@@ -1,12 +1,18 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 1.0
-status: final
+version: 2.0
+status: draft
 author: Steven Rahn
 date_created: 2026-02-08
 date_modified: 2026-02-09
+addenda_incorporated:
+  - ATH-ARCH-A001
+  - ATH-ARCH-A002
 changelog:
+  - version: 2.0
+    date: 2026-02-09
+    summary: "Incorporate ATH-ARCH-A001 (origin identity guidelines), ATH-ARCH-A002 (term registry)"
   - version: 1.0
     date: 2026-02-08
     summary: "Initial specification"
@@ -33,7 +39,7 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ## 2. Two-Layer Architecture
 
-The system is organized into two Forgejo organizations that serve fundamentally different purposes.
+The system is organized into two Forgejo organizations that serve fundamentally different purposes, plus a Term Registry that provides system-wide controlled vocabulary (see section 5). The registry lives in the `example-org` Forgejo organization as foundational infrastructure — not a third content organization, but the controlled vocabulary that both content organizations depend on.
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
@@ -45,11 +51,11 @@ The **Corpus** organization contains origin repositories — one per source of i
 Corpus (Forgejo Organization)
 │
 ├── Automotive
-│   ├── g8board/                  # forum posts from g8board.com
-│   ├── ls1tech/                  # forum posts from ls1tech.com
-│   ├── gm-service-manuals/       # official GM service manual sections
-│   ├── gm-tsbs/                  # GM technical service bulletins
-│   └── penrite-oils/             # product documentation
+│   ├── g8board/                  # forum — G8Board.com community
+│   ├── ls1tech/                  # forum — LS1Tech.com community
+│   ├── gm/                      # General Motors — manuals, TSBs, bulletins, press releases
+│   ├── holden/                   # Holden — workshop manuals, AU-market documentation
+│   └── penrite/                  # Penrite Oils — datasheets, application guides
 │
 ├── Academic / Reference
 │   ├── jstor-economics/          # journal articles from JSTOR
@@ -99,7 +105,7 @@ Compendium/{domain}/
 ├── .gitignore                     # ignores corpora/ (resolved at build time)
 ├── corpora/                       # resolved origin repos (gitignored, like node_modules)
 │   ├── g8board/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
-│   ├── gm-service-manuals/        → resolved (sparse: normalized/ + assets/ + origin.toml)
+│   ├── gm/                        → resolved (sparse: normalized/ + assets/ + origin.toml)
 │   └── ls1tech/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
 ├── manuscript/                    # pre-rendered compendium content (mdBook source)
 │   ├── SUMMARY.md                 # mdBook table of contents
@@ -205,7 +211,80 @@ Compendium/dune/
 
 ## 3. Origin Repositories
 
-### 3.1 Source Registration
+### 3.1 Origin Identity
+
+An origin repository represents a single distinct voice — one entity that produces information. The question that determines an origin boundary is not "what kind of document is it" or "what platform does it live on" but **"who produced it."**
+
+If you can point at a source and say "that came from the same entity expressing its own perspective," it belongs in the same origin. If two sources come from different entities — even if they're on the same platform, cover the same topic, or share the same format — they belong in separate origins.
+
+#### What "Voice" Means
+
+A voice is an entity with a coherent perspective:
+
+- A **company** — GM, Holden, Penrite Oils
+- A **community** — one forum, one subreddit, one Discord server
+- An **author** — Frank Herbert, Brian Herbert
+- A **channel or show** — Engineering Explained, South Main Auto
+- A **government body** — NHTSA, Australian ANCAP
+- An **academic journal** — a single publication venue
+
+A platform is never a voice. Reddit is not an origin — r/MechanicAdvice is. YouTube is not an origin — Engineering Explained is. "Car forums" is not an origin — g8board is.
+
+#### Consolidation by Entity, Not Document Type
+
+All material produced by a single entity belongs in one origin, regardless of document type or format. General Motors publishes service manuals, technical service bulletins, recall notices, press releases, dealer bulletins, and marketing brochures. These are all one voice: GM.
+
+**Before (incorrect — split by document type):**
+```
+corpus/gm-service-manuals/
+corpus/gm-bulletins/
+corpus/gm-press-releases/
+```
+
+**After (correct — one entity, one origin):**
+```
+corpus/gm/
+```
+
+Within the `gm` origin, individual sources use `source_type` to distinguish `service_manual` from `technical_bulletin` from `product_documentation` from `article`. Tags handle topical filtering. Credibility tiers handle trust differences between a factory service manual (`authoritative`) and a marketing brochure (`expert` or lower). The origin only answers: **who said this.**
+
+#### Why Not Consolidate Similar Voices?
+
+Five car forums (g8board, ls1tech, performanceforums, pontiacg8forum, holdenforums) share a platform type, content structure, and ingestion method. It's tempting to merge them into one `car-forums` origin to reduce repo count. This is wrong for four reasons:
+
+1. **Each community is a distinct voice.** g8board is G8-obsessed. ls1tech is LS-engine-first and happens to cover G8s. holdenforums brings the Australian VE platform perspective that American forums lack. These are genuinely different perspectives with different biases, different expertise concentrations, and different blind spots.
+
+2. **Combining introduces the taxonomy problem we're avoiding.** The entire origin architecture is built on the principle that "where it came from" is an unchallengeable fact requiring no editorial judgment. If you combine forums, you're making an editorial decision about which communities are "similar enough" — and that decision may need to be undone later.
+
+3. **The compendium is where commonality is extracted.** Five forums all discussing rear wheel bearings is not a reason to combine them. It's a reason for the compendium to pull from all five and synthesize their perspectives. That's the compendium's job, not the origin's.
+
+4. **The friction of multiple repos is trivial.** Adding an origin as a dependency is one line in `compendium.toml`. Sparse checkout is handled by `resolve.sh`. The real friction is untangling combined origins later when you need one voice in a compendium but not another.
+
+#### The Decision Test
+
+When deciding whether something is one origin or multiple:
+
+1. **Can you name the entity?** "GM", "g8board", "Frank Herbert", "r/MechanicAdvice" — if you can name it as a single entity with a coherent identity, it's one origin.
+
+2. **Would you ever want one without the other in a compendium?** If ls1tech's LS engine content belongs in an engine-building compendium but g8board's doesn't, they must be separate origins. You can't partially include a repo.
+
+3. **Is the split based on document type or entity?** If you're splitting because "service manuals are different from press releases," stop — that's a `source_type` distinction, not an origin distinction. If you're splitting because "GM and Holden are different manufacturers," proceed — those are different entities even though they shared a corporate parent.
+
+#### Updated Examples
+
+| Voice (Entity) | Origin Repo | Contains |
+|----------------|-------------|----------|
+| General Motors | `gm` | Service manuals, TSBs, recalls, press releases, dealer bulletins, brochures |
+| Holden | `holden` | Workshop manuals, Australian-market documentation, press releases |
+| Penrite Oils | `penrite` | Product datasheets, application guides, safety data sheets |
+| G8Board.com | `g8board` | All forum threads from this community |
+| LS1Tech.com | `ls1tech` | All forum threads from this community |
+| Frank Herbert | `frank-herbert` | Novels, short stories, essays, interviews |
+| Engineering Explained | `engineering-explained` | All videos from this channel |
+| South Main Auto | `south-main-auto` | All videos from this channel |
+| NHTSA | `nhtsa` | Recall databases, safety ratings, investigation reports |
+
+### 3.2 Source Registration
 
 Each origin repo contains a registration file that declares metadata about the origin itself:
 
@@ -228,11 +307,31 @@ unlikely_threshold_days = 365         # check 'unlikely' sources annually
 # 'static' sources are never re-checked
 ```
 
+For a multi-document-type entity (see section 3.1), the registration reflects that a single voice may have multiple ingestion paths:
+
+```toml
+# origin.toml for gm
+origin_id = "gm"
+origin_name = "General Motors"
+origin_type = "manufacturer"
+origin_url = "https://www.gm.com"
+description = "Official documentation, bulletins, and publications from General Motors"
+source_id_prefix = "GMOT"
+ingestion_method = "mixed"
+active = true
+
+[reingest]
+default_volatility = "static"
+unlikely_threshold_days = 365
+```
+
+The `ingestion_method = "mixed"` reflects that a single entity origin may have multiple ingestion paths (PDF extraction for manuals, web scraping for press releases, API access for recall databases). The origin groups them by voice; the pipeline handles format differences internally.
+
 The `[reingest]` section defines the default volatility for sources in this origin and the thresholds for re-ingestion priority. Individual sources can override `default_volatility` via the `volatility` field in their frontmatter. The ingestion scanner compares each source's `ingestion_date_last` against the appropriate threshold to generate a re-ingestion priority queue.
 
 The `source_id_prefix` ensures globally unique source IDs across all origins. Prefixes are 4 uppercase letters (allowing for 456,976 unique origin prefixes). Every normalized file in this repo will have a source ID like `G8BD.0001`, `G8BD.0042`, etc. The numeric portion is zero-padded to 4 digits, supporting up to 9,999 sources per origin. When a compendium cites `G8BD.0042`, it unambiguously resolves to a specific file in a specific origin repo.
 
-#### 3.1.1 Origin Repository Layout
+#### 3.2.1 Origin Repository Layout
 
 Each origin repo has a clean top-level structure:
 
@@ -268,7 +367,7 @@ Corpus/g8board/
 
 **The many-to-one rule:** A single source can have multiple files in `ingested/{source_id}/` — the same content in different formats, multiple captures from different dates, or complementary representations (a transcript plus screenshots). Regardless of how many ingested files exist for a source, normalization always produces exactly **one markdown file** in `normalized/` per source ID. The `raw_sources` field in the frontmatter lists the filenames from `ingested/{source_id}/` that the normalization was produced from.
 
-#### 3.1.2 Source Manifest
+#### 3.2.2 Source Manifest
 
 Each origin repo contains a `manifest.toml` that serves as a registry of every source known to belong to this origin — whether captured or not. This is the origin's complete inventory: what we have, what we know about, and what we're planning to acquire.
 
@@ -339,6 +438,32 @@ status = "unavailable"
 notes = "Co-authored with Bill Ransom, no digital edition found"
 ```
 
+For a multi-document-type entity (see section 3.1), one manifest covers all document types from that voice:
+
+```toml
+# manifest.toml for gm — partial example
+
+[[sources]]
+source_id = "GMOT.0001"
+title = "2008 Pontiac G8 Factory Service Manual — Engine Mechanical"
+status = "captured"
+
+[[sources]]
+source_id = "GMOT.0042"
+title = "TSB PI0597B — Rear Wheel Bearing Premature Failure"
+status = "captured"
+
+[[sources]]
+source_id = "GMOT.0100"
+title = "2008 Pontiac G8 Press Release — Launch Announcement"
+status = "pending"
+priority = "low"
+discovered_url = "https://media.gm.com/archive/2008/pontiac-g8"
+discovered_date = "2026-02-09"
+```
+
+The `source_type` field in each normalized file's frontmatter distinguishes what kind of document it is (`service_manual`, `technical_bulletin`, `article`, `product_documentation`). The manifest and origin just track that it all comes from GM.
+
 **Status values:**
 
 | Status | Meaning |
@@ -367,7 +492,7 @@ notes = "Co-authored with Bill Ransom, no digital edition found"
 
 **Source IDs are reserved at discovery time.** When you identify a thread, article, or work that belongs in this origin, it gets a manifest entry and a source ID immediately — even before ingestion. This means the ID is stable and can be referenced in `relations` by other sources before the content is captured. Gaps in numbering (from sources that remain `pending` indefinitely) are expected and harmless.
 
-**The manifest is not for cross-origin references.** If a g8board post mentions a GM TSB, that reference is recorded as an `unresolved` relation in the source's frontmatter — not as a manifest entry in g8board. The TSB belongs in the `gm-tsbs` origin and would be registered there when that origin is created.
+**The manifest is not for cross-origin references.** If a g8board post mentions a GM TSB, that reference is recorded as an `unresolved` relation in the source's frontmatter — not as a manifest entry in g8board. The TSB belongs in the `gm` origin and would be registered there.
 
 **Build-time validation:**
 
@@ -381,14 +506,14 @@ notes = "Co-authored with Bill Ransom, no digital edition found"
 Ingestion Backlog:
   Corpus/frank-herbert:     6 captured, 8 pending (2 high, 3 medium, 3 low), 2 deferred, 1 unavailable
   Corpus/g8board:          42 captured, 156 pending (12 critical, 45 high, 99 medium), 3 deferred
-  Corpus/gm-service-manuals: 15 captured, 60 pending (20 high, 40 medium)
+  Corpus/gm:               75 captured, 120 pending (20 high, 60 medium, 40 low), 5 deferred
 ```
 
-### 3.2 Normalized Source Format
+### 3.3 Normalized Source Format
 
 Every normalized source file is a single markdown document with structured YAML frontmatter. The frontmatter follows a rigid schema: a set of universal fields present on every source, plus extended fields determined by the `source_type`. This consistency enables tooling to validate, query, and compare sources across any origin.
 
-#### 3.2.1 Universal Required Fields
+#### 3.3.1 Universal Required Fields
 
 Every source file must include all of these fields, no exceptions:
 
@@ -397,18 +522,18 @@ Every source file must include all of these fields, no exceptions:
 | `source_id` | string | `XXXX.####` globally unique identifier (4-letter origin prefix + 4-digit number) |
 | `title` | string | Short descriptive label for the source file (not necessarily the work's canonical title) |
 | `summary` | string | One-to-three sentence description of what this source contains and why it's useful. Generated during normalization. Enables synthesis-time relevance assessment without reading the full content |
-| `source_type` | enum | Declares which extended schema applies. See section 3.2.4 for valid types |
-| `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.3 |
-| `tags` | string[] | Objective content descriptors for filtering and scoping. See section 3.2.2 |
+| `source_type` | enum | Declares which extended schema applies. See section 3.3.4 for valid types |
+| `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.4 |
+| `tags` | string[] | Objective content descriptors for filtering and scoping. See section 3.3.2 |
 | `raw_sources` | string[] | Filenames in `ingested/{source_id}/` this was normalized from. Preserves traceability to original artifacts |
 | `ingestion_date_first` | date | When this source was originally captured |
 | `ingestion_date_last` | date | When we last checked/re-ingested from the upstream source (same as `ingestion_date_first` on initial capture) |
 | `content_changed_last` | date | When the upstream content last actually differed from what we had. Used by the ingestion layer to assess source stability |
-| `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.3.1 |
+| `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.4.1 |
 | `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`, `whisper-large-v3`) |
 | `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
 
-#### 3.2.2 Tags
+#### 3.3.2 Tags
 
 Tags are objective descriptors of what the source discusses — not where it should be used. Good tags describe the content's topics, subjects, entities, and concepts. The same source can be relevant to multiple compendiums through different tag intersections.
 
@@ -416,22 +541,22 @@ Tags are the primary mechanism by which `compendium.toml` filters sources for in
 
 - **Objective** — describe what's in the content, not editorial judgments
 - **Granular** — prefer specific terms (`wheel-bearing`, `l76`, `afm-delete`) over vague ones (`car-parts`)
-- **Consistent** — use the same tag across origins for the same concept (don't mix `wheel-bearing` and `hub-bearing` for the same component)
+- **Consistent** — use the same tag across origins for the same concept (don't mix `wheel-bearing` and `hub-bearing` for the same component). The Term Registry (section 5) is the enforcement mechanism for tag consistency — every tag used in frontmatter must be a registered term
 
-#### 3.2.3 Universal Optional Fields
+#### 3.3.3 Universal Optional Fields
 
 These fields are present on most sources but legitimately absent on some:
 
 | Field | Type | When absent |
 |-------|------|-------------|
-| `author` | string | Anonymous forum posts, unsigned government documents |
+| `author` | string | Uses canonical term tags from the Term Registry (section 5). Reserved for identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead. Anonymous or unsigned government documents omit this field entirely |
 | `date_published` | date | Undated historical texts, some web content |
 | `origin_url` | string | Physical books, offline documents |
 | `volatility` | enum | `static`, `unlikely`, `periodic`, `active`. Omit to inherit the default from `origin.toml`. Only set per-source as an override when a source's volatility differs from the origin norm (e.g., an unusually active thread on a mostly-dormant forum) |
-| `relations` | array | Omit if no explicit references to other sources. See section 3.5 |
-| `issues` | array | Omit if no known quality or completeness problems. See section 3.4 |
+| `relations` | array | Omit if no explicit references to other sources. See section 3.6 |
+| `issues` | array | Omit if no known quality or completeness problems. See section 3.5 |
 
-#### 3.2.4 Extended Schemas by `source_type`
+#### 3.3.4 Extended Schemas by `source_type`
 
 The `source_type` field determines which additional fields are required or available. This is a closed enum — adding a new type requires defining its extended schema.
 
@@ -441,6 +566,7 @@ Covers: g8board, ls1tech, performanceforums, and similar threaded discussion sit
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
+| `username` | yes | string | Exact username of the poster on the forum (plain string, not a registry term) |
 | `thread_url` | yes | string | Direct link to the thread |
 | `reply_count` | no | int | Number of replies — engagement signal |
 | `is_solution` | no | bool | Whether this was marked or widely accepted as the answer |
@@ -451,6 +577,7 @@ Covers: Reddit posts and threads. Separated from `forum_post` because Reddit's v
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
+| `username` | yes | string | Exact Reddit username of the poster (plain string, not a registry term) |
 | `subreddit` | yes | string | Which subreddit, without the r/ prefix |
 | `post_url` | yes | string | Permalink to the post |
 | `score` | no | int | Net upvotes — engagement and credibility signal |
@@ -551,7 +678,7 @@ Covers: Product datasheets, catalogs, user guides, safety data sheets, and manuf
 | `document_type` | no | enum | `datasheet`, `catalog`, `guide`, `sds` |
 | `part_numbers` | no | string[] | Associated part numbers |
 
-#### 3.2.5 Complete Example
+#### 3.3.5 Complete Example
 
 A forum post with all applicable fields:
 
@@ -571,8 +698,7 @@ normalization_confidence: 0.92
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: "2026-01-20"
 
-# universal optional
-author: "username"
+# universal optional (author omitted — anonymous forum poster, see username below)
 date_published: "2019-03-15"
 origin_url: "https://www.g8board.com/forum/thread-12345"
 volatility: "unlikely"
@@ -589,6 +715,7 @@ issues:
     resolved: true
 
 # extended: forum_post
+username: "TorqueDave"
 thread_url: "https://www.g8board.com/forum/thread-12345"
 reply_count: 47
 is_solution: true
@@ -597,7 +724,7 @@ is_solution: true
 [normalized markdown content]
 ```
 
-### 3.3 Credibility Tiers
+### 3.4 Credibility Tiers
 
 Each source is rated for trustworthiness:
 
@@ -611,13 +738,13 @@ Each source is rated for trustworthiness:
 
 For fiction origins, `authoritative` means the primary text itself. `expert` would be published literary criticism. `community_validated` might be widely-accepted fan analysis. The tiers adapt naturally to any domain.
 
-#### 3.3.1 Normalization Confidence
+#### 3.4.1 Normalization Confidence
 
 The `normalization_confidence` field (`0.0`–`1.0`) rates the quality of the conversion process itself — how accurately the raw source was captured and converted to markdown. This is distinct from credibility (trustworthiness of claims) and distinct from tags (what it's about).
 
 A perfectly transcribed YouTube video might have high normalization confidence but low credibility tier. A badly OCR'd service manual might have low normalization confidence but authoritative credibility.
 
-### 3.4 Source Issues
+### 3.5 Source Issues
 
 Normalized sources can declare known quality or completeness problems via the `issues` array. This is distinct from `normalization_confidence` — confidence rates how well the conversion went for what we had, while issues flag what we're missing or what has degraded.
 
@@ -637,7 +764,7 @@ issues:
     resolved: true
 ```
 
-#### 3.4.1 Issue Types
+#### 3.5.1 Issue Types
 
 | Type | Description |
 |------|-------------|
@@ -648,7 +775,7 @@ issues:
 | `encoding_corruption` | Garbled text, mojibake, or mangled characters |
 | `format_loss` | Tables, diagrams, code blocks, or formatting that didn't survive conversion |
 
-#### 3.4.2 Severity Levels
+#### 3.5.2 Severity Levels
 
 | Severity | Meaning |
 |----------|---------|
@@ -656,7 +783,7 @@ issues:
 | `major` | Significant information loss but source is still partially useful |
 | `minor` | Cosmetic or non-essential content affected |
 
-#### 3.4.3 Remediation Actions
+#### 3.5.3 Remediation Actions
 
 | Remediation | Description |
 |-------------|-------------|
@@ -680,7 +807,7 @@ Unresolved Issues for Corpus/g8board:
   minor: 15 sources
 ```
 
-### 3.5 Source Relations
+### 3.6 Source Relations
 
 Normalized sources can declare explicit relationships to other sources. These capture **intrinsic relationships** — objective facts about the source that are evident at normalization time. A forum post linked to another thread. A novel is the sequel to another novel. A revised TSB supersedes an earlier one. These are unchallengeable observations captured when the material is being read.
 
@@ -714,17 +841,17 @@ relations:
 
 **Discovered relationships** — connections identified during synthesis rather than present in the source itself ("this post describes the same failure mode as that manual section") — belong in the compendium layer, not source frontmatter. Source relations are strictly what the source itself declares or implies.
 
-#### 3.5.1 Origin Discovery via Relations
+#### 3.6.1 Origin Discovery via Relations
 
 Source relations serve as a **dependency discovery mechanism** for compendiums. When building a compendium, a build-time analysis can scan all `relations` across filtered sources, collect every `source_id` prefix that points to an origin not currently declared as a dependency, and surface it as a recommendation:
 
 ```
 Origin Dependency Analysis for Compendium/commodore-ve:
-  Currently declared: G8BD (g8board), GMSM (gm-service-manuals)
+  Currently declared: G8BD (g8board), GMOT (gm)
 
   Referenced but not included:
     LSTK (ls1tech)         — 15 sources reference this origin
-    GTSB (gm-tsbs)         — 12 sources reference this origin
+    HLDN (holden)          — 3 sources reference this origin
     PFRM (performanceforums) — 4 sources reference this origin
 
   Unresolved references:
@@ -734,7 +861,7 @@ Origin Dependency Analysis for Compendium/commodore-ve:
 
 This turns the relation graph into an organic growth signal — the sources themselves tell you which origins you should be pulling in. The more references to a missing origin, the stronger the signal that including it would improve synthesis quality.
 
-### 3.6 Exotic Origin Types
+### 3.7 Exotic Origin Types
 
 The origin-as-repo pattern supports any source type. The only requirement is an ingestion pipeline that produces normalized markdown with frontmatter.
 
@@ -830,6 +957,37 @@ sparse = ["normalized/", "assets/", "origin.toml"]
 require_any = ["dune"]      # only Dune-related screenplays
 ```
 
+Because `author` is a canonical term tag (see section 5.7), compendium configuration can also filter by author directly using `match_author`:
+
+```toml
+[[compendium.corpora]]
+name = "nyt"
+repo = "corpus/nyt"
+commit = "d4e5f6a"
+sparse = ["normalized/", "assets/", "origin.toml"]
+match_author = "ryan-grimm"          # only his articles from the NYT
+
+[[compendium.corpora]]
+name = "the-intercept"
+repo = "corpus/the-intercept"
+commit = "e5f6a7b"
+sparse = ["normalized/", "assets/", "origin.toml"]
+match_author = "ryan-grimm"          # only his articles from The Intercept
+```
+
+Tag-based filters and author-based filters can be combined. A source matches if it satisfies either condition:
+
+```toml
+[[compendium.corpora]]
+name = "nyt"
+repo = "corpus/nyt"
+commit = "d4e5f6a"
+sparse = ["normalized/", "assets/", "origin.toml"]
+require_any = ["economics", "federal-reserve"]
+match_author = "ryan-grimm"
+# Source matches if it satisfies EITHER condition
+```
+
 ### 4.3 Synthesis Principles
 
 - **Cite sources.** Every factual claim in the compendium references the source ID(s) it derives from. The reader (human or agent) can always trace a claim back to a specific file in a specific origin.
@@ -849,9 +1007,549 @@ Git provides version control at both layers:
 
 ---
 
-## 5. Compendium Format
+## 5. Term Registry
 
-### 5.1 mdBook
+### 5.1 Overview
+
+The Term Registry is a system-wide controlled vocabulary that provides canonical identification for all named entities and descriptors across Athenaeum. It ensures that when two sources reference the same person, organization, vehicle, component, or concept, they use the same term — even if those sources were normalized months apart by different models from different origins.
+
+Without a registry, identification degrades into freeform text matching: `"Ryan Grimm"`, `"ryan-grimm"`, `"R. Grimm"`, and `"grimm-ryan"` all refer to the same person but are invisible to any automated system. The registry solves this by establishing canonical terms with rich metadata, supporting disambiguation of concepts that share surface forms, and enforcing that all frontmatter always uses the correct canonical term.
+
+Every tag used in the system — from specific entities like `l76-engine` to descriptors like `diagnosis` — is a registered term. Terms describe sources. Terms also describe other terms. The registry is a single flat namespace with no imposed hierarchy.
+
+The registry sits alongside the Corpus and Compendium organizations as a foundational Athenaeum component. Every origin's normalization process reads from it and proposes additions to it.
+
+### 5.2 Disambiguation Philosophy
+
+The term registry defines precise coordinates in concept space, not opinions. A term's job is to refer to exactly one thing unambiguously. When a natural-language word or phrase refers to genuinely different things depending on context, it cannot be a term on its own — it requires disambiguation.
+
+This is not about controversy. It's about precision. `palestine` is not a valid term because it is ambiguous — it refers to different geopolitical realities depending on the era and context. `palestine-pre1948` and `palestine-current` are valid terms because each refers to exactly one thing. Both can have "Palestine" as a colloquial name because that *is* what people call them. The canonical term is the precise coordinate. The names are how humans refer to it.
+
+The same principle applies everywhere:
+
+- `mercury` is ambiguous (planet, element, Roman god, car brand). `mercury-planet`, `mercury-element`, `mercury-roman-deity`, `mercury-automobile` are precise.
+- `dod` is ambiguous (Displacement on Demand, Department of Defense). `afm-dod` and `dod-department-of-defense` are precise.
+- `jaguar` is ambiguous (animal, car brand). `jaguar-animal` and `jaguar-automobile` are precise.
+
+Not every term needs disambiguation. `ryan-grimm` is unambiguous — there is one person being referred to. `l76-engine` is unambiguous — there is one engine. Disambiguation is only required when a surface form genuinely maps to multiple distinct concepts.
+
+The iterative nature of the registry means disambiguation improves over time. A term that seemed unambiguous may later be discovered to refer to two things, at which point it gets split and reconciled. The registry is a living document that gets more precise with use.
+
+### 5.3 Core Principle
+
+**The frontmatter is the source of truth. The registry is the authority. They must always agree.**
+
+There is no alias resolution, no runtime translation, no indirection layer. Every tag in every source file's frontmatter is the current canonical form as defined by the registry. If a tag is found to be incorrect — because two entities were confused, or because a tag was superseded by a better canonical form — the affected frontmatter is rewritten. The old form ceases to exist in the system.
+
+### 5.4 Term Structure
+
+Each term in the registry has:
+
+#### Canonical Tag
+
+The single authoritative identifier used in all frontmatter. Follows the same format as regular tags — lowercase, hyphenated, concise:
+
+- `ryan-grimm`
+- `general-motors`
+- `pontiac-g8`
+- `l76-engine`
+- `rear-wheel-bearing`
+
+#### Term Type
+
+There is no type enum. Instead, each term is described by **descriptor tags** — the same tags used to describe source content. A term's "type" emerges from its tags rather than being assigned from a closed taxonomy:
+
+- `ryan-grimm` is tagged `person`, `journalist`, `political-reporter`
+- `general-motors` is tagged `organization`, `manufacturer`, `automotive`
+- `l76-engine` is tagged `component`, `engine`, `v8`, `gen-iv`
+- `dune-novel` is tagged `work`, `novel`, `science-fiction`
+- `pontiac-g8` is tagged `vehicle`, `sedan`, `rear-wheel-drive`
+
+This avoids the taxonomy problem that a closed enum creates — where you'd inevitably encounter something that doesn't fit neatly into `person` vs. `organization` vs. `concept` and end up debating categories instead of describing things.
+
+Descriptor tags that describe terms (like `person`, `organization`, `vehicle`, `component`) are themselves registered terms in the same registry. Terms describe terms. The system is self-referential and flat.
+
+#### Names
+
+The colloquial representations of the term — how humans refer to it in natural language. A term can have multiple names because the same concept is often referred to differently in different contexts:
+
+```toml
+# l76-engine.toml
+
+canonical = "l76-engine"
+names = ["L76", "L76 6.0L V8", "6.0 V8", "L76 engine"]
+tags = ["component", "engine", "v8", "gen-iv", "gm"]
+description = "GM Gen IV 6.0L V8 with Active Fuel Management (AFM/DoD), used in 2008-2009 Pontiac G8 GT and various GM trucks. Shares architecture with LS2 but adds cylinder deactivation."
+```
+
+The `names` field serves the normalization pipeline — when Pass 1 produces a raw tag or encounters a reference in source text, the resolution step checks which terms have matching entries in their `names` array, then uses source context to determine which specific term is intended.
+
+Multiple terms sharing a name is expected and is the core mechanism for disambiguation:
+
+```toml
+# palestine-current.toml
+
+canonical = "palestine-current"
+names = ["Palestine", "State of Palestine", "Occupied Palestinian Territories", "OPT"]
+tags = ["location", "state", "middle-east"]
+description = "The occupied territories comprising the Gaza Strip and the West Bank, including East Jerusalem. Recognized as a state by the UN General Assembly in 2012."
+
+[[relations]]
+type = "contains"
+target = "gaza-strip"
+
+[[relations]]
+type = "contains"
+target = "west-bank"
+```
+
+```toml
+# palestine-pre1948.toml
+
+canonical = "palestine-pre1948"
+names = ["Palestine", "Mandatory Palestine", "British Palestine"]
+tags = ["location", "historical-territory", "middle-east"]
+description = "The geographic region of Palestine as defined by pre-1948 borders, encompassing the territory of the British Mandate for Palestine (1920-1948)."
+```
+
+Both terms have "Palestine" as a name. When a source refers to "Palestine," the resolution step examines the source context to determine which term applies. An article about Ottoman-era agriculture resolves to `palestine-pre1948`. A report on current humanitarian conditions resolves to `palestine-current`. The source context drives the resolution, not an editorial default.
+
+#### Description
+
+A precise, objective explanation of what the term refers to. The description serves two purposes:
+
+1. **Normalization guidance** — gives the model enough context to correctly match source content to the right term and to improve normalization quality during the enrichment pass
+2. **Human disambiguation** — lets a reviewer quickly understand what a term means when resolving conflicts or reviewing proposals
+
+Descriptions should be factual and specific enough that two reasonable people would agree on whether a given reference matches the term.
+
+When terms share similar surface forms, the description carries the disambiguation:
+
+```toml
+# mercury-planet.toml
+
+canonical = "mercury-planet"
+names = ["Mercury"]
+tags = ["location", "planet", "solar-system"]
+description = "The smallest planet in the Solar System and closest to the Sun, with an orbital period of approximately 88 Earth days."
+```
+
+```toml
+# mercury-element.toml
+
+canonical = "mercury-element"
+names = ["Mercury", "quicksilver", "Hg"]
+tags = ["element", "chemical", "metal"]
+description = "Chemical element with atomic number 80, a heavy silvery liquid metal at room temperature. Symbol Hg from Latin hydrargyrum."
+```
+
+#### Entity Relations
+
+Entities can declare relationships to other entities. These are distinct from source relations — they describe how entities relate to each other in the real world:
+
+| Relation | Description | Example |
+|----------|-------------|---------|
+| `writes_for` | Person publishes through this outlet | `ryan-grimm` → `the-intercept` |
+| `manufactures` | Organization produces this product | `general-motors` → `pontiac-g8` |
+| `subsidiary_of` | Organization owned by another | `holden` → `general-motors` |
+| `component_of` | Part belongs to a system or vehicle | `l76-engine` → `pontiac-g8` |
+| `variant_of` | One entity is a variant of another | `holden-ve-commodore` → `pontiac-g8` |
+| `sequel_to` | Creative work follows another | `dune-messiah-novel` → `dune-novel` |
+| `adaptation_of` | One work adapts another | `dune-2021-film` → `dune-novel` |
+| `member_of` | Person belongs to organization | `frank-herbert` → `sfwa` |
+
+These relations are informational — they help agents and synthesis understand context. They are not used for filtering or scoping.
+
+### 5.5 Registry Format
+
+The registry lives in its own repository as a flat collection of TOML files — one file per term. Every registered term, whether it represents a specific entity like `ryan-grimm` or a descriptor like `person`, gets its own file:
+
+```
+example-org/term-registry/
+├── registry.toml                    # registry metadata and configuration
+├── tags/
+│   ├── afm-dod.toml
+│   ├── article.toml                 # descriptor
+│   ├── automotive.toml              # descriptor
+│   ├── brian-herbert.toml
+│   ├── component.toml               # descriptor
+│   ├── descriptor.toml              # descriptor
+│   ├── detroit.toml
+│   ├── diagnosis.toml               # descriptor
+│   ├── diy.toml                     # descriptor
+│   ├── dune-novel.toml
+│   ├── engine.toml                  # descriptor
+│   ├── frank-herbert.toml
+│   ├── g8board.toml
+│   ├── general-motors.toml
+│   ├── holden.toml
+│   ├── holden-ve-commodore.toml
+│   ├── how-to.toml                  # descriptor
+│   ├── journalist.toml              # descriptor
+│   ├── l76-engine.toml
+│   ├── ls1tech.toml
+│   ├── ls2-engine.toml
+│   ├── manufacturer.toml            # descriptor
+│   ├── novel.toml                   # descriptor
+│   ├── organization.toml            # descriptor
+│   ├── penrite.toml
+│   ├── person.toml                  # descriptor
+│   ├── pontiac-g8.toml
+│   ├── r-mechanicadvice.toml
+│   ├── rear-wheel-bearing.toml
+│   ├── ryan-grimm.toml
+│   ├── t56-transmission.toml
+│   ├── troubleshooting.toml         # descriptor
+│   ├── vehicle.toml                 # descriptor
+│   └── work.toml                    # descriptor
+└── proposals/
+    └── pending/
+        └── 2026-02-09_G8BD.0200.toml
+```
+
+There is no organizational hierarchy in the directory structure. No `persons/` or `components/` subdirectories. The terms themselves carry that information — `ryan-grimm.toml` is tagged `person`, `journalist`. The filesystem is flat; the taxonomy lives in the term metadata.
+
+#### Term File Format
+
+Every registered term — entity or descriptor — uses the same file format:
+
+```toml
+# ryan-grimm.toml
+
+canonical = "ryan-grimm"
+names = ["Ryan Grimm", "Ryan Grim"]
+tags = ["person", "journalist", "political-reporter"]
+description = "Investigative journalist, formerly at The Intercept and HuffPost. Covers political power structures and progressive politics."
+
+[[relations]]
+type = "writes_for"
+target = "the-intercept"
+```
+
+```toml
+# general-motors.toml
+
+canonical = "general-motors"
+names = ["General Motors", "GM"]
+tags = ["organization", "manufacturer", "automotive"]
+description = "American multinational automotive manufacturer. Parent company of Chevrolet, Pontiac (discontinued), GMC, Buick, and Cadillac."
+
+[[relations]]
+type = "manufactures"
+target = "pontiac-g8"
+
+[[relations]]
+type = "subsidiary_of"
+target = "holden"
+note = "Holden was a GM subsidiary until 2020"
+```
+
+```toml
+# l76-engine.toml
+
+canonical = "l76-engine"
+names = ["L76", "L76 6.0L V8", "6.0 V8", "L76 engine"]
+tags = ["component", "engine", "v8", "gen-iv", "gm"]
+description = "GM Gen IV 6.0L V8 with Active Fuel Management (AFM/DoD), used in 2008-2009 Pontiac G8 GT and various GM trucks. Shares architecture with LS2 but adds cylinder deactivation."
+
+[[relations]]
+type = "component_of"
+target = "pontiac-g8"
+
+[[relations]]
+type = "variant_of"
+target = "ls2-engine"
+```
+
+Descriptor tags have simpler entries but the same format:
+
+```toml
+# person.toml
+
+canonical = "person"
+names = ["person"]
+tags = []
+description = "A specific individual human being."
+```
+
+```toml
+# journalist.toml
+
+canonical = "journalist"
+names = ["journalist"]
+tags = ["person"]
+description = "A person who investigates, writes, and reports news or information for publication."
+```
+
+```toml
+# diagnosis.toml
+
+canonical = "diagnosis"
+names = ["diagnosis", "diagnostic"]
+tags = ["descriptor"]
+description = "Content focused on identifying the cause of a problem or fault."
+```
+
+Note that descriptor terms can themselves have tags. `journalist` is tagged `person` because every journalist is a person — this captures the relationship without imposing a rigid hierarchy. A normalization model or query tool can traverse these relationships to understand that filtering for `person` should include terms tagged `journalist`.
+
+### 5.6 Two-Pass Normalization Pipeline
+
+The term registry integrates into normalization through a two-pass process. The first pass is isolated — the model works with only the raw source material. The second pass is enriched — the model has registry context and can improve its output.
+
+#### Pass 1: Isolated Normalization
+
+The model normalizes the source with no registry context. It produces:
+
+- The normalized markdown content
+- Frontmatter with all required fields
+- A set of **raw tags** based purely on what it observes in the source material
+
+These raw tags are the model's best-effort identification of entities and descriptors from the source alone. They may be ambiguous (`dod` could mean Active Fuel Management's Displacement on Demand or the Department of Defense), inconsistent with existing conventions (`6.0-v8` when the registry uses `l76-engine`), or novel (an entity the registry has never seen).
+
+The raw tags are not written to the final frontmatter. They are an intermediate output.
+
+#### Tag Resolution
+
+Each raw tag from Pass 1 is compared against the registry:
+
+1. **Exact match** — the raw tag matches a canonical tag in the registry. Use the canonical tag.
+
+2. **Semantic match** — the raw tag doesn't match exactly but clearly refers to a registered entity (e.g., raw tag `6.0-v8-afm` clearly maps to registered entity `l76-engine`). The resolution process identifies the correct canonical tag. High-confidence matches can be automated; lower-confidence matches are flagged for human review.
+
+3. **Ambiguous match** — the raw tag could refer to multiple registered entities (e.g., `dod` could map to both `afm-dod` and `dod-department-of-defense`). Flagged for human review with the source context to determine which entity is intended.
+
+4. **No match** — the raw tag doesn't correspond to any registered term. Two possibilities:
+   - It's a **new entity** that should be registered → goes to the proposal queue
+   - It's a **new descriptor** that should be registered → goes to the proposal queue (descriptors are terms too)
+
+After resolution, the frontmatter is populated with correct canonical entity tags plus any descriptor tags.
+
+#### Pass 2: Enriched Normalization
+
+With tags now resolved, the model re-normalizes with the registry metadata for each matched entity as additional context. The model now knows:
+
+- `l76-engine` is a "GM Gen IV 6.0L V8 with AFM/DoD"
+- `pontiac-g8` is a specific vehicle platform
+- `afm-dod` is the "Active Fuel Management / Displacement on Demand" cylinder deactivation system
+
+This richer understanding improves:
+
+- **Summary quality** — the model can write more precise, technically accurate summaries
+- **Tag completeness** — the model may identify additional relevant entities now that it understands the domain context (e.g., recognizing that a discussion about "cylinder deactivation problems" should also be tagged with `afm-dod`)
+- **Normalization quality** — the model can better structure the content, resolve ambiguous references in the source text, and produce a more useful normalized document
+
+#### Term Proposals
+
+Any raw tag from Pass 1 that didn't resolve to a registry entry is emitted as a proposal — whether it appears to represent a specific entity or a descriptor:
+
+```toml
+# proposals/pending/2026-02-09_G8BD.0200.toml
+
+[[proposals]]
+proposed_by = "G8BD.0200"
+proposed_tag = "4l60e-transmission"
+proposed_tags = ["component", "transmission", "gm"]
+proposed_names = ["4L60E", "4L60E transmission"]
+context = "GM 4-speed automatic transmission discussed in rebuild procedure"
+confidence = 0.95
+
+[[proposals]]
+proposed_by = "G8BD.0200"
+proposed_tag = "tremec-t56"
+proposed_tags = ["component", "transmission", "manual-transmission"]
+proposed_names = ["T56", "Tremec T56", "T56 6-speed"]
+context = "Tremec 6-speed manual transmission option in the Pontiac G8 GXP, discussed in context of swap into GT models"
+confidence = 0.95
+```
+
+Proposals are reviewed by a human. Approved proposals become term files in the registry. Rejected proposals are discarded.
+
+#### Pipeline Summary
+
+```
+Raw Source
+    ↓
+Pass 1: Isolated normalization (no registry context)
+    → normalized content + raw tags
+    ↓
+Tag Resolution: Match raw tags against registry
+    → canonical terms (matched)
+    → proposals (unresolved → registration queue)
+    → ambiguous (flagged for human review)
+    ↓
+Pass 2: Enriched normalization (with registry metadata)
+    → improved content, summary, and tags
+    ↓
+Final normalized source file (written to normalized/)
+```
+
+### 5.7 Author Field vs. Username Field
+
+The `author` field in source frontmatter is reserved for real, identifiable people. It uses canonical term tags:
+
+```yaml
+# Correct — identifiable person, registered term
+author: "ryan-grimm"
+
+# For multiple authors
+authors: ["frank-herbert", "brian-herbert"]
+```
+
+For sources where the author is an anonymous or pseudonymous handle (forum posts, Reddit posts, etc.), the `author`/`authors` field is omitted entirely. Instead, the relevant extended schema provides a **`username`** field that stores the exact username of the poster as a plain string:
+
+```yaml
+# forum_post extended fields
+username: "TorqueDave"
+thread_url: "https://www.g8board.com/forum/thread-12345"
+```
+
+```yaml
+# reddit_post extended fields
+username: "LS_Swapper_9000"
+subreddit: "r-pontiacg8"
+post_url: "https://reddit.com/r/PontiacG8/comments/abc123"
+```
+
+The `username` field:
+- Stores the exact handle as it appears on the platform
+- Is a plain string, not a term registry reference
+- Is not disambiguated, reconciled, or tracked as an entity
+- Exists purely for provenance — "who posted this on the platform"
+
+This avoids the rabbit hole of trying to track and disambiguate pseudonymous internet users across platforms. If a forum poster is later identified as a real person (e.g., a known mechanic or engineer who posts under their real name), the `author` field can be added with their registered term and the `username` field retained for platform provenance.
+
+### 5.8 Reconciliation
+
+Reconciliation is the process of correcting frontmatter when the registry changes. It is not optional and is not deferred. When the registry changes, affected frontmatter is rewritten immediately. Old forms cease to exist.
+
+#### Merge (Two Tags → One)
+
+When two canonical tags are determined to represent the same entity:
+
+1. **Decide canonical form.** Choose the more descriptive or established tag.
+2. **Remove the retired entry** from the registry entirely. It does not become an alias. It is gone.
+3. **Rewrite all frontmatter.** Automated pass scans every origin for the retired tag in any frontmatter field (`tags`, `author`/`authors`, or any extended field) and replaces it with the surviving canonical tag.
+4. **Commit changes.** Each affected origin gets a reconciliation commit.
+
+The retired tag ceases to exist anywhere in the system. Future normalization will not produce it because:
+- Pass 1 may still produce the old surface form as a raw tag
+- But tag resolution will semantically match it to the surviving canonical form, informed by the richer metadata now present on that entity
+- If the old form keeps appearing from Pass 1 and failing resolution, that's a signal the registry description should be improved to enable more reliable matching
+
+#### Split (One Tag → Two)
+
+When a single term is found to represent two different concepts:
+
+1. **Create two distinct entries.** E.g., `mercury-planet` and `mercury-element`.
+2. **Remove the ambiguous entry** from the registry.
+3. **Classify affected sources.** Determine which concept each source actually references. This requires human review — the automated system flags the sources, a human assigns them.
+4. **Rewrite all frontmatter.** Replace the old term with the correct disambiguated term in each affected source file.
+
+Split reconciliation is more invasive than merge reconciliation and always requires human judgment.
+
+#### Rename (Tag → Better Tag)
+
+When a canonical tag should be renamed for clarity:
+
+1. **Update the registry entry** with the new canonical tag.
+2. **Rewrite all frontmatter** containing the old tag.
+3. The old form ceases to exist.
+
+#### Build-Time Validation
+
+Every build should verify consistency:
+
+- Every tag in source frontmatter has a corresponding `.toml` file in the term registry
+- No frontmatter contains a tag that was retired through merge, split, or rename
+- Every `author`/`authors` field value is a registered term tagged `person` (forum/reddit posts use `username` instead, which is not validated against the registry)
+- Every tag referenced in a term file's `tags` array has its own term file in the registry
+- Every `relations` target references a term that exists in the registry
+
+### 5.9 Unified Term Namespace
+
+All terms — whether they represent specific entities like `ryan-grimm` or descriptors like `diagnosis` — live in the same flat registry and follow the same format. There is no formal distinction between "entity terms" and "descriptor terms" at the system level. Every term is just a term.
+
+In practice, terms naturally fall along a spectrum:
+
+**Specific entities** have rich descriptions, relations to other terms, and tend to be unique proper nouns:
+- `ryan-grimm` — a specific person with a career history, publications, and affiliations
+- `l76-engine` — a specific component with technical specifications and vehicle applications
+- `pontiac-g8` — a specific vehicle with model years, platforms, and manufacturer relations
+
+**Descriptors** have simpler entries and describe qualities, activities, or categories:
+- `diagnosis` — content focused on identifying problems
+- `how-to` — step-by-step procedural content
+- `person` — the concept of being a human individual
+
+**Meta-descriptors** are descriptors that primarily exist to describe other terms:
+- `person`, `organization`, `vehicle`, `component` — these describe what kind of entity a term represents
+- `descriptor` — terms that describe content qualities rather than specific entities
+
+This spectrum is not enforced by the system. It emerges naturally from how terms are used. The registry treats them all identically.
+
+### 5.10 Reconciliation Reporting
+
+A periodic reconciliation scan validates consistency across the system:
+
+```
+Term Registry Reconciliation Report:
+
+  Retired terms found in frontmatter (reconciliation failures):
+    "displacement-on-demand" found in G8BD.0150, G8BD.0203
+    Action: automated rewrite required — this term no longer exists, use "afm-dod"
+
+  Potential duplicates (similar terms, not yet investigated):
+    ls2-engine / ls2 — both tagged [component, engine], both in automotive origins
+    Action: human review to determine if these are the same term
+
+  Ambiguous surface forms from recent normalization:
+    "dod" produced by G8BD.0200 (resolved → afm-dod)
+    "dod" produced by USGV.0015 (resolved → dod-department-of-defense)
+    Status: correctly disambiguated
+
+  Unresolved proposals: 12
+    3 high-confidence (>0.9) — likely auto-approvable
+    6 medium-confidence (0.7-0.9) — need review
+    3 low-confidence (<0.7) — may be false identification
+
+  Unregistered tags (in frontmatter, no matching file in registry): 4
+    "mystery-component" — used in G8BD.0150
+    Action: create term file or correct to existing term
+```
+
+### 5.11 Registry Scope and Growth
+
+The registry starts small and grows organically through normalization:
+
+1. **Bootstrap from existing origins.** Normalize existing sources, let Pass 1 produce raw tags, resolve and register them.
+2. **Grow with each normalization.** New sources produce proposals for entities the registry hasn't seen.
+3. **Cross-origin signal.** When the same entity appears across multiple origins, that reinforces confidence in the registration. An entity referenced by 5 origins is well-established.
+4. **Compendium-driven demand.** Building a new compendium may reveal entities that need registration to enable proper filtering.
+
+The registry doesn't need to be complete before normalization begins. Pass 1 operates without registry context. Tag resolution handles what the registry knows, and proposals capture what it doesn't. The system is functional from day one and improves as the registry grows.
+
+### 5.12 Infrastructure Placement
+
+The term registry is system-wide infrastructure, consumed by both the Corpus and Compendium layers but owned by neither. It lives in the `example-org` Forgejo organization alongside other Athenaeum system infrastructure:
+
+```
+example-org/athenaeum/                # spec, tooling, reconciliation scripts
+example-org/term-registry/            # controlled vocabulary
+corpus/gm/                          # origin repos
+corpus/g8board/
+compendium/commodore-ve/            # compendium repos
+compendium/dune/
+```
+
+The `example-org` org contains the things that make Athenaeum work — system-level infrastructure, specifications, and tooling. The `corpus` and `compendium` orgs contain the things Athenaeum operates on. The term registry is plumbing, not content.
+
+The registry is accessed by normalization tooling via Forgejo API or by cloning the repo. It does not need to be submoduled into every origin — the normalization pipeline reads it as an external dependency.
+
+---
+
+## 6. Compendium Format
+
+### 6.1 mdBook
 
 The compendium is built as an **mdBook** — a static documentation site generated from structured markdown files. mdBook was selected because:
 
@@ -864,7 +1562,7 @@ The compendium is built as an **mdBook** — a static documentation site generat
 - Lightweight, fast, and self-hostable
 - Rust-based toolchain
 
-### 5.2 Textbook Structure
+### 6.2 Textbook Structure
 
 Each compendium follows a consistent structural pattern:
 
@@ -877,13 +1575,13 @@ Each compendium follows a consistent structural pattern:
 | **Glossary** | Domain-specific terminology definitions |
 | **Sources** | Master registry of all origins and sources with credibility tiers |
 
-### 5.3 Navigation Aids
+### 6.3 Navigation Aids
 
 The `SUMMARY.md` file serves as both the mdBook table of contents and the agent's navigation map. It provides hierarchical structure down to the section level.
 
-mdBook also generates a `searchindex.json` file at build time that provides full-text search across all pages. This serves as the compendium's index — mapping keywords, part numbers, symptoms, and any other terms to the sections where they appear. See section 9.2 for how the agent leverages this.
+mdBook also generates a `searchindex.json` file at build time that provides full-text search across all pages. This serves as the compendium's index — mapping keywords, part numbers, symptoms, and any other terms to the sections where they appear. See section 10.2 for how the agent leverages this.
 
-### 5.4 Compendium Page Frontmatter
+### 6.4 Compendium Page Frontmatter
 
 mdBook supports YAML frontmatter on pages — it ignores it during rendering, which makes it ideal for metadata that tooling and agents can read without polluting the HTML output. Every compendium chapter page carries synthesis provenance and per-source traceability:
 
@@ -927,7 +1625,7 @@ Each field serves a specific purpose:
 
 Aggregate fields like `source_count`, `origin_count`, and `credibility_summary` are derivable from the `sources` list and do not need to be stored separately.
 
-#### 5.4.1 Incremental Synthesis
+#### 6.4.1 Incremental Synthesis
 
 The per-source `synthesized_at` field enables precise incremental re-synthesis. When an origin's pinned commit is bumped in `compendium.toml`, the staleness check is mechanical:
 
@@ -949,9 +1647,9 @@ The same check catches re-normalization events: if a source is re-normalized wit
 
 ---
 
-## 6. Hosting & Distribution
+## 7. Hosting & Distribution
 
-### 6.1 Architecture
+### 7.1 Architecture
 
 The compendium sites are hosted on an external Caddy server (`ref.example.org`) that is independent of the home infrastructure. This provides:
 
@@ -971,7 +1669,7 @@ https://ref.example.org/economics/        → Economics compendium
 https://ref.example.org/{domain}/         → Any future domain
 ```
 
-### 6.2 Access Control
+### 7.2 Access Control
 
 **Phase 1 (current):** HTTP Basic Authentication across the entire `ref.example.org` site via Caddy's `basicauth` directive. Separate credentials for personal browsing and agent access.
 
@@ -993,7 +1691,7 @@ ref.example.org {
 - A dashboard showing which compendia the authenticated user can access
 - Separate agent tokens scoped to specific corpora
 
-### 6.3 Caddy Server Configuration
+### 7.3 Caddy Server Configuration
 
 The Caddy instance is an external VPS that currently serves as a reverse proxy. Each compendium is deployed as a subdirectory under `/srv/ref/`.
 
@@ -1007,9 +1705,9 @@ The Caddy instance is an external VPS that currently serves as a reverse proxy. 
 
 ---
 
-## 7. CI/CD Pipeline
+## 8. CI/CD Pipeline
 
-### 7.1 Build & Deploy Flow
+### 8.1 Build & Deploy Flow
 
 Each compendium repository contains a Forgejo Actions workflow that automates the build-and-deploy cycle:
 
@@ -1027,14 +1725,14 @@ Build artifacts (book/ directory) are deployed to Caddy server
 Live at ref.example.org/{domain}/ within seconds
 ```
 
-### 7.2 Deployment Mechanism
+### 8.2 Deployment Mechanism
 
 The Caddy server accepts deployments via one of:
 
 - **SSH/SCP push:** The Forgejo Actions runner pushes build artifacts directly to `/srv/ref/{domain}/` on the Caddy VPS via SSH with a deploy key.
 - **Webhook receiver:** A small receiver script on the Caddy box accepts a tarball via HTTP POST with a shared secret, unpacks it to the target directory.
 
-### 7.3 Workflow Template
+### 8.3 Workflow Template
 
 A standardized workflow file that works for any compendium repository:
 
@@ -1070,7 +1768,7 @@ jobs:
 
 The `resolve.sh` script (see section 2.2.1) clones each declared origin at its pinned commit with sparse checkout, pulling only `normalized/`, `assets/`, and `origin.toml`. This keeps CI fast even as origin repos grow large with ingested source material.
 
-### 7.4 Origin Update Propagation
+### 8.4 Origin Update Propagation
 
 When new sources are added to an origin repo, the compendiums that reference it don't automatically rebuild. This is intentional — synthesis is a curated process. The workflow is:
 
@@ -1083,9 +1781,9 @@ For origins with high ingestion velocity, this can be automated with a scheduled
 
 ---
 
-## 8. Agent Layer
+## 9. Agent Layer
 
-### 8.1 Design
+### 9.1 Design
 
 Each domain has a **single bespoke agent** — a dedicated AI assistant that is an expert in that domain and nothing else. There is no multi-agent orchestration, no router, and no shared context between domains. When you need automotive expertise, you invoke the automotive agent. When you need Dune lore, you invoke the Dune agent.
 
@@ -1096,7 +1794,7 @@ This simplicity is deliberate:
 - No prompt budget is wasted on routing logic or domain detection
 - Each agent can have domain-specific personality, terminology, and reasoning patterns
 
-### 8.2 Agent Configuration
+### 9.2 Agent Configuration
 
 Each agent is configured as a **skill** (for Claude Code / claude.ai) or equivalent construct for other platforms. The agent's configuration includes:
 
@@ -1105,7 +1803,7 @@ Each agent is configured as a **skill** (for Claude Code / claude.ai) or equival
 - **Access credentials:** The agent's basic auth credentials for the compendium site.
 - **Domain taxonomy:** Key concepts, terminology, and the structure of the domain to guide query decomposition.
 
-### 8.3 Agent Behavior Model
+### 9.3 Agent Behavior Model
 
 When the agent receives a question, it follows this process:
 
@@ -1115,7 +1813,7 @@ When the agent receives a question, it follows this process:
 4. **Synthesize a response.** Answer the question based on the retrieved compendium content, citing specific sources where the compendium provides them.
 5. **Flag coverage gaps.** If the compendium doesn't cover the topic well, tell the user explicitly rather than speculating.
 
-### 8.4 Example: Automotive Agent
+### 9.4 Example: Automotive Agent
 
 ```
 User: "My car is making a clunking sound when I turn at low speed,
@@ -1140,7 +1838,7 @@ Agent response:
    #PI0597B for [GTSB.0023]..."
 ```
 
-### 8.5 Example: Fiction Agent
+### 9.5 Example: Fiction Agent
 
 ```
 User: "How does the Bene Gesserit breeding program connect to
@@ -1171,9 +1869,9 @@ Agent response:
 
 ---
 
-## 9. Retrieval Strategy
+## 10. Retrieval Strategy
 
-### 9.1 Primary Method — TOC-Based Navigation
+### 10.1 Primary Method — TOC-Based Navigation
 
 The agent's primary retrieval mechanism is structural navigation using the compendium's table of contents. The `SUMMARY.md` is loaded into the agent's context as part of its system prompt. This gives the agent a complete map of what knowledge exists and where it lives.
 
@@ -1187,7 +1885,7 @@ This is analogous to how a knowledgeable human uses a reference book: they alrea
 - Works with the same artifact the human browses
 - Updates are instant — new content appears as soon as it's deployed
 
-### 9.2 Search Index Lookup
+### 10.2 Search Index Lookup
 
 mdBook generates a `searchindex.json` file at build time as part of its static output. This is the same index that powers the browser-side search UI — a full-text tokenized index of every page in the compendium. The agent can fetch and query this index directly via HTTP, bypassing the browser UI entirely.
 
@@ -1219,13 +1917,13 @@ This is superior to a hand-curated index because:
 
 The search index and SUMMARY.md navigation complement each other: the TOC is best for "I know which system this is about," while the search index is best for "I have a symptom or keyword and need to find where it's discussed."
 
-### 9.3 Fallback — Vector Search (Deferred)
+### 10.3 Fallback — Vector Search (Deferred)
 
 Semantic vector search is **not implemented initially** but the architecture accommodates it if needed. The trigger for adding it would be repeated instances where the agent cannot find relevant content through TOC navigation or the search index because the user's query language doesn't match any terminology present in the compendium.
 
 If implemented, it would be a lightweight vector store (e.g., Qdrant in Docker) with embeddings over the compendium's markdown chunks, used only when TOC/search index navigation fails to identify relevant sections.
 
-### 9.4 Forgejo API as Alternative Access Path
+### 10.4 Forgejo API as Alternative Access Path
 
 The Forgejo REST API provides raw file access to the compendium markdown:
 
@@ -1238,9 +1936,9 @@ This serves as an alternative access path — useful for agents running in envir
 
 ---
 
-## 10. Scaling & Reuse
+## 11. Scaling & Reuse
 
-### 10.1 Adding a New Origin
+### 11.1 Adding a New Origin
 
 1. Create a new repository under the Corpus organization
 2. Add `origin.toml` with the registration metadata, source ID prefix, and reingest configuration
@@ -1250,7 +1948,7 @@ This serves as an alternative access path — useful for agents running in envir
 6. Begin normalizing source material with rich frontmatter tags
 7. The origin is now available for any compendium to declare as a dependency
 
-### 10.2 Adding a New Compendium
+### 11.2 Adding a New Compendium
 
 1. Create a new repository under the Compendium organization
 2. Declare origin dependencies in `compendium.toml` with pinned commits and tag filters
@@ -1263,7 +1961,7 @@ This serves as an alternative access path — useful for agents running in envir
 8. Create the agent skill with domain-specific system prompt and SUMMARY.md
 9. Add deploy target to the Caddy configuration
 
-### 10.3 Stacking Compendiums
+### 11.3 Stacking Compendiums
 
 The architecture supports compendiums of varying scope that share source material:
 
@@ -1285,7 +1983,7 @@ All three compendiums reference `marxists-org` as an origin. The economics compe
 
 The same pattern applies to fiction. A "Golden Age Sci-Fi" compendium and a "Dune" compendium both declare `frank-herbert` as a dependency, but filter for different tags.
 
-### 10.4 Domain Taxonomy Design
+### 11.4 Domain Taxonomy Design
 
 Each domain needs its own taxonomy — the organizational structure that chapters follow. This should be designed before significant content is ingested, though it will evolve. Guidelines:
 
@@ -1294,9 +1992,9 @@ Each domain needs its own taxonomy — the organizational structure that chapter
 - Each leaf section should be self-contained enough to be useful when fetched in isolation
 - Cross-reference liberally between related sections
 
-### 10.5 Standardized Frontmatter Schema
+### 11.5 Standardized Frontmatter Schema
 
-The complete source frontmatter schema is defined in section 3.2. In summary:
+The complete source frontmatter schema is defined in section 3.3. In summary:
 
 **Universal required** (every source):
 `source_id`, `title`, `summary`, `source_type`, `credibility_tier`, `tags`, `raw_sources`, `ingestion_date_first`, `ingestion_date_last`, `content_changed_last`, `normalization_confidence`, `normalization_model`, `normalization_date`
@@ -1308,8 +2006,8 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 
 | Source Type | Required Extended Fields | Optional Extended Fields |
 |-------------|-------------------------|--------------------------|
-| `forum_post` | `thread_url` | `reply_count`, `is_solution` |
-| `reddit_post` | `subreddit`, `post_url` | `score`, `comment_count`, `post_type` |
+| `forum_post` | `username`, `thread_url` | `reply_count`, `is_solution` |
+| `reddit_post` | `username`, `subreddit`, `post_url` | `score`, `comment_count`, `post_type` |
 | `book` | `work_title` | `isbn`, `word_count`, `series_name`, `series_position` |
 | `service_manual` | `manual_title`, `section_reference`, `model_years` | `vehicle_system` |
 | `technical_bulletin` | `bulletin_number`, `affected_models`, `affected_years` | `superseded_by` |
@@ -1320,14 +2018,14 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 | `screenplay` | `work_title`, `medium` | `draft` |
 | `product_documentation` | `product_name`, `manufacturer` | `document_type`, `part_numbers` |
 
-**Compendium page frontmatter** (section 5.4):
+**Compendium page frontmatter** (section 6.4):
 `chapter_id`, `title`, `synthesis_model`, `synthesis_date`, `last_reviewed`, `sources[]` (with `source_id`, `synthesized_at`, `credibility_tier` per source)
 
 ---
 
-## 11. Infrastructure Summary
+## 12. Infrastructure Summary
 
-### 11.1 Component Map
+### 12.1 Component Map
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -1342,6 +2040,12 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 │  │   └── ingested/                 ├── dune/                   │
 │  ├── frank-herbert/                ├── economics/              │
 │  └── ...                           └── ...                     │
+│                                                                │
+│  example-org Organization (System Infrastructure)                │
+│  └── term-registry/               # controlled vocabulary     │
+│      ├── registry.toml             # registry metadata         │
+│      ├── tags/                     # one .toml file per term   │
+│      └── proposals/pending/        # unreviewed term proposals │
 │                                                                │
 │  Forgejo Actions Runner                                        │
 │  └── on push: resolve corpora → mdbook build → deploy          │
@@ -1374,7 +2078,7 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### 11.2 Technology Stack
+### 12.2 Technology Stack
 
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
@@ -1382,12 +2086,13 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 | Source organization | Forgejo org (Corpus) | One repo per origin, rich frontmatter tags |
 | Compendium format | Markdown + mdBook | Human-readable source, clean output, built-in search |
 | Source linkage | Declared dependencies in `compendium.toml` | Pin origins to commits, resolve at build time with sparse checkout |
+| Term Registry | Flat TOML files in git | Controlled vocabulary for tags and entities |
 | Hosting | Caddy on external VPS | Simple, reliable, automatic HTTPS, basic auth |
 | CI/CD | Forgejo Actions | Integrated with repos, self-hosted runner |
 | Agent platform | Claude (skill / Code) | Primary AI interface, flexible access patterns |
 | Retrieval | TOC navigation + searchindex.json + HTTP fetch | No additional infrastructure, deterministic, explainable |
 
-### 11.3 What Is Intentionally Not Included
+### 12.3 What Is Intentionally Not Included
 
 | Component | Status | Trigger to Add |
 |-----------|--------|----------------|
@@ -1405,7 +2110,7 @@ The complete source frontmatter schema is defined in section 3.2. In summary:
 ### A.1 Commodore VE (Automotive)
 
 ```
-Corpora: g8board, ls1tech, gm-service-manuals, gm-tsbs, penrite-oils
+Corpora: g8board, ls1tech, gm, holden, penrite
 Taxonomy: by vehicle system (engine, drivetrain, suspension, electrical, ...)
 Agent persona: Expert mechanic familiar with the VE/WM platform
 ```

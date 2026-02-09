@@ -4,7 +4,7 @@ parent_spec: ATH-ARCH
 parent_version: 1.0
 title: "Term Registry — System-Wide Controlled Vocabulary"
 type: addition
-status: pending
+status: incorporated
 author: Steven Rahn
 date_created: 2026-02-09
 sections_affected:
@@ -12,7 +12,7 @@ sections_affected:
   - "3. Origin Repositories"
   - "4. Compendium Synthesis"
   - "11. Infrastructure Summary"
-incorporation_target: ~
+incorporation_target: 2.0
 ---
 
 ## Context

@@ -4,12 +4,12 @@ parent_spec: ATH-ARCH
 parent_version: 1.0
 title: "Origin Identity Guidelines — The One-Voice Rule"
 type: clarification
-status: pending
+status: incorporated
 author: Steven Rahn
 date_created: 2026-02-09
 sections_affected:
   - "3. Origin Repositories"
-incorporation_target: ~
+incorporation_target: 2.0
 ---
 
 ## Context
