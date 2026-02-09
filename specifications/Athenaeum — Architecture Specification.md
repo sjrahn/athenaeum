@@ -37,9 +37,13 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ---
 
-## 2. Two-Layer Architecture
+## 2. Architecture Overview
 
-The system is organized into two Forgejo organizations that serve fundamentally different purposes, plus a Term Registry that provides system-wide controlled vocabulary (see section 5). The registry lives in the `example-org` Forgejo organization as foundational infrastructure — not a third content organization, but the controlled vocabulary that both content organizations depend on.
+The system has three components: two Forgejo organizations that hold content, and a Term Registry that provides the controlled vocabulary both organizations depend on.
+
+- **Corpus** — a Forgejo organization containing origin repositories, one per source of information.
+- **Compendium** — a Forgejo organization containing compendium repositories, one per knowledge domain.
+- **Term Registry** — a system-wide controlled vocabulary that lives in the `example-org` Forgejo organization as foundational infrastructure (see section 4).
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
@@ -98,87 +102,13 @@ Compendium (Forgejo Organization)
 └── ...
 ```
 
-Each compendium repository has this structure:
+See section 5.1 for the detailed repository structure and section 5.2 for dependency resolution.
 
-```
-Compendium/{domain}/
-├── .gitignore                     # ignores corpora/ (resolved at build time)
-├── corpora/                       # resolved origin repos (gitignored, like node_modules)
-│   ├── g8board/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
-│   ├── gm/                        → resolved (sparse: normalized/ + assets/ + origin.toml)
-│   └── ls1tech/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
-├── manuscript/                    # pre-rendered compendium content (mdBook source)
-│   ├── SUMMARY.md                 # mdBook table of contents
-│   ├── introduction.md
-│   ├── quick-reference.md
-│   ├── faq.md
-│   ├── glossary.md
-│   ├── sources.md                 # master source registry
-│   └── {chapter-slug}/            # chapters organized by domain taxonomy
-│       ├── {section}.md
-│       └── ...
-├── compendium.toml                # compendium configuration (dependencies, tag filters, etc.)
-├── book.toml                      # mdBook configuration (src = "manuscript")
-├── resolve.sh                     # clones/updates corpora from declared dependencies
-└── README.md
-```
+### 2.3 Term Registry
 
-#### 2.2.1 Dependency Resolution
+The Term Registry is a system-wide controlled vocabulary that provides canonical identification for all named entities and descriptors across Athenaeum. Every tag used in source frontmatter must be a registered term, ensuring consistent identification even across sources normalized months apart by different models. The registry lives in its own repository under the `example-org` Forgejo organization. See section 4 for the full specification.
 
-Compendium repos only need the `normalized/` directory, `assets/` directory, and `origin.toml` from each origin — never the `ingested/` directory, which can be massive (PDFs, epubs, HTML dumps, video files). Each origin dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
-
-```toml
-[[compendium.corpora]]
-name = "g8board"
-repo = "Corpus/g8board"
-commit = "a1b2c3d"
-require_any = ["g8", "ve", "suspension"]
-sparse = ["normalized/", "assets/", "origin.toml"]
-```
-
-The `corpora/` directory is gitignored — it is populated on demand by a `resolve.sh` script that clones each declared origin at its pinned commit with sparse checkout:
-
-```bash
-#!/bin/bash
-# resolve.sh — resolve corpus dependencies declared in compendium.toml
-
-FORGEJO_URL="${FORGEJO_URL:-https://forgejo.example.com}"
-
-# Parse compendium.toml for corpus declarations (simplified — real implementation
-# would use a TOML parser or a dedicated build tool)
-# For each declared corpus: clone at pinned commit with sparse checkout
-
-clone_corpus() {
-    local name="$1" repo="$2" commit="$3"
-    shift 3
-    local sparse_paths=("$@")
-
-    local target="corpora/$name"
-
-    if [ -d "$target" ]; then
-        echo "Updating $name to $commit"
-        cd "$target"
-        git fetch origin
-        git checkout "$commit"
-        cd - > /dev/null
-    else
-        echo "Cloning $name at $commit"
-        git clone --no-checkout "$FORGEJO_URL/$repo.git" "$target"
-        cd "$target"
-        git sparse-checkout init
-        git sparse-checkout set "${sparse_paths[@]}"
-        git checkout "$commit"
-        cd - > /dev/null
-    fi
-}
-
-# Example invocations (generated from compendium.toml):
-# clone_corpus "g8board" "Corpus/g8board" "a1b2c3d" "normalized/" "assets/" "origin.toml"
-```
-
-This script is run once after cloning the compendium repo, before synthesis, and by the CI workflow on every build. Because `corpora/` is gitignored, the compendium repo itself stays clean — only the manuscript, configuration, and tooling are versioned.
-
-### 2.3 How They Connect
+### 2.4 How They Connect
 
 Origins flow into compendiums via declared dependencies. Multiple compendiums can reference the same origin. The compendium layer uses frontmatter tags to filter which sources are relevant to its scope.
 
@@ -541,7 +471,7 @@ Tags are the primary mechanism by which `compendium.toml` filters sources for in
 
 - **Objective** — describe what's in the content, not editorial judgments
 - **Granular** — prefer specific terms (`wheel-bearing`, `l76`, `afm-delete`) over vague ones (`car-parts`)
-- **Consistent** — use the same tag across origins for the same concept (don't mix `wheel-bearing` and `hub-bearing` for the same component). The Term Registry (section 5) is the enforcement mechanism for tag consistency — every tag used in frontmatter must be a registered term
+- **Consistent** — use the same tag across origins for the same concept (don't mix `wheel-bearing` and `hub-bearing` for the same component). The Term Registry (section 4) is the enforcement mechanism for tag consistency — every tag used in frontmatter must be a registered term
 
 #### 3.3.3 Universal Optional Fields
 
@@ -549,7 +479,7 @@ These fields are present on most sources but legitimately absent on some:
 
 | Field | Type | When absent |
 |-------|------|-------------|
-| `author` | string | Uses canonical term tags from the Term Registry (section 5). Reserved for identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead. Anonymous or unsigned government documents omit this field entirely |
+| `author` | string | Uses canonical term tags from the Term Registry (section 4). Reserved for identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead. Anonymous or unsigned government documents omit this field entirely |
 | `date_published` | date | Undated historical texts, some web content |
 | `origin_url` | string | Physical books, offline documents |
 | `volatility` | enum | `static`, `unlikely`, `periodic`, `active`. Omit to inherit the default from `origin.toml`. Only set per-source as an override when a source's volatility differs from the origin norm (e.g., an unusually active thread on a mostly-dormant forum) |
@@ -905,111 +835,9 @@ has_visual_content: true
 
 ---
 
-## 4. Compendium Synthesis
+## 4. Term Registry
 
-### 4.1 The Synthesis Process
-
-Synthesis transforms tagged source material from multiple origins into a coherent, structured compendium. This is the core intellectual work of the system.
-
-The process for each compendium:
-
-1. **Resolve corpora.** Run `resolve.sh` to clone/update all declared origin dependencies at their pinned commits.
-2. **Filter by tags.** Scan all source files across all corpora. Select those whose tags match the compendium's scope criteria (defined in `compendium.toml`).
-3. **Assess summaries.** Read the `summary` field of each filtered source to understand its scope and relevance without loading full content. Prioritize sources by credibility tier and relevance to the chapter being synthesized.
-4. **Organize by taxonomy.** Group filtered sources by the compendium's chapter structure.
-4. **Synthesize chapters.** Distill the grouped sources into coherent prose, reconciling conflicts, identifying patterns, and citing source IDs.
-5. **Build navigation.** Generate/update `SUMMARY.md`, cross-references, and supplementary sections (FAQ, glossary, quick reference).
-6. **Build output.** Run mdBook to compile the manuscript into the published static site.
-
-### 4.2 Corpus Configuration
-
-Each compendium repo contains a `compendium.toml` that defines its scope:
-
-```toml
-[compendium]
-name = "Dune Universe Compendium"
-description = "Comprehensive reference for the Dune universe across all media"
-
-# Default tag filters — sources must match at least one to be included
-[[compendium.filters]]
-require_any = ["dune", "arrakis", "bene-gesserit", "fremen", "spice-melange"]
-
-# Per-origin declarations with pinned commits and optional filter overrides
-[[compendium.corpora]]
-name = "scifi-channel-dune"
-repo = "corpus/scifi-channel-dune"
-commit = "f7e8d9c"
-sparse = ["normalized/", "assets/", "origin.toml"]
-include_all = true          # every source in this origin is relevant
-
-[[compendium.corpora]]
-name = "frank-herbert"
-repo = "corpus/frank-herbert"
-commit = "b2c3d4e"
-sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune"]      # only Dune-related works from this author
-
-[[compendium.corpora]]
-name = "denis-villeneuve"
-repo = "corpus/denis-villeneuve"
-commit = "c3d4e5f"
-sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune"]      # only Dune-related screenplays
-```
-
-Because `author` is a canonical term tag (see section 5.7), compendium configuration can also filter by author directly using `match_author`:
-
-```toml
-[[compendium.corpora]]
-name = "nyt"
-repo = "corpus/nyt"
-commit = "d4e5f6a"
-sparse = ["normalized/", "assets/", "origin.toml"]
-match_author = "ryan-grimm"          # only his articles from the NYT
-
-[[compendium.corpora]]
-name = "the-intercept"
-repo = "corpus/the-intercept"
-commit = "e5f6a7b"
-sparse = ["normalized/", "assets/", "origin.toml"]
-match_author = "ryan-grimm"          # only his articles from The Intercept
-```
-
-Tag-based filters and author-based filters can be combined. A source matches if it satisfies either condition:
-
-```toml
-[[compendium.corpora]]
-name = "nyt"
-repo = "corpus/nyt"
-commit = "d4e5f6a"
-sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["economics", "federal-reserve"]
-match_author = "ryan-grimm"
-# Source matches if it satisfies EITHER condition
-```
-
-### 4.3 Synthesis Principles
-
-- **Cite sources.** Every factual claim in the compendium references the source ID(s) it derives from. The reader (human or agent) can always trace a claim back to a specific file in a specific origin.
-- **Represent disagreement.** When the service manual says one thing and 30 forum posts say another, the compendium captures both positions with their respective credibility tiers.
-- **Aggregate patterns.** If 40 forum posts describe the same failure mode, the compendium entry reflects the pattern (common mileage range, symptoms, root cause) rather than citing each post individually.
-- **Respect credibility tiers.** Higher-tier sources carry more weight in synthesis. An `authoritative` source is not overruled by `anecdotal` reports unless the volume and consistency of community experience is overwhelming.
-- **Structure for navigation.** Chapters follow the domain's natural taxonomy. Each chapter is self-contained but cross-references related chapters.
-- **Leverage source relations.** When sources declare explicit relationships (`contradicts`, `supersedes`, `references`), the synthesis step should incorporate these signals. A source that `contradicts` another is a flag for the compendium to present both positions. A TSB that `supersedes` an earlier one means the earlier guidance may be outdated.
-- **Respect source issues.** Sources with unresolved `critical` or `major` issues should be weighted accordingly. A source flagged with `missing_media` of `major` severity may be missing key visual information. The compendium can still use it but should note the gap rather than treating the source as complete.
-
-### 4.4 Versioning
-
-Git provides version control at both layers:
-
-- **Origin repos** track when sources were added or corrected. The full history of normalization is preserved.
-- **Compendium repos** track when synthesis was performed, what changed, and which origin versions were used. Because `compendium.toml` pins each origin to a specific commit, compendium builds are reproducible.
-
----
-
-## 5. Term Registry
-
-### 5.1 Overview
+### 4.1 Overview
 
 The Term Registry is a system-wide controlled vocabulary that provides canonical identification for all named entities and descriptors across Athenaeum. It ensures that when two sources reference the same person, organization, vehicle, component, or concept, they use the same term — even if those sources were normalized months apart by different models from different origins.
 
@@ -1019,7 +847,7 @@ Every tag used in the system — from specific entities like `l76-engine` to des
 
 The registry sits alongside the Corpus and Compendium organizations as a foundational Athenaeum component. Every origin's normalization process reads from it and proposes additions to it.
 
-### 5.2 Disambiguation Philosophy
+### 4.2 Disambiguation Philosophy
 
 The term registry defines precise coordinates in concept space, not opinions. A term's job is to refer to exactly one thing unambiguously. When a natural-language word or phrase refers to genuinely different things depending on context, it cannot be a term on its own — it requires disambiguation.
 
@@ -1035,13 +863,13 @@ Not every term needs disambiguation. `ryan-grimm` is unambiguous — there is on
 
 The iterative nature of the registry means disambiguation improves over time. A term that seemed unambiguous may later be discovered to refer to two things, at which point it gets split and reconciled. The registry is a living document that gets more precise with use.
 
-### 5.3 Core Principle
+### 4.3 Core Principle
 
 **The frontmatter is the source of truth. The registry is the authority. They must always agree.**
 
 There is no alias resolution, no runtime translation, no indirection layer. Every tag in every source file's frontmatter is the current canonical form as defined by the registry. If a tag is found to be incorrect — because two entities were confused, or because a tag was superseded by a better canonical form — the affected frontmatter is rewritten. The old form ceases to exist in the system.
 
-### 5.4 Term Structure
+### 4.4 Term Structure
 
 Each term in the registry has:
 
@@ -1160,7 +988,7 @@ Entities can declare relationships to other entities. These are distinct from so
 
 These relations are informational — they help agents and synthesis understand context. They are not used for filtering or scoping.
 
-### 5.5 Registry Format
+### 4.5 Registry Format
 
 The registry lives in its own repository as a flat collection of TOML files — one file per term. Every registered term, whether it represents a specific entity like `ryan-grimm` or a descriptor like `person`, gets its own file:
 
@@ -1292,7 +1120,7 @@ description = "Content focused on identifying the cause of a problem or fault."
 
 Note that descriptor terms can themselves have tags. `journalist` is tagged `person` because every journalist is a person — this captures the relationship without imposing a rigid hierarchy. A normalization model or query tool can traverse these relationships to understand that filtering for `person` should include terms tagged `journalist`.
 
-### 5.6 Two-Pass Normalization Pipeline
+### 4.6 Two-Pass Normalization Pipeline
 
 The term registry integrates into normalization through a two-pass process. The first pass is isolated — the model works with only the raw source material. The second pass is enriched — the model has registry context and can improve its output.
 
@@ -1383,7 +1211,7 @@ Pass 2: Enriched normalization (with registry metadata)
 Final normalized source file (written to normalized/)
 ```
 
-### 5.7 Author Field vs. Username Field
+### 4.7 Author Field vs. Username Field
 
 The `author` field in source frontmatter is reserved for real, identifiable people. It uses canonical term tags:
 
@@ -1418,7 +1246,7 @@ The `username` field:
 
 This avoids the rabbit hole of trying to track and disambiguate pseudonymous internet users across platforms. If a forum poster is later identified as a real person (e.g., a known mechanic or engineer who posts under their real name), the `author` field can be added with their registered term and the `username` field retained for platform provenance.
 
-### 5.8 Reconciliation
+### 4.8 Reconciliation
 
 Reconciliation is the process of correcting frontmatter when the registry changes. It is not optional and is not deferred. When the registry changes, affected frontmatter is rewritten immediately. Old forms cease to exist.
 
@@ -1465,7 +1293,7 @@ Every build should verify consistency:
 - Every tag referenced in a term file's `tags` array has its own term file in the registry
 - Every `relations` target references a term that exists in the registry
 
-### 5.9 Unified Term Namespace
+### 4.9 Unified Term Namespace
 
 All terms — whether they represent specific entities like `ryan-grimm` or descriptors like `diagnosis` — live in the same flat registry and follow the same format. There is no formal distinction between "entity terms" and "descriptor terms" at the system level. Every term is just a term.
 
@@ -1487,7 +1315,7 @@ In practice, terms naturally fall along a spectrum:
 
 This spectrum is not enforced by the system. It emerges naturally from how terms are used. The registry treats them all identically.
 
-### 5.10 Reconciliation Reporting
+### 4.10 Reconciliation Reporting
 
 A periodic reconciliation scan validates consistency across the system:
 
@@ -1517,7 +1345,7 @@ Term Registry Reconciliation Report:
     Action: create term file or correct to existing term
 ```
 
-### 5.11 Registry Scope and Growth
+### 4.11 Registry Scope and Growth
 
 The registry starts small and grows organically through normalization:
 
@@ -1528,7 +1356,7 @@ The registry starts small and grows organically through normalization:
 
 The registry doesn't need to be complete before normalization begins. Pass 1 operates without registry context. Tag resolution handles what the registry knows, and proposals capture what it doesn't. The system is functional from day one and improves as the registry grows.
 
-### 5.12 Infrastructure Placement
+### 4.12 Infrastructure Placement
 
 The term registry is system-wide infrastructure, consumed by both the Corpus and Compendium layers but owned by neither. It lives in the `example-org` Forgejo organization alongside other Athenaeum system infrastructure:
 
@@ -1544,6 +1372,190 @@ compendium/dune/
 The `example-org` org contains the things that make Athenaeum work — system-level infrastructure, specifications, and tooling. The `corpus` and `compendium` orgs contain the things Athenaeum operates on. The term registry is plumbing, not content.
 
 The registry is accessed by normalization tooling via Forgejo API or by cloning the repo. It does not need to be submoduled into every origin — the normalization pipeline reads it as an external dependency.
+
+---
+
+## 5. Compendium Synthesis
+
+### 5.1 Repository Structure
+
+Each compendium repository has this structure:
+
+```
+Compendium/{domain}/
+├── .gitignore                     # ignores corpora/ (resolved at build time)
+├── corpora/                       # resolved origin repos (gitignored, like node_modules)
+│   ├── g8board/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
+│   ├── gm/                        → resolved (sparse: normalized/ + assets/ + origin.toml)
+│   └── ls1tech/                   → resolved (sparse: normalized/ + assets/ + origin.toml)
+├── manuscript/                    # pre-rendered compendium content (mdBook source)
+│   ├── SUMMARY.md                 # mdBook table of contents
+│   ├── introduction.md
+│   ├── quick-reference.md
+│   ├── faq.md
+│   ├── glossary.md
+│   ├── sources.md                 # master source registry
+│   └── {chapter-slug}/            # chapters organized by domain taxonomy
+│       ├── {section}.md
+│       └── ...
+├── compendium.toml                # compendium configuration (dependencies, tag filters, etc.)
+├── book.toml                      # mdBook configuration (src = "manuscript")
+├── resolve.sh                     # clones/updates corpora from declared dependencies
+└── README.md
+```
+
+### 5.2 Dependency Resolution
+
+Compendium repos only need the `normalized/` directory, `assets/` directory, and `origin.toml` from each origin — never the `ingested/` directory, which can be massive (PDFs, epubs, HTML dumps, video files). Each origin dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
+
+```toml
+[[compendium.corpora]]
+name = "g8board"
+repo = "Corpus/g8board"
+commit = "a1b2c3d"
+require_any = ["g8", "ve", "suspension"]
+sparse = ["normalized/", "assets/", "origin.toml"]
+```
+
+The `corpora/` directory is gitignored — it is populated on demand by a `resolve.sh` script that clones each declared origin at its pinned commit with sparse checkout:
+
+```bash
+#!/bin/bash
+# resolve.sh — resolve corpus dependencies declared in compendium.toml
+
+FORGEJO_URL="${FORGEJO_URL:-https://forgejo.example.com}"
+
+# Parse compendium.toml for corpus declarations (simplified — real implementation
+# would use a TOML parser or a dedicated build tool)
+# For each declared corpus: clone at pinned commit with sparse checkout
+
+clone_corpus() {
+    local name="$1" repo="$2" commit="$3"
+    shift 3
+    local sparse_paths=("$@")
+
+    local target="corpora/$name"
+
+    if [ -d "$target" ]; then
+        echo "Updating $name to $commit"
+        cd "$target"
+        git fetch origin
+        git checkout "$commit"
+        cd - > /dev/null
+    else
+        echo "Cloning $name at $commit"
+        git clone --no-checkout "$FORGEJO_URL/$repo.git" "$target"
+        cd "$target"
+        git sparse-checkout init
+        git sparse-checkout set "${sparse_paths[@]}"
+        git checkout "$commit"
+        cd - > /dev/null
+    fi
+}
+
+# Example invocations (generated from compendium.toml):
+# clone_corpus "g8board" "Corpus/g8board" "a1b2c3d" "normalized/" "assets/" "origin.toml"
+```
+
+This script is run once after cloning the compendium repo, before synthesis, and by the CI workflow on every build. Because `corpora/` is gitignored, the compendium repo itself stays clean — only the manuscript, configuration, and tooling are versioned.
+
+### 5.3 The Synthesis Process
+
+Synthesis transforms tagged source material from multiple origins into a coherent, structured compendium. This is the core intellectual work of the system.
+
+The process for each compendium:
+
+1. **Resolve corpora.** Run `resolve.sh` to clone/update all declared origin dependencies at their pinned commits.
+2. **Filter by tags.** Scan all source files across all corpora. Select those whose tags match the compendium's scope criteria (defined in `compendium.toml`).
+3. **Assess summaries.** Read the `summary` field of each filtered source to understand its scope and relevance without loading full content. Prioritize sources by credibility tier and relevance to the chapter being synthesized.
+4. **Organize by taxonomy.** Group filtered sources by the compendium's chapter structure.
+4. **Synthesize chapters.** Distill the grouped sources into coherent prose, reconciling conflicts, identifying patterns, and citing source IDs.
+5. **Build navigation.** Generate/update `SUMMARY.md`, cross-references, and supplementary sections (FAQ, glossary, quick reference).
+6. **Build output.** Run mdBook to compile the manuscript into the published static site.
+
+### 5.4 Corpus Configuration
+
+Each compendium repo contains a `compendium.toml` that defines its scope:
+
+```toml
+[compendium]
+name = "Dune Universe Compendium"
+description = "Comprehensive reference for the Dune universe across all media"
+
+# Default tag filters — sources must match at least one to be included
+[[compendium.filters]]
+require_any = ["dune", "arrakis", "bene-gesserit", "fremen", "spice-melange"]
+
+# Per-origin declarations with pinned commits and optional filter overrides
+[[compendium.corpora]]
+name = "scifi-channel-dune"
+repo = "corpus/scifi-channel-dune"
+commit = "f7e8d9c"
+sparse = ["normalized/", "assets/", "origin.toml"]
+include_all = true          # every source in this origin is relevant
+
+[[compendium.corpora]]
+name = "frank-herbert"
+repo = "corpus/frank-herbert"
+commit = "b2c3d4e"
+sparse = ["normalized/", "assets/", "origin.toml"]
+require_any = ["dune"]      # only Dune-related works from this author
+
+[[compendium.corpora]]
+name = "denis-villeneuve"
+repo = "corpus/denis-villeneuve"
+commit = "c3d4e5f"
+sparse = ["normalized/", "assets/", "origin.toml"]
+require_any = ["dune"]      # only Dune-related screenplays
+```
+
+Because `author` is a canonical term tag (see section 4.7), compendium configuration can also filter by author directly using `match_author`:
+
+```toml
+[[compendium.corpora]]
+name = "nyt"
+repo = "corpus/nyt"
+commit = "d4e5f6a"
+sparse = ["normalized/", "assets/", "origin.toml"]
+match_author = "ryan-grimm"          # only his articles from the NYT
+
+[[compendium.corpora]]
+name = "the-intercept"
+repo = "corpus/the-intercept"
+commit = "e5f6a7b"
+sparse = ["normalized/", "assets/", "origin.toml"]
+match_author = "ryan-grimm"          # only his articles from The Intercept
+```
+
+Tag-based filters and author-based filters can be combined. A source matches if it satisfies either condition:
+
+```toml
+[[compendium.corpora]]
+name = "nyt"
+repo = "corpus/nyt"
+commit = "d4e5f6a"
+sparse = ["normalized/", "assets/", "origin.toml"]
+require_any = ["economics", "federal-reserve"]
+match_author = "ryan-grimm"
+# Source matches if it satisfies EITHER condition
+```
+
+### 5.5 Synthesis Principles
+
+- **Cite sources.** Every factual claim in the compendium references the source ID(s) it derives from. The reader (human or agent) can always trace a claim back to a specific file in a specific origin.
+- **Represent disagreement.** When the service manual says one thing and 30 forum posts say another, the compendium captures both positions with their respective credibility tiers.
+- **Aggregate patterns.** If 40 forum posts describe the same failure mode, the compendium entry reflects the pattern (common mileage range, symptoms, root cause) rather than citing each post individually.
+- **Respect credibility tiers.** Higher-tier sources carry more weight in synthesis. An `authoritative` source is not overruled by `anecdotal` reports unless the volume and consistency of community experience is overwhelming.
+- **Structure for navigation.** Chapters follow the domain's natural taxonomy. Each chapter is self-contained but cross-references related chapters.
+- **Leverage source relations.** When sources declare explicit relationships (`contradicts`, `supersedes`, `references`), the synthesis step should incorporate these signals. A source that `contradicts` another is a flag for the compendium to present both positions. A TSB that `supersedes` an earlier one means the earlier guidance may be outdated.
+- **Respect source issues.** Sources with unresolved `critical` or `major` issues should be weighted accordingly. A source flagged with `missing_media` of `major` severity may be missing key visual information. The compendium can still use it but should note the gap rather than treating the source as complete.
+
+### 5.6 Versioning
+
+Git provides version control at both layers:
+
+- **Origin repos** track when sources were added or corrected. The full history of normalization is preserved.
+- **Compendium repos** track when synthesis was performed, what changed, and which origin versions were used. Because `compendium.toml` pins each origin to a specific commit, compendium builds are reproducible.
 
 ---
 
@@ -1766,7 +1778,7 @@ jobs:
           rsync -avz --delete book/ deploy@caddy-vps:/srv/ref/${GITHUB_REPOSITORY##*/}/
 ```
 
-The `resolve.sh` script (see section 2.2.1) clones each declared origin at its pinned commit with sparse checkout, pulling only `normalized/`, `assets/`, and `origin.toml`. This keeps CI fast even as origin repos grow large with ingested source material.
+The `resolve.sh` script (see section 5.2) clones each declared origin at its pinned commit with sparse checkout, pulling only `normalized/`, `assets/`, and `origin.toml`. This keeps CI fast even as origin repos grow large with ingested source material.
 
 ### 8.4 Origin Update Propagation
 
