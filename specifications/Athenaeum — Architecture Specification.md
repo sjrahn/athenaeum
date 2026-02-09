@@ -2,7 +2,7 @@
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
 version: 1.0
-status: draft
+status: final
 author: Steven Rahn
 date_created: 2026-02-08
 date_modified: 2026-02-09
