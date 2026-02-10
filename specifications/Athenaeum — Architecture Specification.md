@@ -39,103 +39,78 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ## 2. Architecture Overview
 
-The system has three components: two Forgejo organizations that hold content, and a Term Registry that provides the controlled vocabulary both organizations depend on.
-
-- **Corpus** — a Forgejo organization containing origin repositories, one per source of information.
-- **Compendium** — a Forgejo organization containing compendium repositories, one per knowledge domain.
-- **Term Registry** — a system-wide controlled vocabulary that lives in the `example-org` Forgejo organization as foundational infrastructure (see section 4).
+Athenaeum is organized into three conceptual layers that form a pipeline: raw sources enter the **Corpus** layer, where they are ingested and normalized into tagged markdown. The **Term Registry** provides a controlled vocabulary that normalization depends on, creating a feedback loop — normalization produces candidate tags, the registry resolves them to canonical terms, and enriched normalization improves tagging quality. The **Compendium** layer sits at the end of the pipeline, filtering corpus content by registry terms to synthesize domain-specific reference works.
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
-### 2.1 Corpus Organization
+### 2.1 Corpus Layer
 
-The **Corpus** organization contains origin repositories — one per source of information. Each origin is a self-contained collection of normalized material from a single provenance.
+A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, ingested and normalized into tagged markdown files. The normalization process transforms raw material (forum threads, PDFs, video transcripts, books) into a consistent format with rich frontmatter metadata.
 
-```
-Corpus (Forgejo Organization)
-│
-├── Automotive
-│   ├── g8board/                  # forum — G8Board.com community
-│   ├── ls1tech/                  # forum — LS1Tech.com community
-│   ├── gm/                      # General Motors — manuals, TSBs, bulletins, press releases
-│   ├── holden/                   # Holden — workshop manuals, AU-market documentation
-│   └── penrite/                  # Penrite Oils — datasheets, application guides
-│
-├── Academic / Reference
-│   ├── jstor-economics/          # journal articles from JSTOR
-│   ├── pubmed/                   # medical research papers
-│   ├── marxists-org/             # texts from marxists.org
-│   └── wikipedia-economics/      # relevant Wikipedia articles
-│
-├── Fiction / Creative
-│   ├── frank-herbert/            # all works by Frank Herbert
-│   ├── brian-herbert/            # all works by Brian Herbert
-│   ├── denis-villeneuve/         # screenplays, production material
-│   └── scifi-channel-dune/       # miniseries episodes
-│
-├── Media
-│   ├── engineering-explained/    # YouTube channel transcripts
-│   ├── south-main-auto/         # YouTube channel transcripts
-│   └── huberman-lab/            # podcast transcripts
-│
-└── ...
-```
+Key properties:
 
-**Key properties of origin repos:**
+- **One voice, one corpus.** A forum is a corpus. An author is a corpus. A YouTube channel is a corpus. A manufacturer's entire catalog of publications is a corpus. The organizing principle is *who produced the information*, not what it's about.
+- **No editorial filtering.** A corpus contains everything from its source, tagged but unfiltered. Topical selection happens downstream at the compendium layer.
+- **Objective tagging.** Every normalized file carries frontmatter tags that describe what the source discusses — factual descriptors, not editorial judgments about which domain the content "belongs to."
 
-- **One origin, one repo.** A forum is a repo. An author is a repo. A YouTube channel is a repo. A government agency's publications are a repo.
-- **No editorial judgment.** The origin repo contains everything captured from that source, normalized and tagged. There is no filtering by topic — that happens at the compendium layer.
-- **Self-contained normalization.** Each origin repo has its own ingestion and normalization pipeline appropriate to its source type (web scraper for forums, PDF extractor for manuals, transcription pipeline for video/audio).
-- **Rich frontmatter tags.** Every normalized file is tagged with descriptive metadata that enables downstream compendiums to filter for relevant content. The tags are objective descriptors of what the source discusses, not judgments about which compendium it belongs to.
+The range of corpora is deliberately broad: `g8board` (an automotive forum), `frank-herbert` (an author's collected works), `gm` (a manufacturer's manuals, bulletins, and press releases), `engineering-explained` (a YouTube channel's transcripts), `marxists-org` (a text archive). Each is independent and self-contained.
 
-### 2.2 Compendium Organization
+### 2.2 Term Registry
 
-The **Compendium** organization contains compendium repositories — one per domain. Each compendium declares its origin dependencies in `compendium.toml` and resolves them at build/synthesis time, pulling the required content into a local `corpora/` directory. This is analogous to how `package.json` declares dependencies and `node_modules` is populated by `npm install`.
+The Term Registry is the bridge between corpus and compendium — a system-wide controlled vocabulary that ensures the same concept is always identified the same way, regardless of when or how a source was normalized.
 
-```
-Compendium (Forgejo Organization)
-├── commodore-ve/                 # Pontiac G8 / Holden Commodore VE platform
-├── economics/                    # broad economics compendium
-├── socialism/                    # focused socialism compendium
-├── dune/                         # Dune universe compendium
-├── human-health/                 # fitness, nutrition, medical reference
-└── ...
-```
+Normalization and the registry interact as a feedback loop:
 
-See section 5.1 for the detailed repository structure and section 5.2 for dependency resolution.
+1. **Tag production.** During normalization, the pipeline extracts candidate tags from source material.
+2. **Resolution.** Candidate tags are matched against the registry's canonical terms. Aliases, alternate names, and common variants all resolve to the same canonical identifier.
+3. **Enriched normalization.** The registry feeds back into normalization — knowing the canonical vocabulary improves tagging accuracy on a second pass and ensures consistency across corpora normalized months apart by different models.
+4. **Proposals.** When normalization encounters concepts not yet in the registry, it produces term proposals for human review rather than inventing ad-hoc tags.
+5. **Reconciliation.** When canonical terms change (merges, renames, splits), reconciliation propagates the update across all affected frontmatter, keeping every corpus in sync.
 
-### 2.3 Term Registry
+The registry is not a static lookup table — it is an active participant in the normalization process. See section 4 for the full specification.
 
-The Term Registry is a system-wide controlled vocabulary that provides canonical identification for all named entities and descriptors across Athenaeum. Every tag used in source frontmatter must be a registered term, ensuring consistent identification even across sources normalized months apart by different models. The registry lives in its own repository under the `example-org` Forgejo organization. See section 4 for the full specification.
+### 2.3 Compendium Layer
 
-### 2.4 How They Connect
+A compendium defines a knowledge domain and synthesizes a structured reference work from corpus material. It does not store source content — it declares which corpora it draws from, filters their content using registry terms, and produces a coherent, browsable reference from the filtered sources.
 
-Origins flow into compendiums via declared dependencies. Multiple compendiums can reference the same origin. The compendium layer uses frontmatter tags to filter which sources are relevant to its scope.
+Key properties:
+
+- **Domain declaration.** A compendium defines its scope by listing corpus dependencies and the tag-based filters that select relevant content from each.
+- **Shared sources, different filters.** Multiple compendiums can draw from the same corpus. An `economics` compendium and a `socialism` compendium might both depend on `marxists-org`, filtering for different terms.
+- **Synthesis output.** Filtered sources are synthesized into manuscripts — structured, cross-referenced markdown that gets compiled into a browsable, textbook-like reference.
+
+For example, a `dune` compendium might declare dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`, filtering each for content tagged with `dune`. The `frank-herbert` corpus contains *Dune*, *Dune Messiah*, *Man of Two Worlds*, and *The Dragon in the Sea* — but only the first two carry the `dune` tag and pass through to the compendium. Similarly, the `denis-villeneuve` corpus includes *Blade Runner 2049* and *Arrival* alongside the Dune screenplays, but only the Dune material is selected. The compendium gets exactly the sources relevant to its domain, nothing more.
+
+See section 5 for the detailed compendium structure and dependency resolution.
+
+### 2.4 Data Flow
+
+The full pipeline for a single piece of source material:
 
 ```
-Corpus/frank-herbert/
-  ├── dune.md                    tags: [dune, arrakis, spice, sci-fi]
-  ├── dune-messiah.md            tags: [dune, arrakis, prescience, sci-fi]
-  ├── man-of-two-worlds.md       tags: [comedy, sci-fi, collaboration]
-  └── the-dragon-in-the-sea.md   tags: [submarine, psychology, sci-fi]
-
-Corpus/denis-villeneuve/
-  ├── dune-2021-screenplay.md    tags: [dune, arrakis, screenplay, adaptation]
-  ├── dune-part-two-screenplay.md tags: [dune, screenplay, adaptation]
-  ├── blade-runner-2049.md       tags: [blade-runner, screenplay, sci-fi]
-  └── arrival-screenplay.md      tags: [linguistics, sci-fi, screenplay]
-
-Compendium/dune/
-  corpora:
-    - frank-herbert/       → filter: tags contain "dune"
-    - brian-herbert/        → filter: tags contain "dune"
-    - denis-villeneuve/     → filter: tags contain "dune"
-    - scifi-channel-dune/   → filter: all (entire origin is Dune-specific)
-  
-  Result: dune.md, dune-messiah.md, dune-2021-screenplay.md,
-          dune-part-two-screenplay.md, and everything from scifi-channel-dune.
-          NOT man-of-two-worlds.md, NOT blade-runner-2049.md.
+  Raw Source (PDF, forum thread, transcript, ...)
+       │
+       ▼
+  ┌─────────────────────────┐
+  │  Corpus: Normalization  │ ◄──── Term Registry
+  │  ingest → normalize →   │         │
+  │  tag with canonical      │ ────► proposals for
+  │  terms                   │        new terms
+  └─────────────────────────┘
+       │
+       │  tagged markdown with canonical frontmatter
+       ▼
+  ┌─────────────────────────┐
+  │  Compendium: Synthesis  │
+  │  filter by terms →      │
+  │  synthesize → compile   │
+  └─────────────────────────┘
+       │
+       ▼
+  Published Reference (browsable textbook + AI agent context)
 ```
+
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces tagged markdown — the registry resolves tags like "arrakis" and "spice-melange" to their canonical forms and confirms "dune" as a registered term. The `dune` compendium, which declares `frank-herbert` as a dependency with a `dune` tag filter, picks up this file during synthesis. *Man of Two Worlds*, from the same corpus, carries `comedy` and `collaboration` tags but not `dune` — it is never seen by the `dune` compendium. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium that *would* select *Man of Two Worlds*.
 
 ---
 
