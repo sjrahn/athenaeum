@@ -79,7 +79,7 @@ Key properties:
 - **Shared sources, different filters.** Multiple compendiums can draw from the same corpus. An `economics` compendium and a `socialism` compendium might both depend on `marxists-org`, filtering for different terms.
 - **Synthesis output.** Filtered sources are synthesized into manuscripts — structured, cross-referenced markdown that gets compiled into a browsable, textbook-like reference.
 
-For example, a `dune` compendium might declare dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`, filtering each for content tagged with `dune`. The `frank-herbert` corpus contains *Dune*, *Dune Messiah*, *Man of Two Worlds*, and *The Dragon in the Sea* — but only the first two carry the `dune` tag and pass through to the compendium. Similarly, the `denis-villeneuve` corpus includes *Blade Runner 2049* and *Arrival* alongside the Dune screenplays, but only the Dune material is selected. The compendium gets exactly the sources relevant to its domain, nothing more.
+For example, a `dune` compendium might declare dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`, filtering each for content tagged with `dune-franchise`. The `frank-herbert` corpus contains *Dune*, *Dune Messiah*, *Man of Two Worlds*, and *The Dragon in the Sea* — but only the first two carry the `dune-franchise` tag and pass through to the compendium. Similarly, the `denis-villeneuve` corpus includes *Blade Runner 2049* and *Arrival* alongside the Dune screenplays, but only the Dune material is selected. The compendium gets exactly the sources relevant to its domain, nothing more.
 
 See section 5 for the detailed compendium structure and dependency resolution.
 
@@ -110,7 +110,7 @@ The full pipeline for a single piece of source material:
   Published Reference (browsable textbook + AI agent context)
 ```
 
-Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces tagged markdown — the registry resolves tags like "arrakis" and "spice-melange" to their canonical forms and confirms "dune" as a registered term. The `dune` compendium, which declares `frank-herbert` as a dependency with a `dune` tag filter, picks up this file during synthesis. *Man of Two Worlds*, from the same corpus, carries `comedy` and `collaboration` tags but not `dune` — it is never seen by the `dune` compendium. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium that *would* select *Man of Two Worlds*.
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces tagged markdown — the registry resolves raw references to canonical terms like `dune-novel`, `arrakis`, and `spice-melange`, and the broader `dune-franchise` tag links it to the franchise as a whole. The `dune` compendium, which declares `frank-herbert` as a dependency with a `dune-franchise` tag filter, picks up this file during synthesis. *Man of Two Worlds*, from the same corpus, carries `comedy` and `collaboration` tags but not `dune-franchise` — it is never seen by the `dune` compendium. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium that *would* select *Man of Two Worlds*.
 
 ---
 
@@ -1459,7 +1459,7 @@ description = "Comprehensive reference for the Dune universe across all media"
 
 # Default tag filters — sources must match at least one to be included
 [[compendium.filters]]
-require_any = ["dune", "arrakis", "bene-gesserit", "fremen", "spice-melange"]
+require_any = ["dune-franchise", "arrakis", "bene-gesserit", "fremen", "spice-melange"]
 
 # Per-origin declarations with pinned commits and optional filter overrides
 [[compendium.corpora]]
@@ -1474,14 +1474,14 @@ name = "frank-herbert"
 repo = "corpus/frank-herbert"
 commit = "b2c3d4e"
 sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune"]      # only Dune-related works from this author
+require_any = ["dune-franchise"]  # only Dune-related works from this author
 
 [[compendium.corpora]]
 name = "denis-villeneuve"
 repo = "corpus/denis-villeneuve"
 commit = "c3d4e5f"
 sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune"]      # only Dune-related screenplays
+require_any = ["dune-franchise"]  # only Dune-related screenplays
 ```
 
 Because `author` is a canonical term tag (see section 4.7), compendium configuration can also filter by author directly using `match_author`:
