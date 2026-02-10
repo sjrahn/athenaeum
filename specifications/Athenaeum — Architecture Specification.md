@@ -26,7 +26,7 @@ Each domain of interest (automotive repair, political theory, a fiction universe
 
 Athenaeum is designed around four core principles:
 
-- **Origin objectivity.** Sources are organized by where they came from — a forum, an author, a manual, a YouTube channel. This is an unchallengeable fact that requires no editorial judgment. Topical categorization happens downstream via tags.
+- **Origin objectivity.** Sources are organized by where they came from — a forum, an author, a manual, a YouTube channel. This is an unchallengeable fact that requires no editorial judgment. Topical categorization happens downstream at the compendium layer.
 - **Domain isolation.** Each compendium is fully independent — its own repository, its own synthesized reference, its own agent. There is no shared knowledge graph or cross-domain routing. When you need an expert, you call on them explicitly.
 - **Human-first accessibility.** Every compendium is browsable and readable by a human, structured like a textbook with a table of contents, search, glossary, and source citations. The agent accesses the same artifact a human would.
 - **Source provenance.** Every claim in the compendium traces back to its original source material. The agent can tell you not just "this is the answer" but "this answer is supported by the service manual, corroborated by 12 forum reports, and contradicted by one outlier."
@@ -39,78 +39,85 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ## 2. Architecture Overview
 
-Athenaeum is organized into three conceptual layers that form a pipeline: raw sources enter the **Corpus** layer, where they are ingested and normalized into tagged markdown. The **Term Registry** provides a controlled vocabulary that normalization depends on, creating a feedback loop — normalization produces candidate tags, the registry resolves them to canonical terms, and enriched normalization improves tagging quality. The **Compendium** layer sits at the end of the pipeline, filtering corpus content by registry terms to synthesize domain-specific reference works.
+Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested and normalized into markdown with rich summaries. The **Corpus Registry** catalogs all available corpora with tiered summaries that enable progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain without reading every origin. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant sources based on summaries, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
 ### 2.1 Corpus Layer
 
-A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, ingested and normalized into tagged markdown files. The normalization process transforms raw material (forum threads, PDFs, video transcripts, books) into a consistent format with rich frontmatter metadata.
+A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, ingested and normalized into markdown files with structured frontmatter. The normalization process transforms raw material (forum threads, PDFs, video transcripts, books) into a consistent format where each file carries a summary that captures what the source contains and why it's useful.
 
 Key properties:
 
 - **One voice, one corpus.** A forum is a corpus. An author is a corpus. A YouTube channel is a corpus. A manufacturer's entire catalog of publications is a corpus. The organizing principle is *who produced the information*, not what it's about.
-- **No editorial filtering.** A corpus contains everything from its source, tagged but unfiltered. Topical selection happens downstream at the compendium layer.
-- **Objective tagging.** Every normalized file carries frontmatter tags that describe what the source discusses — factual descriptors, not editorial judgments about which domain the content "belongs to."
+- **No editorial filtering.** A corpus contains everything from its source, summarized but unfiltered. Topical selection happens downstream at the compendium layer.
+- **Summary-driven discovery.** Every normalized file carries a summary that enables downstream selection without reading the full content. An LLM reading the summary can determine whether the source is relevant to a given domain.
 
 The range of corpora is deliberately broad: `g8board` (an automotive forum), `frank-herbert` (an author's collected works), `gm` (a manufacturer's manuals, bulletins, and press releases), `engineering-explained` (a YouTube channel's transcripts), `marxists-org` (a text archive). Each is independent and self-contained.
 
-### 2.2 Term Registry
+### 2.2 Corpus Registry
 
-The Term Registry is the bridge between corpus and compendium — a system-wide controlled vocabulary that ensures the same concept is always identified the same way, regardless of when or how a source was normalized.
+The Corpus Registry is a system-wide discovery catalog — a lightweight index of all available corpora with tiered summaries that support progressive disclosure. It enables compendiums to find relevant corpora efficiently without cloning and reading every origin.
 
-Normalization and the registry interact as a feedback loop:
+Each corpus has a registry entry with three summary tiers:
 
-1. **Tag production.** During normalization, the pipeline extracts candidate tags from source material.
-2. **Resolution.** Candidate tags are matched against the registry's canonical terms. Aliases, alternate names, and common variants all resolve to the same canonical identifier.
-3. **Enriched normalization.** The registry feeds back into normalization — knowing the canonical vocabulary improves tagging accuracy on a second pass and ensures consistency across corpora normalized months apart by different models.
-4. **Proposals.** When normalization encounters concepts not yet in the registry, it produces term proposals for human review rather than inventing ad-hoc tags.
-5. **Reconciliation.** When canonical terms change (merges, renames, splits), reconciliation propagates the update across all affected frontmatter, keeping every corpus in sync.
+1. **Tier 1** — a single sentence. Enough to include or exclude at a glance.
+2. **Tier 2** — a concise paragraph. Enough to confirm relevance and understand scope.
+3. **Tier 3** — a comprehensive description. Full detail on what the corpus contains, its source count, and its coverage.
 
-The registry is not a static lookup table — it is an active participant in the normalization process. See section 4 for the full specification.
+At compendium setup time, an LLM reads tier 1 summaries for all corpora to identify candidates, reads tier 2 for confirmation, and consults tier 3 only when needed. This avoids the cost of cloning and scanning corpora that turn out to be irrelevant. See section 4 for the registry format and progressive disclosure process.
 
 ### 2.3 Compendium Layer
 
-A compendium defines a knowledge domain and synthesizes a structured reference work from corpus material. It does not store source content — it declares which corpora it draws from, filters their content using registry terms, and produces a coherent, browsable reference from the filtered sources.
+A compendium defines a knowledge domain and synthesizes a structured reference work from corpus material. It does not store source content — it declares which corpora it draws from, selects relevant sources using an LLM that reads source summaries, and synthesizes a coherent, browsable reference from the selected material.
 
 Key properties:
 
-- **Domain declaration.** A compendium defines its scope by listing corpus dependencies and the tag-based filters that select relevant content from each.
-- **Shared sources, different filters.** Multiple compendiums can draw from the same corpus. An `economics` compendium and a `socialism` compendium might both depend on `marxists-org`, filtering for different terms.
-- **Synthesis output.** Filtered sources are synthesized into manuscripts — structured, cross-referenced markdown that gets compiled into a browsable, textbook-like reference.
+- **Domain declaration.** A compendium defines its scope by listing corpus dependencies and providing a synthesis system prompt that encodes domain knowledge.
+- **Shared sources, different selections.** Multiple compendiums can draw from the same corpus. An `economics` compendium and a `socialism` compendium might both depend on `marxists-org`, with their respective system prompts guiding the LLM to select different sources.
+- **System prompt as domain bootstrap.** The compendium's system prompt provides the LLM with domain-specific context: key relationships, disambiguation guidance, scope boundaries. This is iterable — when synthesis produces gaps or errors, the system prompt is refined.
+- **Synthesis output.** Selected sources are synthesized into manuscripts — structured, cross-referenced markdown that gets compiled into a browsable, textbook-like reference.
 
-For example, a `dune` compendium might declare dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`, filtering each for content tagged with `dune-franchise`. The `frank-herbert` corpus contains *Dune*, *Dune Messiah*, *Man of Two Worlds*, and *The Dragon in the Sea* — but only the first two carry the `dune-franchise` tag and pass through to the compendium. Similarly, the `denis-villeneuve` corpus includes *Blade Runner 2049* and *Arrival* alongside the Dune screenplays, but only the Dune material is selected. The compendium gets exactly the sources relevant to its domain, nothing more.
+For example, a `dune` compendium declares dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`. Its system prompt defines the Dune franchise scope and key relationships. During synthesis, the LLM reads source summaries from each corpus — Frank Herbert's *Dune* and *Dune Messiah* are selected because their summaries clearly relate to the Dune universe, while *Man of Two Worlds* (a comedy collaboration) and *The Dragon in the Sea* (a submarine thriller) are skipped. From `denis-villeneuve`, the Dune screenplays are selected while *Blade Runner 2049* and *Arrival* are not. The LLM's semantic understanding, guided by the system prompt, makes these selections — no tag matching required.
 
-See section 5 for the detailed compendium structure and dependency resolution.
+See section 5 for the detailed compendium structure and synthesis process.
 
 ### 2.4 Data Flow
 
-The full pipeline for a single piece of source material:
+The full pipeline from source to published reference:
 
 ```
   Raw Source (PDF, forum thread, transcript, ...)
        │
        ▼
-  ┌─────────────────────────┐
-  │  Corpus: Normalization  │ ◄──── Term Registry
-  │  ingest → normalize →   │         │
-  │  tag with canonical      │ ────► proposals for
-  │  terms                   │        new terms
-  └─────────────────────────┘
+  ┌─────────────────────────────┐
+  │  Corpus: Normalization      │
+  │  ingest → normalize →       │
+  │  generate summary           │
+  └─────────────────────────────┘
        │
-       │  tagged markdown with canonical frontmatter
+       │  normalized markdown with summary
        ▼
-  ┌─────────────────────────┐
-  │  Compendium: Synthesis  │
-  │  filter by terms →      │
-  │  synthesize → compile   │
-  └─────────────────────────┘
+  ┌─────────────────────────────┐
+  │  Corpus Registry            │
+  │  tiered summaries per       │  ◄── updated when corpora change
+  │  corpus for discovery       │
+  └─────────────────────────────┘
+       │
+       │  progressive disclosure: tier1 → tier2 → tier3
+       ▼
+  ┌─────────────────────────────┐
+  │  Compendium: Synthesis      │
+  │  system prompt + summaries  │
+  │  → select → synthesize →    │
+  │  compile                    │
+  └─────────────────────────────┘
        │
        ▼
   Published Reference (browsable textbook + AI agent context)
 ```
 
-Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces tagged markdown — the registry resolves raw references to canonical terms like `dune-novel`, `arrakis`, and `spice-melange`, and the broader `dune-franchise` tag links it to the franchise as a whole. The `dune` compendium, which declares `frank-herbert` as a dependency with a `dune-franchise` tag filter, picks up this file during synthesis. *Man of Two Worlds*, from the same corpus, carries `comedy` and `collaboration` tags but not `dune-franchise` — it is never seen by the `dune` compendium. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium that *would* select *Man of Two Worlds*.
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces markdown with a summary describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The corpus registry entry for `frank-herbert` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 of the registry immediately identifies `frank-herbert` as relevant. At synthesis time, the LLM reads individual source summaries within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
 
 ---
 
@@ -427,9 +434,8 @@ Every source file must include all of these fields, no exceptions:
 | `source_id` | string | `XXXX.####` globally unique identifier (4-letter origin prefix + 4-digit number) |
 | `title` | string | Short descriptive label for the source file (not necessarily the work's canonical title) |
 | `summary` | string | One-to-three sentence description of what this source contains and why it's useful. Generated during normalization. Enables synthesis-time relevance assessment without reading the full content |
-| `source_type` | enum | Declares which extended schema applies. See section 3.3.4 for valid types |
+| `source_type` | enum | Declares which extended schema applies. See section 3.3.3 for valid types |
 | `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.4 |
-| `tags` | string[] | Objective content descriptors for filtering and scoping. See section 3.3.2 |
 | `raw_sources` | string[] | Filenames in `ingested/{source_id}/` this was normalized from. Preserves traceability to original artifacts |
 | `ingestion_date_first` | date | When this source was originally captured |
 | `ingestion_date_last` | date | When we last checked/re-ingested from the upstream source (same as `ingestion_date_first` on initial capture) |
@@ -438,30 +444,20 @@ Every source file must include all of these fields, no exceptions:
 | `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`, `whisper-large-v3`) |
 | `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
 
-#### 3.3.2 Tags
-
-Tags are objective descriptors of what the source discusses — not where it should be used. Good tags describe the content's topics, subjects, entities, and concepts. The same source can be relevant to multiple compendiums through different tag intersections.
-
-Tags are the primary mechanism by which `compendium.toml` filters sources for inclusion. They should be:
-
-- **Objective** — describe what's in the content, not editorial judgments
-- **Granular** — prefer specific terms (`wheel-bearing`, `l76`, `afm-delete`) over vague ones (`car-parts`)
-- **Consistent** — use the same tag across origins for the same concept (don't mix `wheel-bearing` and `hub-bearing` for the same component). The Term Registry (section 4) is the enforcement mechanism for tag consistency — every tag used in frontmatter must be a registered term
-
-#### 3.3.3 Universal Optional Fields
+#### 3.3.2 Universal Optional Fields
 
 These fields are present on most sources but legitimately absent on some:
 
 | Field | Type | When absent |
 |-------|------|-------------|
-| `author` | string | Uses canonical term tags from the Term Registry (section 4). Reserved for identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead. Anonymous or unsigned government documents omit this field entirely |
+| `author` | string | The name of the identifiable person who produced this content. Reserved for real, identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead (a plain string handle, not tracked or disambiguated). Anonymous or unsigned government documents omit this field entirely. If a forum poster is later identified as a real person, the `author` field can be added alongside the `username` field |
 | `date_published` | date | Undated historical texts, some web content |
 | `origin_url` | string | Physical books, offline documents |
 | `volatility` | enum | `static`, `unlikely`, `periodic`, `active`. Omit to inherit the default from `origin.toml`. Only set per-source as an override when a source's volatility differs from the origin norm (e.g., an unusually active thread on a mostly-dormant forum) |
 | `relations` | array | Omit if no explicit references to other sources. See section 3.6 |
 | `issues` | array | Omit if no known quality or completeness problems. See section 3.5 |
 
-#### 3.3.4 Extended Schemas by `source_type`
+#### 3.3.3 Extended Schemas by `source_type`
 
 The `source_type` field determines which additional fields are required or available. This is a closed enum — adding a new type requires defining its extended schema.
 
@@ -583,7 +579,7 @@ Covers: Product datasheets, catalogs, user guides, safety data sheets, and manuf
 | `document_type` | no | enum | `datasheet`, `catalog`, `guide`, `sds` |
 | `part_numbers` | no | string[] | Associated part numbers |
 
-#### 3.3.5 Complete Example
+#### 3.3.4 Complete Example
 
 A forum post with all applicable fields:
 
@@ -594,7 +590,6 @@ title: "DIY rear wheel bearing replacement with diagnosis walkthrough"
 summary: "Detailed step-by-step guide for diagnosing and replacing rear wheel bearings on the Pontiac G8, including jacking points, torque specs, and tool list. Author reports failure at 82k miles with symptoms of humming at highway speeds progressing to grinding."
 source_type: "forum_post"
 credibility_tier: "community_validated"
-tags: ["suspension", "wheel-bearing", "rear", "diagnosis", "replacement", "g8", "ve"]
 raw_sources: ["thread.html", "thread_wayback_20190315.html"]
 ingestion_date_first: "2026-01-20"
 ingestion_date_last: "2026-06-15"
@@ -645,7 +640,7 @@ For fiction origins, `authoritative` means the primary text itself. `expert` wou
 
 #### 3.4.1 Normalization Confidence
 
-The `normalization_confidence` field (`0.0`–`1.0`) rates the quality of the conversion process itself — how accurately the raw source was captured and converted to markdown. This is distinct from credibility (trustworthiness of claims) and distinct from tags (what it's about).
+The `normalization_confidence` field (`0.0`–`1.0`) rates the quality of the conversion process itself — how accurately the raw source was captured and converted to markdown. This is distinct from credibility (trustworthiness of claims) and distinct from the summary (what it's about).
 
 A perfectly transcribed YouTube video might have high normalization confidence but low credibility tier. A badly OCR'd service manual might have low normalization confidence but authoritative credibility.
 
@@ -779,7 +774,6 @@ title: "Engineering Explained — Why Direct Injection Causes Carbon Buildup"
 summary: "Technical explainer covering the mechanism by which direct injection engines accumulate carbon deposits on intake valves, why port injection doesn't have this problem, and what solutions exist including walnut blasting and dual injection systems."
 source_type: "video"
 credibility_tier: "expert"
-tags: ["engine", "direct-injection", "carbon-buildup", "intake-valves", "fuel-system"]
 raw_sources: ["transcript.json", "frames.zip"]
 ingestion_date_first: "2026-02-01"
 ingestion_date_last: "2026-02-01"
@@ -810,543 +804,147 @@ has_visual_content: true
 
 ---
 
-## 4. Term Registry
+## 4. Corpus Registry
 
 ### 4.1 Overview
 
-The Term Registry is a system-wide controlled vocabulary that provides canonical identification for all named entities and descriptors across Athenaeum. It ensures that when two sources reference the same person, organization, vehicle, component, or concept, they use the same term — even if those sources were normalized months apart by different models from different origins.
+The Corpus Registry is a system-wide discovery catalog that provides tiered summaries for every corpus in Athenaeum. Its purpose is discoverability — enabling compendiums to identify which corpora are relevant to their domain without cloning and scanning every origin repository.
 
-Without a registry, identification degrades into freeform text matching: `"Ryan Grimm"`, `"ryan-grimm"`, `"R. Grimm"`, and `"grimm-ryan"` all refer to the same person but are invisible to any automated system. The registry solves this by establishing canonical terms with rich metadata, supporting disambiguation of concepts that share surface forms, and enforcing that all frontmatter always uses the correct canonical term.
+The registry does not participate in normalization, does not enforce vocabulary, and does not store relationships between entities. Those concerns are handled by the LLM during normalization (which produces good summaries) and by the compendium's synthesis system prompt (which encodes domain-specific knowledge and relationships). The registry is a passive index: it describes what's available so that the right corpora can be found efficiently.
 
-Every tag used in the system — from specific entities like `l76-engine` to descriptors like `diagnosis` — is a registered term. Terms describe sources. Terms also describe other terms. The registry is a single flat namespace with no imposed hierarchy.
+### 4.2 Registry Format
 
-The registry sits alongside the Corpus and Compendium organizations as a foundational Athenaeum component. Every origin's normalization process reads from it and proposes additions to it.
-
-### 4.2 Disambiguation Philosophy
-
-The term registry defines precise coordinates in concept space, not opinions. A term's job is to refer to exactly one thing unambiguously. When a natural-language word or phrase refers to genuinely different things depending on context, it cannot be a term on its own — it requires disambiguation.
-
-This is not about controversy. It's about precision. `palestine` is not a valid term because it is ambiguous — it refers to different geopolitical realities depending on the era and context. `palestine-pre1948` and `palestine-current` are valid terms because each refers to exactly one thing. Both can have "Palestine" as a colloquial name because that *is* what people call them. The canonical term is the precise coordinate. The names are how humans refer to it.
-
-The same principle applies everywhere:
-
-- `mercury` is ambiguous (planet, element, Roman god, car brand). `mercury-planet`, `mercury-element`, `mercury-roman-deity`, `mercury-automobile` are precise.
-- `dod` is ambiguous (Displacement on Demand, Department of Defense). `afm-dod` and `dod-department-of-defense` are precise.
-- `jaguar` is ambiguous (animal, car brand). `jaguar-animal` and `jaguar-automobile` are precise.
-
-Not every term needs disambiguation. `ryan-grimm` is unambiguous — there is one person being referred to. `l76-engine` is unambiguous — there is one engine. Disambiguation is only required when a surface form genuinely maps to multiple distinct concepts.
-
-The iterative nature of the registry means disambiguation improves over time. A term that seemed unambiguous may later be discovered to refer to two things, at which point it gets split and reconciled. The registry is a living document that gets more precise with use.
-
-### 4.3 Core Principle
-
-**The frontmatter is the source of truth. The registry is the authority. They must always agree.**
-
-There is no alias resolution, no runtime translation, no indirection layer. Every tag in every source file's frontmatter is the current canonical form as defined by the registry. If a tag is found to be incorrect — because two entities were confused, or because a tag was superseded by a better canonical form — the affected frontmatter is rewritten. The old form ceases to exist in the system.
-
-### 4.4 Term Structure
-
-Each term in the registry has:
-
-#### Canonical Tag
-
-The single authoritative identifier used in all frontmatter. Follows the same format as regular tags — lowercase, hyphenated, concise:
-
-- `ryan-grimm`
-- `general-motors`
-- `pontiac-g8`
-- `l76-engine`
-- `rear-wheel-bearing`
-
-#### Term Type
-
-There is no type enum. Instead, each term is described by **descriptor tags** — the same tags used to describe source content. A term's "type" emerges from its tags rather than being assigned from a closed taxonomy:
-
-- `ryan-grimm` is tagged `person`, `journalist`, `political-reporter`
-- `general-motors` is tagged `organization`, `manufacturer`, `automotive`
-- `l76-engine` is tagged `component`, `engine`, `v8`, `gen-iv`
-- `dune-novel` is tagged `work`, `novel`, `science-fiction`
-- `pontiac-g8` is tagged `vehicle`, `sedan`, `rear-wheel-drive`
-
-This avoids the taxonomy problem that a closed enum creates — where you'd inevitably encounter something that doesn't fit neatly into `person` vs. `organization` vs. `concept` and end up debating categories instead of describing things.
-
-Descriptor tags that describe terms (like `person`, `organization`, `vehicle`, `component`) are themselves registered terms in the same registry. Terms describe terms. The system is self-referential and flat.
-
-#### Names
-
-The colloquial representations of the term — how humans refer to it in natural language. A term can have multiple names because the same concept is often referred to differently in different contexts:
-
-```toml
-# l76-engine.toml
-
-canonical = "l76-engine"
-names = ["L76", "L76 6.0L V8", "6.0 V8", "L76 engine"]
-tags = ["component", "engine", "v8", "gen-iv", "gm"]
-description = "GM Gen IV 6.0L V8 with Active Fuel Management (AFM/DoD), used in 2008-2009 Pontiac G8 GT and various GM trucks. Shares architecture with LS2 but adds cylinder deactivation."
-```
-
-The `names` field serves the normalization pipeline — when Pass 1 produces a raw tag or encounters a reference in source text, the resolution step checks which terms have matching entries in their `names` array, then uses source context to determine which specific term is intended.
-
-Multiple terms sharing a name is expected and is the core mechanism for disambiguation:
-
-```toml
-# palestine-current.toml
-
-canonical = "palestine-current"
-names = ["Palestine", "State of Palestine", "Occupied Palestinian Territories", "OPT"]
-tags = ["location", "state", "middle-east"]
-description = "The occupied territories comprising the Gaza Strip and the West Bank, including East Jerusalem. Recognized as a state by the UN General Assembly in 2012."
-
-[[relations]]
-type = "contains"
-target = "gaza-strip"
-
-[[relations]]
-type = "contains"
-target = "west-bank"
-```
-
-```toml
-# palestine-pre1948.toml
-
-canonical = "palestine-pre1948"
-names = ["Palestine", "Mandatory Palestine", "British Palestine"]
-tags = ["location", "historical-territory", "middle-east"]
-description = "The geographic region of Palestine as defined by pre-1948 borders, encompassing the territory of the British Mandate for Palestine (1920-1948)."
-```
-
-Both terms have "Palestine" as a name. When a source refers to "Palestine," the resolution step examines the source context to determine which term applies. An article about Ottoman-era agriculture resolves to `palestine-pre1948`. A report on current humanitarian conditions resolves to `palestine-current`. The source context drives the resolution, not an editorial default.
-
-#### Description
-
-A precise, objective explanation of what the term refers to. The description serves two purposes:
-
-1. **Normalization guidance** — gives the model enough context to correctly match source content to the right term and to improve normalization quality during the enrichment pass
-2. **Human disambiguation** — lets a reviewer quickly understand what a term means when resolving conflicts or reviewing proposals
-
-Descriptions should be factual and specific enough that two reasonable people would agree on whether a given reference matches the term.
-
-When terms share similar surface forms, the description carries the disambiguation:
-
-```toml
-# mercury-planet.toml
-
-canonical = "mercury-planet"
-names = ["Mercury"]
-tags = ["location", "planet", "solar-system"]
-description = "The smallest planet in the Solar System and closest to the Sun, with an orbital period of approximately 88 Earth days."
-```
-
-```toml
-# mercury-element.toml
-
-canonical = "mercury-element"
-names = ["Mercury", "quicksilver", "Hg"]
-tags = ["element", "chemical", "metal"]
-description = "Chemical element with atomic number 80, a heavy silvery liquid metal at room temperature. Symbol Hg from Latin hydrargyrum."
-```
-
-#### Entity Relations
-
-Entities can declare relationships to other entities. These are distinct from source relations — they describe how entities relate to each other in the real world:
-
-| Relation | Description | Example |
-|----------|-------------|---------|
-| `writes_for` | Person publishes through this outlet | `ryan-grimm` → `the-intercept` |
-| `manufactures` | Organization produces this product | `general-motors` → `pontiac-g8` |
-| `subsidiary_of` | Organization owned by another | `holden` → `general-motors` |
-| `component_of` | Part belongs to a system or vehicle | `l76-engine` → `pontiac-g8` |
-| `variant_of` | One entity is a variant of another | `holden-ve-commodore` → `pontiac-g8` |
-| `sequel_to` | Creative work follows another | `dune-messiah-novel` → `dune-novel` |
-| `adaptation_of` | One work adapts another | `dune-2021-film` → `dune-novel` |
-| `member_of` | Person belongs to organization | `frank-herbert` → `sfwa` |
-
-These relations are informational — they help agents and synthesis understand context. They are not used for filtering or scoping.
-
-### 4.5 Registry Format
-
-The registry lives in its own repository as a flat collection of TOML files — one file per term. Every registered term, whether it represents a specific entity like `ryan-grimm` or a descriptor like `person`, gets its own file:
+The registry lives in its own repository as a flat collection of TOML files — one file per corpus:
 
 ```
-example-org/term-registry/
-├── registry.toml                    # registry metadata and configuration
-├── tags/
-│   ├── afm-dod.toml
-│   ├── article.toml                 # descriptor
-│   ├── automotive.toml              # descriptor
+example-org/corpus-registry/
+├── registry.toml                    # registry metadata
+├── corpora/
 │   ├── brian-herbert.toml
-│   ├── component.toml               # descriptor
-│   ├── descriptor.toml              # descriptor
-│   ├── detroit.toml
-│   ├── diagnosis.toml               # descriptor
-│   ├── diy.toml                     # descriptor
-│   ├── dune-novel.toml
-│   ├── engine.toml                  # descriptor
+│   ├── denis-villeneuve.toml
+│   ├── engineering-explained.toml
 │   ├── frank-herbert.toml
 │   ├── g8board.toml
-│   ├── general-motors.toml
+│   ├── gm.toml
 │   ├── holden.toml
-│   ├── holden-ve-commodore.toml
-│   ├── how-to.toml                  # descriptor
-│   ├── journalist.toml              # descriptor
-│   ├── l76-engine.toml
+│   ├── huberman-lab.toml
+│   ├── jstor-economics.toml
 │   ├── ls1tech.toml
-│   ├── ls2-engine.toml
-│   ├── manufacturer.toml            # descriptor
-│   ├── novel.toml                   # descriptor
-│   ├── organization.toml            # descriptor
+│   ├── marxists-org.toml
 │   ├── penrite.toml
-│   ├── person.toml                  # descriptor
-│   ├── pontiac-g8.toml
-│   ├── r-mechanicadvice.toml
-│   ├── rear-wheel-bearing.toml
-│   ├── ryan-grimm.toml
-│   ├── t56-transmission.toml
-│   ├── troubleshooting.toml         # descriptor
-│   ├── vehicle.toml                 # descriptor
-│   └── work.toml                    # descriptor
-└── proposals/
-    └── pending/
-        └── 2026-02-09_G8BD.0200.toml
+│   ├── pubmed.toml
+│   ├── scifi-channel-dune.toml
+│   ├── south-main-auto.toml
+│   └── wikipedia-economics.toml
+└── ...
 ```
 
-There is no organizational hierarchy in the directory structure. No `persons/` or `components/` subdirectories. The terms themselves carry that information — `ryan-grimm.toml` is tagged `person`, `journalist`. The filesystem is flat; the taxonomy lives in the term metadata.
+#### Corpus Entry Format
 
-#### Term File Format
-
-Every registered term — entity or descriptor — uses the same file format:
+Each entry maps a canonical corpus name to three tiers of summary:
 
 ```toml
-# ryan-grimm.toml
+# corpora/frank-herbert.toml
 
-canonical = "ryan-grimm"
-names = ["Ryan Grimm", "Ryan Grim"]
-tags = ["person", "journalist", "political-reporter"]
-description = "Investigative journalist, formerly at The Intercept and HuffPost. Covers political power structures and progressive politics."
+canonical = "frank-herbert"
+repo = "corpus/frank-herbert"
 
-[[relations]]
-type = "writes_for"
-target = "the-intercept"
-```
+summary_tier1 = "Complete works of science fiction author Frank Herbert"
 
-```toml
-# general-motors.toml
+summary_tier2 = """
+All published works by Frank Herbert (1920-1986), primarily the six \
+Dune novels (1965-1985) plus standalone novels, short fiction, and \
+collaborations. Themes: ecology, prescience, politics, religion, \
+human consciousness."""
 
-canonical = "general-motors"
-names = ["General Motors", "GM"]
-tags = ["organization", "manufacturer", "automotive"]
-description = "American multinational automotive manufacturer. Parent company of Chevrolet, Pontiac (discontinued), GMC, Buick, and Cadillac."
+summary_tier3 = """
+Frank Herbert's complete published bibliography normalized from \
+printed and digital editions.
 
-[[relations]]
-type = "manufactures"
-target = "pontiac-g8"
+Dune series: Dune (1965), Dune Messiah (1969), Children of Dune \
+(1976), God Emperor of Dune (1981), Heretics of Dune (1984), \
+Chapterhouse: Dune (1985).
 
-[[relations]]
-type = "subsidiary_of"
-target = "holden"
-note = "Holden was a GM subsidiary until 2020"
+Standalone novels: The Dragon in the Sea (1956), The Green Brain \
+(1966), The Santaroga Barrier (1968), Whipping Star (1970), The \
+Dosadi Experiment (1977), others.
+
+Collaborations with Bill Ransom: The Jesus Incident (1979), The \
+Lazarus Effect (1983), The Ascension Factor (1988).
+
+~45 normalized sources."""
 ```
 
 ```toml
-# l76-engine.toml
+# corpora/g8board.toml
 
-canonical = "l76-engine"
-names = ["L76", "L76 6.0L V8", "6.0 V8", "L76 engine"]
-tags = ["component", "engine", "v8", "gen-iv", "gm"]
-description = "GM Gen IV 6.0L V8 with Active Fuel Management (AFM/DoD), used in 2008-2009 Pontiac G8 GT and various GM trucks. Shares architecture with LS2 but adds cylinder deactivation."
+canonical = "g8board"
+repo = "corpus/g8board"
 
-[[relations]]
-type = "component_of"
-target = "pontiac-g8"
+summary_tier1 = "G8Board.com automotive forum — Pontiac G8 community"
 
-[[relations]]
-type = "variant_of"
-target = "ls2-engine"
+summary_tier2 = """
+Forum threads from G8Board.com, the primary English-language \
+community for the 2008-2009 Pontiac G8. Covers diagnostics, \
+repairs, modifications, and ownership experiences for the G8 GT \
+(L76 6.0L V8), G8 GXP (LS3 6.2L V8), and base V6 models."""
+
+summary_tier3 = """
+Comprehensive archive of G8Board.com forum threads normalized from \
+HTML captures. The G8 is a rebadged Holden VE Commodore built in \
+Elizabeth, South Australia.
+
+Coverage includes: suspension and wheel bearing issues, engine and \
+transmission diagnostics, AFM/DoD cylinder deactivation problems, \
+brake upgrades, exhaust and intake modifications, electrical \
+troubleshooting, and general ownership experiences.
+
+High-value threads include community-validated diagnostic \
+walkthroughs, long-running troubleshooting threads with multiple \
+confirming reports, and DIY guides with detailed procedures.
+
+~2,400 normalized sources. Community-validated and anecdotal \
+credibility tiers."""
 ```
 
-Descriptor tags have simpler entries but the same format:
+### 4.3 Progressive Disclosure Process
 
-```toml
-# person.toml
+The tiered summary structure enables efficient corpus discovery at compendium setup time:
 
-canonical = "person"
-names = ["person"]
-tags = []
-description = "A specific individual human being."
-```
+1. **Tier 1 scan.** Read the `summary_tier1` for every corpus in the registry. At one sentence each, the full registry fits in a single LLM context window. Immediately identify obvious candidates and obvious exclusions. For a Dune compendium: `frank-herbert`, `brian-herbert`, `denis-villeneuve`, `scifi-channel-dune` are obvious candidates. `g8board`, `gm`, `penrite` are obvious exclusions.
 
-```toml
-# journalist.toml
+2. **Tier 2 confirmation.** For each candidate, read `summary_tier2` to confirm relevance and understand scope. This catches false positives (a corpus whose name suggests relevance but whose content doesn't match) and surfaces additional context about what each corpus actually contains.
 
-canonical = "journalist"
-names = ["journalist"]
-tags = ["person"]
-description = "A person who investigates, writes, and reports news or information for publication."
-```
+3. **Tier 3 deep dive.** Consult `summary_tier3` only when needed — when scope boundaries are unclear or when understanding the full contents matters for the compendium's design. This is optional for most corpora.
 
-```toml
-# diagnosis.toml
+4. **Declare dependencies.** Register the selected corpora in `compendium.toml`.
 
-canonical = "diagnosis"
-names = ["diagnosis", "diagnostic"]
-tags = ["descriptor"]
-description = "Content focused on identifying the cause of a problem or fault."
-```
+5. **Source-level selection.** After resolving (cloning) declared corpora, read individual source file summaries within each corpus to select which sources feed into synthesis. The compendium's synthesis system prompt guides the LLM's selection decisions at this level.
 
-Note that descriptor terms can themselves have tags. `journalist` is tagged `person` because every journalist is a person — this captures the relationship without imposing a rigid hierarchy. A normalization model or query tool can traverse these relationships to understand that filtering for `person` should include terms tagged `journalist`.
+This process is typically performed once during compendium setup and revisited when new corpora are added to the registry.
 
-### 4.6 Two-Pass Normalization Pipeline
+### 4.4 Registry Maintenance
 
-The term registry integrates into normalization through a two-pass process. The first pass is isolated — the model works with only the raw source material. The second pass is enriched — the model has registry context and can improve its output.
+The registry grows with the system:
 
-#### Pass 1: Isolated Normalization
+- **New corpus, new entry.** When a new origin repository is created, a corresponding registry entry is added with tiered summaries.
+- **Summary updates.** When a corpus grows significantly (new sources added, coverage expanded), its tiered summaries should be updated to reflect the current state.
+- **No reconciliation burden.** Unlike a term registry, corpus registry entries don't affect source frontmatter. Updating a summary is a metadata change with no downstream rewrites.
 
-The model normalizes the source with no registry context. It produces:
+### 4.5 Infrastructure Placement
 
-- The normalized markdown content
-- Frontmatter with all required fields
-- A set of **raw tags** based purely on what it observes in the source material
-
-These raw tags are the model's best-effort identification of entities and descriptors from the source alone. They may be ambiguous (`dod` could mean Active Fuel Management's Displacement on Demand or the Department of Defense), inconsistent with existing conventions (`6.0-v8` when the registry uses `l76-engine`), or novel (an entity the registry has never seen).
-
-The raw tags are not written to the final frontmatter. They are an intermediate output.
-
-#### Tag Resolution
-
-Each raw tag from Pass 1 is compared against the registry:
-
-1. **Exact match** — the raw tag matches a canonical tag in the registry. Use the canonical tag.
-
-2. **Semantic match** — the raw tag doesn't match exactly but clearly refers to a registered entity (e.g., raw tag `6.0-v8-afm` clearly maps to registered entity `l76-engine`). The resolution process identifies the correct canonical tag. High-confidence matches can be automated; lower-confidence matches are flagged for human review.
-
-3. **Ambiguous match** — the raw tag could refer to multiple registered entities (e.g., `dod` could map to both `afm-dod` and `dod-department-of-defense`). Flagged for human review with the source context to determine which entity is intended.
-
-4. **No match** — the raw tag doesn't correspond to any registered term. Two possibilities:
-   - It's a **new entity** that should be registered → goes to the proposal queue
-   - It's a **new descriptor** that should be registered → goes to the proposal queue (descriptors are terms too)
-
-After resolution, the frontmatter is populated with correct canonical entity tags plus any descriptor tags.
-
-#### Pass 2: Enriched Normalization
-
-With tags now resolved, the model re-normalizes with the registry metadata for each matched entity as additional context. The model now knows:
-
-- `l76-engine` is a "GM Gen IV 6.0L V8 with AFM/DoD"
-- `pontiac-g8` is a specific vehicle platform
-- `afm-dod` is the "Active Fuel Management / Displacement on Demand" cylinder deactivation system
-
-This richer understanding improves:
-
-- **Summary quality** — the model can write more precise, technically accurate summaries
-- **Tag completeness** — the model may identify additional relevant entities now that it understands the domain context (e.g., recognizing that a discussion about "cylinder deactivation problems" should also be tagged with `afm-dod`)
-- **Normalization quality** — the model can better structure the content, resolve ambiguous references in the source text, and produce a more useful normalized document
-
-#### Term Proposals
-
-Any raw tag from Pass 1 that didn't resolve to a registry entry is emitted as a proposal — whether it appears to represent a specific entity or a descriptor:
-
-```toml
-# proposals/pending/2026-02-09_G8BD.0200.toml
-
-[[proposals]]
-proposed_by = "G8BD.0200"
-proposed_tag = "4l60e-transmission"
-proposed_tags = ["component", "transmission", "gm"]
-proposed_names = ["4L60E", "4L60E transmission"]
-context = "GM 4-speed automatic transmission discussed in rebuild procedure"
-confidence = 0.95
-
-[[proposals]]
-proposed_by = "G8BD.0200"
-proposed_tag = "tremec-t56"
-proposed_tags = ["component", "transmission", "manual-transmission"]
-proposed_names = ["T56", "Tremec T56", "T56 6-speed"]
-context = "Tremec 6-speed manual transmission option in the Pontiac G8 GXP, discussed in context of swap into GT models"
-confidence = 0.95
-```
-
-Proposals are reviewed by a human. Approved proposals become term files in the registry. Rejected proposals are discarded.
-
-#### Pipeline Summary
+The corpus registry is system-wide infrastructure, consumed by compendiums during setup but owned by neither the corpus nor compendium layer. It lives in the `example-org` Forgejo organization alongside other Athenaeum system infrastructure:
 
 ```
-Raw Source
-    ↓
-Pass 1: Isolated normalization (no registry context)
-    → normalized content + raw tags
-    ↓
-Tag Resolution: Match raw tags against registry
-    → canonical terms (matched)
-    → proposals (unresolved → registration queue)
-    → ambiguous (flagged for human review)
-    ↓
-Pass 2: Enriched normalization (with registry metadata)
-    → improved content, summary, and tags
-    ↓
-Final normalized source file (written to normalized/)
-```
-
-### 4.7 Author Field vs. Username Field
-
-The `author` field in source frontmatter is reserved for real, identifiable people. It uses canonical term tags:
-
-```yaml
-# Correct — identifiable person, registered term
-author: "ryan-grimm"
-
-# For multiple authors
-authors: ["frank-herbert", "brian-herbert"]
-```
-
-For sources where the author is an anonymous or pseudonymous handle (forum posts, Reddit posts, etc.), the `author`/`authors` field is omitted entirely. Instead, the relevant extended schema provides a **`username`** field that stores the exact username of the poster as a plain string:
-
-```yaml
-# forum_post extended fields
-username: "TorqueDave"
-thread_url: "https://www.g8board.com/forum/thread-12345"
-```
-
-```yaml
-# reddit_post extended fields
-username: "LS_Swapper_9000"
-subreddit: "r-pontiacg8"
-post_url: "https://reddit.com/r/PontiacG8/comments/abc123"
-```
-
-The `username` field:
-- Stores the exact handle as it appears on the platform
-- Is a plain string, not a term registry reference
-- Is not disambiguated, reconciled, or tracked as an entity
-- Exists purely for provenance — "who posted this on the platform"
-
-This avoids the rabbit hole of trying to track and disambiguate pseudonymous internet users across platforms. If a forum poster is later identified as a real person (e.g., a known mechanic or engineer who posts under their real name), the `author` field can be added with their registered term and the `username` field retained for platform provenance.
-
-### 4.8 Reconciliation
-
-Reconciliation is the process of correcting frontmatter when the registry changes. It is not optional and is not deferred. When the registry changes, affected frontmatter is rewritten immediately. Old forms cease to exist.
-
-#### Merge (Two Tags → One)
-
-When two canonical tags are determined to represent the same entity:
-
-1. **Decide canonical form.** Choose the more descriptive or established tag.
-2. **Remove the retired entry** from the registry entirely. It does not become an alias. It is gone.
-3. **Rewrite all frontmatter.** Automated pass scans every origin for the retired tag in any frontmatter field (`tags`, `author`/`authors`, or any extended field) and replaces it with the surviving canonical tag.
-4. **Commit changes.** Each affected origin gets a reconciliation commit.
-
-The retired tag ceases to exist anywhere in the system. Future normalization will not produce it because:
-- Pass 1 may still produce the old surface form as a raw tag
-- But tag resolution will semantically match it to the surviving canonical form, informed by the richer metadata now present on that entity
-- If the old form keeps appearing from Pass 1 and failing resolution, that's a signal the registry description should be improved to enable more reliable matching
-
-#### Split (One Tag → Two)
-
-When a single term is found to represent two different concepts:
-
-1. **Create two distinct entries.** E.g., `mercury-planet` and `mercury-element`.
-2. **Remove the ambiguous entry** from the registry.
-3. **Classify affected sources.** Determine which concept each source actually references. This requires human review — the automated system flags the sources, a human assigns them.
-4. **Rewrite all frontmatter.** Replace the old term with the correct disambiguated term in each affected source file.
-
-Split reconciliation is more invasive than merge reconciliation and always requires human judgment.
-
-#### Rename (Tag → Better Tag)
-
-When a canonical tag should be renamed for clarity:
-
-1. **Update the registry entry** with the new canonical tag.
-2. **Rewrite all frontmatter** containing the old tag.
-3. The old form ceases to exist.
-
-#### Build-Time Validation
-
-Every build should verify consistency:
-
-- Every tag in source frontmatter has a corresponding `.toml` file in the term registry
-- No frontmatter contains a tag that was retired through merge, split, or rename
-- Every `author`/`authors` field value is a registered term tagged `person` (forum/reddit posts use `username` instead, which is not validated against the registry)
-- Every tag referenced in a term file's `tags` array has its own term file in the registry
-- Every `relations` target references a term that exists in the registry
-
-### 4.9 Unified Term Namespace
-
-All terms — whether they represent specific entities like `ryan-grimm` or descriptors like `diagnosis` — live in the same flat registry and follow the same format. There is no formal distinction between "entity terms" and "descriptor terms" at the system level. Every term is just a term.
-
-In practice, terms naturally fall along a spectrum:
-
-**Specific entities** have rich descriptions, relations to other terms, and tend to be unique proper nouns:
-- `ryan-grimm` — a specific person with a career history, publications, and affiliations
-- `l76-engine` — a specific component with technical specifications and vehicle applications
-- `pontiac-g8` — a specific vehicle with model years, platforms, and manufacturer relations
-
-**Descriptors** have simpler entries and describe qualities, activities, or categories:
-- `diagnosis` — content focused on identifying problems
-- `how-to` — step-by-step procedural content
-- `person` — the concept of being a human individual
-
-**Meta-descriptors** are descriptors that primarily exist to describe other terms:
-- `person`, `organization`, `vehicle`, `component` — these describe what kind of entity a term represents
-- `descriptor` — terms that describe content qualities rather than specific entities
-
-This spectrum is not enforced by the system. It emerges naturally from how terms are used. The registry treats them all identically.
-
-### 4.10 Reconciliation Reporting
-
-A periodic reconciliation scan validates consistency across the system:
-
-```
-Term Registry Reconciliation Report:
-
-  Retired terms found in frontmatter (reconciliation failures):
-    "displacement-on-demand" found in G8BD.0150, G8BD.0203
-    Action: automated rewrite required — this term no longer exists, use "afm-dod"
-
-  Potential duplicates (similar terms, not yet investigated):
-    ls2-engine / ls2 — both tagged [component, engine], both in automotive origins
-    Action: human review to determine if these are the same term
-
-  Ambiguous surface forms from recent normalization:
-    "dod" produced by G8BD.0200 (resolved → afm-dod)
-    "dod" produced by USGV.0015 (resolved → dod-department-of-defense)
-    Status: correctly disambiguated
-
-  Unresolved proposals: 12
-    3 high-confidence (>0.9) — likely auto-approvable
-    6 medium-confidence (0.7-0.9) — need review
-    3 low-confidence (<0.7) — may be false identification
-
-  Unregistered tags (in frontmatter, no matching file in registry): 4
-    "mystery-component" — used in G8BD.0150
-    Action: create term file or correct to existing term
-```
-
-### 4.11 Registry Scope and Growth
-
-The registry starts small and grows organically through normalization:
-
-1. **Bootstrap from existing origins.** Normalize existing sources, let Pass 1 produce raw tags, resolve and register them.
-2. **Grow with each normalization.** New sources produce proposals for entities the registry hasn't seen.
-3. **Cross-origin signal.** When the same entity appears across multiple origins, that reinforces confidence in the registration. An entity referenced by 5 origins is well-established.
-4. **Compendium-driven demand.** Building a new compendium may reveal entities that need registration to enable proper filtering.
-
-The registry doesn't need to be complete before normalization begins. Pass 1 operates without registry context. Tag resolution handles what the registry knows, and proposals capture what it doesn't. The system is functional from day one and improves as the registry grows.
-
-### 4.12 Infrastructure Placement
-
-The term registry is system-wide infrastructure, consumed by both the Corpus and Compendium layers but owned by neither. It lives in the `example-org` Forgejo organization alongside other Athenaeum system infrastructure:
-
-```
-example-org/athenaeum/                # spec, tooling, reconciliation scripts
-example-org/term-registry/            # controlled vocabulary
+example-org/athenaeum/                # spec, tooling
+example-org/corpus-registry/          # corpus discovery catalog
 corpus/gm/                          # origin repos
 corpus/g8board/
 compendium/commodore-ve/            # compendium repos
 compendium/dune/
 ```
 
-The `example-org` org contains the things that make Athenaeum work — system-level infrastructure, specifications, and tooling. The `corpus` and `compendium` orgs contain the things Athenaeum operates on. The term registry is plumbing, not content.
-
-The registry is accessed by normalization tooling via Forgejo API or by cloning the repo. It does not need to be submoduled into every origin — the normalization pipeline reads it as an external dependency.
+The registry is lightweight — it contains only TOML metadata, not source content. It can be cloned in seconds and read in full by the LLM during compendium setup.
 
 ---
 
@@ -1373,7 +971,7 @@ Compendium/{domain}/
 │   └── {chapter-slug}/            # chapters organized by domain taxonomy
 │       ├── {section}.md
 │       └── ...
-├── compendium.toml                # compendium configuration (dependencies, tag filters, etc.)
+├── compendium.toml                # compendium configuration (dependencies, system prompt, etc.)
 ├── book.toml                      # mdBook configuration (src = "manuscript")
 ├── resolve.sh                     # clones/updates corpora from declared dependencies
 └── README.md
@@ -1386,9 +984,8 @@ Compendium repos only need the `normalized/` directory, `assets/` directory, and
 ```toml
 [[compendium.corpora]]
 name = "g8board"
-repo = "Corpus/g8board"
+repo = "corpus/g8board"
 commit = "a1b2c3d"
-require_any = ["g8", "ve", "suspension"]
 sparse = ["normalized/", "assets/", "origin.toml"]
 ```
 
@@ -1436,84 +1033,89 @@ This script is run once after cloning the compendium repo, before synthesis, and
 
 ### 5.3 The Synthesis Process
 
-Synthesis transforms tagged source material from multiple origins into a coherent, structured compendium. This is the core intellectual work of the system.
+Synthesis transforms source material from multiple origins into a coherent, structured compendium. This is the core intellectual work of the system.
 
 The process for each compendium:
 
 1. **Resolve corpora.** Run `resolve.sh` to clone/update all declared origin dependencies at their pinned commits.
-2. **Filter by tags.** Scan all source files across all corpora. Select those whose tags match the compendium's scope criteria (defined in `compendium.toml`).
-3. **Assess summaries.** Read the `summary` field of each filtered source to understand its scope and relevance without loading full content. Prioritize sources by credibility tier and relevance to the chapter being synthesized.
-4. **Organize by taxonomy.** Group filtered sources by the compendium's chapter structure.
+2. **Select sources.** Read the `summary` field of each source file across all resolved corpora. Using the compendium's synthesis system prompt as context, the LLM selects sources relevant to the domain. Sources are prioritized by credibility tier and relevance to the compendium's scope.
+3. **Organize by taxonomy.** Group selected sources by the compendium's chapter structure.
 4. **Synthesize chapters.** Distill the grouped sources into coherent prose, reconciling conflicts, identifying patterns, and citing source IDs.
 5. **Build navigation.** Generate/update `SUMMARY.md`, cross-references, and supplementary sections (FAQ, glossary, quick reference).
 6. **Build output.** Run mdBook to compile the manuscript into the published static site.
 
-### 5.4 Corpus Configuration
+### 5.4 Compendium Configuration
 
-Each compendium repo contains a `compendium.toml` that defines its scope:
+Each compendium repo contains a `compendium.toml` that declares its corpus dependencies and a synthesis system prompt that encodes domain-specific knowledge:
 
 ```toml
 [compendium]
 name = "Dune Universe Compendium"
 description = "Comprehensive reference for the Dune universe across all media"
-
-# Default tag filters — sources must match at least one to be included
-[[compendium.filters]]
-require_any = ["dune-franchise", "arrakis", "bene-gesserit", "fremen", "spice-melange"]
-
-# Per-origin declarations with pinned commits and optional filter overrides
-[[compendium.corpora]]
-name = "scifi-channel-dune"
-repo = "corpus/scifi-channel-dune"
-commit = "f7e8d9c"
-sparse = ["normalized/", "assets/", "origin.toml"]
-include_all = true          # every source in this origin is relevant
+system_prompt_file = "synthesis-prompt.md"
 
 [[compendium.corpora]]
 name = "frank-herbert"
 repo = "corpus/frank-herbert"
 commit = "b2c3d4e"
 sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune-franchise"]  # only Dune-related works from this author
+
+[[compendium.corpora]]
+name = "brian-herbert"
+repo = "corpus/brian-herbert"
+commit = "a1b2c3d"
+sparse = ["normalized/", "assets/", "origin.toml"]
 
 [[compendium.corpora]]
 name = "denis-villeneuve"
 repo = "corpus/denis-villeneuve"
 commit = "c3d4e5f"
 sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["dune-franchise"]  # only Dune-related screenplays
-```
-
-Because `author` is a canonical term tag (see section 4.7), compendium configuration can also filter by author directly using `match_author`:
-
-```toml
-[[compendium.corpora]]
-name = "nyt"
-repo = "corpus/nyt"
-commit = "d4e5f6a"
-sparse = ["normalized/", "assets/", "origin.toml"]
-match_author = "ryan-grimm"          # only his articles from the NYT
 
 [[compendium.corpora]]
-name = "the-intercept"
-repo = "corpus/the-intercept"
-commit = "e5f6a7b"
+name = "scifi-channel-dune"
+repo = "corpus/scifi-channel-dune"
+commit = "f7e8d9c"
 sparse = ["normalized/", "assets/", "origin.toml"]
-match_author = "ryan-grimm"          # only his articles from The Intercept
+include_all = true          # every source in this origin is relevant — skip summary assessment
 ```
 
-Tag-based filters and author-based filters can be combined. A source matches if it satisfies either condition:
+The `system_prompt_file` points to a markdown file in the compendium repo that provides the LLM with domain context during synthesis. This is where relationships, disambiguation guidance, and scope boundaries live:
 
-```toml
-[[compendium.corpora]]
-name = "nyt"
-repo = "corpus/nyt"
-commit = "d4e5f6a"
-sparse = ["normalized/", "assets/", "origin.toml"]
-require_any = ["economics", "federal-reserve"]
-match_author = "ryan-grimm"
-# Source matches if it satisfies EITHER condition
+```markdown
+# Dune Universe Compendium — Synthesis Prompt
+
+You are synthesizing a comprehensive reference for the Dune franchise.
+
+## Scope
+
+The Dune franchise encompasses:
+- Frank Herbert's six original novels (1965-1985)
+- Brian Herbert and Kevin J. Anderson's continuation novels and prequels
+- David Lynch's Dune (1984 film)
+- Sci Fi Channel miniseries: Frank Herbert's Dune (2000), Children of Dune (2003)
+- Denis Villeneuve's films: Dune: Part One (2021), Dune: Part Two (2024)
+- The Dune: Awakening video game
+
+## Source Selection
+
+From multi-work corpora (frank-herbert, denis-villeneuve), select only
+sources whose summaries indicate Dune-related content. Frank Herbert's
+non-Dune novels (The Dragon in the Sea, Whipping Star, etc.) and
+Villeneuve's non-Dune films (Blade Runner 2049, Arrival) are out of scope.
+
+## Key Relationships
+
+- Paul Atreides is the son of Duke Leto Atreides and Lady Jessica
+- The Bene Gesserit breeding program aimed to produce the Kwisatz Haderach
+- Arrakis is the sole source of the spice melange
+- The Fremen are the native population of Arrakis
+...
 ```
+
+This system prompt is iterable. When synthesis produces gaps (e.g., it conflates two characters, or misses a key relationship), the system prompt is refined and synthesis is re-run. The feedback loop is: synthesize → review → refine prompt → re-synthesize.
+
+The `include_all = true` flag is an efficiency optimization for corpora where every source is known to be in scope (e.g., `scifi-channel-dune` is entirely Dune content). It skips the summary assessment step for that corpus.
 
 ### 5.5 Synthesis Principles
 
@@ -1932,21 +1534,24 @@ This serves as an alternative access path — useful for agents running in envir
 3. Add `manifest.toml` and populate it with known sources (both `captured` and `pending`)
 4. Create the `normalized/`, `assets/`, and `ingested/` directories
 5. Build or configure the ingestion pipeline appropriate to the source type
-6. Begin normalizing source material with rich frontmatter tags
-7. The origin is now available for any compendium to declare as a dependency
+6. Begin normalizing source material
+7. Add a corpus registry entry with tiered summaries (see section 4)
+8. The origin is now available for any compendium to discover and declare as a dependency
 
 ### 11.2 Adding a New Compendium
 
 1. Create a new repository under the Compendium organization
-2. Declare origin dependencies in `compendium.toml` with pinned commits and tag filters
-3. Create `resolve.sh` to clone corpora at pinned commits with sparse checkout (copy from template)
-4. Add `corpora/` to `.gitignore`
-5. Define the domain taxonomy — the chapter structure
-6. Establish the standard manuscript directory structure
-6. Begin the synthesis process from filtered sources
-7. Add the Forgejo Actions deploy workflow (copy from template)
-8. Create the agent skill with domain-specific system prompt and SUMMARY.md
-9. Add deploy target to the Caddy configuration
+2. Consult the corpus registry to discover relevant corpora (see section 4.3)
+3. Declare origin dependencies in `compendium.toml` with pinned commits
+4. Write the synthesis system prompt with domain knowledge, scope boundaries, and key relationships
+5. Create `resolve.sh` to clone corpora at pinned commits with sparse checkout (copy from template)
+6. Add `corpora/` to `.gitignore`
+7. Define the domain taxonomy — the chapter structure
+8. Establish the standard manuscript directory structure
+9. Begin the synthesis process
+10. Add the Forgejo Actions deploy workflow (copy from template)
+11. Create the agent skill with domain-specific system prompt and SUMMARY.md
+12. Add deploy target to the Caddy configuration
 
 ### 11.3 Stacking Compendiums
 
@@ -1955,20 +1560,20 @@ The architecture supports compendiums of varying scope that share source materia
 ```
 Compendium/economics/           (broad)
   corpora: marxists-org, jstor-economics, wikipedia-economics, ...
-  filters: require_any = ["economics", "economic-theory", "markets", ...]
+  system prompt: broad economic theory, markets, policy
 
 Compendium/socialism/           (focused)
   corpora: marxists-org, jstor-economics, ...
-  filters: require_any = ["socialism", "marxism", "class-theory", ...]
+  system prompt: socialist theory, class analysis, historical application
 
 Compendium/politics/            (broad, different lens)
   corpora: marxists-org, jstor-economics, wikipedia-politics, ...
-  filters: require_any = ["political-theory", "governance", "socialism", "capitalism", ...]
+  system prompt: political theory, governance, ideological frameworks
 ```
 
-All three compendiums reference `marxists-org` as an origin. The economics compendium pulls sources tagged with broad economic concepts. The socialism compendium pulls a narrower subset. The politics compendium pulls an overlapping but distinct set. **One source file, one location in git, zero duplication, multiple compendiums synthesizing from different perspectives.**
+All three compendiums reference `marxists-org` as an origin. Each compendium's system prompt guides the LLM to select different sources — the economics compendium selects sources on broad economic concepts, the socialism compendium selects a narrower subset focused on socialist theory, and the politics compendium selects an overlapping but distinct set. **One source file, one location in git, zero duplication, multiple compendiums synthesizing from different perspectives.**
 
-The same pattern applies to fiction. A "Golden Age Sci-Fi" compendium and a "Dune" compendium both declare `frank-herbert` as a dependency, but filter for different tags.
+The same pattern applies to fiction. A "Golden Age Sci-Fi" compendium and a "Dune" compendium both declare `frank-herbert` as a dependency, with their respective system prompts selecting different works.
 
 ### 11.4 Domain Taxonomy Design
 
@@ -1984,7 +1589,7 @@ Each domain needs its own taxonomy — the organizational structure that chapter
 The complete source frontmatter schema is defined in section 3.3. In summary:
 
 **Universal required** (every source):
-`source_id`, `title`, `summary`, `source_type`, `credibility_tier`, `tags`, `raw_sources`, `ingestion_date_first`, `ingestion_date_last`, `content_changed_last`, `normalization_confidence`, `normalization_model`, `normalization_date`
+`source_id`, `title`, `summary`, `source_type`, `credibility_tier`, `raw_sources`, `ingestion_date_first`, `ingestion_date_last`, `content_changed_last`, `normalization_confidence`, `normalization_model`, `normalization_date`
 
 **Universal optional** (present when applicable):
 `author`, `date_published`, `origin_url`, `volatility`, `relations`, `issues`
@@ -2029,10 +1634,9 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 │  └── ...                           └── ...                     │
 │                                                                │
 │  example-org Organization (System Infrastructure)                │
-│  └── term-registry/               # controlled vocabulary     │
+│  └── corpus-registry/             # corpus discovery catalog   │
 │      ├── registry.toml             # registry metadata         │
-│      ├── tags/                     # one .toml file per term   │
-│      └── proposals/pending/        # unreviewed term proposals │
+│      └── corpora/                  # one .toml file per corpus │
 │                                                                │
 │  Forgejo Actions Runner                                        │
 │  └── on push: resolve corpora → mdbook build → deploy          │
@@ -2070,10 +1674,10 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Source of truth | Forgejo (git) | Version control, API access, Actions CI |
-| Source organization | Forgejo org (Corpus) | One repo per origin, rich frontmatter tags |
+| Source organization | Forgejo org (Corpus) | One repo per origin, summary-driven discovery |
+| Corpus Registry | Flat TOML files in git | Tiered summaries for progressive corpus discovery |
 | Compendium format | Markdown + mdBook | Human-readable source, clean output, built-in search |
 | Source linkage | Declared dependencies in `compendium.toml` | Pin origins to commits, resolve at build time with sparse checkout |
-| Term Registry | Flat TOML files in git | Controlled vocabulary for tags and entities |
 | Hosting | Caddy on external VPS | Simple, reliable, automatic HTTPS, basic auth |
 | CI/CD | Forgejo Actions | Integrated with repos, self-hosted runner |
 | Agent platform | Claude (skill / Code) | Primary AI interface, flexible access patterns |
@@ -2092,7 +1696,7 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 
 ---
 
-## Appendix A: Example Corpus Configurations
+## Appendix A: Example Compendium Configurations
 
 ### A.1 Commodore VE (Automotive)
 
@@ -2100,6 +1704,8 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 Corpora: g8board, ls1tech, gm, holden, penrite
 Taxonomy: by vehicle system (engine, drivetrain, suspension, electrical, ...)
 Agent persona: Expert mechanic familiar with the VE/WM platform
+System prompt: Platform equivalencies (G8 = VE Commodore), engine options
+  (L76, LS3, LY7), common failure modes, TSB cross-references
 ```
 
 ### A.2 Dune Universe (Fiction)
@@ -2108,6 +1714,8 @@ Agent persona: Expert mechanic familiar with the VE/WM platform
 Corpora: frank-herbert, brian-herbert, denis-villeneuve, scifi-channel-dune
 Taxonomy: by world element (characters, factions, locations, technology, themes, adaptations)
 Agent persona: Dune scholar with access to all canonical and adaptation material
+System prompt: Franchise scope (novels, films, TV, games), key character
+  relationships, source selection guidance for multi-work corpora
 ```
 
 ### A.3 Economics (Academic)
@@ -2116,15 +1724,19 @@ Agent persona: Dune scholar with access to all canonical and adaptation material
 Corpora: marxists-org, jstor-economics, wikipedia-economics, ...
 Taxonomy: by school of thought and topic area
 Agent persona: Economics professor with breadth across schools of thought
+System prompt: Schools of thought boundaries, key theorists, source selection
+  guidance for broad economic content
 ```
 
 ### A.4 Socialism (Focused Academic)
 
 ```
-Corpora: marxists-org, jstor-economics (subset), ...
-Filters: require_any = ["socialism", "marxism", "class-theory", ...]
+Corpora: marxists-org, jstor-economics, ...
 Taxonomy: by theoretical framework and historical application
 Agent persona: Political theory specialist focused on socialist thought
+System prompt: Scope limited to socialist theory and its applications,
+  source selection from shared corpora focuses on class analysis, labor
+  theory, historical socialist movements
 ```
 
 ---
