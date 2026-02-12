@@ -172,14 +172,6 @@ A platform is never a voice. Reddit is not a corpus — r/MechanicAdvice is. You
 
 All material produced by a single entity belongs in one corpus, regardless of document type or format. General Motors publishes service manuals, technical service bulletins, recall notices, press releases, dealer bulletins, and marketing brochures. These are all one voice: GM.
 
-**Before (incorrect — split by document type):**
-```
-corpus/gm-service-manuals/
-corpus/gm-bulletins/
-corpus/gm-press-releases/
-```
-
-**After (correct — one entity, one corpus):**
 ```
 corpus/gm/
 ```
@@ -208,7 +200,7 @@ When deciding whether something is one corpus or multiple:
 
 3. **Is the split based on document type or entity?** If you're splitting because "service manuals are different from press releases," stop — that's a `content_type` distinction, not a corpus distinction. If you're splitting because "GM and Holden are different manufacturers," proceed — those are different entities even though they shared a corporate parent.
 
-#### Updated Examples
+#### Examples
 
 | Voice (Entity) | Corpus Repo | Contains |
 |----------------|-------------|----------|
@@ -1633,7 +1625,7 @@ This serves as an alternative access path — useful for agents running in envir
 5. Build or configure the ingestion pipeline appropriate to the content type
 6. Build or configure the extraction pipeline — content-type-specific scripts that produce extraction sidecars (see section 3.8.2). For simple text content, a passthrough extractor is sufficient
 7. Begin processing source material through the three-phase pipeline: ingest → extract → normalize (see section 3.8)
-8. The corpus is now discoverable — its `{corpus_id}.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 4)
+8. The corpus is discoverable — its `{corpus_id}.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 4)
 
 ### 11.2 Adding a New Compendium
 
