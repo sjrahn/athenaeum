@@ -12,6 +12,9 @@ addenda_incorporated:
 changelog:
   - version: 2.0
     date: 2026-02-12
+    summary: "Reorder §3 (pipeline before document format), simplify document frontmatter (summary→description, per-source fields moved to sidecar, add sources array), upgrade sidecar format (content_type_hint→content_type, add volatility/ingestion dates/author/date_published, move extended schemas to sidecar)"
+  - version: 2.0
+    date: 2026-02-12
     summary: "Restructure corpus/origin terminology (corpus = entity repo, origin = raw content source within corpus), replace manifest.toml with backlog.toml + document frontmatter, replace extracted/ directory with per-file extraction sidecars in ingested/, update registration TOML schema with per-origin configs"
   - version: 2.0
     date: 2026-02-12
@@ -45,13 +48,13 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ## 2. Architecture Overview
 
-Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested, extracted, and normalized into markdown with rich summaries. Each corpus carries tiered summaries in its `{corpus_id}.toml` that enable **corpus discovery** via progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain by fetching these summaries from the Forgejo API without cloning every corpus. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant documents based on summaries, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
+Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested, extracted, and normalized into markdown with rich descriptions. Each corpus carries tiered summaries in its `{corpus_id}.toml` that enable **corpus discovery** via progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain by fetching these summaries from the Forgejo API without cloning every corpus. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant documents based on descriptions, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
 ### 2.1 Corpus Layer
 
-A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, processed through a three-phase pipeline — ingestion, extraction, and normalization — into markdown files with structured frontmatter. Each file carries a summary that captures what the document contains and why it's useful.
+A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, processed through a three-phase pipeline — ingestion, extraction, and normalization — into markdown files with structured frontmatter. Each file carries a description that captures what the document contains and why it's useful.
 
 A corpus can have multiple **origins** — distinct raw content sources that feed into it. A forum corpus has one origin (the forum itself). A manufacturer corpus might have several: a PDF archive of service manuals, a web database of technical bulletins, and a press release feed. Each origin has its own ingestion method and reingest configuration, declared in the corpus's registration file.
 
@@ -60,7 +63,7 @@ Key properties:
 - **One voice, one corpus.** A forum is a corpus. An author is a corpus. A YouTube channel is a corpus. A manufacturer's entire catalog of publications is a corpus. The organizing principle is *who produced the information*, not what it's about.
 - **Multiple origins, one corpus.** A single entity may publish through multiple channels and formats. These are different origins within the same corpus — the corpus groups them by voice, and each origin's ingestion pipeline handles format differences.
 - **No editorial filtering.** A corpus contains everything from its source, summarized but unfiltered. Topical selection happens downstream at the compendium layer.
-- **Summary-driven discovery.** Every normalized file carries a summary that enables downstream selection without reading the full content. An LLM reading the summary can determine whether the document is relevant to a given domain.
+- **Summary-driven discovery.** Every normalized file carries a description that enables downstream selection without reading the full content. An LLM reading the description can determine whether the document is relevant to a given domain.
 
 The range of corpora is deliberately broad: `g8board` (an automotive forum), `frank-herbert` (an author's collected works), `gm` (a manufacturer's manuals, bulletins, and press releases), `engineering-explained` (a YouTube channel's transcripts), `marxists-org` (a text archive). Each is independent and self-contained.
 
@@ -78,7 +81,7 @@ At compendium setup time, tooling lists all repos in the Corpus organization via
 
 ### 2.3 Compendium Layer
 
-A compendium defines a knowledge domain and synthesizes a structured reference work from corpus material. It does not store source content — it declares which corpora it draws from, selects relevant documents using an LLM that reads document summaries, and synthesizes a coherent, browsable reference from the selected material.
+A compendium defines a knowledge domain and synthesizes a structured reference work from corpus material. It does not store source content — it declares which corpora it draws from, selects relevant documents using an LLM that reads document descriptions, and synthesizes a coherent, browsable reference from the selected material.
 
 Key properties:
 
@@ -87,7 +90,7 @@ Key properties:
 - **System prompt as domain bootstrap.** The compendium's system prompt provides the LLM with domain-specific context: key relationships, disambiguation guidance, scope boundaries. This is iterable — when synthesis produces gaps or errors, the system prompt is refined.
 - **Synthesis output.** Selected documents are synthesized into manuscripts — structured, cross-referenced markdown that gets compiled into a browsable, textbook-like reference.
 
-For example, a `dune` compendium declares dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`. Its system prompt defines the Dune franchise scope and key relationships. During synthesis, the LLM reads document summaries from each corpus — Frank Herbert's *Dune* and *Dune Messiah* are selected because their summaries clearly relate to the Dune universe, while *Man of Two Worlds* (a comedy collaboration) and *The Dragon in the Sea* (a submarine thriller) are skipped. From `denis-villeneuve`, the Dune screenplays are selected while *Blade Runner 2049* and *Arrival* are not. The LLM's semantic understanding, guided by the system prompt, makes these selections — no tag matching required.
+For example, a `dune` compendium declares dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`. Its system prompt defines the Dune franchise scope and key relationships. During synthesis, the LLM reads document descriptions from each corpus — Frank Herbert's *Dune* and *Dune Messiah* are selected because their descriptions clearly relate to the Dune universe, while *Man of Two Worlds* (a comedy collaboration) and *The Dragon in the Sea* (a submarine thriller) are skipped. From `denis-villeneuve`, the Dune screenplays are selected while *Blade Runner 2049* and *Arrival* are not. The LLM's semantic understanding, guided by the system prompt, makes these selections — no tag matching required.
 
 See section 5 for the detailed compendium structure and synthesis process.
 
@@ -118,11 +121,11 @@ The full pipeline from source to published reference:
        ▼
   ┌─────────────────────────────────────────────┐
   │  Phase 3: Normalization                     │
-  │  LLM-driven interpretation                  │  summaries, credibility,
+  │  LLM-driven interpretation                  │  descriptions, credibility,
   │  → documents/{document_id}.md               │  relations, frontmatter
   └─────────────────────────────────────────────┘
        │
-       │  normalized markdown with summary
+       │  normalized markdown with description
        ▼
   ┌─────────────────────────────────────────────┐
   │  Corpus Discovery                           │
@@ -143,7 +146,7 @@ The full pipeline from source to published reference:
   Published Reference (browsable textbook + AI agent context)
 ```
 
-Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as a raw epub file (ingestion). Extraction produces a markdown sidecar with chapter text and metadata alongside the raw file. The normalization agent then interprets the sidecar into the final normalized markdown with a summary describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The `frank-herbert.toml` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 summaries fetched from all corpora immediately identify `frank-herbert` as relevant. At synthesis time, the LLM reads individual document summaries within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as a raw epub file (ingestion). Extraction produces a markdown sidecar with chapter text and metadata alongside the raw file. The normalization agent then interprets the sidecar into the final normalized markdown with a description describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The `frank-herbert.toml` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 summaries fetched from all corpora immediately identify `frank-herbert` as relevant. At synthesis time, the LLM reads individual document descriptions within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
 
 ---
 
@@ -173,10 +176,10 @@ A platform is never a voice. Reddit is not a corpus — r/MechanicAdvice is. You
 All material produced by a single entity belongs in one corpus, regardless of document type or format. General Motors publishes service manuals, technical service bulletins, recall notices, press releases, dealer bulletins, and marketing brochures. These are all one voice: GM.
 
 ```
-corpus/gm/
+corpus/general-motors/
 ```
 
-Within the `gm` corpus, individual documents use `content_type` to distinguish `service_manual` from `technical_bulletin` from `product_documentation` from `article`. Credibility tiers handle trust differences between a factory service manual (`authoritative`) and a marketing brochure (`expert` or lower). The corpus only answers: **who said this.**
+Within the `general-motors` corpus, individual documents use `content_type` to distinguish `service_manual` from `technical_bulletin` from `product_documentation` from `article`. Credibility tiers handle trust differences between a factory service manual (`authoritative`) and a marketing brochure (`expert` or lower). The corpus only answers: **who said this.**
 
 #### Why Not Consolidate Similar Voices?
 
@@ -315,7 +318,7 @@ periodic_threshold_days = 90
 
 Each `[[origins]]` entry represents a distinct raw content source within the corpus. A single-origin corpus (like g8board) has one `[[origins]]` entry. A multi-origin corpus (like GM) has one entry per ingestion path. The `origin_type`, `origin_url`, `ingestion_method`, and `active` fields live at the origin level because they describe the raw content source, not the corpus as a whole.
 
-Each origin's `[origins.reingest]` section defines the default volatility for documents from that origin and the thresholds for re-ingestion priority. Individual documents can override `default_volatility` via the `volatility` field in their frontmatter. The ingestion scanner compares each document's `ingestion_date_last` against the appropriate threshold to generate a re-ingestion priority queue. If a document spans multiple origins, set `volatility` explicitly in the document frontmatter.
+Each origin's `[origins.reingest]` section defines the default volatility for documents from that origin and the thresholds for re-ingestion priority. Individual source files can override `default_volatility` via the `volatility` field in their extraction sidecar. The ingestion scanner compares each sidecar's `ingestion_date_last` against the appropriate threshold to generate a re-ingestion priority queue. If a document spans multiple origins, each sidecar carries its own volatility from its respective origin.
 
 The `corpus_prefix` ensures globally unique document IDs across all corpora. Prefixes are 4 uppercase letters (allowing for 456,976 unique corpus prefixes). Every normalized file in this repo will have a document ID like `G8BD.0001`, `G8BD.0042`, etc. The numeric portion is zero-padded to 4 digits, supporting up to 9,999 documents per corpus. When a compendium cites `G8BD.0042`, it unambiguously resolves to a specific file in a specific corpus repo.
 
@@ -412,7 +415,7 @@ status = "unavailable"
 notes = "Co-authored with Bill Ransom, no digital edition found"
 ```
 
-The `content_type` field in each document file's frontmatter distinguishes what kind of content it is (`service_manual`, `technical_bulletin`, `article`, `product_documentation`). The backlog and corpus just track that it all comes from the same entity.
+The `content_type` field on each extraction sidecar distinguishes what kind of content it is (`service_manual`, `technical_bulletin`, `article`, `product_documentation`). The backlog and corpus just track that it all comes from the same entity.
 
 **Status values** (backlog only — captured documents exist as files, not backlog entries):
 
@@ -458,44 +461,99 @@ Ingestion Backlog:
   Corpus/gm:               75 captured, 120 pending (20 high, 60 medium, 40 low), 5 deferred
 ```
 
-### 3.3 Normalized Document Format
+### 3.3 Normalization Pipeline
 
-Every normalized document file is a single markdown file with structured YAML frontmatter. The frontmatter follows a rigid schema: a set of universal fields present on every document, plus extended fields determined by the `content_type`. This consistency enables tooling to validate, query, and compare documents across any corpus.
+The path from raw source to normalized markdown is a three-phase pipeline. Formalizing these phases makes the pipeline reproducible, auditable, and independently improvable — you can re-normalize from improved models without re-extracting, and you can re-extract with better tools without re-downloading.
 
-#### 3.3.1 Universal Required Fields
+#### 3.3.1 Phase 1: Ingestion
 
-Every document file must include all of these fields, no exceptions:
+**What:** Acquire raw content from external sources.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `document_id` | string | `XXXX.####` globally unique identifier (4-letter corpus prefix + 4-digit number) |
-| `title` | string | Short descriptive label for the document file (not necessarily the work's canonical title) |
-| `summary` | string | One-to-three sentence description of what this document contains and why it's useful. Generated during normalization. Enables synthesis-time relevance assessment without reading the full content |
-| `content_type` | enum | Declares which extended schema applies. See section 3.3.3 for valid types |
-| `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.4 |
-| `ingestion_date_first` | date | When this document was originally captured |
-| `ingestion_date_last` | date | When we last checked/re-ingested from the upstream source (same as `ingestion_date_first` on initial capture) |
-| `content_changed_last` | date | When the upstream content last actually differed from what we had. Used by the ingestion layer to assess source stability |
-| `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.4.1 |
-| `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`) |
-| `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
+**How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy.
 
-#### 3.3.2 Universal Optional Fields
+**Output:** Raw files in `ingested/{document_id}/` with standardized names: `{document_id}_XXX.{ext}` (three-digit sequence number, original extension preserved). Multiple files per document are common (e.g., an HTML capture plus a Wayback snapshot).
 
-These fields are present on most documents but legitimately absent on some:
+Ingestion is already defined by the corpus repository structure (section 3.2.1) and the backlog tracking system (section 3.2.2). This phase simply acquires content; it performs no transformation.
 
-| Field | Type | When absent |
-|-------|------|-------------|
-| `author` | string | The name of the identifiable person who produced this content. Reserved for real, identifiable people — anonymous forum posts and Reddit posts use the `username` extended field instead (a plain string handle, not tracked or disambiguated). Anonymous or unsigned government documents omit this field entirely. If a forum poster is later identified as a real person, the `author` field can be added alongside the `username` field |
-| `date_published` | date | Undated historical texts, some web content |
-| `origin_url` | string | Physical books, offline documents |
-| `volatility` | enum | `static`, `unlikely`, `periodic`, `active`. Omit to inherit the default from the document's origin in `{corpus_id}.toml`. Only set per-document as an override when a document's volatility differs from the origin norm (e.g., an unusually active thread on a mostly-dormant forum). If a document spans multiple origins, set explicitly |
-| `relations` | array | Omit if no explicit references to other documents. See section 3.6 |
-| `issues` | array | Omit if no known quality or completeness problems. See section 3.5 |
+#### 3.3.2 Phase 2: Extraction
 
-#### 3.3.3 Extended Schemas by `content_type`
+**What:** Programmatic transformation of raw files into clean, structured extraction sidecars.
 
-The `content_type` field determines which additional fields are required or available. This is a closed enum — adding a new type requires defining its extended schema.
+**How:** Content-type-specific scripts — no LLM involvement, deterministic processing only.
+
+**Output:** One extraction sidecar per raw file (`{document_id}_XXX.extract.md`) alongside the raw file in `ingested/{document_id}/`, plus assets saved to `assets/{document_id}/`.
+
+**Key principle:** Extraction captures *what's there* without editorial judgment. No summaries, no credibility assessment, no relevance decisions. It strips away format-specific noise (HTML chrome, PDF layout artifacts, ad content) and produces structured text that the normalization agent can interpret.
+
+Operations that belong in extraction:
+
+| Operation | Why extraction |
+|-----------|---------------|
+| Strip HTML chrome/ads | Rule-based, programmatic |
+| OCR a scanned PDF | Tool-driven, no semantic judgment |
+| Transcribe audio (Whisper) | Tool-driven, no semantic judgment |
+| Extract text from epub | Programmatic |
+| Parse forum thread structure (post boundaries, usernames, dates) | Pattern-based |
+| Pull images from HTML/PDF | Programmatic |
+| PDF table recognition | Tool-driven (even if ML-assisted internally) |
+
+**Trivial extraction is fine.** A clean text file gets `extraction_method: "passthrough"` — the pipeline is uniform even when a phase does minimal work.
+
+**Extraction sidecar format.** Each sidecar is a markdown file with YAML frontmatter containing extraction metadata, paired with the extracted clean content as the body:
+
+```yaml
+---
+document_id: "G8BD.0042"
+sequence: 1
+content_type: "forum_post"
+origin: "forum"
+original_url: "https://www.g8board.com/forum/thread-12345"
+original_filename: "thread.html"
+capture_date: "2026-01-15"
+ingestion_date_last: "2026-06-15"
+content_changed_last: "2026-01-20"
+date_published: "2019-03-15"
+volatility: "unlikely"
+extraction_method: "g8board-scraper"
+extraction_tool: "athenaeum-extract v0.3"
+extraction_date: "2026-01-20"
+assets:
+  - filename: "bearing-removal.jpg"
+    context: "Shows bearing removal tool setup"
+  - filename: "torque-sequence.png"
+    context: "Torque sequence diagram for hub assembly"
+
+# extended: forum_post
+username: "TorqueDave"
+thread_url: "https://www.g8board.com/forum/thread-12345"
+reply_count: 47
+---
+
+[extracted clean text content]
+```
+
+The sidecar frontmatter follows these conventions:
+
+- **`document_id`** and **`sequence`** — identify which document and which raw file this sidecar corresponds to.
+- **`content_type`** — authoritative content type. The extraction script knows what it's processing — this is a definitive classification, not a hint. Closed enum (see section 3.3.2.1 for valid types and their extended fields).
+- **`origin`** — which origin within the corpus this raw file came from (matches an `origin_id` in `{corpus_id}.toml`).
+- **`original_url`** and **`original_filename`** — provenance of the raw file before standardized naming.
+- **`capture_date`** — when the raw file was originally acquired.
+- **`ingestion_date_last`** — when we last checked/re-ingested from the upstream source. Same as `capture_date` on initial capture. Used by the ingestion scanner to prioritize re-ingestion.
+- **`content_changed_last`** — when the upstream content last actually differed from what we had. Used to assess source stability.
+- **`author`** — the identifiable person who produced this content. Omit for anonymous content (anonymous forum posts use the `username` extended field instead).
+- **`date_published`** — when the original content was published. Omit for undated content.
+- **`volatility`** — override for the origin's `default_volatility`. Only set when this source's volatility differs from the origin norm. One of: `static`, `unlikely`, `periodic`, `active`.
+- **`extraction_method`**, **`extraction_tool`**, **`extraction_date`** — extraction provenance, enabling targeted bulk re-extraction when tools improve.
+- **`assets`** — filenames and context strings for extracted images/diagrams saved to `assets/{document_id}/`.
+
+Extended fields are content-type-specific and follow the sidecar's `content_type`. These are programmatically determinable fields that the extraction script populates based on what it's processing. See section 3.3.2.1 for the extended fields defined for each content type.
+
+**Asset extraction.** Images, diagrams, and other embedded content are extracted during this phase and saved to `assets/{document_id}/`. The `assets` array in the sidecar frontmatter provides filenames and context strings that the normalization agent uses to produce correct relative paths and alt text in the final markdown document.
+
+##### 3.3.2.1 Extended Sidecar Fields by `content_type`
+
+The `content_type` field determines which additional fields the extraction script populates on the sidecar. This is a closed enum — adding a new type requires defining its extended fields.
 
 ##### `forum_post`
 
@@ -506,7 +564,6 @@ Covers: g8board, ls1tech, performanceforums, and similar threaded discussion sit
 | `username` | yes | string | Exact username of the poster on the forum (plain string, not a registry term) |
 | `thread_url` | yes | string | Direct link to the thread |
 | `reply_count` | no | int | Number of replies — engagement signal |
-| `is_solution` | no | bool | Whether this was marked or widely accepted as the answer |
 
 ##### `reddit_post`
 
@@ -519,7 +576,6 @@ Covers: Reddit posts and threads. Separated from `forum_post` because Reddit's v
 | `post_url` | yes | string | Permalink to the post |
 | `score` | no | int | Net upvotes — engagement and credibility signal |
 | `comment_count` | no | int | Number of comments |
-| `post_type` | no | enum | `discussion`, `question`, `guide`, `review` |
 
 ##### `book`
 
@@ -553,7 +609,6 @@ Covers: TSBs, recall notices, errata, and similar official corrections or adviso
 | `bulletin_number` | yes | string | Official identifier (e.g., PI0597B) |
 | `affected_models` | yes | string[] | Which models are covered |
 | `affected_years` | yes | string[] | Which years are covered |
-| `superseded_by` | no | string | Bulletin number if this has been replaced |
 
 ##### `video`
 
@@ -562,7 +617,6 @@ Covers: YouTube videos, instructional content, any video-first source. Each vide
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
 | `duration_seconds` | yes | int | Video length |
-| `has_visual_content` | yes | bool | Whether visual elements are meaningful to the content (a hands-on repair demo vs. a talking head) |
 | `channel_name` | no | string | Channel or creator name, if not obvious from the origin |
 
 ##### `podcast`
@@ -615,7 +669,83 @@ Covers: Product datasheets, catalogs, user guides, safety data sheets, and manuf
 | `document_type` | no | enum | `datasheet`, `catalog`, `guide`, `sds` |
 | `part_numbers` | no | string[] | Associated part numbers |
 
-#### 3.3.4 Complete Example
+#### 3.3.3 Phase 3: Normalization
+
+**What:** LLM-driven interpretation of extracted content into final normalized markdown with full frontmatter.
+
+**How:** A normalization agent consuming the extraction sidecars, guided by the frontmatter schema and corpus context.
+
+**Output:** `documents/{document_id}.md` with complete YAML frontmatter (required fields, applicable optional fields, and the `sources` array linking to extraction sidecars) and structured markdown content.
+
+**The normalization agent receives:**
+
+1. Extraction sidecars for the document (one or more `.extract.md` files from `ingested/{document_id}/`)
+2. `{corpus_id}.toml` context (corpus metadata, origin configs, credibility defaults)
+3. The frontmatter schema (required fields, optional fields, and the sources array linking to extraction sidecars)
+4. Content-type-specific guidance (how to structure forum threads vs. book chapters vs. video transcripts)
+
+**The normalization agent is responsible for:**
+
+| Operation | Why normalization |
+|-----------|-------------------|
+| Generate `description` | Requires content understanding |
+| Assess `credibility_tier` | Requires domain judgment |
+| Identify `relations` | Requires cross-document awareness |
+| Flag `issues` | Requires quality judgment |
+| Structure the markdown body | Requires editorial decisions about presentation |
+| Populate the `sources` array | Requires mapping sidecars to the document they produced |
+
+The spec defines what the normalization agent receives and produces without prescribing implementation form. The normalization system prompt could live in the corpus repo (for corpus-specific customization) or be standardized tooling (for consistency across corpora).
+
+#### 3.3.4 Phase Boundaries and Re-processing
+
+The three phases are designed to be independently re-runnable:
+
+- **Re-ingestion** (Phase 1 only): Re-acquire from the upstream source when content may have changed. Does not trigger re-extraction or re-normalization unless the ingested content actually differs.
+- **Re-extraction** (Phase 2 only): Re-create sidecars from existing ingested files when extraction tools improve (e.g., "find all documents extracted with tesseract v4 and re-extract with v5"). The `extraction_method` and `extraction_tool` sidecar fields enable targeted bulk re-extraction.
+- **Re-normalization** (Phase 3 only): Re-normalize from existing extraction sidecars when LLM models improve. This is the most common re-processing scenario and the cheapest — no re-downloading, no re-extracting.
+
+Extraction sidecars are persisted alongside raw files in `ingested/` to enable this independence. Extraction is often the expensive step (OCR, Whisper transcription), and the resulting sidecars are small compared to raw files. Compendiums only clone `documents/`, `assets/`, and `{corpus_id}.toml` — the `ingested/` directory (raw files and sidecars) is never needed downstream.
+
+### 3.4 Normalized Document Format
+
+Every normalized document file is a single markdown file with structured YAML frontmatter. The frontmatter carries document identity, a description for discovery, quality metadata, and a lightweight `sources` array linking to the extraction sidecars that were used to produce it. Per-source metadata — content type, author, dates, and content-type-specific fields — lives on the extraction sidecars (section 3.3.2), not the document.
+
+#### 3.4.1 Required Fields
+
+Every document file must include all of these fields, no exceptions:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_id` | string | `XXXX.####` globally unique identifier (4-letter corpus prefix + 4-digit number) |
+| `title` | string | Short descriptive label for the document file (not necessarily the work's canonical title) |
+| `description` | string | One-to-three sentence description of what this document contains and why it's useful. Generated during normalization. Enables synthesis-time relevance assessment without reading the full content |
+| `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.5 |
+| `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.5.1 |
+| `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`) |
+| `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
+| `sources` | array | One entry per raw file used to produce this document. See section 3.4.3 |
+
+#### 3.4.2 Optional Fields
+
+These fields are present on some documents but legitimately absent on most:
+
+| Field | Type | When absent |
+|-------|------|-------------|
+| `relations` | array | No explicit references to other documents. See section 3.7 |
+| `issues` | array | No known quality or completeness problems. See section 3.6 |
+
+#### 3.4.3 Sources Array
+
+Each entry in the `sources` array links to one extraction sidecar used to produce this document. The sidecar (in `ingested/{document_id}/`) holds the full per-source metadata — content type, author, dates, and content-type-specific fields. The document frontmatter carries only a reference and a human-readable identifier.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_id` | string | Identifies the raw file and its sidecar: `{document_id}_XXX` (e.g., `G8BD.0042_001`) |
+| `origin_url` | string | URL of the original content. Use `original_filename` instead for offline sources |
+| `original_filename` | string | Filename of the original content. Use when `origin_url` is absent |
+
+#### 3.4.4 Complete Example
 
 A forum post document with all applicable fields:
 
@@ -623,20 +753,12 @@ A forum post document with all applicable fields:
 ---
 document_id: "G8BD.0042"
 title: "DIY rear wheel bearing replacement with diagnosis walkthrough"
-summary: "Detailed step-by-step guide for diagnosing and replacing rear wheel bearings on the Pontiac G8, including jacking points, torque specs, and tool list. Author reports failure at 82k miles with symptoms of humming at highway speeds progressing to grinding."
-content_type: "forum_post"
+description: "Detailed step-by-step guide for diagnosing and replacing rear wheel bearings on the Pontiac G8, including jacking points, torque specs, and tool list. Author reports failure at 82k miles with symptoms of humming at highway speeds progressing to grinding."
 credibility_tier: "community_validated"
-ingestion_date_first: "2026-01-20"
-ingestion_date_last: "2026-06-15"
-content_changed_last: "2026-01-20"
 normalization_confidence: 0.92
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: "2026-01-20"
 
-# universal optional (author omitted — anonymous forum poster, see username below)
-date_published: "2019-03-15"
-origin_url: "https://www.g8board.com/forum/thread-12345"
-volatility: "unlikely"
 relations:
   - type: "references"
     document_id: "G8BD.0038"
@@ -649,17 +771,15 @@ issues:
     remediation: "wayback_snapshot"
     resolved: true
 
-# extended: forum_post
-username: "TorqueDave"
-thread_url: "https://www.g8board.com/forum/thread-12345"
-reply_count: 47
-is_solution: true
+sources:
+  - source_id: "G8BD.0042_001"
+    origin_url: "https://www.g8board.com/forum/thread-12345"
 ---
 
 [normalized markdown content]
 ```
 
-### 3.4 Credibility Tiers
+### 3.5 Credibility Tiers
 
 Each document is rated for trustworthiness:
 
@@ -673,13 +793,13 @@ Each document is rated for trustworthiness:
 
 For fiction origins, `authoritative` means the primary text itself. `expert` would be published literary criticism. `community_validated` might be widely-accepted fan analysis. The tiers adapt naturally to any domain.
 
-#### 3.4.1 Normalization Confidence
+#### 3.5.1 Normalization Confidence
 
-The `normalization_confidence` field (`0.0`–`1.0`) rates the quality of the conversion process itself — how accurately the raw source was captured and converted to markdown. This is distinct from credibility (trustworthiness of claims) and distinct from the summary (what it's about).
+The `normalization_confidence` field (`0.0`–`1.0`) rates the quality of the conversion process itself — how accurately the raw source was captured and converted to markdown. This is distinct from credibility (trustworthiness of claims) and distinct from the description (what it's about).
 
 A perfectly transcribed YouTube video might have high normalization confidence but low credibility tier. A badly OCR'd service manual might have low normalization confidence but authoritative credibility.
 
-### 3.5 Document Issues
+### 3.6 Document Issues
 
 Normalized documents can declare known quality or completeness problems via the `issues` array. This is distinct from `normalization_confidence` — confidence rates how well the conversion went for what we had, while issues flag what we're missing or what has degraded.
 
@@ -699,7 +819,7 @@ issues:
     resolved: true
 ```
 
-#### 3.5.1 Issue Types
+#### 3.6.1 Issue Types
 
 | Type | Description |
 |------|-------------|
@@ -710,7 +830,7 @@ issues:
 | `encoding_corruption` | Garbled text, mojibake, or mangled characters |
 | `format_loss` | Tables, diagrams, code blocks, or formatting that didn't survive conversion |
 
-#### 3.5.2 Severity Levels
+#### 3.6.2 Severity Levels
 
 | Severity | Meaning |
 |----------|---------|
@@ -718,7 +838,7 @@ issues:
 | `major` | Significant information loss but document is still partially useful |
 | `minor` | Cosmetic or non-essential content affected |
 
-#### 3.5.3 Remediation Actions
+#### 3.6.3 Remediation Actions
 
 | Remediation | Description |
 |-------------|-------------|
@@ -742,7 +862,7 @@ Unresolved Issues for Corpus/g8board:
   minor: 15 documents
 ```
 
-### 3.6 Document Relations
+### 3.7 Document Relations
 
 Normalized documents can declare explicit relationships to other documents. These capture **intrinsic relationships** — objective facts about the document that are evident at normalization time. A forum post linked to another thread. A novel is the sequel to another novel. A revised TSB supersedes an earlier one. These are unchallengeable observations captured when the material is being read.
 
@@ -770,13 +890,14 @@ relations:
 | `references` | Explicitly cites or links to | Forum post → TSB it mentions |
 | `adaptation_of` | Creative adaptation of original material | Screenplay → novel |
 | `supersedes` | Replaces or updates | Revised TSB → original TSB |
+| `superseded_by` | Has been replaced by | Original TSB → revised TSB |
 | `contradicts` | Explicitly disagrees with | One forum post refuting another |
 
 **Cross-corpus references** are particularly valuable. A g8board post may reference a GM TSB that lives in a different corpus repo. At normalization time, the referenced document's ID may not be known yet. The `unresolved` field captures the reference in human-readable form. As the corpus ecosystem grows, a periodic reconciliation pass can attempt to resolve these against all known document IDs.
 
 **Discovered relationships** — connections identified during synthesis rather than present in the document itself ("this post describes the same failure mode as that manual section") — belong in the compendium layer, not document frontmatter. Document relations are strictly what the document itself declares or implies.
 
-#### 3.6.1 Corpus Discovery via Relations
+#### 3.7.1 Corpus Discovery via Relations
 
 Document relations serve as a **dependency discovery mechanism** for compendiums. When building a compendium, a build-time analysis can scan all `relations` across filtered documents, collect every `document_id` prefix that points to a corpus not currently declared as a dependency, and surface it as a recommendation:
 
@@ -796,35 +917,25 @@ Corpus Dependency Analysis for Compendium/commodore-ve:
 
 This turns the relation graph into an organic growth signal — the documents themselves tell you which corpora you should be pulling in. The more references to a missing corpus, the stronger the signal that including it would improve synthesis quality.
 
-### 3.7 Exotic Origin Types
+### 3.8 Exotic Origin Types
 
-The corpus-as-repo pattern supports any content type. The only requirement is a pipeline that can ingest, extract, and normalize the content into markdown with frontmatter. The extraction phase (see section 3.8) handles format-specific programmatic transformation; the normalization phase handles LLM-driven interpretation.
+The corpus-as-repo pattern supports any content type. The only requirement is a pipeline that can ingest, extract, and normalize the content into markdown with frontmatter. The extraction phase (see section 3.3) handles format-specific programmatic transformation; the normalization phase handles LLM-driven interpretation.
 
-**YouTube channels:** Ingestion downloads the video/audio. Extraction runs a transcription tool (e.g., Whisper) and captures frame data, producing a markdown sidecar with timestamped transcript segments and visual content metadata. The normalization agent then interprets the sidecar into final markdown with summary, credibility assessment, and structured frontmatter. Each video is one document file.
+**YouTube channels:** Ingestion downloads the video/audio. Extraction runs a transcription tool (e.g., Whisper) and captures frame data, producing a markdown sidecar with timestamped transcript segments and visual content metadata. The normalization agent then interprets the sidecar into final markdown with description, credibility assessment, and structured frontmatter. Each video is one document file.
 
 ```yaml
 ---
 document_id: "ENEX.0017"
 title: "Engineering Explained — Why Direct Injection Causes Carbon Buildup"
-summary: "Technical explainer covering the mechanism by which direct injection engines accumulate carbon deposits on intake valves, why port injection doesn't have this problem, and what solutions exist including walnut blasting and dual injection systems."
-content_type: "video"
+description: "Technical explainer covering the mechanism by which direct injection engines accumulate carbon deposits on intake valves, why port injection doesn't have this problem, and what solutions exist including walnut blasting and dual injection systems."
 credibility_tier: "expert"
-ingestion_date_first: "2026-02-01"
-ingestion_date_last: "2026-02-01"
-content_changed_last: "2026-02-01"
 normalization_confidence: 0.85
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: "2026-02-01"
 
-# universal optional
-author: "Engineering Explained"
-date_published: "2021-06-14"
-origin_url: "https://youtube.com/watch?v=..."
-volatility: "static"
-
-# extended: video
-duration_seconds: 847
-has_visual_content: true
+sources:
+  - source_id: "ENEX.0017_001"
+    origin_url: "https://youtube.com/watch?v=..."
 ---
 
 [transcript with timestamps and descriptive notes for visual content]
@@ -835,120 +946,6 @@ has_visual_content: true
 **Podcasts:** Similar to YouTube — extraction runs the transcription tool, normalization interprets the result. One episode per document file.
 
 **Government / institutional sources:** Extraction handles PDF text extraction, OCR, and table recognition. The normalization agent interprets the extracted content into markdown. Each publication is one document file.
-
-### 3.8 Normalization Pipeline
-
-The path from raw source to normalized markdown is a three-phase pipeline. Formalizing these phases makes the pipeline reproducible, auditable, and independently improvable — you can re-normalize from improved models without re-extracting, and you can re-extract with better tools without re-downloading.
-
-#### 3.8.1 Phase 1: Ingestion
-
-**What:** Acquire raw content from external sources.
-
-**How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy.
-
-**Output:** Raw files in `ingested/{document_id}/` with standardized names: `{document_id}_XXX.{ext}` (three-digit sequence number, original extension preserved). Multiple files per document are common (e.g., an HTML capture plus a Wayback snapshot).
-
-Ingestion is already defined by the corpus repository structure (section 3.2.1) and the backlog tracking system (section 3.2.2). This phase simply acquires content; it performs no transformation.
-
-#### 3.8.2 Phase 2: Extraction
-
-**What:** Programmatic transformation of raw files into clean, structured extraction sidecars.
-
-**How:** Content-type-specific scripts — no LLM involvement, deterministic processing only.
-
-**Output:** One extraction sidecar per raw file (`{document_id}_XXX.extract.md`) alongside the raw file in `ingested/{document_id}/`, plus assets saved to `assets/{document_id}/`.
-
-**Key principle:** Extraction captures *what's there* without editorial judgment. No summaries, no credibility assessment, no relevance decisions. It strips away format-specific noise (HTML chrome, PDF layout artifacts, ad content) and produces structured text that the normalization agent can interpret.
-
-Operations that belong in extraction:
-
-| Operation | Why extraction |
-|-----------|---------------|
-| Strip HTML chrome/ads | Rule-based, programmatic |
-| OCR a scanned PDF | Tool-driven, no semantic judgment |
-| Transcribe audio (Whisper) | Tool-driven, no semantic judgment |
-| Extract text from epub | Programmatic |
-| Parse forum thread structure (post boundaries, usernames, dates) | Pattern-based |
-| Pull images from HTML/PDF | Programmatic |
-| PDF table recognition | Tool-driven (even if ML-assisted internally) |
-
-**Trivial extraction is fine.** A clean text file gets `extraction_method: "passthrough"` — the pipeline is uniform even when a phase does minimal work.
-
-**Extraction sidecar format.** Each sidecar is a markdown file with YAML frontmatter containing extraction metadata, paired with the extracted clean content as the body:
-
-```yaml
----
-document_id: "G8BD.0042"
-sequence: 1
-origin: "forum"
-original_url: "https://www.g8board.com/forum/thread-12345"
-original_filename: "thread.html"
-capture_date: "2026-01-15"
-content_type_hint: "forum_post"
-extraction_method: "g8board-scraper"
-extraction_tool: "athenaeum-extract v0.3"
-extraction_date: "2026-01-20"
-assets:
-  - filename: "bearing-removal.jpg"
-    context: "Shows bearing removal tool setup"
-  - filename: "torque-sequence.png"
-    context: "Torque sequence diagram for hub assembly"
----
-
-[extracted clean text content]
-```
-
-The sidecar frontmatter follows these conventions:
-
-- **`document_id`** and **`sequence`** — identify which document and which raw file this sidecar corresponds to.
-- **`origin`** — which origin within the corpus this raw file came from (matches an `origin_id` in `{corpus_id}.toml`).
-- **`original_url`** and **`original_filename`** — provenance of the raw file before standardized naming.
-- **`capture_date`** — when the raw file was acquired.
-- **`content_type_hint`** — a hint, not authoritative — the normalization agent makes the final `content_type` determination.
-- **`extraction_method`**, **`extraction_tool`**, **`extraction_date`** — extraction provenance, enabling targeted bulk re-extraction when tools improve.
-- **`assets`** — filenames and context strings for extracted images/diagrams saved to `assets/{document_id}/`.
-- **No rigid schema per content type** — the body contains extracted text structured as the extractor sees fit. Follows the spec's philosophy of leaning on LLM understanding rather than rigid schemas.
-
-**Asset extraction.** Images, diagrams, and other embedded content are extracted during this phase and saved to `assets/{document_id}/`. The `assets` array in the sidecar frontmatter provides filenames and context strings that the normalization agent uses to produce correct relative paths and alt text in the final markdown document.
-
-#### 3.8.3 Phase 3: Normalization
-
-**What:** LLM-driven interpretation of extracted content into final normalized markdown with full frontmatter.
-
-**How:** A normalization agent consuming the extraction sidecars, guided by the frontmatter schema and corpus context.
-
-**Output:** `documents/{document_id}.md` with complete YAML frontmatter (all universal required fields, applicable optional and extended fields) and structured markdown content.
-
-**The normalization agent receives:**
-
-1. Extraction sidecars for the document (one or more `.extract.md` files from `ingested/{document_id}/`)
-2. `{corpus_id}.toml` context (corpus metadata, origin configs, credibility defaults)
-3. The frontmatter schema (universal required fields, optional fields, extended fields for the relevant content type)
-4. Content-type-specific guidance (how to structure forum threads vs. book chapters vs. video transcripts)
-
-**The normalization agent is responsible for:**
-
-| Operation | Why normalization |
-|-----------|-------------------|
-| Generate `summary` | Requires content understanding |
-| Assess `credibility_tier` | Requires domain judgment |
-| Identify `relations` | Requires cross-document awareness |
-| Flag `issues` | Requires quality judgment |
-| Determine `is_solution` for forum posts | Requires thread context understanding |
-| Structure the markdown body | Requires editorial decisions about presentation |
-| Populate all frontmatter fields | Requires interpretation of extraction metadata |
-
-The spec defines what the normalization agent receives and produces without prescribing implementation form. The normalization system prompt could live in the corpus repo (for corpus-specific customization) or be standardized tooling (for consistency across corpora).
-
-#### 3.8.4 Phase Boundaries and Re-processing
-
-The three phases are designed to be independently re-runnable:
-
-- **Re-ingestion** (Phase 1 only): Re-acquire from the upstream source when content may have changed. Does not trigger re-extraction or re-normalization unless the ingested content actually differs.
-- **Re-extraction** (Phase 2 only): Re-create sidecars from existing ingested files when extraction tools improve (e.g., "find all documents extracted with tesseract v4 and re-extract with v5"). The `extraction_method` and `extraction_tool` sidecar fields enable targeted bulk re-extraction.
-- **Re-normalization** (Phase 3 only): Re-normalize from existing extraction sidecars when LLM models improve. This is the most common re-processing scenario and the cheapest — no re-downloading, no re-extracting.
-
-Extraction sidecars are persisted alongside raw files in `ingested/` to enable this independence. Extraction is often the expensive step (OCR, Whisper transcription), and the resulting sidecars are small compared to raw files. Compendiums only clone `documents/`, `assets/`, and `{corpus_id}.toml` — the `ingested/` directory (raw files and sidecars) is never needed downstream.
 
 ---
 
@@ -1023,7 +1020,7 @@ The tiered summary structure enables efficient corpus selection at compendium se
 
 4. **Declare dependencies.** Register the selected corpora in `compendium.toml`.
 
-5. **Document-level selection.** After resolving (cloning) declared corpora, read individual document file summaries within each corpus to select which documents feed into synthesis. The compendium's synthesis system prompt guides the LLM's selection decisions at this level.
+5. **Document-level selection.** After resolving (cloning) declared corpora, read individual document file descriptions within each corpus to select which documents feed into synthesis. The compendium's synthesis system prompt guides the LLM's selection decisions at this level.
 
 This process is typically performed once during compendium setup and revisited when new corpora are added to the organization.
 
@@ -1127,7 +1124,7 @@ Synthesis transforms source material from multiple corpora into a coherent, stru
 The process for each compendium:
 
 1. **Resolve corpora.** Run `resolve.sh` to clone/update all declared corpus dependencies at their pinned commits.
-2. **Select documents.** Read the `summary` field of each document file across all resolved corpora. Using the compendium's synthesis system prompt as context, the LLM selects documents relevant to the domain. Documents are prioritized by credibility tier and relevance to the compendium's scope.
+2. **Select documents.** Read the `description` field of each document file across all resolved corpora. Using the compendium's synthesis system prompt as context, the LLM selects documents relevant to the domain. Documents are prioritized by credibility tier and relevance to the compendium's scope.
 3. **Organize by taxonomy.** Group selected documents by the compendium's chapter structure.
 4. **Synthesize chapters.** Distill the grouped documents into coherent prose, reconciling conflicts, identifying patterns, and citing document IDs.
 5. **Build navigation.** Generate/update `SUMMARY.md`, cross-references, and supplementary sections (FAQ, glossary, quick reference).
@@ -1166,7 +1163,7 @@ name = "scifi-channel-dune"
 repo = "corpus/scifi-channel-dune"
 commit = "f7e8d9c"
 sparse = ["documents/", "assets/", "scifi-channel-dune.toml"]
-include_all = true          # every document in this corpus is relevant — skip summary assessment
+include_all = true          # every document in this corpus is relevant — skip description assessment
 ```
 
 The `system_prompt_file` points to a markdown file in the compendium repo that provides the LLM with domain context during synthesis. This is where relationships, disambiguation guidance, and scope boundaries live:
@@ -1189,7 +1186,7 @@ The Dune franchise encompasses:
 ## Document Selection
 
 From multi-work corpora (frank-herbert, denis-villeneuve), select only
-documents whose summaries indicate Dune-related content. Frank Herbert's
+documents whose descriptions indicate Dune-related content. Frank Herbert's
 non-Dune novels (The Dragon in the Sea, Whipping Star, etc.) and
 Villeneuve's non-Dune films (Blade Runner 2049, Arrival) are out of scope.
 
@@ -1204,7 +1201,7 @@ Villeneuve's non-Dune films (Blade Runner 2049, Arrival) are out of scope.
 
 This system prompt is iterable. When synthesis produces gaps (e.g., it conflates two characters, or misses a key relationship), the system prompt is refined and synthesis is re-run. The feedback loop is: synthesize → review → refine prompt → re-synthesize.
 
-The `include_all = true` flag is an efficiency optimization for corpora where every document is known to be in scope (e.g., `scifi-channel-dune` is entirely Dune content). It skips the summary assessment step for that corpus.
+The `include_all = true` flag is an efficiency optimization for corpora where every document is known to be in scope (e.g., `scifi-channel-dune` is entirely Dune content). It skips the description assessment step for that corpus.
 
 ### 5.5 Synthesis Principles
 
@@ -1315,7 +1312,7 @@ For each chapter in manuscript/:
       Flag this chapter for re-synthesis
 ```
 
-A commit bump that touches 200 files (because `ingestion_date_last` was updated on a routine check) but only has real normalization changes in 3 of them results in exactly the chapters referencing those 3 documents being flagged. Everything else is untouched. This keeps re-synthesis proportional to actual change, not to ingestion activity.
+A commit bump that touches 200 files (because sidecar `ingestion_date_last` fields were updated on a routine check) but only has real normalization changes in 3 of them results in exactly the chapters referencing those 3 documents being flagged. Everything else is untouched. This keeps re-synthesis proportional to actual change, not to ingestion activity.
 
 The same check catches re-normalization events: if a document is re-normalized with a better model (content unchanged, but `normalization_date` and `normalization_model` updated), the compendium correctly flags that chapter for re-synthesis from the improved material.
 
@@ -1623,8 +1620,8 @@ This serves as an alternative access path — useful for agents running in envir
 3. Add `backlog.toml` and populate with known pending documents
 4. Create the `documents/`, `assets/`, and `ingested/` directories
 5. Build or configure the ingestion pipeline appropriate to the content type
-6. Build or configure the extraction pipeline — content-type-specific scripts that produce extraction sidecars (see section 3.8.2). For simple text content, a passthrough extractor is sufficient
-7. Begin processing source material through the three-phase pipeline: ingest → extract → normalize (see section 3.8)
+6. Build or configure the extraction pipeline — content-type-specific scripts that produce extraction sidecars (see section 3.3.2). For simple text content, a passthrough extractor is sufficient
+7. Begin processing source material through the three-phase pipeline: ingest → extract → normalize (see section 3.3)
 8. The corpus is discoverable — its `{corpus_id}.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 4)
 
 ### 11.2 Adding a New Compendium
@@ -1675,24 +1672,26 @@ Each domain needs its own taxonomy — the organizational structure that chapter
 
 ### 11.5 Standardized Frontmatter Schema
 
-The complete document frontmatter schema is defined in section 3.3. In summary:
+The complete document frontmatter schema is defined in section 3.4. In summary:
 
 **Universal required** (every document):
-`document_id`, `title`, `summary`, `content_type`, `credibility_tier`, `ingestion_date_first`, `ingestion_date_last`, `content_changed_last`, `normalization_confidence`, `normalization_model`, `normalization_date`
+`document_id`, `title`, `description`, `credibility_tier`, `normalization_confidence`, `normalization_model`, `normalization_date`, `sources[]`
 
 **Universal optional** (present when applicable):
-`author`, `date_published`, `origin_url`, `volatility`, `relations`, `issues`
+`relations`, `issues`
 
-**Extended schemas** are determined by `content_type` (closed enum):
+**Sources entry:** `source_id`, `origin_url` or `original_filename`
+
+**Sidecar fields** (section 3.3.2): core fields (`document_id`, `sequence`, `content_type`, `origin`, `original_url`, `original_filename`, `capture_date`, `ingestion_date_last`, `content_changed_last`, `author`, `date_published`, `volatility`, `extraction_method`, `extraction_tool`, `extraction_date`, `assets`) plus extended schemas by `content_type`:
 
 | Content Type | Required Extended Fields | Optional Extended Fields |
 |-------------|-------------------------|--------------------------|
-| `forum_post` | `username`, `thread_url` | `reply_count`, `is_solution` |
-| `reddit_post` | `username`, `subreddit`, `post_url` | `score`, `comment_count`, `post_type` |
+| `forum_post` | `username`, `thread_url` | `reply_count` |
+| `reddit_post` | `username`, `subreddit`, `post_url` | `score`, `comment_count` |
 | `book` | `work_title` | `isbn`, `word_count`, `series_name`, `series_position` |
 | `service_manual` | `manual_title`, `section_reference`, `model_years` | `vehicle_system` |
-| `technical_bulletin` | `bulletin_number`, `affected_models`, `affected_years` | `superseded_by` |
-| `video` | `duration_seconds`, `has_visual_content` | `channel_name` |
+| `technical_bulletin` | `bulletin_number`, `affected_models`, `affected_years` | |
+| `video` | `duration_seconds` | `channel_name` |
 | `podcast` | `duration_seconds` | `episode_number`, `series_name` |
 | `research_paper` | `journal`, `peer_reviewed` | `doi` |
 | `article` | `article_url` | `publication` |
