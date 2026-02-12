@@ -39,13 +39,13 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 ## 2. Architecture Overview
 
-Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested and normalized into markdown with rich summaries. The **Corpus Registry** catalogs all available corpora with tiered summaries that enable progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain without reading every origin. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant sources based on summaries, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
+Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested, extracted, and normalized into markdown with rich summaries. Each corpus carries tiered summaries in its `origin.toml` that enable **corpus discovery** via progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain by fetching these summaries from the Forgejo API without cloning every origin. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant sources based on summaries, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
 
 **Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
 
 ### 2.1 Corpus Layer
 
-A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, ingested and normalized into markdown files with structured frontmatter. The normalization process transforms raw material (forum threads, PDFs, video transcripts, books) into a consistent format where each file carries a summary that captures what the source contains and why it's useful.
+A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, processed through a three-phase pipeline — ingestion, extraction, and normalization — into markdown files with structured frontmatter. Each file carries a summary that captures what the source contains and why it's useful.
 
 Key properties:
 
@@ -55,17 +55,17 @@ Key properties:
 
 The range of corpora is deliberately broad: `g8board` (an automotive forum), `frank-herbert` (an author's collected works), `gm` (a manufacturer's manuals, bulletins, and press releases), `engineering-explained` (a YouTube channel's transcripts), `marxists-org` (a text archive). Each is independent and self-contained.
 
-### 2.2 Corpus Registry
+### 2.2 Corpus Discovery
 
-The Corpus Registry is a system-wide discovery catalog — a lightweight index of all available corpora with tiered summaries that support progressive disclosure. It enables compendiums to find relevant corpora efficiently without cloning and reading every origin.
+Corpus discovery is API-driven — each origin's `origin.toml` carries tiered summaries that describe the corpus, and these are fetched on demand from the Forgejo API without cloning any repos. There is no separate registry repository; the corpora describe themselves.
 
-Each corpus has a registry entry with three summary tiers:
+Each corpus carries three summary tiers in its `origin.toml`:
 
 1. **Tier 1** — a single sentence. Enough to include or exclude at a glance.
 2. **Tier 2** — a concise paragraph. Enough to confirm relevance and understand scope.
 3. **Tier 3** — a comprehensive description. Full detail on what the corpus contains, its source count, and its coverage.
 
-At compendium setup time, an LLM reads tier 1 summaries for all corpora to identify candidates, reads tier 2 for confirmation, and consults tier 3 only when needed. This avoids the cost of cloning and scanning corpora that turn out to be irrelevant. See section 4 for the registry format and progressive disclosure process.
+At compendium setup time, tooling lists all repos in the Corpus organization via the Forgejo API, fetches each `origin.toml`, and extracts the summary tiers. An LLM reads tier 1 summaries for all corpora to identify candidates, reads tier 2 for confirmation, and consults tier 3 only when needed. This avoids the cost of cloning and scanning corpora that turn out to be irrelevant. See section 4 for the discovery format and progressive disclosure process.
 
 ### 2.3 Compendium Layer
 
@@ -91,17 +91,32 @@ The full pipeline from source to published reference:
        │
        ▼
   ┌─────────────────────────────┐
-  │  Corpus: Normalization      │
-  │  ingest → normalize →       │
-  │  generate summary           │
+  │  Phase 1: Ingestion         │
+  │  acquire raw content        │  script-driven or manual
+  │  → ingested/{source_id}/    │
+  └─────────────────────────────┘
+       │
+       ▼
+  ┌─────────────────────────────┐
+  │  Phase 2: Extraction        │
+  │  programmatic transform     │  deterministic, no LLM
+  │  → extracted/{source_id}.json
+  │  → assets/{source_id}/      │
+  └─────────────────────────────┘
+       │
+       ▼
+  ┌─────────────────────────────┐
+  │  Phase 3: Normalization     │
+  │  LLM-driven interpretation  │  summaries, credibility,
+  │  → normalized/{source_id}.md│  relations, frontmatter
   └─────────────────────────────┘
        │
        │  normalized markdown with summary
        ▼
   ┌─────────────────────────────┐
-  │  Corpus Registry            │
-  │  tiered summaries per       │  ◄── updated when corpora change
-  │  corpus for discovery       │
+  │  Corpus Discovery           │
+  │  origin.toml summaries      │  ◄── fetched via Forgejo API
+  │  from each corpus repo      │
   └─────────────────────────────┘
        │
        │  progressive disclosure: tier1 → tier2 → tier3
@@ -117,7 +132,7 @@ The full pipeline from source to published reference:
   Published Reference (browsable textbook + AI agent context)
 ```
 
-Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as raw text. Normalization produces markdown with a summary describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The corpus registry entry for `frank-herbert` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 of the registry immediately identifies `frank-herbert` as relevant. At synthesis time, the LLM reads individual source summaries within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as a raw epub file (ingestion). Extraction produces a structured JSON with chapter text and metadata. The normalization agent then interprets this into markdown with a summary describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The `origin.toml` for `frank-herbert` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 summaries fetched from all corpora immediately identify `frank-herbert` as relevant. At synthesis time, the LLM reads individual source summaries within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
 
 ---
 
@@ -211,6 +226,32 @@ source_id_prefix = "G8BD"            # 4-letter prefix for all source IDs from t
 ingestion_method = "web_scraper"
 active = true                        # whether new content is still being captured
 
+# tiered summaries for corpus discovery (see section 4)
+summary_tier1 = "G8Board.com automotive forum — Pontiac G8 community"
+
+summary_tier2 = """
+Forum threads from G8Board.com, the primary English-language \
+community for the 2008-2009 Pontiac G8. Covers diagnostics, \
+repairs, modifications, and ownership experiences for the G8 GT \
+(L76 6.0L V8), G8 GXP (LS3 6.2L V8), and base V6 models."""
+
+summary_tier3 = """
+Comprehensive archive of G8Board.com forum threads normalized from \
+HTML captures. The G8 is a rebadged Holden VE Commodore built in \
+Elizabeth, South Australia.
+
+Coverage includes: suspension and wheel bearing issues, engine and \
+transmission diagnostics, AFM/DoD cylinder deactivation problems, \
+brake upgrades, exhaust and intake modifications, electrical \
+troubleshooting, and general ownership experiences.
+
+High-value threads include community-validated diagnostic \
+walkthroughs, long-running troubleshooting threads with multiple \
+confirming reports, and DIY guides with detailed procedures.
+
+~2,400 normalized sources. Community-validated and anecdotal \
+credibility tiers."""
+
 [reingest]
 default_volatility = "unlikely"       # most old threads are stable
 active_threshold_days = 7             # check 'active' sources weekly
@@ -231,6 +272,24 @@ description = "Official documentation, bulletins, and publications from General 
 source_id_prefix = "GMOT"
 ingestion_method = "mixed"
 active = true
+
+summary_tier1 = "General Motors official documentation — service manuals, TSBs, recalls"
+
+summary_tier2 = """
+Official publications from General Motors covering service manuals, \
+technical service bulletins, recall notices, dealer bulletins, press \
+releases, and brochures. Primarily North American market vehicles."""
+
+summary_tier3 = """
+General Motors official documentation normalized from PDFs, web \
+captures, and database exports. Includes service manuals (Helm and \
+ACDelco TDS), technical service bulletins (TSBs/PIs), NHTSA recall \
+documentation cross-referenced to GM campaign numbers, dealer \
+bulletins, press releases, and marketing brochures.
+
+Coverage spans multiple GM brands and platforms with emphasis on \
+vehicles sharing platforms with Holden (Zeta, Sigma). ~75 normalized \
+sources. Authoritative credibility tier."""
 
 [reingest]
 default_volatility = "static"
@@ -255,6 +314,10 @@ Corpus/g8board/
 │   ├── G8BD.0001.md
 │   ├── G8BD.0002.md
 │   └── G8BD.0042.md
+├── extracted/                          # intermediate JSON from extraction phase
+│   ├── G8BD.0001.json
+│   ├── G8BD.0002.json
+│   └── G8BD.0042.json
 ├── assets/                             # embedded content referenced by normalized files
 │   ├── G8BD.0001/
 │   │   ├── bearing-removal.jpg
@@ -274,7 +337,8 @@ Corpus/g8board/
 **Directory purposes:**
 
 - **`normalized/`** — One markdown file per source. Files only exist here when there is actual normalized content. No stubs, no placeholders.
-- **`assets/`** — Images, diagrams, and other embedded content referenced by normalized files. Organized as one subdirectory per source ID (only present when that source has assets). Normalized markdown references assets via relative paths: `![diagram](../assets/G8BD.0042/hub-assembly-diagram.png)`.
+- **`extracted/`** — Intermediate structured JSON produced by the extraction phase (see section 3.8). One JSON file per source ID. Persisted in the repo to enable re-normalization without re-extraction when models improve. Excluded from compendium sparse checkout.
+- **`assets/`** — Images, diagrams, and other embedded content referenced by normalized files. Organized as one subdirectory per source ID (only present when that source has assets). Assets are produced during extraction — the normalization agent references existing assets via the `assets` array in the extracted JSON.
 - **`ingested/`** — Original captured artifacts in their native format. Organized as one subdirectory per source ID, preserving original filenames. Multiple files per source are common (e.g., initial capture plus Wayback snapshot for remediation).
 
 **The many-to-one rule:** A single source can have multiple files in `ingested/{source_id}/` — the same content in different formats, multiple captures from different dates, or complementary representations (a transcript plus screenshots). Regardless of how many ingested files exist for a source, normalization always produces exactly **one markdown file** in `normalized/` per source ID. The `raw_sources` field in the frontmatter lists the filenames from `ingested/{source_id}/` that the normalization was produced from.
@@ -440,8 +504,11 @@ Every source file must include all of these fields, no exceptions:
 | `ingestion_date_first` | date | When this source was originally captured |
 | `ingestion_date_last` | date | When we last checked/re-ingested from the upstream source (same as `ingestion_date_first` on initial capture) |
 | `content_changed_last` | date | When the upstream content last actually differed from what we had. Used by the ingestion layer to assess source stability |
+| `extraction_method` | string | How the content was extracted (e.g., `g8board-scraper`, `epub-extract`, `whisper`, `passthrough`). Enables bulk re-extraction when tools improve |
+| `extraction_tool` | string | Specific tool and version that performed extraction (e.g., `athenaeum-extract v0.3`, `whisper-large-v3`, `manual`) |
+| `extraction_date` | date | When extraction was performed |
 | `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.4.1 |
-| `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`, `whisper-large-v3`) |
+| `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`) |
 | `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
 
 #### 3.3.2 Universal Optional Fields
@@ -594,6 +661,9 @@ raw_sources: ["thread.html", "thread_wayback_20190315.html"]
 ingestion_date_first: "2026-01-20"
 ingestion_date_last: "2026-06-15"
 content_changed_last: "2026-01-20"
+extraction_method: "g8board-scraper"
+extraction_tool: "athenaeum-extract v0.3"
+extraction_date: "2026-01-20"
 normalization_confidence: 0.92
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: "2026-01-20"
@@ -763,9 +833,9 @@ This turns the relation graph into an organic growth signal — the sources them
 
 ### 3.7 Exotic Origin Types
 
-The origin-as-repo pattern supports any source type. The only requirement is an ingestion pipeline that produces normalized markdown with frontmatter.
+The origin-as-repo pattern supports any source type. The only requirement is a pipeline that can ingest, extract, and normalize the content into markdown with frontmatter. The extraction phase (see section 3.8) handles format-specific programmatic transformation; the normalization phase handles LLM-driven interpretation.
 
-**YouTube channels:** A transcription pipeline (e.g., Whisper) processes each video into a markdown file. For visual content, descriptive frames or AI-generated visual descriptions can supplement the transcript. Each video is one source file.
+**YouTube channels:** Ingestion downloads the video/audio. Extraction runs a transcription tool (e.g., Whisper) and captures frame data, producing structured JSON with timestamped transcript segments and visual content metadata. The normalization agent then interprets this into markdown with summary, credibility assessment, and structured frontmatter. Each video is one source file.
 
 ```yaml
 ---
@@ -774,12 +844,15 @@ title: "Engineering Explained — Why Direct Injection Causes Carbon Buildup"
 summary: "Technical explainer covering the mechanism by which direct injection engines accumulate carbon deposits on intake valves, why port injection doesn't have this problem, and what solutions exist including walnut blasting and dual injection systems."
 source_type: "video"
 credibility_tier: "expert"
-raw_sources: ["transcript.json", "frames.zip"]
+raw_sources: ["video.mp4"]
 ingestion_date_first: "2026-02-01"
 ingestion_date_last: "2026-02-01"
 content_changed_last: "2026-02-01"
+extraction_method: "whisper"
+extraction_tool: "whisper-large-v3"
+extraction_date: "2026-02-01"
 normalization_confidence: 0.85
-normalization_model: "whisper-large-v3"
+normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: "2026-02-01"
 
 # universal optional
@@ -796,58 +869,150 @@ has_visual_content: true
 [transcript with timestamps and descriptive notes for visual content]
 ```
 
-**Authors (fiction):** Each work is normalized into one or more source files — a short story as one file, a novel potentially split into chapters. The primary text is `authoritative` credibility. Introductions, afterwords, and interviews are tagged separately.
+**Authors (fiction):** Extraction handles format conversion (epub parsing, OCR for scanned editions). Each work is normalized into one or more source files — a short story as one file, a novel potentially split into chapters. The primary text is `authoritative` credibility. Introductions, afterwords, and interviews are tagged separately.
 
-**Podcasts:** Similar to YouTube — transcription pipeline, one episode per source file, tagged by topics discussed.
+**Podcasts:** Similar to YouTube — extraction runs the transcription tool, normalization interprets the result. One episode per source file.
 
-**Government / institutional sources:** PDFs, reports, and policy documents normalized via PDF extraction. Each document is one source file.
+**Government / institutional sources:** Extraction handles PDF text extraction, OCR, and table recognition. The normalization agent interprets the extracted content into markdown. Each document is one source file.
+
+### 3.8 Normalization Pipeline
+
+The path from raw source to normalized markdown is a three-phase pipeline. Formalizing these phases makes the pipeline reproducible, auditable, and independently improvable — you can re-normalize from improved models without re-extracting, and you can re-extract with better tools without re-downloading.
+
+#### 3.8.1 Phase 1: Ingestion
+
+**What:** Acquire raw content from external sources.
+
+**How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy.
+
+**Output:** Raw files in `ingested/{source_id}/`, preserving original filenames and formats. Multiple files per source are common (e.g., an HTML capture plus a Wayback snapshot).
+
+Ingestion is already defined by the origin repository structure (section 3.2.1) and the manifest tracking system (section 3.2.2). This phase simply acquires content; it performs no transformation.
+
+#### 3.8.2 Phase 2: Extraction
+
+**What:** Programmatic transformation of raw files into clean, structured intermediate JSON.
+
+**How:** Source-type-specific scripts — no LLM involvement, deterministic processing only.
+
+**Output:** `extracted/{source_id}.json` + assets saved to `assets/{source_id}/`.
+
+**Key principle:** Extraction captures *what's there* without editorial judgment. No summaries, no credibility assessment, no relevance decisions. It strips away format-specific noise (HTML chrome, PDF layout artifacts, ad content) and produces structured text that the normalization agent can interpret.
+
+Operations that belong in extraction:
+
+| Operation | Why extraction |
+|-----------|---------------|
+| Strip HTML chrome/ads | Rule-based, programmatic |
+| OCR a scanned PDF | Tool-driven, no semantic judgment |
+| Transcribe audio (Whisper) | Tool-driven, no semantic judgment |
+| Extract text from epub | Programmatic |
+| Parse forum thread structure (post boundaries, usernames, dates) | Pattern-based |
+| Pull images from HTML/PDF | Programmatic |
+| PDF table recognition | Tool-driven (even if ML-assisted internally) |
+
+**Trivial extraction is fine.** A clean text file gets `extraction_method: "passthrough"` — the pipeline is uniform even when a phase does minimal work.
+
+**Extracted JSON format.** Standard envelope with source-type-flexible content:
+
+```json
+{
+  "source_id": "G8BD.0042",
+  "source_type_hint": "forum_post",
+  "extraction": {
+    "method": "g8board-scraper",
+    "tool_version": "athenaeum-extract v0.3",
+    "date": "2026-01-20",
+    "raw_sources": ["thread.html", "thread_wayback_20190315.html"],
+    "notes": ["2 of 4 images returned 404, captured via Wayback"]
+  },
+  "metadata": {
+    "username": "TorqueDave",
+    "thread_url": "https://www.g8board.com/forum/thread-12345",
+    "date_published": "2019-03-15",
+    "reply_count": 47
+  },
+  "content": {
+    "posts": [
+      {
+        "author": "TorqueDave",
+        "date": "2019-03-15",
+        "body": "So my G8 started making a humming noise at highway speeds..."
+      }
+    ]
+  },
+  "assets": [
+    {"filename": "bearing-removal.jpg", "context": "Shows bearing removal tool setup"},
+    {"filename": "torque-sequence.png", "context": "Torque sequence diagram for hub assembly"}
+  ]
+}
+```
+
+The format follows these conventions:
+
+- **Envelope** (`source_id`, `extraction`, `assets`) is standardized — same structure for all source types.
+- **`metadata`** carries source-type-specific structured data captured during extraction (forum: username, dates, reply count; book: chapter structure, ISBN; video: duration, timestamps).
+- **`content`** carries the actual extracted text, structured as the extractor sees fit (forum: array of posts; book: array of chapters; video: timestamped transcript segments).
+- **`source_type_hint`** is a hint, not authoritative — the normalization agent makes the final `source_type` determination.
+- **No rigid JSON schema per source type** — follows the spec's philosophy of leaning on LLM understanding rather than rigid schemas.
+
+**Asset extraction.** Images, diagrams, and other embedded content are extracted during this phase and saved to `assets/{source_id}/`. The `assets` array in the extracted JSON provides filenames and context strings that the normalization agent uses to produce correct relative paths and alt text in the final markdown.
+
+#### 3.8.3 Phase 3: Normalization
+
+**What:** LLM-driven interpretation of extracted content into final normalized markdown with full frontmatter.
+
+**How:** A normalization agent consuming the extracted JSON, guided by the frontmatter schema and origin context.
+
+**Output:** `normalized/{source_id}.md` with complete YAML frontmatter (all universal required fields, applicable optional and extended fields) and structured markdown content.
+
+**The normalization agent receives:**
+
+1. The extracted JSON for the source
+2. `origin.toml` context (origin metadata, credibility defaults, reingest configuration)
+3. The frontmatter schema (universal required fields, optional fields, extended fields for the relevant source type)
+4. Source-type-specific guidance (how to structure forum threads vs. book chapters vs. video transcripts)
+
+**The normalization agent is responsible for:**
+
+| Operation | Why normalization |
+|-----------|-------------------|
+| Generate `summary` | Requires content understanding |
+| Assess `credibility_tier` | Requires domain judgment |
+| Identify `relations` | Requires cross-source awareness |
+| Flag `issues` | Requires quality judgment |
+| Determine `is_solution` for forum posts | Requires thread context understanding |
+| Structure the markdown body | Requires editorial decisions about presentation |
+| Populate all frontmatter fields | Requires interpretation of extraction metadata |
+
+The spec defines what the normalization agent receives and produces without prescribing implementation form. The normalization system prompt could live in the origin repo (for origin-specific customization) or be standardized tooling (for consistency across origins).
+
+#### 3.8.4 Phase Boundaries and Re-processing
+
+The three phases are designed to be independently re-runnable:
+
+- **Re-ingestion** (Phase 1 only): Re-acquire from the upstream source when content may have changed. Does not trigger re-extraction or re-normalization unless the ingested content actually differs.
+- **Re-extraction** (Phase 2 only): Re-extract from existing ingested files when extraction tools improve (e.g., "find all sources extracted with tesseract v4 and re-extract with v5"). The `extraction_method` and `extraction_tool` frontmatter fields enable targeted bulk re-extraction.
+- **Re-normalization** (Phase 3 only): Re-normalize from existing extracted JSON when LLM models improve. This is the most common re-processing scenario and the cheapest — no re-downloading, no re-extracting.
+
+The `extracted/` directory is persisted in the repo to enable this independence. Extraction is often the expensive step (OCR, Whisper transcription), and the resulting JSON is small compared to `ingested/` raw files. The `extracted/` directory is excluded from compendium sparse checkout — compendiums only need `normalized/`, `assets/`, and `origin.toml`.
 
 ---
 
-## 4. Corpus Registry
+## 4. Corpus Discovery
 
 ### 4.1 Overview
 
-The Corpus Registry is a system-wide discovery catalog that provides tiered summaries for every corpus in Athenaeum. Its purpose is discoverability — enabling compendiums to identify which corpora are relevant to their domain without cloning and scanning every origin repository.
+Corpus discovery enables compendiums to identify which corpora are relevant to their domain without cloning and scanning every origin repository. Each origin's `origin.toml` carries tiered summaries that describe the corpus (see section 3.2 for format). At compendium setup time, these summaries are fetched via the Forgejo API — no separate registry repository is needed.
 
-The registry does not participate in normalization, does not enforce vocabulary, and does not store relationships between entities. Those concerns are handled by the LLM during normalization (which produces good summaries) and by the compendium's synthesis system prompt (which encodes domain-specific knowledge and relationships). The registry is a passive index: it describes what's available so that the right corpora can be found efficiently.
+This design follows the spec's principle of avoiding unnecessary infrastructure. The corpora describe themselves; discovery is a computed view over the Corpus organization, not a maintained artifact.
 
-### 4.2 Registry Format
+### 4.2 Summary Tier Format
 
-The registry lives in its own repository as a flat collection of TOML files — one file per corpus:
-
-```
-example-org/corpus-registry/
-├── registry.toml                    # registry metadata
-├── corpora/
-│   ├── brian-herbert.toml
-│   ├── denis-villeneuve.toml
-│   ├── engineering-explained.toml
-│   ├── frank-herbert.toml
-│   ├── g8board.toml
-│   ├── gm.toml
-│   ├── holden.toml
-│   ├── huberman-lab.toml
-│   ├── jstor-economics.toml
-│   ├── ls1tech.toml
-│   ├── marxists-org.toml
-│   ├── penrite.toml
-│   ├── pubmed.toml
-│   ├── scifi-channel-dune.toml
-│   ├── south-main-auto.toml
-│   └── wikipedia-economics.toml
-└── ...
-```
-
-#### Corpus Entry Format
-
-Each entry maps a canonical corpus name to three tiers of summary:
+Each `origin.toml` includes three summary tiers alongside the origin's registration metadata:
 
 ```toml
-# corpora/frank-herbert.toml
-
-canonical = "frank-herbert"
-repo = "corpus/frank-herbert"
+# origin.toml (summary fields — other fields omitted for clarity)
 
 summary_tier1 = "Complete works of science fiction author Frank Herbert"
 
@@ -875,43 +1040,29 @@ Lazarus Effect (1983), The Ascension Factor (1988).
 ~45 normalized sources."""
 ```
 
-```toml
-# corpora/g8board.toml
+The tiers are designed for progressive disclosure:
 
-canonical = "g8board"
-repo = "corpus/g8board"
+- **`summary_tier1`** — A single sentence. Enough to include or exclude at a glance.
+- **`summary_tier2`** — A concise paragraph. Enough to confirm relevance and understand scope.
+- **`summary_tier3`** — A comprehensive description. Full detail on what the corpus contains, its source count, and its coverage.
 
-summary_tier1 = "G8Board.com automotive forum — Pontiac G8 community"
+### 4.3 API-Driven Discovery Process
 
-summary_tier2 = """
-Forum threads from G8Board.com, the primary English-language \
-community for the 2008-2009 Pontiac G8. Covers diagnostics, \
-repairs, modifications, and ownership experiences for the G8 GT \
-(L76 6.0L V8), G8 GXP (LS3 6.2L V8), and base V6 models."""
+Discovery tooling fetches summaries from the Forgejo API without cloning any repos:
 
-summary_tier3 = """
-Comprehensive archive of G8Board.com forum threads normalized from \
-HTML captures. The G8 is a rebadged Holden VE Commodore built in \
-Elizabeth, South Australia.
+1. **Enumerate corpora.** `GET /api/v1/orgs/corpus/repos` — list all repositories in the Corpus organization. Each repo is one corpus.
 
-Coverage includes: suspension and wheel bearing issues, engine and \
-transmission diagnostics, AFM/DoD cylinder deactivation problems, \
-brake upgrades, exhaust and intake modifications, electrical \
-troubleshooting, and general ownership experiences.
+2. **Fetch origin metadata.** For each repo, `GET /api/v1/repos/corpus/{name}/contents/origin.toml` — fetch the file contents via API. These requests are parallelized.
 
-High-value threads include community-validated diagnostic \
-walkthroughs, long-running troubleshooting threads with multiple \
-confirming reports, and DIY guides with detailed procedures.
+3. **Parse and extract.** Parse each `origin.toml` and extract `origin_id`, `summary_tier1`, `summary_tier2`, `summary_tier3`.
 
-~2,400 normalized sources. Community-validated and anecdotal \
-credibility tiers."""
-```
+This produces a complete discovery index from live data in seconds, even for hundreds of corpora. The index can be cached locally and refreshed on demand.
 
-### 4.3 Progressive Disclosure Process
+### 4.4 Progressive Disclosure Process
 
-The tiered summary structure enables efficient corpus discovery at compendium setup time:
+The tiered summary structure enables efficient corpus selection at compendium setup time:
 
-1. **Tier 1 scan.** Read the `summary_tier1` for every corpus in the registry. At one sentence each, the full registry fits in a single LLM context window. Immediately identify obvious candidates and obvious exclusions. For a Dune compendium: `frank-herbert`, `brian-herbert`, `denis-villeneuve`, `scifi-channel-dune` are obvious candidates. `g8board`, `gm`, `penrite` are obvious exclusions.
+1. **Tier 1 scan.** Read the `summary_tier1` for every corpus. At one sentence each, all corpora fit in a single LLM context window. Immediately identify obvious candidates and obvious exclusions. For a Dune compendium: `frank-herbert`, `brian-herbert`, `denis-villeneuve`, `scifi-channel-dune` are obvious candidates. `g8board`, `gm`, `penrite` are obvious exclusions.
 
 2. **Tier 2 confirmation.** For each candidate, read `summary_tier2` to confirm relevance and understand scope. This catches false positives (a corpus whose name suggests relevance but whose content doesn't match) and surfaces additional context about what each corpus actually contains.
 
@@ -921,30 +1072,15 @@ The tiered summary structure enables efficient corpus discovery at compendium se
 
 5. **Source-level selection.** After resolving (cloning) declared corpora, read individual source file summaries within each corpus to select which sources feed into synthesis. The compendium's synthesis system prompt guides the LLM's selection decisions at this level.
 
-This process is typically performed once during compendium setup and revisited when new corpora are added to the registry.
+This process is typically performed once during compendium setup and revisited when new corpora are added to the organization.
 
-### 4.4 Registry Maintenance
+### 4.5 Summary Maintenance
 
-The registry grows with the system:
+Because summaries live in `origin.toml` — the same file that defines everything else about the origin — maintenance is straightforward:
 
-- **New corpus, new entry.** When a new origin repository is created, a corresponding registry entry is added with tiered summaries.
-- **Summary updates.** When a corpus grows significantly (new sources added, coverage expanded), its tiered summaries should be updated to reflect the current state.
-- **No reconciliation burden.** Unlike a term registry, corpus registry entries don't affect source frontmatter. Updating a summary is a metadata change with no downstream rewrites.
-
-### 4.5 Infrastructure Placement
-
-The corpus registry is system-wide infrastructure, consumed by compendiums during setup but owned by neither the corpus nor compendium layer. It lives in the `example-org` Forgejo organization alongside other Athenaeum system infrastructure:
-
-```
-example-org/athenaeum/                # spec, tooling
-example-org/corpus-registry/          # corpus discovery catalog
-corpus/gm/                          # origin repos
-corpus/g8board/
-compendium/commodore-ve/            # compendium repos
-compendium/dune/
-```
-
-The registry is lightweight — it contains only TOML metadata, not source content. It can be cloned in seconds and read in full by the LLM during compendium setup.
+- **New corpus.** When a new origin repository is created, its `origin.toml` includes tiered summaries from the start. No separate registry entry to create.
+- **Summary updates.** When a corpus grows significantly (new sources added, coverage expanded), update the summary tiers in `origin.toml`. This is a single-file commit in the origin repo.
+- **No sync burden.** There is no separate registry to keep in sync with origin repos. The summaries are always authoritative because they live at the source.
 
 ---
 
@@ -979,7 +1115,7 @@ Compendium/{domain}/
 
 ### 5.2 Dependency Resolution
 
-Compendium repos only need the `normalized/` directory, `assets/` directory, and `origin.toml` from each origin — never the `ingested/` directory, which can be massive (PDFs, epubs, HTML dumps, video files). Each origin dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
+Compendium repos only need the `normalized/` directory, `assets/` directory, and `origin.toml` from each origin — never the `ingested/` directory (which can be massive) or the `extracted/` directory (which is an intermediate artifact used only for re-normalization within the origin repo). Each origin dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
 
 ```toml
 [[compendium.corpora]]
@@ -1532,16 +1668,16 @@ This serves as an alternative access path — useful for agents running in envir
 1. Create a new repository under the Corpus organization
 2. Add `origin.toml` with the registration metadata, source ID prefix, and reingest configuration
 3. Add `manifest.toml` and populate it with known sources (both `captured` and `pending`)
-4. Create the `normalized/`, `assets/`, and `ingested/` directories
+4. Create the `normalized/`, `extracted/`, `assets/`, and `ingested/` directories
 5. Build or configure the ingestion pipeline appropriate to the source type
-6. Begin normalizing source material
-7. Add a corpus registry entry with tiered summaries (see section 4)
-8. The origin is now available for any compendium to discover and declare as a dependency
+6. Build or configure the extraction pipeline — source-type-specific scripts that produce extracted JSON (see section 3.8.2). For simple text sources, a passthrough extractor is sufficient
+7. Begin processing source material through the three-phase pipeline: ingest → extract → normalize (see section 3.8)
+8. The origin is now discoverable — its `origin.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 4)
 
 ### 11.2 Adding a New Compendium
 
 1. Create a new repository under the Compendium organization
-2. Consult the corpus registry to discover relevant corpora (see section 4.3)
+2. Discover relevant corpora via API-driven progressive disclosure (see section 4.4)
 3. Declare origin dependencies in `compendium.toml` with pinned commits
 4. Write the synthesis system prompt with domain knowledge, scope boundaries, and key relationships
 5. Create `resolve.sh` to clone corpora at pinned commits with sparse checkout (copy from template)
@@ -1634,9 +1770,7 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 │  └── ...                           └── ...                     │
 │                                                                │
 │  example-org Organization (System Infrastructure)                │
-│  └── corpus-registry/             # corpus discovery catalog   │
-│      ├── registry.toml             # registry metadata         │
-│      └── corpora/                  # one .toml file per corpus │
+│  └── athenaeum/                    # spec, tooling             │
 │                                                                │
 │  Forgejo Actions Runner                                        │
 │  └── on push: resolve corpora → mdbook build → deploy          │
@@ -1675,7 +1809,7 @@ The complete source frontmatter schema is defined in section 3.3. In summary:
 |-----------|------------|-----------|
 | Source of truth | Forgejo (git) | Version control, API access, Actions CI |
 | Source organization | Forgejo org (Corpus) | One repo per origin, summary-driven discovery |
-| Corpus Registry | Flat TOML files in git | Tiered summaries for progressive corpus discovery |
+| Corpus discovery | Forgejo API + `origin.toml` | Tiered summaries fetched on demand, no separate registry repo |
 | Compendium format | Markdown + mdBook | Human-readable source, clean output, built-in search |
 | Source linkage | Declared dependencies in `compendium.toml` | Pin origins to commits, resolve at build time with sparse checkout |
 | Hosting | Caddy on external VPS | Simple, reliable, automatic HTTPS, basic auth |
