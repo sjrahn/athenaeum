@@ -1,8 +1,8 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 2.0
-status: final
+version: 3.0
+status: draft
 author: Steven Rahn
 date_created: 2026-02-08
 date_modified: 2026-02-16
@@ -10,6 +10,9 @@ addenda_incorporated:
   - ATH-ARCH-A001
   - ATH-ARCH-A002
 changelog:
+  - version: 3.0
+    date: 2026-02-16
+    summary: "Major version: mandatory subdivisions (XXXX.TT.NNNNNNN ID format), directory overhaul (documents/→manuscript/, ingested/→sources/, assets inside manuscript/<slug>/assets/<doc_id>/), split ingestion into acquisition (.download/ staging) + reconciliation (ID assignment, stub creation), corpus as browsable mdbook reference (book.toml, frontmatter-strip, corpus.example.org), backlog rewrite ([[entries]] without pre-assigned IDs), document status field (pending_normalization|normalized), new §4 Corpus Format, new §12 Pipeline Agent Architecture (ingestor agent, normalizer agent, Curator skill), renumber all sections"
   - version: 2.0
     date: 2026-02-12
     summary: "Reorder §3 (pipeline before document format), simplify document frontmatter (summary→description, per-source fields moved to sidecar, add sources array), upgrade sidecar format (content_type_hint→content_type, add volatility/ingestion dates/author/date_published, move extended schemas to sidecar)"
@@ -42,7 +45,7 @@ Athenaeum is designed around four core principles:
 
 ### 1.1 Design Philosophy
 
-The architecture intentionally avoids complexity where simplicity suffices. There is no vector database, no knowledge graph, no multi-agent orchestration, and no domain router. These are not rejected — they are deferred until a concrete need for them is demonstrated. The system is designed so that any of these can be added later without rearchitecting what exists.
+The architecture intentionally avoids complexity where simplicity suffices. There is no vector database, no knowledge graph, and no domain router. Pipeline orchestration uses a lightweight agent pattern (section 12) — single-purpose workers coordinated by a skill, not a general-purpose multi-agent framework. These are not rejected — they are deferred until a concrete need for them is demonstrated. The system is designed so that any of these can be added later without rearchitecting what exists.
 
 ---
 
@@ -50,11 +53,11 @@ The architecture intentionally avoids complexity where simplicity suffices. Ther
 
 Athenaeum is organized into three conceptual layers. Raw sources enter the **Corpus** layer, where they are ingested, extracted, and normalized into markdown with rich descriptions. Each corpus carries tiered summaries in its `{corpus_id}.toml` that enable **corpus discovery** via progressive disclosure — compendiums can efficiently discover which corpora are relevant to their domain by fetching these summaries from the Forgejo API without cloning every corpus. The **Compendium** layer declares corpus dependencies, uses an LLM to select relevant documents based on descriptions, and synthesizes the selected material into domain-specific reference works guided by a compendium-specific system prompt.
 
-**Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* refers to the pre-rendered markdown that gets compiled into the published compendium.
+**Terminology:** *Corpus* (plural: *corpora*) means "a body of collected texts" — this is where raw source material lives. *Compendium* means "a comprehensive collection of concise information" — this is where synthesized reference works live. *Manuscript* has a dual meaning depending on context: at the corpus level, it means "normalized documents structured for mdbook rendering" (the `manuscript/` directory in a corpus repo); at the compendium level, it means "synthesized reference content" (the `manuscript/` directory in a compendium repo). Both are mdbook source directories, but their content has different provenance. *Subdivision* refers to an organizational category within a corpus — subdivisions drive directory structure, mdbook chapters, and document ID assignment.
 
 ### 2.1 Corpus Layer
 
-A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, processed through a three-phase pipeline — ingestion, extraction, and normalization — into markdown files with structured frontmatter. Each file carries a description that captures what the document contains and why it's useful.
+A corpus is a self-contained collection of normalized material from a single source of information — one voice. It represents everything captured from that source, processed through a four-phase pipeline — acquisition, reconciliation, extraction, and normalization — into markdown files with structured frontmatter. Each file carries a description that captures what the document contains and why it's useful. Every corpus builds as a browsable mdbook reference (see section 4), organized by mandatory subdivisions that categorize documents within the corpus.
 
 A corpus can have multiple **origins** — distinct raw content sources that feed into it. A forum corpus has one origin (the forum itself). A manufacturer corpus might have several: a PDF archive of service manuals, a web database of technical bulletins, and a press release feed. Each origin has its own ingestion method and reingest configuration, declared in the corpus's registration file.
 
@@ -77,7 +80,7 @@ Each corpus carries three summary tiers in its `{corpus_id}.toml`:
 2. **Tier 2** — a concise paragraph. Enough to confirm relevance and understand scope.
 3. **Tier 3** — a comprehensive description. Full detail on what the corpus contains, its document count, and its coverage.
 
-At compendium setup time, tooling lists all repos in the Corpus organization via the Forgejo API, fetches each `{corpus_id}.toml`, and extracts the summary tiers. An LLM reads tier 1 summaries for all corpora to identify candidates, reads tier 2 for confirmation, and consults tier 3 only when needed. This avoids the cost of cloning and scanning corpora that turn out to be irrelevant. See section 4 for the discovery format and progressive disclosure process.
+At compendium setup time, tooling lists all repos in the Corpus organization via the Forgejo API, fetches each `{corpus_id}.toml`, and extracts the summary tiers. An LLM reads tier 1 summaries for all corpora to identify candidates, reads tier 2 for confirmation, and consults tier 3 only when needed. This avoids the cost of cloning and scanning corpora that turn out to be irrelevant. See section 5 for the discovery format and progressive disclosure process.
 
 ### 2.3 Compendium Layer
 
@@ -92,7 +95,7 @@ Key properties:
 
 For example, a `dune` compendium declares dependencies on `frank-herbert`, `brian-herbert`, `denis-villeneuve`, and `scifi-channel-dune`. Its system prompt defines the Dune franchise scope and key relationships. During synthesis, the LLM reads document descriptions from each corpus — Frank Herbert's *Dune* and *Dune Messiah* are selected because their descriptions clearly relate to the Dune universe, while *Man of Two Worlds* (a comedy collaboration) and *The Dragon in the Sea* (a submarine thriller) are skipped. From `denis-villeneuve`, the Dune screenplays are selected while *Blade Runner 2049* and *Arrival* are not. The LLM's semantic understanding, guided by the system prompt, makes these selections — no tag matching required.
 
-See section 5 for the detailed compendium structure and synthesis process.
+See section 6 for the detailed compendium structure and synthesis process.
 
 ### 2.4 Data Flow
 
@@ -103,38 +106,48 @@ The full pipeline from source to published reference:
        │
        ▼
   ┌─────────────────────────────────────────────┐
-  │  Phase 1: Ingestion                         │
-  │  acquire raw content                        │  script-driven or manual
-  │  → ingested/{document_id}/                  │
-  │    {document_id}_XXX.{ext}                  │
+  │  Phase 1a: Acquisition                      │
+  │  acquire raw content to staging             │  script-driven or manual
+  │  → .download/<descriptive-name>/            │  (gitignored)
+  └─────────────────────────────────────────────┘
+       │
+       ▼
+  ┌─────────────────────────────────────────────┐
+  │  Phase 1b: Reconciliation                   │
+  │  assign identity, move to corpus            │  subdivision detection,
+  │  → sources/<slug>/{document_id}/            │  ID assignment,
+  │  → manuscript/<slug>/{document_id}.md       │  stub creation
+  │    (status: pending_normalization)           │
   └─────────────────────────────────────────────┘
        │
        ▼
   ┌─────────────────────────────────────────────┐
   │  Phase 2: Extraction                        │
   │  programmatic transform                     │  deterministic, no LLM
-  │  → ingested/{document_id}/                  │
+  │  → sources/<slug>/{document_id}/            │
   │    {document_id}_XXX.extract.md (sidecars)  │
-  │  → assets/{document_id}/                    │
+  │  → manuscript/<slug>/assets/{document_id}/  │
   └─────────────────────────────────────────────┘
        │
        ▼
   ┌─────────────────────────────────────────────┐
   │  Phase 3: Normalization                     │
   │  LLM-driven interpretation                  │  descriptions, credibility,
-  │  → documents/{document_id}.md               │  relations, frontmatter
+  │  → manuscript/<slug>/{document_id}.md       │  relations, frontmatter
+  │    (status: normalized)                      │
   └─────────────────────────────────────────────┘
        │
        │  normalized markdown with description
-       ▼
-  ┌─────────────────────────────────────────────┐
-  │  Corpus Discovery                           │
-  │  {corpus_id}.toml summaries                 │  ◄── fetched via Forgejo API
-  │  from each corpus repo                      │
-  └─────────────────────────────────────────────┘
-       │
-       │  progressive disclosure: tier1 → tier2 → tier3
-       ▼
+       ├──────────────────────────────────────────┐
+       ▼                                          ▼
+  ┌──────────────────────────┐  ┌──────────────────────────────┐
+  │  Corpus Book             │  │  Corpus Discovery            │
+  │  mdbook build from       │  │  {corpus_id}.toml summaries  │
+  │  manuscript/             │  │  fetched via Forgejo API     │
+  │  → corpus.example.org/     │  └──────────────────────────────┘
+  └──────────────────────────┘       │
+                                     │  progressive disclosure
+                                     ▼
   ┌─────────────────────────────────────────────┐
   │  Compendium: Synthesis                      │
   │  system prompt + summaries                  │
@@ -146,7 +159,7 @@ The full pipeline from source to published reference:
   Published Reference (browsable textbook + AI agent context)
 ```
 
-Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as a raw epub file (ingestion). Extraction produces a markdown sidecar with chapter text and metadata alongside the raw file. The normalization agent then interprets the sidecar into the final normalized markdown with a description describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis. The `frank-herbert.toml` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 summaries fetched from all corpora immediately identify `frank-herbert` as relevant. At synthesis time, the LLM reads individual document descriptions within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
+Concretely: Frank Herbert's *Dune* enters the `frank-herbert` corpus as a raw epub file downloaded to `.download/` (acquisition). Reconciliation detects it belongs in the `novels` subdivision, assigns it `FHBT.NV.0000001`, moves the epub to `sources/novels/FHBT.NV.0000001/`, and creates a stub in `manuscript/novels/FHBT.NV.0000001.md`. Extraction produces a markdown sidecar with chapter text and metadata alongside the raw file. The normalization agent then interprets the sidecar into the final normalized markdown with a description describing it as a science fiction novel about ecology, politics, and prescience on the desert planet Arrakis, replacing the stub and setting `status: normalized`. The `frank-herbert.toml` captures the corpus scope across its tiered summaries. When the `dune` compendium is set up, tier 1 summaries fetched from all corpora immediately identify `frank-herbert` as relevant. At synthesis time, the LLM reads individual document descriptions within the cloned corpus and — guided by the compendium's system prompt — selects *Dune* and *Dune Messiah* while skipping *Man of Two Worlds*. The same `frank-herbert` corpus could simultaneously feed a hypothetical `sci-fi-comedy` compendium whose system prompt would guide selection of *Man of Two Worlds* instead.
 
 ---
 
@@ -219,44 +232,49 @@ When deciding whether something is one corpus or multiple:
 
 ### 3.2 Corpus Registration
 
-Each corpus repo contains a registration file (`{corpus_id}.toml`) that declares metadata about the corpus and its origins. The filename matches the `corpus_id` by convention, enabling discovery tooling to cache all registration files in a flat directory without name collisions:
+Each corpus repo contains a registration file (`{corpus_id}.toml`) that declares metadata about the corpus, its origins, and its subdivisions. The filename matches the `corpus_id` by convention, enabling discovery tooling to cache all registration files in a flat directory without name collisions:
 
 ```toml
 # g8board.toml
 corpus_id = "g8board"
 corpus_name = "G8Board.com"
 corpus_prefix = "G8BD"
+document_id_format = "G8BD.TT.NNNNNNN"
 
-# tiered summaries for corpus discovery (see section 4)
-summary_tier1 = "G8Board.com automotive forum — Pontiac G8 community"
+# tiered summaries for corpus discovery (see section 5)
+summary_tier1 = "Pontiac G8 forum threads covering DIY repairs, modifications, diagnostics, and common problems"
 
 summary_tier2 = """
-Forum threads from G8Board.com, the primary English-language \
-community for the 2008-2009 Pontiac G8. Covers diagnostics, \
-repairs, modifications, and ownership experiences for the G8 GT \
-(L76 6.0L V8), G8 GXP (LS3 6.2L V8), and base V6 models."""
+Community forum posts from G8Board.com covering maintenance, repair, \
+and modification of 2008-2009 Pontiac G8 vehicles (GT, GXP, base V6). \
+Organized across 8 taxonomy subdivisions: Technical Articles & DIY, \
+V8 Engine, Suspension & Brakes, Drivetrain, Exhaust, G8 GT Talk, \
+Stereo & Electronics, and Intake & Fuel. Document IDs use \
+G8BD.TT.NNNNNNN format."""
 
 summary_tier3 = """
-Comprehensive archive of G8Board.com forum threads normalized from \
-HTML captures. The G8 is a rebadged Holden VE Commodore built in \
-Elizabeth, South Australia.
-
-Coverage includes: suspension and wheel bearing issues, engine and \
-transmission diagnostics, AFM/DoD cylinder deactivation problems, \
-brake upgrades, exhaust and intake modifications, electrical \
-troubleshooting, and general ownership experiences.
-
-High-value threads include community-validated diagnostic \
-walkthroughs, long-running troubleshooting threads with multiple \
-confirming reports, and DIY guides with detailed procedures.
-
-~2,400 normalized documents. Community-validated and anecdotal \
-credibility tiers."""
+Normalized forum threads from G8Board.com (document IDs use \
+G8BD.TT.NNNNNNN format, e.g. G8BD.TA.0000001), the primary \
+community forum for Pontiac G8 owners and enthusiasts. Organized \
+across 8 subdivisions covering: engine topics (L76 6.0L, LS3 6.2L, \
+AFM/DoD delete, camshaft swap DIY, oil consumption), drivetrain \
+(transmission fluid, torque converter, driveshaft, differential \
+mount bushings), suspension/brakes (wheel bearings, sway bar \
+upgrades, brake upgrade part numbers), exhaust (factory exhaust \
+system construction and modification), intake/fuel (hose clamp \
+maintenance, air intake mods), stereo/electronics (LED swaps, \
+lighting), general GT discussion (common problems, ownership \
+guides), and technical articles (DIY guides). Sources preserve \
+original posts and replies with credibility ratings. High-value \
+content includes photo-documented procedures, GM part numbers, and \
+community-validated troubleshooting from experienced G8 owners."""
 
 [[origins]]
 origin_id = "forum"
+origin_name = "G8Board.com Forum"
 origin_type = "forum"
 origin_url = "https://www.g8board.com"
+description = "Community forum for Pontiac G8 owners and enthusiasts"
 ingestion_method = "web_scraper"
 active = true
 
@@ -266,22 +284,72 @@ active_threshold_days = 7             # check 'active' documents weekly
 periodic_threshold_days = 90          # check 'periodic' documents quarterly
 unlikely_threshold_days = 365         # check 'unlikely' documents annually
 # 'static' documents are never re-checked
+
+[[subdivision]]
+code = "TA"
+slug = "technical-articles-diy"
+name = "Technical Articles & DIY"
+description = "Community-written repair guides, installation how-tos, and diagnostic procedures"
+
+[[subdivision]]
+code = "V8"
+slug = "v8-engine-tech-l76-ls3"
+name = "V8 Engine"
+description = "LS3/L76/LY7 engine topics: camshaft, lifters, oil, AFM/DoD, cooling"
+
+[[subdivision]]
+code = "SB"
+slug = "suspension-brakes"
+name = "Suspension & Brakes"
+description = "Wheel bearings, sway bars, brake swaps, CTS-V/Brembo upgrades"
+
+[[subdivision]]
+code = "DT"
+slug = "drivetrain-tech"
+name = "Drivetrain"
+description = "Transmission, torque converter, driveshaft, differential, manual swap"
+
+[[subdivision]]
+code = "EX"
+slug = "exhaust-tech"
+name = "Exhaust"
+description = "Exhaust system modifications, catalytic converters, headers, mufflers"
+
+[[subdivision]]
+code = "GT"
+slug = "g8-gt-talk-v8"
+name = "G8 GT Talk"
+description = "General V8 model discussion, common problems, ownership guides"
+
+[[subdivision]]
+code = "SE"
+slug = "stereo-electronics"
+name = "Stereo & Electronics"
+description = "Audio, lighting, wiring, LED swaps, Bluetooth, radio programming"
+
+[[subdivision]]
+code = "IF"
+slug = "intake-fuel-tech"
+name = "Intake & Fuel"
+description = "Intake manifold, fuel system, hose clamps, air intake modifications"
 ```
 
-For a multi-document-type entity (see section 3.1), multiple origins within the corpus handle the different ingestion paths:
+For a multi-document-type entity (see section 3.1), multiple origins and subdivisions within the corpus handle the different ingestion paths and organizational categories:
 
 ```toml
 # gm.toml
 corpus_id = "gm"
 corpus_name = "General Motors"
 corpus_prefix = "GMOT"
+document_id_format = "GMOT.TT.NNNNNNN"
 
 summary_tier1 = "General Motors official documentation — service manuals, TSBs, recalls"
 
 summary_tier2 = """
 Official publications from General Motors covering service manuals, \
 technical service bulletins, recall notices, dealer bulletins, press \
-releases, and brochures. Primarily North American market vehicles."""
+releases, and brochures. Primarily North American market vehicles. \
+Organized by document type subdivisions."""
 
 summary_tier3 = """
 General Motors official documentation normalized from PDFs, web \
@@ -314,13 +382,46 @@ active = true
 [origins.reingest]
 default_volatility = "periodic"
 periodic_threshold_days = 90
+
+[[subdivision]]
+code = "SM"
+slug = "service-manuals"
+name = "Service Manuals"
+description = "OEM factory service manual sections"
+
+[[subdivision]]
+code = "TB"
+slug = "technical-bulletins"
+name = "Technical Bulletins"
+description = "TSBs, PIs, and recall notices"
+
+[[subdivision]]
+code = "PR"
+slug = "press-releases"
+name = "Press Releases"
+description = "Official press releases and marketing documentation"
 ```
 
 Each `[[origins]]` entry represents a distinct raw content source within the corpus. A single-origin corpus (like g8board) has one `[[origins]]` entry. A multi-origin corpus (like GM) has one entry per ingestion path. The `origin_type`, `origin_url`, `ingestion_method`, and `active` fields live at the origin level because they describe the raw content source, not the corpus as a whole.
 
 Each origin's `[origins.reingest]` section defines the default volatility for documents from that origin and the thresholds for re-ingestion priority. Individual source files can override `default_volatility` via the `volatility` field in their extraction sidecar. The ingestion scanner compares each sidecar's `ingestion_date_last` against the appropriate threshold to generate a re-ingestion priority queue. If a document spans multiple origins, each sidecar carries its own volatility from its respective origin.
 
-The `corpus_prefix` ensures globally unique document IDs across all corpora. Prefixes are 4 uppercase letters (allowing for 456,976 unique corpus prefixes). Every normalized file in this repo will have a document ID like `G8BD.0001`, `G8BD.0042`, etc. The numeric portion is zero-padded to 4 digits, supporting up to 9,999 documents per corpus. When a compendium cites `G8BD.0042`, it unambiguously resolves to a specific file in a specific corpus repo.
+The `corpus_prefix` ensures globally unique document IDs across all corpora. Prefixes are 4 uppercase letters (allowing for 456,976 unique corpus prefixes). The full document ID format is `XXXX.TT.NNNNNNN` — a 4-letter corpus prefix, a 2-character uppercase alphanumeric subdivision code, and a 7-digit zero-padded sequence number. For example, `G8BD.TA.0000001` identifies the first document in the Technical Articles subdivision of the g8board corpus. When a compendium cites `G8BD.SB.0000003`, it unambiguously resolves to a specific file in a specific corpus repo and subdivision.
+
+#### Subdivisions
+
+**Subdivisions are mandatory.** Every corpus defines at least one `[[subdivision]]` entry in its `{corpus_id}.toml`. This means the document ID format is always `XXXX.TT.NNNNNNN` — there is no short form without a subdivision code.
+
+Subdivisions drive three things: directory structure (files are organized under subdivision slug directories in both `manuscript/` and `sources/`), mdbook chapter organization (each subdivision becomes a top-level chapter in the corpus book), and ID assignment (the 2-character code is embedded in every document ID).
+
+The subdivision structure varies by corpus type:
+
+- **Forum corpus** (g8board): subdivisions map to forum sections — Technical Articles, V8 Engine, Suspension & Brakes, etc.
+- **Author corpus** (frank-herbert): subdivisions map to work types — `NV` (novels), `SS` (short stories), `ES` (essays), `IN` (interviews).
+- **Manufacturer corpus** (gm): subdivisions map to document types — `SM` (service manuals), `TB` (technical bulletins), `PR` (press releases).
+- **YouTube channel** (engineering-explained): could use a single subdivision `VD` (videos) or subdivide by topic area.
+
+Even a corpus with only one logical category still defines a subdivision — the format is universal.
 
 #### 3.2.1 Corpus Repository Layout
 
@@ -328,64 +429,81 @@ Each corpus repo has a clean top-level structure:
 
 ```
 Corpus/g8board/
-├── g8board.toml                        # corpus registration + origin configs
-├── backlog.toml                        # non-captured document tracking
-├── documents/                          # one markdown file per captured document
-│   ├── G8BD.0001.md
-│   ├── G8BD.0002.md
-│   └── G8BD.0042.md
-├── assets/                             # embedded content referenced by document files
-│   ├── G8BD.0001/
-│   │   ├── bearing-removal.jpg
-│   │   └── torque-sequence.png
-│   └── G8BD.0042/
-│       └── hub-assembly-diagram.png
-└── ingested/                           # raw files + extraction sidecars, per document
-    ├── G8BD.0001/
-    │   ├── G8BD.0001_001.html
-    │   └── G8BD.0001_001.extract.md
-    └── G8BD.0042/
-        ├── G8BD.0042_001.html
-        ├── G8BD.0042_001.extract.md
-        ├── G8BD.0042_002.html          # e.g., wayback capture
-        └── G8BD.0042_002.extract.md
+├── g8board.toml                        # corpus registration + origin/subdivision configs
+├── backlog.toml                        # non-captured entry tracking
+├── book.toml                           # mdbook config (src = "manuscript")
+├── manuscript/                         # normalized documents, organized by subdivision
+│   ├── SUMMARY.md                      # mdbook table of contents
+│   ├── README.md                       # corpus-level overview page
+│   ├── suspension-brakes/              # subdivision slug directory
+│   │   ├── README.md                   # subdivision overview
+│   │   ├── G8BD.SB.0000001.md
+│   │   ├── G8BD.SB.0000002.md
+│   │   └── assets/                     # embedded content for this subdivision
+│   │       └── G8BD.SB.0000002/
+│   │           ├── bearing-removal.jpg
+│   │           └── torque-sequence.png
+│   └── technical-articles-diy/
+│       ├── README.md
+│       ├── G8BD.TA.0000001.md
+│       └── G8BD.TA.0000002.md
+├── sources/                            # raw files + extraction sidecars, by subdivision
+│   ├── suspension-brakes/
+│   │   ├── G8BD.SB.0000001/
+│   │   │   ├── G8BD.SB.0000001_001.html
+│   │   │   └── G8BD.SB.0000001_001.extract.md
+│   │   └── G8BD.SB.0000002/
+│   │       ├── G8BD.SB.0000002_001.html
+│   │       └── G8BD.SB.0000002_001.extract.md
+│   └── technical-articles-diy/
+│       └── G8BD.TA.0000001/
+│           ├── G8BD.TA.0000001_001.html
+│           └── G8BD.TA.0000001_001.extract.md
+└── .download/                          # staging area for acquired content (gitignored)
+    └── example-thread.12345/
+        └── thread.html
 ```
 
 **Directory purposes:**
 
-- **`documents/`** — One markdown file per document. Files only exist here when there is actual normalized content. No stubs, no placeholders.
-- **`assets/`** — Images, diagrams, and other embedded content referenced by document files. Organized as one subdirectory per document ID (only present when that document has assets). Assets are produced during extraction — the normalization agent references existing assets via the `assets` array in the extraction sidecar.
-- **`ingested/`** — Raw files and extraction sidecars, organized as one subdirectory per document ID. Raw files use standardized names (`{document_id}_XXX.{ext}` — three-digit sequence, original extension preserved). Each raw file is paired with an extraction sidecar (`{document_id}_XXX.extract.md`) that contains the programmatically extracted content as markdown with YAML frontmatter.
+- **`manuscript/`** — Normalized documents structured for mdbook rendering. Organized by subdivision slug directories, each containing one markdown file per normalized document plus a `README.md` that serves as the subdivision's chapter overview. The corpus builds as a browsable mdbook reference (see section 4). Documents with `status: pending_normalization` exist here as stubs — minimal files created at reconciliation that serve as the work queue for the normalizer agent.
+- **`manuscript/<slug>/assets/<doc_id>/`** — Images, diagrams, and other embedded content referenced by document files. Nested inside the manuscript tree so that mdbook resolves relative paths cleanly (documents reference assets via `./assets/<doc_id>/filename`). Assets are produced during extraction — the normalization agent references existing assets via the `assets` array in the extraction sidecar.
+- **`sources/`** — Raw files and extraction sidecars, organized by subdivision slug and then by document ID. Raw files use standardized names (`{document_id}_XXX.{ext}` — three-digit sequence, original extension preserved). Each raw file is paired with an extraction sidecar (`{document_id}_XXX.extract.md`) that contains the programmatically extracted content as markdown with YAML frontmatter.
+- **`.download/`** — Gitignored staging area for acquired content that has not yet been reconciled into the corpus. Acquisition scripts write raw content here; reconciliation moves it into `sources/` with a proper document ID. Failed acquisitions remain here without consuming IDs.
+- **`book.toml`** — mdbook configuration for the corpus book (`src = "manuscript"`). See section 4.
+- **`SUMMARY.md`** — mdbook table of contents. Subdivisions become top-level chapters, with individual documents listed as sub-entries.
+- **Per-subdivision `README.md`** — Overview page for each subdivision chapter, describing the subdivision's scope.
 
-**The many-to-one rule:** A single document can have multiple raw files in `ingested/{document_id}/` — the same content in different formats, multiple captures from different dates, or complementary representations (a transcript plus screenshots). Each raw file has its own extraction sidecar. Regardless of how many ingested files exist for a document, normalization always produces exactly **one markdown file** in `documents/` per document ID.
+**The many-to-one rule:** A single document can have multiple raw files in `sources/<slug>/{document_id}/` — the same content in different formats, multiple captures from different dates, or complementary representations (a transcript plus screenshots). Each raw file has its own extraction sidecar. Regardless of how many source files exist for a document, normalization always produces exactly **one markdown file** in `manuscript/<slug>/` per document ID.
 
 #### 3.2.2 Document Backlog
 
-Captured documents are self-describing — they exist as files in `documents/` with complete frontmatter. The `backlog.toml` file tracks documents that are *not yet captured*: known to exist, but pending ingestion, explicitly deferred, or currently unavailable.
+Captured documents are self-describing — they exist as files in `manuscript/` with complete frontmatter. The `backlog.toml` file tracks entries that are *not yet captured*: known to exist, but pending ingestion, explicitly deferred, or currently unavailable.
+
+**Backlog entries do not have document IDs.** IDs are assigned only at reconciliation (see section 3.3.2), not at discovery time. This is a deliberate design choice — it means failed acquisitions don't consume IDs, the backlog doesn't need to know about subdivision codes, and there are never phantom IDs referenced by no file.
 
 ```toml
-# backlog.toml — tracks known documents not yet captured
+# backlog.toml — tracks known content not yet captured
 
-[[documents]]
-document_id = "G8BD.0200"
+[[entries]]
 title = "Complete AFM delete guide with dyno results"
+url = "https://www.g8board.com/threads/afm-delete-guide.56789/"
+section = "v8-engine-tech-l76-ls3"
 status = "pending"
 priority = "high"
-discovered_url = "https://www.g8board.com/forum/thread-56789"
-discovered_date = "2026-02-08"
 
-[[documents]]
-document_id = "G8BD.0201"
+[[entries]]
 title = "Headlight condensation fix - bake and reseal"
+url = "https://www.g8board.com/threads/headlight-condensation.56800/"
+section = "technical-articles-diy"
 status = "pending"
 priority = "medium"
-discovered_url = "https://www.g8board.com/forum/thread-56800"
-discovered_date = "2026-02-08"
 notes = "Includes detailed photos of the baking process"
 
-[[documents]]
-document_id = "G8BD.0202"
+[[entries]]
 title = "G8 production numbers by color and trim"
+url = "https://www.g8board.com/threads/production-numbers.56900/"
+section = "g8-gt-talk-v8"
 status = "deferred"
 notes = "Interesting but not relevant to any current compendium"
 ```
@@ -395,37 +513,49 @@ For an author corpus, the backlog tracks works not yet acquired:
 ```toml
 # backlog.toml for frank-herbert
 
-[[documents]]
-document_id = "FHBT.0003"
+[[entries]]
 title = "Children of Dune"
+section = "novels"
 status = "pending"
 priority = "high"
 notes = "Need to acquire epub"
 
-[[documents]]
-document_id = "FHBT.0011"
+[[entries]]
 title = "The White Plague"
+section = "novels"
 status = "deferred"
 notes = "Out of print, difficult to acquire"
 
-[[documents]]
-document_id = "FHBT.0012"
+[[entries]]
 title = "Man of Two Worlds"
+section = "novels"
 status = "unavailable"
 notes = "Co-authored with Bill Ransom, no digital edition found"
 ```
 
 The `content_type` field on each extraction sidecar distinguishes what kind of content it is (`service_manual`, `technical_bulletin`, `article`, `product_documentation`). The backlog and corpus just track that it all comes from the same entity.
 
-**Status values** (backlog only — captured documents exist as files, not backlog entries):
+**Primary fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | yes | Human-readable title of the entry |
+| `url` | string | no | Where this content can be acquired (for web-based origins) |
+| `section` | string | no | Subdivision slug this entry belongs to (may be `"unknown"` if not yet categorized) |
+| `priority` | enum | no | `critical`, `high`, `medium`, `low` — only applicable to `pending` entries |
+| `status` | enum | yes | `pending`, `ingested`, `deferred`, `unavailable` |
+| `notes` | string | no | Freeform notes about this entry or why it's in a particular status |
+
+**Status values:**
 
 | Status | Meaning |
 |--------|---------|
-| `pending` | Known to exist and belongs in this corpus. Queued for future ingestion |
+| `pending` | Known to exist and belongs in this corpus. Queued for future acquisition |
+| `ingested` | Successfully acquired and reconciled into the corpus. Entry remains for tracking provenance |
 | `deferred` | Known to exist, explicitly deprioritized. Won't be ingested soon but tracked for completeness |
 | `unavailable` | Known to exist but currently impossible to acquire (dead link, out of print, behind paywall) |
 
-**Priority values** (only applicable to `pending` documents):
+**Priority values** (only applicable to `pending` entries):
 
 | Priority | Meaning |
 |----------|---------|
@@ -434,23 +564,15 @@ The `content_type` field on each extraction sidecar distinguishes what kind of c
 | `medium` | Would improve coverage but not urgent |
 | `low` | Known to exist, no current compendium needs it |
 
-**Backlog-specific optional fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `discovered_url` | string | Where this document was found (for web-based origins) |
-| `discovered_date` | date | When this document was discovered |
-| `notes` | string | Freeform notes about this document or why it's in a particular status |
-
-**Document IDs are reserved at discovery time.** When you identify a thread, article, or work that belongs in this corpus, it gets a backlog entry and a document ID immediately — even before ingestion. This means the ID is stable and can be referenced in `relations` by other documents before the content is captured. Gaps in numbering (from documents that remain `pending` indefinitely) are expected and harmless.
+**Within-corpus references to backlog items.** Because backlog entries have no document IDs, other documents in the corpus cannot reference them by ID. If a normalized document references content that is still in the backlog, the reference is recorded as an `unresolved` relation in the document's frontmatter — the same mechanism used for cross-corpus references. Once the backlog entry is acquired and reconciled, the `unresolved` reference can be resolved to the assigned document ID.
 
 **The backlog is not for cross-corpus references.** If a g8board post mentions a GM TSB, that reference is recorded as an `unresolved` relation in the document's frontmatter — not as a backlog entry in g8board. The TSB belongs in the `gm` corpus and would be registered there.
 
 **Build-time validation:**
 
-- Every file in `documents/` must have valid frontmatter
-- Every document_id in `backlog.toml` must NOT have a file in `documents/`
-- No overlapping IDs between `documents/` and `backlog.toml`
+- Every file in `manuscript/<slug>/` must have valid frontmatter with a `status` field
+- Backlog entries with `status: ingested` should have a corresponding file in `manuscript/`
+- No document file should exist without a corresponding directory in `sources/`
 
 **Ingestion backlog reporting:**
 
@@ -463,25 +585,44 @@ Ingestion Backlog:
 
 ### 3.3 Normalization Pipeline
 
-The path from raw source to normalized markdown is a three-phase pipeline. Formalizing these phases makes the pipeline reproducible, auditable, and independently improvable — you can re-normalize from improved models without re-extracting, and you can re-extract with better tools without re-downloading.
+The path from raw source to normalized markdown is a four-phase pipeline. Formalizing these phases makes the pipeline reproducible, auditable, and independently improvable — you can re-normalize from improved models without re-extracting, you can re-extract with better tools without re-downloading, and failed acquisitions never consume document IDs.
 
-#### 3.3.1 Phase 1: Ingestion
+#### 3.3.1 Phase 1a: Acquisition
 
-**What:** Acquire raw content from external sources.
+**What:** Acquire raw content from external sources into a staging area.
 
 **How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy.
 
-**Output:** Raw files in `ingested/{document_id}/` with standardized names: `{document_id}_XXX.{ext}` (three-digit sequence number, original extension preserved). Multiple files per document are common (e.g., an HTML capture plus a Wayback snapshot).
+**Output:** Raw files in `.download/<descriptive-name>/` — a gitignored staging area with no document IDs assigned. The naming convention is descriptive (e.g., `.download/afm-delete-guide.56789/thread.html`) because IDs don't exist yet.
 
-Ingestion is already defined by the corpus repository structure (section 3.2.1) and the backlog tracking system (section 3.2.2). This phase simply acquires content; it performs no transformation.
+Acquisition simply captures content; it performs no transformation and assigns no identity. Failed acquisitions (network errors, paywalled content, corrupt downloads) remain in `.download/` as orphans without consuming any corpus resources. The `.download/` directory is gitignored — it is a transient workspace, not part of the versioned corpus.
 
-#### 3.3.2 Phase 2: Extraction
+#### 3.3.2 Phase 1b: Reconciliation
+
+**What:** Move acquired content from staging into the corpus, assigning identity.
+
+**How:** Reconciliation tooling (or the ingestor agent — see section 12) auto-detects the appropriate subdivision from the content or backlog metadata, assigns the next available document ID within that subdivision, creates the source directory, and generates a document stub.
+
+**Operations:**
+
+1. **Subdivision detection.** Determine which subdivision the content belongs to — from backlog `section` field, from content analysis, or from explicit user input.
+2. **ID assignment.** Assign the next sequential `XXXX.TT.NNNNNNN` ID within the detected subdivision.
+3. **Source creation.** Move raw files from `.download/` to `sources/<slug>/{document_id}/` with standardized names (`{document_id}_XXX.{ext}`).
+4. **Extraction.** Run the appropriate extraction script to produce sidecars alongside the raw files.
+5. **Stub creation.** Create a document stub in `manuscript/<slug>/{document_id}.md` with `status: pending_normalization` — a minimal file containing frontmatter skeleton with the assigned ID, title, and status. This stub serves as the work queue entry for the normalizer agent.
+6. **Backlog update.** Mark the corresponding backlog entry as `ingested` if one exists.
+
+**Output:** A reconciled document with files in `sources/<slug>/{document_id}/` (raw files + extraction sidecars) and a stub in `manuscript/<slug>/{document_id}.md`. The sidecar's `document_id` field is populated during reconciliation — it was absent during acquisition.
+
+**The stub pattern.** Reconciliation creates document stubs with `status: pending_normalization` in `manuscript/`. This replaces the v2.0 invariant of "no stubs, no placeholders" — stubs now serve as the explicit work queue for normalizer agents. A stub contains enough frontmatter for the document to appear in `SUMMARY.md` and be tracked, but its content is minimal until normalization completes and sets `status: normalized`.
+
+#### 3.3.3 Phase 2: Extraction
 
 **What:** Programmatic transformation of raw files into clean, structured extraction sidecars.
 
-**How:** Content-type-specific scripts — no LLM involvement, deterministic processing only.
+**How:** Content-type-specific scripts — no LLM involvement, deterministic processing only. Extraction is typically run as part of reconciliation (section 3.3.2) but can be re-run independently.
 
-**Output:** One extraction sidecar per raw file (`{document_id}_XXX.extract.md`) alongside the raw file in `ingested/{document_id}/`, plus assets saved to `assets/{document_id}/`.
+**Output:** One extraction sidecar per raw file (`{document_id}_XXX.extract.md`) alongside the raw file in `sources/<slug>/{document_id}/`, plus assets saved to `manuscript/<slug>/assets/{document_id}/`.
 
 **Key principle:** Extraction captures *what's there* without editorial judgment. No summaries, no credibility assessment, no relevance decisions. It strips away format-specific noise (HTML chrome, PDF layout artifacts, ad content) and produces structured text that the normalization agent can interpret.
 
@@ -503,20 +644,20 @@ Operations that belong in extraction:
 
 ```yaml
 ---
-document_id: "G8BD.0042"
+document_id: "G8BD.SB.0000001"
 sequence: 1
 content_type: "forum_post"
 origin: "forum"
-original_url: "https://www.g8board.com/forum/thread-12345"
-original_filename: "thread.html"
-capture_date: "2026-01-15"
-ingestion_date_last: "2026-06-15"
-content_changed_last: "2026-01-20"
-date_published: "2019-03-15"
+original_url: "https://www.g8board.com/threads/rear-suspension-rebuild-the-easy-way.290127/"
+original_filename: "G8BD.SB.0000001_001.html"
+capture_date: "2026-02-16"
+ingestion_date_last: "2026-02-16"
+content_changed_last: "2026-02-16"
+date_published: "2024-01-24T00:46:23-05:00"
 volatility: "unlikely"
 extraction_method: "g8board-scraper"
-extraction_tool: "athenaeum-extract v0.3"
-extraction_date: "2026-01-20"
+extraction_tool: "scrape_thread.py v0.6"
+extraction_date: "2026-02-16"
 assets:
   - filename: "bearing-removal.jpg"
     context: "Shows bearing removal tool setup"
@@ -524,9 +665,8 @@ assets:
     context: "Torque sequence diagram for hub assembly"
 
 # extended: forum_post
-username: "TorqueDave"
-thread_url: "https://www.g8board.com/forum/thread-12345"
-reply_count: 47
+thread_url: "https://www.g8board.com/threads/rear-suspension-rebuild-the-easy-way.290127/"
+reply_count: 13
 ---
 
 [extracted clean text content]
@@ -535,7 +675,7 @@ reply_count: 47
 The sidecar frontmatter follows these conventions:
 
 - **`document_id`** and **`sequence`** — identify which document and which raw file this sidecar corresponds to.
-- **`content_type`** — authoritative content type. The extraction script knows what it's processing — this is a definitive classification, not a hint. Closed enum (see section 3.3.2.1 for valid types and their extended fields).
+- **`content_type`** — authoritative content type. The extraction script knows what it's processing — this is a definitive classification, not a hint. Closed enum (see section 3.3.3.1 for valid types and their extended fields).
 - **`origin`** — which origin within the corpus this raw file came from (matches an `origin_id` in `{corpus_id}.toml`).
 - **`original_url`** and **`original_filename`** — provenance of the raw file before standardized naming.
 - **`capture_date`** — when the raw file was originally acquired.
@@ -545,13 +685,13 @@ The sidecar frontmatter follows these conventions:
 - **`date_published`** — when the original content was published. Omit for undated content.
 - **`volatility`** — override for the origin's `default_volatility`. Only set when this source's volatility differs from the origin norm. One of: `static`, `unlikely`, `periodic`, `active`.
 - **`extraction_method`**, **`extraction_tool`**, **`extraction_date`** — extraction provenance, enabling targeted bulk re-extraction when tools improve.
-- **`assets`** — filenames and context strings for extracted images/diagrams saved to `assets/{document_id}/`.
+- **`assets`** — filenames and context strings for extracted images/diagrams saved to `manuscript/<slug>/assets/{document_id}/`.
 
-Extended fields are content-type-specific and follow the sidecar's `content_type`. These are programmatically determinable fields that the extraction script populates based on what it's processing. See section 3.3.2.1 for the extended fields defined for each content type.
+Extended fields are content-type-specific and follow the sidecar's `content_type`. These are programmatically determinable fields that the extraction script populates based on what it's processing. See section 3.3.3.1 for the extended fields defined for each content type.
 
-**Asset extraction.** Images, diagrams, and other embedded content are extracted during this phase and saved to `assets/{document_id}/`. The `assets` array in the sidecar frontmatter provides filenames and context strings that the normalization agent uses to produce correct relative paths and alt text in the final markdown document.
+**Asset extraction.** Images, diagrams, and other embedded content are extracted during this phase and saved to `manuscript/<slug>/assets/{document_id}/`. The `assets` array in the sidecar frontmatter provides filenames and context strings that the normalization agent uses to produce correct relative paths (`./assets/<doc_id>/filename`) and alt text in the final markdown document. Assets live inside the manuscript tree so that mdbook resolves relative paths without path rewriting.
 
-##### 3.3.2.1 Extended Sidecar Fields by `content_type`
+##### 3.3.3.1 Extended Sidecar Fields by `content_type`
 
 The `content_type` field determines which additional fields the extraction script populates on the sidecar. This is a closed enum — adding a new type requires defining its extended fields.
 
@@ -579,7 +719,7 @@ Covers: Reddit posts and threads. Separated from `forum_post` because Reddit's v
 
 ##### `book`
 
-Covers: complete published works — novels, non-fiction books, collected works. **A single document is always the entire book.** In `ingested/` the book may be split across many files (chapter PDFs, an epub, a complete PDF), but normalization always produces one markdown file per work.
+Covers: complete published works — novels, non-fiction books, collected works. **A single document is always the entire book.** In `sources/` the book may be split across many files (chapter PDFs, an epub, a complete PDF), but normalization always produces one markdown file per work.
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
@@ -669,17 +809,17 @@ Covers: Product datasheets, catalogs, user guides, safety data sheets, and manuf
 | `document_type` | no | enum | `datasheet`, `catalog`, `guide`, `sds` |
 | `part_numbers` | no | string[] | Associated part numbers |
 
-#### 3.3.3 Phase 3: Normalization
+#### 3.3.4 Phase 3: Normalization
 
 **What:** LLM-driven interpretation of extracted content into final normalized markdown with full frontmatter.
 
-**How:** A normalization agent consuming the extraction sidecars, guided by the frontmatter schema and corpus context.
+**How:** A normalization agent (see section 12.3) consuming the extraction sidecars, guided by the frontmatter schema and corpus context. Normalization replaces the stub created at reconciliation with the full document content and sets `status: normalized`.
 
-**Output:** `documents/{document_id}.md` with complete YAML frontmatter (required fields, applicable optional fields, and the `sources` array linking to extraction sidecars) and structured markdown content.
+**Output:** `manuscript/<slug>/{document_id}.md` with complete YAML frontmatter (required fields, applicable optional fields, and the `sources` array linking to extraction sidecars) and structured markdown content.
 
 **The normalization agent receives:**
 
-1. Extraction sidecars for the document (one or more `.extract.md` files from `ingested/{document_id}/`)
+1. Extraction sidecars for the document (one or more `.extract.md` files from `sources/<slug>/{document_id}/`)
 2. `{corpus_id}.toml` context (corpus metadata, origin configs, credibility defaults)
 3. The frontmatter schema (required fields, optional fields, and the sources array linking to extraction sidecars)
 4. Content-type-specific guidance (how to structure forum threads vs. book chapters vs. video transcripts)
@@ -694,22 +834,24 @@ Covers: Product datasheets, catalogs, user guides, safety data sheets, and manuf
 | Flag `issues` | Requires quality judgment |
 | Structure the markdown body | Requires editorial decisions about presentation |
 | Populate the `sources` array | Requires mapping sidecars to the document they produced |
+| Set `status: normalized` | Signals that the stub has been replaced with full content |
 
-The spec defines what the normalization agent receives and produces without prescribing implementation form. The normalization system prompt could live in the corpus repo (for corpus-specific customization) or be standardized tooling (for consistency across corpora).
+The spec defines what the normalization agent receives and produces without prescribing implementation form. The normalization agent definition lives in the corpus repo's `.claude/agents/` directory (see section 12.3), enabling corpus-specific customization while following a standardized pattern.
 
-#### 3.3.4 Phase Boundaries and Re-processing
+#### 3.3.5 Phase Boundaries and Re-processing
 
-The three phases are designed to be independently re-runnable:
+The four phases are designed to be independently re-runnable:
 
-- **Re-ingestion** (Phase 1 only): Re-acquire from the upstream source when content may have changed. Does not trigger re-extraction or re-normalization unless the ingested content actually differs.
-- **Re-extraction** (Phase 2 only): Re-create sidecars from existing ingested files when extraction tools improve (e.g., "find all documents extracted with tesseract v4 and re-extract with v5"). The `extraction_method` and `extraction_tool` sidecar fields enable targeted bulk re-extraction.
+- **Re-acquisition** (Phase 1a only): Re-acquire from the upstream source when content may have changed. Content lands in `.download/` as fresh staging. Does not trigger re-reconciliation, re-extraction, or re-normalization unless the acquired content actually differs.
+- **Re-reconciliation** (Phase 1b only): Rarely needed — typically only when a document needs to be reassigned to a different subdivision.
+- **Re-extraction** (Phase 2 only): Re-create sidecars from existing source files when extraction tools improve (e.g., "find all documents extracted with tesseract v4 and re-extract with v5"). The `extraction_method` and `extraction_tool` sidecar fields enable targeted bulk re-extraction.
 - **Re-normalization** (Phase 3 only): Re-normalize from existing extraction sidecars when LLM models improve. This is the most common re-processing scenario and the cheapest — no re-downloading, no re-extracting.
 
-Extraction sidecars are persisted alongside raw files in `ingested/` to enable this independence. Extraction is often the expensive step (OCR, Whisper transcription), and the resulting sidecars are small compared to raw files. Compendiums only clone `documents/`, `assets/`, and `{corpus_id}.toml` — the `ingested/` directory (raw files and sidecars) is never needed downstream.
+Extraction sidecars are persisted alongside raw files in `sources/` to enable this independence. Extraction is often the expensive step (OCR, Whisper transcription), and the resulting sidecars are small compared to raw files. Compendiums only clone `manuscript/` and `{corpus_id}.toml` — the `sources/` directory (raw files and sidecars) and `.download/` staging area are never needed downstream.
 
 ### 3.4 Normalized Document Format
 
-Every normalized document file is a single markdown file with structured YAML frontmatter. The frontmatter carries document identity, a description for discovery, quality metadata, and a lightweight `sources` array linking to the extraction sidecars that were used to produce it. Per-source metadata — content type, author, dates, and content-type-specific fields — lives on the extraction sidecars (section 3.3.2), not the document.
+Every normalized document file is a single markdown file with structured YAML frontmatter. The frontmatter carries document identity, a description for discovery, quality metadata, and a lightweight `sources` array linking to the extraction sidecars that were used to produce it. Per-source metadata — content type, author, dates, and content-type-specific fields — lives on the extraction sidecars (section 3.3.3), not the document.
 
 #### 3.4.1 Required Fields
 
@@ -717,13 +859,14 @@ Every document file must include all of these fields, no exceptions:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `document_id` | string | `XXXX.####` globally unique identifier (4-letter corpus prefix + 4-digit number) |
+| `document_id` | string | `XXXX.TT.NNNNNNN` globally unique identifier (4-letter corpus prefix + 2-char subdivision code + 7-digit number) |
 | `title` | string | Short descriptive label for the document file (not necessarily the work's canonical title) |
 | `description` | string | One-to-three sentence description of what this document contains and why it's useful. Generated during normalization. Enables synthesis-time relevance assessment without reading the full content |
 | `credibility_tier` | enum | `authoritative`, `expert`, `community_validated`, `anecdotal`, `speculative`. See section 3.5 |
 | `normalization_confidence` | float | `0.0`–`1.0`, quality of the conversion process. See section 3.5.1 |
 | `normalization_model` | string | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`) |
 | `normalization_date` | date | When normalization was last performed. **This is the field the compendium layer compares against to determine if re-synthesis is needed** — it captures both content changes and re-normalization with improved models |
+| `status` | enum | `pending_normalization` or `normalized`. Documents start as stubs (`pending_normalization`) created at reconciliation and transition to `normalized` when the normalizer agent completes processing |
 | `sources` | array | One entry per raw file used to produce this document. See section 3.4.3 |
 
 #### 3.4.2 Optional Fields
@@ -737,11 +880,11 @@ These fields are present on some documents but legitimately absent on most:
 
 #### 3.4.3 Sources Array
 
-Each entry in the `sources` array links to one extraction sidecar used to produce this document. The sidecar (in `ingested/{document_id}/`) holds the full per-source metadata — content type, author, dates, and content-type-specific fields. The document frontmatter carries only a reference and a human-readable identifier.
+Each entry in the `sources` array links to one extraction sidecar used to produce this document. The sidecar (in `sources/<slug>/{document_id}/`) holds the full per-source metadata — content type, author, dates, and content-type-specific fields. The document frontmatter carries only a reference and a human-readable identifier.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source_id` | string | Identifies the raw file and its sidecar: `{document_id}_XXX` (e.g., `G8BD.0042_001`) |
+| `source_id` | string | Identifies the raw file and its sidecar: `{document_id}_XXX` (e.g., `G8BD.SB.0000001_001`) |
 | `origin_url` | string | URL of the original content. Use `original_filename` instead for offline sources |
 | `original_filename` | string | Filename of the original content. Use when `origin_url` is absent |
 
@@ -751,17 +894,16 @@ A forum post document with all applicable fields:
 
 ```yaml
 ---
-document_id: "G8BD.0042"
-title: "DIY rear wheel bearing replacement with diagnosis walkthrough"
-description: "Detailed step-by-step guide for diagnosing and replacing rear wheel bearings on the Pontiac G8, including jacking points, torque specs, and tool list. Author reports failure at 82k miles with symptoms of humming at highway speeds progressing to grinding."
+document_id: "G8BD.SB.0000001"
+title: "Rear Suspension Rebuild - The Easy Way"
+description: "Complete rear subframe swap using a 2017 Caprice PPV dropout into a high-mileage G8 GT, providing aluminum knuckles and control arms, lower ball joint in knuckle, 18mm rear sway bar, and stiffer cradle bushings. Includes ABS sensor wiring procedure and compatibility information for 2011-2017 PPV models."
 credibility_tier: "community_validated"
-normalization_confidence: 0.92
-normalization_model: "claude-sonnet-4-5-20250514"
-normalization_date: "2026-01-20"
+normalization_confidence: 0.95
+normalization_model: "claude-sonnet-4-5-20250929"
+normalization_date: "2026-02-16"
+status: "normalized"
 
 relations:
-  - type: "references"
-    document_id: "G8BD.0038"
   - type: "references"
     unresolved: "GM TSB #PI0597B"
 issues:
@@ -772,8 +914,8 @@ issues:
     resolved: true
 
 sources:
-  - source_id: "G8BD.0042_001"
-    origin_url: "https://www.g8board.com/forum/thread-12345"
+  - source_id: "G8BD.SB.0000001_001"
+    origin_url: "https://www.g8board.com/threads/rear-suspension-rebuild-the-easy-way.290127/"
 ---
 
 [normalized markdown content]
@@ -849,7 +991,7 @@ issues:
 | `manual_reconstruction` | Requires human effort to reconstruct from context |
 | `none` | No remediation needed or possible |
 
-The `resolved` boolean tracks whether the issue has been addressed. The typical workflow: normalization flags dead images → issue is logged with `remediation: "wayback_snapshot"` → Wayback snapshot is retrieved and added to `ingested/{document_id}/` → document is re-normalized from improved raw material → issue is marked `resolved: true`. The issue remains in frontmatter as a historical record.
+The `resolved` boolean tracks whether the issue has been addressed. The typical workflow: normalization flags dead images → issue is logged with `remediation: "wayback_snapshot"` → Wayback snapshot is retrieved and added to `sources/<slug>/{document_id}/` → document is re-normalized from improved raw material → issue is marked `resolved: true`. The issue remains in frontmatter as a historical record.
 
 For the `content_modified` type, the remediation may involve pulling both the current version and a Wayback snapshot as separate raw files. A forum post edited to add "UPDATE: don't do this, it caused X" is more valuable with both versions visible — the normalization can reconcile them or note the differences.
 
@@ -869,13 +1011,13 @@ Normalized documents can declare explicit relationships to other documents. Thes
 ```yaml
 relations:
   - type: "sequel_to"
-    document_id: "FHBT.0001"            # Dune Messiah is a sequel to Dune
+    document_id: "FHBT.NV.0000001"      # Dune Messiah is a sequel to Dune
   - type: "reply_to"
-    document_id: "G8BD.0038"            # this forum post replies to that thread
+    document_id: "G8BD.SB.0000001"      # this forum post replies to that thread
   - type: "adaptation_of"
-    document_id: "FHBT.0001"            # Villeneuve screenplay adapts the novel
+    document_id: "FHBT.NV.0000001"      # Villeneuve screenplay adapts the novel
   - type: "supersedes"
-    document_id: "GTSB.0004"            # revised TSB replaces an earlier one
+    document_id: "GMOT.TB.0000004"      # revised TSB replaces an earlier one
   - type: "references"
     unresolved: "GM TSB #PI0597B"      # cross-corpus reference not yet resolved
 ```
@@ -925,16 +1067,17 @@ The corpus-as-repo pattern supports any content type. The only requirement is a 
 
 ```yaml
 ---
-document_id: "ENEX.0017"
+document_id: "ENEX.VD.0000017"
 title: "Engineering Explained — Why Direct Injection Causes Carbon Buildup"
 description: "Technical explainer covering the mechanism by which direct injection engines accumulate carbon deposits on intake valves, why port injection doesn't have this problem, and what solutions exist including walnut blasting and dual injection systems."
 credibility_tier: "expert"
 normalization_confidence: 0.85
-normalization_model: "claude-sonnet-4-5-20250514"
+normalization_model: "claude-sonnet-4-5-20250929"
 normalization_date: "2026-02-01"
+status: "normalized"
 
 sources:
-  - source_id: "ENEX.0017_001"
+  - source_id: "ENEX.VD.0000017_001"
     origin_url: "https://youtube.com/watch?v=..."
 ---
 
@@ -949,15 +1092,108 @@ sources:
 
 ---
 
-## 4. Corpus Discovery
+## 4. Corpus Format
 
 ### 4.1 Overview
+
+Corpora are not just data stores — they are browsable mdbook references. Each corpus builds as a self-contained static site where every normalized document is readable in a web browser. This serves three purposes: human review of normalized documents without opening raw files, a navigable corpus overview organized by subdivision, and a shareable reference that can be hosted independently of the compendium layer.
+
+The term "corpus manuscript" refers to the normalized documents structured for mdbook rendering — the `manuscript/` directory is the mdbook source. This is distinct from "compendium manuscript," which refers to the synthesized reference content in a compendium's `manuscript/` directory. Both use mdbook as the rendering engine, but their content has fundamentally different provenance: corpus manuscripts are normalized source material, compendium manuscripts are LLM-synthesized domain knowledge.
+
+### 4.2 book.toml
+
+Each corpus repository contains a `book.toml` at its root:
+
+```toml
+[book]
+title = "G8Board.com Corpus"
+authors = ["Steven Rahn"]
+language = "en"
+src = "manuscript"
+
+[build]
+build-dir = ".build"
+
+[preprocessor.frontmatter-strip]
+
+[output.html]
+default-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 0
+```
+
+Key configuration:
+
+- **`src = "manuscript"`** — points mdbook at the `manuscript/` directory as its source.
+- **`[preprocessor.frontmatter-strip]`** — uses the `mdbook-frontmatter` crate (third-party preprocessor) to strip YAML frontmatter from rendered HTML output. This is essential because every document file carries YAML frontmatter for machine-readable metadata, but this metadata should not appear in the rendered book. The preprocessor removes everything between `---` delimiters before rendering.
+- **`build-dir = ".build"`** — keeps build output separate from the source tree (gitignored).
+- **`[output.html.fold]`** — collapses chapter entries by default for cleaner navigation in corpora with many documents.
+
+### 4.3 Chapter Organization
+
+Subdivisions become top-level chapters in the corpus book. The `SUMMARY.md` file defines the mdbook table of contents:
+
+```markdown
+# Summary
+
+[G8Board.com Corpus](./README.md)
+
+---
+
+- [Drivetrain](./drivetrain-tech/README.md)
+    - [G8BD.DT.0000001 - Trans mount bolt sizes](./drivetrain-tech/G8BD.DT.0000001.md)
+    - [G8BD.DT.0000002 - Diff compatibility list](./drivetrain-tech/G8BD.DT.0000002.md)
+- [Suspension & Brakes](./suspension-brakes/README.md)
+    - [G8BD.SB.0000001 - Rear Suspension Rebuild](./suspension-brakes/G8BD.SB.0000001.md)
+    - [G8BD.SB.0000002 - Brake upgrade P/Ns](./suspension-brakes/G8BD.SB.0000002.md)
+- [Technical Articles & DIY](./technical-articles-diy/README.md)
+    - [G8BD.TA.0000001 - Backup sensor info](./technical-articles-diy/G8BD.TA.0000001.md)
+    ...
+```
+
+Each subdivision directory contains a `README.md` that serves as the chapter landing page, describing the subdivision's scope and listing its contents. Document entries in `SUMMARY.md` use the format `[{document_id} - {title}]({path})` for consistent navigation.
+
+The `SUMMARY.md` is maintained as documents are added — reconciliation (section 3.3.2) adds new document entries, and the normalizer updates the title if it changes during normalization.
+
+### 4.4 Hosting
+
+Corpus books are hosted at `corpus.example.org/{corpus_id}/`:
+
+```
+https://corpus.example.org/g8board/          → G8Board corpus book
+https://corpus.example.org/frank-herbert/    → Frank Herbert corpus book
+https://corpus.example.org/gm/              → General Motors corpus book
+```
+
+CI/CD for corpus books follows the same pattern as compendium deployment (see section 9): push to main triggers an mdbook build, and the output is deployed to the Caddy server. The corpus CI workflow is simpler than the compendium workflow because there are no corpus dependencies to resolve — the `manuscript/` directory is the complete source.
+
+### 4.5 Relationship to Compendium
+
+A corpus book and a compendium book serve different purposes from the same underlying technology:
+
+| Aspect | Corpus Book | Compendium Book |
+|--------|-------------|-----------------|
+| **Content** | All normalized documents, unfiltered | Synthesized, curated domain reference |
+| **Organization** | By subdivision (where it came from) | By domain taxonomy (what it's about) |
+| **Authorship** | Normalization agent (faithful to source) | Synthesis agent (editorial judgment) |
+| **Audience** | Corpus maintainer, QA review | End users, domain agents |
+| **Scope** | Single voice | Multiple corpora, multiple voices |
+
+The corpus book is a raw reference — every document in the corpus is visible and browsable. The compendium is a synthesized view — it selects, filters, and reorganizes content from multiple corpora into a coherent domain reference. A developer reviewing normalization quality browses the corpus book. A user or agent seeking domain knowledge browses the compendium.
+
+---
+
+## 5. Corpus Discovery
+
+### 5.1 Overview
 
 Corpus discovery enables compendiums to identify which corpora are relevant to their domain without cloning and scanning every corpus repository. Each corpus's `{corpus_id}.toml` carries tiered summaries that describe the corpus (see section 3.2 for format). At compendium setup time, these summaries are fetched via the Forgejo API — no separate registry repository is needed.
 
 This design follows the spec's principle of avoiding unnecessary infrastructure. The corpora describe themselves; discovery is a computed view over the Corpus organization, not a maintained artifact.
 
-### 4.2 Summary Tier Format
+### 5.2 Summary Tier Format
 
 Each `{corpus_id}.toml` includes three summary tiers alongside the corpus's registration metadata:
 
@@ -996,7 +1232,7 @@ The tiers are designed for progressive disclosure:
 - **`summary_tier2`** — A concise paragraph. Enough to confirm relevance and understand scope.
 - **`summary_tier3`** — A comprehensive description. Full detail on what the corpus contains, its document count, and its coverage.
 
-### 4.3 API-Driven Discovery Process
+### 5.3 API-Driven Discovery Process
 
 Discovery tooling fetches summaries from the Forgejo API without cloning any repos:
 
@@ -1008,7 +1244,7 @@ Discovery tooling fetches summaries from the Forgejo API without cloning any rep
 
 This produces a complete discovery index from live data in seconds, even for hundreds of corpora. The index can be cached locally and refreshed on demand.
 
-### 4.4 Progressive Disclosure Process
+### 5.4 Progressive Disclosure Process
 
 The tiered summary structure enables efficient corpus selection at compendium setup time:
 
@@ -1024,7 +1260,7 @@ The tiered summary structure enables efficient corpus selection at compendium se
 
 This process is typically performed once during compendium setup and revisited when new corpora are added to the organization.
 
-### 4.5 Summary Maintenance
+### 5.5 Summary Maintenance
 
 Because summaries live in `{corpus_id}.toml` — the same file that defines everything else about the corpus — maintenance is straightforward:
 
@@ -1034,9 +1270,9 @@ Because summaries live in `{corpus_id}.toml` — the same file that defines ever
 
 ---
 
-## 5. Compendium Synthesis
+## 6. Compendium Synthesis
 
-### 5.1 Repository Structure
+### 6.1 Repository Structure
 
 Each compendium repository has this structure:
 
@@ -1044,9 +1280,9 @@ Each compendium repository has this structure:
 Compendium/{domain}/
 ├── .gitignore                     # ignores corpora/ (resolved at build time)
 ├── corpora/                       # resolved corpus repos (gitignored, like node_modules)
-│   ├── g8board/                   → resolved (sparse: documents/ + assets/ + g8board.toml)
-│   ├── gm/                        → resolved (sparse: documents/ + assets/ + gm.toml)
-│   └── ls1tech/                   → resolved (sparse: documents/ + assets/ + ls1tech.toml)
+│   ├── g8board/                   → resolved (sparse: manuscript/ + g8board.toml)
+│   ├── gm/                        → resolved (sparse: manuscript/ + gm.toml)
+│   └── ls1tech/                   → resolved (sparse: manuscript/ + ls1tech.toml)
 ├── manuscript/                    # pre-rendered compendium content (mdBook source)
 │   ├── SUMMARY.md                 # mdBook table of contents
 │   ├── introduction.md
@@ -1063,16 +1299,16 @@ Compendium/{domain}/
 └── README.md
 ```
 
-### 5.2 Dependency Resolution
+### 6.2 Dependency Resolution
 
-Compendium repos only need the `documents/` directory, `assets/` directory, and `{corpus_id}.toml` from each corpus — never the `ingested/` directory (which contains raw files and extraction sidecars used only for re-normalization within the corpus repo). Each corpus dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
+Compendium repos only need the `manuscript/` directory and `{corpus_id}.toml` from each corpus — never the `sources/` directory (which contains raw files and extraction sidecars used only for re-normalization within the corpus repo). Assets are included because they live inside `manuscript/`. Each corpus dependency is declared in `compendium.toml` with a pinned commit hash and the sparse paths to check out:
 
 ```toml
 [[compendium.corpora]]
 name = "g8board"
 repo = "corpus/g8board"
 commit = "a1b2c3d"
-sparse = ["documents/", "assets/", "g8board.toml"]
+sparse = ["manuscript/", "g8board.toml"]
 ```
 
 The `corpora/` directory is gitignored — it is populated on demand by a `resolve.sh` script that clones each declared corpus at its pinned commit with sparse checkout:
@@ -1112,12 +1348,12 @@ clone_corpus() {
 }
 
 # Example invocations (generated from compendium.toml):
-# clone_corpus "g8board" "Corpus/g8board" "a1b2c3d" "documents/" "assets/" "g8board.toml"
+# clone_corpus "g8board" "Corpus/g8board" "a1b2c3d" "manuscript/" "g8board.toml"
 ```
 
 This script is run once after cloning the compendium repo, before synthesis, and by the CI workflow on every build. Because `corpora/` is gitignored, the compendium repo itself stays clean — only the manuscript, configuration, and tooling are versioned.
 
-### 5.3 The Synthesis Process
+### 6.3 The Synthesis Process
 
 Synthesis transforms source material from multiple corpora into a coherent, structured compendium. This is the core intellectual work of the system.
 
@@ -1130,7 +1366,7 @@ The process for each compendium:
 5. **Build navigation.** Generate/update `SUMMARY.md`, cross-references, and supplementary sections (FAQ, glossary, quick reference).
 6. **Build output.** Run mdBook to compile the manuscript into the published static site.
 
-### 5.4 Compendium Configuration
+### 6.4 Compendium Configuration
 
 Each compendium repo contains a `compendium.toml` that declares its corpus dependencies and a synthesis system prompt that encodes domain-specific knowledge:
 
@@ -1144,25 +1380,25 @@ system_prompt_file = "synthesis-prompt.md"
 name = "frank-herbert"
 repo = "corpus/frank-herbert"
 commit = "b2c3d4e"
-sparse = ["documents/", "assets/", "frank-herbert.toml"]
+sparse = ["manuscript/", "frank-herbert.toml"]
 
 [[compendium.corpora]]
 name = "brian-herbert"
 repo = "corpus/brian-herbert"
 commit = "a1b2c3d"
-sparse = ["documents/", "assets/", "brian-herbert.toml"]
+sparse = ["manuscript/", "brian-herbert.toml"]
 
 [[compendium.corpora]]
 name = "denis-villeneuve"
 repo = "corpus/denis-villeneuve"
 commit = "c3d4e5f"
-sparse = ["documents/", "assets/", "denis-villeneuve.toml"]
+sparse = ["manuscript/", "denis-villeneuve.toml"]
 
 [[compendium.corpora]]
 name = "scifi-channel-dune"
 repo = "corpus/scifi-channel-dune"
 commit = "f7e8d9c"
-sparse = ["documents/", "assets/", "scifi-channel-dune.toml"]
+sparse = ["manuscript/", "scifi-channel-dune.toml"]
 include_all = true          # every document in this corpus is relevant — skip description assessment
 ```
 
@@ -1203,7 +1439,7 @@ This system prompt is iterable. When synthesis produces gaps (e.g., it conflates
 
 The `include_all = true` flag is an efficiency optimization for corpora where every document is known to be in scope (e.g., `scifi-channel-dune` is entirely Dune content). It skips the description assessment step for that corpus.
 
-### 5.5 Synthesis Principles
+### 6.5 Synthesis Principles
 
 - **Cite documents.** Every factual claim in the compendium references the document ID(s) it derives from. The reader (human or agent) can always trace a claim back to a specific file in a specific corpus.
 - **Represent disagreement.** When the service manual says one thing and 30 forum posts say another, the compendium captures both positions with their respective credibility tiers.
@@ -1213,7 +1449,7 @@ The `include_all = true` flag is an efficiency optimization for corpora where ev
 - **Leverage document relations.** When documents declare explicit relationships (`contradicts`, `supersedes`, `references`), the synthesis step should incorporate these signals. A document that `contradicts` another is a flag for the compendium to present both positions. A TSB that `supersedes` an earlier one means the earlier guidance may be outdated.
 - **Respect document issues.** Documents with unresolved `critical` or `major` issues should be weighted accordingly. A document flagged with `missing_media` of `major` severity may be missing key visual information. The compendium can still use it but should note the gap rather than treating the document as complete.
 
-### 5.6 Versioning
+### 6.6 Versioning
 
 Git provides version control at both layers:
 
@@ -1222,9 +1458,9 @@ Git provides version control at both layers:
 
 ---
 
-## 6. Compendium Format
+## 7. Compendium Format
 
-### 6.1 mdBook
+### 7.1 mdBook
 
 The compendium is built as an **mdBook** — a static documentation site generated from structured markdown files. mdBook was selected because:
 
@@ -1237,7 +1473,7 @@ The compendium is built as an **mdBook** — a static documentation site generat
 - Lightweight, fast, and self-hostable
 - Rust-based toolchain
 
-### 6.2 Textbook Structure
+### 7.2 Textbook Structure
 
 Each compendium follows a consistent structural pattern:
 
@@ -1250,13 +1486,13 @@ Each compendium follows a consistent structural pattern:
 | **Glossary** | Domain-specific terminology definitions |
 | **References** | Master registry of all corpora and documents with credibility tiers |
 
-### 6.3 Navigation Aids
+### 7.3 Navigation Aids
 
 The `SUMMARY.md` file serves as both the mdBook table of contents and the agent's navigation map. It provides hierarchical structure down to the section level.
 
-mdBook also generates a `searchindex.json` file at build time that provides full-text search across all pages. This serves as the compendium's index — mapping keywords, part numbers, symptoms, and any other terms to the sections where they appear. See section 10.2 for how the agent leverages this.
+mdBook also generates a `searchindex.json` file at build time that provides full-text search across all pages. This serves as the compendium's index — mapping keywords, part numbers, symptoms, and any other terms to the sections where they appear. See section 11.2 for how the agent leverages this.
 
-### 6.4 Compendium Page Frontmatter
+### 7.4 Compendium Page Frontmatter
 
 mdBook supports YAML frontmatter on pages — it ignores it during rendering, which makes it ideal for metadata that tooling and agents can read without polluting the HTML output. Every compendium chapter page carries synthesis provenance and per-document traceability:
 
@@ -1268,19 +1504,19 @@ synthesis_model: "claude-opus-4-5-20250630"
 synthesis_date: "2026-02-08"
 last_reviewed: "2026-02-08"
 documents:
-  - document_id: "G8BD.0042"
-    synthesized_at: "2026-01-20"
+  - document_id: "G8BD.SB.0000001"
+    synthesized_at: "2026-02-16"
     credibility_tier: "community_validated"
-  - document_id: "G8BD.0118"
-    synthesized_at: "2026-01-15"
+  - document_id: "G8BD.SB.0000002"
+    synthesized_at: "2026-02-16"
     credibility_tier: "community_validated"
-  - document_id: "G8BD.0203"
-    synthesized_at: "2026-02-01"
+  - document_id: "G8BD.SB.0000003"
+    synthesized_at: "2026-02-16"
     credibility_tier: "anecdotal"
-  - document_id: "GMSM.0034"
+  - document_id: "GMOT.SM.0000034"
     synthesized_at: "2026-02-01"
     credibility_tier: "authoritative"
-  - document_id: "GTSB.0012"
+  - document_id: "GMOT.TB.0000012"
     synthesized_at: "2026-02-08"
     credibility_tier: "authoritative"
 ---
@@ -1300,7 +1536,7 @@ Each field serves a specific purpose:
 
 Aggregate fields like `document_count`, `origin_count`, and `credibility_summary` are derivable from the `documents` list and do not need to be stored separately.
 
-#### 6.4.1 Incremental Synthesis
+#### 7.4.1 Incremental Synthesis
 
 The per-document `synthesized_at` field enables precise incremental re-synthesis. When a corpus's pinned commit is bumped in `compendium.toml`, the staleness check is mechanical:
 
@@ -1322,13 +1558,13 @@ The same check catches re-normalization events: if a document is re-normalized w
 
 ---
 
-## 7. Hosting & Distribution
+## 8. Hosting & Distribution
 
-### 7.1 Architecture
+### 8.1 Architecture
 
 The compendium sites are hosted on an external Caddy server (`ref.example.org`) that is independent of the home infrastructure. This provides:
 
-> **Domain naming:** `ref.example.org` hosts published compendiums — the synthesized reference works that agents and humans browse. `corpus.example.org` is reserved for a future corpus explorer that will provide browsable access to the corpus repositories and their source material.
+> **Domain naming:** `ref.example.org` hosts published compendiums — the synthesized reference works that agents and humans browse. `corpus.example.org` hosts corpus books — browsable mdbook references built from the normalized documents in each corpus (see section 4).
 
 - High availability regardless of home lab state
 - Accessibility from any device (phone, laptop, Claude Code session)
@@ -1344,7 +1580,7 @@ https://ref.example.org/economics/        → Economics compendium
 https://ref.example.org/{domain}/         → Any future domain
 ```
 
-### 7.2 Access Control
+### 8.2 Access Control
 
 **Phase 1 (current):** HTTP Basic Authentication across the entire `ref.example.org` site via Caddy's `basicauth` directive. Separate credentials for personal browsing and agent access.
 
@@ -1366,7 +1602,7 @@ ref.example.org {
 - A dashboard showing which compendia the authenticated user can access
 - Separate agent tokens scoped to specific corpora
 
-### 7.3 Caddy Server Configuration
+### 8.3 Caddy Server Configuration
 
 The Caddy instance is an external VPS that currently serves as a reverse proxy. Each compendium is deployed as a subdirectory under `/srv/ref/`.
 
@@ -1380,9 +1616,9 @@ The Caddy instance is an external VPS that currently serves as a reverse proxy. 
 
 ---
 
-## 8. CI/CD Pipeline
+## 9. CI/CD Pipeline
 
-### 8.1 Build & Deploy Flow
+### 9.1 Build & Deploy Flow
 
 Each compendium repository contains a Forgejo Actions workflow that automates the build-and-deploy cycle:
 
@@ -1400,14 +1636,14 @@ Build artifacts (book/ directory) are deployed to Caddy server
 Live at ref.example.org/{domain}/ within seconds
 ```
 
-### 8.2 Deployment Mechanism
+### 9.2 Deployment Mechanism
 
 The Caddy server accepts deployments via one of:
 
 - **SSH/SCP push:** The Forgejo Actions runner pushes build artifacts directly to `/srv/ref/{domain}/` on the Caddy VPS via SSH with a deploy key.
 - **Webhook receiver:** A small receiver script on the Caddy box accepts a tarball via HTTP POST with a shared secret, unpacks it to the target directory.
 
-### 8.3 Workflow Template
+### 9.3 Workflow Template
 
 A standardized workflow file that works for any compendium repository:
 
@@ -1441,9 +1677,37 @@ jobs:
           rsync -avz --delete book/ deploy@caddy-vps:/srv/ref/${GITHUB_REPOSITORY##*/}/
 ```
 
-The `resolve.sh` script (see section 5.2) clones each declared corpus at its pinned commit with sparse checkout, pulling only `documents/`, `assets/`, and `{corpus_id}.toml`. This keeps CI fast even as corpus repos grow large with ingested source material.
+The `resolve.sh` script (see section 6.2) clones each declared corpus at its pinned commit with sparse checkout, pulling only `manuscript/` and `{corpus_id}.toml`. This keeps CI fast even as corpus repos grow large with source material.
 
-### 8.4 Corpus Update Propagation
+### 9.4 Corpus Book Deployment
+
+Corpus repositories have their own CI/CD workflow that builds the corpus book and deploys it to `corpus.example.org`. This workflow is simpler than the compendium workflow because there are no dependencies to resolve:
+
+```yaml
+# .forgejo/workflows/deploy-corpus.yml
+name: Build and Deploy Corpus Book
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'manuscript/**'
+      - 'book.toml'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Build
+        run: mdbook build
+      - name: Deploy
+        run: |
+          rsync -avz --delete .build/ deploy@caddy-vps:/srv/corpus/${GITHUB_REPOSITORY##*/}/
+```
+
+### 9.5 Corpus Update Propagation
 
 When new documents are added to a corpus repo, the compendiums that reference it don't automatically rebuild. This is intentional — synthesis is a curated process. The workflow is:
 
@@ -1456,11 +1720,11 @@ For corpora with high ingestion velocity, this can be automated with a scheduled
 
 ---
 
-## 9. Agent Layer
+## 10. Domain Agent Layer
 
-### 9.1 Design
+### 10.1 Design
 
-Each domain has a **single bespoke agent** — a dedicated AI assistant that is an expert in that domain and nothing else. There is no multi-agent orchestration, no router, and no shared context between domains. When you need automotive expertise, you invoke the automotive agent. When you need Dune lore, you invoke the Dune agent.
+Each domain has a **single bespoke agent** — a dedicated AI assistant that is an expert in that domain and nothing else. There is no domain router and no shared context between domains. When you need automotive expertise, you invoke the automotive agent. When you need Dune lore, you invoke the Dune agent. (Pipeline agents — the ingestor, normalizer, and Curator described in section 12 — are internal corpus maintenance tools, not domain-facing agents.)
 
 This simplicity is deliberate:
 
@@ -1469,7 +1733,7 @@ This simplicity is deliberate:
 - No prompt budget is wasted on routing logic or domain detection
 - Each agent can have domain-specific personality, terminology, and reasoning patterns
 
-### 9.2 Agent Configuration
+### 10.2 Agent Configuration
 
 Each agent is configured as a **skill** (for Claude Code / claude.ai) or equivalent construct for other platforms. The agent's configuration includes:
 
@@ -1478,7 +1742,7 @@ Each agent is configured as a **skill** (for Claude Code / claude.ai) or equival
 - **Access credentials:** The agent's basic auth credentials for the compendium site.
 - **Domain taxonomy:** Key concepts, terminology, and the structure of the domain to guide query decomposition.
 
-### 9.3 Agent Behavior Model
+### 10.3 Agent Behavior Model
 
 When the agent receives a question, it follows this process:
 
@@ -1488,7 +1752,7 @@ When the agent receives a question, it follows this process:
 4. **Synthesize a response.** Answer the question based on the retrieved compendium content, citing specific documents where the compendium provides them.
 5. **Flag coverage gaps.** If the compendium doesn't cover the topic well, tell the user explicitly rather than speculating.
 
-### 9.4 Example: Automotive Agent
+### 10.4 Example: Automotive Agent
 
 ```
 User: "My car is making a clunking sound when I turn at low speed,
@@ -1507,13 +1771,13 @@ Agent fetches:
 Agent response:
   "The most common cause of a low-speed clunk during turns on the
    VE platform is worn sway bar end links (confirmed by 23 forum
-   reports [G8BD.0015, G8BD.0042, ...], typically appearing between
+   reports [G8BD.SB.0000001, G8BD.SB.0000002, ...], typically appearing between
    60-90k miles). The second most likely cause is the steering
    intermediate shaft — a known weakness that GM issued TSB
-   #PI0597B for [GTSB.0023]..."
+   #PI0597B for [GMOT.TB.0000023]..."
 ```
 
-### 9.5 Example: Fiction Agent
+### 10.5 Example: Fiction Agent
 
 ```
 User: "How does the Bene Gesserit breeding program connect to
@@ -1532,21 +1796,21 @@ Agent fetches:
 Agent response:
   "The breeding program was a multi-generational effort to produce
    the Kwisatz Haderach — a male Bene Gesserit who could access
-   both masculine and feminine ancestral memories [FHBT.0001, ch.1].
+   both masculine and feminine ancestral memories [FHBT.NV.0000001, ch.1].
    Jessica's decision to bear a son one generation early meant Paul
-   was uncontrolled by the Sisterhood's plans [FHBT.0001, ch.3]...
+   was uncontrolled by the Sisterhood's plans [FHBT.NV.0000001, ch.3]...
    
    The Villeneuve adaptation emphasizes this tension visually in
-   the Reverend Mother's testing scene [DVNV.0001, act 1], though it
+   the Reverend Mother's testing scene [DVNV.FL.0000001, act 1], though it
    compresses the political context that Herbert developed across
    several chapters..."
 ```
 
 ---
 
-## 10. Retrieval Strategy
+## 11. Retrieval Strategy
 
-### 10.1 Primary Method — TOC-Based Navigation
+### 11.1 Primary Method — TOC-Based Navigation
 
 The agent's primary retrieval mechanism is structural navigation using the compendium's table of contents. The `SUMMARY.md` is loaded into the agent's context as part of its system prompt. This gives the agent a complete map of what knowledge exists and where it lives.
 
@@ -1560,7 +1824,7 @@ This is analogous to how a knowledgeable human uses a reference book: they alrea
 - Works with the same artifact the human browses
 - Updates are instant — new content appears as soon as it's deployed
 
-### 10.2 Search Index Lookup
+### 11.2 Search Index Lookup
 
 mdBook generates a `searchindex.json` file at build time as part of its static output. This is the same index that powers the browser-side search UI — a full-text tokenized index of every page in the compendium. The agent can fetch and query this index directly via HTTP, bypassing the browser UI entirely.
 
@@ -1592,13 +1856,13 @@ This is superior to a hand-curated index because:
 
 The search index and SUMMARY.md navigation complement each other: the TOC is best for "I know which system this is about," while the search index is best for "I have a symptom or keyword and need to find where it's discussed."
 
-### 10.3 Fallback — Vector Search (Deferred)
+### 11.3 Fallback — Vector Search (Deferred)
 
 Semantic vector search is **not implemented initially** but the architecture accommodates it if needed. The trigger for adding it would be repeated instances where the agent cannot find relevant content through TOC navigation or the search index because the user's query language doesn't match any terminology present in the compendium.
 
 If implemented, it would be a lightweight vector store (e.g., Qdrant in Docker) with embeddings over the compendium's markdown chunks, used only when TOC/search index navigation fails to identify relevant sections.
 
-### 10.4 Forgejo API as Alternative Access Path
+### 11.4 Forgejo API as Alternative Access Path
 
 The Forgejo REST API provides raw file access to the compendium markdown:
 
@@ -1611,23 +1875,122 @@ This serves as an alternative access path — useful for agents running in envir
 
 ---
 
-## 11. Scaling & Reuse
+## 12. Pipeline Agent Architecture
 
-### 11.1 Adding a New Corpus
+### 12.1 Overview
+
+The corpus normalization pipeline (section 3.3) is operated by specialized agents — lightweight, single-purpose AI workers that each handle one item per invocation. This section formalizes the agent pattern that has emerged from the g8board corpus implementation.
+
+The pattern is intentionally minimal: each agent has a focused responsibility, processes exactly one item, and reports results to a coordinator. There is no inter-agent communication, no shared state beyond the filesystem, and no orchestration framework. Parallelism is managed at the coordinator level (the Curator skill or a human operator), not within the agents themselves.
+
+This is distinct from the domain agent layer (section 10), which provides end-user knowledge retrieval. Pipeline agents are internal tools for building and maintaining corpora.
+
+### 12.2 Ingestor Agent
+
+The ingestor agent handles acquisition, reconciliation, and integrity verification for a single content item.
+
+**Characteristics:**
+
+- **Model class:** haiku (fast, cheap — no creative judgment needed)
+- **Scope:** One item per invocation
+- **Location:** `.claude/agents/ingestor.md` in the corpus repo
+- **Tools:** Read, Bash, Glob, Grep (read-only except for Bash to run scripts)
+
+**Responsibilities:**
+
+1. **Acquisition.** Run the appropriate scraper or downloader to capture raw content into `.download/`.
+2. **Reconciliation.** Auto-detect the subdivision from backlog metadata or content analysis, assign the next sequential document ID, move files to `sources/<slug>/{document_id}/`, run extraction to produce sidecars, create the document stub in `manuscript/<slug>/`.
+3. **Integrity verification.** Verify file creation, check content completeness (page counts, post counts, post number gaps), validate sidecar frontmatter, and detect deduplication issues.
+4. **Structured reporting.** Report results back to the coordinator with success/failure status, assigned document ID, file counts, and any integrity warnings.
+
+The ingestor agent does not make decisions about what to ingest or which subdivision to target — it receives these instructions from the coordinator. It is a reliable executor, not a decision maker.
+
+### 12.3 Normalizer Agent
+
+The normalizer agent transforms extraction sidecars into fully spec-compliant corpus documents.
+
+**Characteristics:**
+
+- **Model class:** sonnet (creative judgment required for descriptions, credibility assessment, issue identification)
+- **Scope:** One document per invocation
+- **Location:** `.claude/agents/normalizer.md` in the corpus repo
+- **Tools:** Read, Write, Edit, Bash, Glob, Grep
+
+**Responsibilities:**
+
+1. **Read sidecars.** Load all extraction sidecars from `sources/<slug>/{document_id}/` to understand the raw content.
+2. **Generate LLM-dependent frontmatter.** Produce the `description`, `credibility_tier`, `relations`, and `issues` fields that require content understanding and domain judgment.
+3. **Assemble the document.** Combine the generated frontmatter with the extracted content body into the final normalized markdown, replacing the stub created at reconciliation.
+4. **Set status.** Update `status` from `pending_normalization` to `normalized`.
+5. **Self-verify.** Validate the output against the frontmatter schema, check for broken asset references, and verify the `sources` array matches the sidecars on disk.
+
+The normalizer agent receives corpus context (`{corpus_id}.toml`, the frontmatter schema, content-type-specific guidance) and produces a single output file. Its system prompt is corpus-specific, living in the corpus repo alongside the agent definition.
+
+### 12.4 The Curator
+
+The Curator is an autonomous corpus management skill that orchestrates pipeline operations. Unlike the ingestor and normalizer agents (which are single-purpose workers), the Curator operates at a higher level — assessing corpus state, prioritizing work, and dispatching agents.
+
+**Characteristics:**
+
+- **Type:** Claude Code skill (`.claude/skills/`)
+- **Operating loop:** Assess → Prioritize → Propose → Execute → Report
+- **Dispatches:** Ingestor and normalizer agents via the Task tool, parallelizing multiple invocations
+
+**Operating loop:**
+
+1. **Assess.** Read `backlog.toml`, scan `manuscript/` for stubs (`status: pending_normalization`), check `sources/` for integrity, review corpus health metrics.
+2. **Prioritize.** Apply a decision framework: critical compendium blockers first, then high-priority backlog items, then normalization of existing stubs, then low-priority discovery.
+3. **Propose.** Present the prioritized work plan to the human operator for approval.
+4. **Execute.** Spawn ingestor agents (for acquisition + reconciliation) and normalizer agents (for pending stubs), managing parallelism by launching multiple agents concurrently.
+5. **Report.** Summarize results — documents ingested, documents normalized, issues encountered, updated corpus health metrics.
+
+**Reference files.** The Curator's skill definition references corpus-specific configuration: the `{corpus_id}.toml` schema, the pipeline workflow, the frontmatter schema, and a self-improvement playbook that captures lessons learned from previous runs. These reference files live in the corpus repo and evolve with the corpus.
+
+### 12.5 Parallelism Model
+
+Parallelism is managed at the coordinator level, not within agents:
+
+- The **Curator** (or a human operator) decides how many agents to run concurrently based on available resources and rate limits.
+- Each **ingestor agent** processes one item. The coordinator spawns N ingestor agents in parallel for N items.
+- Each **normalizer agent** processes one document. The coordinator spawns N normalizer agents in parallel for N documents.
+- Agents do not communicate with each other. They read from and write to the filesystem, and the coordinator sequences work to avoid conflicts (e.g., not normalizing a document that is still being ingested).
+
+This model avoids the complexity of inter-agent coordination while still enabling high throughput. A typical Curator session might spawn 5 ingestor agents in parallel, wait for completion, then spawn 5 normalizer agents for the newly reconciled documents.
+
+### 12.6 Generality
+
+The pipeline agent pattern is not specific to g8board or forum content. It applies to any corpus:
+
+- The **ingestor agent** is parameterized by the acquisition script and reconciliation logic, which are corpus-specific.
+- The **normalizer agent** is parameterized by the corpus's frontmatter schema and content-type guidance, which vary by corpus.
+- The **Curator** is parameterized by the corpus's backlog format, subdivision structure, and priority framework.
+
+Each corpus repo contains its own agent definitions (`.claude/agents/`) and Curator skill (`.claude/skills/`), configured for that corpus's specific needs. The pattern is the same; the configuration differs.
+
+---
+
+## 13. Scaling & Reuse
+
+### 13.1 Adding a New Corpus
 
 1. Create a new repository under the Corpus organization
-2. Add `{corpus_id}.toml` with corpus metadata, origin configs, and reingest configuration
-3. Add `backlog.toml` and populate with known pending documents
-4. Create the `documents/`, `assets/`, and `ingested/` directories
-5. Build or configure the ingestion pipeline appropriate to the content type
-6. Build or configure the extraction pipeline — content-type-specific scripts that produce extraction sidecars (see section 3.3.2). For simple text content, a passthrough extractor is sufficient
-7. Begin processing source material through the three-phase pipeline: ingest → extract → normalize (see section 3.3)
-8. The corpus is discoverable — its `{corpus_id}.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 4)
+2. Add `{corpus_id}.toml` with corpus metadata, origin configs, `[[subdivision]]` entries, and reingest configuration
+3. Add `backlog.toml` and populate with known pending entries
+4. Create the `manuscript/` directory with `SUMMARY.md`, `README.md`, and per-subdivision slug directories (each with its own `README.md`)
+5. Create the `sources/` directory with matching subdivision slug directories
+6. Add `book.toml` with `src = "manuscript"` and `[preprocessor.frontmatter-strip]` (see section 4.2)
+7. Add `.download/` to `.gitignore`
+8. Build or configure the acquisition pipeline appropriate to the content type
+9. Build or configure the extraction pipeline — content-type-specific scripts that produce extraction sidecars (see section 3.3.3). For simple text content, a passthrough extractor is sufficient
+10. Create agent definitions in `.claude/agents/` (ingestor and normalizer — see section 12) parameterized for this corpus
+11. Optionally create a Curator skill in `.claude/skills/` for autonomous corpus management
+12. Begin processing source material through the four-phase pipeline: acquire → reconcile → extract → normalize (see section 3.3)
+13. The corpus is discoverable — its `{corpus_id}.toml` tiered summaries are available via the Forgejo API for any compendium to find (see section 5)
 
-### 11.2 Adding a New Compendium
+### 13.2 Adding a New Compendium
 
 1. Create a new repository under the Compendium organization
-2. Discover relevant corpora via API-driven progressive disclosure (see section 4.4)
+2. Discover relevant corpora via API-driven progressive disclosure (see section 5.4)
 3. Declare corpus dependencies in `compendium.toml` with pinned commits
 4. Write the synthesis system prompt with domain knowledge, scope boundaries, and key relationships
 5. Create `resolve.sh` to clone corpora at pinned commits with sparse checkout (copy from template)
@@ -1639,7 +2002,7 @@ This serves as an alternative access path — useful for agents running in envir
 11. Create the agent skill with domain-specific system prompt and SUMMARY.md
 12. Add deploy target to the Caddy configuration
 
-### 11.3 Stacking Compendiums
+### 13.3 Stacking Compendiums
 
 The architecture supports compendiums of varying scope that share source material:
 
@@ -1661,7 +2024,7 @@ All three compendiums reference `marxists-org` as a corpus. Each compendium's sy
 
 The same pattern applies to fiction. A "Golden Age Sci-Fi" compendium and a "Dune" compendium both declare `frank-herbert` as a dependency, with their respective system prompts selecting different works.
 
-### 11.4 Domain Taxonomy Design
+### 13.4 Domain Taxonomy Design
 
 Each domain needs its own taxonomy — the organizational structure that chapters follow. This should be designed before significant content is ingested, though it will evolve. Guidelines:
 
@@ -1670,19 +2033,19 @@ Each domain needs its own taxonomy — the organizational structure that chapter
 - Each leaf section should be self-contained enough to be useful when fetched in isolation
 - Cross-reference liberally between related sections
 
-### 11.5 Standardized Frontmatter Schema
+### 13.5 Standardized Frontmatter Schema
 
 The complete document frontmatter schema is defined in section 3.4. In summary:
 
 **Universal required** (every document):
-`document_id`, `title`, `description`, `credibility_tier`, `normalization_confidence`, `normalization_model`, `normalization_date`, `sources[]`
+`document_id`, `title`, `description`, `credibility_tier`, `normalization_confidence`, `normalization_model`, `normalization_date`, `status`, `sources[]`
 
 **Universal optional** (present when applicable):
 `relations`, `issues`
 
 **Sources entry:** `source_id`, `origin_url` or `original_filename`
 
-**Sidecar fields** (section 3.3.2): core fields (`document_id`, `sequence`, `content_type`, `origin`, `original_url`, `original_filename`, `capture_date`, `ingestion_date_last`, `content_changed_last`, `author`, `date_published`, `volatility`, `extraction_method`, `extraction_tool`, `extraction_date`, `assets`) plus extended schemas by `content_type`:
+**Sidecar fields** (section 3.3.3): core fields (`document_id`, `sequence`, `content_type`, `origin`, `original_url`, `original_filename`, `capture_date`, `ingestion_date_last`, `content_changed_last`, `author`, `date_published`, `volatility`, `extraction_method`, `extraction_tool`, `extraction_date`, `assets`) plus extended schemas by `content_type`:
 
 | Content Type | Required Extended Fields | Optional Extended Fields |
 |-------------|-------------------------|--------------------------|
@@ -1698,14 +2061,14 @@ The complete document frontmatter schema is defined in section 3.4. In summary:
 | `screenplay` | `work_title`, `medium` | `draft` |
 | `product_documentation` | `product_name`, `manufacturer` | `document_type`, `part_numbers` |
 
-**Compendium page frontmatter** (section 6.4):
+**Compendium page frontmatter** (section 7.4):
 `chapter_id`, `title`, `synthesis_model`, `synthesis_date`, `last_reviewed`, `documents[]` (with `document_id`, `synthesized_at`, `credibility_tier` per document)
 
 ---
 
-## 12. Infrastructure Summary
+## 14. Infrastructure Summary
 
-### 12.1 Component Map
+### 14.1 Component Map
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -1715,28 +2078,36 @@ The complete document frontmatter schema is defined in section 3.4. In summary:
 │  ├── g8board/                      ├── commodore-ve/           │
 │  │   ├── g8board.toml              │   ├── corpora/ (resolved) │
 │  │   ├── backlog.toml              │   ├── manuscript/         │
-│  │   ├── documents/                │   ├── compendium.toml     │
-│  │   ├── assets/                   │   └── book.toml           │
-│  │   └── ingested/                 ├── dune/                   │
-│  ├── frank-herbert/                ├── economics/              │
-│  └── ...                           └── ...                     │
+│  │   ├── book.toml                 │   ├── compendium.toml     │
+│  │   ├── manuscript/               │   └── book.toml           │
+│  │   ├── sources/                  ├── dune/                   │
+│  │   ├── .download/ (gitignored)   ├── economics/              │
+│  │   └── .claude/agents/           └── ...                     │
+│  ├── frank-herbert/                                            │
+│  └── ...                                                       │
 │                                                                │
 │  example-org Organization (System Infrastructure)                │
 │  └── athenaeum/                    # spec, tooling             │
 │                                                                │
 │  Forgejo Actions Runner                                        │
-│  └── on push: resolve corpora → mdbook build → deploy          │
+│  ├── corpus: on push → mdbook build → deploy to corpus.rahn   │
+│  └── compendium: on push → resolve → mdbook build → deploy    │
 └───────────────────────┬────────────────────────────────────────┘
                         │ rsync / scp / webhook
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                  Caddy VPS (External)                          │
 │                                                                │
-│  ref.example.org                                               │
+│  ref.example.org (compendiums)                                 │
 │  ├── basicauth (steven, agent)                                 │
-│  ├── /srv/ref/commodore-ve/    ← mdBook HTML output         │
-│  ├── /srv/ref/dune/            ← mdBook HTML output         │
-│  ├── /srv/ref/economics/       ← mdBook HTML output         │
+│  ├── /srv/ref/commodore-ve/    ← compendium mdBook output   │
+│  ├── /srv/ref/dune/            ← compendium mdBook output   │
+│  └── ...                                                       │
+│                                                                │
+│  corpus.example.org (corpus books)                             │
+│  ├── basicauth (steven, agent)                                 │
+│  ├── /srv/corpus/g8board/      ← corpus mdBook output       │
+│  ├── /srv/corpus/frank-herbert/← corpus mdBook output       │
 │  └── ...                                                       │
 └───────────────────────┬────────────────────────────────────────┘
                         │ HTTPS (basic auth)
@@ -1745,31 +2116,39 @@ The complete document frontmatter schema is defined in section 3.4. In summary:
 │                       Consumers                                │
 │                                                                │
 │  Steven (browser)                                              │
-│  └── Browses any compendium like a textbook                    │
+│  ├── Browses compendiums for domain knowledge                  │
+│  └── Browses corpus books for normalization review             │
 │                                                                │
 │  Domain Agent (Claude skill / Claude Code)                     │
 │  ├── SUMMARY.md in system prompt context                       │
 │  ├── searchindex.json for full-text keyword lookup             │
 │  ├── Fetches specific pages via HTTP on demand                 │
 │  └── Responds with source-grounded answers                     │
+│                                                                │
+│  Pipeline Agents (.claude/agents/)                             │
+│  ├── Ingestor: acquire + reconcile + verify (haiku)            │
+│  ├── Normalizer: sidecars → normalized doc (sonnet)            │
+│  └── Curator: autonomous corpus management (.claude/skills/)   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### 12.2 Technology Stack
+### 14.2 Technology Stack
 
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Source of truth | Forgejo (git) | Version control, API access, Actions CI |
-| Source organization | Forgejo org (Corpus) | One repo per corpus, with origins declared in `{corpus_id}.toml` |
+| Source organization | Forgejo org (Corpus) | One repo per corpus, with origins and subdivisions declared in `{corpus_id}.toml` |
 | Corpus discovery | Forgejo API + `{corpus_id}.toml` | Tiered summaries fetched on demand, no separate registry repo |
+| Corpus format | Markdown + mdBook | Browsable corpus books at `corpus.example.org`, frontmatter stripped via `mdbook-frontmatter` |
 | Compendium format | Markdown + mdBook | Human-readable source, clean output, built-in search |
 | Source linkage | Declared dependencies in `compendium.toml` | Pin corpora to commits, resolve at build time with sparse checkout |
 | Hosting | Caddy on external VPS | Simple, reliable, automatic HTTPS, basic auth |
-| CI/CD | Forgejo Actions | Integrated with repos, self-hosted runner |
-| Agent platform | Claude (skill / Code) | Primary AI interface, flexible access patterns |
+| CI/CD | Forgejo Actions | Integrated with repos, self-hosted runner (corpus + compendium workflows) |
+| Domain agents | Claude (skill / Code) | Primary AI interface for end-user knowledge retrieval |
+| Pipeline agents | Claude Code agents (`.claude/agents/`) | Ingestor (haiku), normalizer (sonnet), Curator (skill) for corpus maintenance |
 | Retrieval | TOC navigation + searchindex.json + HTTP fetch | No additional infrastructure, deterministic, explainable |
 
-### 12.3 What Is Intentionally Not Included
+### 14.3 What Is Intentionally Not Included
 
 | Component | Status | Trigger to Add |
 |-----------|--------|----------------|
@@ -1777,7 +2156,7 @@ The complete document frontmatter schema is defined in section 3.4. In summary:
 | Knowledge graph | Deferred | Multi-hop relationship queries become common |
 | Domain router | Not planned | Only needed if agents are invoked implicitly |
 | Cross-domain linking | Not planned | Domains are intentionally isolated |
-| Real-time ingestion | Not planned | Compendium is a curated reference, not a live feed |
+| General-purpose orchestration framework | Not planned | Pipeline agents use lightweight coordination via Curator skill (section 12), not a framework |
 | Per-compendium auth gateway | Deferred | Needed when sharing specific compendiums with others |
 
 ---
@@ -1839,7 +2218,7 @@ If a compendium is made public, contributions become possible via pull requests 
 
 ### B.3 Agent Self-Improvement Feedback Loop
 
-When the agent encounters a question it cannot answer well (coverage gap), this could be captured as a signal to prioritize source collection in that area. The agent logs topics where it had to flag thin coverage, and those become ingestion priorities for the relevant origins.
+**Partially realized in v3.0.** The Curator skill (section 12.4) implements an assess → prioritize → propose → execute → report loop with a self-improvement playbook. Coverage gap signals from domain agents can feed into the Curator's prioritization framework. The remaining future work is formalizing the feedback path from domain agents to the Curator.
 
 ### B.4 Multi-Format Export
 
@@ -1847,4 +2226,4 @@ The same compendium markdown could be exported to additional formats: PDF for of
 
 ### B.5 Corpus Ingestion Automation
 
-As corpus pipelines mature, ingestion can be increasingly automated. A forum scraper that runs on a schedule, a YouTube channel monitor that transcribes new uploads, or an RSS-triggered pipeline for new publications. The normalized output always flows into the same corpus repo structure regardless of how it was triggered.
+**Realized in v3.0.** The pipeline agent architecture (section 12) formalizes corpus ingestion automation. The Curator skill autonomously assesses, prioritizes, and dispatches ingestor and normalizer agents. Remaining future work: scheduled triggers (cron-based scraper runs, RSS monitors) and fully unattended operation without human approval of the Curator's proposals.
