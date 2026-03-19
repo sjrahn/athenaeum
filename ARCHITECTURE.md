@@ -3,7 +3,7 @@ spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
 version: 8.0
 status: draft
-author: Steven Rahn
+license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-03-18
 changelog:
@@ -100,7 +100,7 @@ corpus/
 │   │   └── transcript.vtt
 │   └── ...
 ├── capture/
-│   └── afm-delete-guide.56789/
+│   └── brake-caliper-rebuild.12345/
 │       ├── thread.html
 │       └── img_001.jpg
 └── schema/
@@ -218,7 +218,7 @@ Present only on source records (`record_type: source`).
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `origin_url` | string | conditional | URL of the original content. Required for web-sourced artifacts. |
-| `origin_name` | string | yes | Human-readable origin identifier (e.g., "G8Board.com", "Metal Archives") |
+| `origin_name` | string | yes | Human-readable origin identifier (e.g., "ExampleForum.com", "MusicDB.org") |
 | `original_filename` | string | conditional | For non-web sources. Use when `origin_url` is absent. |
 | `capture_date` | date | yes | When the artifact was acquired |
 | `artifact_store` | string | no | Remote base URI for this record's artifacts. Absent = local only, not yet externalized. |
@@ -273,7 +273,7 @@ asset_refs:
     sha256: "abc123..."
   - ref: "assets://frame_002.jpg"
     sha256: "def456..."
-  - ref: "artifacts://PI0597B.pdf"
+  - ref: "artifacts://service-bulletin.pdf"
     source: "p6h7i8j9-k0l1-4m2n-3o4p-5q6r7s8t9u0v"
 ```
 
@@ -327,7 +327,7 @@ Optional array of known quality or completeness problems. Absence means "no know
 issues:
   - type: "missing_media"
     severity: "major"
-    description: "3 of 5 embedded images unavailable — showed timing chain alignment"
+    description: "3 of 5 embedded images unavailable — showed step-by-step assembly procedure"
     remediation: "wayback_snapshot"
     resolved: false
 ```
@@ -358,7 +358,7 @@ relations:
   - type: "sequel_to"
     target: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
   - type: "references"
-    unresolved: "GM TSB #PI0597B"
+    unresolved: "Manufacturer Service Bulletin #SB-2024-001"
 ```
 
 **Relation types:**
@@ -416,15 +416,15 @@ The schema library is the extensibility mechanism. As the corpus grows, new cont
 ```yaml
 ---
 uuid: "7a3f2b1c-4d5e-4f6a-8b9c-0d1e2f3a4b5c"
-title: "Rear Suspension Rebuild - The Easy Way"
-description: "Forum thread documenting a complete rear subframe swap using a 2017 Caprice PPV dropout into a Pontiac G8 GT, including ABS sensor wiring and compatibility details."
+title: "Brake Caliper Rebuild - Complete Guide"
+description: "Forum thread with a step-by-step brake caliper rebuild procedure, including torque specs, seal kit part numbers, and before/after photos."
 record_type: source
 content_type: forum_post
 status: normalized
-tags: ["suspension", "rear-subframe", "ppv-swap", "pontiac-g8"]
+tags: ["brakes", "caliper-rebuild", "diy"]
 
-origin_url: "https://www.g8board.com/threads/rear-suspension-rebuild.290127/"
-origin_name: "G8Board.com"
+origin_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
+origin_name: "ExampleForum.com"
 capture_date: 2026-02-16
 artifact_refs:
   - ref: "artifacts://thread.html"
@@ -439,13 +439,13 @@ credibility_tier: community_validated
 normalization_confidence: 0.95
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: 2026-02-16
-conversion_method: "g8board-scraper"
+conversion_method: "forum-scraper"
 conversion_tool: "scrape_thread.py v0.6"
 conversion_date: 2026-02-16
 
 # extended: forum_post
-username: "G8GTSteve"
-thread_url: "https://www.g8board.com/threads/rear-suspension-rebuild.290127/"
+username: "user_mike"
+thread_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
 reply_count: 13
 
 issues:
@@ -457,13 +457,13 @@ issues:
 
 relations:
   - type: references
-    unresolved: "GM TSB #PI0597B"
+    unresolved: "Manufacturer Service Bulletin #SB-2024-001"
 ---
 
-## Rear Subframe Swap Procedure
+## Brake Caliper Rebuild Procedure
 
-The easiest upgrade path for the G8 rear suspension is a complete
-subframe swap from a 2017 Caprice PPV...
+A complete guide to rebuilding front brake calipers, including
+seal replacement, piston inspection, and bleeding procedure...
 ```
 
 #### Document Record
@@ -471,21 +471,21 @@ subframe swap from a 2017 Caprice PPV...
 ```yaml
 ---
 uuid: "9c5f4d3e-6f7a-4b8c-0d1e-2f3a4b5c6d7e"
-title: "Obscura"
-description: "Gorguts' third studio album (1998), a landmark of technical death metal known for its extreme dissonance and avant-garde composition."
+title: "Convergence"
+description: "The Celestial Order's second studio album (2019), a progressive rock record blending jazz fusion elements with intricate polyrhythmic arrangements."
 record_type: document
 content_type: album
 status: normalized
-tags: ["gorguts", "death-metal", "technical", "1998"]
+tags: ["the-celestial-order", "progressive-rock", "2019"]
 
 constituents:
-  - "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"  # Metal Archives album page
-  - "e1f2g3h4-i5j6-4k7l-8m9n-0o1p2q3r4s5t"  # RYM album page with reviews
+  - "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"  # MusicDB album page
+  - "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"  # Review aggregator page
   - "i5j6k7l8-m9n0-4o1p-8q2r-3s4t5u6v7w8x"  # YouTube live performance
-  - "m9n0o1p2-q3r4-4s5t-8u6v-7w8x9y0z1a2b"  # song: Earthly Love
-  - "q3r4s5t6-u7v8-4w9x-8y0z-1a2b3c4d5e6f"  # song: Obscura
-  - "u7v8w9x0-y1z2-4a3b-8c4d-5e6f7a8b9c0d"  # song: Nostalgia
-merge_rationale: "All records related to the Gorguts album Obscura"
+  - "m9n0o1p2-q3r4-4s5t-8u6v-7w8x9y0z1a2b"  # song: Meridian
+  - "q3r4s5t6-u7v8-4w9x-8y0z-1a2b3c4d5e6f"  # song: Convergence
+  - "u7v8w9x0-y1z2-4a3b-8c4d-5e6f7a8b9c0d"  # song: Tidal Resonance
+merge_rationale: "All records related to The Celestial Order album Convergence"
 
 asset_refs:
   - ref: "assets://frame_001.jpg"
@@ -499,21 +499,21 @@ normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: 2026-03-17
 
 # extended: album
-artist_name: "Gorguts"
-release_date: 1998
-label: "Olympic Recordings"
+artist_name: "The Celestial Order"
+release_date: 2019
+label: "Horizon Records"
 track_count: 8
-genre: ["technical death metal", "avant-garde metal"]
+genre: ["progressive rock", "jazz fusion"]
 
 relations:
   - type: preceded_by
     target: "y1z2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"
 ---
 
-## Obscura (1998)
+## Convergence (2019)
 
-Gorguts' third album represents a radical departure from their earlier
-death metal style...
+The Celestial Order's second album represents a bold evolution from their
+debut, weaving jazz fusion elements into a progressive rock framework...
 ```
 
 ---
@@ -532,7 +532,7 @@ Capture brings raw content into the corpus and assigns it identity. It has two s
 
 **How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy. Capture acquires **all associated content** from the source: the primary content (HTML page, PDF, etc.) plus any embedded or linked assets (images, supplementary files) that would otherwise be lost.
 
-**Output:** Raw files in `capture/` in a temporary folder with a descriptive name (e.g., `capture/afm-delete-guide.56789/`). No UUID assigned yet, no content type determined. The naming convention is descriptive because identity doesn't exist yet.
+**Output:** Raw files in `capture/` in a temporary folder with a descriptive name (e.g., `capture/brake-caliper-rebuild.12345/`). No UUID assigned yet, no content type determined. The naming convention is descriptive because identity doesn't exist yet.
 
 Failed or abandoned captures remain in `capture/` without consuming any corpus resources — no UUID, no record, no artifact folder. The `capture/` directory is a transient workspace.
 
@@ -633,7 +633,7 @@ The agent must **not**:
 
 **Process:**
 
-1. **Discover candidates.** LLM-assisted or manual. After normalizing a batch, a discovery pass identifies records about the same subject. "These three sources are all about the same Gorguts album."
+1. **Discover candidates.** LLM-assisted or manual. After normalizing a batch, a discovery pass identifies records about the same subject. "These three sources are all about the same album."
 
 2. **Propose merge.** The proposal specifies which records to combine, what document content type the result should be, and an optional merge rationale. The operator approves or rejects.
 
@@ -839,7 +839,7 @@ Source content types are **origin-oriented** — they describe what was captured
 
 #### `forum_post`
 
-Threaded forum discussion from sites like G8Board, LS1Tech, or similar.
+Threaded forum discussion from hobbyist and enthusiast community sites.
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
@@ -850,15 +850,15 @@ Threaded forum discussion from sites like G8Board, LS1Tech, or similar.
 ```yaml
 ---
 uuid: "f1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c"
-title: "AFM Delete Guide with Dyno Results"
-description: "Detailed walkthrough of AFM/DoD delete on an L76 6.0L, including before/after dyno numbers and part list."
+title: "Brake Caliper Rebuild - Complete Guide"
+description: "Step-by-step brake caliper rebuild with torque specs, seal kit part numbers, and before/after photos."
 record_type: source
 content_type: forum_post
 status: normalized
-tags: ["afm-delete", "l76", "engine"]
+tags: ["brakes", "caliper-rebuild", "diy"]
 
-origin_url: "https://www.g8board.com/threads/afm-delete-guide.56789/"
-origin_name: "G8Board.com"
+origin_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
+origin_name: "ExampleForum.com"
 capture_date: 2026-03-01
 artifact_refs:
   - ref: "artifacts://thread.html"
@@ -869,18 +869,19 @@ credibility_tier: community_validated
 normalization_confidence: 0.92
 normalization_model: "claude-sonnet-4-5-20250514"
 normalization_date: 2026-03-01
-conversion_method: "g8board-scraper"
+conversion_method: "forum-scraper"
 conversion_tool: "scrape_thread.py v0.6"
 conversion_date: 2026-03-01
 
-username: "LS3SwapKing"
-thread_url: "https://www.g8board.com/threads/afm-delete-guide.56789/"
+username: "user_jane"
+thread_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
 reply_count: 47
 ---
 
-## AFM Delete Procedure
+## Brake Caliper Rebuild Procedure
 
-The Active Fuel Management (AFM) system on the L76 can be fully deleted...
+A complete guide to rebuilding front brake calipers, including seal
+replacement, piston inspection, and bleeding procedure...
 ```
 
 ---
@@ -972,11 +973,11 @@ Captured image — photo, diagram, screenshot, scan.
 
 #### `metadata_page`
 
-Structured reference page from a database site — Metal Archives, RateYourMusic, IMDB, Wikipedia, Discogs.
+Structured reference page from a database site — music databases, film databases, encyclopedias, etc.
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
-| `source_site` | yes | string | Which site (e.g., "Metal Archives", "RYM", "IMDB") |
+| `source_site` | yes | string | Which site (e.g., "MusicDB.org", "IMDB", "Wikipedia") |
 | `page_type` | yes | string | What kind of page (e.g., "band", "album", "artist", "film", "episode") |
 
 ---
