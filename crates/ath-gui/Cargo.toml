@@ -1,0 +1,16 @@
+[package]
+name = "ath-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ath-core.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+serde_yaml_ng.workspace = true

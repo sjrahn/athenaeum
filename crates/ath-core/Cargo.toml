@@ -1,0 +1,13 @@
+[package]
+name = "ath-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+petgraph.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

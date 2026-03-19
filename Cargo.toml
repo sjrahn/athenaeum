@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["crates/ath-core", "crates/ath-gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+ath-core = { path = "crates/ath-core" }
+
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+petgraph = "0.7"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+notify = "8"
+crossbeam-channel = "0.5"
+eframe = "0.31"
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["all_loaders"] }
+clap = { version = "4", features = ["derive", "env"] }
