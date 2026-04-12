@@ -3,7 +3,7 @@ mod state;
 mod views;
 mod widgets;
 
-const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
+const DEFAULT_SERVER: &str = "http://example-host.tailnet.example:8080";
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
