@@ -1,22 +1,10 @@
 use ath_core::api_types::RecordDetail;
 use ath_core::model::{Frontmatter, RecordType};
+use uuid::Uuid;
 
-use crate::state::AppState;
-
-pub fn detail_view(ui: &mut egui::Ui, state: &mut AppState) {
-    if state.selected_record.is_none() {
-        ui.centered_and_justified(|ui| {
-            ui.heading("Select a record from the sidebar");
-        });
-        return;
-    }
-
-    let Some(detail) = state.selected_detail.clone() else {
-        ui.centered_and_justified(|ui| {
-            ui.heading("Loading record...");
-        });
-        return;
-    };
+/// Render record detail content. Returns UUIDs of navigation links that were clicked.
+pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail) -> Vec<Uuid> {
+    let mut nav_requests = Vec::new();
 
     let record = &detail.record;
     let fm = &record.frontmatter;
@@ -29,13 +17,15 @@ pub fn detail_view(ui: &mut egui::Ui, state: &mut AppState) {
 
             // -- Type-specific sections --
             match fm.record_type {
-                RecordType::Source => source_detail(ui, fm, &detail, state),
-                RecordType::Document => document_detail(ui, fm, &detail, state),
+                RecordType::Source => source_detail(ui, fm, detail, &mut nav_requests),
+                RecordType::Document => document_detail(ui, fm, detail, &mut nav_requests),
             }
 
             // -- Shared footer: relations, issues, extended, body --
-            shared_footer(ui, fm, &detail, &record.body, state);
+            shared_footer(ui, fm, detail, &record.body, &mut nav_requests);
         });
+
+    nav_requests
 }
 
 /// Header shared by both source and document views.
@@ -92,7 +82,7 @@ fn source_detail(
     ui: &mut egui::Ui,
     fm: &Frontmatter,
     detail: &RecordDetail,
-    state: &mut AppState,
+    nav: &mut Vec<Uuid>,
 ) {
     // Origin & capture info
     ui.group(|ui| {
@@ -218,8 +208,7 @@ fn source_detail(
             for parent in &detail.parents {
                 let label = format!("{} — {}", parent.title, parent.content_type);
                 if ui.link(&label).clicked() {
-                    state.selected_record = Some(parent.uuid);
-                    state.selected_detail = None;
+                    nav.push(parent.uuid);
                 }
             }
         });
@@ -231,7 +220,7 @@ fn document_detail(
     ui: &mut egui::Ui,
     fm: &Frontmatter,
     detail: &RecordDetail,
-    state: &mut AppState,
+    nav: &mut Vec<Uuid>,
 ) {
     // Merge info
     if fm.merge_rationale.is_some() || !detail.children.is_empty() {
@@ -253,8 +242,7 @@ fn document_detail(
                         ui.colored_label(type_color, &child.record_type);
                         let label = format!("{} — {}", child.title, child.content_type);
                         if ui.link(&label).clicked() {
-                            state.selected_record = Some(child.uuid);
-                            state.selected_detail = None;
+                            nav.push(child.uuid);
                         }
                     });
                 }
@@ -320,8 +308,7 @@ fn document_detail(
             for parent in &detail.parents {
                 let label = format!("{} — {}", parent.title, parent.content_type);
                 if ui.link(&label).clicked() {
-                    state.selected_record = Some(parent.uuid);
-                    state.selected_detail = None;
+                    nav.push(parent.uuid);
                 }
             }
         });
@@ -334,7 +321,7 @@ fn shared_footer(
     fm: &Frontmatter,
     _detail: &RecordDetail,
     body: &str,
-    state: &mut AppState,
+    nav: &mut Vec<Uuid>,
 ) {
     // Relations
     if !fm.relations.is_empty() {
@@ -346,8 +333,7 @@ fn shared_footer(
                     ui.strong(&rel.relation_type);
                     if let Some(target) = rel.target {
                         if ui.link(target.to_string()).clicked() {
-                            state.selected_record = Some(target);
-                            state.selected_detail = None;
+                            nav.push(target);
                         }
                     } else if let Some(unresolved) = &rel.unresolved {
                         ui.weak(format!("(unresolved: {unresolved})"));

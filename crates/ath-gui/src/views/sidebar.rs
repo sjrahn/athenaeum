@@ -37,10 +37,10 @@ pub fn sidebar(ui: &mut egui::Ui, state: &mut AppState) -> Option<Uuid> {
         .show_rows(ui, ROW_HEIGHT, total_rows, |ui, row_range| {
             for row_idx in row_range {
                 let entry = &state.sidebar_entries[row_idx];
-                let is_selected = state.selected_record == Some(entry.uuid);
+                let is_open = state.open_windows.contains_key(&entry.uuid);
 
                 let response = ui.push_id(entry.uuid, |ui| {
-                    let frame = if is_selected {
+                    let frame = if is_open {
                         egui::Frame::NONE
                             .inner_margin(6.0)
                             .corner_radius(4.0)
@@ -100,7 +100,6 @@ pub fn sidebar(ui: &mut egui::Ui, state: &mut AppState) -> Option<Uuid> {
 
                 // Handle click
                 if response.inner.response.interact(egui::Sense::click()).clicked() {
-                    state.selected_record = Some(entry.uuid);
                     clicked_uuid = Some(entry.uuid);
                 }
             }

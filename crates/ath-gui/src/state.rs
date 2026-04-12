@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use ath_core::api_types::{CorpusInfo, FacetsResponse, RecordDetail, RecordSummary};
 use uuid::Uuid;
 
@@ -34,9 +36,8 @@ pub struct AppState {
     pub sidebar_entries: Vec<RecordSummary>,
     pub sidebar_total: u64,
 
-    // Selected record detail
-    pub selected_record: Option<Uuid>,
-    pub selected_detail: Option<RecordDetail>,
+    // Open detail windows: UUID -> loaded detail
+    pub open_windows: BTreeMap<Uuid, RecordDetail>,
 
     // Filter/search state
     pub search_text: String,
@@ -47,6 +48,10 @@ pub struct AppState {
     pub filter_origin_name: Option<String>,
     pub filter_credibility_tier: Option<String>,
     pub filter_record_type: Option<String>,
+
+    // UI toggles
+    pub show_sidebar: bool,
+    pub show_filter_bar: bool,
 
     // Status
     pub load_error: Option<String>,
@@ -60,8 +65,7 @@ impl AppState {
             facets: None,
             sidebar_entries: Vec::new(),
             sidebar_total: 0,
-            selected_record: None,
-            selected_detail: None,
+            open_windows: BTreeMap::new(),
             search_text: String::new(),
             sort_order: SortOrder::TitleAsc,
             filter_content_type: None,
@@ -70,6 +74,8 @@ impl AppState {
             filter_origin_name: None,
             filter_credibility_tier: None,
             filter_record_type: None,
+            show_sidebar: true,
+            show_filter_bar: true,
             load_error: None,
         }
     }

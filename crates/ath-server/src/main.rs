@@ -7,6 +7,7 @@ use axum::response::Json;
 use axum::routing::get;
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 use ath_core::corpus::Corpus;
 use ath_core::db::{CorpusDb, CorpusInfo, FacetsResponse, QueryParams, QueryResult, RecordDetail};
@@ -100,12 +101,16 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods([Method::GET])
         .allow_origin(Any);
 
+    let static_dir = std::env::var("ATHENAEUM_STATIC_DIR")
+        .unwrap_or_else(|_| "crates/ath-gui/dist".to_string());
+
     let app = Router::new()
         .route("/api/corpora", get(get_corpora))
         .route("/api/facets", get(get_facets))
         .route("/api/records", get(get_records))
         .route("/api/records/{uuid}", get(get_record))
         .layer(cors)
+        .fallback_service(ServeDir::new(&static_dir))
         .with_state(state);
 
     let addr = "0.0.0.0:8080";

@@ -3,7 +3,6 @@ use crate::state::{AppState, SortOrder};
 /// Action returned by the filter bar for the app to handle.
 pub enum FilterAction {
     None,
-    SwitchCorpus(usize),
     RefreshRecords,
 }
 
@@ -12,38 +11,8 @@ pub fn filter_bar(ui: &mut egui::Ui, state: &mut AppState) -> FilterAction {
 
     ui.add_space(4.0);
 
-    // Row 1: Corpus switcher, search, sort
+    // Row 1: Search + sort
     ui.horizontal(|ui| {
-        // Corpus switcher
-        if state.corpora.len() > 1 {
-            ui.label("Corpus:");
-            let current_name = state.corpus_name().to_owned();
-            let corpus_names: Vec<(usize, String)> = state
-                .corpora
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (i, c.name.clone()))
-                .collect();
-            let mut switch_to = None;
-            egui::ComboBox::from_id_salt("corpus_switcher")
-                .selected_text(&current_name)
-                .show_ui(ui, |ui| {
-                    for (i, name) in &corpus_names {
-                        if ui
-                            .selectable_label(*i == state.active_corpus_idx, name)
-                            .clicked()
-                        {
-                            switch_to = Some(*i);
-                        }
-                    }
-                });
-            if let Some(idx) = switch_to {
-                action = FilterAction::SwitchCorpus(idx);
-            }
-
-            ui.separator();
-        }
-
         // Search input
         ui.label("Search:");
         let search_response = ui.add(
@@ -98,7 +67,6 @@ pub fn filter_bar(ui: &mut egui::Ui, state: &mut AppState) -> FilterAction {
             && current_type.is_some()
         {
             state.filter_record_type = None;
-            // Clear type-specific filters when switching
             state.filter_origin_name = None;
             state.filter_credibility_tier = None;
             action = FilterAction::RefreshRecords;
@@ -119,7 +87,6 @@ pub fn filter_bar(ui: &mut egui::Ui, state: &mut AppState) -> FilterAction {
             && current_type.as_deref() != Some("document")
         {
             state.filter_record_type = Some("document".to_string());
-            // Clear source-specific filters
             state.filter_origin_name = None;
             state.filter_credibility_tier = None;
             action = FilterAction::RefreshRecords;
@@ -281,5 +248,10 @@ pub fn status_bar(ui: &mut egui::Ui, state: &AppState) {
 
         ui.separator();
         ui.weak(state.corpus_name());
+
+        if !state.open_windows.is_empty() {
+            ui.separator();
+            ui.weak(format!("{} open", state.open_windows.len()));
+        }
     });
 }
