@@ -8,7 +8,7 @@ ath-core.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
-ehttp.workspace = true
+ehttp = { version = "0.7", features = ["multipart"] }
 anyhow.workspace = true
 tracing.workspace = true
 uuid.workspace = true

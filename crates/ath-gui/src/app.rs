@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use ath_core::api_types::{CorpusInfo, FacetsResponse, QueryResult, RecordDetail};
+use ath_core::api_types::{
+    CorpusInfo, FacetsResponse, QueryResult, RecordDetail, SubmissionsResponse, SubmitResponse,
+};
 use uuid::Uuid;
 
-use crate::state::AppState;
+use crate::state::{AppState, PendingFile};
 use crate::views;
 
 /// Pending HTTP responses, polled each frame.
@@ -15,6 +17,8 @@ struct PendingRequests {
     records: Option<Result<QueryResult, String>>,
     /// Detail responses keyed by UUID (supports multiple in-flight window fetches).
     details: BTreeMap<Uuid, Result<Option<RecordDetail>, String>>,
+    submit_result: Option<Result<SubmitResponse, String>>,
+    submissions_list: Option<Result<SubmissionsResponse, String>>,
 }
 
 enum LoadState {
@@ -114,8 +118,100 @@ impl AtheneumApp {
         self.state.facets = None;
         self.state.sidebar_entries.clear();
         self.state.sidebar_total = 0;
+        self.state.submissions.clear();
         self.fetch_facets();
         self.fetch_records();
+        if self.state.show_submit_panel {
+            self.fetch_submissions();
+        }
+    }
+
+    pub fn submit_capture(&mut self) {
+        if self.state.corpora.is_empty() {
+            return;
+        }
+
+        let corpus = self.state.corpus_name().to_owned();
+        let title = self.state.submit_title.clone();
+        let url = self.state.submit_url.clone();
+        let description = self.state.submit_description.clone();
+        let source_type = self.state.submit_source_type.clone();
+        let files = std::mem::take(&mut self.state.submit_files);
+        let server_url = self.server_url.clone();
+        let pending = self.pending.clone();
+
+        self.state.submit_status = Some("Submitting...".to_string());
+
+        // Build multipart body
+        let mut builder = ehttp::multipart::MultipartBuilder::new()
+            .add_text("corpus", &corpus);
+
+        if !title.is_empty() {
+            builder = builder.add_text("title", &title);
+        }
+        if !url.is_empty() {
+            builder = builder.add_text("url", &url);
+        }
+        if !description.is_empty() {
+            builder = builder.add_text("description", &description);
+        }
+        if !source_type.is_empty() {
+            builder = builder.add_text("source_type", &source_type);
+        }
+
+        for file in &files {
+            if let Some(bytes) = &file.bytes {
+                let mut cursor = std::io::Cursor::new(bytes.as_ref());
+                match builder.add_stream(&mut cursor, "file", Some(&file.name), None) {
+                    Ok(b) => builder = b,
+                    Err(e) => {
+                        tracing::error!(%e, name = %file.name, "failed to add file to multipart");
+                        self.state.submit_status = Some(format!("Error: {e}"));
+                        self.state.submit_files = files;
+                        return;
+                    }
+                }
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(path) = &file.path {
+                    match builder.add_file("file", path) {
+                        Ok(b) => builder = b,
+                        Err(e) => {
+                            tracing::error!(%e, path = %path.display(), "failed to add file to multipart");
+                            self.state.submit_status = Some(format!("Error: {e}"));
+                            self.state.submit_files = files;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let api_url = format!("{}/api/submit", server_url);
+        let request = ehttp::Request::post_multipart(api_url, builder);
+
+        ehttp::fetch(request, move |result| {
+            let outcome = parse_response::<SubmitResponse>(result);
+            pending.lock().unwrap().submit_result = Some(outcome);
+        });
+    }
+
+    pub fn fetch_submissions(&mut self) {
+        if self.state.corpora.is_empty() {
+            return;
+        }
+        let corpus = self.state.corpus_name().to_owned();
+        let url = format!(
+            "{}/api/submissions?corpus={}",
+            self.server_url,
+            url_encode(&corpus)
+        );
+        let pending = self.pending.clone();
+
+        ehttp::fetch(ehttp::Request::get(&url), move |result| {
+            let outcome = parse_response::<SubmissionsResponse>(result);
+            pending.lock().unwrap().submissions_list = Some(outcome);
+        });
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -130,6 +226,13 @@ impl AtheneumApp {
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut self.state.show_sidebar, "Sidebar");
                 ui.checkbox(&mut self.state.show_filter_bar, "Filter Bar");
+                if ui
+                    .checkbox(&mut self.state.show_submit_panel, "Submit Panel")
+                    .changed()
+                    && self.state.show_submit_panel
+                {
+                    self.fetch_submissions();
+                }
             });
 
             // Corpus switcher in menu bar
@@ -201,9 +304,42 @@ impl eframe::App for AtheneumApp {
             }
         }
 
+        // Submit result
+        let mut refresh_submissions = false;
+        if let Some(result) = pending.submit_result.take() {
+            match result {
+                Ok(resp) => {
+                    self.state.submit_status =
+                        Some(format!("Staged: {} ({} files)", resp.folder, resp.file_count));
+                    self.state.submit_title.clear();
+                    self.state.submit_url.clear();
+                    self.state.submit_description.clear();
+                    self.state.submit_source_type.clear();
+                    self.state.submit_files.clear();
+                    refresh_submissions = true;
+                }
+                Err(e) => {
+                    tracing::warn!(%e, "submission failed");
+                    self.state.submit_status = Some(format!("Error: {e}"));
+                }
+            }
+        }
+
+        // Submissions list
+        if let Some(result) = pending.submissions_list.take() {
+            match result {
+                Ok(resp) => self.state.submissions = resp.submissions,
+                Err(e) => tracing::warn!(%e, "failed to fetch submissions"),
+            }
+        }
+
         // Detail responses — insert into open_windows
         let completed = std::mem::take(&mut pending.details);
         drop(pending);
+
+        if refresh_submissions {
+            self.fetch_submissions();
+        }
 
         for (uuid, result) in completed {
             self.details_in_flight.remove(&uuid);
@@ -250,6 +386,29 @@ impl eframe::App for AtheneumApp {
             });
         }
 
+        // Submit panel (bottom, before status bar)
+        if self.state.show_submit_panel {
+            egui::Panel::bottom("submit_panel")
+                .default_size(200.0)
+                .resizable(true)
+                .show_inside(ui, |ui| {
+                    let action = views::submit_panel(ui, &mut self.state);
+                    match action {
+                        views::SubmitAction::None => {}
+                        views::SubmitAction::Submit => {
+                            self.submit_capture();
+                            // Refresh queue after a short delay (submit is async)
+                        }
+                        views::SubmitAction::RemoveFile(idx) => {
+                            self.state.submit_files.remove(idx);
+                        }
+                        views::SubmitAction::RefreshQueue => {
+                            self.fetch_submissions();
+                        }
+                    }
+                });
+        }
+
         // Status bar
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
             views::status_bar(ui, &self.state);
@@ -267,6 +426,31 @@ impl eframe::App for AtheneumApp {
                         }
                     }
                 });
+        }
+
+        // Handle drag-drop: accumulate files into submit builder
+        if self.state.show_submit_panel {
+            let dropped: Vec<egui::DroppedFile> =
+                ui.ctx().input(|i| i.raw.dropped_files.clone());
+            for file in dropped {
+                let name = file
+                    .name
+                    .clone();
+                let name = if name.is_empty() {
+                    file.path
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unnamed".to_string())
+                } else {
+                    name
+                };
+                self.state.submit_files.push(PendingFile {
+                    name,
+                    path: file.path.clone(),
+                    bytes: file.bytes.clone(),
+                });
+            }
         }
 
         // Central panel: landing when no windows open

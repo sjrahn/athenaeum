@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use ath_core::api_types::{CorpusInfo, FacetsResponse, RecordDetail, RecordSummary};
+use ath_core::api_types::{
+    CorpusInfo, FacetsResponse, RecordDetail, RecordSummary, SubmissionEntry,
+};
 use uuid::Uuid;
 
 /// Sort order for the sidebar record list.
@@ -21,6 +25,14 @@ impl SortOrder {
             SortOrder::NewestFirst => "newest_first",
         }
     }
+}
+
+/// A file accumulated in the submission builder before sending.
+pub struct PendingFile {
+    pub name: String,
+    #[allow(dead_code)] // used on native only (add_file is cfg-gated)
+    pub path: Option<PathBuf>,
+    pub bytes: Option<Arc<[u8]>>,
 }
 
 /// All mutable application state — thin client backed by server queries.
@@ -52,6 +64,16 @@ pub struct AppState {
     // UI toggles
     pub show_sidebar: bool,
     pub show_filter_bar: bool,
+    pub show_submit_panel: bool,
+
+    // Submission builder
+    pub submit_title: String,
+    pub submit_url: String,
+    pub submit_description: String,
+    pub submit_source_type: String,
+    pub submit_files: Vec<PendingFile>,
+    pub submit_status: Option<String>,
+    pub submissions: Vec<SubmissionEntry>,
 
     // Status
     pub load_error: Option<String>,
@@ -76,6 +98,14 @@ impl AppState {
             filter_record_type: None,
             show_sidebar: true,
             show_filter_bar: true,
+            show_submit_panel: false,
+            submit_title: String::new(),
+            submit_url: String::new(),
+            submit_description: String::new(),
+            submit_source_type: String::new(),
+            submit_files: Vec::new(),
+            submit_status: None,
+            submissions: Vec::new(),
             load_error: None,
         }
     }

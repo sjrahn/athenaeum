@@ -81,3 +81,27 @@ pub struct FacetsResponse {
     pub origin_names: Vec<String>,
     pub credibility_tiers: Vec<String>,
 }
+
+/// Response after a successful capture submission.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmitResponse {
+    pub folder: String,
+    pub file_count: u32,
+}
+
+/// A single pending capture folder in the submission queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmissionEntry {
+    pub folder: String,
+    pub title: String,
+    pub url: Option<String>,
+    pub source_type: Option<String>,
+    pub capture_date: String,
+    pub files: Vec<String>,
+}
+
+/// Response listing all pending capture folders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmissionsResponse {
+    pub submissions: Vec<SubmissionEntry>,
+}

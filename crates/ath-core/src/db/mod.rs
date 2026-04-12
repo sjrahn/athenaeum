@@ -4,7 +4,6 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::api_types::*;
 use crate::model::Record;
 
 // Re-export API types for convenience
