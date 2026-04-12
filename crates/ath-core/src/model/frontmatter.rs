@@ -21,9 +21,21 @@ where
             if s == "pending" || s.is_empty() {
                 Ok(None)
             } else {
+                // Try bare date first, then datetime (extract date portion)
                 NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%Z")
+                            .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+                            .map(|dt| dt.date())
+                    })
+                    .or_else(|_| {
+                        // Try parsing as RFC 3339 / ISO 8601 with timezone
+                        s.parse::<chrono::DateTime<chrono::Utc>>()
+                            .map(|dt| dt.date_naive())
+                            .map_err(|e| e.into())
+                    })
                     .map(Some)
-                    .map_err(|e| D::Error::custom(format!("invalid date '{s}': {e}")))
+                    .map_err(|e: chrono::ParseError| D::Error::custom(format!("invalid date '{s}': {e}")))
             }
         }
         // serde_yaml_ng may parse dates as tagged values
@@ -59,6 +71,7 @@ pub struct Frontmatter {
     pub title: String,
     pub description: String,
     pub record_type: RecordType,
+    #[serde(default, alias = "source_type")]
     pub content_type: String,
     pub status: Status,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

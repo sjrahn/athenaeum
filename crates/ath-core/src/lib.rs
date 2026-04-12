@@ -1,5 +1,8 @@
+pub mod api_types;
 pub mod corpus;
 pub mod dag;
+#[cfg(feature = "sqlite")]
+pub mod db;
 pub mod error;
 pub mod filter;
 pub mod model;

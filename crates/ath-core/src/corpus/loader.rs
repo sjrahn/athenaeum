@@ -89,4 +89,12 @@ impl Corpus {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+
+    /// Create a corpus from pre-loaded records (used by web/WASM target).
+    pub fn from_records(records: HashMap<Uuid, Record>) -> Self {
+        Corpus {
+            records,
+            root_path: PathBuf::new(),
+        }
+    }
 }

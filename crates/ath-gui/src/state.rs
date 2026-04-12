@@ -1,6 +1,4 @@
-use ath_core::corpus::Corpus;
-use ath_core::dag::RecordDag;
-use ath_core::filter::{Facets, GroupBy, RecordFilter};
+use ath_core::api_types::{CorpusInfo, FacetsResponse, RecordDetail, RecordSummary};
 use uuid::Uuid;
 
 /// Sort order for the sidebar record list.
@@ -9,95 +7,129 @@ pub enum SortOrder {
     TitleAsc,
     TitleDesc,
     StatusAsc,
+    NewestFirst,
 }
 
-/// All mutable application state.
+impl SortOrder {
+    pub fn as_query_param(&self) -> &str {
+        match self {
+            SortOrder::TitleAsc => "title_asc",
+            SortOrder::TitleDesc => "title_desc",
+            SortOrder::StatusAsc => "status_asc",
+            SortOrder::NewestFirst => "newest_first",
+        }
+    }
+}
+
+/// All mutable application state — thin client backed by server queries.
 pub struct AppState {
-    // Data
-    pub corpus: Corpus,
-    pub dag: RecordDag,
+    // Corpus list
+    pub corpora: Vec<CorpusInfo>,
+    pub active_corpus_idx: usize,
 
-    // Facets (computed from corpus)
-    pub facets: Facets,
+    // Facets for filter dropdowns
+    pub facets: Option<FacetsResponse>,
 
-    // UI state
+    // Sidebar data (paginated from server)
+    pub sidebar_entries: Vec<RecordSummary>,
+    pub sidebar_total: u64,
+
+    // Selected record detail
     pub selected_record: Option<Uuid>,
-    pub filter: RecordFilter,
-    pub group_by: Option<GroupBy>,
-    pub sort_order: SortOrder,
+    pub selected_detail: Option<RecordDetail>,
 
-    // Derived: sorted/filtered list of UUIDs for the sidebar
-    pub filtered_uuids: Vec<Uuid>,
+    // Filter/search state
+    pub search_text: String,
+    pub sort_order: SortOrder,
+    pub filter_content_type: Option<String>,
+    pub filter_status: Option<String>,
+    pub filter_tag: Option<String>,
+    pub filter_origin_name: Option<String>,
+    pub filter_credibility_tier: Option<String>,
+    pub filter_record_type: Option<String>,
 
     // Status
     pub load_error: Option<String>,
 }
 
 impl AppState {
-    pub fn new(corpus: Corpus) -> Self {
-        let dag = RecordDag::build(&corpus.records);
-        let facets = Facets::compute(corpus.records.values());
-        let mut state = AppState {
-            corpus,
-            dag,
-            facets,
+    pub fn new() -> Self {
+        AppState {
+            corpora: Vec::new(),
+            active_corpus_idx: 0,
+            facets: None,
+            sidebar_entries: Vec::new(),
+            sidebar_total: 0,
             selected_record: None,
-            filter: RecordFilter::default(),
-            group_by: None,
+            selected_detail: None,
+            search_text: String::new(),
             sort_order: SortOrder::TitleAsc,
-            filtered_uuids: Vec::new(),
+            filter_content_type: None,
+            filter_status: None,
+            filter_tag: None,
+            filter_origin_name: None,
+            filter_credibility_tier: None,
+            filter_record_type: None,
             load_error: None,
-        };
-        state.recompute_filtered_list();
-        state
+        }
     }
 
-    /// Recompute the filtered and sorted list of record UUIDs.
-    pub fn recompute_filtered_list(&mut self) {
-        let mut uuids: Vec<Uuid> = self
-            .corpus
-            .records
-            .values()
-            .filter(|r| self.filter.is_empty() || self.filter.matches(r))
-            .map(|r| r.frontmatter.uuid)
-            .collect();
+    /// Get the active corpus name, if any.
+    pub fn corpus_name(&self) -> &str {
+        self.corpora
+            .get(self.active_corpus_idx)
+            .map(|c| c.name.as_str())
+            .unwrap_or("")
+    }
 
-        // Sort
-        let records = &self.corpus.records;
-        match self.sort_order {
-            SortOrder::TitleAsc => {
-                uuids.sort_by(|a, b| {
-                    let ta = records.get(a).map(|r| r.frontmatter.title.as_str()).unwrap_or("");
-                    let tb = records.get(b).map(|r| r.frontmatter.title.as_str()).unwrap_or("");
-                    ta.to_lowercase().cmp(&tb.to_lowercase())
-                });
-            }
-            SortOrder::TitleDesc => {
-                uuids.sort_by(|a, b| {
-                    let ta = records.get(a).map(|r| r.frontmatter.title.as_str()).unwrap_or("");
-                    let tb = records.get(b).map(|r| r.frontmatter.title.as_str()).unwrap_or("");
-                    tb.to_lowercase().cmp(&ta.to_lowercase())
-                });
-            }
-            SortOrder::StatusAsc => {
-                uuids.sort_by(|a, b| {
-                    let sa = records.get(a).map(|r| r.frontmatter.status as u8).unwrap_or(0);
-                    let sb = records.get(b).map(|r| r.frontmatter.status as u8).unwrap_or(0);
-                    sa.cmp(&sb)
-                });
-            }
+    /// Build query string for the records API.
+    pub fn build_records_url(&self, server_url: &str) -> String {
+        let corpus = self.corpus_name();
+        let mut url = format!(
+            "{}/api/records?corpus={}&sort={}&offset=0&limit=10000",
+            server_url,
+            url_encode(corpus),
+            self.sort_order.as_query_param(),
+        );
+
+        if !self.search_text.is_empty() {
+            url.push_str(&format!("&q={}", url_encode(&self.search_text)));
         }
 
-        self.filtered_uuids = uuids;
-    }
+        if let Some(ct) = &self.filter_content_type {
+            url.push_str(&format!("&content_type={}", url_encode(ct)));
+        }
 
-    /// Recompute facets from the current corpus.
-    pub fn recompute_facets(&mut self) {
-        self.facets = Facets::compute(self.corpus.records.values());
-    }
+        if let Some(st) = &self.filter_status {
+            url.push_str(&format!("&status={}", url_encode(st)));
+        }
 
-    /// Get all unique tags in sorted order (convenience for UI).
-    pub fn all_tags_sorted(&self) -> Vec<&str> {
-        self.facets.all_tags.iter().map(|s| s.as_str()).collect()
+        if let Some(tag) = &self.filter_tag {
+            url.push_str(&format!("&tag={}", url_encode(tag)));
+        }
+
+        if let Some(on) = &self.filter_origin_name {
+            url.push_str(&format!("&origin_name={}", url_encode(on)));
+        }
+
+        if let Some(ct) = &self.filter_credibility_tier {
+            url.push_str(&format!("&credibility_tier={}", url_encode(ct)));
+        }
+
+        if let Some(rt) = &self.filter_record_type {
+            url.push_str(&format!("&record_type={}", url_encode(rt)));
+        }
+
+        url
     }
+}
+
+/// Minimal URL encoding for query parameters.
+fn url_encode(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('&', "%26")
+        .replace('=', "%3D")
+        .replace('#', "%23")
+        .replace('+', "%2B")
 }
