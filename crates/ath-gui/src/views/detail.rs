@@ -2,9 +2,24 @@ use ath_core::api_types::RecordDetail;
 use ath_core::model::{Frontmatter, RecordType};
 use uuid::Uuid;
 
-/// Render record detail content. Returns UUIDs of navigation links that were clicked.
-pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail) -> Vec<Uuid> {
+/// Request to open an artifact/asset preview.
+pub struct ArtifactRequest {
+    pub corpus: String,
+    pub kind: String, // "artifacts" or "assets"
+    pub uuid: String,
+    pub filename: String,
+}
+
+/// Actions returned by the detail view.
+pub struct DetailActions {
+    pub nav_requests: Vec<Uuid>,
+    pub artifact_requests: Vec<ArtifactRequest>,
+}
+
+/// Render record detail content. Returns navigation and artifact open requests.
+pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail, corpus: &str) -> DetailActions {
     let mut nav_requests = Vec::new();
+    let mut artifact_requests = Vec::new();
 
     let record = &detail.record;
     let fm = &record.frontmatter;
@@ -17,15 +32,18 @@ pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail) -> Vec<Uuid> {
 
             // -- Type-specific sections --
             match fm.record_type {
-                RecordType::Source => source_detail(ui, fm, detail, &mut nav_requests),
-                RecordType::Document => document_detail(ui, fm, detail, &mut nav_requests),
+                RecordType::Source => source_detail(ui, fm, detail, corpus, &mut nav_requests, &mut artifact_requests),
+                RecordType::Document => document_detail(ui, fm, detail, corpus, &mut nav_requests, &mut artifact_requests),
             }
 
             // -- Shared footer: relations, issues, extended, body --
             shared_footer(ui, fm, detail, &record.body, &mut nav_requests);
         });
 
-    nav_requests
+    DetailActions {
+        nav_requests,
+        artifact_requests,
+    }
 }
 
 /// Header shared by both source and document views.
@@ -82,7 +100,9 @@ fn source_detail(
     ui: &mut egui::Ui,
     fm: &Frontmatter,
     detail: &RecordDetail,
+    corpus: &str,
     nav: &mut Vec<Uuid>,
+    artifacts: &mut Vec<ArtifactRequest>,
 ) {
     // Origin & capture info
     ui.group(|ui| {
@@ -190,7 +210,15 @@ fn source_detail(
             }
             for aref in &fm.artifact_refs {
                 ui.horizontal(|ui| {
-                    ui.monospace(&aref.uri);
+                    let filename = aref.uri.strip_prefix("artifacts://").unwrap_or(&aref.uri);
+                    if ui.link(filename).clicked() {
+                        artifacts.push(ArtifactRequest {
+                            corpus: corpus.to_string(),
+                            kind: "artifacts".to_string(),
+                            uuid: fm.uuid.to_string(),
+                            filename: filename.to_string(),
+                        });
+                    }
                     ui.weak(format!(
                         "sha256: {}...",
                         &aref.sha256[..aref.sha256.len().min(16)]
@@ -220,7 +248,9 @@ fn document_detail(
     ui: &mut egui::Ui,
     fm: &Frontmatter,
     detail: &RecordDetail,
+    corpus: &str,
     nav: &mut Vec<Uuid>,
+    artifacts: &mut Vec<ArtifactRequest>,
 ) {
     // Merge info
     if fm.merge_rationale.is_some() || !detail.children.is_empty() {
@@ -288,7 +318,24 @@ fn document_detail(
             }
             for aref in &fm.asset_refs {
                 ui.horizontal(|ui| {
-                    ui.monospace(&aref.uri);
+                    // Determine kind and UUID for the file serving endpoint
+                    let (kind, owner_uuid, filename) = if aref.uri.starts_with("assets://") {
+                        ("assets", fm.uuid.to_string(), aref.uri.strip_prefix("assets://").unwrap_or(&aref.uri).to_string())
+                    } else if aref.uri.starts_with("artifacts://") {
+                        let owner = aref.source.map(|u| u.to_string()).unwrap_or_else(|| fm.uuid.to_string());
+                        ("artifacts", owner, aref.uri.strip_prefix("artifacts://").unwrap_or(&aref.uri).to_string())
+                    } else {
+                        ("assets", fm.uuid.to_string(), aref.uri.clone())
+                    };
+
+                    if ui.link(&filename).clicked() {
+                        artifacts.push(ArtifactRequest {
+                            corpus: corpus.to_string(),
+                            kind: kind.to_string(),
+                            uuid: owner_uuid,
+                            filename,
+                        });
+                    }
                     if let Some(sha) = &aref.sha256 {
                         ui.weak(format!("sha256: {}...", &sha[..sha.len().min(16)]));
                     }

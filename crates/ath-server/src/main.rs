@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::Method;
-use axum::response::Json;
+use axum::http::{Method, header};
+use axum::response::{Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -353,6 +354,61 @@ fn slugify(s: &str) -> String {
         .join("-")
 }
 
+async fn get_file(
+    State(state): State<AppState>,
+    Path((corpus, kind, uuid, filename)): Path<(String, String, String, String)>,
+) -> Result<Response<Body>, axum::http::StatusCode> {
+    // Validate kind
+    if kind != "artifacts" && kind != "assets" {
+        return Err(axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    // Look up corpus path
+    let corpus_path = state
+        .corpus_paths
+        .iter()
+        .find(|(name, _)| name == &corpus)
+        .map(|(_, path)| path.clone())
+        .ok_or(axum::http::StatusCode::NOT_FOUND)?;
+
+    // Build file path and validate no traversal
+    let file_path = corpus_path.join(&kind).join(&uuid).join(&filename);
+    let canonical = file_path
+        .canonicalize()
+        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let corpus_canonical = corpus_path
+        .canonicalize()
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !canonical.starts_with(&corpus_canonical) {
+        return Err(axum::http::StatusCode::FORBIDDEN);
+    }
+
+    let bytes =
+        std::fs::read(&canonical).map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+
+    let content_type = match filename.rsplit('.').next().map(|e| e.to_lowercase()) {
+        Some(ref ext) if ext == "html" || ext == "htm" => "text/html",
+        Some(ref ext) if ext == "css" => "text/css",
+        Some(ref ext) if ext == "js" => "application/javascript",
+        Some(ref ext) if ext == "json" => "application/json",
+        Some(ref ext) if ext == "xml" => "application/xml",
+        Some(ref ext) if ext == "txt" || ext == "md" || ext == "csv" || ext == "vtt" => "text/plain",
+        Some(ref ext) if ext == "yaml" || ext == "yml" => "text/yaml",
+        Some(ref ext) if ext == "png" => "image/png",
+        Some(ref ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg",
+        Some(ref ext) if ext == "gif" => "image/gif",
+        Some(ref ext) if ext == "webp" => "image/webp",
+        Some(ref ext) if ext == "svg" => "image/svg+xml",
+        Some(ref ext) if ext == "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    };
+
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -398,6 +454,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/records/{uuid}", get(get_record))
         .route("/api/submit", post(submit_capture))
         .route("/api/submissions", get(get_submissions))
+        .route("/api/files/{corpus}/{kind}/{uuid}/{filename}", get(get_file))
         .layer(cors)
         .fallback_service(ServeDir::new(&static_dir))
         .with_state(state);

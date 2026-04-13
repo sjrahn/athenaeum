@@ -6,7 +6,7 @@ use ath_core::api_types::{
 };
 use uuid::Uuid;
 
-use crate::state::{AppState, PendingFile};
+use crate::state::{AppState, PendingFile, PreviewContent, PreviewState};
 use crate::views;
 
 /// Pending HTTP responses, polled each frame.
@@ -15,10 +15,11 @@ struct PendingRequests {
     corpora: Option<Result<Vec<CorpusInfo>, String>>,
     facets: Option<Result<FacetsResponse, String>>,
     records: Option<Result<QueryResult, String>>,
-    /// Detail responses keyed by UUID (supports multiple in-flight window fetches).
     details: BTreeMap<Uuid, Result<Option<RecordDetail>, String>>,
     submit_result: Option<Result<SubmitResponse, String>>,
     submissions_list: Option<Result<SubmissionsResponse, String>>,
+    /// Preview file responses: key -> (bytes, content_type_header)
+    previews: BTreeMap<String, Result<(Vec<u8>, String), String>>,
 }
 
 enum LoadState {
@@ -53,7 +54,6 @@ impl AtheneumApp {
     fn fetch_corpora(&mut self) {
         let url = format!("{}/api/corpora", self.server_url);
         let pending = self.pending.clone();
-
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
             let outcome = parse_response::<Vec<CorpusInfo>>(result);
             pending.lock().unwrap().corpora = Some(outcome);
@@ -68,7 +68,6 @@ impl AtheneumApp {
             url_encode(&corpus)
         );
         let pending = self.pending.clone();
-
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
             let outcome = parse_response::<FacetsResponse>(result);
             pending.lock().unwrap().facets = Some(outcome);
@@ -80,10 +79,8 @@ impl AtheneumApp {
             return;
         }
         self.records_request_in_flight = true;
-
         let url = self.state.build_records_url(&self.server_url);
         let pending = self.pending.clone();
-
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
             let outcome = parse_response::<QueryResult>(result);
             pending.lock().unwrap().records = Some(outcome);
@@ -95,10 +92,8 @@ impl AtheneumApp {
             return;
         }
         self.details_in_flight.insert(uuid);
-
         let url = format!("{}/api/records/{}", self.server_url, uuid);
         let pending = self.pending.clone();
-
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
             let outcome = parse_response::<Option<RecordDetail>>(result);
             pending.lock().unwrap().details.insert(uuid, outcome);
@@ -121,7 +116,7 @@ impl AtheneumApp {
         self.state.submissions.clear();
         self.fetch_facets();
         self.fetch_records();
-        if self.state.show_submit_panel {
+        if self.state.show_submit_window {
             self.fetch_submissions();
         }
     }
@@ -142,9 +137,8 @@ impl AtheneumApp {
 
         self.state.submit_status = Some("Submitting...".to_string());
 
-        // Build multipart body
-        let mut builder = ehttp::multipart::MultipartBuilder::new()
-            .add_text("corpus", &corpus);
+        let mut builder =
+            ehttp::multipart::MultipartBuilder::new().add_text("corpus", &corpus);
 
         if !title.is_empty() {
             builder = builder.add_text("title", &title);
@@ -189,7 +183,6 @@ impl AtheneumApp {
 
         let api_url = format!("{}/api/submit", server_url);
         let request = ehttp::Request::post_multipart(api_url, builder);
-
         ehttp::fetch(request, move |result| {
             let outcome = parse_response::<SubmitResponse>(result);
             pending.lock().unwrap().submit_result = Some(outcome);
@@ -207,10 +200,52 @@ impl AtheneumApp {
             url_encode(&corpus)
         );
         let pending = self.pending.clone();
-
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
             let outcome = parse_response::<SubmissionsResponse>(result);
             pending.lock().unwrap().submissions_list = Some(outcome);
+        });
+    }
+
+    pub fn fetch_preview(&mut self, req: &views::ArtifactRequest) {
+        let key = format!("{}/{}/{}/{}", req.corpus, req.kind, req.uuid, req.filename);
+
+        // Don't re-fetch if already open or loading
+        if self.state.open_previews.contains_key(&key) {
+            return;
+        }
+
+        // Insert loading placeholder
+        self.state.open_previews.insert(
+            key.clone(),
+            PreviewState {
+                title: req.filename.clone(),
+                content: PreviewContent::Loading,
+            },
+        );
+
+        let url = format!(
+            "{}/api/files/{}/{}/{}/{}",
+            self.server_url, req.corpus, req.kind, req.uuid, req.filename
+        );
+        let pending = self.pending.clone();
+        let fetch_key = key.clone();
+        ehttp::fetch(ehttp::Request::get(&url), move |result| {
+            let outcome = match result {
+                Ok(response) if response.ok => {
+                    let ct = response
+                        .headers
+                        .get("content-type")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "application/octet-stream".to_string());
+                    Ok((response.bytes, ct))
+                }
+                Ok(response) => Err(format!(
+                    "Server error: {} {}",
+                    response.status, response.status_text
+                )),
+                Err(e) => Err(e),
+            };
+            pending.lock().unwrap().previews.insert(fetch_key, outcome);
         });
     }
 
@@ -224,36 +259,20 @@ impl AtheneumApp {
             });
 
             ui.menu_button("View", |ui| {
-                ui.checkbox(&mut self.state.show_sidebar, "Sidebar");
-                ui.checkbox(&mut self.state.show_filter_bar, "Filter Bar");
                 if ui
-                    .checkbox(&mut self.state.show_submit_panel, "Submit Panel")
+                    .checkbox(&mut self.state.show_corpora_window, "Corpora")
                     .changed()
-                    && self.state.show_submit_panel
+                {}
+                if ui
+                    .checkbox(&mut self.state.show_records_window, "Records")
+                    .changed()
+                {}
+                if ui
+                    .checkbox(&mut self.state.show_submit_window, "Submit")
+                    .changed()
+                    && self.state.show_submit_window
                 {
                     self.fetch_submissions();
-                }
-            });
-
-            // Corpus switcher in menu bar
-            let corpus_label = if self.state.corpora.is_empty() {
-                "Corpus".to_string()
-            } else {
-                format!("Corpus: {}", self.state.corpus_name())
-            };
-            ui.menu_button(corpus_label, |ui| {
-                let mut switch_to = None;
-                for (i, corpus) in self.state.corpora.iter().enumerate() {
-                    if ui
-                        .selectable_label(i == self.state.active_corpus_idx, &corpus.name)
-                        .clicked()
-                    {
-                        switch_to = Some(i);
-                        ui.close();
-                    }
-                }
-                if let Some(idx) = switch_to {
-                    self.switch_corpus(idx);
                 }
             });
         });
@@ -333,7 +352,19 @@ impl eframe::App for AtheneumApp {
             }
         }
 
-        // Detail responses — insert into open_windows
+        // Preview responses
+        let completed_previews = std::mem::take(&mut pending.previews);
+        for (key, result) in completed_previews {
+            let content = match result {
+                Ok((bytes, content_type)) => classify_preview(bytes, &content_type, &key),
+                Err(e) => PreviewContent::Error(e),
+            };
+            if let Some(preview) = self.state.open_previews.get_mut(&key) {
+                preview.content = content;
+            }
+        }
+
+        // Detail responses
         let completed = std::mem::take(&mut pending.details);
         drop(pending);
 
@@ -373,31 +404,111 @@ impl eframe::App for AtheneumApp {
             self.menu_bar(ui);
         });
 
-        // Filter bar
-        if self.state.show_filter_bar {
-            egui::Panel::top("filter_bar").show_inside(ui, |ui| {
-                let action = views::filter_bar(ui, &mut self.state);
-                match action {
-                    views::FilterAction::None => {}
-                    views::FilterAction::RefreshRecords => {
-                        self.fetch_records();
-                    }
+        // Status bar
+        let mut open_corpora = false;
+        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Corpus selector — clicking opens the Corpora window
+                let corpus_label = if self.state.corpora.is_empty() {
+                    "No corpus".to_string()
+                } else {
+                    self.state.corpus_name().to_string()
+                };
+                if ui.small_button(&corpus_label).clicked() {
+                    open_corpora = true;
+                }
+
+                ui.separator();
+
+                // Record count
+                let total = self.state.sidebar_total;
+                let showing = self.state.sidebar_entries.len();
+                if showing as u64 == total {
+                    ui.weak(format!("{total} records"));
+                } else {
+                    ui.weak(format!("{showing} / {total} records"));
+                }
+
+                // Open windows count
+                if !self.state.open_windows.is_empty() {
+                    ui.separator();
+                    ui.weak(format!("{} open", self.state.open_windows.len()));
                 }
             });
+        });
+        if open_corpora {
+            self.state.show_corpora_window = true;
         }
 
-        // Submit panel (bottom, before status bar)
-        if self.state.show_submit_panel {
-            egui::Panel::bottom("submit_panel")
-                .default_size(200.0)
+        // Background
+        egui::CentralPanel::default().show_inside(ui, |_| {});
+
+        let ctx = ui.ctx().clone();
+
+        // Corpora window
+        if self.state.show_corpora_window {
+            let mut open = true;
+            egui::Window::new("Corpora")
+                .id(egui::Id::new("corpora_window"))
+                .open(&mut open)
+                .default_size([250.0, 200.0])
                 .resizable(true)
-                .show_inside(ui, |ui| {
+                .show(&ctx, |ui| {
+                    if let Some(idx) = views::corpora_window(ui, &self.state) {
+                        self.switch_corpus(idx);
+                    }
+                });
+            if !open {
+                self.state.show_corpora_window = false;
+            }
+        }
+
+        // Records window
+        if self.state.show_records_window {
+            let mut open = true;
+            let title = format!(
+                "Records \u{2014} {} ({})",
+                self.state.corpus_name(),
+                self.state.sidebar_total
+            );
+            egui::Window::new(title)
+                .id(egui::Id::new("records_window"))
+                .open(&mut open)
+                .default_size([500.0, 600.0])
+                .resizable(true)
+                .show(&ctx, |ui| {
+                    let action = views::records_window(ui, &mut self.state);
+                    match action {
+                        views::RecordsAction::None => {}
+                        views::RecordsAction::RefreshRecords => {
+                            self.fetch_records();
+                        }
+                        views::RecordsAction::OpenDetail(uuid) => {
+                            if !self.state.open_windows.contains_key(&uuid) {
+                                self.fetch_detail(uuid);
+                            }
+                        }
+                    }
+                });
+            if !open {
+                self.state.show_records_window = false;
+            }
+        }
+
+        // Submit window
+        if self.state.show_submit_window {
+            let mut open = true;
+            egui::Window::new("Submit")
+                .id(egui::Id::new("submit_window"))
+                .open(&mut open)
+                .default_size([600.0, 300.0])
+                .resizable(true)
+                .show(&ctx, |ui| {
                     let action = views::submit_panel(ui, &mut self.state);
                     match action {
                         views::SubmitAction::None => {}
                         views::SubmitAction::Submit => {
                             self.submit_capture();
-                            // Refresh queue after a short delay (submit is async)
                         }
                         views::SubmitAction::RemoveFile(idx) => {
                             self.state.submit_files.remove(idx);
@@ -407,35 +518,17 @@ impl eframe::App for AtheneumApp {
                         }
                     }
                 });
+            if !open {
+                self.state.show_submit_window = false;
+            }
         }
 
-        // Status bar
-        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
-            views::status_bar(ui, &self.state);
-        });
-
-        // Sidebar
-        if self.state.show_sidebar {
-            egui::Panel::left("sidebar")
-                .default_size(320.0)
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    if let Some(uuid) = views::sidebar(ui, &mut self.state) {
-                        if !self.state.open_windows.contains_key(&uuid) {
-                            self.fetch_detail(uuid);
-                        }
-                    }
-                });
-        }
-
-        // Handle drag-drop: accumulate files into submit builder
-        if self.state.show_submit_panel {
+        // Drag-drop: accumulate files into submit builder when submit window is open
+        if self.state.show_submit_window {
             let dropped: Vec<egui::DroppedFile> =
-                ui.ctx().input(|i| i.raw.dropped_files.clone());
+                ctx.input(|i| i.raw.dropped_files.clone());
             for file in dropped {
-                let name = file
-                    .name
-                    .clone();
+                let name = file.name.clone();
                 let name = if name.is_empty() {
                     file.path
                         .as_ref()
@@ -453,19 +546,11 @@ impl eframe::App for AtheneumApp {
             }
         }
 
-        // Central panel: landing when no windows open
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            if self.state.open_windows.is_empty() {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Click a record to open it");
-                });
-            }
-        });
-
         // Detail windows
-        let ctx = ui.ctx().clone();
         let mut to_close = Vec::new();
         let mut nav_requests = Vec::new();
+        let mut artifact_requests = Vec::new();
+        let corpus_name = self.state.corpus_name().to_string();
 
         let window_entries: Vec<(Uuid, RecordDetail)> = self
             .state
@@ -484,8 +569,9 @@ impl eframe::App for AtheneumApp {
                 .default_size([600.0, 500.0])
                 .resizable(true)
                 .show(&ctx, |ui| {
-                    let navs = views::detail_content(ui, detail);
-                    nav_requests.extend(navs);
+                    let actions = views::detail_content(ui, detail, &corpus_name);
+                    nav_requests.extend(actions.nav_requests);
+                    artifact_requests.extend(actions.artifact_requests);
                 });
 
             if !is_open {
@@ -502,6 +588,70 @@ impl eframe::App for AtheneumApp {
                 self.fetch_detail(uuid);
             }
         }
+
+        for req in &artifact_requests {
+            self.fetch_preview(req);
+        }
+
+        // Preview windows
+        let preview_keys: Vec<String> = self.state.open_previews.keys().cloned().collect();
+        let mut previews_to_close = Vec::new();
+
+        for key in &preview_keys {
+            let preview = &self.state.open_previews[key];
+            let title = &preview.title;
+            let mut is_open = true;
+
+            egui::Window::new(title)
+                .id(egui::Id::new(format!("preview_{key}")))
+                .open(&mut is_open)
+                .default_size([500.0, 400.0])
+                .resizable(true)
+                .show(&ctx, |ui| {
+                    match &preview.content {
+                        PreviewContent::Loading => {
+                            ui.centered_and_justified(|ui| {
+                                ui.spinner();
+                            });
+                        }
+                        PreviewContent::Image { uri, bytes } => {
+                            egui::ScrollArea::both()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    let image = egui::Image::from_bytes(uri.clone(), bytes.clone());
+                                    ui.add(image);
+                                });
+                        }
+                        PreviewContent::Text(text) => {
+                            egui::ScrollArea::both()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    ui.monospace(text);
+                                });
+                        }
+                        PreviewContent::Unsupported { filename, size } => {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(20.0);
+                                ui.heading(filename);
+                                ui.label(format!("{} bytes", size));
+                                ui.add_space(8.0);
+                                ui.weak("Preview not available for this file type");
+                            });
+                        }
+                        PreviewContent::Error(e) => {
+                            ui.colored_label(egui::Color32::RED, format!("Error: {e}"));
+                        }
+                    }
+                });
+
+            if !is_open {
+                previews_to_close.push(key.clone());
+            }
+        }
+
+        for key in previews_to_close {
+            self.state.open_previews.remove(&key);
+        }
     }
 }
 
@@ -516,6 +666,31 @@ fn parse_response<T: serde::de::DeserializeOwned>(
             response.status, response.status_text
         )),
         Err(e) => Err(e),
+    }
+}
+
+/// Classify fetched bytes into a preview content type.
+fn classify_preview(bytes: Vec<u8>, content_type: &str, key: &str) -> PreviewContent {
+    if content_type.starts_with("image/") {
+        let uri = format!("bytes://{key}");
+        let arc_bytes: Arc<[u8]> = bytes.into();
+        PreviewContent::Image {
+            uri,
+            bytes: arc_bytes,
+        }
+    } else if content_type.starts_with("text/")
+        || content_type == "application/json"
+        || content_type == "application/xml"
+        || content_type == "application/javascript"
+    {
+        match String::from_utf8(bytes) {
+            Ok(text) => PreviewContent::Text(text),
+            Err(e) => PreviewContent::Error(format!("Not valid UTF-8: {e}")),
+        }
+    } else {
+        let size = bytes.len();
+        let filename = key.rsplit('/').next().unwrap_or(key).to_string();
+        PreviewContent::Unsupported { filename, size }
     }
 }
 

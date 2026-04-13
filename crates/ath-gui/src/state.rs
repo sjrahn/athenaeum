@@ -27,6 +27,21 @@ impl SortOrder {
     }
 }
 
+/// Content of a preview window, classified by file type.
+pub enum PreviewContent {
+    Loading,
+    Image { uri: String, bytes: Arc<[u8]> },
+    Text(String),
+    Unsupported { filename: String, size: usize },
+    Error(String),
+}
+
+/// State for an open artifact/asset preview window.
+pub struct PreviewState {
+    pub title: String,
+    pub content: PreviewContent,
+}
+
 /// A file accumulated in the submission builder before sending.
 pub struct PendingFile {
     pub name: String,
@@ -51,6 +66,9 @@ pub struct AppState {
     // Open detail windows: UUID -> loaded detail
     pub open_windows: BTreeMap<Uuid, RecordDetail>,
 
+    // Open preview windows: key -> preview state
+    pub open_previews: BTreeMap<String, PreviewState>,
+
     // Filter/search state
     pub search_text: String,
     pub sort_order: SortOrder,
@@ -61,10 +79,10 @@ pub struct AppState {
     pub filter_credibility_tier: Option<String>,
     pub filter_record_type: Option<String>,
 
-    // UI toggles
-    pub show_sidebar: bool,
-    pub show_filter_bar: bool,
-    pub show_submit_panel: bool,
+    // Window toggles
+    pub show_corpora_window: bool,
+    pub show_records_window: bool,
+    pub show_submit_window: bool,
 
     // Submission builder
     pub submit_title: String,
@@ -88,6 +106,7 @@ impl AppState {
             sidebar_entries: Vec::new(),
             sidebar_total: 0,
             open_windows: BTreeMap::new(),
+            open_previews: BTreeMap::new(),
             search_text: String::new(),
             sort_order: SortOrder::TitleAsc,
             filter_content_type: None,
@@ -96,9 +115,9 @@ impl AppState {
             filter_origin_name: None,
             filter_credibility_tier: None,
             filter_record_type: None,
-            show_sidebar: true,
-            show_filter_bar: true,
-            show_submit_panel: false,
+            show_corpora_window: false,
+            show_records_window: true,
+            show_submit_window: false,
             submit_title: String::new(),
             submit_url: String::new(),
             submit_description: String::new(),
