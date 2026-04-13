@@ -8,6 +8,7 @@ ath-core.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
+image.workspace = true
 ehttp = { version = "0.7", features = ["multipart"] }
 anyhow.workspace = true
 tracing.workspace = true
@@ -15,6 +16,8 @@ uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+egui_taffy = "0.12"
+egui_commonmark = "0.23"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tracing-subscriber.workspace = true

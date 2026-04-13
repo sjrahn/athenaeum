@@ -93,6 +93,12 @@ pub struct AppState {
     pub submit_status: Option<String>,
     pub submissions: Vec<SubmissionEntry>,
 
+    // Markdown rendering cache
+    pub md_cache: egui_commonmark::CommonMarkCache,
+
+    // Theme
+    pub theme: crate::theme::Theme,
+
     // Status
     pub load_error: Option<String>,
 }
@@ -108,7 +114,7 @@ impl AppState {
             open_windows: BTreeMap::new(),
             open_previews: BTreeMap::new(),
             search_text: String::new(),
-            sort_order: SortOrder::TitleAsc,
+            sort_order: SortOrder::NewestFirst,
             filter_content_type: None,
             filter_status: None,
             filter_tag: None,
@@ -125,6 +131,8 @@ impl AppState {
             submit_files: Vec::new(),
             submit_status: None,
             submissions: Vec::new(),
+            md_cache: egui_commonmark::CommonMarkCache::default(),
+            theme: crate::theme::Theme::Frappe,
             load_error: None,
         }
     }

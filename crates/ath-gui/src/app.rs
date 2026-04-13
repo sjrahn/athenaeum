@@ -206,7 +206,27 @@ impl AtheneumApp {
         });
     }
 
-    pub fn fetch_preview(&mut self, req: &views::ArtifactRequest) {
+    /// Open an artifact — inline preview for images/text, external browser for everything else.
+    pub fn open_artifact(&mut self, ctx: &egui::Context, req: &views::ArtifactRequest) {
+        let url = format!(
+            "{}/api/files/{}/{}/{}/{}",
+            self.server_url, req.corpus, req.kind, req.uuid, req.filename
+        );
+
+        // Check extension to decide inline vs external
+        let ext = req.filename.rsplit('.').next().unwrap_or("").to_lowercase();
+        let inline = matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg"
+                | "txt" | "md" | "csv" | "vtt" | "json" | "yaml" | "yml" | "xml" | "js" | "css"
+        );
+
+        if !inline {
+            // HTML, PDF, and anything else — open in browser directly
+            ctx.open_url(egui::OpenUrl::new_tab(&url));
+            return;
+        }
+
         let key = format!("{}/{}/{}/{}", req.corpus, req.kind, req.uuid, req.filename);
 
         // Don't re-fetch if already open or loading
@@ -223,10 +243,6 @@ impl AtheneumApp {
             },
         );
 
-        let url = format!(
-            "{}/api/files/{}/{}/{}/{}",
-            self.server_url, req.corpus, req.kind, req.uuid, req.filename
-        );
         let pending = self.pending.clone();
         let fetch_key = key.clone();
         ehttp::fetch(ehttp::Request::get(&url), move |result| {
@@ -289,6 +305,10 @@ impl eframe::App for AtheneumApp {
                 Ok(corpora) => {
                     tracing::info!(count = corpora.len(), "loaded corpora list");
                     self.state.corpora = corpora;
+                    // Default to corpus-public if available
+                    if let Some(idx) = self.state.corpora.iter().position(|c| c.name == "corpus-public") {
+                        self.state.active_corpus_idx = idx;
+                    }
                     self.load_state = LoadState::Ready;
                     drop(pending);
                     self.fetch_facets();
@@ -434,6 +454,21 @@ impl eframe::App for AtheneumApp {
                     ui.separator();
                     ui.weak(format!("{} open", self.state.open_windows.len()));
                 }
+
+                // Theme switcher — right-aligned
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let current = self.state.theme;
+                    egui::ComboBox::from_id_salt("theme_switcher")
+                        .selected_text(current.label())
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            for &t in crate::theme::Theme::ALL {
+                                if ui.selectable_value(&mut self.state.theme, t, t.label()).changed() {
+                                    crate::theme::apply(ui.ctx(), t);
+                                }
+                            }
+                        });
+                });
             });
         });
         if open_corpora {
@@ -569,7 +604,7 @@ impl eframe::App for AtheneumApp {
                 .default_size([600.0, 500.0])
                 .resizable(true)
                 .show(&ctx, |ui| {
-                    let actions = views::detail_content(ui, detail, &corpus_name);
+                    let actions = views::detail_content(ui, detail, &corpus_name, &mut self.state.md_cache);
                     nav_requests.extend(actions.nav_requests);
                     artifact_requests.extend(actions.artifact_requests);
                 });
@@ -590,7 +625,7 @@ impl eframe::App for AtheneumApp {
         }
 
         for req in &artifact_requests {
-            self.fetch_preview(req);
+            self.open_artifact(&ctx, req);
         }
 
         // Preview windows

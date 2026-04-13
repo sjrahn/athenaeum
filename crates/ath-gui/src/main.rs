@@ -1,5 +1,6 @@
 mod app;
 mod state;
+mod theme;
 mod views;
 mod widgets;
 
@@ -23,7 +24,17 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Athenaeum",
         options,
-        Box::new(move |_cc| Ok(Box::new(app::AtheneumApp::new(server_url)))),
+        Box::new(move |cc| {
+            // egui_taffy needs multiple passes for layout recalculation
+            cc.egui_ctx.options_mut(|opts| {
+                opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+            });
+            // Register image loaders for egui::Image::from_bytes()
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            // Apply default theme
+            theme::apply(&cc.egui_ctx, theme::Theme::Frappe);
+            Ok(Box::new(app::AtheneumApp::new(server_url)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {e}"))
 }
@@ -67,7 +78,14 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(move |_cc| Ok(Box::new(app::AtheneumApp::new(server_url)))),
+                Box::new(move |cc| {
+                    cc.egui_ctx.options_mut(|opts| {
+                        opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+                    });
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    theme::apply(&cc.egui_ctx, theme::Theme::Frappe);
+                    Ok(Box::new(app::AtheneumApp::new(server_url)))
+                }),
             )
             .await
             .expect("failed to start eframe");

@@ -59,8 +59,8 @@ pub fn records_window(ui: &mut egui::Ui, state: &mut AppState) -> RecordsAction 
             });
     });
 
-    // Row 2: Type tabs + filter combos
-    ui.horizontal(|ui| {
+    // Row 2: Type tabs + filter combos (wrapping)
+    ui.horizontal_wrapped(|ui| {
         let current_type = state.filter_record_type.clone();
 
         if ui

@@ -17,7 +17,7 @@ pub struct DetailActions {
 }
 
 /// Render record detail content. Returns navigation and artifact open requests.
-pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail, corpus: &str) -> DetailActions {
+pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail, corpus: &str, md_cache: &mut egui_commonmark::CommonMarkCache) -> DetailActions {
     let mut nav_requests = Vec::new();
     let mut artifact_requests = Vec::new();
 
@@ -37,7 +37,7 @@ pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail, corpus: &str) ->
             }
 
             // -- Shared footer: relations, issues, extended, body --
-            shared_footer(ui, fm, detail, &record.body, &mut nav_requests);
+            shared_footer(ui, fm, detail, &record.body, &mut nav_requests, md_cache);
         });
 
     DetailActions {
@@ -58,19 +58,17 @@ fn record_header(ui: &mut egui::Ui, fm: &Frontmatter) {
 
     ui.add_space(4.0);
 
-    // Badges
-    ui.horizontal(|ui| {
+    // Badges — wrapping row with consistent spacing
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
         let type_color = match fm.record_type {
             RecordType::Source => egui::Color32::from_rgb(70, 130, 200),
             RecordType::Document => egui::Color32::from_rgb(70, 180, 100),
         };
         ui.colored_label(type_color, fm.record_type.to_string());
-        ui.label("|");
         ui.label(&fm.content_type);
-        ui.label("|");
         ui.label(fm.status.to_string());
         if let Some(tier) = &fm.credibility_tier {
-            ui.label("|");
             ui.label(tier);
         }
     });
@@ -83,9 +81,10 @@ fn record_header(ui: &mut egui::Ui, fm: &Frontmatter) {
         ui.add_space(8.0);
     }
 
-    // Tags
+    // Tags — wrapping row
     if !fm.tags.is_empty() {
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             ui.strong("Tags:");
             for tag in &fm.tags {
                 ui.label(format!("#{tag}"));
@@ -369,6 +368,7 @@ fn shared_footer(
     _detail: &RecordDetail,
     body: &str,
     nav: &mut Vec<Uuid>,
+    md_cache: &mut egui_commonmark::CommonMarkCache,
 ) {
     // Relations
     if !fm.relations.is_empty() {
@@ -442,7 +442,8 @@ fn shared_footer(
     if body.is_empty() {
         ui.weak("(no body content)");
     } else {
-        ui.monospace(body);
+        egui_commonmark::CommonMarkViewer::new()
+            .show(ui, md_cache, body);
     }
 }
 
