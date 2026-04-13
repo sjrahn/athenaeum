@@ -48,6 +48,7 @@ cd crates/ath-gui && trunk build
 - **egui_taffy 0.12** — CSS flexbox layout engine. Used for submit panel two-column layout. Avoid wrapping individual widgets in `.ui()`/`.ui_infinite()` — use only for structural flex containers. See gotchas #11.
 - **egui_commonmark 0.23** — Markdown renderer for record body content.
 - **catppuccin theme** — Inlined in `crates/ath-gui/src/theme.rs` (catppuccin-egui crate doesn't support egui 0.34 yet). Switchable from status bar.
+- **Fira Code** — Embedded font (`crates/ath-gui/fonts/FiraCode-Regular.ttf`). Default font, switchable from status bar. Font size adjustable 8–24pt. See `crates/ath-gui/src/fonts.rs`.
 - **egui_extras** — Image loaders (`install_image_loaders()` required at startup). JPEG requires explicit `image` crate feature.
 
 ## Key design principles
