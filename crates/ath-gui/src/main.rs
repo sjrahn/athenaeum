@@ -1,4 +1,5 @@
 mod app;
+mod fonts;
 mod state;
 mod theme;
 mod views;
@@ -31,7 +32,9 @@ fn main() -> anyhow::Result<()> {
             });
             // Register image loaders for egui::Image::from_bytes()
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            // Apply default theme
+            // Apply default font, size, and theme
+            fonts::apply(&cc.egui_ctx, fonts::Font::FiraCode);
+            fonts::apply_size(&cc.egui_ctx, fonts::DEFAULT_SIZE);
             theme::apply(&cc.egui_ctx, theme::Theme::Frappe);
             Ok(Box::new(app::AtheneumApp::new(server_url)))
         }),
@@ -83,6 +86,8 @@ fn main() {
                         opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
                     });
                     egui_extras::install_image_loaders(&cc.egui_ctx);
+                    fonts::apply(&cc.egui_ctx, fonts::Font::FiraCode);
+                    fonts::apply_size(&cc.egui_ctx, fonts::DEFAULT_SIZE);
                     theme::apply(&cc.egui_ctx, theme::Theme::Frappe);
                     Ok(Box::new(app::AtheneumApp::new(server_url)))
                 }),

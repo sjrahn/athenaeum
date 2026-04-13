@@ -80,7 +80,6 @@ pub struct AppState {
     pub filter_record_type: Option<String>,
 
     // Window toggles
-    pub show_corpora_window: bool,
     pub show_records_window: bool,
     pub show_submit_window: bool,
 
@@ -96,11 +95,15 @@ pub struct AppState {
     // Markdown rendering cache
     pub md_cache: egui_commonmark::CommonMarkCache,
 
-    // Theme
+    // Theme and font
     pub theme: crate::theme::Theme,
+    pub font: crate::fonts::Font,
+    pub font_size: f32,
 
     // Status
     pub load_error: Option<String>,
+    pub connected: bool,
+    pub last_error: Option<String>,
 }
 
 impl AppState {
@@ -121,7 +124,6 @@ impl AppState {
             filter_origin_name: None,
             filter_credibility_tier: None,
             filter_record_type: None,
-            show_corpora_window: false,
             show_records_window: true,
             show_submit_window: false,
             submit_title: String::new(),
@@ -133,7 +135,11 @@ impl AppState {
             submissions: Vec::new(),
             md_cache: egui_commonmark::CommonMarkCache::default(),
             theme: crate::theme::Theme::Frappe,
+            font: crate::fonts::Font::FiraCode,
+            font_size: crate::fonts::DEFAULT_SIZE,
             load_error: None,
+            connected: false,
+            last_error: None,
         }
     }
 

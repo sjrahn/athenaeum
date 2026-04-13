@@ -20,13 +20,22 @@ struct PendingRequests {
     submissions_list: Option<Result<SubmissionsResponse, String>>,
     /// Preview file responses: key -> (bytes, content_type_header)
     previews: BTreeMap<String, Result<(Vec<u8>, String), String>>,
+    health: Option<Result<(), String>>,
 }
 
 enum LoadState {
     Loading,
     Ready,
-    Error,
+    Error {
+        /// Seconds until next auto-retry
+        retry_in: f32,
+        /// Which attempt we're on (for backoff)
+        attempt: u32,
+    },
 }
+
+/// Seconds between health pings once connected.
+const HEALTH_INTERVAL: f32 = 10.0;
 
 pub struct AtheneumApp {
     pub state: AppState,
@@ -35,6 +44,8 @@ pub struct AtheneumApp {
     pending: Arc<Mutex<PendingRequests>>,
     records_request_in_flight: bool,
     details_in_flight: std::collections::BTreeSet<Uuid>,
+    health_timer: f32,
+    health_in_flight: bool,
 }
 
 impl AtheneumApp {
@@ -46,9 +57,28 @@ impl AtheneumApp {
             pending: Arc::new(Mutex::new(PendingRequests::default())),
             records_request_in_flight: false,
             details_in_flight: std::collections::BTreeSet::new(),
+            health_timer: 0.0,
+            health_in_flight: false,
         };
         app.fetch_corpora();
         app
+    }
+
+    fn fetch_health(&mut self) {
+        if self.health_in_flight {
+            return;
+        }
+        self.health_in_flight = true;
+        let url = format!("{}/api/health", self.server_url);
+        let pending = self.pending.clone();
+        ehttp::fetch(ehttp::Request::get(&url), move |result| {
+            let outcome = match result {
+                Ok(response) if response.ok => Ok(()),
+                Ok(response) => Err(format!("{} {}", response.status, response.status_text)),
+                Err(e) => Err(e),
+            };
+            pending.lock().unwrap().health = Some(outcome);
+        });
     }
 
     fn fetch_corpora(&mut self) {
@@ -276,10 +306,6 @@ impl AtheneumApp {
 
             ui.menu_button("View", |ui| {
                 if ui
-                    .checkbox(&mut self.state.show_corpora_window, "Corpora")
-                    .changed()
-                {}
-                if ui
                     .checkbox(&mut self.state.show_records_window, "Records")
                     .changed()
                 {}
@@ -297,6 +323,18 @@ impl AtheneumApp {
 
 impl eframe::App for AtheneumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Auto-retry countdown when server is unreachable
+        if let LoadState::Error { retry_in, .. } = &mut self.load_state {
+            *retry_in -= ctx.input(|i| i.stable_dt);
+            if *retry_in <= 0.0 {
+                self.load_state = LoadState::Loading;
+                self.state.load_error = None;
+                self.fetch_corpora();
+                ctx.request_repaint();
+                return;
+            }
+        }
+
         let mut pending = self.pending.lock().unwrap();
 
         // Corpora list
@@ -310,15 +348,44 @@ impl eframe::App for AtheneumApp {
                         self.state.active_corpus_idx = idx;
                     }
                     self.load_state = LoadState::Ready;
+                    self.state.connected = true;
+                    self.state.last_error = None;
                     drop(pending);
                     self.fetch_facets();
                     self.fetch_records();
                     pending = self.pending.lock().unwrap();
                 }
                 Err(e) => {
-                    tracing::error!(%e, "failed to fetch corpora");
+                    let attempt = match self.load_state {
+                        LoadState::Error { attempt, .. } => attempt + 1,
+                        _ => 1,
+                    };
+                    let delay = match attempt {
+                        1 => 2.0,
+                        2 => 5.0,
+                        _ => 10.0,
+                    };
+                    tracing::error!(%e, attempt, retry_in = delay, "failed to fetch corpora");
                     self.state.load_error = Some(e.clone());
-                    self.load_state = LoadState::Error;
+                    self.load_state = LoadState::Error {
+                        retry_in: delay,
+                        attempt,
+                    };
+                }
+            }
+        }
+
+        // Health check
+        if let Some(result) = pending.health.take() {
+            self.health_in_flight = false;
+            match result {
+                Ok(()) => {
+                    self.state.connected = true;
+                    self.state.last_error = None;
+                }
+                Err(e) => {
+                    self.state.connected = false;
+                    self.state.last_error = Some(e);
                 }
             }
         }
@@ -403,19 +470,60 @@ impl eframe::App for AtheneumApp {
             }
         }
 
-        if matches!(self.load_state, LoadState::Loading) {
+        // Periodic health ping (only once connected)
+        if matches!(self.load_state, LoadState::Ready) {
+            self.health_timer -= ctx.input(|i| i.stable_dt);
+            if self.health_timer <= 0.0 {
+                self.health_timer = HEALTH_INTERVAL;
+                self.fetch_health();
+            }
+        } else {
             ctx.request_repaint();
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Loading screen
+        // Loading / error screen
         if matches!(self.load_state, LoadState::Loading) {
             egui::CentralPanel::default().show_inside(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Loading corpora...");
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() / 3.0);
+                    ui.spinner();
+                    ui.add_space(8.0);
+                    ui.heading("Connecting to server...");
+                    ui.weak(&self.server_url);
                 });
             });
+            return;
+        }
+
+        if let LoadState::Error { retry_in, attempt } = self.load_state {
+            let mut do_retry = false;
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() / 3.0);
+                    ui.heading("Cannot reach server");
+                    ui.add_space(4.0);
+                    if let Some(ref err) = self.state.load_error {
+                        ui.weak(err);
+                    }
+                    ui.weak(format!("URL: {}", self.server_url));
+                    ui.add_space(12.0);
+                    if ui.button("Retry now").clicked() {
+                        do_retry = true;
+                    }
+                    ui.add_space(4.0);
+                    ui.weak(format!(
+                        "Auto-retry in {:.0}s (attempt {attempt})",
+                        retry_in.max(0.0),
+                    ));
+                });
+            });
+            if do_retry {
+                self.load_state = LoadState::Loading;
+                self.state.load_error = None;
+                self.fetch_corpora();
+            }
             return;
         }
 
@@ -425,18 +533,31 @@ impl eframe::App for AtheneumApp {
         });
 
         // Status bar
-        let mut open_corpora = false;
+        let mut switch_corpus_to = None;
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                // Corpus selector — clicking opens the Corpora window
-                let corpus_label = if self.state.corpora.is_empty() {
-                    "No corpus".to_string()
+                // Connection status indicator
+                let (color, tooltip) = if self.state.connected {
+                    (egui::Color32::from_rgb(0x40, 0xA0, 0x2B), "Connected".to_string())
                 } else {
-                    self.state.corpus_name().to_string()
+                    let msg = self.state.last_error.as_deref().unwrap_or("Disconnected");
+                    (egui::Color32::from_rgb(0xD2, 0x42, 0x42), format!("Disconnected: {msg}"))
                 };
-                if ui.small_button(&corpus_label).clicked() {
-                    open_corpora = true;
-                }
+                let dot = egui::RichText::new("\u{25CF}").color(color);
+                ui.label(dot).on_hover_text(tooltip);
+
+                // Corpus selector
+                let current_name = self.state.corpus_name().to_string();
+                egui::ComboBox::from_id_salt("corpus_switcher")
+                    .selected_text(&current_name)
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for (idx, corpus) in self.state.corpora.iter().enumerate() {
+                            if ui.selectable_label(idx == self.state.active_corpus_idx, &corpus.name).clicked() {
+                                switch_corpus_to = Some(idx);
+                            }
+                        }
+                    });
 
                 ui.separator();
 
@@ -455,11 +576,11 @@ impl eframe::App for AtheneumApp {
                     ui.weak(format!("{} open", self.state.open_windows.len()));
                 }
 
-                // Theme switcher — right-aligned
+                // Theme, font, size — right-aligned
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let current = self.state.theme;
+                    let current_theme = self.state.theme;
                     egui::ComboBox::from_id_salt("theme_switcher")
-                        .selected_text(current.label())
+                        .selected_text(current_theme.label())
                         .width(100.0)
                         .show_ui(ui, |ui| {
                             for &t in crate::theme::Theme::ALL {
@@ -468,35 +589,40 @@ impl eframe::App for AtheneumApp {
                                 }
                             }
                         });
+
+                    let current_font = self.state.font;
+                    egui::ComboBox::from_id_salt("font_switcher")
+                        .selected_text(current_font.label())
+                        .width(90.0)
+                        .show_ui(ui, |ui| {
+                            for &f in crate::fonts::Font::ALL {
+                                if ui.selectable_value(&mut self.state.font, f, f.label()).changed() {
+                                    crate::fonts::apply(ui.ctx(), f);
+                                }
+                            }
+                        });
+
+                    // Font size adjustment
+                    if ui.small_button("+").clicked() && self.state.font_size < crate::fonts::MAX_SIZE {
+                        self.state.font_size += crate::fonts::SIZE_STEP;
+                        crate::fonts::apply_size(ui.ctx(), self.state.font_size);
+                    }
+                    ui.weak(format!("{}pt", self.state.font_size as u32));
+                    if ui.small_button("\u{2212}").clicked() && self.state.font_size > crate::fonts::MIN_SIZE {
+                        self.state.font_size -= crate::fonts::SIZE_STEP;
+                        crate::fonts::apply_size(ui.ctx(), self.state.font_size);
+                    }
                 });
             });
         });
-        if open_corpora {
-            self.state.show_corpora_window = true;
+        if let Some(idx) = switch_corpus_to {
+            self.switch_corpus(idx);
         }
 
         // Background
         egui::CentralPanel::default().show_inside(ui, |_| {});
 
         let ctx = ui.ctx().clone();
-
-        // Corpora window
-        if self.state.show_corpora_window {
-            let mut open = true;
-            egui::Window::new("Corpora")
-                .id(egui::Id::new("corpora_window"))
-                .open(&mut open)
-                .default_size([250.0, 200.0])
-                .resizable(true)
-                .show(&ctx, |ui| {
-                    if let Some(idx) = views::corpora_window(ui, &self.state) {
-                        self.switch_corpus(idx);
-                    }
-                });
-            if !open {
-                self.state.show_corpora_window = false;
-            }
-        }
 
         // Records window
         if self.state.show_records_window {
@@ -595,10 +721,10 @@ impl eframe::App for AtheneumApp {
             .collect();
 
         for (uuid, detail) in &window_entries {
-            let title = &detail.record.frontmatter.title;
+            let title = truncate_title(&detail.record.frontmatter.title, 50);
             let mut is_open = true;
 
-            egui::Window::new(title)
+            egui::Window::new(&title)
                 .id(egui::Id::new(uuid))
                 .open(&mut is_open)
                 .default_size([600.0, 500.0])
@@ -726,6 +852,15 @@ fn classify_preview(bytes: Vec<u8>, content_type: &str, key: &str) -> PreviewCon
         let size = bytes.len();
         let filename = key.rsplit('/').next().unwrap_or(key).to_string();
         PreviewContent::Unsupported { filename, size }
+    }
+}
+
+fn truncate_title(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max - 1).collect();
+        format!("{truncated}\u{2026}")
     }
 }
 

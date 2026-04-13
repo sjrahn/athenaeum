@@ -448,6 +448,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "crates/ath-gui/dist".to_string());
 
     let app = Router::new()
+        .route("/api/health", get(|| async { "ok" }))
         .route("/api/corpora", get(get_corpora))
         .route("/api/facets", get(get_facets))
         .route("/api/records", get(get_records))
