@@ -1,1 +1,11 @@
 /target
+
+# Trunk (WASM) build output
+crates/ath-gui/dist/
+
+# Xcode / iOS (see IOS-CLIENT-PLAN.md)
+clients/ios/**/xcuserdata/
+clients/ios/**/DerivedData/
+clients/ios/**/*.xcuserstate
+clients/ios/**/.build/
+clients/ios/**/*.xcodeproj/project.xcworkspace/xcuserdata/

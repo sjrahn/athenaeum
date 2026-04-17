@@ -7,6 +7,7 @@ edition.workspace = true
 ath-core = { workspace = true, features = ["sqlite"] }
 axum.workspace = true
 tokio.workspace = true
+tower.workspace = true
 tower-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -14,3 +15,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+notify.workspace = true
+uuid.workspace = true

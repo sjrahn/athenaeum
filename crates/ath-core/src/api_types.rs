@@ -82,6 +82,13 @@ pub struct FacetsResponse {
     pub credibility_tiers: Vec<String>,
 }
 
+/// Response from a full corpus reload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReloadResponse {
+    pub corpora_loaded: usize,
+    pub total_records: usize,
+}
+
 /// Response after a successful capture submission.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmitResponse {

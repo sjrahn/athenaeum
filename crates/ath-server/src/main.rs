@@ -1,18 +1,25 @@
+mod watcher;
+
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{Method, header};
+use axum::extract::{Multipart, Path, Query, Request, State};
+use axum::http::Method;
 use axum::response::{Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
+use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
+use uuid::Uuid;
 
 use ath_core::api_types::{SubmissionEntry, SubmissionsResponse, SubmitResponse};
 use ath_core::corpus::Corpus;
-use ath_core::db::{CorpusDb, CorpusInfo, FacetsResponse, QueryParams, QueryResult, RecordDetail};
+use ath_core::db::{
+    CorpusDb, CorpusInfo, FacetsResponse, QueryParams, QueryResult, RecordDetail, ReloadResponse,
+};
 
 const CORPUS_PATHS: &[(&str, &str)] = &[
     ("corpus-private", "../corpus-private"),
@@ -22,6 +29,8 @@ const CORPUS_PATHS: &[(&str, &str)] = &[
 struct ServerState {
     db: CorpusDb,
     corpus_paths: Vec<(String, PathBuf)>,
+    /// Maps canonical file paths to record UUIDs (for delete handling in the watcher).
+    path_index: Mutex<HashMap<PathBuf, Uuid>>,
 }
 
 type AppState = Arc<ServerState>;
@@ -357,13 +366,12 @@ fn slugify(s: &str) -> String {
 async fn get_file(
     State(state): State<AppState>,
     Path((corpus, kind, uuid, filename)): Path<(String, String, String, String)>,
+    req: Request,
 ) -> Result<Response<Body>, axum::http::StatusCode> {
-    // Validate kind
     if kind != "artifacts" && kind != "assets" {
         return Err(axum::http::StatusCode::BAD_REQUEST);
     }
 
-    // Look up corpus path
     let corpus_path = state
         .corpus_paths
         .iter()
@@ -371,7 +379,6 @@ async fn get_file(
         .map(|(_, path)| path.clone())
         .ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
-    // Build file path and validate no traversal
     let file_path = corpus_path.join(&kind).join(&uuid).join(&filename);
     let canonical = file_path
         .canonicalize()
@@ -383,30 +390,55 @@ async fn get_file(
         return Err(axum::http::StatusCode::FORBIDDEN);
     }
 
-    let bytes =
-        std::fs::read(&canonical).map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let response = ServeFile::new(&canonical)
+        .oneshot(req)
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (parts, body) = response.into_parts();
+    Ok(Response::from_parts(parts, Body::new(body)))
+}
 
-    let content_type = match filename.rsplit('.').next().map(|e| e.to_lowercase()) {
-        Some(ref ext) if ext == "html" || ext == "htm" => "text/html",
-        Some(ref ext) if ext == "css" => "text/css",
-        Some(ref ext) if ext == "js" => "application/javascript",
-        Some(ref ext) if ext == "json" => "application/json",
-        Some(ref ext) if ext == "xml" => "application/xml",
-        Some(ref ext) if ext == "txt" || ext == "md" || ext == "csv" || ext == "vtt" => "text/plain",
-        Some(ref ext) if ext == "yaml" || ext == "yml" => "text/yaml",
-        Some(ref ext) if ext == "png" => "image/png",
-        Some(ref ext) if ext == "jpg" || ext == "jpeg" => "image/jpeg",
-        Some(ref ext) if ext == "gif" => "image/gif",
-        Some(ref ext) if ext == "webp" => "image/webp",
-        Some(ref ext) if ext == "svg" => "image/svg+xml",
-        Some(ref ext) if ext == "pdf" => "application/pdf",
-        _ => "application/octet-stream",
-    };
+async fn reload_corpora(
+    State(state): State<AppState>,
+) -> Result<Json<ReloadResponse>, axum::http::StatusCode> {
+    let mut total_records = 0usize;
+    let mut corpora_loaded = 0usize;
+    let mut new_index = HashMap::new();
 
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, content_type)
-        .body(Body::from(bytes))
-        .unwrap())
+    for (name, corpus_path) in &state.corpus_paths {
+        state
+            .db
+            .clear_corpus(name)
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        match Corpus::load(corpus_path) {
+            Ok(corpus) => {
+                let count = corpus.records.len();
+                for record in corpus.records.values() {
+                    if let Ok(canonical) = record.file_path.canonicalize() {
+                        new_index.insert(canonical, record.frontmatter.uuid);
+                    }
+                }
+                state
+                    .db
+                    .insert_corpus(name, &corpus.records)
+                    .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+                total_records += count;
+                corpora_loaded += 1;
+                tracing::info!(name, count, "reloaded corpus");
+            }
+            Err(e) => {
+                tracing::warn!(name, %e, "skipping corpus during reload");
+            }
+        }
+    }
+
+    *state.path_index.lock().unwrap() = new_index;
+
+    Ok(Json(ReloadResponse {
+        corpora_loaded,
+        total_records,
+    }))
 }
 
 #[tokio::main]
@@ -417,6 +449,7 @@ async fn main() -> anyhow::Result<()> {
 
     let db = CorpusDb::open_memory()?;
     let mut corpus_paths = Vec::new();
+    let mut path_index = HashMap::new();
 
     for (name, path) in CORPUS_PATHS {
         let corpus_path = PathBuf::from(path);
@@ -429,6 +462,11 @@ async fn main() -> anyhow::Result<()> {
                     records = corpus.len(),
                     "loaded corpus"
                 );
+                for record in corpus.records.values() {
+                    if let Ok(canonical) = record.file_path.canonicalize() {
+                        path_index.insert(canonical, record.frontmatter.uuid);
+                    }
+                }
                 db.insert_corpus(name, &corpus.records)?;
                 tracing::info!(name, "inserted into database");
             }
@@ -438,7 +476,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let state: AppState = Arc::new(ServerState { db, corpus_paths });
+    let state: AppState = Arc::new(ServerState {
+        db,
+        corpus_paths,
+        path_index: Mutex::new(path_index),
+    });
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])
@@ -456,9 +498,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/submit", post(submit_capture))
         .route("/api/submissions", get(get_submissions))
         .route("/api/files/{corpus}/{kind}/{uuid}/{filename}", get(get_file))
+        .route("/api/reload", post(reload_corpora))
         .layer(cors)
         .fallback_service(ServeDir::new(&static_dir))
-        .with_state(state);
+        .with_state(Arc::clone(&state));
+
+    watcher::spawn_watcher(Arc::clone(&state));
 
     let addr = "0.0.0.0:8080";
     tracing::info!("listening on http://{addr}");

@@ -9,6 +9,7 @@ use crate::model::Record;
 // Re-export API types for convenience
 pub use crate::api_types::{
     CorpusInfo, FacetsResponse, QueryParams, QueryResult, RecordDetail, RecordSummary,
+    ReloadResponse,
 };
 
 /// In-memory SQLite database for querying corpus records.
@@ -139,6 +140,137 @@ impl CorpusDb {
         tx.execute_batch(
             "INSERT INTO records_fts(rowid, title, description, body)
              SELECT rowid, title, description, body FROM records",
+        )?;
+
+        tx.commit()
+    }
+
+    /// Clear all records for a corpus (and associated tags, constituents, FTS).
+    pub fn clear_corpus(&self, corpus_name: &str) -> rusqlite::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        tx.execute(
+            "DELETE FROM records_fts WHERE rowid IN (SELECT rowid FROM records WHERE corpus = ?1)",
+            params![corpus_name],
+        )?;
+        tx.execute(
+            "DELETE FROM record_tags WHERE record_uuid IN (SELECT uuid FROM records WHERE corpus = ?1)",
+            params![corpus_name],
+        )?;
+        tx.execute(
+            "DELETE FROM constituents WHERE parent_uuid IN (SELECT uuid FROM records WHERE corpus = ?1)",
+            params![corpus_name],
+        )?;
+        tx.execute(
+            "DELETE FROM records WHERE corpus = ?1",
+            params![corpus_name],
+        )?;
+
+        tx.commit()
+    }
+
+    /// Insert or update a single record, keeping FTS and auxiliary tables in sync.
+    pub fn upsert_record(&self, corpus_name: &str, record: &Record) -> rusqlite::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let fm = &record.frontmatter;
+        let uuid_str = fm.uuid.to_string();
+
+        // Remove old FTS entry (rowid changes on INSERT OR REPLACE)
+        tx.execute(
+            "DELETE FROM records_fts WHERE rowid IN (SELECT rowid FROM records WHERE uuid = ?1)",
+            params![uuid_str],
+        )?;
+        // Remove old tags and constituents
+        tx.execute(
+            "DELETE FROM record_tags WHERE record_uuid = ?1",
+            params![uuid_str],
+        )?;
+        tx.execute(
+            "DELETE FROM constituents WHERE parent_uuid = ?1",
+            params![uuid_str],
+        )?;
+
+        // Upsert the record
+        let record_json = serde_json::to_string(record).unwrap_or_default();
+        tx.execute(
+            "INSERT OR REPLACE INTO records
+             (uuid, corpus, title, description, record_type, content_type, status,
+              credibility_tier, normalization_confidence, origin_name, origin_url,
+              capture_date, author, date_published, body, record_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                uuid_str,
+                corpus_name,
+                fm.title,
+                fm.description,
+                fm.record_type.to_string(),
+                fm.content_type,
+                fm.status.to_string(),
+                fm.credibility_tier,
+                fm.normalization_confidence,
+                fm.origin_name,
+                fm.origin_url,
+                fm.capture_date.map(|d| d.to_string()),
+                fm.author,
+                fm.date_published.map(|d| d.to_string()),
+                record.body,
+                record_json,
+            ],
+        )?;
+
+        // Insert tags
+        {
+            let mut insert_tag = tx.prepare_cached(
+                "INSERT OR IGNORE INTO record_tags (record_uuid, tag) VALUES (?1, ?2)",
+            )?;
+            for tag in &fm.tags {
+                insert_tag.execute(params![uuid_str, tag])?;
+            }
+        }
+
+        // Insert constituents
+        if let Some(constituents) = &fm.constituents {
+            let mut insert_constituent = tx.prepare_cached(
+                "INSERT OR IGNORE INTO constituents (parent_uuid, child_uuid) VALUES (?1, ?2)",
+            )?;
+            for child in constituents {
+                insert_constituent.execute(params![uuid_str, child.to_string()])?;
+            }
+        }
+
+        // Insert new FTS entry with the new rowid
+        tx.execute(
+            "INSERT INTO records_fts(rowid, title, description, body)
+             SELECT rowid, title, description, body FROM records WHERE uuid = ?1",
+            params![uuid_str],
+        )?;
+
+        tx.commit()
+    }
+
+    /// Delete a single record by UUID (and associated tags, constituents, FTS).
+    pub fn delete_record(&self, uuid: Uuid) -> rusqlite::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let uuid_str = uuid.to_string();
+
+        tx.execute(
+            "DELETE FROM records_fts WHERE rowid IN (SELECT rowid FROM records WHERE uuid = ?1)",
+            params![uuid_str],
+        )?;
+        tx.execute(
+            "DELETE FROM record_tags WHERE record_uuid = ?1",
+            params![uuid_str],
+        )?;
+        tx.execute(
+            "DELETE FROM constituents WHERE parent_uuid = ?1",
+            params![uuid_str],
+        )?;
+        tx.execute(
+            "DELETE FROM records WHERE uuid = ?1",
+            params![uuid_str],
         )?;
 
         tx.commit()
