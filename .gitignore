@@ -3,9 +3,13 @@
 # Trunk (WASM) build output
 crates/ath-gui/dist/
 
-# Xcode / iOS (see IOS-CLIENT-PLAN.md)
-clients/ios/**/xcuserdata/
-clients/ios/**/DerivedData/
-clients/ios/**/*.xcuserstate
-clients/ios/**/.build/
-clients/ios/**/*.xcodeproj/project.xcworkspace/xcuserdata/
+# Xcode / Apple clients (see IOS-CLIENT-PLAN.md — being superseded by APPLE-CLIENT-PLAN.md)
+clients/**/xcuserdata/
+clients/**/DerivedData/
+clients/**/*.xcuserstate
+clients/**/.build/
+clients/**/*.xcodeproj/project.xcworkspace/xcuserdata/
+clients/**/*.xcodeproj/xcuserdata/
+
+# macOS Finder metadata
+.DS_Store
