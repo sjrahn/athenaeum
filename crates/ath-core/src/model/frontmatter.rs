@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{ArtifactRef, AssetRef, Issue, RecordType, Relation, Status};
+use super::{ArtifactRef, AssetRef, Issue, RecordType, Status};
 
 /// Deserializer that accepts a NaiveDate or returns None for non-date strings
 /// like "pending".
@@ -76,6 +76,10 @@ pub struct Frontmatter {
     pub status: Status,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Editorial curation layer (independent from pipeline `status`).
+    /// `"visible"` (default) | `"deranked"` | `"hidden"`. Absent == visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
 
     // --- Quality fields ---
     /// Stored as String to tolerate "pending" in stubs.
@@ -147,8 +151,13 @@ pub struct Frontmatter {
     // --- Issues and relations ---
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issues: Vec<Issue>,
+    /// Set-theory classification: "this record is an instance of the concept
+    /// described by each target". Instance → concept only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relations: Vec<Relation>,
+    pub part_of: Vec<Uuid>,
+    /// Identity equivalence (reuploads, re-captures, dedup). Symmetric.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub same_as: Vec<Uuid>,
 
     // --- Extended fields (content-type-specific) ---
     /// Captures all fields not explicitly modeled above.

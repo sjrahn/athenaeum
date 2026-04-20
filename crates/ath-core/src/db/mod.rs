@@ -32,6 +32,7 @@ impl CorpusDb {
                 record_type TEXT NOT NULL,
                 content_type TEXT NOT NULL,
                 status TEXT NOT NULL,
+                visibility TEXT,
                 credibility_tier TEXT,
                 normalization_confidence REAL NOT NULL DEFAULT 0.0,
                 origin_name TEXT,
@@ -63,6 +64,7 @@ impl CorpusDb {
             CREATE INDEX idx_records_corpus ON records(corpus);
             CREATE INDEX idx_records_content_type ON records(corpus, content_type);
             CREATE INDEX idx_records_status ON records(corpus, status);
+            CREATE INDEX idx_records_visibility ON records(corpus, visibility);
             CREATE INDEX idx_records_title ON records(corpus, title COLLATE NOCASE);
             CREATE INDEX idx_record_tags_tag ON record_tags(tag);
             CREATE INDEX idx_constituents_child ON constituents(child_uuid);
@@ -87,9 +89,9 @@ impl CorpusDb {
             let mut insert_record = tx.prepare_cached(
                 "INSERT OR REPLACE INTO records
                  (uuid, corpus, title, description, record_type, content_type, status,
-                  credibility_tier, normalization_confidence, origin_name, origin_url,
+                  visibility, credibility_tier, normalization_confidence, origin_name, origin_url,
                   capture_date, author, date_published, body, record_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             )?;
 
             let mut insert_tag = tx.prepare_cached(
@@ -113,6 +115,7 @@ impl CorpusDb {
                     fm.record_type.to_string(),
                     fm.content_type,
                     fm.status.to_string(),
+                    fm.visibility,
                     fm.credibility_tier,
                     fm.normalization_confidence,
                     fm.origin_name,
@@ -197,9 +200,9 @@ impl CorpusDb {
         tx.execute(
             "INSERT OR REPLACE INTO records
              (uuid, corpus, title, description, record_type, content_type, status,
-              credibility_tier, normalization_confidence, origin_name, origin_url,
+              visibility, credibility_tier, normalization_confidence, origin_name, origin_url,
               capture_date, author, date_published, body, record_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 uuid_str,
                 corpus_name,
@@ -208,6 +211,7 @@ impl CorpusDb {
                 fm.record_type.to_string(),
                 fm.content_type,
                 fm.status.to_string(),
+                fm.visibility,
                 fm.credibility_tier,
                 fm.normalization_confidence,
                 fm.origin_name,
@@ -392,6 +396,19 @@ impl CorpusDb {
             bind_values.push((":record_type".to_string(), Box::new(rt.clone())));
         }
 
+        // Editorial visibility filter. Default hides deranked/hidden.
+        match params.visibility.as_deref() {
+            None | Some("") | Some("visible") => {
+                conditions
+                    .push("(r.visibility IS NULL OR r.visibility = 'visible')".to_string());
+            }
+            Some("all") => { /* no filter */ }
+            Some(v) => {
+                conditions.push("r.visibility = :visibility".to_string());
+                bind_values.push((":visibility".to_string(), Box::new(v.to_string())));
+            }
+        }
+
         let where_clause = conditions.join(" AND ");
 
         let order_clause = match params.sort.as_str() {
@@ -412,7 +429,7 @@ impl CorpusDb {
 
         // Data query
         let data_sql = format!(
-            "SELECT DISTINCT r.uuid, r.title, r.status, r.content_type, r.record_type
+            "SELECT DISTINCT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
              FROM {from_clause}
              WHERE {where_clause}
              ORDER BY {order_clause}
@@ -431,12 +448,26 @@ impl CorpusDb {
         let mut data_stmt = conn.prepare(&data_sql)?;
         let rows = data_stmt.query_map(param_refs.as_slice(), |row| {
             let uuid_str: String = row.get(0)?;
-            Ok((uuid_str, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                uuid_str,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         })?;
 
         let mut records = Vec::new();
         for row in rows {
-            let (uuid_str, title, status, content_type, record_type): (String, String, String, String, String) = row?;
+            let (uuid_str, title, status, content_type, record_type, visibility): (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = row?;
 
             // Fetch tags for this record
             let tags = self.get_tags_inner(&conn, &uuid_str)?;
@@ -448,6 +479,7 @@ impl CorpusDb {
                 content_type,
                 record_type,
                 tags,
+                visibility,
             });
         }
 
@@ -504,19 +536,33 @@ impl CorpusDb {
         uuid_str: &str,
     ) -> rusqlite::Result<Vec<RecordSummary>> {
         let mut stmt = conn.prepare_cached(
-            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type
+            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
              FROM records r
              JOIN constituents c ON c.parent_uuid = r.uuid
              WHERE c.child_uuid = ?1",
         )?;
 
         let rows = stmt.query_map(params![uuid_str], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         })?;
 
         let mut result = Vec::new();
         for row in rows {
-            let (uuid_s, title, status, content_type, record_type): (String, String, String, String, String) = row?;
+            let (uuid_s, title, status, content_type, record_type, visibility): (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = row?;
             let tags = self.get_tags_inner(conn, &uuid_s)?;
             result.push(RecordSummary {
                 uuid: uuid_s.parse().unwrap_or_default(),
@@ -525,6 +571,7 @@ impl CorpusDb {
                 content_type,
                 record_type,
                 tags,
+                visibility,
             });
         }
 
@@ -537,19 +584,33 @@ impl CorpusDb {
         uuid_str: &str,
     ) -> rusqlite::Result<Vec<RecordSummary>> {
         let mut stmt = conn.prepare_cached(
-            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type
+            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
              FROM records r
              JOIN constituents c ON c.child_uuid = r.uuid
              WHERE c.parent_uuid = ?1",
         )?;
 
         let rows = stmt.query_map(params![uuid_str], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         })?;
 
         let mut result = Vec::new();
         for row in rows {
-            let (uuid_s, title, status, content_type, record_type): (String, String, String, String, String) = row?;
+            let (uuid_s, title, status, content_type, record_type, visibility): (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+            ) = row?;
             let tags = self.get_tags_inner(conn, &uuid_s)?;
             result.push(RecordSummary {
                 uuid: uuid_s.parse().unwrap_or_default(),
@@ -558,6 +619,7 @@ impl CorpusDb {
                 content_type,
                 record_type,
                 tags,
+                visibility,
             });
         }
 

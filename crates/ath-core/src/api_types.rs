@@ -36,6 +36,11 @@ pub struct QueryParams {
     pub credibility_tier: Option<String>,
     #[serde(default)]
     pub record_type: Option<String>,
+    /// Editorial visibility filter.
+    /// `"visible"` (default) | `"deranked"` | `"hidden"` | `"all"`.
+    /// Absent or `"visible"` hides deranked/hidden records.
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 fn default_sort() -> String {
@@ -55,6 +60,8 @@ pub struct RecordSummary {
     pub content_type: String,
     pub record_type: String,
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
 }
 
 /// Paginated query result.

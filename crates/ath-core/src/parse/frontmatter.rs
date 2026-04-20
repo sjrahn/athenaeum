@@ -1,7 +1,75 @@
 use std::path::Path;
 
+use serde_yaml_ng::Value;
+
 use crate::error::{Error, Result};
 use crate::model::{Frontmatter, Record};
+
+/// Rewrite v8-era `relations: [{type, target}, ...]` into the v9 flat
+/// `part_of` / `same_as` lists. Drops deprecated relation types with a warning.
+///
+/// Runs on the raw YAML mapping before struct deserialization so no legacy
+/// field leaks into `Frontmatter.extended`.
+fn migrate_legacy_relations(value: &mut Value, path: &Path) {
+    let Value::Mapping(map) = value else { return };
+    let Some(relations_value) = map.remove("relations") else {
+        return;
+    };
+    let Value::Sequence(entries) = relations_value else {
+        tracing::warn!(path = %path.display(), "relations field is not a sequence, dropping");
+        return;
+    };
+
+    let mut part_of: Vec<Value> = Vec::new();
+    let mut same_as: Vec<Value> = Vec::new();
+
+    for entry in entries {
+        let Value::Mapping(entry_map) = entry else {
+            continue;
+        };
+        let rel_type = entry_map.get("type").and_then(Value::as_str).unwrap_or("");
+        let target = entry_map.get("target").cloned();
+
+        match rel_type {
+            "part_of" => {
+                if let Some(t) = target {
+                    part_of.push(t);
+                }
+            }
+            "same_as" => {
+                if let Some(t) = target {
+                    same_as.push(t);
+                }
+            }
+            other => {
+                tracing::warn!(
+                    path = %path.display(),
+                    relation_type = other,
+                    "dropping deprecated v8 relation type"
+                );
+            }
+        }
+    }
+
+    if !part_of.is_empty() {
+        merge_uuid_list(map, "part_of", part_of);
+    }
+    if !same_as.is_empty() {
+        merge_uuid_list(map, "same_as", same_as);
+    }
+}
+
+fn merge_uuid_list(map: &mut serde_yaml_ng::Mapping, key: &str, mut extracted: Vec<Value>) {
+    let key_val = Value::String(key.to_string());
+    if let Some(existing) = map.remove(key) {
+        if let Value::Sequence(mut seq) = existing {
+            seq.append(&mut extracted);
+            map.insert(key_val, Value::Sequence(seq));
+            return;
+        }
+    }
+    map.insert(key_val, Value::Sequence(extracted));
+}
 
 /// Split a markdown file's content into YAML frontmatter and body.
 ///
@@ -41,8 +109,16 @@ pub fn parse_record(path: &Path) -> Result<Record> {
         detail: "file does not start with '---'".to_string(),
     })?;
 
-    let frontmatter: Frontmatter =
+    let mut yaml_value: Value =
         serde_yaml_ng::from_str(yaml_str).map_err(|e| Error::YamlDeserialize {
+            path: path.to_owned(),
+            source: e,
+        })?;
+
+    migrate_legacy_relations(&mut yaml_value, path);
+
+    let frontmatter: Frontmatter =
+        serde_yaml_ng::from_value(yaml_value).map_err(|e| Error::YamlDeserialize {
             path: path.to_owned(),
             source: e,
         })?;

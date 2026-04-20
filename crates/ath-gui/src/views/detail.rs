@@ -45,7 +45,7 @@ pub fn detail_content(ui: &mut egui::Ui, detail: &RecordDetail, corpus: &str, md
                 RecordType::Document => document_detail(ui, fm, detail, corpus, &mut nav_requests, &mut artifact_requests),
             }
 
-            // -- Shared collapsible sections: relations, issues, extended --
+            // -- Shared collapsible sections: part_of, same_as, issues, extended --
             shared_sections(ui, fm, detail, &mut nav_requests);
         });
 
@@ -445,7 +445,7 @@ fn document_detail(
 }
 
 // ---------------------------------------------------------------------------
-// Shared collapsible sections: relations, issues, extended
+// Shared collapsible sections: part_of, same_as, issues, extended
 // ---------------------------------------------------------------------------
 
 fn shared_sections(
@@ -454,22 +454,28 @@ fn shared_sections(
     _detail: &RecordDetail,
     nav: &mut Vec<Uuid>,
 ) {
-    // Relations
-    if !fm.relations.is_empty() {
-        egui::CollapsingHeader::new(format!("Relations ({})", fm.relations.len()))
+    // Part of (instance-of classification)
+    if !fm.part_of.is_empty() {
+        egui::CollapsingHeader::new(format!("Part of ({})", fm.part_of.len()))
             .default_open(false)
             .show(ui, |ui| {
-                for rel in &fm.relations {
-                    ui.horizontal(|ui| {
-                        ui.strong(&rel.relation_type);
-                        if let Some(target) = rel.target {
-                            if ui.link(target.to_string()).clicked() {
-                                nav.push(target);
-                            }
-                        } else if let Some(unresolved) = &rel.unresolved {
-                            ui.weak(format!("(unresolved: {unresolved})"));
-                        }
-                    });
+                for target in &fm.part_of {
+                    if ui.link(target.to_string()).clicked() {
+                        nav.push(*target);
+                    }
+                }
+            });
+    }
+
+    // Same as (identity equivalence)
+    if !fm.same_as.is_empty() {
+        egui::CollapsingHeader::new(format!("Same as ({})", fm.same_as.len()))
+            .default_open(false)
+            .show(ui, |ui| {
+                for target in &fm.same_as {
+                    if ui.link(target.to_string()).clicked() {
+                        nav.push(*target);
+                    }
                 }
             });
     }
