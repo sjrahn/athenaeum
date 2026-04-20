@@ -22,14 +22,10 @@ struct OriginalView: View {
     @FocusState private var focused: Bool
 
     private var orderedArtifacts: [ArtifactRef] {
-        let refs = detail.record.frontmatter.artifactRefs
-        // Primary first, then insertion order; stable sort keeps ties.
-        let withIdx = refs.enumerated().map { ($0.offset, $0.element) }
-        let sorted = withIdx.sorted { lhs, rhs in
-            if lhs.1.primary != rhs.1.primary { return lhs.1.primary }
-            return lhs.0 < rhs.0
-        }
-        return sorted.map(\.1)
+        ArtifactRefHelpers.orderPrimaryFirst(
+            detail.record.frontmatter.artifactRefs,
+            recordContentType: detail.record.frontmatter.contentType
+        )
     }
 
     var body: some View {

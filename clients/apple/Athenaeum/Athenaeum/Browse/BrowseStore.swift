@@ -35,6 +35,16 @@ final class BrowseStore {
     var health: HealthState = .unknown
     var lastSync: Date?
 
+    /// True while `loadMore()` is fetching the next page; used to gate
+    /// re-entry from scroll-triggered infinite-scroll sentinels.
+    var isLoadingMore: Bool = false
+
+    /// Chronological list of recently-selected record IDs, driven by
+    /// `select()`. `historyIndex` points at the "current" selection so
+    /// `goBack()` / `goForward()` can walk without disturbing the list.
+    private(set) var selectionHistory: [UUID] = []
+    private(set) var historyIndex: Int = -1
+
     // MARK: - Dependencies
 
     private let client: APIClient
@@ -44,6 +54,10 @@ final class BrowseStore {
     private var healthTask: Task<Void, Never>?
     private var currentRecordsTask: Task<Void, Never>?
     private var currentDetailTask: Task<Void, Never>?
+
+    /// Set transiently while `goBack()` / `goForward()` drive `select()` so
+    /// those selections don't themselves push new entries onto the stack.
+    private var navigatingViaHistory: Bool = false
 
     // MARK: - Init
 
@@ -184,7 +198,10 @@ final class BrowseStore {
     func reloadRecords() {
         currentRecordsTask?.cancel()
         records = .loading
-        let snapshot = query
+        isLoadingMore = false
+        var snapshot = query
+        snapshot.offset = 0
+        query.offset = 0
         currentRecordsTask = Task {
             do {
                 let result = try await client.records(query: snapshot)
@@ -208,6 +225,47 @@ final class BrowseStore {
         }
     }
 
+    /// True when the loaded page is a strict prefix of the total result set.
+    /// Drives the infinite-scroll sentinel and the toolbar "loading more" row.
+    var hasMoreRecords: Bool {
+        guard case .loaded(let result) = records else { return false }
+        return result.records.count < Int(result.total)
+    }
+
+    /// Fetch and append the next page of records to the current result.
+    /// Noop when there's no more data, when a page is already in-flight, or
+    /// when the list is in a non-loaded state. Errors leave the existing
+    /// records visible — failing infinite-scroll shouldn't blow the list away.
+    func loadMore() {
+        guard case .loaded(let current) = records else { return }
+        guard !isLoadingMore else { return }
+        guard current.records.count < Int(current.total) else { return }
+
+        isLoadingMore = true
+        var snapshot = query
+        snapshot.offset = UInt64(current.records.count)
+        Task {
+            do {
+                let page = try await client.records(query: snapshot)
+                // Merge even if a concurrent filter change landed — only
+                // append when the total + query shape still match.
+                if case .loaded(let latest) = records,
+                   latest.total == page.total
+                {
+                    let merged = QueryResult(
+                        total: page.total,
+                        records: latest.records + page.records
+                    )
+                    records = .loaded(merged)
+                }
+                isLoadingMore = false
+            } catch {
+                log.warning("loadMore failed: \(String(describing: error), privacy: .public)")
+                isLoadingMore = false
+            }
+        }
+    }
+
     func reloadSubmissions() {
         submissions = .loading
         Task {
@@ -227,6 +285,24 @@ final class BrowseStore {
     func select(_ uuid: UUID?) {
         selectedRecordID = uuid
         currentDetailTask?.cancel()
+
+        // Push into selection history unless the caller is the history
+        // itself (back/forward). Selecting the same record twice in a row
+        // doesn't push.
+        if let uuid, !navigatingViaHistory {
+            let current = historyIndex >= 0 && historyIndex < selectionHistory.count
+                ? selectionHistory[historyIndex] : nil
+            if current != uuid {
+                // Drop any forward-history past the cursor before pushing.
+                if historyIndex < selectionHistory.count - 1 {
+                    selectionHistory.removeSubrange((historyIndex + 1)...)
+                }
+                selectionHistory.append(uuid)
+                historyIndex = selectionHistory.count - 1
+            }
+        }
+        navigatingViaHistory = false
+
         guard let uuid else {
             selectedDetail = .idle
             return
@@ -247,6 +323,27 @@ final class BrowseStore {
                 selectedDetail = .error(.invalidResponse(String(describing: error)))
             }
         }
+    }
+
+    // MARK: - Selection history
+
+    var canGoBack: Bool { historyIndex > 0 }
+    var canGoForward: Bool {
+        historyIndex >= 0 && historyIndex < selectionHistory.count - 1
+    }
+
+    func goBack() {
+        guard canGoBack else { return }
+        historyIndex -= 1
+        navigatingViaHistory = true
+        select(selectionHistory[historyIndex])
+    }
+
+    func goForward() {
+        guard canGoForward else { return }
+        historyIndex += 1
+        navigatingViaHistory = true
+        select(selectionHistory[historyIndex])
     }
 
     var selectedRecord: RecordSummary? {

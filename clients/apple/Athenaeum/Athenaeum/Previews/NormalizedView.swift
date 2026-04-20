@@ -65,6 +65,13 @@ struct NormalizedView: View {
     }
 
     private func splitBlocks(_ text: String) -> [MarkdownBlock] {
+        // First, lift out any Obsidian-style `%%…%%` comment blocks so they
+        // render as distinct "legacy note" cards rather than mixing in with
+        // the real content. Supports both block (delimiters on their own
+        // lines) and inline (`%% … %%` within a paragraph) forms; inline
+        // ones collapse to a small muted marker.
+        let (stripped, comments) = extractComments(text)
+
         var out: [MarkdownBlock] = []
         var buffer: [String] = []
         func flush() {
@@ -73,9 +80,15 @@ struct NormalizedView: View {
             out.append(MarkdownBlock.from(joined))
             buffer.removeAll(keepingCapacity: true)
         }
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        for raw in stripped.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = String(raw)
-            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+            if line.hasPrefix("\u{FEFF}COMMENT:") {
+                flush()
+                let idx = Int(line.dropFirst("\u{FEFF}COMMENT:".count)) ?? 0
+                if idx < comments.count {
+                    out.append(.comment(comments[idx]))
+                }
+            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 flush()
             } else {
                 buffer.append(line)
@@ -83,6 +96,43 @@ struct NormalizedView: View {
         }
         flush()
         return out
+    }
+
+    /// Parse `%%…%%` Obsidian comment blocks out of the body and replace each
+    /// with a `\u{FEFF}COMMENT:<idx>` marker line. Returns the rewritten body
+    /// and the extracted comment bodies in order. Robust to:
+    /// - Block form: delimiters on their own lines, possibly multi-line body.
+    /// - Inline form: `%%…%%` entirely within a paragraph (replaced by the
+    ///   same marker, rendered as a small chip).
+    private func extractComments(_ text: String) -> (String, [String]) {
+        var comments: [String] = []
+        var result = text
+        // Greedy multi-line regex — Swift `Regex` with `(?s)` dotall.
+        guard let regex = try? NSRegularExpression(
+            pattern: "%%([\\s\\S]*?)%%",
+            options: []
+        ) else {
+            return (text, [])
+        }
+        var work = text as NSString
+        var matches = regex.matches(in: result, range: NSRange(location: 0, length: work.length))
+        while let match = matches.first {
+            let bodyRange = match.range(at: 1)
+            let body = work.substring(with: bodyRange)
+            comments.append(body.trimmingCharacters(in: .whitespacesAndNewlines))
+            let full = work.substring(with: match.range)
+            let marker = "\n\u{FEFF}COMMENT:\(comments.count - 1)\n"
+            // Replace the first occurrence manually so we don't recompute the
+            // whole string at each step.
+            if let range = result.range(of: full) {
+                result.replaceSubrange(range, with: marker)
+            }
+            work = result as NSString
+            matches = regex.matches(
+                in: result, range: NSRange(location: 0, length: work.length)
+            )
+        }
+        return (result, comments)
     }
 }
 
@@ -94,6 +144,11 @@ private enum MarkdownBlock {
     case code(String)
     case bullet([String])
     case paragraph(String)
+    /// Obsidian-style `%%…%%` comment block — content that the author
+    /// flagged as editorial scaffolding rather than real normalized body.
+    /// Rendered collapsed by default with a header chip; user can click
+    /// to expand.
+    case comment(String)
 
     static func from(_ raw: String) -> MarkdownBlock {
         let lines = raw.split(separator: "\n").map(String.init)
@@ -184,6 +239,8 @@ private enum MarkdownBlock {
                 .foregroundStyle(theme.tokens.text)
                 .textSelection(.enabled)
                 .lineSpacing(4)
+        case .comment(let body):
+            CommentBlockView(body: body)
         }
     }
 
@@ -195,5 +252,74 @@ private enum MarkdownBlock {
             return parsed
         }
         return AttributedString(raw)
+    }
+}
+
+/// Collapsed Obsidian-style comment card. Header chip announces it's a
+/// legacy note and indicates expand state; body renders in dim mono so the
+/// eye never confuses it with real content. Short comments (< 120 chars)
+/// start expanded; longer ones stay collapsed until the user clicks.
+private struct CommentBlockView: View {
+    @Environment(\.theme) private var theme
+    let body_: String
+
+    @State private var expanded: Bool
+
+    init(body: String) {
+        self.body_ = body
+        _expanded = State(initialValue: body.count < 120)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            if expanded {
+                Text(body_)
+                    .font(.athenaeum(.mono, size: 10))
+                    .foregroundStyle(theme.tokens.dim)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.tokens.surface2)
+        .overlay(
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .strokeBorder(theme.tokens.border, lineWidth: 1)
+        )
+    }
+
+    private var header: some View {
+        Button {
+            expanded.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(theme.tokens.dim)
+                Text("editorial note")
+                    .font(.athenaeum(.mono, size: 9, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(theme.tokens.dim)
+                Text("%%…%%")
+                    .font(.athenaeum(.mono, size: 9))
+                    .foregroundStyle(theme.tokens.dim.opacity(0.7))
+                Spacer(minLength: 0)
+                if !expanded {
+                    Text(firstLine)
+                        .font(.athenaeum(.mono, size: 9))
+                        .foregroundStyle(theme.tokens.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var firstLine: String {
+        body_.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? ""
     }
 }

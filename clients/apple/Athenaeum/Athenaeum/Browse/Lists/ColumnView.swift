@@ -85,6 +85,7 @@ struct ColumnView: View {
                                 store.select(record.uuid)
                             }
                         }
+                        LoadMoreSentinel()
                     }
                 }
             }

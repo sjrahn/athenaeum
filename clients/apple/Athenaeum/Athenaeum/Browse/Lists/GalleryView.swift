@@ -29,6 +29,7 @@ struct GalleryView: View {
                         ForEach(result.records) { card(for: $0) }
                     }
                     .padding(12)
+                    LoadMoreSentinel()
                 }
             }
         } else if store.records.isLoading {

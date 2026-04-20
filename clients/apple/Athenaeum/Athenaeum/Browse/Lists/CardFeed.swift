@@ -24,6 +24,7 @@ struct CardFeed: View {
                 ScrollView {
                     LazyVStack(spacing: 6) {
                         ForEach(result.records) { card(for: $0) }
+                        LoadMoreSentinel()
                     }
                     .padding(10)
                 }

@@ -37,10 +37,10 @@ struct MacToolbar: View {
 
     private var navButtons: some View {
         HStack(spacing: 2) {
-            Btn(.ghost, action: {}) { Text("‹") }
-                .disabled(true)
-            Btn(.ghost, action: {}) { Text("›") }
-                .disabled(true)
+            Btn(.ghost, action: { store.goBack() }) { Text("‹") }
+                .disabled(!store.canGoBack)
+            Btn(.ghost, action: { store.goForward() }) { Text("›") }
+                .disabled(!store.canGoForward)
         }
     }
 

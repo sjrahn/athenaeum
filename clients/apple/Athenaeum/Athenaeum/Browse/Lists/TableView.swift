@@ -58,6 +58,7 @@ struct RecordsTableView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(result.records) { row(record: $0) }
+                        LoadMoreSentinel()
                     }
                 }
             }

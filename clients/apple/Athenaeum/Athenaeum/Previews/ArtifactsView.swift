@@ -36,13 +36,10 @@ struct ArtifactsView: View {
     }
 
     private var orderedRefs: [ArtifactRef] {
-        let refs = detail.record.frontmatter.artifactRefs
-        let withIdx = refs.enumerated().map { ($0.offset, $0.element) }
-        let sorted = withIdx.sorted { lhs, rhs in
-            if lhs.1.primary != rhs.1.primary { return lhs.1.primary }
-            return lhs.0 < rhs.0
-        }
-        return sorted.map(\.1)
+        ArtifactRefHelpers.orderPrimaryFirst(
+            detail.record.frontmatter.artifactRefs,
+            recordContentType: detail.record.frontmatter.contentType
+        )
     }
 
     private func header(count: Int) -> some View {

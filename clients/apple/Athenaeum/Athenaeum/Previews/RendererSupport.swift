@@ -54,6 +54,45 @@ enum ArtifactRefHelpers {
         }
         return ""
     }
+
+    /// Sort artifacts with the most-primary one first. Preference order:
+    /// 1. Any artifact flagged `primary: true`.
+    /// 2. If none flagged (legacy / partially-migrated records), an
+    ///    artifact whose `mimetype` matches the record's `content_type`
+    ///    (i.e. what the corpus author considered the canonical form).
+    /// 3. Insertion order otherwise.
+    ///
+    /// This keeps list views and switchers consistent with the user's
+    /// expectation that "primary MIME" content is the first thing they see.
+    static func orderPrimaryFirst(
+        _ refs: [ArtifactRef],
+        recordContentType: String
+    ) -> [ArtifactRef] {
+        if refs.isEmpty { return refs }
+        // Fast path: someone is flagged.
+        if refs.contains(where: \.primary) {
+            let withIdx = refs.enumerated().map { ($0.offset, $0.element) }
+            let sorted = withIdx.sorted { lhs, rhs in
+                if lhs.1.primary != rhs.1.primary { return lhs.1.primary }
+                return lhs.0 < rhs.0
+            }
+            return sorted.map(\.1)
+        }
+        // Fallback: promote the artifact whose MIME matches the record's
+        // declared primary content-type.
+        let target = recordContentType.lowercased()
+        guard !target.isEmpty,
+              let matchIdx = refs.firstIndex(where: {
+                  ($0.mimetype?.lowercased() ?? "") == target
+              })
+        else {
+            return refs
+        }
+        var reordered = refs
+        let promoted = reordered.remove(at: matchIdx)
+        reordered.insert(promoted, at: 0)
+        return reordered
+    }
 }
 
 /// 40pt footer strip used by most renderers — filename on the left, action
