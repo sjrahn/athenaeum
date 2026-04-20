@@ -3,10 +3,16 @@ import AthenaeumKit
 
 /// Standalone detail window opened by `openWindow(id: "detail", value: uuid)`.
 /// Owns its own `APIClient` fetch for the given UUID and renders the full
-/// `DocPreview`-style tabbed layout. Survives independently of the main
-/// browse window so the user can keep multiple records open side by side.
+/// tabbed layout shared with the embedded `DocPreview`. Survives
+/// independently of the main browse window so the user can keep multiple
+/// records open side by side.
+///
+/// The BrowseStore is injected from the app scene — we use it for corpus
+/// context (for building artifact file URLs) but don't depend on its
+/// selection state.
 struct DetailWindow: View {
     @Environment(\.theme) private var theme
+    @Environment(\.openWindow) private var openWindow
     @Environment(PreferencesStore.self) private var preferences
     let uuid: UUID
 
@@ -21,12 +27,12 @@ struct DetailWindow: View {
             case .loading:
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             case .idle:
-                Color.clear.onAppear { load() }
+                Color.clear
             case .error(let err):
                 errorView(err)
             }
         }
-        .frame(minWidth: 560, minHeight: 480)
+        .frame(minWidth: 640, idealWidth: 840, minHeight: 520, idealHeight: 640)
         .background(theme.tokens.bg)
         .task(id: uuid) { load() }
     }
@@ -53,22 +59,57 @@ struct DetailWindow: View {
         let active = tabs.contains(selectedTab) ? selectedTab : tabs.first ?? .metadata
 
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                KindChip(recordType: fm.recordType)
-                MimeChip(mime: fm.contentType)
-                Text(fm.title.isEmpty ? "(untitled)" : fm.title)
-                    .font(.athenaeum(.sans, size: 14, weight: .semibold))
-                    .foregroundStyle(theme.tokens.text)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(theme.tokens.surface)
+            header(detail: d)
             Hairline()
             tabBar(tabs: tabs, active: active)
             Hairline()
             content(detail: d, tab: active)
+        }
+        .onChange(of: d.record.frontmatter.uuid) { _, _ in
+            if !tabs.contains(selectedTab) { selectedTab = tabs.first ?? .metadata }
+        }
+    }
+
+    private func header(detail: RecordDetail) -> some View {
+        let fm = detail.record.frontmatter
+        return HStack(spacing: 8) {
+            KindChip(recordType: fm.recordType)
+            MimeChip(mime: fm.contentType)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(fm.title.isEmpty ? "(untitled)" : fm.title)
+                    .font(.athenaeum(.sans, size: 14, weight: .semibold))
+                    .foregroundStyle(theme.tokens.text)
+                    .lineLimit(1)
+                Text(metaLine(detail: detail))
+                    .font(.athenaeum(.mono, size: 10))
+                    .foregroundStyle(theme.tokens.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Btn(.ghost, action: { openWindow(id: "quicklook") }) {
+                HStack(spacing: 4) { Text("quick look"); Kbd("⇧⌘Y") }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(theme.tokens.surface)
+    }
+
+    private func metaLine(detail: RecordDetail) -> String {
+        let fm = detail.record.frontmatter
+        switch fm.recordType {
+        case .source:
+            var parts: [String] = []
+            if let origin = fm.originName ?? fm.originUrl { parts.append(origin) }
+            parts.append("\(fm.artifactRefs.count) artifacts")
+            if let cap = fm.captureDate { parts.append("captured \(cap)") }
+            return parts.joined(separator: " · ")
+        case .document:
+            var parts: [String] = []
+            parts.append("↳ \(fm.constituents?.count ?? 0) records")
+            if let norm = fm.normalizationDate { parts.append("normalized \(norm)") }
+            return parts.joined(separator: " · ")
         }
     }
 
@@ -106,20 +147,17 @@ struct DetailWindow: View {
 
     @ViewBuilder
     private func content(detail: RecordDetail, tab: DetailTab) -> some View {
-        // Phase 2 shares the same stubs as the embedded DocPreview by
-        // re-using its pane factory indirectly: we render a minimal mirror
-        // here to avoid importing private internals.
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("tab: \(tab.label)")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                Text(detail.record.body.isEmpty ? "(empty body)" : detail.record.body)
-                    .font(.athenaeum(.sans, size: 13))
-                    .foregroundStyle(theme.tokens.text)
-                    .textSelection(.enabled)
-            }
-            .padding(16)
+        switch tab {
+        case .original:
+            OriginalView(detail: detail)
+        case .normalized:
+            NormalizedView(detail: detail)
+        case .artifacts:
+            ArtifactsView(detail: detail)
+        case .dependencies:
+            DependenciesView(detail: detail)
+        case .metadata:
+            MetadataView(detail: detail)
         }
     }
 

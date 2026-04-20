@@ -63,6 +63,7 @@ struct AthenaeumApp: App {
             if let uuid {
                 DetailWindow(uuid: uuid)
                     .athenaeumEnvironment(preferences)
+                    .environment(browse)
             } else {
                 Text("no record")
             }

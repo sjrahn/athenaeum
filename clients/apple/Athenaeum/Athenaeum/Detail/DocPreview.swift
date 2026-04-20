@@ -3,8 +3,11 @@ import AthenaeumKit
 
 /// Tabbed detail shell. For source records: `original | normalized |
 /// artifacts | metadata`. For document records: `normalized | dependencies |
-/// metadata`. Phase 2 ships the tab bar + metadata/artifacts/dependencies
-/// tabs; Original + Normalized panes are stubs that Phase 3 fills in.
+/// metadata`.
+///
+/// All five tab panes (`OriginalView`, `NormalizedView`, `ArtifactsView`,
+/// `DependenciesView`, `MetadataView`) live under `Athenaeum/Previews/` and
+/// are shared with `QuickLookWindow` / `DetailWindow`.
 struct DocPreview: View {
     @Environment(\.theme) private var theme
     @Environment(\.density) private var density
@@ -139,15 +142,15 @@ struct DocPreview: View {
     private func tabContent(detail: RecordDetail, tab: DetailTab) -> some View {
         switch tab {
         case .original:
-            OriginalStub(detail: detail)
+            OriginalView(detail: detail)
         case .normalized:
-            NormalizedStub(detail: detail)
+            NormalizedView(detail: detail)
         case .artifacts:
-            ArtifactsTab(detail: detail, store: store)
+            ArtifactsView(detail: detail)
         case .dependencies:
-            DependenciesTab(detail: detail)
+            DependenciesView(detail: detail)
         case .metadata:
-            MetadataTab(detail: detail)
+            MetadataView(detail: detail)
         }
     }
 
@@ -211,259 +214,5 @@ enum DetailTab: Hashable {
         case .dependencies: "dependencies"
         case .metadata: "metadata"
         }
-    }
-}
-
-// MARK: - Pane stubs (Phase 3 fills these in)
-
-private struct OriginalStub: View {
-    @Environment(\.theme) private var theme
-    let detail: RecordDetail
-    var body: some View {
-        let fm = detail.record.frontmatter
-        return VStack(spacing: 12) {
-            Text("Original artifact preview")
-                .font(.athenaeum(.sans, size: 13, weight: .semibold))
-                .foregroundStyle(theme.tokens.text)
-            if let primary = fm.primaryArtifact {
-                HStack(spacing: 6) {
-                    MimeChip(mime: primary.mimetype ?? fm.contentType)
-                    Text(primary.ref)
-                        .font(.athenaeum(.mono, size: 10))
-                        .foregroundStyle(theme.tokens.muted)
-                }
-            }
-            Text("Per-MIME renderer (pdf / video / image / html / …) ships in Phase 3.")
-                .font(.athenaeum(.mono, size: 10))
-                .foregroundStyle(theme.tokens.dim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private struct NormalizedStub: View {
-    @Environment(\.theme) private var theme
-    let detail: RecordDetail
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("normalized · markdown")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                if detail.record.body.isEmpty {
-                    Text("(empty body)")
-                        .font(.athenaeum(.mono, size: 11))
-                        .foregroundStyle(theme.tokens.dim)
-                } else {
-                    Text(detail.record.body)
-                        .font(.athenaeum(.sans, size: 13))
-                        .foregroundStyle(theme.tokens.text)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: 720, alignment: .leading)
-                }
-            }
-            .padding(16)
-        }
-    }
-}
-
-private struct ArtifactsTab: View {
-    @Environment(\.theme) private var theme
-    let detail: RecordDetail
-    let store: BrowseStore
-
-    var body: some View {
-        let refs = detail.record.frontmatter.artifactRefs
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(refs.count) artifacts · primary marked")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .padding(.bottom, 4)
-                ForEach(refs) { ref in
-                    row(for: ref)
-                }
-                if refs.isEmpty {
-                    Text("(no artifacts)")
-                        .font(.athenaeum(.mono, size: 11))
-                        .foregroundStyle(theme.tokens.dim)
-                }
-            }
-            .padding(16)
-        }
-    }
-
-    private func row(for ref: ArtifactRef) -> some View {
-        HStack(spacing: 8) {
-            MimeChip(mime: ref.mimetype ?? "application/octet-stream")
-            Text(ref.ref)
-                .font(.athenaeum(.mono, size: 11, weight: ref.primary ? .semibold : .regular))
-                .foregroundStyle(ref.primary ? theme.tokens.accent : theme.tokens.text)
-            if ref.primary {
-                Pill("primary")
-            }
-            Spacer(minLength: 4)
-            Text(String(ref.sha256.prefix(8)))
-                .font(.athenaeum(.mono, size: 9))
-                .foregroundStyle(theme.tokens.dim)
-        }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(ref.primary ? theme.tokens.accentSoft.opacity(0.3) : theme.tokens.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .strokeBorder(theme.tokens.border, lineWidth: 1)
-        )
-    }
-}
-
-private struct DependenciesTab: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.openWindow) private var openWindow
-    let detail: RecordDetail
-
-    var body: some View {
-        let constituents = detail.record.frontmatter.constituents ?? []
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("\(constituents.count) constituents")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .padding(.bottom, 4)
-                ForEach(detail.children) { child in
-                    row(for: child)
-                }
-                if constituents.isEmpty && detail.children.isEmpty {
-                    Text("(no dependencies)")
-                        .font(.athenaeum(.mono, size: 11))
-                        .foregroundStyle(theme.tokens.dim)
-                }
-                if !detail.parents.isEmpty {
-                    Text("reverse — records using this")
-                        .font(.athenaeum(.mono, size: 10))
-                        .foregroundStyle(theme.tokens.dim)
-                        .padding(.top, 16)
-                    Text("\(detail.parents.count) records")
-                        .font(.athenaeum(.mono, size: 11))
-                        .foregroundStyle(theme.tokens.muted)
-                }
-            }
-            .padding(16)
-        }
-    }
-
-    private func row(for child: RecordSummary) -> some View {
-        Button {
-            openWindow(id: "detail", value: child.uuid)
-        } label: {
-            HStack(spacing: 8) {
-                KindChip(recordType: RecordType(rawValue: child.recordType) ?? .source)
-                MimeChip(mime: child.contentType)
-                Text(child.title.isEmpty ? "(untitled)" : child.title)
-                    .font(.athenaeum(.sans, size: 12, weight: .medium))
-                    .foregroundStyle(theme.tokens.text)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Text(child.uuid.uuidString.prefix(8))
-                    .font(.athenaeum(.mono, size: 9))
-                    .foregroundStyle(theme.tokens.dim)
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(theme.tokens.surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .strokeBorder(theme.tokens.border, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct MetadataTab: View {
-    @Environment(\.theme) private var theme
-    let detail: RecordDetail
-
-    var body: some View {
-        let fm = detail.record.frontmatter
-        let rows = rows(for: fm)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(row.key)
-                            .font(.athenaeum(.mono, size: 11))
-                            .foregroundStyle(theme.tokens.dim)
-                            .frame(width: 170, alignment: .leading)
-                        Text(row.value)
-                            .font(.athenaeum(.mono, size: 11))
-                            .foregroundStyle(theme.tokens.text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                apiEchoBox(uuid: fm.uuid)
-            }
-            .padding(16)
-        }
-    }
-
-    private struct Row { let key: String; let value: String }
-
-    private func rows(for fm: Frontmatter) -> [Row] {
-        var out: [Row] = []
-        out.append(Row(key: "id", value: fm.uuid.uuidString))
-        out.append(Row(key: "kind", value: fm.recordType.rawValue))
-        out.append(Row(key: "title", value: fm.title))
-        if !fm.description.isEmpty {
-            out.append(Row(key: "description", value: fm.description))
-        }
-        if let origin = fm.originUrl ?? fm.originName {
-            out.append(Row(key: "origin", value: origin))
-        }
-        if let c = fm.constituents, !c.isEmpty {
-            out.append(Row(key: "depends_on", value: "\(c.count) records"))
-        }
-        out.append(Row(key: "primary_mime", value: fm.contentType))
-        if !fm.artifactRefs.isEmpty {
-            let mimes = fm.artifactRefs.compactMap { $0.mimetype }.joined(separator: ", ")
-            out.append(Row(key: "artifacts", value: "\(fm.artifactRefs.count) (\(mimes))"))
-        }
-        if let cap = fm.captureDate { out.append(Row(key: "captured", value: cap)) }
-        if let norm = fm.normalizationDate { out.append(Row(key: "normalized", value: norm)) }
-        if !fm.tags.isEmpty { out.append(Row(key: "tags", value: fm.tags.joined(separator: ", "))) }
-        out.append(Row(key: "status", value: fm.status.rawValue))
-        if let tier = fm.credibilityTier {
-            out.append(Row(key: "credibility_tier", value: tier))
-        }
-        if let v = fm.visibility {
-            out.append(Row(key: "visibility", value: v))
-        }
-        return out
-    }
-
-    private func apiEchoBox(uuid: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("GET /api/records/\(uuid.uuidString.lowercased())")
-                .font(.athenaeum(.mono, size: 10))
-                .foregroundStyle(theme.tokens.dim)
-            Text("→ returns this record's detail as JSON")
-                .font(.athenaeum(.mono, size: 10))
-                .foregroundStyle(theme.tokens.dim)
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.tokens.surface2)
-        .overlay(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .strokeBorder(theme.tokens.border, lineWidth: 1)
-        )
-        .padding(.top, 16)
     }
 }

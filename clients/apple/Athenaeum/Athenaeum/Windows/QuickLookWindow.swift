@@ -1,10 +1,10 @@
 import SwiftUI
 import AthenaeumKit
 
-/// Secondary 360×320 floating window. Triggered by ⇧⌘Y. Content = current
-/// selection's normalized / original preview. Phase 3 wires real artifact
-/// renderers; Phase 2 renders a mono card with title + meta + first lines of
-/// the body.
+/// Secondary floating window triggered by ⇧⌘Y. Renders the current
+/// selection's Original (source) or Normalized (document) content at a
+/// compact size — it's a glance view, not a full detail window. The user
+/// reaches for a proper detail window when they want room to work.
 struct QuickLookWindow: View {
     @Environment(\.theme) private var theme
     @Environment(BrowseStore.self) private var store
@@ -21,37 +21,38 @@ struct QuickLookWindow: View {
                 placeholder(err.localizedDescription)
             }
         }
-        .frame(minWidth: 360, idealWidth: 360, minHeight: 320, idealHeight: 320)
-        .background(theme.tokens.surface2)
+        .frame(minWidth: 360, idealWidth: 480, minHeight: 320, idealHeight: 420)
+        .background(theme.tokens.bg)
     }
 
+    @ViewBuilder
     private func loaded(_ detail: RecordDetail) -> some View {
         let fm = detail.record.frontmatter
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                KindChip(recordType: fm.recordType)
-                MimeChip(mime: fm.contentType)
-            }
-            Text(fm.title.isEmpty ? "(untitled)" : fm.title)
-                .font(.athenaeum(.sans, size: 14, weight: .semibold))
-                .foregroundStyle(theme.tokens.text)
-                .lineLimit(2)
-            if !fm.description.isEmpty {
-                Text(fm.description)
-                    .font(.athenaeum(.sans, size: 12))
-                    .foregroundStyle(theme.tokens.muted)
-                    .lineLimit(3)
-            }
+        VStack(spacing: 0) {
+            header(fm: fm)
             Hairline()
-            ScrollView {
-                Text(detail.record.body.isEmpty ? "(empty body)" : detail.record.body)
-                    .font(.athenaeum(.mono, size: 11))
-                    .foregroundStyle(theme.tokens.text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            switch fm.recordType {
+            case .source:
+                OriginalView(detail: detail)
+            case .document:
+                NormalizedView(detail: detail)
             }
         }
-        .padding(12)
+    }
+
+    private func header(fm: Frontmatter) -> some View {
+        HStack(spacing: 6) {
+            KindChip(recordType: fm.recordType)
+            MimeChip(mime: fm.contentType)
+            Text(fm.title.isEmpty ? "(untitled)" : fm.title)
+                .font(.athenaeum(.sans, size: 12, weight: .semibold))
+                .foregroundStyle(theme.tokens.text)
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(theme.tokens.surface)
     }
 
     private func placeholder(_ text: String) -> some View {
