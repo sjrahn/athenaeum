@@ -20,7 +20,8 @@ let package = Package(
         ),
         .testTarget(
             name: "AthenaeumKitTests",
-            dependencies: ["AthenaeumKit"]
+            dependencies: ["AthenaeumKit"],
+            resources: [.copy("Fixtures")]
         ),
     ],
     swiftLanguageModes: [.v6]

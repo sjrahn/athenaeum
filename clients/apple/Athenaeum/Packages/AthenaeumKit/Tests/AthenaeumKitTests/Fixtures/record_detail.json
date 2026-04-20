@@ -1,0 +1,56 @@
+{
+    "record": {
+        "frontmatter": {
+            "uuid": "019d7608-1370-7180-9951-44ca8884a2a5",
+            "title": "#08-09-41-002H - Diagnostic Information for Supplemental Inflatable Restraint (SIR) System, Intermittent AIR BAG Indicator/Lamp Illuminated with DTC(s) B0012, B0013, B0015, B0016, B0019, B0020, B0022, B0023, B0026, B0033, B0040, B0042 or B0044 Set - (Nov 15, 2016)",
+            "description": "GM TSB 08-09-41-002H: #08-09-41-002H - Diagnostic Information for Supplemental Inflatable Restraint (SIR) System, Intermittent AIR BAG Indicator/Lamp Illuminated with DTC(s) B0012, B0013, B0015, B0016, B0019, B0020, B0022, B0023, B0026, B0033, B0040, B0042 or B0044 Set - (Nov 15, 2016).",
+            "record_type": "source",
+            "content_type": "text/html",
+            "status": "draft",
+            "normalization_confidence": 0.65,
+            "normalization_model": "corpus-scripts/normalize_alldata v1.0",
+            "origin_name": "AllData DIY",
+            "artifact_refs": [
+                {
+                    "ref": "artifacts://ADG8.TS.0000192_001.html",
+                    "sha256": "4652cfaf8e14b54339c8d8acfcef4035877e69a8121c791193ee6817b97d26ec"
+                },
+                {
+                    "ref": "artifacts://ADG8.TS.0000192_002.gif",
+                    "sha256": "5e671e9d760b5df2c00e56108bab8ebc337299eea97fd45326eaa7e9f48da8cd"
+                },
+                {
+                    "ref": "artifacts://ADG8.TS.0000192_003.gif",
+                    "sha256": "d5d03b5fec4d61e0286dd966112c78e5b9ed73a510a9f58994c0b2600daf5060"
+                },
+                {
+                    "ref": "artifacts://ADG8.TS.0000192_004.pdf",
+                    "sha256": "4c2b8258f80eb18dc54e9f88df22cf7b4b781b0389b2d68bfc6fe4bd5a1c0f00"
+                }
+            ],
+            "capture_method": "web_scrape",
+            "capture_timestamp": "2026-02-22T00:00:00Z",
+            "normalization_timestamp": "2026-03-19T00:00:00Z",
+            "reconcile_method": "alldata-g8/scrape",
+            "reconcile_timestamp": "2026-02-22T00:00:00Z",
+            "supersedes": "08-09-41-002G"
+        },
+        "body": "%%migration: legacy_frontmatter\nbreadcrumb: Vehicle > Technical Service Bulletins\ncredibility_tier: authoritative\nmodels: 2005-2007 Buick Rainier\npage_type: tsb\nsource_type: alldatadiy\nsystem: Technical Service Bulletins\ntags:\n- pontiac-g8\n- alldata-diy\n- tsbs\ntsb_date: 2016-11-15\ntsb_number: 08-09-41-002H\n%%\n\n#08-09-41-002H: Diagnostic Information for Supplemental Inflatable Restraint (SIR) System, Intermittent AIR BAG Indicator/Lamp Illuminated with DTC(s) B0012, B0013, B0015, B0016, B0019, B0020, B0022, B0023, B0026, B0033, B0040, B0042 or B0044 Set - (Nov 15, 2016) \n\nSubject:\u00a0 \nDiagnostic Information for Supplemental Inflatable Restraint (SIR) System, Intermittent AIR BAG Indicator/Lamp Illuminated with DTC(s) B0012, B0013, B0015, B0016, B0019, B0020, B0022, B0023, B0026, B0033, B0040, B0042 or B0044 Set (Inspect and Replace Connector Position Assurance (CPA) Retainer) \n in SI. \nUsing the information from the DTC Descriptor, determine the location of the affected electrical connector. Refer to  and the in SI. \nTurn **OFF** the ignition and disable the supplemental inflatable restraint (SIR) system. Refer to  in SI. \n**BEFORE** removing, **INSPECT** the CPA retainer at the electrical connector. \n\n> [!note]\n> The connector and connector position assurance (CPA) may seat independent of each other. Both the connector and CPA should seat with an audible and/or tactile click. The CPA isolates the shorting-bars within the connector allowing the deployment circuit to operate properly.\n\nIf the CPA retainer is loose, damaged, or will not seat in the connector, replace it with a new one. Reinstall the CPA correctly by first pushing the connector body in completely, and then pushing the CPA retainer in completely. \nIf the CPA retainer is not loose or damaged and is properly seated, proceed to Step 6.\n\nRemove the CPA retainer and disconnect the electrical connector. Inspect the terminals for the following conditions:\n\nCorrosion\nContamination\nTerminal tension\nDamage\n\n> [!note]\n> The terminals in the SIR/SRS system are made with a special plating. This plating provides the necessary contact integrity for the sensitive, low energy circuits. Use the J-38125 SIR Terminal Repair Kit for repairing SIR/SRS terminals and connectors. DO NOT substitute any other terminals for those in the repair kit.\n\nIf the terminals are damaged, corrosion is observed, or have poor tension, repair or replace as necessary. Apply dielectric grease, GM\u2009P/N\u200912345579 (in Canada, use P/N\u200910953481) on the connector pins and terminals when reassembling. Refer to in SI. \n\n> [!note]\n> The connector and connector position assurance (CPA) may seat independent of each other. Both the connector and CPA should seat with an audible and/or tactile click. The CPA isolates the shorting-bars within the connector allowing the deployment circuit to operate properly.\n\nConnect the electrical connector, and install the CPA retainer.\nEnable the supplemental inflatable restraint (SIR) system. Refer to  in SI. \nClear the DTC with a scan tool.\nVerify that the DTC does not reset by performing the Diagnostic Repair Verification in SI.\n\nIf any DTC resets, then refer to  in SI. \n\nParts Information\n     \n\n Part Number\n\n Description\n\n 12052834\n\n RETAINER, CPA\n\n 88988974\n\n RETAINER, CPA\n\n 54590003\n\n RETAINER, CPA\n\n (J-38125 SIR Tray)\n\n GM P/N 12345579 (in Canada, use P/N 10953481)\n\n LUBRICANT, DIELECTRIC SILICONE (1 oz / 29 ml TUBE\n\n> [!note]\n> If the CPA retainer P/N 54590003 (Orange CPA) cannot be located in the J-38125 SIR Terminal Repair Kit, contact Bosch Automotive Service Solutions @ 1-800-GM-TOOLS and order P/N 54590003-PKG to obtain a package of 5.\n\nWarranty Information\n     \n\n> [!note]\n> Select the appropriate Labor Operation for the repair that is performed.\n\nFor vehicles repaired under warranty, use:\n\n Labor Operation\n\n Description\n\n Labor Time\n\n 5430840\n\n Terminal Replacement\n\n Use Published Labor Operation Time\n\n 5430922\n\n Connector Reconnection\n\n GM bulletins are intended for use by professional technicians, NOT a \"do-it-yourselfer\".\u00a0 They are written to inform these technicians of conditions that may occur on some vehicles, or to provide information that could assist in the proper service of a vehicle.\u00a0 Properly trained technicians have the equipment, tools, safety instructions, and know-how to do a job properly and safely.\u00a0 If a condition is described, DO NOT assume that the bulletin applies to your vehicle, or that your vehicle will have that condition.\u00a0 See your GM dealer for information on whether your vehicle may benefit from the information.\n\n![image](artifacts://ADG8.TS.0000192_003.gif) \n WE SUPPORT VOLUNTARY TECHNICIAN CERTIFICATION\n\n\u00a9 2016 General Motors.\u00a0 All rights reserved.\n\n## Related Information\n\n**Application and ID**\n- [[unresolved:Components]]\n\n**Description and Operation**\n- [[019d7608-1370-7072-9f44-aacd835bb3bf|Components]]\n\n**Diagnostic Trouble Codes**\n- [[019d7608-1370-7c00-b3d6-30e298c7f200|Vehicle]]\n\n**Diagrams**\n- [[unresolved:Connector Views]]\n- [[unresolved:Diagnostic Aids]]\n\n**Locations**\n- [[unresolved:Components]]\n- [[unresolved:Connectors]]\n- [[019d7608-1370-7660-bc7a-305e879c006c|Grommets]]\n- [[unresolved:Grounds]]\n- [[019d7608-1370-7e63-8164-0fc72b551cc7|Harness]]\n- [[019d7608-1758-7ac0-9696-f44fc104ceb0|Splices]]\n\n**Service and Repair**\n- [[unresolved:Procedures]]\n- [[unresolved:Removal and Replacement]]\n\n**Service Precautions**\n- [[unresolved:Technician Safety Information]]\n- [[unresolved:Vehicle Damage Warnings]]\n\n**Technical Service Bulletins**\n- [[019d7608-1370-7603-b3f3-2cf97fee1efc|All New Technical Service Bulletins]]\n- [[unresolved:All Technical Service Bulletins]]\n- [[019d7608-1370-7992-bf2d-8cd6b8e2c388|By Symptom]]\n- [[019d7608-1370-7513-8756-741e31a66234|Customer Interest Bulletins]]\n- [[019d7608-1370-7a02-a476-5f26a388947b|General Information Bulletins]]\n- [[019d7608-1370-7851-ba43-c3b9e499c1f2|Recalls and Campaigns]]\n- [[019d7608-1370-79a3-ae0d-c0e403473664|Repair Tips]]\n- [[019d7608-1370-7ba3-b29b-642bf67b2835|Software Update Bulletins]]\n- [[019d7608-1370-7411-b038-43f72549a830|Superseded Bulletins]]\n\n**Testing and Inspection**\n- [[unresolved:Component Tests and General Diagnostics]]\n- [[unresolved:Initial Inspection and Diagnostic Overview]]\n- [[unresolved:Programming and Relearning]]\n- [[unresolved:Scan Tool Testing and Procedures]]\n- [[unresolved:Symptom Related Diagnostic Procedures]]\n\n**Tools and Equipment**\n- [[019d7608-1370-75d2-93d8-7e24fa2f5385|Electrical / Mechanical Repair]]\n\n",
+        "file_path": "../corpus-public/sources/019d7608-1370-7180-9951-44ca8884a2a5.md"
+    },
+    "parents": [
+        {
+            "uuid": "c1096d7e-94cd-4b4e-a064-fac6347e102f",
+            "title": "G8 General Technical Service Bulletins Reference",
+            "status": "stub",
+            "content_type": "",
+            "record_type": "document",
+            "tags": [
+                "alldata-diy",
+                "pontiac-g8",
+                "tsbs"
+            ]
+        }
+    ],
+    "children": []
+}

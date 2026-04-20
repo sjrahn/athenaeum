@@ -1,0 +1,45 @@
+{
+    "total": 7124,
+    "records": [
+        {
+            "uuid": "019d7608-1370-7180-9951-44ca8884a2a5",
+            "title": "#08-09-41-002H - Diagnostic Information for Supplemental Inflatable Restraint (SIR) System, Intermittent AIR BAG Indicator/Lamp Illuminated with DTC(s) B0012, B0013, B0015, B0016, B0019, B0020, B0022, B0023, B0026, B0033, B0040, B0042 or B0044 Set - (Nov 15, 2016)",
+            "status": "draft",
+            "content_type": "text/html",
+            "record_type": "source",
+            "tags": []
+        },
+        {
+            "uuid": "019d7608-1370-7881-8ad5-413d3ee76614",
+            "title": "#17-NA-047 - EBCM Wheel Speed Sensor Diagnostic Aid for ABS Message - Click or Ratchet Noise - Service Traction Message - Service Stabilitrak Message - Service Steering Message - (Feb 20, 2017)",
+            "status": "draft",
+            "content_type": "text/html",
+            "record_type": "source",
+            "tags": []
+        },
+        {
+            "uuid": "019d856e-b3f0-7f33-9bca-83222967f4c5",
+            "title": "$5,000 Home Deep Clean \u2014 What's Included (edgecleaning)",
+            "status": "normalized",
+            "content_type": "text/html",
+            "record_type": "source",
+            "tags": []
+        },
+        {
+            "uuid": "019d7608-1370-74f3-8ca0-2876a45e587a",
+            "title": "- Symptoms - Automatic Transmission",
+            "status": "draft",
+            "content_type": "text/html",
+            "record_type": "source",
+            "tags": []
+        },
+        {
+            "uuid": "019d7608-1370-7133-acb5-2d4003ec5705",
+            "title": "- Symptoms - Cellular Communication",
+            "status": "draft",
+            "content_type": "text/html",
+            "record_type": "source",
+            "tags": []
+        }
+    ]
+}
