@@ -15,6 +15,10 @@ struct DocPreview: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var selectedTab: DetailTab = .original
+    /// When the user clicks an artifact row on the Artifacts tab, we stash
+    /// its ref here and switch to the Original tab; `OriginalView` consumes
+    /// the value on appear / change and resets it to nil.
+    @State private var pendingArtifactRef: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,11 +146,18 @@ struct DocPreview: View {
     private func tabContent(detail: RecordDetail, tab: DetailTab) -> some View {
         switch tab {
         case .original:
-            OriginalView(detail: detail)
+            OriginalView(
+                detail: detail,
+                targetArtifactRef: pendingArtifactRef,
+                onTargetConsumed: { pendingArtifactRef = nil }
+            )
         case .normalized:
             NormalizedView(detail: detail)
         case .artifacts:
-            ArtifactsView(detail: detail)
+            ArtifactsView(detail: detail) { ref in
+                pendingArtifactRef = ref.ref
+                selectedTab = .original
+            }
         case .dependencies:
             DependenciesView(detail: detail)
         case .metadata:

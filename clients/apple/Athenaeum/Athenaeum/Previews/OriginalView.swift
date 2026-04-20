@@ -12,6 +12,12 @@ struct OriginalView: View {
     @Environment(BrowseStore.self) private var store
 
     let detail: RecordDetail
+    /// Artifact the caller wants focused when this view appears. Used by the
+    /// Artifacts tab to jump directly to an artifact in the Original tab.
+    /// Cleared by calling `onTargetConsumed` after we've applied it.
+    var targetArtifactRef: String? = nil
+    var onTargetConsumed: () -> Void = {}
+
     @State private var index: Int = 0
     @FocusState private var focused: Bool
 
@@ -45,8 +51,12 @@ struct OriginalView: View {
             }
         }
         .focusable()
+        .focusEffectDisabled()
         .focused($focused)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            applyTargetIfPresent()
+        }
         .onKeyPress("[") {
             index = max(0, index - 1)
             return .handled
@@ -57,6 +67,10 @@ struct OriginalView: View {
         }
         .onChange(of: detail.record.frontmatter.uuid) { _, _ in
             index = 0
+            applyTargetIfPresent()
+        }
+        .onChange(of: targetArtifactRef) { _, _ in
+            applyTargetIfPresent()
         }
     }
 
@@ -94,6 +108,15 @@ struct OriginalView: View {
         case .generic:
             GenericBinaryRender(artifact: artifact, url: url)
         }
+    }
+
+    private func applyTargetIfPresent() {
+        guard let target = targetArtifactRef else { return }
+        let artifacts = orderedArtifacts
+        if let i = artifacts.firstIndex(where: { $0.ref == target }) {
+            index = i
+        }
+        onTargetConsumed()
     }
 
     private var currentSummary: RecordSummary? {

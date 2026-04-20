@@ -8,6 +8,10 @@ import AthenaeumKit
 struct ArtifactsView: View {
     @Environment(\.theme) private var theme
     let detail: RecordDetail
+    /// Called when the user clicks an artifact row. Typical wiring: switch
+    /// to the `original` tab and seed the ArtifactSwitcher's index to this
+    /// artifact. Noop by default so call sites that don't care still compile.
+    var onSelect: (ArtifactRef) -> Void = { _ in }
 
     var body: some View {
         let refs = orderedRefs
@@ -48,32 +52,38 @@ struct ArtifactsView: View {
     }
 
     private func row(for ref: ArtifactRef) -> some View {
-        HStack(spacing: 10) {
-            MimeChip(mime: ref.mimetype ?? "application/octet-stream")
-            Text(ArtifactRefHelpers.filename(from: ref.ref))
-                .font(.athenaeum(.mono, size: 11, weight: ref.primary ? .semibold : .regular))
-                .foregroundStyle(ref.primary ? theme.tokens.accent : theme.tokens.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if ref.primary { Pill("primary") }
-            Spacer(minLength: 4)
-            Text(String(ref.sha256.prefix(8)))
-                .font(.athenaeum(.mono, size: 9))
-                .foregroundStyle(theme.tokens.dim)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9))
-                .foregroundStyle(theme.tokens.dim)
+        Button {
+            onSelect(ref)
+        } label: {
+            HStack(spacing: 10) {
+                MimeChip(mime: ref.mimetype ?? "application/octet-stream")
+                Text(ArtifactRefHelpers.filename(from: ref.ref))
+                    .font(.athenaeum(.mono, size: 11, weight: ref.primary ? .semibold : .regular))
+                    .foregroundStyle(ref.primary ? theme.tokens.accent : theme.tokens.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if ref.primary { Pill("primary") }
+                Spacer(minLength: 4)
+                Text(String(ref.sha256.prefix(8)))
+                    .font(.athenaeum(.mono, size: 9))
+                    .foregroundStyle(theme.tokens.dim)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(theme.tokens.dim)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(ref.primary ? theme.tokens.accentSoft.opacity(0.3) : theme.tokens.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .strokeBorder(theme.tokens.border, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(ref.primary ? theme.tokens.accentSoft.opacity(0.3) : theme.tokens.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .strokeBorder(theme.tokens.border, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
     }
 
     private var footerNote: some View {

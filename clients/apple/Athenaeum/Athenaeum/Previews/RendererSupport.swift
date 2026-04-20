@@ -156,8 +156,24 @@ struct RendererLoadingView: View {
     }
 }
 
+/// Process-wide cache of UTF-8 artifact bodies, keyed by URL. Lives for the
+/// lifetime of the app — revisiting the same artifact after navigating away
+/// is instant. No byte budget yet; add an LRU if we start loading large
+/// text artifacts (see APPLE-UX-NOTES.md).
+@MainActor
+final class TextArtifactCache {
+    static let shared = TextArtifactCache()
+    private var entries: [URL: String] = [:]
+
+    func get(_ url: URL) -> String? { entries[url] }
+    func set(_ url: URL, _ value: String) { entries[url] = value }
+}
+
 /// Thin model for `@State` text loaders used by text / json / email renderers.
-/// Fetches UTF-8 text once per URL and caches the result.
+/// Fetches UTF-8 text once per URL, short-circuits through `TextArtifactCache`
+/// on revisits, and is resilient to rapid URL churn (the `[`/`]` nav in the
+/// artifact switcher cancels in-flight loads; we avoid clobbering state for
+/// a cancelled task).
 @Observable
 @MainActor
 final class TextArtifactLoader {
@@ -171,11 +187,23 @@ final class TextArtifactLoader {
     private var loadedURL: URL?
 
     func load(_ url: URL) async {
+        // Already showing this URL — nothing to do.
         if case .loaded = state, loadedURL == url { return }
+        // Cache hit: skip the spinner entirely so rapid `[`/`]` doesn't
+        // flash loading states on content we already have.
+        if let cached = TextArtifactCache.shared.get(url) {
+            state = .loaded(cached)
+            loadedURL = url
+            return
+        }
         state = .loading
         loadedURL = url
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
+            // If the task was cancelled mid-flight (user advanced past this
+            // artifact before it finished), don't write back to `state` —
+            // the successor task will have already set its own state.
+            if Task.isCancelled { return }
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 state = .failed("HTTP \(http.statusCode)")
                 return
@@ -183,8 +211,13 @@ final class TextArtifactLoader {
             let text = String(data: data, encoding: .utf8)
                 ?? String(data: data, encoding: .isoLatin1)
                 ?? ""
+            TextArtifactCache.shared.set(url, text)
             state = .loaded(text)
+        } catch is CancellationError {
+            // Successor task is live; leave state alone.
+            return
         } catch {
+            if Task.isCancelled { return }
             state = .failed(error.localizedDescription)
         }
     }

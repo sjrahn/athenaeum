@@ -52,8 +52,16 @@ struct MetadataView: View {
         }
         out.append(Row(key: "primary_mime", value: fm.contentType))
         if !fm.artifactRefs.isEmpty {
-            let mimes = fm.artifactRefs.compactMap { $0.mimetype }.joined(separator: ", ")
-            out.append(Row(key: "artifacts", value: "\(fm.artifactRefs.count) (\(mimes))"))
+            // Dedupe mimes, preserving first-seen order — a record with four
+            // jpegs + two jsons reads as `6 (image/jpeg, application/json)`,
+            // not the full typed-out list.
+            var uniqueMimes: [String] = []
+            for mime in fm.artifactRefs.compactMap(\.mimetype)
+            where !uniqueMimes.contains(mime) {
+                uniqueMimes.append(mime)
+            }
+            let mimeList = uniqueMimes.joined(separator: ", ")
+            out.append(Row(key: "artifacts", value: "\(fm.artifactRefs.count) (\(mimeList))"))
         }
         if let cap = fm.captureDate { out.append(Row(key: "captured", value: cap)) }
         if let norm = fm.normalizationDate { out.append(Row(key: "normalized", value: norm)) }

@@ -18,6 +18,7 @@ struct DetailWindow: View {
 
     @State private var detail: LoadState<RecordDetail> = .idle
     @State private var selectedTab: DetailTab = .original
+    @State private var pendingArtifactRef: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -149,11 +150,18 @@ struct DetailWindow: View {
     private func content(detail: RecordDetail, tab: DetailTab) -> some View {
         switch tab {
         case .original:
-            OriginalView(detail: detail)
+            OriginalView(
+                detail: detail,
+                targetArtifactRef: pendingArtifactRef,
+                onTargetConsumed: { pendingArtifactRef = nil }
+            )
         case .normalized:
             NormalizedView(detail: detail)
         case .artifacts:
-            ArtifactsView(detail: detail)
+            ArtifactsView(detail: detail) { ref in
+                pendingArtifactRef = ref.ref
+                selectedTab = .original
+            }
         case .dependencies:
             DependenciesView(detail: detail)
         case .metadata:

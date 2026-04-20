@@ -25,6 +25,7 @@ struct AthenaeumApp: App {
                 .environment(browse)
                 .task { browse.start() }
         }
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(after: .sidebar) {
                 Button("Switch to corpus-public") {
