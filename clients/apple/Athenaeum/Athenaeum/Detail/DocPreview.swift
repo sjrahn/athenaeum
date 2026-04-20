@@ -135,9 +135,11 @@ struct DocPreview: View {
                         .fill(selected ? theme.tokens.accent : Color.clear)
                         .frame(height: 2)
                 }
+                // `.contentShape` must live *inside* the Button's label so
+                // the entire padded rect is hit-tested, not just the text.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
     }
 
     // MARK: - Tab content

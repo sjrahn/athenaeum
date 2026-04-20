@@ -131,6 +131,7 @@ struct MacToolbar: View {
                         .padding(.horizontal, 8)
                         .frame(height: 20)
                         .background(selected ? theme.tokens.accentSoft : .clear)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -174,6 +175,7 @@ struct MacToolbar: View {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(theme.tokens.accentSoft)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -191,6 +193,7 @@ struct MacToolbar: View {
                         .padding(.horizontal, 8)
                         .frame(height: 20)
                         .background(selected ? theme.tokens.accentSoft : .clear)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

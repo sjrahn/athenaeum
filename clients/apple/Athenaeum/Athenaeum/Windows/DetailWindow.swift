@@ -135,9 +135,9 @@ struct DetailWindow: View {
                                 .fill(tab == active ? theme.tokens.accent : Color.clear)
                                 .frame(height: 2)
                         }
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .contentShape(Rectangle())
             }
             Spacer()
         }
