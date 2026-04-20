@@ -314,6 +314,10 @@ private struct CommentBlockView: View {
                         .truncationMode(.tail)
                 }
             }
+            // Explicit full-width frame so the HStack actually fills the
+            // card's inner rect — without this the hit region collapses to
+            // the intrinsic content width and only the text is clickable.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
