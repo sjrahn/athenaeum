@@ -9,7 +9,7 @@ date_modified: 2026-04-20
 changelog:
   - version: 9.0
     date: 2026-04-20
-    summary: "content_type redefined as IANA MIME type. Schema library pivots from per-concept classification to per-MIME normalization guidelines; schemas self-declare applicable MIME types via their own frontmatter. Closed content-type enum removed — classification happens by forward reference to ordinary concept documents. Relations reduced to two flat frontmatter fields (part_of, same_as); Relation struct with per-entry type dropped along with sequel_to/reply_to/references/adaptation_of/supersedes/superseded_by/contradicts. ArtifactRef gains mimetype (required) and primary (optional boolean, one-per-source). New visibility field (visible/deranked/hidden) separates editorial curation from pipeline status. Body tags (Obsidian-style #tag markers) forward-declared as the mechanism for topical aboutness."
+    summary: "content_type redefined as IANA MIME type. Schema library pivots from per-concept classification to per-MIME normalization guidelines; schemas self-declare applicable MIME types via their own frontmatter. Closed content-type enum removed — classification happens by forward reference to ordinary concept documents, with an informal distinction between set documents (valid part_of targets) and entity documents (linked via body prose). Relations reduced to two flat frontmatter fields (part_of, same_as); Relation struct with per-entry type dropped along with sequel_to/reply_to/references/adaptation_of/supersedes/superseded_by/contradicts. ArtifactRef gains mimetype (required) and primary (optional boolean, one-per-source). New visibility field (visible/deranked/hidden) separates editorial curation from pipeline status. Body tags (Obsidian-style #tag markers) forward-declared as the mechanism for topical aboutness. Contextualization specifies progressive disclosure of ancestor concept documents: eagerly loaded descriptions, lazy-fetched bodies via tool calls, to scale to deep part_of chains."
   - version: 8.0
     date: 2026-03-18
     summary: "Major rewrite: flat UUID-based corpus with compositional merges (DAG). Sources (captured from origins) and documents (merged composites) as the two record types. All metadata in YAML frontmatter. Schema library for content type definitions. Normalization integrity principle. Concrete capture staging and artifact/asset storage. Eliminates corpus-per-repo structure, graduation, tombstones, ID remapping, routing claims, partition codes."
@@ -129,7 +129,7 @@ No nesting beyond the top-level separation. Organization is expressed through me
 
 ### 2.2 Sources
 
-**Sources** are records captured from a single external origin — a forum thread, a YouTube video, a PDF document, a web article, a metadata page.
+**Sources** are records captured from a single external origin — a forum thread, a hosted video, a PDF document, a web article, a metadata page.
 
 The source's `content_type` is the **IANA MIME type of its primary artifact**: `text/html`, `video/mp4`, `application/pdf`, `audio/mpeg`, and so on. The MIME drives normalization: a matching schema in the schema library (selected by MIME compatibility, not by filename) provides guidance on how to produce a faithful markdown rendition of content in that format. Sources do not carry semantic classifications like "forum post" or "bank statement" — those are expressed separately as `part_of` references to concept documents.
 
@@ -225,7 +225,7 @@ Present only on source records (`record_type: source`).
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `origin_url` | string | conditional | URL of the original content. Required for web-sourced artifacts. |
-| `origin_name` | string | yes | Human-readable origin identifier (e.g., "ExampleForum.com", "MusicDB.org") |
+| `origin_name` | string | yes | Human-readable origin identifier (e.g., "ExampleForum.com", "ExampleMusicDB.org") |
 | `original_filename` | string | conditional | For non-web sources. Use when `origin_url` is absent. |
 | `capture_date` | date | yes | When the artifact was acquired |
 | `artifact_store` | string | no | Remote base URI for this record's artifacts. Absent = local only, not yet externalized. |
@@ -324,7 +324,7 @@ Present on every record.
 | `anecdotal` | Single person's unconfirmed experience | One forum post describing a symptom |
 | `speculative` | Theory or hypothesis without evidence | Unsubstantiated claim or guess |
 
-Credibility is about the trustworthiness of the content's claims. Normalization confidence is about how accurately the raw artifact was converted to markdown. A perfectly transcribed YouTube video might have high confidence but low credibility. A badly OCR'd service manual might have low confidence but authoritative credibility.
+Credibility is about the trustworthiness of the content's claims. Normalization confidence is about how accurately the raw artifact was converted to markdown. A perfectly transcribed video might have high confidence but low credibility. A badly OCR'd service manual might have low confidence but authoritative credibility.
 
 #### 3.1.5 Pipeline Fields
 
@@ -385,7 +385,7 @@ same_as:
 | `part_of` | UUID[] | all records | Instance-of / membership. The referencing record **is an instance of** (or a member of) the concept described by each target. Transitivity is computed by the server — wider memberships reachable through chains of `part_of` do not need to be restated. |
 | `same_as` | UUID[] | all records | Equivalence. Each target represents the same underlying thing as this record (reuploads, duplicate captures, dedup candidates). Symmetric — stored one-way, walked both ways. |
 
-**Rule: `part_of` is strictly ontological — "is an instance of the concept described by the target."** A song audio file is a song; it belongs as `part_of` a Song concept document. A Wikipedia page *about* songs is **not** a song — it's an article *describing* songs — and therefore does not have the Song concept in its `part_of` list. Articles and other reference material attach via other mechanisms: as `constituents` when their content was synthesized into a document's body, or as body-prose tags surfaced via backlinks.
+**Rule: `part_of` is strictly ontological — "is an instance of the concept described by the target."** A song audio file is a song; it belongs as `part_of` a Song concept document. An encyclopedia entry *about* songs is **not** a song — it's an article *describing* songs — and therefore does not have the Song concept in its `part_of` list. Articles and other reference material attach via other mechanisms: as `constituents` when their content was synthesized into a document's body, or as body-prose tags surfaced via backlinks.
 
 | Relationship | Mechanism | Direction |
 |---|---|---|
@@ -394,7 +394,7 @@ same_as:
 | Identity equivalence | `same_as` | Symmetric (stored one-way, graph walked both ways) |
 | Related reading / mentions / evidence | Body-prose tags (§3.2) surfaced as backlinks | Emerges from content |
 
-**Source-to-source constraint.** `part_of` targets MUST be document records — a source is never ontologically an instance of another source. `same_as` is the only inter-source relation and is used for duplicates and reuploads. Body-prose cross-references (e.g. one AllData HTML artifact hyperlinking another) stay in content and are never lifted to `part_of`.
+**Source-to-source constraint.** `part_of` targets MUST be document records — a source is never ontologically an instance of another source. `same_as` is the only inter-source relation and is used for duplicates and reuploads. Body-prose cross-references (e.g. one HTML capture hyperlinking another) stay in content and are never lifted to `part_of`.
 
 **Deferrability.** First-pass normalization produces only the body; relations are added later by human curation or LLM enrichment passes. A record with empty `part_of` and `same_as` is complete and valid — just not yet classified.
 
@@ -419,7 +419,7 @@ The body of `{uuid}.md` below the frontmatter closing `---` is the normalized ma
 
 The body uses standard markdown with wiki-links for cross-record references (`[[target_uuid|Display Text]]`) and callout blocks for warnings and notes (`> [!note]`, `> [!warning]`).
 
-**Body tags (forward-declared).** Records may embed `#tag` markers within body prose to indicate topical mentions at specific positions in the content — a news segment that mentions the Pontiac G8 at minute 12, a textbook chapter that references Newton's Third Law in its opening paragraph. Body-tag parsing and indexing are reserved for a future minor revision of this spec; their semantics and exact syntax are not yet finalized. When implemented, the server will build a tag-position index queryable for backlinks (records mentioning `#song` surface when viewing the Song concept document), and topical aboutness emerges from this index rather than being declared in frontmatter `part_of`.
+**Body tags (forward-declared).** Records may embed `#tag` markers within body prose to indicate topical mentions at specific positions in the content — a news segment that mentions a particular product at minute 12, a textbook chapter that references a specific principle in its opening paragraph. Body-tag parsing and indexing are reserved for a future minor revision of this spec; their semantics and exact syntax are not yet finalized. When implemented, the server will build a tag-position index queryable for backlinks (records mentioning `#<tag>` surface when viewing the corresponding concept document), and topical aboutness emerges from this index rather than being declared in frontmatter `part_of`.
 
 **Editorial comment blocks (forward-declared).** Records may embed editorial annotations inline within body content to add curator context without altering the normalized rendering. Syntax and indexing also reserved for a future revision.
 
@@ -535,9 +535,9 @@ status: normalized
 tags: ["the-celestial-order", "progressive-rock", "2019"]
 
 constituents:
-  - "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"  # MusicDB album page (source)
+  - "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"  # Music database album page (source)
   - "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"  # Review aggregator page (source)
-  - "i5j6k7l8-m9n0-4o1p-8q2r-3s4t5u6v7w8x"  # YouTube live performance (source)
+  - "i5j6k7l8-m9n0-4o1p-8q2r-3s4t5u6v7w8x"  # Live performance video (source)
   - "m9n0o1p2-q3r4-4s5t-8u6v-7w8x9y0z1a2b"  # song: Meridian (document)
   - "q3r4s5t6-u7v8-4w9x-8y0z-1a2b3c4d5e6f"  # song: Convergence (document)
   - "u7v8w9x0-y1z2-4a3b-8c4d-5e6f7a8b9c0d"  # song: Tidal Resonance (document)
@@ -574,37 +574,72 @@ debut, weaving jazz fusion elements into a progressive rock framework...
 
 #### Concept Document
 
-A concept document has the same shape as a merged document, but typically no `constituents` (it's authored directly rather than synthesized) and is the *target* of many `part_of` references from instance records. Nothing in its frontmatter marks it as "a concept" — its role emerges from the graph.
+A concept document has the same shape as a merged document, but typically no `constituents` (it's authored directly rather than synthesized) and is the *target* of many `part_of` references from instance records. Nothing in its frontmatter marks it as "a concept" — its role emerges from the graph. See §3.5.1 for the distinction between concept documents that behave like sets (valid `part_of` targets) and those that represent entities (linked via body prose rather than membership).
 
 ```yaml
 ---
 uuid: "b0b0b0b0-1111-4222-8333-444444444444"
-title: "Album"
-description: "A musical release grouping a cohesive set of recorded tracks — studio album, EP, live album, or compilation. Used as a classification target for individual album records."
+title: "Hosted Videos"
+description: "Video content hosted on a third-party video-sharing platform. Captures typically include the original video file, the hosting page HTML carrying engagement signals (view count, like count, comment counts, creator-pinned or -replied comments), and the official description text. Surface these engagement and metadata fields in normalization when available."
 record_type: document
 content_type: text/markdown
 status: normalized
-tags: ["concept", "music"]
+tags: ["concept", "video"]
 
 credibility_tier: authoritative
 normalization_confidence: 1.0
 normalization_model: "claude-sonnet-4-5-20250514"
-normalization_date: 2026-04-19
+normalization_date: 2026-04-20
 
 part_of:
-  - "cccccccc-dddd-4eee-8fff-000000000000"  # Music (broader concept)
+  - "cccccccc-dddd-4eee-8fff-000000000000"  # Videos (broader set concept)
 ---
 
-## Album
+## Hosted Videos
 
-An **album** is a musical release grouping tracks into a cohesive work...
+Hosted video content spans long-form material, livestreams, and short-form clips.
+All share the core platform affordances: engagement counters (views, reactions),
+creator-pinned and -replied comments, and canonical textual description metadata
+alongside the media itself...
 ```
+
+The description here demonstrates §3.5.5 — it doesn't just define the concept, it tells downstream normalizers what to look for in captures. Describing this in the description rather than the body means the normalizer sees it in eagerly-loaded summary context without having to pull the full body (§4.2.2).
 
 ### 3.5 Classification via concept documents
 
 Semantic classification in v9 is expressed by graph membership: records declare `part_of` references to **concept documents** — ordinary document records that describe a category, entity, or idea. Nothing in a concept document's frontmatter marks it as "a concept"; its role is emergent from how other records refer to it.
 
-**Worked example: a single track**
+#### 3.5.1 Entity documents vs set documents
+
+Not every concept document is a valid `part_of` target. Concept documents fall into two informal kinds:
+
+- **Set documents** describe a collection — "Hosted Videos," "Product Reviews," "Channel A's Filmography," "Tracks on Album 3." Other records belong inside them as instances. These are the valid `part_of` targets.
+- **Entity documents** describe a thing that isn't reducible to a set — a person, a brand, a channel, an organization, a product, a place. An entity has attributes, history, and presence beyond any collection of content associated with it. Records do **not** `part_of` an entity directly, because the entity is richer than the content it relates to.
+
+The canonical test: would every record on the target's inbound `part_of` edges genuinely satisfy "is an instance of this target"? If the target is an entity with content-producing and non-content-producing facets, the answer is no — and there's almost always a better target (a set document) alongside it.
+
+**Concrete example.** Consider a content creator's online channel that hosts long-form videos, short-form clips, and text-only community posts. "Short clips are videos" and "community posts are not videos" are both true — which means the channel *entity* is not a pure subset of "Hosted Videos." Split into two documents:
+
+```yaml
+# doc-channel-a (entity)
+title: "Channel A"
+description: "A hosted creator channel publishing long-form videos, short clips, and community text posts..."
+part_of: []            # Entity — not ontologically inside any set
+# Body: the channel as a thing — history, style, audience. Links via
+# prose to doc-creator-a (the person running it) and doc-channel-a-filmography (works).
+
+# doc-channel-a-filmography (set)
+title: "Channel A Filmography"
+description: "Complete set of videos produced on Channel A."
+part_of: [doc-hosted-videos]   # This set is a subset of all hosted videos
+# Body: prose listing or describing the body of work.
+```
+
+Records `part_of` the filmography, not the channel entity. The channel entity connects to the filmography through body-prose wikilinks and to the creator through the same mechanism — attribution, authorship, and "made by" relationships live in prose, not in `part_of`.
+
+When in doubt, ask: "Does this target have aspects that aren't about the content inside it?" If yes, it's an entity — create a sibling set document for the content and `part_of` into that.
+
+#### 3.5.2 Worked example: a single track
 
 Album-track structure with a new track record classified across multiple axes:
 
@@ -612,29 +647,28 @@ Album-track structure with a new track record classified across multiple axes:
 # Track 2 source record
 content_type: audio/mpeg
 part_of:
-  - <album-3-uuid>                  # This specific album
-  - <artist-x-discography-uuid>     # Redundant if Album 3 is already part_of Discography — remove on next touch
+  - <album-3-uuid>                  # Specific album (set of tracks on that album)
+  - <concept-song-uuid>             # "Song" general concept (set of all songs)
+```
 
-# Album 3 document
+The album document, if curators treat it as a pure set of its tracks, can itself `part_of` higher sets:
+
+```yaml
+# Album 3 document (used here as a set-of-tracks)
 record_type: document
 content_type: text/markdown
 part_of:
   - <artist-x-discography-uuid>
-  - <album-concept-uuid>            # "Album" as a general concept
-
-# Artist X discography document
-record_type: document
-content_type: text/markdown
-part_of:
-  - <all-songs-concept-uuid>
 ```
+
+But if Album 3 also has cover art, reviews, and merch associated with it in the corpus, it may better be treated as an **entity** — with a sibling `<album-3-tracklist>` set document that the tracks `part_of` instead. Curator's judgment.
 
 **Transitivity.** The server computes wider memberships by walking `part_of` chains. "Track 2 belongs to All Songs" doesn't need to be stated anywhere — it follows from the chain. Records should declare only the most specific memberships that are directly true; compaction on-touch removes entries made redundant by chain additions elsewhere.
 
-**Dedup example** using `same_as`:
+#### 3.5.3 Deduplication with `same_as`
 
 ```yaml
-# A YouTube video reupload
+# A duplicate video upload (e.g., a reupload or mirrored copy)
 content_type: video/mp4
 same_as:
   - <original-video-uuid>
@@ -643,14 +677,32 @@ same_as:
 
 Both records remain fully valid representations. If one should take priority in default surfaces, use `visibility: deranked` or `visibility: hidden` on the less-preferred entries — separate from the structural `same_as` claim.
 
-**What `part_of` is not.** `part_of` is strictly instance-of. A Wikipedia article *about* the Pontiac G8 is not a Pontiac G8 — it's an article. It does not belong as `part_of` the Pontiac-G8 concept document. Its relationship is better expressed:
+#### 3.5.4 What `part_of` is not
 
-- As a `constituent` of the Pontiac-G8 document, if its content was synthesized into that document's body, OR
-- Via body-prose tags (forward-declared in §3.2), emerging as a backlink when viewing the Pontiac-G8 concept document
+`part_of` is strictly instance-of. An encyclopedia article *about* a specific product is not a product — it's an article. It does not belong as `part_of` the product's concept document. Its relationship is better expressed:
 
-This rule is universal: `part_of` targets must pass the "is this record *an instance of* the target concept" test. If the relationship is "about" or "references" or "informs," it belongs elsewhere.
+- As a `constituent` of the product document, if its content was synthesized into that document's body, OR
+- Via body-prose tags (forward-declared in §3.2), emerging as a backlink when viewing the product's concept document
 
-**Deferrability.** First-pass normalization of a source produces only the body — the record has `part_of: []`. Classification is added later by curators or LLM enrichment passes. Records can live indefinitely without explicit classification; the corpus degrades gracefully.
+This rule is universal: `part_of` targets must pass the "is this record *an instance of* the target concept" test. If the relationship is "about" or "references" or "informs" or "made by," it belongs elsewhere.
+
+#### 3.5.5 Writing good concept descriptions
+
+The `description` field (1–3 sentences, required on every record per §3.1.1) does double duty on concept documents: it defines the concept for humans and serves as the eagerly-loaded context that normalizers see when processing records `part_of` the concept (see §4.2.2 on progressive disclosure).
+
+Curator guideline: for set documents that may gather many instance records, **surface any normalization-relevant facets in the description**. The difference between:
+
+> "A video hosted on a third-party platform."
+
+and
+
+> "A video hosted on a third-party platform. Captures typically include the original video file and a hosting-page HTML carrying engagement signals (view count, reactions, comment counts, creator-pinned comments) alongside an official description text. Surface these fields in normalization when available."
+
+is the difference between a normalizer knowing to look for engagement metadata or missing it entirely. The second form costs maybe 30 extra tokens and sets the ceiling on what re-normalization passes can do without pulling the full body.
+
+#### 3.5.6 Deferrability
+
+First-pass normalization of a source produces only the body — the record has `part_of: []`. Classification is added later by curators or LLM enrichment passes. Records can live indefinitely without explicit classification; the corpus degrades gracefully.
 
 ---
 
@@ -720,7 +772,7 @@ Normalization transforms a stub record into a complete, useful markdown file. It
 | `text/html`, `application/xhtml+xml` | Clean content; strip navigation, styling, chrome |
 | `application/pdf` | Text and table extraction; per-page structure |
 | `image/*` | `![alt text](artifacts://filename)` embed; descriptive alt from MIME-schema guidance |
-| `audio/*` | Transcription (Whisper or similar) with timestamps |
+| `audio/*` | Automatic speech-recognition transcription with timestamps |
 | `video/*` | Transcription + frame descriptions per schema guidance |
 | `application/epub+zip` | Parse chapter structure, extract text |
 | `text/markdown`, `text/plain` | Passthrough (`conversion_method: passthrough`) |
@@ -732,9 +784,17 @@ Trivial conversion is fine. A clean text file gets `conversion_method: "passthro
 
 #### 4.2.2 Contextualization
 
-**What:** LLM-driven refinement of record content.
+**What:** LLM-driven refinement of record content, informed by both format guidance (MIME schemas) and semantic guidance (concept documents the record is `part_of`).
 
-**How:** An LLM agent loads the record and the MIME-normalization schema matching the record's `content_type`, then refines the content with semantic understanding. For document records (after merge), the agent loads all constituent records together for cross-record awareness.
+**How:** An LLM agent loads the record, the MIME-normalization schema matching its `content_type`, and the ancestors in its `part_of` chain, then refines the content with semantic understanding. For document records (after merge), the agent also loads all constituent records for cross-record awareness.
+
+**Progressive disclosure of concept context.** A record's `part_of` chain can get deep (track → album → discography → artist → music-genre → ...). Loading every concept document's full body upfront would explode context and drown out the artifact. Instead, the normalizer receives concept documents in two tiers:
+
+1. **Eagerly, as summary context.** Walk the record's `part_of` chain transitively and assemble a list of `{uuid, title, description}` for every ancestor concept. Descriptions are spec-required to be 1–3 sentences (§3.1.1), so even deep chains stay cheap — typically a few hundred tokens total. This is enough for the normalizer to know what concepts govern the record and to spot relevant normalization hints that were placed in the descriptions (see §3.5.5).
+
+2. **Lazily, on demand.** Expose a `fetch_concept_body(uuid)` tool. The normalizer decides which ancestors have enough normalization-relevant prose in their body to be worth pulling, and fetches them selectively. Unused concept bodies never enter context.
+
+If the total eager-summary context would exceed a configured budget, truncate by depth — the farthest ancestors drop first, since they are the least specific and most likely to be superseded by closer ancestors' guidance. Depth-limit policy is an implementation detail; the spec only requires that contextualization has *some* access to the ancestor chain.
 
 **Operations:**
 
@@ -981,7 +1041,7 @@ Sources typically have a non-markdown MIME reflecting their captured format. The
 | `application/pdf` | Service manuals, academic papers, technical bulletins, datasheets, scans | Extract text and tables. OCR if the PDF is image-only. Preserve page boundaries via headings or horizontal rules when useful for citation. |
 | `application/epub+zip` | Novels, non-fiction ebooks, collected works | Parse chapter structure; emit one heading per chapter. Preserve internal links where targets resolve within the ebook. |
 | `text/markdown`, `text/plain` | Clean native markdown or text files | Passthrough with minimal cleanup. Set `conversion_method: "passthrough"`. |
-| `video/mp4`, `video/webm`, `video/quicktime` | YouTube captures, tutorials, documentaries, films | Transcribe audio with timestamps. Describe frames per schema guidance. A primary artifact may have a companion HTML page capturing metadata — still marked non-primary. |
+| `video/mp4`, `video/webm`, `video/quicktime` | Video captures from hosting platforms, tutorials, documentaries, films | Transcribe audio with timestamps. Describe frames per schema guidance. A primary artifact may have a companion HTML page capturing metadata — still marked non-primary. |
 | `audio/mpeg`, `audio/x-m4a`, `audio/x-m4b`, `audio/wav`, `audio/ogg` | Podcast episodes, audiobook chapters, radio segments, songs | Transcribe with timestamps. Preserve speaker turn markers where determinable. |
 | `image/jpeg`, `image/png`, `image/gif`, `image/webp` | Photos, diagrams, screenshots, scans | Emit as `![alt text](artifacts://filename)`; LLM-generated alt text based on visible content. Surface text content via OCR when appropriate. |
 | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | Word documents | Extract text preserving structure; handle tracked changes / comments conservatively. |
@@ -990,14 +1050,14 @@ Sources typically have a non-markdown MIME reflecting their captured format. The
 **Typical extended fields for common captures** (informational, not required):
 
 - **Forum threads (`text/html` from forum platforms):** `username`, `thread_url`, `reply_count`
-- **Reddit threads (`text/html` from reddit.com):** `username`, `subreddit`, `post_url`, `score`, `comment_count`
+- **Voting-community threads (`text/html` from aggregator-style forums):** `username`, `community_slug`, `post_url`, `score`, `comment_count`
 - **Web articles (`text/html` from publisher sites):** `article_url`, `publication`, `author`
 - **Video sources:** `duration_seconds`, `channel_name`, `platform`
 - **Audio sources:** `duration_seconds`, `series_name`, `episode_number`
 - **PDF sources:** `page_count`, `document_type` (e.g., `manual_section`, `bulletin`, `paper`, `datasheet`)
 - **Ebooks:** `work_title`, `isbn`, `word_count`, `series_name`, `series_position`
 - **Images:** `dimensions`, `subject`
-- **Metadata pages from database sites:** `source_site` (MusicDB.org, IMDB, Wikipedia, etc.), `page_type` (band, album, artist, film, episode, etc.)
+- **Metadata pages from database sites:** `source_site` (music databases, film databases, encyclopedic wikis, etc.), `page_type` (band, album, artist, film, episode, etc.)
 - **Screenplays:** `work_title`, `medium` (`film` / `television` / `stage`), `draft`
 - **Product documentation:** `product_name`, `manufacturer`, `document_type` (`datasheet` / `catalog` / `guide` / `sds`), `part_numbers`
 
