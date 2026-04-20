@@ -20,7 +20,7 @@ public struct MimeChip: View {
             )
     }
 
-    static func shortKey(for mime: String) -> String {
+    public static func shortKey(for mime: String) -> String {
         let lower = mime.lowercased()
         if lower.hasPrefix("application/pdf") { return "pdf" }
         if lower.hasPrefix("video/mp4") { return "mp4" }

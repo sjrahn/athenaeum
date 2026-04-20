@@ -9,17 +9,78 @@ import AthenaeumKit
 @main
 struct AthenaeumApp: App {
     @State private var preferences: PreferencesStore
+    @State private var browse: BrowseStore
 
     init() {
         AthenaeumFonts.registerBundledFonts()
-        _preferences = State(initialValue: PreferencesStore())
+        let prefs = PreferencesStore()
+        _preferences = State(initialValue: prefs)
+        _browse = State(initialValue: BrowseStore(preferences: prefs))
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Athenaeum") {
             ContentView()
                 .athenaeumEnvironment(preferences)
+                .environment(browse)
+                .task { browse.start() }
         }
+        .commands {
+            CommandGroup(after: .sidebar) {
+                Button("Switch to corpus-public") {
+                    browse.switchCorpus("corpus-public")
+                }
+                .keyboardShortcut("1", modifiers: [.command, .control])
+                Button("Switch to corpus-private") {
+                    browse.switchCorpus("corpus-private")
+                }
+                .keyboardShortcut("2", modifiers: [.command, .control])
+            }
+            CommandMenu("Corpus") {
+                Button("Reload") { browse.reloadAll() }
+                    .keyboardShortcut("r", modifiers: [.command])
+                Divider()
+                Button("Switch to corpus-public") {
+                    browse.switchCorpus("corpus-public")
+                }
+                Button("Switch to corpus-private") {
+                    browse.switchCorpus("corpus-private")
+                }
+            }
+            CommandMenu("View") {
+                Picker("List style", selection: Binding(
+                    get: { browse.listVariant },
+                    set: { browse.listVariant = $0 }
+                )) {
+                    ForEach(ListVariant.allCases, id: \.self) { v in
+                        Text(v.label).tag(v)
+                    }
+                }
+            }
+        }
+
+        WindowGroup(id: "detail", for: UUID.self) { $uuid in
+            if let uuid {
+                DetailWindow(uuid: uuid)
+                    .athenaeumEnvironment(preferences)
+            } else {
+                Text("no record")
+            }
+        }
+
+        Window("Quick Look", id: "quicklook") {
+            QuickLookWindow()
+                .athenaeumEnvironment(preferences)
+                .environment(browse)
+        }
+        .defaultSize(width: 360, height: 320)
+        .keyboardShortcut("y", modifiers: [.shift, .command])
+
+        Window("Submit", id: "submit") {
+            SubmitWindow()
+                .athenaeumEnvironment(preferences)
+        }
+        .defaultSize(width: 520, height: 460)
 
         #if os(macOS)
         Settings {
