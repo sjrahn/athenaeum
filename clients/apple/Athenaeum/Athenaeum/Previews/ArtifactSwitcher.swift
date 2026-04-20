@@ -35,13 +35,26 @@ struct ArtifactSwitcher: View {
     }
 
     private var tabs: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(artifacts.enumerated()), id: \.offset) { idx, ref in
-                    tab(for: ref, at: idx)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(artifacts.enumerated()), id: \.offset) { idx, ref in
+                        tab(for: ref, at: idx)
+                            .id(idx)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .onChange(of: index) { _, newIndex in
+                // Keep the active tab visible when the user presses `[` / `]`
+                // or clicks a row on the Artifacts tab.
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
-            .padding(.horizontal, 8)
+            .onAppear {
+                proxy.scrollTo(index, anchor: .center)
+            }
         }
     }
 

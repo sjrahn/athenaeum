@@ -52,6 +52,11 @@ fn default_limit() -> u64 {
 }
 
 /// A lightweight record summary for sidebar display (no body).
+///
+/// `primary_artifact_ref` / `primary_artifact_mimetype` carry just enough
+/// information for list/gallery views to build a thumbnail URL without
+/// fetching the full record detail per row. Both are absent on document
+/// records and on sources with no artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordSummary {
     pub uuid: Uuid,
@@ -62,6 +67,10 @@ pub struct RecordSummary {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visibility: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_artifact_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_artifact_mimetype: Option<String>,
 }
 
 /// Paginated query result.

@@ -292,6 +292,21 @@ final class BrowseStore {
         )
     }
 
+    /// Build a file URL for the list/gallery thumbnail of a record, using the
+    /// primary-artifact fields carried by `RecordSummary`. Returns `nil` when
+    /// the record has no artifact (e.g. document records).
+    func thumbnailURL(for record: RecordSummary) -> URL? {
+        guard let ref = record.primaryArtifactRef,
+              let filename = artifactFilename(from: ref)
+        else { return nil }
+        return client.fileURL(
+            corpus: query.corpus,
+            kind: "artifacts",
+            uuid: record.uuid,
+            filename: filename
+        )
+    }
+
     private func artifactFilename(from ref: String) -> String? {
         guard let range = ref.range(of: "://") else { return ref }
         return String(ref[range.upperBound...])

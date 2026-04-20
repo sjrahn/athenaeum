@@ -50,9 +50,9 @@ struct ContentView: View {
     private var body_: some View {
         HSplitView {
             listPane
-                .frame(minWidth: 320)
+                .frame(minWidth: 360, idealWidth: 520)
             DocPreview()
-                .frame(minWidth: 360)
+                .frame(minWidth: 360, idealWidth: 560)
         }
     }
 

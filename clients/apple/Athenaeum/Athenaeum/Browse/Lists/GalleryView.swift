@@ -42,8 +42,11 @@ struct GalleryView: View {
             store.select(record.uuid)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                Thumb(mime: record.contentType)
-                    .frame(height: 96)
+                Thumb(
+                    mime: record.contentType,
+                    imageURL: imageURL(for: record)
+                )
+                .frame(height: 96)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
                         KindChip(recordType: RecordType(rawValue: record.recordType) ?? .source)
@@ -75,28 +78,63 @@ struct GalleryView: View {
             .font(.athenaeum(.mono, size: 11))
             .foregroundStyle(theme.tokens.muted)
     }
+
+    /// Build a thumbnail URL when the record's primary artifact is an
+    /// image. For non-image primary artifacts (PDF first-page render, video
+    /// poster) we could do more — deferred to a thumbnailer in Phase 6.
+    private func imageURL(for record: RecordSummary) -> URL? {
+        let mime = (record.primaryArtifactMimetype ?? record.contentType).lowercased()
+        guard mime.hasPrefix("image/") else { return nil }
+        return store.thumbnailURL(for: record)
+    }
 }
 
-/// Per-MIME abstract thumbnail. No network access — these are visual stand-ins
-/// rendered from SwiftUI shapes. Phase 3 can replace with real thumbnails
-/// (image artifacts → `AsyncImage`, PDFs → first-page render).
+/// Per-MIME thumbnail. Image-primary records render the actual image via
+/// `AsyncImage`; other MIMEs fall back to abstract SwiftUI-shape stand-ins
+/// that Phase 6 can upgrade (PDF first-page render, video poster frames).
 private struct Thumb: View {
     @Environment(\.theme) private var theme
     let mime: String
+    let imageURL: URL?
 
     var body: some View {
         let key = MimeChip.shortKey(for: mime)
         GeometryReader { _ in
-            switch key {
-            case "pdf": pdfThumb
-            case "mp4": videoThumb
-            case "mp3": audioThumb
-            case "html": htmlThumb
-            case "png", "jpg": imageThumb
-            case "eml": emailThumb
-            default: textThumb
+            if let imageURL {
+                imageCard(url: imageURL)
+            } else {
+                switch key {
+                case "pdf": pdfThumb
+                case "mp4": videoThumb
+                case "mp3": audioThumb
+                case "html": htmlThumb
+                case "png", "jpg": imageThumb
+                case "eml": emailThumb
+                default: textThumb
+                }
             }
         }
+    }
+
+    private func imageCard(url: URL) -> some View {
+        ZStack {
+            Color(hex: "#151310")
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .empty:
+                    ProgressView().controlSize(.small)
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    imageThumb // fall back to gradient if network/decoding fails
+                @unknown default:
+                    EmptyView()
+                }
+            }
+        }
+        .clipped()
     }
 
     private var pdfThumb: some View {

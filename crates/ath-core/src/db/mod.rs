@@ -40,6 +40,8 @@ impl CorpusDb {
                 capture_date TEXT,
                 author TEXT,
                 date_published TEXT,
+                primary_artifact_ref TEXT,
+                primary_artifact_mimetype TEXT,
                 body TEXT NOT NULL DEFAULT '',
                 record_json TEXT NOT NULL
             );
@@ -90,8 +92,9 @@ impl CorpusDb {
                 "INSERT OR REPLACE INTO records
                  (uuid, corpus, title, description, record_type, content_type, status,
                   visibility, credibility_tier, normalization_confidence, origin_name, origin_url,
-                  capture_date, author, date_published, body, record_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                  capture_date, author, date_published, primary_artifact_ref,
+                  primary_artifact_mimetype, body, record_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             )?;
 
             let mut insert_tag = tx.prepare_cached(
@@ -106,6 +109,7 @@ impl CorpusDb {
                 let fm = &record.frontmatter;
                 let uuid_str = fm.uuid.to_string();
                 let record_json = serde_json::to_string(record).unwrap_or_default();
+                let (primary_ref, primary_mime) = primary_artifact_summary(record);
 
                 insert_record.execute(params![
                     uuid_str,
@@ -123,6 +127,8 @@ impl CorpusDb {
                     fm.capture_date.map(|d| d.to_string()),
                     fm.author,
                     fm.date_published.map(|d| d.to_string()),
+                    primary_ref,
+                    primary_mime,
                     record.body,
                     record_json,
                 ])?;
@@ -197,12 +203,14 @@ impl CorpusDb {
 
         // Upsert the record
         let record_json = serde_json::to_string(record).unwrap_or_default();
+        let (primary_ref, primary_mime) = primary_artifact_summary(record);
         tx.execute(
             "INSERT OR REPLACE INTO records
              (uuid, corpus, title, description, record_type, content_type, status,
               visibility, credibility_tier, normalization_confidence, origin_name, origin_url,
-              capture_date, author, date_published, body, record_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+              capture_date, author, date_published, primary_artifact_ref,
+              primary_artifact_mimetype, body, record_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 uuid_str,
                 corpus_name,
@@ -219,6 +227,8 @@ impl CorpusDb {
                 fm.capture_date.map(|d| d.to_string()),
                 fm.author,
                 fm.date_published.map(|d| d.to_string()),
+                primary_ref,
+                primary_mime,
                 record.body,
                 record_json,
             ],
@@ -429,7 +439,8 @@ impl CorpusDb {
 
         // Data query
         let data_sql = format!(
-            "SELECT DISTINCT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
+            "SELECT DISTINCT r.uuid, r.title, r.status, r.content_type, r.record_type,
+                    r.visibility, r.primary_artifact_ref, r.primary_artifact_mimetype
              FROM {from_clause}
              WHERE {where_clause}
              ORDER BY {order_clause}
@@ -455,17 +466,30 @@ impl CorpusDb {
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         })?;
 
         let mut records = Vec::new();
         for row in rows {
-            let (uuid_str, title, status, content_type, record_type, visibility): (
+            let (
+                uuid_str,
+                title,
+                status,
+                content_type,
+                record_type,
+                visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
+            ): (
                 String,
                 String,
                 String,
                 String,
                 String,
+                Option<String>,
+                Option<String>,
                 Option<String>,
             ) = row?;
 
@@ -480,6 +504,8 @@ impl CorpusDb {
                 record_type,
                 tags,
                 visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
             });
         }
 
@@ -536,7 +562,8 @@ impl CorpusDb {
         uuid_str: &str,
     ) -> rusqlite::Result<Vec<RecordSummary>> {
         let mut stmt = conn.prepare_cached(
-            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
+            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility,
+                    r.primary_artifact_ref, r.primary_artifact_mimetype
              FROM records r
              JOIN constituents c ON c.parent_uuid = r.uuid
              WHERE c.child_uuid = ?1",
@@ -550,17 +577,30 @@ impl CorpusDb {
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         })?;
 
         let mut result = Vec::new();
         for row in rows {
-            let (uuid_s, title, status, content_type, record_type, visibility): (
+            let (
+                uuid_s,
+                title,
+                status,
+                content_type,
+                record_type,
+                visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
+            ): (
                 String,
                 String,
                 String,
                 String,
                 String,
+                Option<String>,
+                Option<String>,
                 Option<String>,
             ) = row?;
             let tags = self.get_tags_inner(conn, &uuid_s)?;
@@ -572,6 +612,8 @@ impl CorpusDb {
                 record_type,
                 tags,
                 visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
             });
         }
 
@@ -584,7 +626,8 @@ impl CorpusDb {
         uuid_str: &str,
     ) -> rusqlite::Result<Vec<RecordSummary>> {
         let mut stmt = conn.prepare_cached(
-            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility
+            "SELECT r.uuid, r.title, r.status, r.content_type, r.record_type, r.visibility,
+                    r.primary_artifact_ref, r.primary_artifact_mimetype
              FROM records r
              JOIN constituents c ON c.child_uuid = r.uuid
              WHERE c.parent_uuid = ?1",
@@ -598,17 +641,30 @@ impl CorpusDb {
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         })?;
 
         let mut result = Vec::new();
         for row in rows {
-            let (uuid_s, title, status, content_type, record_type, visibility): (
+            let (
+                uuid_s,
+                title,
+                status,
+                content_type,
+                record_type,
+                visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
+            ): (
                 String,
                 String,
                 String,
                 String,
                 String,
+                Option<String>,
+                Option<String>,
                 Option<String>,
             ) = row?;
             let tags = self.get_tags_inner(conn, &uuid_s)?;
@@ -620,11 +676,28 @@ impl CorpusDb {
                 record_type,
                 tags,
                 visibility,
+                primary_artifact_ref,
+                primary_artifact_mimetype,
             });
         }
 
         Ok(result)
     }
+}
+
+/// Pick the primary artifact (or first artifact when none is flagged) for a
+/// record and return `(ref, mimetype)` for storage in the summary columns.
+/// Document records and sources without artifacts return `(None, None)`.
+fn primary_artifact_summary(record: &Record) -> (Option<String>, Option<String>) {
+    let artifacts = &record.frontmatter.artifact_refs;
+    if artifacts.is_empty() {
+        return (None, None);
+    }
+    let chosen = artifacts
+        .iter()
+        .find(|a| a.primary)
+        .unwrap_or(&artifacts[0]);
+    (Some(chosen.uri.clone()), chosen.mimetype.clone())
 }
 
 /// Escape user input for FTS5 queries.

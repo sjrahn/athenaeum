@@ -1,10 +1,14 @@
 import SwiftUI
 import AthenaeumKit
 
-/// Full-width records table. Phase 2 renders the four columns that don't
-/// require `RecordDetail`: kind / mime / title / tags. `artfcts`, `size`,
-/// `origin`, `normalized` need detail-level data and are pending a bulk
-/// summary endpoint — render as `—` for now.
+/// Full-width records table. Shows the four columns we can cheaply populate
+/// from `RecordSummary`: kind / mime / title / tags.
+///
+/// The design calls for origin / artfcts / size / normalized too, but those
+/// need detail-level data the summary endpoint doesn't include yet. Rather
+/// than render four always-blank `—` columns (user feedback: "I have to pull
+/// the preview panel smaller to see the first columns"), we drop them until
+/// the server grows a fatter summary shape or a bulk-detail endpoint.
 struct RecordsTableView: View {
     @Environment(\.theme) private var theme
     @Environment(\.density) private var density
@@ -24,17 +28,18 @@ struct RecordsTableView: View {
             cell("kind", width: 46)
             cell("mime", width: 60)
             cell("title", width: nil)
-            cell("origin", width: 200, mono: true)
-            cell("artfcts", width: 60, mono: true, align: .trailing)
-            cell("size", width: 68, mono: true, align: .trailing)
-            cell("tags", width: 160)
-            cell("normalized", width: 140, mono: true)
+            cell("tags", width: 220)
         }
         .frame(height: 24)
         .background(theme.tokens.surface2)
     }
 
-    private func cell(_ text: String, width: CGFloat?, mono: Bool = false, align: Alignment = .leading) -> some View {
+    private func cell(
+        _ text: String,
+        width: CGFloat?,
+        mono: Bool = false,
+        align: Alignment = .leading
+    ) -> some View {
         Text(text.uppercased())
             .font(.athenaeum(.mono, size: 9, weight: .semibold))
             .tracking(0.8)
@@ -82,31 +87,12 @@ struct RecordsTableView: View {
                     .truncationMode(.tail)
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("—")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .frame(width: 200, alignment: .leading)
-                    .padding(.horizontal, 8)
-                Text("—")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .frame(width: 60, alignment: .trailing)
-                    .padding(.horizontal, 8)
-                Text("—")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .frame(width: 68, alignment: .trailing)
-                    .padding(.horizontal, 8)
-                Text(record.tags.prefix(3).joined(separator: ", "))
+                Text(record.tags.prefix(4).joined(separator: ", "))
                     .font(.athenaeum(.mono, size: 10))
                     .foregroundStyle(theme.tokens.muted)
                     .lineLimit(1)
-                    .frame(width: 160, alignment: .leading)
-                    .padding(.horizontal, 8)
-                Text("—")
-                    .font(.athenaeum(.mono, size: 10))
-                    .foregroundStyle(theme.tokens.dim)
-                    .frame(width: 140, alignment: .leading)
+                    .truncationMode(.tail)
+                    .frame(width: 220, alignment: .leading)
                     .padding(.horizontal, 8)
             }
             .frame(height: density.rowH + 2)
