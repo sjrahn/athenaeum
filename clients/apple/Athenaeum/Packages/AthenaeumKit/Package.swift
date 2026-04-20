@@ -16,7 +16,8 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AthenaeumKit"
+            name: "AthenaeumKit",
+            resources: [.copy("Fonts")]
         ),
         .testTarget(
             name: "AthenaeumKitTests",

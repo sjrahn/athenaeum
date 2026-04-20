@@ -54,8 +54,34 @@ public struct Config: @unchecked Sendable {
         }
     }
 
+    /// Theme override. Defaults to `.system` on first launch.
+    public var themeMode: ThemeMode {
+        get {
+            defaults.string(forKey: Keys.themeMode)
+                .flatMap(ThemeMode.init(rawValue:))
+                ?? .system
+        }
+        nonmutating set {
+            defaults.set(newValue.rawValue, forKey: Keys.themeMode)
+        }
+    }
+
+    /// Density override. Defaults to `.dense` (design default) on first launch.
+    public var density: Density {
+        get {
+            defaults.string(forKey: Keys.density)
+                .flatMap(Density.init(rawValue:))
+                ?? .dense
+        }
+        nonmutating set {
+            defaults.set(newValue.rawValue, forKey: Keys.density)
+        }
+    }
+
     private enum Keys {
         static let serverURL = "athenaeum.serverURL"
         static let lastUsedCorpus = "athenaeum.lastUsedCorpus"
+        static let themeMode = "athenaeum.themeMode"
+        static let density = "athenaeum.density"
     }
 }
