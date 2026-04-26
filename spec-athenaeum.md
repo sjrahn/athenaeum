@@ -1,12 +1,25 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.2
+version: 10.3
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.3
+    date: 2026-04-26
+    summary: >
+      Refinement pass C. Classification reframed as a clear hierarchy: MIME-based
+      base schemas are foundational and required (the data-contract floor every
+      conforming corpus carries), and custom classification schemas are an optional
+      corpus-author-driven layer on top. §3.3.2 renamed "Custom Classification
+      Schemas"; match conditions spelled out concretely (`content_type`,
+      `uri_pattern`, `has_tags`, `field_match`). New §3.3.3 articulates the
+      schema-feedback loop — custom classification schemas emerge from observed
+      patterns in document authoring, get authored by the curator, and apply
+      retroactively via re-normalization. Curator (§5.5) gains explicit
+      schema-monitoring responsibility. Examples in §3.3 anonymized.
   - version: 10.2
     date: 2026-04-26
     summary: >
@@ -115,7 +128,7 @@ Above the corpus sits the **compendium layer** — curated reference works synth
 | **Capture** | An encounter event recorded only by date. Re-encountering identical bytes appends a new entry to the artifact's `capture_dates`; the bytes themselves never move and never produce a new record. |
 | **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original; no editorialization beyond inline topic annotations. |
 | **Functional URI** | A composable URI scheme (`blake3://{hash}?page=4&crop=…`) used in document bodies to reference deterministic transformations of artifact content. Document-layer only. Resolved at compile/render time. |
-| **Schema** | A reference document describing how to normalize or classify content. Two kinds: **base schemas** (MIME-type-keyed, universal, format-intrinsic) and **classification schemas** (corpus-local, domain-specific). |
+| **Schema** | A reference document describing how to normalize or classify content. Two kinds: **base schemas** (MIME-type-keyed, universal, foundational data contract) and **custom classification schemas** (corpus-local, optional, corpus-author-driven). |
 | **Compendium** | A curated synthesis of records into a domain-specific reference work. |
 
 ---
@@ -138,7 +151,7 @@ corpus/
 ├── documents/   — document records (UUID-named)
 ├── binary/      — content-addressed binary store, keyed by blake3
 ├── capture/     — staging area for in-progress captures
-└── schema/      — base and classification schemas (see §3.3)
+└── schema/      — base and custom classification schemas (see §3.3)
 ```
 
 **Directory purposes:**
@@ -368,11 +381,11 @@ Records may carry frontmatter fields beyond those in §3.1.1–§3.1.6. Extended
 
 - **Base schema extraction.** Format-intrinsic fields read from the artifact's binary (file headers, embedded metadata). Examples: `page_title` and `meta_description` for HTML, `duration_seconds` and `bitrate_kbps` for audio, `width_px` and `height_px` for images, `page_count` for PDFs. The base schema for each MIME type defines which fields the normalizer extracts (see §3.3.1).
 
-- **Classification schema extraction.** Domain-specific fields added when a corpus-local classification schema matches the record. Examples: `artist`, `album`, `track_number` when an audio file's ID3 tags identify it as a musical recording; `service_section`, `vehicle_platform` when a PDF is recognized as a service manual page. Classification schemas are corpus-local (see §3.3.2).
+- **Custom classification schema extraction.** Domain-specific fields added when a custom classification schema (§3.3.2) matches the record. Examples: `artist`, `album`, `track_number` when an audio file's ID3 tags identify it as a musical recording; `service_section`, `vehicle_platform` when a PDF is recognized as a service manual page. Custom classification schemas are corpus-local and corpus-author-driven.
 
 Extended fields are tolerated by the core loader but not required. A record carrying only the base-schema fields its MIME yields is fully valid — classification can be deferred to a later pass.
 
-If a field is genuinely required for a kind of content, the strongest practice is to author a classification schema declaring the requirement and a tag the normalizer applies when the schema matches.
+If a field is genuinely required for a kind of content the corpus cares about, the strongest practice is to author a custom classification schema declaring the requirement and a tag the normalizer applies when the schema matches.
 
 ### 3.2 Body Format
 
@@ -455,7 +468,13 @@ There are no stored structural relations (`is_a`, `part_of`). Compositional stru
 
 ### 3.3 Schema Library
 
-The `schema/` directory holds reference documents that describe how to normalize and classify content. There are two kinds:
+Classification has a clear hierarchy:
+
+1. **MIME-based classification (base schemas) is the foundational and required step.** Every artifact gets a base schema applied, driven by its `content_type`. The base schema dictates the normalization method, declares the hashes that ship with the artifact, and lists the extended fields the normalizer extracts. This is the data-contract floor. Tooling consuming the corpus can rely on every base-schema-declared field and hash being present absolutely.
+
+2. **Custom classification is an optional layer on top.** A corpus author MAY define custom classification schemas to recognize content patterns and extract domain-specific fields and tags. The spec describes the *mechanism* (match conditions, field/tag declarations, schema composition rules); it does **not** prescribe what schemas a particular corpus should have or how the corpus's authors should choose to maintain them. Custom classification is a curatorial artifact — it lives entirely with the corpus.
+
+The two kinds of schemas live under `schema/base/` and `schema/classification/` respectively (concrete layout in `impl-corpus.md`).
 
 #### 3.3.1 Base Schemas (MIME type)
 
@@ -512,17 +531,31 @@ extended_fields:
 
 The procedural side — how a normalizer detects MIME, in what order it computes these hashes, where the resulting binary lands on disk — is an implementation concern (see `impl-corpus.md`). What the spec mandates is that each artifact of this MIME ends up carrying every declared hash and every required field.
 
-#### 3.3.2 Corpus-Local Classification Schemas
+#### 3.3.2 Custom Classification Schemas
 
-A corpus MAY define classification schemas that add domain-specific metadata extraction. These are keyed by a match condition (typically tag-based or content_type + heuristic) and define additional extended fields and tags.
+Custom classification schemas are optional. A corpus author authors them to recognize content patterns and extract domain-specific fields and tags beyond what the base schema gives. The spec defines the schema format and the composition rules; it does **not** dictate which schemas a particular corpus should have.
 
-Classification schemas live in the corpus's schema directory, not in the global toolkit. They are portable with the corpus but not universal.
+Custom classification schemas live in the corpus's `schema/classification/` directory. They are portable with the corpus but are not universal — different corpora carry different custom schemas reflecting their own concerns.
+
+**Match conditions.** A schema's `match` block declares the conditions under which it applies. Any of these condition types may be combined; all listed conditions must be satisfied for the schema to match:
+
+- **`content_type`** — exact MIME match or MIME-prefix match (e.g., `audio/*`).
+- **`uri_pattern`** — a regex evaluated against any entry in the artifact's `uris[]`. A typical use is matching a domain (e.g., `^https?://[^/]*example\\.com/`).
+- **`has_tags`** — list of tags the artifact must already carry (after base-schema or earlier-classification application).
+- **`field_match`** — required values for already-extracted extended fields (e.g., `pdf_producer: "TexLive"`).
+
+A match is a logical AND across the listed conditions. To express disjunction, author multiple schemas — they compose naturally (see below).
+
+**Schema document format.**
 
 ```yaml
 schema_type: classification
 match:
   content_type: "audio/mpeg"
-  condition: "ID3 artist and album tags are populated"
+  has_tags: []                                  # optional
+  uri_pattern: ""                               # optional
+  field_match:                                  # optional
+    # field_name: required_value
 
 classification:
   add_tags: [musical-recording]
@@ -546,13 +579,33 @@ extended_fields:
     description: "Track position on album."
 ```
 
-**Composition.** The normalizer applies the base schema first (format extraction), then checks classification schemas for matching conditions. Matching classification schemas add their tags and extended fields to the record. Multiple classification schemas may match — their fields merge (last-write-wins on collision).
+**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `classification.add_tags` and `extended_fields` to the artifact. Multiple schemas may match — their fields merge (last-write-wins on collision; tag lists are unioned).
 
-**Unclassified artifacts.** An artifact that matches no classification schema is fully valid — it has its base schema fields and whatever tags the normalizer assigned. Classification can be deferred to a later pass when more context is available (e.g., after related artifacts are captured or documents are written that provide context).
+**Layered matching.** Because a schema's match conditions can include `has_tags`, a schema can layer on top of an earlier match. A general-platform schema might add a tag (e.g., `video-platform-x`) and a few generic fields; a more-specific schema gated on `has_tags: [video-platform-x]` plus a `uri_pattern` can then add fields specific to a particular show or section of that platform. This is how a corpus grows from coarse to fine classification without duplicating match logic.
 
-**Tag vocabulary conventions.** A corpus MAY maintain a conventions file listing its tag vocabulary with descriptions. This is guidance for normalizers and curators, not a schema constraint. Unknown tags are valid — they signal vocabulary growth. High-frequency unknown tags are candidates for vocabulary formalization.
+**Examples (illustrative — concrete schemas are corpus-author choices).**
+- An artifact captured from a video-hosting platform: a domain-keyed schema adds `upload_date`, `like_count`, `channel_name`, `view_count`.
+- An artifact from a specific recurring show on that platform: a layered schema (`has_tags: [hosted-video]` + a channel-specific `uri_pattern`) adds `episode_date`, `hosts`, `guests`, `topics_discussed`.
+- An artifact from a specific forum-platform signature: a `uri_pattern` schema adds `thread_id`, `op_username`, `reply_count`.
+- Audio with populated ID3 tags: as in the example above, adds `artist`, `album`, `track_number` and the `musical-recording` tag.
 
-#### 3.3.3 MIME Type Reference
+**Unclassified artifacts.** An artifact that matches no custom classification schema is fully valid — it carries its base-schema fields and whatever tags the normalizer or operator assigned. Custom classification can be deferred to a later pass when more context is available.
+
+**Tag vocabulary conventions.** A corpus MAY maintain a conventions file listing its tag vocabulary with one-line descriptions. This is guidance for normalizers and curators, not a schema constraint. Unknown tags are valid — they signal vocabulary growth. High-frequency unknown tags are candidates for formalization, often via a new custom classification schema.
+
+#### 3.3.3 Custom classification as a living curatorial artifact
+
+Custom classification schemas are not authored upfront; they emerge from how the corpus is used.
+
+**The feedback loop.** Document authoring (codices, compendiums) reveals patterns. Authors keep reaching for the same metadata about the same kind of content; tag clusters form around recurring topics; a domain dominates a slice of the corpus. The curator notices these patterns and authors a custom classification schema that captures them — declaring the fields the authors keep wanting and the tag that names the pattern. A re-normalization sweep applies the new schema to every existing artifact whose match conditions are satisfied. Subsequent document authoring is now richer because the metadata is already on the artifacts.
+
+This loop is the corpus's classification layer growing in step with its actual usage. A corpus with no document layer yet has only base schemas — and that's fine. A corpus whose document layer is rich and active will grow a substantial custom classification library over time. The schemas, the artifacts, and the documents co-evolve.
+
+The pipeline mechanics of pattern detection, schema authoring, and re-normalization sweeps live in `impl-corpus.md`.
+
+The Curator agent (§5.5) is responsible for monitoring the document layer for pattern emergence and proposing new custom classification schemas to the operator.
+
+#### 3.3.4 MIME Type Reference
 
 A concise per-type reference for the most commonly captured MIME types. Each row lists the canonical MIME, the normalization method, and the extended fields the base schema typically extracts. This is illustrative, not closed — any IANA MIME type is valid.
 
@@ -570,7 +623,7 @@ A concise per-type reference for the most commonly captured MIME types. Each row
 | `application/json` | extraction (passthrough) | `top_level_keys` (when reasonable) |
 | `unknown` or unmatched | metadata | `byte_size`, `magic_bytes_summary` |
 
-A corpus authoring its own classification schemas adds further extended fields on top of these (see §3.3.2).
+A corpus authoring its own custom classification schemas adds further extended fields on top of these (see §3.3.2).
 
 ### 3.4 Examples
 
@@ -799,11 +852,11 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 #### 4.2.3 Contextualization
 
-**What:** LLM-driven refinement of the body, informed by base schema guidance, classification schema matches, and any tag vocabulary conventions the corpus declares.
+**What:** LLM-driven refinement of the body, informed by base schema guidance, custom classification schema matches, and any tag vocabulary conventions the corpus declares.
 
-**How:** The normalizer loads the record, the matching base schema, and any classification schemas whose match conditions apply. It refines the body, fills extended fields, assesses `credibility_tier`, generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
+**How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, assesses `credibility_tier`, generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
 
-**Schema composition.** Base schema fields are extracted first. Matching classification schemas add their tags and extended fields, merging into the record (last-write-wins on field collisions). Multiple classification schemas may match.
+**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their tags and extended fields, merging into the record (last-write-wins on field collisions). Multiple custom schemas may match.
 
 **Output:** Record with refined body, extended fields populated, and `status: normalized`.
 
@@ -873,7 +926,7 @@ Each operation can target specific records via metadata queries. The `conversion
 
 The pipeline is operated by specialized agents — lightweight, single-purpose workers that each handle one item per invocation. Agents have focused responsibilities, process exactly one item, and report results to a coordinator. There is no inter-agent communication and no shared state beyond the corpus filesystem.
 
-Agents consult base schemas and classification schemas under `schema/` to apply consistent normalization and classification per content type.
+Agents consult base schemas and any custom classification schemas under `schema/` to apply consistent normalization and classification per content type.
 
 ### 5.2 Capturer
 
@@ -895,7 +948,7 @@ Brings an artifact stub to `status: normalized`.
 
 **Scope:** One artifact per invocation.
 
-**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every classification-schema-declared field where a classification schema matched, the resulting tags, a `normalization_type` reflecting how the body was derived, an assessed `credibility_tier`, a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, the resulting tags, a `normalization_type` reflecting how the body was derived, an assessed `credibility_tier`, a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
 Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
 
@@ -913,15 +966,15 @@ Creates or edits document records that synthesize knowledge across artifacts and
 
 ### 5.5 Curator
 
-Autonomous orchestration skill that assesses corpus state, prioritizes work, and dispatches agents.
+Autonomous orchestration skill that assesses corpus state, prioritizes work, and dispatches agents. Also responsible for the schema-feedback loop (§3.3.3) — monitoring the document layer for emerging patterns and proposing new custom classification schemas to the operator.
 
 **Operating loop:**
 
-1. **Assess.** Scan `artifacts/` and `documents/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, unresolved cross-references, and authoring opportunities. Check `capture/` for completed captures awaiting reconciliation.
-2. **Prioritize.** Apply decision framework: compendium blockers first, then high-priority new captures, then normalization of existing stubs, then re-resolution sweeps, then re-normalization driven by tool/model upgrades.
-3. **Propose.** Present the prioritized work plan to the operator for approval.
+1. **Assess.** Scan `artifacts/` and `documents/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, unresolved cross-references, and authoring opportunities. Check `capture/` for completed captures awaiting reconciliation. Watch the document layer for recurring patterns (tag clusters, URI-domain frequency, repeated extended-field demand) that might warrant a new custom classification schema.
+2. **Prioritize.** Apply decision framework: compendium blockers first, then high-priority new captures, then normalization of existing stubs, then re-resolution sweeps, then re-normalization driven by tool/model upgrades or by newly authored custom classification schemas.
+3. **Propose.** Present the prioritized work plan to the operator for approval. Surface schema-authoring proposals when patterns warrant them.
 4. **Execute.** Spawn capturer, normalizer, and author agents, managing parallelism by launching multiple agents concurrently.
-5. **Report.** Summarize results — records captured, normalized, authored, issues encountered.
+5. **Report.** Summarize results — records captured, normalized, authored, issues encountered, schemas proposed.
 
 ### 5.6 Parallelism Model
 
@@ -940,7 +993,7 @@ Autonomous orchestration skill that assesses corpus state, prioritizes work, and
 | Conversion (HTML→MD, PDF→text, OCR, transcription) | Deterministic | Reproducible, tool-specific, no editorial judgment |
 | Cross-reference resolution | Deterministic | Mechanical URL→blake3 lookup against the corpus index |
 | Contextualization (refine, describe, assess, surface issues) | LLM | Requires semantic understanding and editorial judgment |
-| Classification schema match | Deterministic (when conditions are mechanical) / LLM (when conditions require interpretation) | Depends on the schema's match condition |
+| Custom classification schema match | Deterministic (when conditions are mechanical) / LLM (when conditions require interpretation) | Depends on the schema's match condition |
 | Document authoring | LLM | Requires synthesis, structure, and editorial decisions |
 | Functional URI evaluation (page extract, framegrab, crop) | Deterministic | Reproducible transformations of immutable inputs |
 | Build (export, index) | Deterministic | Mechanical, reproducible |
@@ -992,7 +1045,7 @@ A record that has been updated triggers re-synthesis only in chapters that cite 
 
 ## Appendix A: MIME Reference
 
-This appendix is a concise overview of MIME types commonly encountered in practice. The authoritative source for normalization guidance per MIME is the base schema in `schema/base/`. Extended fields beyond `content_type` are extracted by base schemas (format-intrinsic) and classification schemas (corpus-local domain-specific).
+This appendix is a concise overview of MIME types commonly encountered in practice. The authoritative source for normalization guidance per MIME is the base schema in `schema/base/`. Extended fields beyond `content_type` are extracted by base schemas (format-intrinsic) and custom classification schemas (corpus-local, optional, domain-specific).
 
 Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permitted as a sentinel.
 
@@ -1005,7 +1058,7 @@ Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permit
 | `application/epub+zip` | extraction | `work_title`, `epub_author`, `language`, `chapter_count`, `word_count` | Parse chapter structure; one heading per chapter. Internal links resolve via cross-reference resolution if other captures match. |
 | `text/markdown`, `text/plain` | extraction (passthrough) | `word_count`, `language` | Minimal cleanup. `conversion_method: "passthrough"`. |
 | `video/mp4`, `video/webm`, `video/mkv`, `video/quicktime` | transcription | `duration_seconds`, `width_px`, `height_px`, `frame_rate`, `video_codec`, `audio_codec` | Transcribe audio with timestamps. Frame descriptions per schema guidance. |
-| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` | Transcribe with timestamps. Speaker turn markers where determinable. ID3-tagged audio that classification schemas recognize as musical recordings gains `artist`, `track_title`, `album`, `track_number`. |
+| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` | Transcribe with timestamps. Speaker turn markers where determinable. ID3-tagged audio that a corpus-local custom classification schema recognizes as musical recordings gains `artist`, `track_title`, `album`, `track_number`. |
 | `image/jpeg`, `image/png`, `image/webp`, `image/gif` | description | `width_px`, `height_px`, `color_space`, `exif_date`, `exif_gps_lat`, `exif_gps_lon`, `exif_camera` | Visual description and OCR text in body. Embedded in artifact bodies via `![[blake3]]`; embedded in document bodies via plain embed or functional URI. |
 | `message/rfc822` | extraction | `from`, `to`, `subject`, `message_date`, `in_reply_to` | Body is the message text; headers extracted to extended fields. Multipart bodies flatten to text/plain or text/html as primary. |
 | `application/json` | extraction (passthrough) | `top_level_keys` | Prettify; preserve structure. |
@@ -1013,7 +1066,7 @@ Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permit
 
 ### A.2 Classification examples
 
-A corpus typically authors classification schemas to recognize content patterns it cares about. Examples:
+A corpus typically authors custom classification schemas to recognize content patterns it cares about. Examples:
 
 - **Forum threads** — text/html on a known forum domain → `add_tags: [forum-thread]`, extended fields `username`, `thread_url`, `reply_count`.
 - **Voting-community threads** — text/html on aggregator-style platforms → `community_slug`, `post_url`, `score`, `comment_count`.
@@ -1021,7 +1074,7 @@ A corpus typically authors classification schemas to recognize content patterns 
 - **Service manuals** — application/pdf with publisher metadata matching a manual pattern → `service_section`, `vehicle_platform`, `manufacturer`.
 - **Musical recordings** — audio/* with populated ID3 artist/album → `artist`, `track_title`, `album`, `track_number`.
 
-Classification schemas are corpus-local. The same MIME can carry different classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
+Custom classification schemas are corpus-local and optional. The same MIME can carry different custom classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
 
 ### A.3 When to author a document on top
 

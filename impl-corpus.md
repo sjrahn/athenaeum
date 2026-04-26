@@ -188,11 +188,11 @@ Failures here are bugs in the pipeline; they should fail loudly.
 
 ## 4. Custom-classification feedback loop
 
-Custom classification schemas (§3.3.2 of the spec) are corpus-local and corpus-author-driven. They emerge from observed patterns in how the corpus is used, not from upfront design. Refinement C (planned) will articulate this loop in the spec; this section describes the operational implementation.
+Custom classification schemas (§3.3.2 + §3.3.3 of the spec) are corpus-local and corpus-author-driven. They emerge from observed patterns in how the corpus is used, not from upfront design. The spec articulates the loop conceptually (and assigns it to the Curator agent); this section describes the operational implementation.
 
 ### 4.1 Pattern detection
 
-The curator (human or agent) periodically scans the corpus for patterns that suggest a classification schema should exist:
+The curator (human or agent) periodically scans the corpus for patterns that suggest a custom classification schema should exist:
 
 - **Tag clusters.** A set of artifacts share a tag and would benefit from richer extended fields than the base schema gives.
 - **URI-domain frequency.** Many artifacts have one of their `uris[]` matching a common domain, suggesting a platform-specific schema (custom field set for that platform).
@@ -201,7 +201,7 @@ The curator (human or agent) periodically scans the corpus for patterns that sug
 
 ### 4.2 Schema authoring
 
-When a pattern is worth formalizing, the curator drafts a classification schema:
+When a pattern is worth formalizing, the curator drafts a custom classification schema:
 
 ```yaml
 schema_type: classification
@@ -245,7 +245,7 @@ Re-normalization is the general capability to re-process existing artifacts when
 
 ### 5.1 When to re-normalize
 
-- A new classification schema lands and its match condition selects existing artifacts.
+- A new custom classification schema lands and its match condition selects existing artifacts.
 - A base schema is improved (new extended-field declarations, better normalization guidance).
 - A normalization model is upgraded.
 - A conversion tool is upgraded (better extractor, better OCR, better transcription).
@@ -258,8 +258,8 @@ The curator scopes the sweep using the most-precise selector possible:
 
 - By `conversion_tool` version, when re-running improved conversion.
 - By `normalization_model`, when re-running improved contextualization.
-- By `uri` pattern, when applying a URI-targeted classification schema.
-- By tag, when applying a tag-keyed classification schema.
+- By `uri` pattern, when applying a URI-targeted custom classification schema.
+- By tag, when applying a tag-keyed custom classification schema.
 - By `content_type`, when applying a MIME-keyed change.
 
 ### 5.3 Partial re-application
