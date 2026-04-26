@@ -164,12 +164,12 @@ Schemas that match contribute their declared tags and extended fields. Multiple 
 
 Refine the body and frontmatter:
 
+- Apply matching custom classification schemas, recording each application in the artifact's `classifications:` array as `{schema, justification}`. The schema's contributed fields and tags merge into top-level frontmatter per §3.3.2 composition rules. Justification is required for every application — mechanical for deterministic matches, substantive prose for LLM judgments.
 - Improve formatting fidelity (broken tables, malformed lists).
 - Resolve encoding ambiguity where determinable from context.
 - Add or improve image alt text from visible content.
 - Surface issues to `issues[]` (missing media, broken links, partial content, encoding corruption, format loss).
 - Generate or refine `description`.
-- Assess `credibility_tier`.
 - Set `status: normalized`.
 
 For artifact records, contextualization MUST preserve normalization integrity — the body remains a faithful rendering of the original content. No information that wasn't in the original.
@@ -268,7 +268,7 @@ Re-normalization should disturb only the fields that need updating. The implemen
 
 - Diff the current frontmatter against the would-be new frontmatter.
 - Apply only the differences.
-- Avoid churn on fields the change doesn't affect (descriptions hand-edited by curators, manually adjusted credibility tiers, etc.).
+- Avoid churn on fields the change doesn't affect (descriptions hand-edited by curators, manually adjusted classification justifications, etc.).
 
 This keeps re-normalization sweeps surgical and reviewable in git diffs.
 

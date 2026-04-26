@@ -93,7 +93,7 @@ Authoring a document in a codex follows the spec's `Author` agent contract (§5.
 3. **Pick a slug** (the codex topic). Stable, kebab-case, codex-unique.
 4. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks (the most stable form). Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer documents within the same codex via `[[slug]]` (preferred) or `[[uuid]]`.
 5. **Never write `[[codex-name:…]]`.** A codex is pure — its docs only reference downward to artifacts and locally to peer docs. Cross-codex citation is a compendium-build job.
-6. **Save** under `documents/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status, credibility tier.
+6. **Save** under `documents/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Document frontmatter is deliberately thin (spec §3.1.3) — there is no document-side credibility field. Compendiums weight a document's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
 
 ### 4.2 Compendium authoring
 

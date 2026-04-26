@@ -1,12 +1,34 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.4
+version: 10.5
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.5
+    date: 2026-04-26
+    summary: >
+      Refinement pass E. Credibility removed from §3.1.4 core Quality Fields
+      entirely (artifacts and documents both); the closed 5-tier enum dropped.
+      Credibility is now expressed as multiple small custom classification
+      schemas — `peer-reviewed`, `preprint`, `corporate-bias`, `community-validated`,
+      `anecdotal-claim` shown as Appendix A.2 examples, but corpora invent their
+      own vocabularies. New top-level `classifications:` array on artifact
+      records provides a per-application audit trail: each entry is
+      `{schema, justification}`, with universal required justification across
+      all applied classifications (mechanical for deterministic matches,
+      substantive prose for LLM judgments). Schema-declared fields and tags
+      continue to merge into top-level frontmatter per the v10.3 composition
+      rule; the array does not duplicate values. §6.3 compendium synthesis
+      principles reworked to weight by whatever credibility-signal classifications
+      the corpus carries rather than a fixed enum. Documents lose
+      `credibility_tier` outright with no replacement — codices and compendiums
+      consult artifact-level credibility signals when weighting matters.
+      Normalizer language (§4.2.3, §5.3, §5.7) and impl docs updated to drop
+      "assess credibility_tier" from the contextualization step (subsumed by
+      "apply matching custom classification schemas").
   - version: 10.4
     date: 2026-04-26
     summary: >
@@ -363,6 +385,7 @@ Present only on artifact records (`record_type: artifact`).
 | `uris` | string[] | yes (≥1) | All known URIs that resolve to this artifact's bytes. None canonical — request URLs, redirect targets, mirror URLs, DOIs, IPFS CIDs, `file://` paths are all equivalent labels. URIs may be added at any time (e.g., a DOI assigned later, a mirror discovered) and become valid retroactively for the artifact. |
 | `capture_dates` | ISO-8601[] | yes (≥1) | Timestamps at which these bytes were encountered. Re-encountering identical bytes appends a new entry. |
 | `hashes` | map | no | Per-artifact instances of the cryptographic and perceptual hashes the base schema (§3.3.1) declares for this MIME. blake3 is at the top level (it is the identity); other declared hashes (e.g., `chromaprint`, `phash`, `sha256`) live here. |
+| `classifications` | object[] | no | Audit log of custom classification schemas applied to this artifact. Each entry is `{schema, justification}`; see §3.3.2. The schemas' contributed fields and tags merge into top-level frontmatter (this array does not duplicate them). Absent when no custom classifications have been applied. |
 | `normalization_type` | enum | no | How the body was derived: `extraction` (HTML→markdown, PDF→text), `transcription` (audio/video→text), `description` (image→text), `metadata` (opaque binary→summary). |
 | `author` | string | no | Identifiable person who produced this content. Omit for anonymous content. |
 | `date_published` | date | no | When the original content was published. Omit for undated content. |
@@ -398,26 +421,13 @@ There is no `constituents` list, no `part_of`, no `same_as`, no `is_a`. All stru
 
 #### 3.1.4 Quality Fields
 
-Present on every record.
+Present on every record. These describe the normalizer's *self-assessment of how it did its job* — they are not content-trust judgments. Credibility, when expressed, is a custom classification — each credibility signal is its own schema. See §3.3.2 and Appendix A.2.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `credibility_tier` | enum | yes | Trustworthiness of the content (see table below). |
 | `normalization_confidence` | float | yes (artifacts) | `0.0`–`1.0`, quality of the normalization process for this artifact. |
 | `normalization_model` | string | no | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`). |
 | `normalization_date` | date | no | When normalization was last performed. |
-
-**Credibility tiers:**
-
-| Tier | Description | Examples |
-|------|-------------|----------|
-| `authoritative` | Official or primary source | OEM service manual, published novel text, peer-reviewed paper |
-| `expert` | Credentialed professional with demonstrated expertise | Professional mechanic writeup, published literary criticism |
-| `community_validated` | Claim independently confirmed by multiple people | Forum fix confirmed by 5+ users, widely accepted fan analysis |
-| `anecdotal` | Single person's unconfirmed experience | One forum post describing a symptom |
-| `speculative` | Theory or hypothesis without evidence | Unsubstantiated claim or guess |
-
-Credibility describes the trustworthiness of the content's claims. Normalization confidence describes how accurately the raw artifact was rendered into markdown. A perfectly transcribed video might have high confidence but low credibility. A badly OCR'd service manual might have low confidence but authoritative credibility.
 
 #### 3.1.5 Pipeline Fields
 
@@ -667,6 +677,23 @@ extended_fields:
 
 **Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `classification.add_tags` and `extended_fields` to the artifact. Multiple schemas may match — their fields merge (last-write-wins on collision; tag lists are unioned).
 
+**Audit trail (`classifications` array).** Every applied custom classification schema is also recorded on the artifact in a top-level `classifications:` array (§3.1.2). Each entry has only two fields:
+
+```yaml
+classifications:
+  - schema: forum-thread
+    justification: "URL matched forum.example.com domain pattern"
+  - schema: community-validated
+    justification: "Repair confirmed across 5+ replies with photos; OP follow-up reports successful resolution; no dissenting comments"
+```
+
+- **`schema`** — the schema's name (filename stem under `schema/classification/`).
+- **`justification`** — required prose explaining *why* this schema was applied. For deterministic matches the justification is mechanical ("matched id3v2 TPE1 + TALB populated", "URL matched forum.example.com domain pattern"). For LLM-judgment matches the justification is substantive prose summarising the evidence ("thread shows consensus across 5+ users on the symptoms and the remedy").
+
+The contract is uniform: every applied schema produces a `classifications` entry, every entry carries a justification. The shape is the same regardless of how mechanical or judgmental the match was. Re-runs, schema iteration, and curator review all read the same audit trail.
+
+The array does **not** duplicate the schema's contributed fields or tags — those live in the merged top-level frontmatter per the composition rule above. The array is purely the log of *which schemas applied and the reasoning for each*. Field provenance ("which schema contributed `thread_id`?") is reconstructed by walking the schemas referenced in `classifications:` against their declarations — the schema files are the source of truth for what each schema contributes.
+
 **Layered matching.** Because a schema's match conditions can include `has_tags`, a schema can layer on top of an earlier match. A general-platform schema might add a tag (e.g., `video-platform-x`) and a few generic fields; a more-specific schema gated on `has_tags: [video-platform-x]` plus a `uri_pattern` can then add fields specific to a particular show or section of that platform. This is how a corpus grows from coarse to fine classification without duplicating match logic.
 
 **Examples (illustrative — concrete schemas are corpus-author choices).**
@@ -731,8 +758,7 @@ hashes:
   sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 status: normalized
 visibility: visible
-tags: [brake-caliper, caliper-rebuild]
-credibility_tier: community_validated
+tags: [brake-caliper, caliper-rebuild, forum-thread, community-validated]
 normalization_confidence: 0.92
 normalization_type: extraction
 normalization_model: "claude-sonnet-4-5-20250514"
@@ -745,6 +771,13 @@ conversion_date: 2026-03-15
 page_title: "Caliper Rebuild Thread"
 meta_description: "Discussion of front caliper rebuild"
 language: "en"
+
+# Custom classification audit trail
+classifications:
+  - schema: forum-thread
+    justification: "URL matched forum.example.com domain pattern"
+  - schema: community-validated
+    justification: "Repair confirmed across 5+ replies with photos; OP follow-up reports successful resolution; no dissenting comments"
 ---
 
 ## Caliper Rebuild Thread
@@ -778,7 +811,6 @@ record_type: document
 status: draft
 visibility: visible
 tags: [brake-caliper, caliper-rebuild]
-credibility_tier: expert
 ---
 
 ## Overview
@@ -958,7 +990,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **What:** LLM-driven refinement of the body, informed by base schema guidance, custom classification schema matches, and any tag vocabulary conventions the corpus declares.
 
-**How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, assesses `credibility_tier`, generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
+**How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, applies matching custom classification schemas (recording each application in the artifact's `classifications:` array as `{schema, justification}`), generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
 
 **Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their tags and extended fields, merging into the record (last-write-wins on field collisions). Multiple custom schemas may match.
 
@@ -1054,11 +1086,11 @@ Brings an artifact stub to `status: normalized`.
 
 **Scope:** One artifact per invocation.
 
-**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, the resulting tags, a `normalization_type` reflecting how the body was derived, an assessed `credibility_tier`, a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, the resulting tags, a `normalization_type` reflecting how the body was derived, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
 Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
 
-The split between deterministic (conversion, cross-reference resolution, schema-driven extraction) and LLM-driven (contextual refinement, description, credibility judgment) is described in §5.7. Procedural detail lives in `impl-corpus.md`.
+The split between deterministic (conversion, cross-reference resolution, schema-driven extraction) and LLM-driven (contextual refinement, description, classification-schema match where the conditions require interpretation) is described in §5.7. Procedural detail lives in `impl-corpus.md`.
 
 ### 5.4 Author
 
@@ -1098,7 +1130,7 @@ Autonomous orchestration skill that assesses corpus state, prioritizes work, and
 | Hash computation (blake3, sha256, md5) | Deterministic | Mechanical integrity check |
 | Conversion (HTML→MD, PDF→text, OCR, transcription) | Deterministic | Reproducible, tool-specific, no editorial judgment |
 | Cross-reference resolution | Deterministic | Mechanical URL→blake3 lookup against the corpus index |
-| Contextualization (refine, describe, assess, surface issues) | LLM | Requires semantic understanding and editorial judgment |
+| Contextualization (refine, describe, surface issues) | LLM | Requires semantic understanding and editorial judgment |
 | Custom classification schema match | Deterministic (when conditions are mechanical) / LLM (when conditions require interpretation) | Depends on the schema's match condition |
 | Document authoring | LLM | Requires synthesis, structure, and editorial decisions |
 | Functional URI evaluation (page extract, framegrab, crop) | Deterministic | Reproducible transformations of immutable inputs |
@@ -1143,9 +1175,9 @@ Compendiums select records and codex topics from one or more codices and corpora
 
 - **Reference stability hierarchy.** Prefer the lowest level of reference that suffices: artifact (`[[blake3]]`) is always stable across regeneration; a codex topic by slug (`[[codex-name:slug]]`) is stable across codex regeneration that preserves topic naming; a codex doc UUID is bound to a specific instance and may orphan. Compendiums that cite slugs survive their codices being rebuilt; compendiums that cite UUIDs are tied to a specific codex instance.
 - **Cite records.** Every factual claim references the identifier(s) it derives from. Use functional URIs when citing specific pages, frames, or crops where precision matters.
-- **Represent disagreement.** When sources conflict, the compendium presents both positions with their respective credibility tiers rather than silently choosing one.
+- **Represent disagreement.** When sources conflict, the compendium presents both positions with whatever credibility-signal classifications they carry (see §3.3.2). Where the corpus expresses no credibility signals, surface the disagreement neutrally and let the reader judge.
 - **Aggregate patterns.** If many artifacts describe the same phenomenon, the compendium captures the pattern (common conditions, symptoms, root cause) rather than citing each artifact individually.
-- **Respect credibility tiers.** Higher-tier records carry more weight. An `authoritative` document is not overruled by `anecdotal` reports unless the volume and consistency of community experience is overwhelming.
+- **Weight by credibility signals.** Records carrying classifications the compendium treats as authoritative (e.g., `peer-reviewed`, `community-validated`) carry more weight in synthesis than records carrying classifications it treats as weaker (e.g., `preprint`, `anecdotal-claim`, `corporate-bias`). The specific weighting is a compendium-author choice — different compendiums on the same domain may weight the same signals differently. The synthesis system prompt (§6.4) is the natural place to encode the compendium's weighting policy.
 - **Respect issues.** Records with unresolved `critical` or `major` issues should be weighted accordingly and gaps noted.
 - **Leverage codex topics and tags.** Codex topics are the strongest input — a well-authored codex doc already encodes synthesis a compendium chapter wants. Compendium chapters typically start by selecting a small set of seed topics from one or more codices and following their references outward into the underlying corpora.
 - **Leverage similarity.** Tier-3 body embeddings surface cross-modal connections (an audio transcript and an HTML article on the same topic) that tags alone may miss.
@@ -1189,13 +1221,70 @@ Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permit
 
 ### A.2 Classification examples
 
-A corpus typically authors custom classification schemas to recognize content patterns it cares about. Examples:
+A corpus typically authors custom classification schemas to recognize content patterns it cares about. Examples of content-pattern schemas:
 
 - **Forum threads** — text/html on a known forum domain → `add_tags: [forum-thread]`, extended fields `username`, `thread_url`, `reply_count`.
 - **Voting-community threads** — text/html on aggregator-style platforms → `community_slug`, `post_url`, `score`, `comment_count`.
 - **Web articles** — text/html on publisher domains → `article_url`, `publication`, `byline`.
 - **Service manuals** — application/pdf with publisher metadata matching a manual pattern → `service_section`, `vehicle_platform`, `manufacturer`.
 - **Musical recordings** — audio/* with populated ID3 artist/album → `artist`, `track_title`, `album`, `track_number`.
+
+Credibility signals are also custom classifications — each signal is its own narrow schema. There is no universal credibility scheme; corpora invent their own vocabulary as patterns emerge. Some illustrative examples:
+
+```yaml
+# schema/classification/peer-reviewed.yaml
+schema_type: classification
+match:
+  content_type: "application/pdf"
+  uri_pattern: "^https?://(www\\.sciencedirect|link\\.springer|onlinelibrary\\.wiley|nature)\\.com/"
+classification:
+  add_tags: [peer-reviewed]
+```
+
+```yaml
+# schema/classification/preprint.yaml
+schema_type: classification
+match:
+  content_type: "application/pdf"
+  uri_pattern: "^https?://(arxiv\\.org|biorxiv\\.org|medrxiv\\.org)/"
+classification:
+  add_tags: [preprint]
+```
+
+```yaml
+# schema/classification/corporate-bias.yaml
+schema_type: classification
+match:
+  content_type: "*"
+  # LLM judgment: matches when contextualization recognizes
+  # promotional / corporate-PR framing in the content.
+classification:
+  add_tags: [corporate-bias]
+```
+
+```yaml
+# schema/classification/community-validated.yaml
+schema_type: classification
+match:
+  has_tags: [forum-thread]
+  # LLM judgment: applies when thread shows clear consensus
+  # across multiple independent users and no dissent.
+classification:
+  add_tags: [community-validated]
+```
+
+```yaml
+# schema/classification/anecdotal-claim.yaml
+schema_type: classification
+match:
+  has_tags: [forum-thread]
+  # LLM judgment: applies when content is a single user's
+  # unconfirmed experience report.
+classification:
+  add_tags: [anecdotal-claim]
+```
+
+Different corpora carry different credibility vocabularies. A research-paper corpus might add `retracted`, `predatory-journal`, `industry-funded`. A forum corpus might add `op-claim`, `consensus-supported`, `disputed`. A news corpus might add `wire-service`, `op-ed`, `sponsored-content`. The vocabulary evolves as the curator notices what kinds of credibility distinctions actually matter for the corpus's downstream synthesis use cases — the §3.3.3 schema-feedback loop applies to credibility signals like any other custom classification.
 
 Custom classification schemas are corpus-local and optional. The same MIME can carry different custom classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
 
