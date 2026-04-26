@@ -10,7 +10,9 @@ If you are Claude Code and this is the start of a session working on Athenaeum, 
 
 ```
 athenaeum/
-├── ARCHITECTURE.md          # Canonical specification (v8.0) — record model, frontmatter schema, design principles
+├── spec-athenaeum.md        # Canonical specification (v10) — data contract for records, frontmatter, body, schema library
+├── impl-corpus.md           # Implementation guide for the corpus / artifact-layer pipeline
+├── impl-codex.md            # Implementation guide for the codex / document-layer pipeline (created in refinement D)
 ├── CONTENT-TYPES.md         # Content type enumeration and metadata attributes
 ├── NEW-CORPUS.md            # Corpus planning notes
 ├── Cargo.toml               # Workspace root
@@ -53,7 +55,7 @@ cd crates/ath-gui && trunk build
 
 ## Key design principles
 
-- **ARCHITECTURE.md is the spec.** Code must conform to it. When code needs something the spec doesn't cover, update the spec first.
+- **`spec-athenaeum.md` is the spec.** Code must conform to it. When code needs something the spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md` and `impl-codex.md`, not in the spec.
 - **Two corpora, always separate.** `../corpus-private` and `../corpus-public` are hardcoded in ath-server. They are distinct collections with a corpus switcher, never merged.
 - **Client-server architecture.** Both desktop and web targets are HTTP clients. The GUI never reads the filesystem directly.
 - **SQLite is in-memory.** Rebuilt from corpus files on every server start. It's a query engine, not a data store.

@@ -1,12 +1,24 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.0
+version: 10.1
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-04-25
+date_modified: 2026-04-26
 changelog:
+  - version: 10.1
+    date: 2026-04-26
+    summary: >
+      Refinement pass A. Spec de-prescribed: §4 (Pipeline) and §5 (Agents) trimmed
+      from process recipes to data-shape contracts; concrete sharding and on-disk
+      paths moved to the new companion implementation guides `impl-corpus.md` and
+      `impl-codex.md`. Base schemas (§3.3.1) gain explicit `hashes:` declarations —
+      which cryptographic and perceptual hashes ship with each MIME's artifacts is
+      now part of the data contract, not implementation detail. ARCHITECTURE.md
+      renamed to spec-athenaeum.md to clarify its role as the spec, distinct from
+      the impl docs. Examples in §3.4 anonymized — no real-world brand, forum,
+      vehicle, or platform names.
   - version: 10.0
     date: 2026-04-24
     summary: >
@@ -103,43 +115,30 @@ Above the corpus sits the **compendium layer** — curated reference works synth
 
 A **record** is the universal unit of the Athenaeum. Every record is a single markdown file with YAML frontmatter and a body. Records are one of two kinds:
 
-- **Artifact records** (`record_type: artifact`) — one per captured file, named by the blake3 hash of the binary content (`{blake3-hash}.md`). The body is a normalized text rendering of the original content.
+- **Artifact records** (`record_type: artifact`) — one per captured file, named by the blake3 hash of the binary content. The body is a normalized text rendering of the original content.
 
-- **Document records** (`record_type: document`) — authored compositions, named by UUID v4 (`{uuid}.md`). The body is markdown prose with wikilinks and embeds referencing other records.
+- **Document records** (`record_type: document`) — authored compositions, named by UUID v4. The body is markdown prose with wikilinks and embeds referencing other records.
 
-The corpus is a flat collection of records plus a content-addressed binary store and supporting directories:
+A corpus contains the following top-level directories:
 
 ```
 corpus/
-├── artifacts/
-│   ├── a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5...md     # artifact records
-│   ├── b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3...md
-│   └── ...
-├── documents/
-│   ├── a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6.md   # document records
-│   └── ...
-├── binary/
-│   ├── a7/f3/b2c1d4e5f6...html                   # content-addressed binaries
-│   ├── b8/c9/d0e1f2a3b4...jpg
-│   └── ...
-├── capture/
-│   └── (in-progress captures, no UUIDs or hashes assigned yet)
-└── schema/
-    ├── base/
-    │   └── (MIME-type base schemas — may be symlinked or copied from the toolkit)
-    └── classification/
-        └── (corpus-local classification schemas)
+├── artifacts/   — artifact records (content-addressed by blake3)
+├── documents/   — document records (UUID-named)
+├── binary/      — content-addressed binary store, keyed by blake3
+├── capture/     — staging area for in-progress captures
+└── schema/      — base and classification schemas (see §3.3)
 ```
 
 **Directory purposes:**
 
-- **`artifacts/`** — Artifact records (one markdown file per captured artifact, named by blake3 hash).
-- **`documents/`** — Document records (authored compositions, named by UUID).
-- **`binary/`** — Content-addressed binary store. Each captured file lives at a path derived from its blake3 hash. Internal structure (sharding, extension handling) is a tooling concern; the only invariant is that a binary is retrievable given its blake3 hash.
-- **`capture/`** — Staging area for in-progress captures. Descriptive folder names; no identity assigned yet. Failed captures remain here without consuming corpus resources.
-- **`schema/`** — Normalization and classification schemas (see §3.3). `base/` holds universal MIME-type base schemas; `classification/` holds corpus-local classification schemas.
+- **`artifacts/`** — Artifact records, content-addressed by the blake3 hash of the underlying binary. Concrete on-disk layout (e.g., sharding) is an implementation concern; the only invariant is that an artifact record is locatable by its blake3 hash.
+- **`documents/`** — Document records, identified by UUID.
+- **`binary/`** — Content-addressed binary store. Each captured file is locatable by its blake3 hash; concrete layout is an implementation concern.
+- **`capture/`** — Staging area for in-progress captures. No identity assigned yet. Failed captures remain here without consuming corpus resources.
+- **`schema/`** — Schemas governing normalization and classification (see §3.3).
 
-There is no nesting beyond the top-level separation. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy.
+There is no nesting beyond the top-level separation. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy. Concrete on-disk paths and sharding conventions live in the implementation guide (`impl-corpus.md`).
 
 ### 2.2 Artifacts
 
@@ -264,14 +263,14 @@ Example artifact frontmatter fragment:
 blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
 record_type: artifact
 content_type: text/html
-origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
 captures:
   - date: 2026-03-15T14:22:00Z
     method: scrape
-    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
   - date: 2026-04-02T09:11:00Z
     method: scrape
-    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
 hashes:
   sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 normalization_type: extraction
@@ -449,10 +448,13 @@ The `schema/` directory holds reference documents that describe how to normalize
 
 #### 3.3.1 Base Schemas (MIME type)
 
-Base schemas are keyed by `content_type`. They define:
+Base schemas are keyed by `content_type`. **They are part of the data contract** — every conforming corpus carries the fields and hashes its base schemas declare for the MIMEs it contains. Tooling consuming the corpus relies on these guarantees absolutely.
+
+A base schema defines:
 
 - **Normalization method:** `extraction`, `transcription`, `description`, or `metadata`.
 - **Normalization guidance:** prose instructions for the normalizer.
+- **Hashes:** the cryptographic and perceptual hashes that ship with every artifact of this MIME. `blake3` is always present (it is the artifact's identity). Format-specific perceptual hashes (e.g., `chromaprint` for audio, `phash` for images) are declared here. Any auxiliary hashes (e.g., `sha256`, `md5`) the schema chooses to publish are also declared here. The per-artifact instances of these hashes live in the artifact record's `hashes` field (§3.1.2).
 - **Extended fields:** structured metadata mechanically extractable from any file of this type. These are format-intrinsic — they come from file headers and embedded metadata.
 
 Base schemas are universal. They apply to any corpus using this MIME type. They travel with the Athenaeum toolkit, not with individual corpora.
@@ -468,6 +470,11 @@ normalization:
   guidance: |
     Extract audio metadata from file headers. Read ID3v2 tags
     when present, falling back to ID3v1.
+
+hashes:
+  - blake3         # required for every artifact (its identity)
+  - chromaprint    # perceptual hash for audio
+  - sha256         # auxiliary, for interoperability with external systems
 
 extended_fields:
   duration_seconds:
@@ -491,6 +498,8 @@ extended_fields:
     source: file_metadata
     description: "Audio channels (1=mono, 2=stereo)."
 ```
+
+The procedural side — how a normalizer detects MIME, in what order it computes these hashes, where the resulting binary lands on disk — is an implementation concern (see `impl-corpus.md`). What the spec mandates is that each artifact of this MIME ends up carrying every declared hash and every required field.
 
 #### 3.3.2 Corpus-Local Classification Schemas
 
@@ -559,15 +568,15 @@ A corpus authoring its own classification schemas adds further extended fields o
 ```yaml
 ---
 blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
-title: "Caliper Rebuild Thread - G8Forum"
-description: "Forum thread documenting front caliper rebuild on a 2009 Pontiac G8 GT, with photos of bore wear and discussion of remanufactured units."
+title: "Caliper Rebuild Thread"
+description: "Enthusiast-forum thread documenting a front caliper rebuild on a sedan, with photos of bore wear and discussion of remanufactured units."
 record_type: artifact
 content_type: text/html
-origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
 captures:
   - date: 2026-03-15T14:22:00Z
     method: scrape
-    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
 status: normalized
 visibility: visible
 tags: [brake-caliper, caliper-rebuild]
@@ -582,64 +591,64 @@ conversion_date: 2026-03-15
 
 # Schema-extracted extended fields (from text/html base schema)
 page_title: "Caliper Rebuild Thread"
-meta_description: "Discussion of front caliper rebuild on 2009 Pontiac G8 GT"
+meta_description: "Discussion of front caliper rebuild"
 language: "en"
 ---
 
 ## Caliper Rebuild Thread
 
-**Original post by GTO_Dave, 2024-08-12:**
+**Original post by user_alpha, 2024-08-12:**
 
-Had to rebuild the front calipers on my '09 G8 GT at 180k km.
+Had to rebuild the front calipers on my sedan at 180k km.
 Here's what the bore looked like after pulling the piston:
 
 ![[b8c9d0e1f2a3b4c5...]]
 
 Scoring was bad enough that I decided to replace rather than hone.
-Ordered a remanufactured unit from [RockAuto](https://rockauto.com/caliper-xyz).
+Ordered a remanufactured unit from [a parts retailer](https://parts.example.com/caliper-xyz).
 
 If you're seeing similar wear, check out the
 [[c9d0e1f2a3b4c5d6...|brake bleeding procedure thread]]
 before reassembling — I made the mistake of not bench-bleeding first.
 ```
 
-The inline image is embedded via `![[blake3-hash]]` — this embeds the image artifact's normalized text body (a visual description). The link to the bleeding thread is a wikilink to another artifact record. The RockAuto link stays as a plain markdown URL because that page wasn't captured. No editorialization in the body — it faithfully mirrors the original forum post's structure and content.
+The inline image is embedded via `![[blake3-hash]]` — this embeds the image artifact's normalized text body (a visual description). The link to the bleeding thread is a wikilink to another artifact record. The parts-retailer link stays as a plain markdown URL because that page wasn't captured. No editorialization in the body — it faithfully mirrors the original forum post's structure and content.
 
 #### Document Record
 
 ```yaml
 ---
 uuid: "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6"
-slug: "brake-caliper-rebuild-g8"
-title: "Brake Caliper Rebuild — Pontiac G8 GT"
-description: "Authored guide to rebuilding the front calipers on Zeta-platform Pontiac G8 GT, drawing on the service manual, GTO_Dave's forum thread, and a video walkthrough."
+slug: "brake-caliper-rebuild"
+title: "Brake Caliper Rebuild"
+description: "Authored guide to rebuilding the front calipers on a sliding-caliper braking system, drawing on the service manual, a community forum thread, and a video walkthrough."
 record_type: document
 status: draft
 visibility: visible
-tags: [brake-caliper, caliper-rebuild, g8-gt, zeta-platform]
+tags: [brake-caliper, caliper-rebuild]
 credibility_tier: expert
 ---
 
 ## Overview
 
-The front brake calipers on the Zeta platform are a single-piston
-sliding design. Rebuild is straightforward but the piston bore must
-be inspected carefully.
+The front brake calipers in a typical single-piston sliding design
+are straightforward to rebuild, but the piston bore must be inspected
+carefully.
 
 ![[blake3://a7f3b2c1?page=4&crop=50,100,550,400|Caliper exploded diagram from service manual]]
 
 ## Inspection
 
-Remove the caliper mounting bolts using a 14mm socket. See
-[[b8c9d0e1...|AllData procedure]] for torque specs.
+Remove the caliper mounting bolts using the appropriate socket size.
+See [[b8c9d0e1...|service-manual procedure]] for torque specs.
 
 Inspect the piston bore for scoring:
 
 ![[blake3://c9d0e1f2?framegrab=1:23|Bore scoring example from video walkthrough]]
 
 If scoring is visible as in the image above, the caliper must be
-replaced. The bore cannot be honed to spec on these units — see
-[[d0e1f2a3...|GTO_Dave's rebuild thread]] for discussion.
+replaced — the bore cannot be honed back to spec on this design. See
+[[d0e1f2a3...|forum-thread discussion]] for additional commentary.
 
 ## Related
 
@@ -742,22 +751,20 @@ Captures may pass through `capture/` as a transient workspace for in-progress ac
 
 #### 4.1.2 Reconciliation
 
-For each captured file:
+When reconciliation completes for a captured file:
 
-1. **Fetch.** Retrieve the target and all embedded resources.
-2. **Hash.** Compute the blake3 hash of the file's binary content. Optionally compute auxiliary hashes (sha256, md5) for interoperability.
-3. **Dedup check.**
-   - If `artifacts/{hash}.md` exists with a matching `origin_uri`: append a new entry to `captures[]`. No new record.
-   - If `artifacts/{hash}.md` exists with a different `origin_uri`: extend `origin_uri` to a string array and append a `captures[]` entry.
-   - If `artifacts/{hash}.md` does not exist: create a new artifact record with `status: stub`, `record_type: artifact`, `blake3`, `content_type` (from MIME detection), `origin_uri`, and one `captures[]` entry. Body is empty pending normalization.
-4. **Store binary.** Place the file in the content-addressed binary store at `binary/{hash}.{ext}`. Idempotent — if the file already exists at that path, no-op.
+- The file's binary content is locatable in the content-addressed binary store under its blake3 hash.
+- An artifact record exists for that blake3 hash. If a record for the hash already existed (the bytes had been captured before), reconciliation appended capture provenance to it rather than creating a duplicate. If no record existed, a new one was created with `record_type: artifact`, `blake3`, `content_type` (the MIME determined for the binary), capture provenance, and `status: stub` (body empty pending normalization).
+- The artifact record carries every hash declared by its base schema (§3.3.1) — at minimum `blake3`, plus any format-specific perceptual hashes and auxiliary hashes the schema lists.
+- Reconciliation has not classified *what the record is about* — only *what format it is in*. Classification (tags, custom classification schemas) happens during normalization or in later passes.
+
+The procedural detail — order of fetch / MIME-detect / hash / store, transient staging, in-memory record build — is implementation-specific (see `impl-corpus.md`).
 
 **Key principles:**
 
 - Capture is the **only step requiring network access**. Everything downstream is offline.
-- Identity is the hash, not an assigned UUID. Failed captures consume no identity space.
-- Every captured file becomes its own artifact record. Bundles of related files (a forum thread plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
-- Reconciliation does not classify *what the record is about* — only *what format it is in*. Classification (tags, classification schemas) happens during normalization or in later passes.
+- Identity is the hash. Failed captures consume no identity space.
+- Every captured file becomes its own artifact record. Bundles of related files (a page plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
 
 ### 4.2 Normalize
 
@@ -769,7 +776,7 @@ Normalization transforms an artifact stub into a complete, useful markdown recor
 
 **How:** MIME-driven, schema-guided. The base schema for the artifact's `content_type` selects the conversion path: extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text via VLM), or metadata summary (opaque binaries).
 
-**Output:** The body of `{blake3}.md` is filled with the artifact's content as well-formed markdown. `status` set to `draft`. `normalization_type` set to the method used.
+**Output:** The artifact record's body is filled with the artifact's content as well-formed markdown. `status` set to `draft`. `normalization_type` set to the method used.
 
 #### 4.2.2 Cross-reference resolution
 
@@ -791,18 +798,13 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **What:** Create or edit a document record that synthesizes knowledge across one or more artifacts and other documents.
 
-**Process:**
-
-1. **Identify a synthesis target.** A topic that benefits from authored prose (a how-to guide, a concept definition, an album page, a compendium chapter source). Triggers may come from the curator, from emerging tag clusters, from operator direction, or from compendium gaps.
-2. **Assign UUID.** Generate a UUIDv4 for the new document.
-3. **Write the body.** Author markdown prose. Cite artifacts via wikilinks (`[[blake3|text]]`). Embed artifact content where it pays off (`![[blake3]]`). Use functional URIs for computed transformations (`![[blake3://hash?params]]`). Link to peer documents (`[[uuid-or-slug|text]]`). Apply tags in frontmatter.
-4. **Write the document.** Save as `documents/{uuid}.md` with `record_type: document`, the assigned UUID, optional slug, title, description, tags, and quality fields.
+**Outputs of an authoring pass:** A document record with `record_type: document`, a UUID, optional slug, title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks (`[[blake3|text]]`), embeds artifact content where it pays off (`![[blake3]]`), uses functional URIs for computed transformations (`![[blake3://hash?params]]`), links to peer documents (`[[uuid-or-slug|text]]`), and applies tags in frontmatter.
 
 There is no merge ceremony, no constituent list, no merge rationale field. The body *is* the synthesis; the references in the body are the structural relationships.
 
 **Authoring is non-destructive.** Referenced artifacts and other documents are unchanged and independently addressable. Removing a reference from a document body simply removes that reference — no cascade, no mutation of the target.
 
-**Documents may be authored in layers.** A "Caliper Rebuild — Pontiac G8 GT" document may be referenced by a higher-level "Brake Caliper Service" document, which is in turn referenced by a "Brake System Overview" document. Each level adds context. The link graph is the hierarchy.
+**Documents may be authored in layers.** A specific subject's how-to document may be referenced by a higher-level service-overview document, which is in turn referenced by a system-overview document. Each level adds context. The link graph is the hierarchy.
 
 ### 4.4 Re-normalize
 
@@ -862,38 +864,29 @@ Agents consult base schemas and classification schemas under `schema/` to apply 
 
 ### 5.2 Capturer
 
-Handles capture and reconciliation for a single content item.
+Brings a single content item into the corpus.
 
 **Model class:** Haiku-tier (fast, cheap — no creative judgment needed).
 
 **Scope:** One content item per invocation.
 
-**Responsibilities:**
+**Output contract:** When the capturer finishes successfully, the artifact record for the captured bytes exists (newly created or augmented with this capture's provenance), and the binary lives in the content-addressed store keyed by its blake3 hash. The artifact's MIME has been determined, and every hash declared by its base schema has been computed and recorded. The capturer reports whether the record is new or existing, plus any warnings.
 
-1. Run the appropriate capture script to acquire the file from its `origin_uri` into staging (or directly to the binary store).
-2. Compute the blake3 hash and any auxiliary hashes.
-3. Detect MIME type (extension + magic-byte sniffing).
-4. Reconcile against the existing corpus: dedup-check, append capture event, or create a new artifact stub.
-5. Move the binary into the content-addressed store.
-6. Report results: hash, MIME, whether the record is new or existing, any warnings.
-
-The capturer is a reliable executor, not a decision maker — it does not choose what to capture or how to classify content.
+The capturer is a reliable executor, not a decision maker — it does not choose what to capture or how to classify content. The procedural details (fetch tooling, MIME-detect ordering, in-memory vs on-disk staging) live in `impl-corpus.md`.
 
 ### 5.3 Normalizer
 
-Transforms artifact stubs into fully normalized records, handling conversion, cross-reference resolution, and contextualization.
+Brings an artifact stub to `status: normalized`.
 
 **Model class:** Sonnet-tier (creative judgment required for contextualization, issue surfacing, description generation).
 
 **Scope:** One artifact per invocation.
 
-**Responsibilities:**
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every classification-schema-declared field where a classification schema matched, the resulting tags, a `normalization_type` reflecting how the body was derived, an assessed `credibility_tier`, a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
-1. **Conversion.** For artifacts with `status: stub`, run the MIME-matched converter to fill the markdown body. Set `status: draft`. Set `normalization_type` to the method used. This step shells out to deterministic tooling.
-2. **Cross-reference resolution.** For each hyperlink and embedded resource in the original content, check whether the target was captured (by URL → blake3 lookup). If captured, replace with a blake3 wikilink or embed. If not, leave as a standard URL. Mechanical resolution — the normalizer does not add links that didn't exist in the original content.
-3. **Schema application.** Apply the base schema for the artifact's `content_type` (extracts format-intrinsic extended fields, sets normalization guidance). Then check classification schemas for matching conditions; apply any that match (add tags, extract domain-specific extended fields).
-4. **Contextualization.** Refine the body with LLM judgment, consulting schema guidance. Improve formatting fidelity, resolve encoding ambiguity, generate alt text for images, surface issues. Generate or refine `description`. Assess `credibility_tier`. Set `status: normalized`.
-5. **Self-verify.** Confirm `content_type` matches the actual MIME of the stored binary. Confirm `blake3` field matches the filename and the binary store key.
+Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
+
+The split between deterministic (conversion, cross-reference resolution, schema-driven extraction) and LLM-driven (contextual refinement, description, credibility judgment) is described in §5.7. Procedural detail lives in `impl-corpus.md`.
 
 ### 5.4 Author
 
@@ -903,12 +896,7 @@ Creates or edits document records that synthesize knowledge across artifacts and
 
 **Scope:** One document per invocation.
 
-**Responsibilities:**
-
-1. **Identify synthesis targets** (when prompted). Given a topic, a tag cluster, or operator direction, identify what document should be authored.
-2. **Compose the body.** Author markdown prose that synthesizes knowledge across referenced artifacts and documents. Cite via wikilinks, embed where appropriate, use functional URIs for computed transformations of artifact content.
-3. **Write the document.** Assign UUID, populate frontmatter (title, description, tags, optional slug, status, credibility tier), write to `documents/{uuid}.md`.
-4. **Maintain peer references.** When authoring or editing a document, surface backlink candidates and related documents so cross-references stay current.
+**Output contract:** When the author finishes successfully, a document record exists with `record_type: document`, a UUID, optional slug, title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations, and links to peer documents. Backlinks and related-document candidates are surfaced for follow-up.
 
 ### 5.5 Curator
 
