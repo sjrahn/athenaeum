@@ -12,7 +12,7 @@ If you are Claude Code and this is the start of a session working on Athenaeum, 
 athenaeum/
 ├── spec-athenaeum.md        # Canonical specification (v10) — data contract for records, frontmatter, body, schema library
 ├── impl-corpus.md           # Implementation guide for the corpus / artifact-layer pipeline
-├── impl-codex.md            # Implementation guide for the codex / document-layer pipeline (created in refinement D)
+├── impl-codex.md            # Implementation guide for the codex / document-layer pipeline
 ├── CONTENT-TYPES.md         # Content type enumeration and metadata attributes
 ├── NEW-CORPUS.md            # Corpus planning notes
 ├── Cargo.toml               # Workspace root
