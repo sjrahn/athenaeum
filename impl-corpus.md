@@ -90,7 +90,7 @@ Append per-capture provenance to the artifact record:
 - Append the encounter timestamp to `capture_dates[]`.
 - Add any new URI(s) (request URL, final-after-redirect URL, asset CDN URL, mirror URL, DOI, `file://` path) to `uris[]`. URIs are deduplicated as a set; order doesn't matter.
 
-Refinement B will land the simplified two-array shape (`uris[]` + `capture_dates[]`) — until then, the v10 `captures[]` struct array is what gets appended.
+That's it. The artifact record carries `uris[]` (every URI known to resolve to its bytes, none canonical) and `capture_dates[]` (every timestamp the bytes were encountered). The pipeline does **not** record per-event metadata (which URI was actually used at which moment, what `method` was used, what redirect chain occurred). If recovering a particular (uri, date) capture package becomes important later, that's a job for an out-of-band capture log, not for the artifact record.
 
 ### 2.7 Storage layout
 
@@ -195,7 +195,7 @@ Custom classification schemas (§3.3.2 of the spec) are corpus-local and corpus-
 The curator (human or agent) periodically scans the corpus for patterns that suggest a classification schema should exist:
 
 - **Tag clusters.** A set of artifacts share a tag and would benefit from richer extended fields than the base schema gives.
-- **URI-domain frequency.** Many artifacts share an `origin_uri` domain, suggesting a platform-specific schema (custom field set for that platform).
+- **URI-domain frequency.** Many artifacts have one of their `uris[]` matching a common domain, suggesting a platform-specific schema (custom field set for that platform).
 - **Recurring extended-field values.** Many artifacts have the same value in a schema-extracted field, suggesting a sub-classification.
 - **Codex-driven demand.** The codex/compendium layers (`impl-codex.md`) reveal patterns when authoring keeps reaching for the same kind of metadata that isn't currently extracted.
 

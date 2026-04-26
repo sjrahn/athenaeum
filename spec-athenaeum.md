@@ -1,12 +1,23 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.1
+version: 10.2
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.2
+    date: 2026-04-26
+    summary: >
+      Refinement pass B. Artifact record stripped to bare-fact provenance:
+      `origin_uri` + structured `captures[]` (with date/method/origin_uri sub-objects)
+      replaced by two flat arrays — `uris: string[]` (cumulative, none canonical;
+      append-friendly so DOIs/mirrors added later become valid retroactively for all
+      captures) and `capture_dates: ISO-8601[]` (encounter timestamps). No per-event
+      `method` or URI association; recovery of a specific (uri, date) capture package
+      is not the artifact record's job. v9-leftover `original_filename` and singular
+      `capture_date` dropped (local-file captures use `file://` URIs in `uris[]`).
   - version: 10.1
     date: 2026-04-26
     summary: >
@@ -70,7 +81,7 @@ Above the corpus sits the **compendium layer** — curated reference works synth
 
 1. **Every record is independently valid.** A single captured page and a fully synthesized monograph are both complete, addressable, useful markdown documents.
 
-2. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a capture event to the existing record rather than creating a new one.
+2. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a new entry to the existing record's `capture_dates` rather than creating a new record.
 
 3. **Normalization integrity.** An artifact's body is a faithful normalized rendering of its original content. Normalization may produce a more accurate representation (resolve encoding ambiguity, fix format-conversion artifacts, surface OCR text from images) but it MUST NOT add information that didn't exist in the original. Editorial work happens in documents, not in artifacts.
 
@@ -101,7 +112,7 @@ Above the corpus sits the **compendium layer** — curated reference works synth
 | **Embed** | `![[target]]` — inline content inclusion. Renders the target's normalized body at that position. For images, this surfaces the text description; in compiled outputs the actual binary can be substituted. |
 | **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are corpus-local — they require no external concept document to function. |
 | **Slug** | An optional, corpus-unique, human-readable identifier for a record (`[a-z0-9]+(-[a-z0-9]+)*`). Enables readable wikilinks: `[[brake-bleeding\|Brake Bleeding Procedure]]` instead of `[[a1b2c3d4-…\|Brake Bleeding Procedure]]`. |
-| **Capture** | A timestamped event recording when an artifact's bytes were obtained from an `origin_uri`. Re-encountering identical bytes appends a new capture entry rather than creating a new record. |
+| **Capture** | An encounter event recorded only by date. Re-encountering identical bytes appends a new entry to the artifact's `capture_dates`; the bytes themselves never move and never produce a new record. |
 | **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original; no editorialization beyond inline topic annotations. |
 | **Functional URI** | A composable URI scheme (`blake3://{hash}?page=4&crop=…`) used in document bodies to reference deterministic transformations of artifact content. Document-layer only. Resolved at compile/render time. |
 | **Schema** | A reference document describing how to normalize or classify content. Two kinds: **base schemas** (MIME-type-keyed, universal, format-intrinsic) and **classification schemas** (corpus-local, domain-specific). |
@@ -144,15 +155,15 @@ There is no nesting beyond the top-level separation. Organization is expressed t
 
 An artifact record represents a single captured file. It is named by the blake3 hash of the file's binary content (`{blake3-hash}.md`) and contains:
 
-- **Frontmatter:** `content_type` (MIME type), `origin_uri` (where obtained), `captures[]` (timestamped capture events), schema-extracted extended fields, and standard metadata fields.
+- **Frontmatter:** `content_type` (MIME type), `uris[]` (all known URIs that resolve to this artifact, none canonical), `capture_dates[]` (timestamps these bytes were encountered), schema-extracted extended fields, and standard metadata fields.
 
 - **Body:** A normalized markdown rendering of the artifact, faithful to the original content's structure and meaning. For HTML: stripped-and-cleaned markdown preserving document structure. For audio: a transcript. For images: OCR text and/or visual description. For PDFs: extracted text with structural markup. Cross-references in the original content (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds where the targets exist in the corpus, preserving the original content's link structure. See §3.2 for body format rules.
 
 - **Binary storage:** The actual file is stored in the content-addressed binary store under `binary/`, retrievable by the same blake3 hash.
 
-**Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `captures[]` entry. Git sees a metadata-only diff.
+**Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `capture_dates` entry, and any URI not already in `uris[]` is appended. Git sees a metadata-only diff.
 
-**Re-capture of changed content.** If a previously captured URL returns different content, the new content produces a different hash and a new artifact record. Both share the same `origin_uri`, making them discoverable as captures of the same origin at different points in time. Cross-URI succession (the same content at a new URL) has no automatic mechanism in v10.
+**Re-capture of changed content.** If a previously captured URL returns different content, the new content produces a different hash and therefore a new artifact record. Both records will list the URL in their `uris[]`, making them discoverable as captures of the same origin URL at different points in time. Cross-URI succession (the same content at a new URL) has no automatic mechanism in v10.
 
 **Record type.** Artifact records use `record_type: artifact`.
 
@@ -250,9 +261,9 @@ Present only on artifact records (`record_type: artifact`).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `origin_uri` | string or string[] | yes | The URI(s) where this file was obtained. Multiple URIs indicate the same file found at different locations. |
-| `captures` | object[] | yes | Timestamped capture events. Accumulates entries when the same bytes are re-encountered. Each entry: `{date: ISO-8601, method: string, origin_uri: string}`. |
-| `hashes` | map | no | Auxiliary cryptographic hashes for interoperability (e.g., `md5`, `sha256`). Not used for identity or similarity — blake3 is the identity. |
+| `uris` | string[] | yes (≥1) | All known URIs that resolve to this artifact's bytes. None canonical — request URLs, redirect targets, mirror URLs, DOIs, IPFS CIDs, `file://` paths are all equivalent labels. URIs may be added at any time (e.g., a DOI assigned later, a mirror discovered) and become valid retroactively for the artifact. |
+| `capture_dates` | ISO-8601[] | yes (≥1) | Timestamps at which these bytes were encountered. Re-encountering identical bytes appends a new entry. |
+| `hashes` | map | no | Per-artifact instances of the cryptographic and perceptual hashes the base schema (§3.3.1) declares for this MIME. blake3 is at the top level (it is the identity); other declared hashes (e.g., `chromaprint`, `phash`, `sha256`) live here. |
 | `normalization_type` | enum | no | How the body was derived: `extraction` (HTML→markdown, PDF→text), `transcription` (audio/video→text), `description` (image→text), `metadata` (opaque binary→summary). |
 | `author` | string | no | Identifiable person who produced this content. Omit for anonymous content. |
 | `date_published` | date | no | When the original content was published. Omit for undated content. |
@@ -263,20 +274,20 @@ Example artifact frontmatter fragment:
 blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
 record_type: artifact
 content_type: text/html
-origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
-captures:
-  - date: 2026-03-15T14:22:00Z
-    method: scrape
-    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
-  - date: 2026-04-02T09:11:00Z
-    method: scrape
-    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
+uris:
+  - "https://forum.example.com/threads/caliper-rebuild.4521/"
+  - "https://forum.example.com/threads/caliper-rebuild-2024/"   # redirect target
+  - "doi:10.5555/forum.thread.4521"                              # added retroactively
+capture_dates:
+  - 2026-03-15T14:22:00Z
+  - 2026-04-02T09:11:00Z
 hashes:
+  simhash: "f7e8d9c0b1a24c3d"
   sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 normalization_type: extraction
 ```
 
-The same bytes encountered twice yield two `captures[]` entries on the same record — never two records.
+The same bytes encountered twice append a new entry to `capture_dates` — they never produce a second record. New URIs discovered for already-captured bytes are appended to `uris[]` whenever they're discovered, including long after the original capture.
 
 #### 3.1.3 Document-Specific Fields
 
@@ -572,11 +583,13 @@ title: "Caliper Rebuild Thread"
 description: "Enthusiast-forum thread documenting a front caliper rebuild on a sedan, with photos of bore wear and discussion of remanufactured units."
 record_type: artifact
 content_type: text/html
-origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
-captures:
-  - date: 2026-03-15T14:22:00Z
-    method: scrape
-    origin_uri: "https://forum.example.com/threads/caliper-rebuild.4521/"
+uris:
+  - "https://forum.example.com/threads/caliper-rebuild.4521/"
+capture_dates:
+  - 2026-03-15T14:22:00Z
+hashes:
+  simhash: "f7e8d9c0b1a24c3d"
+  sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 status: normalized
 visibility: visible
 tags: [brake-caliper, caliper-rebuild]
@@ -833,7 +846,7 @@ There is no merge ceremony, no constituent list, no merge rationale field. The b
 2. Resolve all functional URIs in document bodies — compute transformations, write derived artifacts to the build's output directory, substitute paths.
 3. Generate index and navigation structures appropriate to the output format (tag indexes, slug routes, backlink panels).
 
-**Origin-URL routing.** The build process can generate a lookup index mapping `origin_uri` values to artifact blake3 hashes, enabling consumers to find records by the URL they were captured from.
+**Origin-URL routing.** The build process can generate a lookup index mapping any `uris[]` value to its artifact blake3 hash, enabling consumers to find records by any of the URLs known to resolve to them.
 
 Build is an implementation detail — this spec defines what the corpus contains, not how it's published.
 
