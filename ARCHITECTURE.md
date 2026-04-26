@@ -1,12 +1,32 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 9.0
+version: 10.0
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-04-20
+date_modified: 2026-04-25
 changelog:
+  - version: 10.0
+    date: 2026-04-24
+    summary: >
+      Fundamental architecture revision. Source records replaced by content-addressed
+      artifact records — each captured file is its own record named by blake3 hash.
+      One artifact per record, one content_type, one normalization path. Byte-identical
+      dedup is structural. Artifact bodies faithfully mirror original content with
+      cross-references resolved to blake3 wikilinks and embeds where targets exist
+      in the corpus. All stored relations eliminated (is_a, part_of, same_as,
+      constituents) — replaced by Obsidian primitives (wikilinks, embeds, tags) and
+      computed similarity (blake3 exact, perceptual hashes, body embeddings). Two
+      sharply separated layers: artifact layer (faithful representation, no
+      editorialization) and document layer (authored knowledge, editorial freedom,
+      functional URIs for computed transformations). Normalized body established as
+      universal cross-modal representation enabling computed similarity without stored
+      edges. Schema library restructured: universal MIME-type base schemas plus
+      corpus-local classification schemas. Tags as sole classification mechanism —
+      flat, portable, corpus-local. Functional URI scheme for deterministic
+      transformations of artifact content at document compile time. Entity/set concept
+      distinction eliminated. Slug mechanism for human-readable addressability.
   - version: 9.0
     date: 2026-04-20
     summary: "content_type redefined as IANA MIME type. Schema library pivots from per-concept classification to per-MIME normalization guidelines; schemas self-declare applicable MIME types via their own frontmatter. Closed content-type enum removed — classification happens by forward reference to ordinary concept documents, with an informal distinction between set documents (valid part_of targets) and entity documents (linked via body prose). Relations reduced to two flat frontmatter fields (part_of, same_as); Relation struct with per-entry type dropped along with sequel_to/reply_to/references/adaptation_of/supersedes/superseded_by/contradicts. ArtifactRef gains mimetype (required) and primary (optional boolean, one-per-source). New visibility field (visible/deranked/hidden) separates editorial curation from pipeline status. Body tags (Obsidian-style #tag markers) forward-declared as the mechanism for topical aboutness. Contextualization specifies progressive disclosure of ancestor concept documents: eagerly loaded descriptions, lazy-fetched bodies via tool calls, to scale to deep part_of chains."
@@ -24,50 +44,56 @@ changelog:
 
 ### 1.1 What This Is
 
-The Athenaeum is a knowledge normalization and synthesis pipeline. It captures content from arbitrary external sources, normalizes it into a uniform markdown representation, composes related records through merging, and synthesizes domain-specific reference works (compendiums) from the normalized material.
+The Athenaeum is a knowledge normalization and synthesis system. It captures content from external sources, normalizes each captured file into a uniform markdown representation, and supports authoring documents that synthesize knowledge across many captured files.
 
-The system has two layers:
+The system has two sharply separated layers within the corpus:
 
-- **The corpus layer.** A flat collection of UUID-identified records, each producing exactly one markdown file. Records are either **sources** (captured from a single external origin) or **documents** (merged from other records). Records compose into a directed acyclic graph (DAG) through merging, where each level produces richer output than the level below.
+- **The artifact layer.** Content-addressed records, one per captured file, named by the blake3 hash of the file's binary content. Each artifact's body is a faithful normalized rendering of the original content. Cross-references in the original (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds where the targets exist in the corpus. The artifact layer is the ground truth — it preserves what was captured, exactly as it was.
 
-- **The compendium layer.** Curated synthesis of selected records into domain-specific reference works — structured, editorial, and opinionated where the corpus is faithful and objective.
+- **The document layer.** Authored markdown compositions, named by UUID. Document bodies have full editorial freedom: they reference artifacts as evidence, embed artifact content inline, and connect to other documents through wikilinks and tags. Documents are where synthesized, opinionated, contextualized knowledge lives.
+
+Above the corpus sits the **compendium layer** — curated reference works synthesized from selected records, organized by a domain taxonomy and shaped by an editorial point of view.
 
 ### 1.2 Design Principles
 
-1. **Every record is independently valid.** Whether it's a single captured forum post or a merged multi-source artist profile, every record in the corpus is a complete, addressable, useful markdown document.
+1. **Every record is independently valid.** A single captured page and a fully synthesized monograph are both complete, addressable, useful markdown documents.
 
-2. **Artifact immutability.** Captured artifacts (the raw external files — HTML, PDF, epub, etc.) never change. Normalization produces a new representation; it does not modify the original.
+2. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a capture event to the existing record rather than creating a new one.
 
-3. **Normalization integrity.** Normalization must never add information that doesn't already exist in the original artifact. Contextualization achieves a more accurate representation of the artifact's content — it may resolve ambiguity, fix formatting, and improve structure, but it must not fabricate or interpolate content. Sources are faithful to their origin. Documents are where the complete picture forms by combining multiple accurate sources.
+3. **Normalization integrity.** An artifact's body is a faithful normalized rendering of its original content. Normalization may produce a more accurate representation (resolve encoding ambiguity, fix format-conversion artifacts, surface OCR text from images) but it MUST NOT add information that didn't exist in the original. Editorial work happens in documents, not in artifacts.
 
-4. **Compositional merges.** Records compose into richer records without consuming the originals. A song record merged with lyrics and audio metadata produces a new, richer document. The originals remain independently accessible.
+4. **The normalized body as universal representation.** Every artifact record carries a text body: a normalized rendering of the original file appropriate to its content type. This body projects all modalities into a common representational space — text — enabling universal computation across the corpus. Search, similarity, clustering, and embeddings all operate on this body. The body is the durable, auditable, git-versioned input; everything derived from it is ephemeral cache, rebuildable when models improve or normalization is refined.
 
-5. **Metadata-driven organization.** Classification, grouping, and discovery are metadata operations, not filesystem operations. Moving a record from one category to another means updating a field, not relocating files or remapping IDs.
+5. **Compositional structure lives in the body.** Documents express composition through their prose: wikilinks, embeds, and tags. There is no stored frontmatter "constituents," "part_of," "is_a," or "same_as." The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties, not asserted.
 
-6. **Stable identity.** A record's UUID never changes regardless of how it's classified, merged, or reorganized. References to a record are permanent.
+6. **Metadata-driven organization.** Classification, grouping, and discovery are tag and link operations, not filesystem operations. Reorganizing the corpus means editing references, never moving or renaming files.
 
-7. **LLM-native.** The pipeline leverages LLM capabilities for semantic tasks (contextualization, merge candidate discovery, assembly) while keeping mechanical tasks (capture, format conversion) deterministic and reproducible.
+7. **Stable identity.** An artifact's blake3 hash never changes (the bytes are immutable). A document's UUID never changes. References are permanent.
 
-8. **Offline-first.** Only capture requires network access. Everything else operates on local data.
+8. **LLM-native.** The pipeline leverages LLM capabilities for semantic tasks (normalization, cross-reference resolution, document authoring) while keeping mechanical tasks (capture, hashing, format conversion, functional URI evaluation) deterministic and reproducible.
+
+9. **Offline-first.** Only capture requires network access. Everything else operates on local data — including normalization (when the local model is sufficient), document authoring, similarity, and compendium synthesis.
 
 ### 1.3 Terminology
 
 | Term | Definition |
 |------|-----------|
-| **Record** | The universal unit. A UUID-identified markdown file. Either a source or a document. |
-| **Source** | A record captured from a single external origin. Represents a faithful textual rendering of its artifact(s). |
-| **Document** | A record created by merging other records, or authored directly as a concept. Represents a synthesized or conceptual entity. |
-| **Artifact** | A raw external file (HTML, PDF, epub, image, audio, etc.) captured from an origin. Stored in `artifacts/{uuid}/`. Immutable. |
-| **Asset** | A file used or produced during document normalization — derived from artifacts (frame grabs, transcriptions) or an artifact used directly. Stored in `assets/{uuid}/`. Document-only. |
-| **UUID** | Universally unique identifier for a record (v4, RFC 9562). Stable and permanent. |
-| **Constituent** | A record that is a direct child of a document record in the merge DAG. |
-| **Merge** | The process of creating a document record from existing records about the same subject. |
-| **Normalization** | Converting raw captured content into well-formed markdown with structured metadata. Must not add information not present in the original artifact. |
+| **Record** | The universal unit. A markdown file with YAML frontmatter and a normalized or authored body. Either an artifact or a document. |
+| **Artifact Record** | A record representing a single captured file, named by the blake3 hash of its binary content (`{blake3-hash}.md`). One record per file, one content type per record. The body is a normalized text rendering of the artifact. The actual binary file is stored in content-addressed storage indexed by the same hash. Artifact records are the ground truth of the corpus. |
+| **Document Record** | A record representing authored knowledge, named by a UUID (`{uuid}.md`). The body is a markdown composition that references artifacts (as evidence) and other documents (as cross-references). Documents are where editorial work lives. |
+| **Content-Addressed Naming** | Artifact records are named by the blake3 hash of their binary content. Byte-identical files produce the same hash and therefore the same record — structural deduplication is automatic. Document records continue to use UUID-based naming. |
+| **Blake3** | The 256-bit content hash that identifies an artifact record and its underlying binary. 64-character lowercase hex string. Functions as identity, filename stem, and content-addressed storage key. |
+| **UUID** | Universally unique identifier for a document record (v4, RFC 9562). Stable and permanent. Not used on artifact records. |
+| **Reference** | A wikilink or embed in a record's body that points to another record by blake3 hash (artifacts) or UUID/slug (documents). References are the primary mechanism for expressing relationships between records. They live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. |
+| **Wikilink** | `[[target\|display]]` — a clickable cross-reference. Targets are blake3 hashes (for artifacts) or document UUIDs/slugs. The display text is optional; without it the target identifier is shown. |
+| **Embed** | `![[target]]` — inline content inclusion. Renders the target's normalized body at that position. For images, this surfaces the text description; in compiled outputs the actual binary can be substituted. |
+| **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are corpus-local — they require no external concept document to function. |
+| **Slug** | An optional, corpus-unique, human-readable identifier for a record (`[a-z0-9]+(-[a-z0-9]+)*`). Enables readable wikilinks: `[[brake-bleeding\|Brake Bleeding Procedure]]` instead of `[[a1b2c3d4-…\|Brake Bleeding Procedure]]`. |
+| **Capture** | A timestamped event recording when an artifact's bytes were obtained from an `origin_uri`. Re-encountering identical bytes appends a new capture entry rather than creating a new record. |
+| **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original; no editorialization beyond inline topic annotations. |
+| **Functional URI** | A composable URI scheme (`blake3://{hash}?page=4&crop=…`) used in document bodies to reference deterministic transformations of artifact content. Document-layer only. Resolved at compile/render time. |
+| **Schema** | A reference document describing how to normalize or classify content. Two kinds: **base schemas** (MIME-type-keyed, universal, format-intrinsic) and **classification schemas** (corpus-local, domain-specific). |
 | **Compendium** | A curated synthesis of records into a domain-specific reference work. |
-| **Content type** | The IANA MIME type of the record's primary artifact (sources) or `text/markdown` (documents). `unknown` is allowed as a sentinel. |
-| **Concept document** | An ordinary document record that represents an abstract idea, category, person, or entity. Other records classify themselves by referencing concept documents via `part_of`. No special schema or flag — just a regular document used as a reference target. |
-| **Schema** | A reference document under `schema/` giving normalization guidance for a MIME type or family of MIMEs. Schemas declare the MIME types they handle in their own frontmatter; they describe *how* to produce markdown from a given format, not *what* the record is about. |
-| **Relation** | A forward reference in a record's frontmatter to another record. Only two kinds exist: `part_of` (instance-of or membership) and `same_as` (equivalence). |
 
 ---
 
@@ -75,119 +101,116 @@ The system has two layers:
 
 ### 2.1 Records
 
-A **record** is the universal unit of the Athenaeum. Every record:
+A **record** is the universal unit of the Athenaeum. Every record is a single markdown file with YAML frontmatter and a body. Records are one of two kinds:
 
-- Has a universally unique identifier (UUID v4)
-- Is a single markdown file `{uuid}.md` with YAML frontmatter and normalized content body
-- Lives in either `sources/` or `documents/` depending on its type
-- Is independently addressable and useful as a standalone document
+- **Artifact records** (`record_type: artifact`) — one per captured file, named by the blake3 hash of the binary content (`{blake3-hash}.md`). The body is a normalized text rendering of the original content.
 
-The corpus is a flat collection of markdown files with supporting directories for artifacts, assets, and schemas:
+- **Document records** (`record_type: document`) — authored compositions, named by UUID v4 (`{uuid}.md`). The body is markdown prose with wikilinks and embeds referencing other records.
+
+The corpus is a flat collection of records plus a content-addressed binary store and supporting directories:
 
 ```
 corpus/
-├── sources/
-│   ├── 7a3f2b1c-4d5e-4f6a-8b9c-0d1e2f3a4b5c.md
-│   ├── 8b4e3c2d-5e6f-4a7b-9c0d-1e2f3a4b5c6d.md
+├── artifacts/
+│   ├── a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5...md     # artifact records
+│   ├── b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3...md
 │   └── ...
 ├── documents/
-│   ├── 9c5f4d3e-6f7a-4b8c-0d1e-2f3a4b5c6d7e.md
+│   ├── a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6.md   # document records
 │   └── ...
-├── artifacts/
-│   ├── 7a3f2b1c-4d5e-4f6a-8b9c-0d1e2f3a4b5c/
-│   │   ├── thread.html
-│   │   ├── img_001.jpg
-│   │   └── img_002.jpg
-│   └── ...
-├── assets/
-│   ├── 9c5f4d3e-6f7a-4b8c-0d1e-2f3a4b5c6d7e/
-│   │   ├── frame_001.jpg
-│   │   └── transcript.vtt
+├── binary/
+│   ├── a7/f3/b2c1d4e5f6...html                   # content-addressed binaries
+│   ├── b8/c9/d0e1f2a3b4...jpg
 │   └── ...
 ├── capture/
-│   └── brake-caliper-rebuild.12345/
-│       ├── thread.html
-│       └── img_001.jpg
+│   └── (in-progress captures, no UUIDs or hashes assigned yet)
 └── schema/
-    ├── html_content.md
-    ├── pdf_content.md
-    ├── audio_content.md
-    ├── video_content.md
-    └── ...
+    ├── base/
+    │   └── (MIME-type base schemas — may be symlinked or copied from the toolkit)
+    └── classification/
+        └── (corpus-local classification schemas)
 ```
 
 **Directory purposes:**
 
-- **`sources/`** — Source records (one markdown file per captured origin)
-- **`documents/`** — Document records (merged documents + concept documents, same shape)
-- **`artifacts/`** — Raw captured files organized by source UUID. Immutable originals. May be externalized to remote storage.
-- **`assets/`** — Derived or referenced files for document records, organized by document UUID. May be externalized to remote storage.
-- **`capture/`** — Staging area for in-progress captures. Descriptive folder names, no UUIDs. Failed captures remain here without consuming corpus resources.
-- **`schema/`** — MIME-normalization schemas. Each file declares which MIME types it handles in its own frontmatter (`applies_to_mimetypes:`) and provides conversion / contextualization guidance for the pipeline.
+- **`artifacts/`** — Artifact records (one markdown file per captured artifact, named by blake3 hash).
+- **`documents/`** — Document records (authored compositions, named by UUID).
+- **`binary/`** — Content-addressed binary store. Each captured file lives at a path derived from its blake3 hash. Internal structure (sharding, extension handling) is a tooling concern; the only invariant is that a binary is retrievable given its blake3 hash.
+- **`capture/`** — Staging area for in-progress captures. Descriptive folder names; no identity assigned yet. Failed captures remain here without consuming corpus resources.
+- **`schema/`** — Normalization and classification schemas (see §3.3). `base/` holds universal MIME-type base schemas; `classification/` holds corpus-local classification schemas.
 
-No nesting beyond the top-level separation. Organization is expressed through metadata (tags, MIME type, `part_of` references, `same_as` equivalences) and through the merge DAG — not through directory hierarchy.
+There is no nesting beyond the top-level separation. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy.
 
-### 2.2 Sources
+### 2.2 Artifacts
 
-**Sources** are records captured from a single external origin — a forum thread, a hosted video, a PDF document, a web article, a metadata page.
+An artifact record represents a single captured file. It is named by the blake3 hash of the file's binary content (`{blake3-hash}.md`) and contains:
 
-The source's `content_type` is the **IANA MIME type of its primary artifact**: `text/html`, `video/mp4`, `application/pdf`, `audio/mpeg`, and so on. The MIME drives normalization: a matching schema in the schema library (selected by MIME compatibility, not by filename) provides guidance on how to produce a faithful markdown rendition of content in that format. Sources do not carry semantic classifications like "forum post" or "bank statement" — those are expressed separately as `part_of` references to concept documents.
+- **Frontmatter:** `content_type` (MIME type), `origin_uri` (where obtained), `captures[]` (timestamped capture events), schema-extracted extended fields, and standard metadata fields.
 
-The source record's frontmatter references its artifact files via `artifacts://` URIs (see section 3.1.2) with SHA-256 hashes for integrity verification and `mimetype` per ref for accurate rendering. Exactly one artifact ref SHOULD be marked `primary: true` — it's the artifact the record's MIME-level `content_type` applies to and the default view in consumers. The artifacts themselves live in `artifacts/{uuid}/` and may be externalized to remote storage.
+- **Body:** A normalized markdown rendering of the artifact, faithful to the original content's structure and meaning. For HTML: stripped-and-cleaned markdown preserving document structure. For audio: a transcript. For images: OCR text and/or visual description. For PDFs: extracted text with structural markup. Cross-references in the original content (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds where the targets exist in the corpus, preserving the original content's link structure. See §3.2 for body format rules.
 
-**A source is a faithful representation of its artifact.** Normalization may improve formatting, resolve ambiguity, and fix structural issues, but it must not add information that isn't present in the original artifact. The source record is an accurate markdown rendition of its artifact — nothing more. Any classification beyond "what format is this" is a deferrable enrichment done via forward references after first-pass normalization completes.
+- **Binary storage:** The actual file is stored in the content-addressed binary store under `binary/`, retrievable by the same blake3 hash.
+
+**Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `captures[]` entry. Git sees a metadata-only diff.
+
+**Re-capture of changed content.** If a previously captured URL returns different content, the new content produces a different hash and a new artifact record. Both share the same `origin_uri`, making them discoverable as captures of the same origin at different points in time. Cross-URI succession (the same content at a new URL) has no automatic mechanism in v10.
+
+**Record type.** Artifact records use `record_type: artifact`.
 
 ### 2.3 Documents
 
-**Documents** are records that either (a) synthesize multiple related records about the same subject through a merge, or (b) represent a standalone concept (an abstract idea, a category, a person, a place, an entity) that other records forward-reference for classification purposes.
+A document record is an authored markdown composition representing synthesized knowledge. It is named by a UUID (`{uuid}.md`) and contains:
 
-A document's `content_type` is almost always `text/markdown` — documents *are* markdown by construction. Their role in the corpus (merged synthesis vs. standalone concept) is a matter of how other records relate to them, not something the document itself declares. A "Song" concept document is ontologically identical to "Convergence (2019 album)" — both are documents with bodies describing their subject. The difference is emergent: hundreds of song-audio source records reference the Song concept document via `part_of`; relatively few records reference the specific album.
+- **Frontmatter:** `uuid`, `title`, `tags` (classification), and minimal metadata. Document frontmatter is deliberately thin — structural relationships live in the body.
 
-Merged documents list their **direct constituent UUIDs** in the `constituents` field. Only direct children — not the full flattened tree. To find all leaf sources, follow the chain through constituent records. Concept documents typically have no `constituents` (they aren't synthesized from other records; they're authored directly), or a short list of the key sources that informed the document's prose.
+- **Body:** Authored markdown prose with wikilinks to other documents, wikilinks and embeds referencing artifacts (by blake3 hash), and optionally functional URIs for computed transformations of artifact content. The body *is* the composition — it is the authoritative record of what knowledge the document synthesizes and what evidence it draws on.
 
-Documents may reference files via `asset_refs` — either derived files produced during normalization (stored in `assets/{uuid}/`) or artifacts from constituent source records used directly.
+Documents connect to other documents through wikilinks and tags. Documents reference artifacts through wikilinks (for citation/evidence) and embeds (for inline content inclusion). The reference direction is always document → artifact for evidence, and document ↔ document for knowledge structure.
 
-**Documents are where editorial work lives.** Unlike sources (which are faithful to a single artifact), documents may synthesize, reconcile disagreements, and draw cross-references. This is the appropriate place for the kind of editorial enrichment that would violate normalization integrity if applied to a source.
+**Documents are where editorial work lives.** Unlike artifact bodies (which faithfully mirror their original content), document bodies are written by curators or synthesis agents. Documents may add interpretation, analysis, and context that no single artifact contains; structure knowledge for a particular audience or purpose; reconcile disagreements across artifacts; and carry the editorial voice that artifacts intentionally lack.
 
-### 2.4 The Merge DAG
+**Record type.** Document records use `record_type: document`.
 
-Records compose into a directed acyclic graph (DAG) through merging. Each merge creates a new document record whose `constituents` field lists its direct children.
+### 2.4 The Document Graph
+
+Composition is expressed through references in document bodies — there is no stored "constituents" list, no `part_of` field, no merge DAG metadata. The link graph itself is the hierarchy.
 
 ```
-[lyrics_rym_a1b2]     ──┐
-                         ├──► [song_c3d4]  ──┐
-[audio_yt_e5f6]        ──┘                   │
-                                              ├──► [album_g7h8]  ──► [artist_k1l2]
-[lyrics_rym_i9j0]     ──┐                   │
-                         ├──► [song_m3n4]  ──┘
-[metadata_ma_o5p6]    ──┘
+[[artifact a7f3…]]   ──┐
+                       ├──►  [[doc song-meridian]]   ──┐
+[[artifact e5f6…]]   ──┘                               │
+                                                       ├──►  [[doc album-convergence]]  ──►  [[doc artist-celestial]]
+[[artifact i9j0…]]   ──┐                               │
+                       ├──►  [[doc song-tidal]]      ──┘
+[[artifact o5p6…]]   ──┘
 ```
+
+Each arrow is a wikilink or embed appearing in the body of the referencing record. The "Album: Convergence" document mentions and links to its track documents and the artist; each track document mentions and links to the artifacts it synthesizes from. Reading the body reveals the structure; no separate metadata block restates it.
 
 **Properties:**
 
-- **Acyclic.** A record cannot be a constituent of itself, directly or indirectly.
-- **Direct children only.** Each document's `constituents` lists only its immediate children. The full tree is reconstructable by traversal.
-- **Non-destructive.** Merging creates a new record; originals are unmodified and remain independently addressable.
-- **Multi-parent.** A single record can be a constituent of multiple document records. An interview transcript might contribute to both an artist document and a documentary film document.
+- **Composition is implicit.** Following wikilinks reconstructs the structure. There is no canonical "tree" — documents may have many parents and many children.
+- **Acyclic by convention.** Cycles are technically possible (a document linking to a document that links back) but conventionally avoided in compositional structures. Cross-references between peer documents (sibling links) are fine and frequently desirable.
+- **Non-destructive.** Authoring a parent document does not modify or consume its referenced children. The references are pointers; the targets remain independent.
+- **Multi-parent.** A single artifact or document may be referenced by many documents. An interview transcript artifact might be cited by both an artist-profile document and a documentary-film document.
+- **Reference direction.** Documents reference artifacts (citation/evidence). Documents reference other documents (knowledge structure, prerequisites, see-also). Artifacts reference other artifacts only when the original content's cross-references resolve to captured targets (see §3.2). Artifacts never reference documents — artifact bodies are faithful to original content, which had no knowledge of corpus documents.
 
-### 2.5 Normalization Context Flow
+### 2.5 Re-normalization Context Flow
 
-When a document record is created through merging, its normalization draws on all constituents to produce richer output than any constituent alone.
+Normalization is on-demand, not a one-time event. A given artifact may be re-normalized when:
 
-This context can also flow **downward** to improve the accuracy of source records. A song source from a lyrics website might have an incomplete translation. When that song is merged with an audio transcription source, the album document gains context from both. A subsequent **re-normalization** pass on the original lyrics source can use the audio transcription's context to complete the translation — this is valid because the information already exists in the artifact (the lyrics are there, just ambiguous), and the context helps achieve a more accurate representation.
+- New artifacts are captured whose presence resolves previously unresolved cross-references (turning external URLs into blake3 wikilinks).
+- The normalization model is upgraded.
+- Schema guidance for the artifact's MIME type is improved.
+- A bulk re-normalization sweep is triggered by tooling improvements.
 
-Re-normalization is on-demand, not automatic. Processing order follows a reverse topological sort — leaves first, then their parent documents, then grandparents — so improvements at lower levels propagate upward through subsequent passes.
+Re-normalization MUST preserve normalization integrity — the new body remains faithful to the original artifact's content. It may produce a more accurate representation, but it MUST NOT introduce information not present in the original. Editorial enrichment that draws on context outside the artifact belongs in document bodies, not in artifact bodies.
+
+Document bodies are re-authored, not re-normalized. They are edited by humans or synthesis agents like any other authored markdown.
 
 ### 2.6 Every Record Is a Valid Document
 
-There is no "incomplete" state in terms of document validity. A freshly captured source record that has been normalized is a complete, useful document. Merging makes it *richer*, but the unmerged version is not deficient.
-
-This means:
-
-- The corpus is always in a valid state
-- Any record can be selected for compendium synthesis at any time
-- Merging is an enrichment operation, not a completion requirement
-- The system is useful from the first captured source onward
+There is no "incomplete" state in terms of record validity. A freshly captured artifact whose body has been normalized is a complete, useful markdown document. An authored document whose body cites a single artifact is a complete, useful markdown document. The corpus is always in a valid state; any record can be selected for compendium synthesis at any time. Authoring richer documents on top of existing artifacts and documents is enrichment, not a completion requirement.
 
 ---
 
@@ -195,113 +218,74 @@ This means:
 
 ### 3.1 Frontmatter Schema
 
-All record metadata lives in YAML frontmatter of `{uuid}.md`. There are no separate configuration files — the markdown file is the single source of truth for both metadata and content.
+All record metadata lives in YAML frontmatter at the top of each `.md` file. There are no separate configuration files — the markdown file is the single source of truth for both metadata and content.
 
-The schema library (`schema/`) provides MIME-normalization guidance consumed by the conversion and contextualization pipeline. Schemas are reference material, not field-validation authorities; extended frontmatter fields are tolerated freely (see §3.1.8). Appendix A provides a reference snapshot of common MIME types encountered in practice with examples.
+The schema library (`schema/`) provides normalization and classification guidance (see §3.3); extended fields beyond the core schema are tolerated freely (see §3.1.7). Appendix A provides a concise per-MIME field reference.
 
 #### 3.1.1 Core Fields
 
-Present on every record.
+Present on every record (unless noted as record-type-specific).
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `uuid` | string | yes | UUIDv4 identifier. Immutable once assigned. |
-| `title` | string | yes | Short descriptive label |
-| `description` | string | yes | 1–3 sentence description. Primary mechanism for discovery and relevance assessment. |
-| `record_type` | enum | yes | `source` or `document` |
-| `content_type` | string | yes | IANA MIME type of the record's primary artifact. For documents almost always `text/markdown`. `unknown` is permitted as a sentinel when the MIME cannot be determined. |
-| `status` | enum | yes | Pipeline state: `stub` (captured, no body), `draft` (converted, body filled), `normalized` (LLM-refined, ready for use). |
-| `visibility` | enum | no | Editorial curation layer, independent of `status`. One of `visible` (default when absent), `deranked` (appears in results at lower priority), `hidden` (excluded from default results, still accessible by direct UUID). |
-| `tags` | string[] | no | Declarative topic tags for filtering and organization. See §3.2 for the relationship to body-embedded tag markers. |
+| Field | Type | Required | Applies to | Description |
+|-------|------|----------|------------|-------------|
+| `record_type` | enum | yes | both | One of `artifact` or `document`. |
+| `blake3` | string | yes (artifacts) | artifact records | The blake3 hash of the artifact's binary content. 64-character lowercase hex string. Serves as the record's identity, filename stem, and content-addressed storage key. |
+| `uuid` | UUID | yes (documents) | document records | Standard v4 UUID. Not used on artifact records — artifact identity is the blake3 hash. |
+| `slug` | string | no | both (typically documents) | Optional corpus-unique, human-readable identifier. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Used for readable wikilinks. Uniqueness enforced corpus-wide; slug changes require updating all references. |
+| `title` | string | yes | both | Short descriptive label. |
+| `description` | string | yes | both | 1–3 sentence description. Primary mechanism for discovery and relevance assessment. |
+| `content_type` | string | yes (artifacts) | artifact records | IANA MIME type of the captured artifact (e.g., `text/html`, `application/pdf`, `image/jpeg`). `unknown` is permitted as a sentinel when the MIME cannot be determined. Document records do not carry `content_type` — they are markdown by construction. |
+| `status` | enum | yes | both | Pipeline state: `stub` (captured, no body), `draft` (converted, body filled), `normalized` (LLM-refined, ready for use). Document records typically begin at `draft` since authoring fills the body directly. |
+| `visibility` | enum | no | both | Editorial curation layer, independent of `status`. One of `visible` (default when absent), `deranked` (appears in results at lower priority), `hidden` (excluded from default results, still accessible by direct identifier). |
+| `tags` | string[] | no | both | Classification tags. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Declare what this record is about or what category it belongs to. Tags are corpus-local — they require no external concept document to function. A corpus MAY define a tag vocabulary in its conventions file for consistency. |
 
-`content_type` carries format semantics only — it says nothing about what the record is *about* or what it represents conceptually. Semantic classification (this video is a song; this PDF is a bank statement) is expressed through forward references to concept documents via `part_of`. See §3.5.
+On artifact records, `tags` classify what the captured content is about. They are populated by the normalizer during contextualization and may be refined by curation passes. Frontmatter tags declare whole-record topical coverage; inline comment tags (`%% #tag %%`) provide positional precision (see §3.2).
+
+On document records, `tags` classify what the authored knowledge covers. They are set by the document's author (human or agent).
 
 `visibility` lets a curator retire low-quality records from normal surfaces without deleting them. Use cases: low-content pages caught in a bulk scrape; superseded captures that remain valuable as historical versions; records flagged for further review. Default search and list queries show only `visible` records.
 
-#### 3.1.2 Source-Specific Fields
+#### 3.1.2 Artifact-Specific Fields
 
-Present only on source records (`record_type: source`).
+Present only on artifact records (`record_type: artifact`).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `origin_url` | string | conditional | URL of the original content. Required for web-sourced artifacts. |
-| `origin_name` | string | yes | Human-readable origin identifier (e.g., "ExampleForum.com", "ExampleMusicDB.org") |
-| `original_filename` | string | conditional | For non-web sources. Use when `origin_url` is absent. |
-| `capture_date` | date | yes | When the artifact was acquired |
-| `artifact_store` | string | no | Remote base URI for this record's artifacts. Absent = local only, not yet externalized. |
-| `artifact_refs` | array | yes | References to artifact files with integrity hashes (see below) |
+| `origin_uri` | string or string[] | yes | The URI(s) where this file was obtained. Multiple URIs indicate the same file found at different locations. |
+| `captures` | object[] | yes | Timestamped capture events. Accumulates entries when the same bytes are re-encountered. Each entry: `{date: ISO-8601, method: string, origin_uri: string}`. |
+| `hashes` | map | no | Auxiliary cryptographic hashes for interoperability (e.g., `md5`, `sha256`). Not used for identity or similarity — blake3 is the identity. |
+| `normalization_type` | enum | no | How the body was derived: `extraction` (HTML→markdown, PDF→text), `transcription` (audio/video→text), `description` (image→text), `metadata` (opaque binary→summary). |
 | `author` | string | no | Identifiable person who produced this content. Omit for anonymous content. |
 | `date_published` | date | no | When the original content was published. Omit for undated content. |
 
-**Artifact references** use the `artifacts://` URI scheme, where the path is relative to the record's artifact folder (`artifacts/{uuid}/`). Each reference carries its own MIME type and may be flagged as the primary artifact:
+Example artifact frontmatter fragment:
 
 ```yaml
-artifact_store: "smb://nas/athenaeum/artifacts/7a3f2b1c-4d5e-4f6a-8b9c-0d1e2f3a4b5c/"
-artifact_refs:
-  - ref: "artifacts://thread.html"
-    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    mimetype: "text/html"
-    primary: true
-  - ref: "artifacts://img_001.jpg"
-    sha256: "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
-    mimetype: "image/jpeg"
+blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
+record_type: artifact
+content_type: text/html
+origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+captures:
+  - date: 2026-03-15T14:22:00Z
+    method: scrape
+    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+  - date: 2026-04-02T09:11:00Z
+    method: scrape
+    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+hashes:
+  sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+normalization_type: extraction
 ```
 
-**Per-ref fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `ref` | string | yes | `artifacts://` URI relative to `artifacts/{uuid}/` |
-| `sha256` | string | yes | SHA-256 integrity hash |
-| `mimetype` | string | yes | IANA MIME type of this specific artifact file |
-| `primary` | bool | no | Default `false`. Exactly one entry per source record SHOULD have `primary: true`. Drives default-artifact selection in consumers (e.g., the artifact rendered in the Original tab of a detail view). The record's top-level `content_type` matches the `mimetype` of this entry. |
-
-**Resolution order:**
-
-1. Check `artifacts/{uuid}/` in the local corpus
-2. If not found locally and `artifact_store` is set, fetch from remote to `artifacts/{uuid}/`
-3. Use local copy
-
-The `artifact_store` field being absent signals the record's artifacts have not been externalized yet — they exist only in the local `artifacts/{uuid}/` directory. All records should eventually be externalized.
-
-The SHA-256 hash enables integrity verification (confirming the artifact hasn't been corrupted or modified since capture) and deduplication (identifying identical artifacts captured from different origins).
+The same bytes encountered twice yield two `captures[]` entries on the same record — never two records.
 
 #### 3.1.3 Document-Specific Fields
 
 Present only on document records (`record_type: document`).
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `constituents` | string[] | yes | UUIDs of direct child records (not flattened — follow the chain for leaves) |
-| `merge_rationale` | string | no | Why these records were merged together |
-| `asset_store` | string | no | Remote base URI for this document's assets. Absent = local only, not yet externalized. |
-| `asset_refs` | array | no | References to asset and artifact files (see below) |
+Document frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `record_type`, `status`, optional `slug`, `visibility`, `tags`) and the common quality and pipeline fields below, documents carry no structural metadata. A document's references to artifacts and other documents are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the document synthesizes and what evidence it draws on.
 
-Frontmatter stays manageable because `constituents` lists only direct children. An artist document with 10 albums lists 10 UUIDs. Each album lists its own songs. The full tree is reconstructable but never materialized in a single frontmatter block.
-
-**Asset references** can reference two kinds of files:
-
-1. **Derived assets** (`assets://`) — files produced during document normalization (frame grabs, transcription segments, derived diagrams). Stored in `assets/{uuid}/`.
-
-2. **Source artifacts** (`artifacts://`) — artifacts from a constituent source record used directly in the document (e.g., a PDF rendered inline). These require a `source` field identifying which source record the artifact belongs to. No `sha256` needed — the hash lives on the source record.
-
-```yaml
-asset_store: "smb://nas/athenaeum/assets/9c5f4d3e-6f7a-4b8c-0d1e-2f3a4b5c6d7e/"
-asset_refs:
-  - ref: "assets://frame_001.jpg"
-    sha256: "abc123..."
-  - ref: "assets://frame_002.jpg"
-    sha256: "def456..."
-  - ref: "artifacts://service-bulletin.pdf"
-    source: "p6h7i8j9-k0l1-4m2n-3o4p-5q6r7s8t9u0v"
-```
-
-**Resolution:**
-
-- `assets://filename` → check `assets/{uuid}/` locally → fetch from `asset_store` if set → use local copy
-- `artifacts://filename` with `source` → resolves against the source record's artifact folder using the source record's resolution order
-
-**Assets are document-only.** Sources reference only their raw artifacts. Derived files only exist at the document level. This keeps the source layer purely about faithful artifact representation.
+There is no `constituents` list, no `part_of`, no `same_as`, no `is_a`. All structural relationships are body references or computed similarity (see §3.5).
 
 #### 3.1.4 Quality Fields
 
@@ -309,10 +293,10 @@ Present on every record.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `credibility_tier` | enum | yes | Trustworthiness of the content (see table below) |
-| `normalization_confidence` | float | yes | `0.0`–`1.0`, quality of the conversion/normalization process itself |
-| `normalization_model` | string | yes | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`) |
-| `normalization_date` | date | yes | When normalization was last performed |
+| `credibility_tier` | enum | yes | Trustworthiness of the content (see table below). |
+| `normalization_confidence` | float | yes (artifacts) | `0.0`–`1.0`, quality of the normalization process for this artifact. |
+| `normalization_model` | string | no | Model or tool that performed normalization (e.g., `claude-sonnet-4-5-20250514`). |
+| `normalization_date` | date | no | When normalization was last performed. |
 
 **Credibility tiers:**
 
@@ -324,19 +308,19 @@ Present on every record.
 | `anecdotal` | Single person's unconfirmed experience | One forum post describing a symptom |
 | `speculative` | Theory or hypothesis without evidence | Unsubstantiated claim or guess |
 
-Credibility is about the trustworthiness of the content's claims. Normalization confidence is about how accurately the raw artifact was converted to markdown. A perfectly transcribed video might have high confidence but low credibility. A badly OCR'd service manual might have low confidence but authoritative credibility.
+Credibility describes the trustworthiness of the content's claims. Normalization confidence describes how accurately the raw artifact was rendered into markdown. A perfectly transcribed video might have high confidence but low credibility. A badly OCR'd service manual might have low confidence but authoritative credibility.
 
 #### 3.1.5 Pipeline Fields
 
-Present on source records; optional on document records.
+Present on artifact records; optional on document records.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `conversion_method` | string | conditional | How the artifact was converted (source records) |
-| `conversion_tool` | string | conditional | Tool/script version used for conversion |
-| `conversion_date` | date | conditional | When conversion was performed |
+| `conversion_method` | string | conditional | How the artifact body was produced (e.g., `html-extraction`, `pdf-text`, `whisper-transcription`, `passthrough`). |
+| `conversion_tool` | string | conditional | Tool/script version used for conversion. |
+| `conversion_date` | date | conditional | When conversion was performed. |
 
-These fields enable targeted bulk re-conversion when tools improve (e.g., "re-convert all records processed by `tesseract v4`").
+These fields enable targeted bulk re-conversion when tools improve (e.g., "re-convert all artifacts processed by `tesseract v4`").
 
 #### 3.1.6 Issues
 
@@ -362,520 +346,494 @@ issues:
 | `encoding_corruption` | Garbled text, mojibake, mangled characters |
 | `format_loss` | Tables, diagrams, or formatting didn't survive conversion |
 
-**Severity:** `critical` (unusable without fix), `major` (significant loss but partially useful), `minor` (cosmetic or non-essential)
+**Severity:** `critical` (unusable without fix), `major` (significant loss but partially useful), `minor` (cosmetic or non-essential).
 
-**Remediation:** `wayback_snapshot`, `alternate_source`, `original_author`, `re_capture`, `manual_reconstruction`, `none`
+**Remediation:** `wayback_snapshot`, `alternate_source`, `original_author`, `re_capture`, `manual_reconstruction`, `none`.
 
 The `resolved` boolean tracks whether the issue has been addressed. Resolved issues remain in frontmatter as historical record.
 
-#### 3.1.7 Relations
+#### 3.1.7 Extended Fields
 
-Forward references to other records. v9 collapses the previous tagged-array `relations` list into two flat frontmatter fields, both arrays of UUIDs:
+Records may carry frontmatter fields beyond those in §3.1.1–§3.1.6. Extended fields come from two sources:
 
-```yaml
-part_of:
-  - "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"   # Album 3 (document)
-  - "f7e8d9c0-b1a2-4c3d-9e4f-5a6b7c8d9e0f"   # Artist X discography (document)
-same_as:
-  - "e4d3c2b1-a098-4765-8fed-cba987654321"   # Reupload / duplicate capture
-```
+- **Base schema extraction.** Format-intrinsic fields read from the artifact's binary (file headers, embedded metadata). Examples: `page_title` and `meta_description` for HTML, `duration_seconds` and `bitrate_kbps` for audio, `width_px` and `height_px` for images, `page_count` for PDFs. The base schema for each MIME type defines which fields the normalizer extracts (see §3.3.1).
 
-| Field | Type | Applies to | Meaning |
-|-------|------|-----------|---------|
-| `part_of` | UUID[] | all records | Instance-of / membership. The referencing record **is an instance of** (or a member of) the concept described by each target. Transitivity is computed by the server — wider memberships reachable through chains of `part_of` do not need to be restated. |
-| `same_as` | UUID[] | all records | Equivalence. Each target represents the same underlying thing as this record (reuploads, duplicate captures, dedup candidates). Symmetric — stored one-way, walked both ways. |
+- **Classification schema extraction.** Domain-specific fields added when a corpus-local classification schema matches the record. Examples: `artist`, `album`, `track_number` when an audio file's ID3 tags identify it as a musical recording; `service_section`, `vehicle_platform` when a PDF is recognized as a service manual page. Classification schemas are corpus-local (see §3.3.2).
 
-**Rule: `part_of` is strictly ontological — "is an instance of the concept described by the target."** A song audio file is a song; it belongs as `part_of` a Song concept document. An encyclopedia entry *about* songs is **not** a song — it's an article *describing* songs — and therefore does not have the Song concept in its `part_of` list. Articles and other reference material attach via other mechanisms: as `constituents` when their content was synthesized into a document's body, or as body-prose tags surfaced via backlinks.
+Extended fields are tolerated by the core loader but not required. A record carrying only the base-schema fields its MIME yields is fully valid — classification can be deferred to a later pass.
 
-| Relationship | Mechanism | Direction |
-|---|---|---|
-| Instance classification | `part_of` | Instance → Concept (outbound on the record that *is* the instance) |
-| Body-material derivation / merge DAG | `constituents` (see §3.1.3) | Composed document → source material used |
-| Identity equivalence | `same_as` | Symmetric (stored one-way, graph walked both ways) |
-| Related reading / mentions / evidence | Body-prose tags (§3.2) surfaced as backlinks | Emerges from content |
-
-**Source-to-source constraint.** `part_of` targets MUST be document records — a source is never ontologically an instance of another source. `same_as` is the only inter-source relation and is used for duplicates and reuploads. Body-prose cross-references (e.g. one HTML capture hyperlinking another) stay in content and are never lifted to `part_of`.
-
-**Deferrability.** First-pass normalization produces only the body; relations are added later by human curation or LLM enrichment passes. A record with empty `part_of` and `same_as` is complete and valid — just not yet classified.
-
-**Opportunistic compaction.** Redundant `part_of` entries that are derivable by transitivity from existing chains SHOULD be removed when the record is otherwise touched. Do not proactively rewrite unchanged records.
-
-**Unresolved references.** v8's `unresolved: "string"` slot is dropped. Mentions of entities that don't yet have records live in body prose as tags (§3.2) — the server's tag index surfaces them for curator follow-up.
-
-#### 3.1.8 Extended Fields
-
-Records may carry additional frontmatter fields beyond those in §3.1.1–§3.1.7. These are not enumerated by a closed schema — v9 removes the per-concept required-field enforcement of v8. Any extended fields are informational or capture-pipeline-specific (e.g., `channel_name`, `duration_seconds`, `post_url`, `score`, `subreddit`, `username`, `publication`, `isbn`) and are tolerated but not required by the core loader.
-
-The MIME-normalization schemas in `schema/` (see §3.3) may suggest extended fields that are useful to preserve for certain MIME families, but they do not mandate them. Extended fields are a convenience for preserving capture-time metadata, not a classification mechanism.
-
-If a field is genuinely required for a kind of content, the strongest practice is to author a concept document that documents the expectations and reference it via `part_of` — making the requirement a human-readable convention rather than a parser constraint.
+If a field is genuinely required for a kind of content, the strongest practice is to author a classification schema declaring the requirement and a tag the normalizer applies when the schema matches.
 
 ### 3.2 Body Format
 
-The body of `{uuid}.md` below the frontmatter closing `---` is the normalized markdown content:
+The body of a record is the markdown content below the frontmatter closing `---`. The rules differ sharply between artifact bodies and document bodies.
 
-- For **source records**: the artifact's content converted to well-formed markdown — a faithful representation of the original, not an embellishment
-- For **document records**: enriched content assembled from all constituents (for merged documents) or authored directly (for concept documents), structured for coherent reading — the appropriate place for cross-referencing, synthesis, and editorial structure
+#### 3.2.1 Artifact Body Integrity
 
-The body uses standard markdown with wiki-links for cross-record references (`[[target_uuid|Display Text]]`) and callout blocks for warnings and notes (`> [!note]`, `> [!warning]`).
+An artifact's body is a faithful normalized rendering of the original content. The normalizer MUST NOT add editorial content, interpretation, or connections that did not exist in the original. The body mirrors the original's structure: its headings, paragraphs, lists, links, and embedded media, translated into markdown.
 
-**Body tags (forward-declared).** Records may embed `#tag` markers within body prose to indicate topical mentions at specific positions in the content — a news segment that mentions a particular product at minute 12, a textbook chapter that references a specific principle in its opening paragraph. Body-tag parsing and indexing are reserved for a future minor revision of this spec; their semantics and exact syntax are not yet finalized. When implemented, the server will build a tag-position index queryable for backlinks (records mentioning `#<tag>` surface when viewing the corresponding concept document), and topical aboutness emerges from this index rather than being declared in frontmatter `part_of`.
+The one permitted addition is inline topic annotations (§3.2.4) — these are metadata, not content.
 
-**Editorial comment blocks (forward-declared).** Records may embed editorial annotations inline within body content to add curator context without altering the normalized rendering. Syntax and indexing also reserved for a future revision.
+#### 3.2.2 Cross-Reference Resolution
 
-Until those mechanisms land, body prose is free-form markdown; only frontmatter fields are indexed and queryable.
+The original content's hyperlinks and embedded resources are resolved during normalization:
+
+- **Captured target exists in corpus:** Replace the URL with a blake3 wikilink or embed.
+  - Hyperlinks become wikilinks: `[[{blake3-hash}|original link text]]`
+  - Embedded images become embeds: `![[{blake3-hash}]]`
+  - Embedded media become embeds with alt text: `![[{blake3-hash}|description]]`
+
+- **Captured target does not exist:** Leave as a standard markdown URL: `[link text](https://original-url.com)` or `![alt](https://original-url.com/image.jpg)`. The link is unresolved — it points outside the corpus. If the target is captured later, a re-normalization pass can resolve it.
+
+Cross-reference resolution is the *only* way artifacts link to each other. No artifact body contains wikilinks or embeds that the normalizer invented — every link corresponds to a link or embed in the original content.
+
+Wikilinks SHOULD use the full 64-character blake3 hash. Tooling MAY accept unambiguous hash prefixes for human-edited contexts, but generated artifact bodies use the full hash.
+
+#### 3.2.3 What Embeds Mean
+
+When an artifact body contains `![[blake3-hash]]`, Obsidian renders the target artifact's body inline. For an image artifact, this means the image's normalized text (OCR, visual description) appears at the position where the original image was. For a linked document artifact, Obsidian renders the target's full body. In compiled outputs (mdbook, static site), the tooling can substitute the actual binary (render the real image, embed the real video).
+
+The same syntax in document bodies has the same meaning, plus access to functional URIs (§3.7) for computed transformations.
+
+#### 3.2.4 Inline Topic Annotations
+
+Artifact bodies may contain topic annotations in Obsidian-style comment blocks. These are the *only* permitted editorialization in an artifact body — they are metadata annotations classifying what the surrounding content discusses, not additions to the content.
+
+**Syntax:** `%% #slug %%` or `%% #slug-1 #slug-2 %%`
+
+**Scoping rules:**
+
+1. **Frontmatter `tags`** — whole-record scope. Every line is implicitly within these topics.
+2. **Annotation on a heading** — section scope. Applies until the next heading of equal or higher level.
+3. **Annotation on a line** — passage scope. Applies to that specific line only.
+
+Scopes are additive. Annotate at topical transition points, not on every line.
+
+Document bodies may use the same annotation syntax for the same purpose.
+
+#### 3.2.5 Document Bodies
+
+Document bodies are authored compositions with full editorial freedom. Unlike artifact bodies (which faithfully mirror original content), document bodies are written by curators or synthesis agents. They may:
+
+- Add interpretation, analysis, and context that no single artifact contains.
+- Structure knowledge for a particular audience or purpose.
+- Reference artifacts as evidence using wikilinks: `[[{blake3-hash}|display text]]`
+- Embed artifact content inline: `![[{blake3-hash}]]`
+- Use functional URIs for computed transformations: `![[blake3://{hash}?params|alt text]]`
+- Link to other documents: `[[{uuid}|display text]]` or `[[slug|display text]]`
+- Use tags for topical classification (in frontmatter and optionally inline).
+
+#### 3.2.6 Referencing Artifacts from Documents
+
+Documents reference artifacts in two ways:
+
+- **Wikilinks** (`[[{blake3-hash}|text]]`) — citation-style references. "See the original forum post for details." The reader can click through to the full artifact.
+
+- **Embeds** (`![[{blake3-hash}]]`) — inline content inclusion. The artifact's normalized body renders at that position. For images, this surfaces the text description; in compiled outputs, the actual image can be substituted.
+
+Both create backlinks visible in Obsidian's graph view, making it discoverable which documents draw on which artifacts.
+
+#### 3.2.7 Connecting Documents to Documents
+
+Documents connect to each other through standard Obsidian primitives:
+
+- **Wikilinks** — cross-references between documents. "See also the [[brake-system-overview|Brake System Overview]]."
+- **Tags** — shared classification. Documents tagged `#brake-caliper` are discoverable together.
+- **Embeds** — inline inclusion of one document's body in another.
+
+There are no stored structural relations (`is_a`, `part_of`). Compositional structure is expressed through the document graph itself: a "Brake System Overview" document that wikilinks to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" documents *is* the compositional structure. The links in the body are the hierarchy.
 
 ### 3.3 Schema Library
 
-The `schema/` directory contains **MIME-normalization schemas** — reference documents consumed by the normalization pipeline (humans authoring scripts, LLMs performing contextualization) that describe how to produce a markdown representation from artifact content of a given MIME type.
+The `schema/` directory holds reference documents that describe how to normalize and classify content. There are two kinds:
 
-A schema is a markdown file whose frontmatter declares which MIME types it handles, and whose body gives guidance to normalizers. Each schema self-declares its applicable MIME types:
+#### 3.3.1 Base Schemas (MIME type)
+
+Base schemas are keyed by `content_type`. They define:
+
+- **Normalization method:** `extraction`, `transcription`, `description`, or `metadata`.
+- **Normalization guidance:** prose instructions for the normalizer.
+- **Extended fields:** structured metadata mechanically extractable from any file of this type. These are format-intrinsic — they come from file headers and embedded metadata.
+
+Base schemas are universal. They apply to any corpus using this MIME type. They travel with the Athenaeum toolkit, not with individual corpora.
+
+**Schema document format:**
 
 ```yaml
----
-schema_id: html_content
-applies_to_mimetypes:
-  - text/html
-  - application/xhtml+xml
-version: "1.0"
----
+schema_type: base
+content_type: "audio/mpeg"
 
-# HTML Content Normalization
+normalization:
+  method: "transcription"
+  guidance: |
+    Extract audio metadata from file headers. Read ID3v2 tags
+    when present, falling back to ID3v1.
 
-Guidance on converting captured HTML artifacts into well-formed markdown...
-
-## Stripping
-
-- Remove navigation chrome, sidebars, ads, related-content widgets.
-- Preserve the primary content area, headings, lists, tables, code blocks.
-
-## Edge cases
-...
+extended_fields:
+  duration_seconds:
+    type: number
+    required: true
+    source: file_metadata
+    description: "Total duration in seconds."
+  bitrate_kbps:
+    type: number
+    required: false
+    source: file_metadata
+    description: "Encoding bitrate in kbps."
+  sample_rate_hz:
+    type: number
+    required: false
+    source: file_metadata
+    description: "Sample rate in Hz."
+  channels:
+    type: number
+    required: false
+    source: file_metadata
+    description: "Audio channels (1=mono, 2=stereo)."
 ```
 
-**Organization.** Schema files live under `schema/` with arbitrary filenames chosen by the author — there is no enforced MIME-to-filename mapping. A schema can cover one MIME (`text/html`) or a family (`audio/mpeg`, `audio/x-m4b`, `audio/wav`). The pipeline selects a schema for a record by matching the record's `content_type` against available schemas' `applies_to_mimetypes`. When multiple schemas match, the most specific one wins (more specific MIME match, then most recent version).
+#### 3.3.2 Corpus-Local Classification Schemas
 
-**What schemas are not.** v9 schemas are not classification instruments. They do not enumerate the conceptual categories of records (that's expressed by concept documents and `part_of`), and they do not enforce required extended fields (see §3.1.8). They only describe *how to convert* a given input format into a faithful markdown rendition.
+A corpus MAY define classification schemas that add domain-specific metadata extraction. These are keyed by a match condition (typically tag-based or content_type + heuristic) and define additional extended fields and tags.
 
-**Authoring workflow.** New MIMEs get schemas lazily. The first record with a novel MIME gets a best-effort normalization and the pipeline flags the gap; a schema is written when enough similar content arrives to justify the effort. An `unknown` or missing schema falls back to a generic best-effort normalizer.
+Classification schemas live in the corpus's schema directory, not in the global toolkit. They are portable with the corpus but not universal.
 
-**Migration note.** v8 maintained a closed enum of concept schemas (`schema/sources/forum_post.md`, `schema/documents/album.md`). These are not v9 schemas — they describe concepts, not MIME normalization. They migrate to ordinary concept documents in the corpus (under `documents/`) and are removed from `schema/` over time. Migration is out of scope for this spec.
+```yaml
+schema_type: classification
+match:
+  content_type: "audio/mpeg"
+  condition: "ID3 artist and album tags are populated"
+
+classification:
+  add_tags: [musical-recording]
+
+extended_fields:
+  artist:
+    type: string
+    source: id3_tag
+    description: "Performing artist from ID3 metadata."
+  track_title:
+    type: string
+    source: id3_tag
+    description: "Track title from ID3 metadata."
+  album:
+    type: string
+    source: id3_tag
+    description: "Album name from ID3 metadata."
+  track_number:
+    type: number
+    source: id3_tag
+    description: "Track position on album."
+```
+
+**Composition.** The normalizer applies the base schema first (format extraction), then checks classification schemas for matching conditions. Matching classification schemas add their tags and extended fields to the record. Multiple classification schemas may match — their fields merge (last-write-wins on collision).
+
+**Unclassified artifacts.** An artifact that matches no classification schema is fully valid — it has its base schema fields and whatever tags the normalizer assigned. Classification can be deferred to a later pass when more context is available (e.g., after related artifacts are captured or documents are written that provide context).
+
+**Tag vocabulary conventions.** A corpus MAY maintain a conventions file listing its tag vocabulary with descriptions. This is guidance for normalizers and curators, not a schema constraint. Unknown tags are valid — they signal vocabulary growth. High-frequency unknown tags are candidates for vocabulary formalization.
+
+#### 3.3.3 MIME Type Reference
+
+A concise per-type reference for the most commonly captured MIME types. Each row lists the canonical MIME, the normalization method, and the extended fields the base schema typically extracts. This is illustrative, not closed — any IANA MIME type is valid.
+
+| MIME | Method | Typical extended fields |
+|------|--------|------------------------|
+| `text/html`, `application/xhtml+xml` | extraction | `page_title`, `meta_description`, `canonical_url`, `og_title`, `og_description`, `og_image`, `og_type`, `language` |
+| `text/markdown` | extraction (passthrough) | `word_count` |
+| `text/plain` | extraction (passthrough) | `word_count`, `language` |
+| `application/pdf` | extraction | `page_count`, `pdf_author`, `pdf_title`, `pdf_creation_date`, `pdf_producer`, `is_scanned` |
+| `application/epub+zip` | extraction | `work_title`, `epub_author`, `language`, `chapter_count`, `word_count` |
+| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` |
+| `video/mp4`, `video/webm`, `video/mkv`, `video/quicktime` | transcription | `duration_seconds`, `width_px`, `height_px`, `frame_rate`, `video_codec`, `audio_codec` |
+| `image/jpeg`, `image/png`, `image/webp`, `image/gif` | description | `width_px`, `height_px`, `color_space`, `exif_date`, `exif_gps_lat`, `exif_gps_lon`, `exif_camera` |
+| `message/rfc822` (email) | extraction | `from`, `to`, `subject`, `message_date`, `in_reply_to` |
+| `application/json` | extraction (passthrough) | `top_level_keys` (when reasonable) |
+| `unknown` or unmatched | metadata | `byte_size`, `magic_bytes_summary` |
+
+A corpus authoring its own classification schemas adds further extended fields on top of these (see §3.3.2).
 
 ### 3.4 Examples
 
-#### Source Record
+#### Artifact Record
 
 ```yaml
 ---
-uuid: "7a3f2b1c-4d5e-4f6a-8b9c-0d1e2f3a4b5c"
-title: "Brake Caliper Rebuild - Complete Guide"
-description: "Forum thread with a step-by-step brake caliper rebuild procedure, including torque specs, seal kit part numbers, and before/after photos."
-record_type: source
+blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
+title: "Caliper Rebuild Thread - G8Forum"
+description: "Forum thread documenting front caliper rebuild on a 2009 Pontiac G8 GT, with photos of bore wear and discussion of remanufactured units."
+record_type: artifact
 content_type: text/html
+origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
+captures:
+  - date: 2026-03-15T14:22:00Z
+    method: scrape
+    origin_uri: "https://g8forum.com/threads/caliper-rebuild.4521/"
 status: normalized
-tags: ["brakes", "caliper-rebuild", "diy"]
-
-origin_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
-origin_name: "ExampleForum.com"
-capture_date: 2026-02-16
-artifact_refs:
-  - ref: "artifacts://thread.html"
-    sha256: "e3b0c44298fc1c149afbf4c8996fb924..."
-    mimetype: "text/html"
-    primary: true
-  - ref: "artifacts://img_001.jpg"
-    sha256: "a7ffc6f8bf1ed76651c14756a061d662..."
-    mimetype: "image/jpeg"
-  - ref: "artifacts://img_002.jpg"
-    sha256: "9f86d081884c7d659a2feaa0c55ad015..."
-    mimetype: "image/jpeg"
-date_published: 2024-01-24
-
+visibility: visible
+tags: [brake-caliper, caliper-rebuild]
 credibility_tier: community_validated
-normalization_confidence: 0.95
+normalization_confidence: 0.92
+normalization_type: extraction
 normalization_model: "claude-sonnet-4-5-20250514"
-normalization_date: 2026-02-16
-conversion_method: "forum-scraper"
+normalization_date: 2026-03-15
+conversion_method: "html-extraction"
 conversion_tool: "scrape_thread.py v0.6"
-conversion_date: 2026-02-16
+conversion_date: 2026-03-15
 
-# capture-pipeline extended fields
-username: "user_mike"
-thread_url: "https://www.example-autoforum.com/threads/brake-caliper-rebuild.12345/"
-reply_count: 13
-
-issues:
-  - type: missing_media
-    severity: major
-    description: "2 of 4 embedded images unavailable"
-    remediation: wayback_snapshot
-    resolved: false
-
-part_of:
-  - "c1d2e3f4-5678-4901-abcd-ef0123456789"   # Forum-post concept document
-  - "f1e2d3c4-b5a6-4798-8000-123456789abc"   # Brake-system concept document
+# Schema-extracted extended fields (from text/html base schema)
+page_title: "Caliper Rebuild Thread"
+meta_description: "Discussion of front caliper rebuild on 2009 Pontiac G8 GT"
+language: "en"
 ---
 
-## Brake Caliper Rebuild Procedure
+## Caliper Rebuild Thread
 
-A complete guide to rebuilding front brake calipers, including
-seal replacement, piston inspection, and bleeding procedure...
+**Original post by GTO_Dave, 2024-08-12:**
+
+Had to rebuild the front calipers on my '09 G8 GT at 180k km.
+Here's what the bore looked like after pulling the piston:
+
+![[b8c9d0e1f2a3b4c5...]]
+
+Scoring was bad enough that I decided to replace rather than hone.
+Ordered a remanufactured unit from [RockAuto](https://rockauto.com/caliper-xyz).
+
+If you're seeing similar wear, check out the
+[[c9d0e1f2a3b4c5d6...|brake bleeding procedure thread]]
+before reassembling — I made the mistake of not bench-bleeding first.
 ```
 
-#### Document Record (merged)
+The inline image is embedded via `![[blake3-hash]]` — this embeds the image artifact's normalized text body (a visual description). The link to the bleeding thread is a wikilink to another artifact record. The RockAuto link stays as a plain markdown URL because that page wasn't captured. No editorialization in the body — it faithfully mirrors the original forum post's structure and content.
+
+#### Document Record
 
 ```yaml
 ---
-uuid: "9c5f4d3e-6f7a-4b8c-0d1e-2f3a4b5c6d7e"
-title: "Convergence"
-description: "The Celestial Order's second studio album (2019), a progressive rock record blending jazz fusion elements with intricate polyrhythmic arrangements."
+uuid: "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6"
+slug: "brake-caliper-rebuild-g8"
+title: "Brake Caliper Rebuild — Pontiac G8 GT"
+description: "Authored guide to rebuilding the front calipers on Zeta-platform Pontiac G8 GT, drawing on the service manual, GTO_Dave's forum thread, and a video walkthrough."
 record_type: document
-content_type: text/markdown
-status: normalized
-tags: ["the-celestial-order", "progressive-rock", "2019"]
-
-constituents:
-  - "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"  # Music database album page (source)
-  - "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b"  # Review aggregator page (source)
-  - "i5j6k7l8-m9n0-4o1p-8q2r-3s4t5u6v7w8x"  # Live performance video (source)
-  - "m9n0o1p2-q3r4-4s5t-8u6v-7w8x9y0z1a2b"  # song: Meridian (document)
-  - "q3r4s5t6-u7v8-4w9x-8y0z-1a2b3c4d5e6f"  # song: Convergence (document)
-  - "u7v8w9x0-y1z2-4a3b-8c4d-5e6f7a8b9c0d"  # song: Tidal Resonance (document)
-merge_rationale: "All records related to The Celestial Order album Convergence"
-
-asset_refs:
-  - ref: "assets://frame_001.jpg"
-    sha256: "d4735e3a265e16eee03f59718b9b5d03..."
-  - ref: "artifacts://page.html"
-    source: "a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d"
-
-credibility_tier: authoritative
-normalization_confidence: 0.90
-normalization_model: "claude-sonnet-4-5-20250514"
-normalization_date: 2026-03-17
-
-# capture-pipeline extended fields
-artist_name: "The Celestial Order"
-release_date: 2019
-label: "Horizon Records"
-track_count: 8
-genre: ["progressive rock", "jazz fusion"]
-
-part_of:
-  - "b0b0b0b0-1111-4222-8333-444444444444"  # Album concept document
-  - "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"  # The Celestial Order (artist document)
+status: draft
+visibility: visible
+tags: [brake-caliper, caliper-rebuild, g8-gt, zeta-platform]
+credibility_tier: expert
 ---
 
-## Convergence (2019)
+## Overview
 
-The Celestial Order's second album represents a bold evolution from their
-debut, weaving jazz fusion elements into a progressive rock framework...
+The front brake calipers on the Zeta platform are a single-piston
+sliding design. Rebuild is straightforward but the piston bore must
+be inspected carefully.
+
+![[blake3://a7f3b2c1?page=4&crop=50,100,550,400|Caliper exploded diagram from service manual]]
+
+## Inspection
+
+Remove the caliper mounting bolts using a 14mm socket. See
+[[b8c9d0e1...|AllData procedure]] for torque specs.
+
+Inspect the piston bore for scoring:
+
+![[blake3://c9d0e1f2?framegrab=1:23|Bore scoring example from video walkthrough]]
+
+If scoring is visible as in the image above, the caliper must be
+replaced. The bore cannot be honed to spec on these units — see
+[[d0e1f2a3...|GTO_Dave's rebuild thread]] for discussion.
+
+## Related
+
+- [[brake-bleeding|Brake Bleeding Procedure]] — must bench-bleed before reassembly
+- [[rotor-replacement|Rotor Replacement]] — often done at the same time
+- [[brake-system-overview|Brake System Overview]] — parent document
 ```
 
-#### Concept Document
+The document uses both plain blake3 wikilinks (for direct artifact references) and functional URIs (for computed transformations like page extraction and framegrabs). Links to other documents use slugs for readability.
 
-A concept document has the same shape as a merged document, but typically no `constituents` (it's authored directly rather than synthesized) and is the *target* of many `part_of` references from instance records. Nothing in its frontmatter marks it as "a concept" — its role emerges from the graph. See §3.5.1 for the distinction between concept documents that behave like sets (valid `part_of` targets) and those that represent entities (linked via body prose rather than membership).
+### 3.5 Classification
 
-```yaml
----
-uuid: "b0b0b0b0-1111-4222-8333-444444444444"
-title: "Hosted Videos"
-description: "Video content hosted on a third-party video-sharing platform. Captures typically include the original video file, the hosting page HTML carrying engagement signals (view count, like count, comment counts, creator-pinned or -replied comments), and the official description text. Surface these engagement and metadata fields in normalization when available."
-record_type: document
-content_type: text/markdown
-status: normalized
-tags: ["concept", "video"]
+Classification in v10 uses tags, the document graph, and computed similarity — no stored structural relations.
 
-credibility_tier: authoritative
-normalization_confidence: 1.0
-normalization_model: "claude-sonnet-4-5-20250514"
-normalization_date: 2026-04-20
+#### 3.5.1 Tags
 
-part_of:
-  - "cccccccc-dddd-4eee-8fff-000000000000"  # Videos (broader set concept)
----
+Tags handle categorical classification. An artifact tagged `brake-caliper` is findable by topic. A document tagged `brake-caliper` and `g8-gt` is discoverable at the intersection. Tags are flat (no hierarchy), portable (no external dependencies), and corpus-local (a tag means whatever the corpus's conventions say it means).
 
-## Hosted Videos
+A corpus MAY maintain a conventions file (`schema/tags.md` or similar) listing its tag vocabulary with one-line descriptions. This is guidance, not constraint — unknown tags are valid and signal vocabulary growth.
 
-Hosted video content spans long-form material, livestreams, and short-form clips.
-All share the core platform affordances: engagement counters (views, reactions),
-creator-pinned and -replied comments, and canonical textual description metadata
-alongside the media itself...
-```
+#### 3.5.2 The Document Graph
 
-The description here demonstrates §3.5.5 — it doesn't just define the concept, it tells downstream normalizers what to look for in captures. Describing this in the description rather than the body means the normalizer sees it in eagerly-loaded summary context without having to pull the full body (§4.2.2).
+The document graph handles structural organization. A "Brake System Overview" document that links to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" documents expresses compositional structure through its body, not through frontmatter relations. The link graph is the hierarchy.
 
-### 3.5 Classification via concept documents
+A document representing a concept (a category, a person, a place, a thing) is just a document with descriptive prose. Other documents reference it by wikilink. There is no special "concept document" status — the role is emergent from the graph.
 
-Semantic classification in v9 is expressed by graph membership: records declare `part_of` references to **concept documents** — ordinary document records that describe a category, entity, or idea. Nothing in a concept document's frontmatter marks it as "a concept"; its role is emergent from how other records refer to it.
+#### 3.5.3 Deduplication and Similarity
 
-#### 3.5.1 Entity documents vs set documents
+Deduplication and similarity are handled entirely through intrinsic properties of artifacts, not through stored relations:
 
-Not every concept document is a valid `part_of` target. Concept documents fall into two informal kinds:
+**Tier 1: Blake3 (exact).** Same bytes → same hash → same record. Structural, automatic, zero-cost.
 
-- **Set documents** describe a collection — "Hosted Videos," "Product Reviews," "Channel A's Filmography," "Tracks on Album 3." Other records belong inside them as instances. These are the valid `part_of` targets.
-- **Entity documents** describe a thing that isn't reducible to a set — a person, a brand, a channel, an organization, a product, a place. An entity has attributes, history, and presence beyond any collection of content associated with it. Records do **not** `part_of` an entity directly, because the entity is richer than the content it relates to.
+**Tier 2: Perceptual hashes (format-specific, cached).** Same perceptible content, different bytes. pHash/dHash for images, chromaprint for audio, simhash for text/HTML. Computed from the binary artifact. Cached for performance, rebuildable from inputs that are already stored.
 
-The canonical test: would every record on the target's inbound `part_of` edges genuinely satisfy "is an instance of this target"? If the target is an entity with content-producing and non-content-producing facets, the answer is no — and there's almost always a better target (a set document) alongside it.
+**Tier 3: Body embeddings (cross-modal, cached).** The normalized body projects every modality into text. Embeddings of that text enable universal semantic similarity. An audio transcript and an HTML transcript of the same interview land near each other because their normalized text says the same things. Cached, rebuildable, model-upgradeable.
 
-**Concrete example.** Consider a content creator's online channel that hosts long-form videos, short-form clips, and text-only community posts. "Short clips are videos" and "community posts are not videos" are both true — which means the channel *entity* is not a pure subset of "Hosted Videos." Split into two documents:
+All three tiers produce queries, not stored edges. The spec defines the inputs (binary artifact + normalized body); tooling builds the indices.
 
-```yaml
-# doc-channel-a (entity)
-title: "Channel A"
-description: "A hosted creator channel publishing long-form videos, short clips, and community text posts..."
-part_of: []            # Entity — not ontologically inside any set
-# Body: the channel as a thing — history, style, audience. Links via
-# prose to doc-creator-a (the person running it) and doc-channel-a-filmography (works).
+### 3.6 Slugs
 
-# doc-channel-a-filmography (set)
-title: "Channel A Filmography"
-description: "Complete set of videos produced on Channel A."
-part_of: [doc-hosted-videos]   # This set is a subset of all hosted videos
-# Body: prose listing or describing the body of work.
-```
+Slugs provide human-readable addressability for records. Documents need slugs so other documents can wikilink to them by readable name rather than UUID. Artifact records rarely need slugs but can have them for significant, frequently-referenced captures.
 
-Records `part_of` the filmography, not the channel entity. The channel entity connects to the filmography through body-prose wikilinks and to the creator through the same mechanism — attribution, authorship, and "made by" relationships live in prose, not in `part_of`.
+A slug is corpus-unique. Slug changes require updating all wikilinks that reference the old slug; tooling SHOULD provide a rename helper that walks the corpus and rewrites references in a single pass.
 
-When in doubt, ask: "Does this target have aspects that aren't about the content inside it?" If yes, it's an entity — create a sibling set document for the content and `part_of` into that.
+A wikilink resolves in this order:
 
-#### 3.5.2 Worked example: a single track
+1. Exact match against `blake3` (artifact record).
+2. Exact match against `uuid` (document record).
+3. Exact match against `slug` (any record).
+4. Otherwise, an unresolved link — surfaced in tooling as a backlink candidate.
 
-Album-track structure with a new track record classified across multiple axes:
+### 3.7 Functional URI Scheme
 
-```yaml
-# Track 2 source record
-content_type: audio/mpeg
-part_of:
-  - <album-3-uuid>                  # Specific album (set of tracks on that album)
-  - <concept-song-uuid>             # "Song" general concept (set of all songs)
-```
+Documents may reference computed transformations of artifacts using functional URIs. These are only valid in document bodies — artifact bodies use plain blake3 wikilinks and embeds only.
 
-The album document, if curators treat it as a pure set of its tracks, can itself `part_of` higher sets:
+**Base syntax:** `blake3://{hash}` — resolves to the artifact's binary content.
 
-```yaml
-# Album 3 document (used here as a set-of-tracks)
-record_type: document
-content_type: text/markdown
-part_of:
-  - <artist-x-discography-uuid>
-```
+**Fragment navigation:** `blake3://{hash}#anchor` — navigates to a named section of the artifact's normalized body.
 
-But if Album 3 also has cover art, reviews, and merch associated with it in the corpus, it may better be treated as an **entity** — with a sibling `<album-3-tracklist>` set document that the tracks `part_of` instead. Curator's judgment.
+**Transformation parameters:** appended as query parameters, composed left-to-right (each function operates on the output of the previous):
 
-**Transitivity.** The server computes wider memberships by walking `part_of` chains. "Track 2 belongs to All Songs" doesn't need to be stated anywhere — it follows from the chain. Records should declare only the most specific memberships that are directly true; compaction on-touch removes entries made redundant by chain additions elsewhere.
+| Parameter | Applies to | Meaning |
+|-----------|-----------|---------|
+| `page={n}` | PDF | Extract page n (1-indexed). |
+| `page={n}-{m}` | PDF | Extract page range. |
+| `crop={x},{y},{w},{h}` | Image, PDF page | Crop to region (origin top-left, pixels or percentage). |
+| `resize={w}x{h}` | Image | Resize to dimensions. |
+| `framegrab={t}` | Video | Extract frame at timestamp (seconds or `m:ss`). |
+| `range={t1}-{t2}` | Audio, Video | Extract time range. |
+| `grayscale` | Image | Convert to grayscale. |
 
-#### 3.5.3 Deduplication with `same_as`
+**Composition example:** `blake3://{hash}?page=4&crop=50,100,550,400` — extract page 4 from a PDF, then crop to the caliper diagram region. The result is an image.
 
-```yaml
-# A duplicate video upload (e.g., a reupload or mirrored copy)
-content_type: video/mp4
-same_as:
-  - <original-video-uuid>
-  - <mirror-upload-uuid>
-```
+**Semantics:**
 
-Both records remain fully valid representations. If one should take priority in default surfaces, use `visibility: deranked` or `visibility: hidden` on the less-preferred entries — separate from the structural `same_as` claim.
+- Functional URIs are **deterministic** — same inputs always produce the same output (the underlying artifact is immutable by content addressing).
+- Results are **cacheable** — the cache key is the full URI string. Cache can be blown away and regenerated at any time.
+- Results are **ephemeral** — they are not stored as records. They exist at compile/render time.
+- Functional URIs are **document-layer only** — artifact bodies never contain them.
 
-#### 3.5.4 What `part_of` is not
+**In Obsidian (raw browsing):** Functional URIs that can't be resolved at browse time fall back to displaying the alt text. Tooling or plugins can resolve them.
 
-`part_of` is strictly instance-of. An encyclopedia article *about* a specific product is not a product — it's an article. It does not belong as `part_of` the product's concept document. Its relationship is better expressed:
+**In compiled outputs (mdbook, static site):** The build process resolves all functional URIs, computes transformations, and substitutes results (rendered images, extracted audio clips, etc.).
 
-- As a `constituent` of the product document, if its content was synthesized into that document's body, OR
-- Via body-prose tags (forward-declared in §3.2), emerging as a backlink when viewing the product's concept document
-
-This rule is universal: `part_of` targets must pass the "is this record *an instance of* the target concept" test. If the relationship is "about" or "references" or "informs" or "made by," it belongs elsewhere.
-
-#### 3.5.5 Writing good concept descriptions
-
-The `description` field (1–3 sentences, required on every record per §3.1.1) does double duty on concept documents: it defines the concept for humans and serves as the eagerly-loaded context that normalizers see when processing records `part_of` the concept (see §4.2.2 on progressive disclosure).
-
-Curator guideline: for set documents that may gather many instance records, **surface any normalization-relevant facets in the description**. The difference between:
-
-> "A video hosted on a third-party platform."
-
-and
-
-> "A video hosted on a third-party platform. Captures typically include the original video file and a hosting-page HTML carrying engagement signals (view count, reactions, comment counts, creator-pinned comments) alongside an official description text. Surface these fields in normalization when available."
-
-is the difference between a normalizer knowing to look for engagement metadata or missing it entirely. The second form costs maybe 30 extra tokens and sets the ceiling on what re-normalization passes can do without pulling the full body.
-
-#### 3.5.6 Deferrability
-
-First-pass normalization of a source produces only the body — the record has `part_of: []`. Classification is added later by curators or LLM enrichment passes. Records can live indefinitely without explicit classification; the corpus degrades gracefully.
+The v10 parameter set is deliberately minimal. Future extensions should be added conservatively — each parameter must be deterministic over immutable inputs.
 
 ---
 
 ## 4. Pipeline
 
-The path from raw content to normalized record is a pipeline of discrete steps: **capture**, **normalize**, optionally **merge**, and optionally **re-normalize**. Each step is independently re-runnable. A separate **build** step materializes the corpus for consumption.
+The path from raw content to a richly authored corpus is a pipeline of discrete steps: **capture**, **normalize**, optionally **author**, and optionally **re-normalize**. Each step is independently re-runnable. A separate **build** step materializes the corpus for consumption.
 
 ### 4.1 Capture
 
-Capture brings raw content into the corpus and assigns it identity. It has two steps: **staging** and **reconciliation**.
+Capture brings raw content into the corpus. The flow is content-addressed end-to-end: identity is the hash of the bytes, not an assigned UUID.
 
-#### 4.1.1 Staging
+#### 4.1.1 Staging (optional)
 
-**What:** Acquire raw content from an external source into the staging area.
-
-**How:** Script-driven or manual — web scrapers, downloaders, API clients, manual file copy. Capture acquires **all associated content** from the source: the primary content (HTML page, PDF, etc.) plus any embedded or linked assets (images, supplementary files) that would otherwise be lost.
-
-**Output:** Raw files in `capture/` in a temporary folder with a descriptive name (e.g., `capture/brake-caliper-rebuild.12345/`). No UUID assigned yet, MIME types not yet finalized. The naming convention is descriptive because identity doesn't exist yet.
-
-Failed or abandoned captures remain in `capture/` without consuming any corpus resources — no UUID, no record, no artifact folder. The `capture/` directory is a transient workspace.
+Captures may pass through `capture/` as a transient workspace for in-progress acquisition (multi-step downloads, multi-file scrapes, manual organization). Failed or abandoned captures remain here without consuming corpus resources.
 
 #### 4.1.2 Reconciliation
 
-**What:** Assign identity to captured content, move artifacts into the corpus, and create a source record stub.
+For each captured file:
 
-**How:** Reconciliation examines the captured content, assigns a UUIDv4, and records per-artifact MIME types. MIME detection is typically deterministic (file extension + magic-byte sniffing); only ambiguous cases warrant LLM assistance.
-
-**Process:**
-
-1. **Assign UUID.** Generate a UUIDv4 for this record.
-2. **Detect MIME types.** For each captured file, determine its IANA MIME type (via extension + content sniffing). These populate `artifact_refs[].mimetype`.
-3. **Pick the primary artifact.** Exactly one of the captured files is the record's primary content; its MIME becomes the record's top-level `content_type`. For a scraped web page with images, the HTML file is primary. For a downloaded PDF with cover thumbnails, the PDF. For a captured video with a description page, the video. Heuristics: prefer the artifact that carries the primary content of the origin, falling back to the first or largest file. Mark it `primary: true` in `artifact_refs`.
-4. **Move artifacts.** Rename the temporary capture folder to the UUID and move it to `artifacts/{uuid}/`. The raw files are now in their permanent location.
-5. **Compute hashes.** Calculate SHA-256 hashes for each artifact file.
-6. **Create source stub.** Write `sources/{uuid}.md` with frontmatter populated:
-   - `status: stub` (no body content yet)
-   - `content_type` = the primary artifact's MIME
-   - `artifact_refs` with `artifacts://` URIs, SHA-256 hashes, MIME types, and the `primary: true` flag on one entry
-   - Core metadata: `origin_url`, `origin_name`, `capture_date`, etc.
-   - `part_of` left empty — classification is deferred to a later pass
+1. **Fetch.** Retrieve the target and all embedded resources.
+2. **Hash.** Compute the blake3 hash of the file's binary content. Optionally compute auxiliary hashes (sha256, md5) for interoperability.
+3. **Dedup check.**
+   - If `artifacts/{hash}.md` exists with a matching `origin_uri`: append a new entry to `captures[]`. No new record.
+   - If `artifacts/{hash}.md` exists with a different `origin_uri`: extend `origin_uri` to a string array and append a `captures[]` entry.
+   - If `artifacts/{hash}.md` does not exist: create a new artifact record with `status: stub`, `record_type: artifact`, `blake3`, `content_type` (from MIME detection), `origin_uri`, and one `captures[]` entry. Body is empty pending normalization.
+4. **Store binary.** Place the file in the content-addressed binary store at `binary/{hash}.{ext}`. Idempotent — if the file already exists at that path, no-op.
 
 **Key principles:**
 
 - Capture is the **only step requiring network access**. Everything downstream is offline.
-- The UUID is only assigned when artifacts are successfully acquired and reconciled. Failed captures don't consume UUIDs.
-- All associated content from the origin is captured — every file becomes a reference in `artifact_refs`.
-- Reconciliation does not classify *what the record is about* — only *what format it is in*. Classification (via `part_of`) happens later as an enrichment pass.
-
-Content to be captured may be tracked externally (a backlog, a spreadsheet, a task list). The corpus itself only contains records for content that has been captured and reconciled.
+- Identity is the hash, not an assigned UUID. Failed captures consume no identity space.
+- Every captured file becomes its own artifact record. Bundles of related files (a forum thread plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
+- Reconciliation does not classify *what the record is about* — only *what format it is in*. Classification (tags, classification schemas) happens during normalization or in later passes.
 
 ### 4.2 Normalize
 
-Normalization transforms a stub record into a complete, useful markdown file. It has two sub-steps: **conversion** (deterministic) and **contextualization** (LLM-driven).
+Normalization transforms an artifact stub into a complete, useful markdown record. It has three sub-steps: **conversion** (deterministic), **cross-reference resolution** (deterministic), and **contextualization** (LLM-driven).
 
 #### 4.2.1 Conversion
 
-**What:** Deterministic conversion of artifact content into markdown.
+**What:** Deterministic conversion of artifact bytes into a markdown body.
 
-**How:** MIME-driven conversion — no LLM involvement, deterministic and reproducible. Conversion reads the primary artifact file referenced by `artifact_refs` (resolving via the local `artifacts/{uuid}/` directory or fetching from `artifact_store`) and produces the markdown body of the record. The converter is selected by matching the record's `content_type` MIME against available schema guidance in `schema/` (§3.3).
+**How:** MIME-driven, schema-guided. The base schema for the artifact's `content_type` selects the conversion path: extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text via VLM), or metadata summary (opaque binaries).
 
-**Output:** The body of `{uuid}.md` is filled with the artifact's content as well-formed markdown. `status` set to `draft`.
+**Output:** The body of `{blake3}.md` is filled with the artifact's content as well-formed markdown. `status` set to `draft`. `normalization_type` set to the method used.
 
-**MIME-family handling (representative):**
+#### 4.2.2 Cross-reference resolution
 
-| MIME family | Conversion output |
-|-------------|-------------------|
-| `text/html`, `application/xhtml+xml` | Clean content; strip navigation, styling, chrome |
-| `application/pdf` | Text and table extraction; per-page structure |
-| `image/*` | `![alt text](artifacts://filename)` embed; descriptive alt from MIME-schema guidance |
-| `audio/*` | Automatic speech-recognition transcription with timestamps |
-| `video/*` | Transcription + frame descriptions per schema guidance |
-| `application/epub+zip` | Parse chapter structure, extract text |
-| `text/markdown`, `text/plain` | Passthrough (`conversion_method: passthrough`) |
-| `unknown` or unmatched | Best-effort fallback; emit `draft` body with a placeholder and record the gap |
+After producing the normalized body, the normalizer checks all hyperlinks and embedded resource references against the corpus's blake3 index. Targets that match a captured artifact are rewritten as blake3 wikilinks or embeds. Targets with no match remain as standard markdown URLs. This is a mechanical resolution, not an editorial judgment — the normalizer does not add links that didn't exist in the original content.
 
-Trivial conversion is fine. A clean text file gets `conversion_method: "passthrough"` — the pipeline is uniform even when a step does minimal work.
+Re-normalization passes can re-run cross-reference resolution as new artifacts are captured, turning previously unresolved URLs into wikilinks and embeds without altering anything else in the body.
 
-**Conversion provenance.** The `conversion_method`, `conversion_tool`, and `conversion_date` fields enable targeted bulk re-conversion when tools improve (e.g., "re-convert all `application/pdf` records processed by `tesseract v4` with `tesseract v5`").
+#### 4.2.3 Contextualization
 
-#### 4.2.2 Contextualization
+**What:** LLM-driven refinement of the body, informed by base schema guidance, classification schema matches, and any tag vocabulary conventions the corpus declares.
 
-**What:** LLM-driven refinement of record content, informed by both format guidance (MIME schemas) and semantic guidance (concept documents the record is `part_of`).
+**How:** The normalizer loads the record, the matching base schema, and any classification schemas whose match conditions apply. It refines the body, fills extended fields, assesses `credibility_tier`, generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
 
-**How:** An LLM agent loads the record, the MIME-normalization schema matching its `content_type`, and the ancestors in its `part_of` chain, then refines the content with semantic understanding. For document records (after merge), the agent also loads all constituent records for cross-record awareness.
+**Schema composition.** Base schema fields are extracted first. Matching classification schemas add their tags and extended fields, merging into the record (last-write-wins on field collisions). Multiple classification schemas may match.
 
-**Progressive disclosure of concept context.** A record's `part_of` chain can get deep (track → album → discography → artist → music-genre → ...). Loading every concept document's full body upfront would explode context and drown out the artifact. Instead, the normalizer receives concept documents in two tiers:
+**Output:** Record with refined body, extended fields populated, and `status: normalized`.
 
-1. **Eagerly, as summary context.** Walk the record's `part_of` chain transitively and assemble a list of `{uuid, title, description}` for every ancestor concept. Descriptions are spec-required to be 1–3 sentences (§3.1.1), so even deep chains stay cheap — typically a few hundred tokens total. This is enough for the normalizer to know what concepts govern the record and to spot relevant normalization hints that were placed in the descriptions (see §3.5.5).
+### 4.3 Author
 
-2. **Lazily, on demand.** Expose a `fetch_concept_body(uuid)` tool. The normalizer decides which ancestors have enough normalization-relevant prose in their body to be worth pulling, and fetches them selectively. Unused concept bodies never enter context.
-
-If the total eager-summary context would exceed a configured budget, truncate by depth — the farthest ancestors drop first, since they are the least specific and most likely to be superseded by closer ancestors' guidance. Depth-limit policy is an implementation detail; the spec only requires that contextualization has *some* access to the ancestor chain.
-
-**Operations:**
-
-| Operation | Why LLM |
-|-----------|---------|
-| Convert remaining inline HTML to well-formed markdown | Requires semantic understanding of structure |
-| Improve image alt text and classification | Requires content understanding |
-| Normalize formatting across the record | Requires editorial judgment |
-| Generate or refine `description` | Requires content understanding |
-| Assess `credibility_tier` | Requires domain judgment |
-| Surface quality issues | Requires quality judgment |
-| Cross-reference related content (document records) | Requires cross-record semantic awareness |
-
-**Normalization integrity (source records).** For source records, contextualization must produce a more accurate representation of the artifact — not a more complete one. The agent may:
-
-- Fix structural issues (broken tables, malformed lists)
-- Resolve encoding ambiguity (mojibake → correct characters, when determinable from context)
-- Improve formatting fidelity (better markdown representation of the original structure)
-- Add alt text to images based on visible content
-- Surface issues where content is missing or degraded
-
-The agent must **not**:
-
-- Add factual claims not present in the artifact
-- Fill in gaps with inferred information
-- Embellish or editorialize the content
-- Add context from external knowledge
-
-**Document records are different.** When contextualizing a document record (after merge), the agent draws on all constituent records to produce enriched, composite content. Cross-referencing, synthesis, and editorial structure are appropriate here because the document's purpose is to form a complete picture from multiple accurate sources.
-
-**Output:** Record with refined body and `status: normalized`.
-
-### 4.3 Merge
-
-**What:** Create a new document record from existing records that represent the same subject.
+**What:** Create or edit a document record that synthesizes knowledge across one or more artifacts and other documents.
 
 **Process:**
 
-1. **Discover candidates.** LLM-assisted or manual. After normalizing a batch, a discovery pass identifies records about the same subject. "These three sources are all about the same album."
+1. **Identify a synthesis target.** A topic that benefits from authored prose (a how-to guide, a concept definition, an album page, a compendium chapter source). Triggers may come from the curator, from emerging tag clusters, from operator direction, or from compendium gaps.
+2. **Assign UUID.** Generate a UUIDv4 for the new document.
+3. **Write the body.** Author markdown prose. Cite artifacts via wikilinks (`[[blake3|text]]`). Embed artifact content where it pays off (`![[blake3]]`). Use functional URIs for computed transformations (`![[blake3://hash?params]]`). Link to peer documents (`[[uuid-or-slug|text]]`). Apply tags in frontmatter.
+4. **Write the document.** Save as `documents/{uuid}.md` with `record_type: document`, the assigned UUID, optional slug, title, description, tags, and quality fields.
 
-2. **Propose merge.** The proposal specifies which records to combine, what concept document(s) the result should `part_of`, and an optional merge rationale. The operator approves or rejects.
+There is no merge ceremony, no constituent list, no merge rationale field. The body *is* the synthesis; the references in the body are the structural relationships.
 
-3. **Create document record.** A new UUID is assigned. The record is written to `documents/{uuid}.md`. The `constituents` field lists direct child UUIDs. `record_type` is `document`. `content_type` is `text/markdown`. `part_of` references any concept documents the merged result classifies under.
+**Authoring is non-destructive.** Referenced artifacts and other documents are unchanged and independently addressable. Removing a reference from a document body simply removes that reference — no cascade, no mutation of the target.
 
-4. **Normalize the document.** The normalizer loads all constituent records and assembles enriched content drawing on all of them, producing the document's markdown body. Any derived files produced during normalization are stored in `assets/{uuid}/` and referenced via `asset_refs`. The document is richer than any individual constituent because it draws on all of them and is free to synthesize across sources.
-
-**Merge is non-destructive.** Constituent records remain unchanged and independently addressable in `sources/` (or `documents/` for multi-level merges). The merge creates a new record on top of them. An incorrect merge is undone by deleting the document record — the constituents are unaffected.
-
-**Multi-level merges** are natural: song documents (merged from lyrics + audio + metadata sources) become constituents of an album document, which becomes a constituent of an artist document. Each level adds context and produces progressively richer output.
+**Documents may be authored in layers.** A "Caliper Rebuild — Pontiac G8 GT" document may be referenced by a higher-level "Brake Caliper Service" document, which is in turn referenced by a "Brake System Overview" document. Each level adds context. The link graph is the hierarchy.
 
 ### 4.4 Re-normalize
 
-**What:** Flow normalization context from merges back to constituent records to improve their accuracy.
+**What:** Re-run normalization on existing artifact records, taking advantage of newly available context (newly captured artifacts that resolve previously unresolved cross-references), tooling improvements (better extraction, better OCR, better transcription), or model upgrades.
 
 **When:**
 
-- A constituent source has known issues (incomplete translation, ambiguous formatting) that parent records might help resolve
-- A new merge provides context that wasn't available at original normalization time
-- A model upgrade justifies re-processing with better tools
+- A previously unresolved cross-reference now has a captured target.
+- A schema (base or classification) has been improved.
+- The normalization model has been upgraded.
+- An artifact has known issues that re-processing might resolve.
 
-**How:** On-demand pass triggered by the operator or Curator agent. Processing order follows a **reverse topological sort** of the DAG — leaf sources first (using context from their parent documents to resolve ambiguity), then intermediate documents, then top-level documents. This ensures improvements at lower levels propagate upward when parent documents are subsequently re-normalized.
+**How:** On-demand, triggered by the operator or Curator. Re-normalization MAY rewrite the body but MUST preserve normalization integrity — the new body remains a faithful rendering of the original artifact. Cross-reference resolution is re-run automatically.
 
-**Normalization integrity still applies.** Even during re-normalization with additional context, a source record must remain faithful to its artifact. Context from parent records can help resolve ambiguity (e.g., disambiguating a partial lyric translation), but must not introduce information that isn't in the original artifact.
-
-**Re-normalization is optional.** Many records will never be re-normalized — the initial normalization is sufficient. The capability exists for cases where DAG context meaningfully improves accuracy.
+**Re-normalization is optional.** Many artifacts will never be re-normalized — the initial normalization is sufficient. The capability exists for cases where new context or improved tooling meaningfully improves accuracy.
 
 ### 4.5 Build
 
 **What:** Materialize the corpus into a browsable or publishable form.
 
-**How:** A build process reads the corpus and produces output suitable for consumption (static site, browsable vault, or other format).
+**How:** A build process reads the corpus and produces output suitable for consumption (static site, browsable vault, mdbook, or other format).
 
-**Processing order:** Reverse topological sort of the DAG:
+**Steps:**
 
-1. For each source record, resolve `artifact_refs` to actual files (ensure artifacts are in `artifacts/{uuid}/`, fetching from `artifact_store` if needed)
-2. For document records, resolve `asset_refs` similarly (ensure assets are in `assets/{uuid}/`, fetching from `asset_store` if needed)
-3. Generate index and navigation structures appropriate to the output format
+1. Resolve all wikilinks and embeds (artifact↔artifact, document↔artifact, document↔document) to whatever the target format expects (file paths, anchored URLs, inlined content).
+2. Resolve all functional URIs in document bodies — compute transformations, write derived artifacts to the build's output directory, substitute paths.
+3. Generate index and navigation structures appropriate to the output format (tag indexes, slug routes, backlink panels).
 
-**URL-to-UUID resolution.** The build process can generate a lookup index mapping origin URLs to UUIDs, enabling consumers to find records by the URL they were captured from. Both the original origin URL and the record's UUID serve as stable entry points.
+**Origin-URL routing.** The build process can generate a lookup index mapping `origin_uri` values to artifact blake3 hashes, enabling consumers to find records by the URL they were captured from.
 
-Build is an implementation detail — this spec defines what the corpus contains, not how it's published. The build system reads markdown files and metadata, and produces whatever output format is appropriate.
+Build is an implementation detail — this spec defines what the corpus contains, not how it's published.
 
 ### 4.6 Phase Boundaries and Re-processing
 
@@ -883,13 +841,14 @@ Pipeline steps are independently re-runnable:
 
 | Operation | Scope | Trigger |
 |-----------|-------|---------|
-| **Re-capture** | One record | Upstream content may have changed |
-| **Re-convert** | Records by `conversion_tool` version | Conversion tools improved |
+| **Re-capture** | One artifact (new bytes → new record) | Upstream content has changed |
+| **Re-convert** | Artifacts by `conversion_tool` version | Conversion tools improved |
+| **Re-resolve cross-references** | Any artifact body | New artifacts captured |
 | **Re-contextualize** | Records by `normalization_model` | LLM models improved |
-| **Re-merge** | One document record | Constituents have been updated |
-| **Re-normalize (contextual)** | DAG subgraph | Merge context should flow to constituents |
+| **Re-author a document** | One document | Knowledge updated; new artifacts available |
+| **Rebuild similarity caches** | Tier 2/3 indices | Model upgrades; index drift |
 
-Each operation can target specific records via metadata queries. The `conversion_tool`, `normalization_model`, and `normalization_date` fields enable precise targeting (e.g., "re-contextualize all records normalized before March 2026").
+Each operation can target specific records via metadata queries. The `conversion_tool`, `normalization_model`, and `normalization_date` fields enable precise targeting.
 
 ---
 
@@ -899,54 +858,57 @@ Each operation can target specific records via metadata queries. The `conversion
 
 The pipeline is operated by specialized agents — lightweight, single-purpose workers that each handle one item per invocation. Agents have focused responsibilities, process exactly one item, and report results to a coordinator. There is no inter-agent communication and no shared state beyond the corpus filesystem.
 
-Agents consult MIME-normalization schemas in `schema/` that match the record's `content_type`, applying consistent normalization guidance for each MIME family.
+Agents consult base schemas and classification schemas under `schema/` to apply consistent normalization and classification per content type.
 
-### 5.2 Ingestor
+### 5.2 Capturer
 
-Handles capture staging, reconciliation, and record stub creation for a single content item.
+Handles capture and reconciliation for a single content item.
 
-**Model class:** Haiku-tier (fast, cheap — no creative judgment needed)
+**Model class:** Haiku-tier (fast, cheap — no creative judgment needed).
 
-**Scope:** One content item per invocation
+**Scope:** One content item per invocation.
 
 **Responsibilities:**
 
-1. Run the appropriate capture script to acquire artifacts into `capture/`
-2. Reconcile: detect MIME types, pick the primary artifact, assign UUID, move artifacts to `artifacts/{uuid}/`
-3. Compute SHA-256 hashes for each artifact file
-4. Create `sources/{uuid}.md` with stub frontmatter including `content_type`, per-ref `mimetype`, and `primary: true` on one ref
-5. Verify artifact integrity (file completeness, expected content present, hashes recorded)
-6. Report results: success/failure, UUID assigned, artifact count, any warnings
+1. Run the appropriate capture script to acquire the file from its `origin_uri` into staging (or directly to the binary store).
+2. Compute the blake3 hash and any auxiliary hashes.
+3. Detect MIME type (extension + magic-byte sniffing).
+4. Reconcile against the existing corpus: dedup-check, append capture event, or create a new artifact stub.
+5. Move the binary into the content-addressed store.
+6. Report results: hash, MIME, whether the record is new or existing, any warnings.
 
-The ingestor receives instructions about what to capture. It is a reliable executor, not a decision maker — it does not choose what to ingest or how to classify content.
+The capturer is a reliable executor, not a decision maker — it does not choose what to capture or how to classify content.
 
 ### 5.3 Normalizer
 
-Transforms record stubs into fully normalized records, handling both conversion and contextualization.
+Transforms artifact stubs into fully normalized records, handling conversion, cross-reference resolution, and contextualization.
 
-**Model class:** Sonnet-tier (creative judgment required for contextualization, issue surfacing, description generation)
+**Model class:** Sonnet-tier (creative judgment required for contextualization, issue surfacing, description generation).
 
-**Scope:** One record per invocation. For document records, all constituent records are loaded for cross-record awareness.
-
-**Responsibilities:**
-
-1. **Conversion.** For source records with `status: stub`, resolve the primary artifact and run the MIME-matched converter to fill the markdown body. Set `status: draft`. This step shells out to deterministic tooling.
-2. **Contextualization.** Refine content with LLM judgment, consulting the MIME-normalization schema that matches the record's `content_type`. For source records: achieve accurate representation without adding information. For document records: synthesize across constituents, produce derived assets in `assets/{uuid}/`. Surface issues. Generate or refine `description`. Assess `credibility_tier`. Set `status: normalized`.
-3. **Self-verify.** Check for broken artifact references. Verify SHA-256 hashes if artifacts are locally available. Confirm `content_type` matches the `mimetype` of the primary artifact ref.
-
-### 5.4 Merger
-
-Creates document records from related source records.
-
-**Model class:** Sonnet-tier (semantic judgment required for candidate discovery and assembly)
-
-**Scope:** One merge operation per invocation
+**Scope:** One artifact per invocation.
 
 **Responsibilities:**
 
-1. **Candidate discovery** (when prompted). Given a set of records, identify groups that represent the same subject. Present candidates to operator for approval.
-2. **Create document record.** Assign UUID, write `documents/{uuid}.md`, populate frontmatter with `constituents`, `content_type: text/markdown`, and any applicable `part_of` references to concept documents.
-3. **Assemble document content.** Load all constituent records and produce enriched markdown that draws on all of them. Produce any derived assets in `assets/{uuid}/`. Structure the body coherently; no schema-enforced layout in v9.
+1. **Conversion.** For artifacts with `status: stub`, run the MIME-matched converter to fill the markdown body. Set `status: draft`. Set `normalization_type` to the method used. This step shells out to deterministic tooling.
+2. **Cross-reference resolution.** For each hyperlink and embedded resource in the original content, check whether the target was captured (by URL → blake3 lookup). If captured, replace with a blake3 wikilink or embed. If not, leave as a standard URL. Mechanical resolution — the normalizer does not add links that didn't exist in the original content.
+3. **Schema application.** Apply the base schema for the artifact's `content_type` (extracts format-intrinsic extended fields, sets normalization guidance). Then check classification schemas for matching conditions; apply any that match (add tags, extract domain-specific extended fields).
+4. **Contextualization.** Refine the body with LLM judgment, consulting schema guidance. Improve formatting fidelity, resolve encoding ambiguity, generate alt text for images, surface issues. Generate or refine `description`. Assess `credibility_tier`. Set `status: normalized`.
+5. **Self-verify.** Confirm `content_type` matches the actual MIME of the stored binary. Confirm `blake3` field matches the filename and the binary store key.
+
+### 5.4 Author
+
+Creates or edits document records that synthesize knowledge across artifacts and other documents.
+
+**Model class:** Sonnet-tier (semantic judgment required for synthesis).
+
+**Scope:** One document per invocation.
+
+**Responsibilities:**
+
+1. **Identify synthesis targets** (when prompted). Given a topic, a tag cluster, or operator direction, identify what document should be authored.
+2. **Compose the body.** Author markdown prose that synthesizes knowledge across referenced artifacts and documents. Cite via wikilinks, embed where appropriate, use functional URIs for computed transformations of artifact content.
+3. **Write the document.** Assign UUID, populate frontmatter (title, description, tags, optional slug, status, credibility tier), write to `documents/{uuid}.md`.
+4. **Maintain peer references.** When authoring or editing a document, surface backlink candidates and related documents so cross-references stay current.
 
 ### 5.5 Curator
 
@@ -954,34 +916,35 @@ Autonomous orchestration skill that assesses corpus state, prioritizes work, and
 
 **Operating loop:**
 
-1. **Assess.** Scan `sources/` and `documents/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, merge candidates, and re-normalization opportunities. Check `capture/` for completed captures awaiting reconciliation.
-2. **Prioritize.** Apply decision framework: compendium blockers first, then high-priority new captures, then normalization of existing stubs, then merge candidates, then re-normalization.
+1. **Assess.** Scan `artifacts/` and `documents/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, unresolved cross-references, and authoring opportunities. Check `capture/` for completed captures awaiting reconciliation.
+2. **Prioritize.** Apply decision framework: compendium blockers first, then high-priority new captures, then normalization of existing stubs, then re-resolution sweeps, then re-normalization driven by tool/model upgrades.
 3. **Propose.** Present the prioritized work plan to the operator for approval.
-4. **Execute.** Spawn ingestor, normalizer, and merger agents, managing parallelism by launching multiple agents concurrently.
-5. **Report.** Summarize results — records captured, normalized, merged, issues encountered.
+4. **Execute.** Spawn capturer, normalizer, and author agents, managing parallelism by launching multiple agents concurrently.
+5. **Report.** Summarize results — records captured, normalized, authored, issues encountered.
 
 ### 5.6 Parallelism Model
 
 - The **Curator** (or human operator) decides concurrency based on available resources and rate limits.
 - Each agent processes one item. The Curator spawns N agents in parallel for N items.
-- Agents do not communicate with each other. They read from and write to the corpus, and the Curator sequences work to avoid conflicts (e.g., not normalizing a document whose constituents are still being captured).
-- Typical session: spawn 5 ingestors in parallel → wait for completion → spawn 5 normalizers for the new stubs → spawn merger for identified candidates.
+- Agents do not communicate with each other. They read from and write to the corpus, and the Curator sequences work to avoid conflicts (e.g., not authoring a document whose evidentiary artifacts are still being captured).
+- Typical session: spawn 5 capturers in parallel → wait for completion → spawn 5 normalizers for the new stubs → spawn an author for any documents the new artifacts unblock.
 
 ### 5.7 Deterministic vs. LLM Boundary
 
 | Operation | Type | Rationale |
 |-----------|------|-----------|
-| Capture (download, scrape) | Deterministic | Reproducible, scriptable, no judgment needed |
-| Reconciliation (assign UUID, detect MIME, pick primary artifact) | Deterministic | File extension + magic-byte sniffing are mechanical; LLM only for genuinely ambiguous captures |
-| Hash computation (SHA-256) | Deterministic | Mechanical integrity check |
+| Capture (fetch, hash, store) | Deterministic | Reproducible, scriptable, no judgment needed |
+| Reconciliation (dedup check, MIME detection) | Deterministic | Hash comparison + extension/magic-byte sniffing are mechanical |
+| Hash computation (blake3, sha256, md5) | Deterministic | Mechanical integrity check |
 | Conversion (HTML→MD, PDF→text, OCR, transcription) | Deterministic | Reproducible, tool-specific, no editorial judgment |
+| Cross-reference resolution | Deterministic | Mechanical URL→blake3 lookup against the corpus index |
 | Contextualization (refine, describe, assess, surface issues) | LLM | Requires semantic understanding and editorial judgment |
-| Merge candidate discovery | LLM | Requires semantic matching across records |
-| Document assembly (from constituents) | LLM | Requires editorial decisions about structure and emphasis |
-| Re-normalization (context flow) | LLM | Requires contextual understanding from parent records |
+| Classification schema match | Deterministic (when conditions are mechanical) / LLM (when conditions require interpretation) | Depends on the schema's match condition |
+| Document authoring | LLM | Requires synthesis, structure, and editorial decisions |
+| Functional URI evaluation (page extract, framegrab, crop) | Deterministic | Reproducible transformations of immutable inputs |
 | Build (export, index) | Deterministic | Mechanical, reproducible |
 
-The boundary is clear: **if the operation could produce different valid outputs depending on judgment, it's LLM-driven. If the output is deterministic given the input, it's scripted.** This enables independent re-processing — you can re-convert with better tools without re-contextualizing, and vice versa.
+The boundary is clear: **if the operation could produce different valid outputs depending on judgment, it's LLM-driven. If the output is deterministic given the input, it's scripted.** This enables independent re-processing — re-convert with better tools without re-contextualizing, and vice versa.
 
 ---
 
@@ -989,27 +952,28 @@ The boundary is clear: **if the operation could produce different valid outputs 
 
 ### 6.1 What a Compendium Is
 
-A **compendium** is a curated synthesis of records into a domain-specific reference work. Where records preserve and normalize source material faithfully, compendiums apply editorial judgment to produce coherent, structured knowledge.
+A **compendium** is a curated synthesis of records into a domain-specific reference work. Where the corpus preserves and normalizes captured content faithfully and authors documents that synthesize across captures, compendiums apply a further editorial layer: scope, point of view, and a domain taxonomy.
 
-A compendium is opinionated. It has a defined scope, a point of view, and a domain taxonomy. Multiple compendiums can draw from the same records and produce different works — an economics compendium and a socialism compendium might both use records from the same academic sources, selecting different subsets and synthesizing from different perspectives.
+A compendium is opinionated. Multiple compendiums can draw from the same records and produce different works — an economics compendium and a socialism compendium might both draw on the same academic artifacts, selecting different subsets and synthesizing from different perspectives.
 
 ### 6.2 How Compendiums Use Records
 
 Compendiums select records from the corpus and synthesize them into chapters organized by a domain taxonomy:
 
-1. **Select records.** Using record descriptions, tags, MIME types, and `part_of` classifications, identify records relevant to the compendium's domain. Document records (merged or concept) are preferred because they're already enriched, but source records can also be selected directly.
+1. **Select records.** Using descriptions, tags, and tier-3 body-embedding similarity, identify records relevant to the compendium's domain. Document records are preferred because they're already authored synthesis, but artifact records can be cited directly when their content is the primary source.
 2. **Organize by taxonomy.** Group selected records by the compendium's chapter structure. The taxonomy follows the domain's natural organization (by vehicle system for automotive, by character/faction/theme for fiction, by theory/era for economics).
-3. **Synthesize chapters.** Distill grouped records into coherent prose, reconciling conflicts, identifying patterns, and citing record UUIDs.
+3. **Synthesize chapters.** Distill grouped records into coherent prose, reconciling conflicts, identifying patterns, and citing record identifiers (blake3 for artifacts, UUID/slug for documents). Functional URIs may be used to cite specific pages, frames, or crops.
 4. **Build navigation.** Generate cross-references and supplementary sections (FAQ, glossary, quick reference).
 
 ### 6.3 Synthesis Principles
 
-- **Cite records.** Every factual claim references the UUID(s) it derives from. The reader can always trace a claim back to a specific record.
+- **Cite records.** Every factual claim references the identifier(s) it derives from — blake3 for artifacts, UUID or slug for documents. Functional URIs cite specific pages, frames, or crops where precision matters.
 - **Represent disagreement.** When records conflict, the compendium presents both positions with their respective credibility tiers rather than silently choosing one.
-- **Aggregate patterns.** If 40 forum posts describe the same failure mode, the compendium captures the pattern (common mileage range, symptoms, root cause) rather than citing each post individually.
+- **Aggregate patterns.** If 40 forum-thread artifacts describe the same failure mode, the compendium captures the pattern (common mileage range, symptoms, root cause) rather than citing each artifact individually.
 - **Respect credibility tiers.** Higher-tier records carry more weight. An `authoritative` document is not overruled by `anecdotal` reports unless the volume and consistency of community experience is overwhelming.
 - **Respect issues.** Records with unresolved `critical` or `major` issues should be weighted accordingly and gaps noted.
-- **Leverage relations.** `same_as` identifies duplicate captures (collapse to one for citation purposes). `part_of` reveals classification and enables grouping records by concept document during synthesis.
+- **Leverage tags and the document graph.** Tags surface candidate records by topic. The document graph (existing authored documents and their wikilinks) is the strongest input — a well-authored document already encodes the synthesis a chapter needs. Compendium chapters often start by selecting a small set of seed documents and following their references outward.
+- **Leverage similarity.** Tier-3 body embeddings surface cross-modal connections (an audio transcript and an HTML article on the same topic) that tags alone may miss.
 
 ### 6.4 System Prompts
 
@@ -1019,68 +983,51 @@ System prompts are iterable. When synthesis produces gaps or errors, the system 
 
 ### 6.5 Incremental Re-synthesis
 
-Compendiums track which records were used to produce each chapter and the `normalization_date` of each record at the time of synthesis. When records are re-normalized or new records are added, only affected chapters need re-synthesis.
+Compendiums track which records were used to produce each chapter and the `normalization_date` (for artifacts) or last-edit date (for documents) of each at the time of synthesis. When records are re-normalized, re-authored, or new records are added, only affected chapters need re-synthesis.
 
-A record that has been re-normalized (new `normalization_date`) triggers re-synthesis only in chapters that cite it. This keeps re-synthesis proportional to actual content change, not to corpus-wide activity.
+A record that has been updated triggers re-synthesis only in chapters that cite it. This keeps re-synthesis proportional to actual content change, not to corpus-wide activity.
 
 ---
 
 ## Appendix A: MIME Reference
 
-This appendix lists MIME types commonly encountered in practice, along with typical normalization notes and frequently-observed extended metadata fields. **It is not a closed enumeration.** Any IANA-registered MIME is valid as a `content_type` value. The schema library (`schema/`) is the authoritative source of normalization guidance for each MIME or MIME family; this appendix is an illustrative snapshot.
+This appendix is a concise overview of MIME types commonly encountered in practice. The authoritative source for normalization guidance per MIME is the base schema in `schema/base/`. Extended fields beyond `content_type` are extracted by base schemas (format-intrinsic) and classification schemas (corpus-local domain-specific).
 
-Extended fields shown below are **informational only** — they are capture-pipeline byproducts and v9 does not validate their presence. Their main role is preserving useful metadata that was trivially available at capture time (video duration, document page count, forum username).
+Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permitted as a sentinel.
 
-### A.1 Source MIMEs
+### A.1 Common artifact MIMEs
 
-Sources typically have a non-markdown MIME reflecting their captured format. The record's body is the markdown rendition; the artifacts preserve the originals.
+| MIME | Method | Typical extended fields | Notes |
+|------|--------|------------------------|-------|
+| `text/html`, `application/xhtml+xml` | extraction | `page_title`, `meta_description`, `canonical_url`, `og_title`, `og_description`, `og_image`, `og_type`, `language` | Strip navigation, chrome, advertising. Preserve primary content, headings, tables, code blocks. The largest MIME by volume in most corpora. |
+| `application/pdf` | extraction | `page_count`, `pdf_author`, `pdf_title`, `pdf_creation_date`, `pdf_producer`, `is_scanned` | Extract text and tables. OCR if scanned. Page boundaries surface as section anchors usable from functional URIs. |
+| `application/epub+zip` | extraction | `work_title`, `epub_author`, `language`, `chapter_count`, `word_count` | Parse chapter structure; one heading per chapter. Internal links resolve via cross-reference resolution if other captures match. |
+| `text/markdown`, `text/plain` | extraction (passthrough) | `word_count`, `language` | Minimal cleanup. `conversion_method: "passthrough"`. |
+| `video/mp4`, `video/webm`, `video/mkv`, `video/quicktime` | transcription | `duration_seconds`, `width_px`, `height_px`, `frame_rate`, `video_codec`, `audio_codec` | Transcribe audio with timestamps. Frame descriptions per schema guidance. |
+| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` | Transcribe with timestamps. Speaker turn markers where determinable. ID3-tagged audio that classification schemas recognize as musical recordings gains `artist`, `track_title`, `album`, `track_number`. |
+| `image/jpeg`, `image/png`, `image/webp`, `image/gif` | description | `width_px`, `height_px`, `color_space`, `exif_date`, `exif_gps_lat`, `exif_gps_lon`, `exif_camera` | Visual description and OCR text in body. Embedded in artifact bodies via `![[blake3]]`; embedded in document bodies via plain embed or functional URI. |
+| `message/rfc822` | extraction | `from`, `to`, `subject`, `message_date`, `in_reply_to` | Body is the message text; headers extracted to extended fields. Multipart bodies flatten to text/plain or text/html as primary. |
+| `application/json` | extraction (passthrough) | `top_level_keys` | Prettify; preserve structure. |
+| `unknown` | metadata | `byte_size`, `magic_bytes_summary` | Best-effort fallback. Record the gap in `issues[]`. |
 
-| MIME | Typical artifact | Notes |
-|------|------------------|-------|
-| `text/html`, `application/xhtml+xml` | Web pages, forum threads, articles, blog posts | Strip navigation, chrome, advertising. Preserve primary content, headings, tables, code blocks. The largest MIME by volume in most corpora. |
-| `application/pdf` | Service manuals, academic papers, technical bulletins, datasheets, scans | Extract text and tables. OCR if the PDF is image-only. Preserve page boundaries via headings or horizontal rules when useful for citation. |
-| `application/epub+zip` | Novels, non-fiction ebooks, collected works | Parse chapter structure; emit one heading per chapter. Preserve internal links where targets resolve within the ebook. |
-| `text/markdown`, `text/plain` | Clean native markdown or text files | Passthrough with minimal cleanup. Set `conversion_method: "passthrough"`. |
-| `video/mp4`, `video/webm`, `video/quicktime` | Video captures from hosting platforms, tutorials, documentaries, films | Transcribe audio with timestamps. Describe frames per schema guidance. A primary artifact may have a companion HTML page capturing metadata — still marked non-primary. |
-| `audio/mpeg`, `audio/x-m4a`, `audio/x-m4b`, `audio/wav`, `audio/ogg` | Podcast episodes, audiobook chapters, radio segments, songs | Transcribe with timestamps. Preserve speaker turn markers where determinable. |
-| `image/jpeg`, `image/png`, `image/gif`, `image/webp` | Photos, diagrams, screenshots, scans | Emit as `![alt text](artifacts://filename)`; LLM-generated alt text based on visible content. Surface text content via OCR when appropriate. |
-| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | Word documents | Extract text preserving structure; handle tracked changes / comments conservatively. |
-| `unknown` | Captures whose MIME cannot be determined or for which no schema exists | Best-effort fallback normalizer; record the gap in `issues[]`. |
+### A.2 Classification examples
 
-**Typical extended fields for common captures** (informational, not required):
+A corpus typically authors classification schemas to recognize content patterns it cares about. Examples:
 
-- **Forum threads (`text/html` from forum platforms):** `username`, `thread_url`, `reply_count`
-- **Voting-community threads (`text/html` from aggregator-style forums):** `username`, `community_slug`, `post_url`, `score`, `comment_count`
-- **Web articles (`text/html` from publisher sites):** `article_url`, `publication`, `author`
-- **Video sources:** `duration_seconds`, `channel_name`, `platform`
-- **Audio sources:** `duration_seconds`, `series_name`, `episode_number`
-- **PDF sources:** `page_count`, `document_type` (e.g., `manual_section`, `bulletin`, `paper`, `datasheet`)
-- **Ebooks:** `work_title`, `isbn`, `word_count`, `series_name`, `series_position`
-- **Images:** `dimensions`, `subject`
-- **Metadata pages from database sites:** `source_site` (music databases, film databases, encyclopedic wikis, etc.), `page_type` (band, album, artist, film, episode, etc.)
-- **Screenplays:** `work_title`, `medium` (`film` / `television` / `stage`), `draft`
-- **Product documentation:** `product_name`, `manufacturer`, `document_type` (`datasheet` / `catalog` / `guide` / `sds`), `part_numbers`
+- **Forum threads** — text/html on a known forum domain → `add_tags: [forum-thread]`, extended fields `username`, `thread_url`, `reply_count`.
+- **Voting-community threads** — text/html on aggregator-style platforms → `community_slug`, `post_url`, `score`, `comment_count`.
+- **Web articles** — text/html on publisher domains → `article_url`, `publication`, `byline`.
+- **Service manuals** — application/pdf with publisher metadata matching a manual pattern → `service_section`, `vehicle_platform`, `manufacturer`.
+- **Musical recordings** — audio/* with populated ID3 artist/album → `artist`, `track_title`, `album`, `track_number`.
 
-### A.2 Document MIMEs
+Classification schemas are corpus-local. The same MIME can carry different classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
 
-Documents almost always have `content_type: text/markdown` — they are markdown by construction. The classification that used to be their "content type" in v8 (`album`, `novel`, `song`, `artist`, `tv_episode`, `technical_reference`, `research_work`) is expressed in v9 as `part_of` references to concept documents describing those categories.
+### A.3 When to author a document on top
 
-Typical concept documents a corpus might author:
+A rule of thumb: when multiple artifacts share strong tag overlap and would benefit from synthesized prose, author a document. Examples where authored documents pay off:
 
-- **Music domain:** `Song`, `Album`, `Artist`, `Genre`, specific artist/band documents, specific album documents
-- **Literature domain:** `Novel`, `Novella`, `Series`, `Author`, specific author/work documents
-- **Broadcast domain:** `TV Episode`, `TV Series`, `Film`, `Podcast`
-- **Technical domain:** `Technical Reference`, `Service Manual`, `System` (e.g., "Brake System"), specific product/model documents
-- **Academic domain:** `Research Paper`, `Journal`, `Field` (e.g., "Condensed Matter Physics")
+- Multiple artifacts about the same album → an album document that synthesizes across the metadata page, the audio, and reviews.
+- Many artifacts about products in a line → a product-line document that summarizes shared attributes and links to per-product documents.
+- Recurring abstract categories (Review, Analysis, Explainer) → category documents that cut across domains via cross-document wikilinks.
 
-These concept documents are ordinary document records. Typical extended fields for each are a matter of curator convention and are preserved as informational metadata when present (e.g., `artist_name`, `release_date`, `label` on an album record; `work_title`, `author_name`, `year_published` on a novel record). The authoritative guide for any given concept is the prose in the concept document itself.
-
-### A.3 When to author a concept document
-
-A rule of thumb: if multiple records would otherwise sit orphaned and describable only by tags, and you find yourself wanting to query "all records that are X", then X likely deserves a concept document. Examples where a concept document pays off:
-
-- Multiple sources about the same album → one Album-specific document as a shared classification target
-- Many sources about products in a line → a product-line concept document
-- Recurring abstract categories (Review, Analysis, Explainer) → category concept documents that cut across domains
-
-Concept documents are cheap to create and cheap to retire (move or delete, update inbound `part_of` references). Do not over-plan. Start with the concepts that emerge naturally from the corpus's actual classification needs.
+Documents are cheap to create and cheap to retire. Do not over-plan. Start with the syntheses that the corpus's actual usage makes valuable, and let the document graph grow organically.
