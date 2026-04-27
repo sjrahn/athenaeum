@@ -157,16 +157,16 @@ For every artifact, apply the base schema first (extracts format-intrinsic field
 
 - `content_type` match — exact MIME or prefix.
 - `uri` regex / domain match — does any URI in `uris[]` match?
-- Prior-tag match — does the artifact already have a tag the schema requires?
+- Prior-classification match — does the artifact already carry a `classifications:[]` entry the schema requires (the `has_classifications` condition)?
 - Extended-field-value match — does the artifact have a field with a particular value?
 
-Schemas that match contribute their declared tags and extended fields. Multiple schemas may match; their outputs merge with last-write-wins on collision.
+Schemas that match contribute their declared extended fields and append an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match; their fields merge with last-write-wins on collision. Custom classification schemas do **not** write to a frontmatter `tags` field — artifacts don't carry one (spec §3.5.1).
 
 ### 3.4 Contextualization (LLM-driven)
 
 Refine the body and frontmatter:
 
-- Apply matching custom classification schemas, recording each application in the artifact's `classifications:` array as `{schema, justification}`. The schema's contributed fields and tags merge into top-level frontmatter per §3.3.2 composition rules. Justification is required for every application — mechanical for deterministic matches, substantive prose for LLM judgments.
+- Apply matching custom classification schemas, recording each application in the artifact's `classifications:` array as `{schema, justification}`. The schema's contributed extended fields merge into top-level frontmatter per §3.3.2 composition rules. Justification is required for every application — mechanical for deterministic matches, substantive prose for LLM judgments.
 - Improve formatting fidelity (broken tables, malformed lists).
 - Resolve encoding ambiguity where determinable from context.
 - Add or improve image alt text from visible content.
@@ -196,7 +196,7 @@ Custom classification schemas (§3.3.2 + §3.3.3 of the spec) are corpus-local a
 
 The curator (human or agent) periodically scans the corpus for patterns that suggest a custom classification schema should exist:
 
-- **Tag clusters.** A set of artifacts share a tag and would benefit from richer extended fields than the base schema gives.
+- **Classification clusters.** A set of artifacts share an existing classification (the same schema applied to all of them) and would benefit from richer extended fields layered on top, gated via `has_classifications`.
 - **URI-domain frequency.** Many artifacts have one of their `uris[]` matching a common domain, suggesting a platform-specific schema (custom field set for that platform).
 - **Recurring extended-field values.** Many artifacts have the same value in a schema-extracted field, suggesting a sub-classification.
 - **Codex-driven demand.** The codex/compendium layers (`impl-codex.md`) reveal patterns when authoring keeps reaching for the same kind of metadata that isn't currently extracted.
@@ -209,12 +209,10 @@ When a pattern is worth formalizing, the curator drafts a custom classification 
 schema_type: classification
 match:
   content_type: "..."
-  uri_pattern: "..."           # optional
-  has_tags: ["..."]            # optional
-  field_match:                 # optional
+  uri_pattern: "..."                  # optional
+  has_classifications: ["..."]        # optional
+  field_match:                        # optional
     field_name: value
-classification:
-  add_tags: [...]
 extended_fields:
   ...
 ```
@@ -226,14 +224,14 @@ The schema is committed to the corpus's `schema/classification/` directory.
 To apply the new schema retroactively, the curator triggers a re-normalization sweep over the artifacts the schema's match condition matches. Re-normalization:
 
 - Re-runs schema application (§3.3) against affected artifacts.
-- Adds the schema's tags and extended fields without disturbing other frontmatter.
+- Appends an entry to each affected artifact's `classifications:[]` array (with justification) and adds the schema's declared extended fields, without disturbing other frontmatter.
 - Does **not** rewrite the body unless the body's content depends on schema-extracted fields (rare).
 
 Sweep scoping options:
 
 - By `uri` pattern — fastest, when the schema's match is URI-based.
 - By `content_type` — useful when the schema applies to a whole MIME family.
-- By prior tag — when the schema layers on top of an earlier classification.
+- By prior classification — when the schema layers on top of an earlier classification (`has_classifications` match).
 
 ### 4.4 Schema evolution
 
@@ -261,7 +259,7 @@ The curator scopes the sweep using the most-precise selector possible:
 - By `conversion_tool` version, when re-running improved conversion.
 - By `normalization_model`, when re-running improved contextualization.
 - By `uri` pattern, when applying a URI-targeted custom classification schema.
-- By tag, when applying a tag-keyed custom classification schema.
+- By prior classification (the artifact already carries a particular classification), when applying a layered schema.
 - By `content_type`, when applying a MIME-keyed change.
 
 ### 5.3 Partial re-application

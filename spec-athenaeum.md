@@ -1,12 +1,39 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.9
+version: 10.10
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.10
+    date: 2026-04-26
+    summary: >
+      Refinement pass J. Tags become a pure codex-record concept; artifact
+      records and compendium records no longer carry frontmatter `tags`.
+      Artifact classification is recorded entirely in the `classifications:[]`
+      audit trail (every applied custom classification schema is logged with
+      a justification, and the schema's contributed extended fields merge
+      into top-level frontmatter). The schema-application *is* the artifact-
+      side classification signal — there's no parallel tag list. Inline
+      `%% #tag %%` annotations are restricted to codex-record bodies (§3.2.4
+      rewritten); artifact bodies, which must remain faithful to original
+      content, no longer permit them. §3.1.1 `tags` row scoped to "codex
+      records only"; §3.5.1 rewritten for codex-only tags; §3.4 example
+      artifact frontmatter has its `tags:` line removed. §3.3.2 schema YAML
+      drops `classification.add_tags`; the `has_tags` match condition is
+      renamed `has_classifications` (a schema gates on prior schema
+      applications, not on artifact tags). §3.3.2 composition rule, audit
+      trail prose, layered-matching prose, and examples all updated. §4.2.3
+      and §5.3 normalizer output contracts no longer mention "the resulting
+      tags" — artifacts emit extended fields and classification entries.
+      Appendix A.2 examples have their `add_tags` blocks stripped (the
+      schema name itself is the signal); `has_tags: [forum-thread]` in the
+      community-validated / anecdotal-claim schemas becomes
+      `has_classifications: [forum-thread]`. impl-corpus.md §3.3, §3.4,
+      §4.1 (Tag clusters → Classification clusters), §4.2 schema-authoring
+      YAML, §4.3, §5.2 all updated. Codex-side tag handling unchanged.
   - version: 10.9
     date: 2026-04-26
     summary: >
@@ -457,11 +484,9 @@ Present on every record (unless noted as record-type-specific).
 | `content_type` | string | yes (artifacts) | artifact records | IANA MIME type of the captured artifact (e.g., `text/html`, `application/pdf`, `image/jpeg`). `unknown` is permitted as a sentinel when the MIME cannot be determined. Codex records and compendium records do not carry `content_type` — they are markdown by construction. |
 | `status` | enum | yes | all | Pipeline state: `stub` (captured, no body), `draft` (converted, body filled), `normalized` (LLM-refined, ready for use). Codex records and compendium records typically begin at `draft` since authoring fills the body directly. |
 | `visibility` | enum | no | all | Editorial curation layer, independent of `status`. One of `visible` (default when absent), `deranked` (appears in results at lower priority), `hidden` (excluded from default results, still accessible by direct identifier). |
-| `tags` | string[] | no | all | Classification tags. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Declare what this record is about or what category it belongs to. Tags are corpus-local — they require no external concept document to function. A corpus MAY define a tag vocabulary in its conventions file for consistency. |
+| `tags` | string[] | no | codex records only | Classification tags. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Declare what this codex record is about or what category it belongs to. Tags are codex-local — they require no external concept document to function. A codex MAY define a tag vocabulary in its `codex.yaml` or a conventions file for consistency. **Tags are not used on artifact records or compendium records** — artifact classification is recorded in the `classifications:[]` audit trail (§3.1.2, §3.3.2); compendium-record organization is the author's chapter structure. |
 
-On artifact records, `tags` classify what the captured content is about. They are populated by the normalizer during contextualization and may be refined by curation passes. Frontmatter tags declare whole-record topical coverage; inline comment tags (`%% #tag %%`) provide positional precision (see §3.2).
-
-On codex records, `tags` classify what the authored knowledge covers. They are set by the record's author (human or agent).
+On codex records, `tags` classify what the authored knowledge covers. They are set by the record's author (human or agent). Frontmatter tags declare whole-record topical coverage; inline `%% #tag %%` annotations (§3.2.4) provide positional precision within the body.
 
 `visibility` lets a curator retire low-quality records from normal surfaces without deleting them. Use cases: low-content pages caught in a bulk scrape; superseded captures that remain valuable as historical versions; records flagged for further review. Default search and list queries show only `visible` records.
 
@@ -606,7 +631,7 @@ The same syntax in codex-record and compendium-record bodies has the same meanin
 
 #### 3.2.4 Inline Topic Annotations
 
-Artifact bodies may contain topic annotations in Obsidian-style comment blocks. These are the *only* permitted editorialization in an artifact body — they are metadata annotations classifying what the surrounding content discusses, not additions to the content.
+Codex-record bodies may contain topic annotations in Obsidian-style comment blocks. These supplement the record's frontmatter `tags` field with positional precision — useful when a codex record covers multiple sub-topics and the author wants a section or passage tagged distinctly.
 
 **Syntax:** `%% #tag %%` or `%% #tag-1 #tag-2 %%`
 
@@ -618,7 +643,7 @@ Artifact bodies may contain topic annotations in Obsidian-style comment blocks. 
 
 Scopes are additive. Annotate at topical transition points, not on every line.
 
-Codex-record bodies may use the same annotation syntax for the same purpose.
+**Inline annotations are valid only in codex-record bodies.** Artifact bodies must remain faithful to the original content (§3.2.1) and do not carry tags or annotations; their classification is recorded in the `classifications:[]` audit trail (§3.1.2, §3.3.2). Compendium-record bodies organize by chapter rather than by tag.
 
 #### 3.2.5 Codex-Record Bodies
 
@@ -719,7 +744,7 @@ The procedural side — how a normalizer detects MIME, in what order it computes
 
 #### 3.3.2 Custom Classification Schemas
 
-Custom classification schemas are optional. A corpus author authors them to recognize content patterns and extract domain-specific fields and tags beyond what the base schema gives. The spec defines the schema format and the composition rules; it does **not** dictate which schemas a particular corpus should have.
+Custom classification schemas are optional. A corpus author authors them to recognize content patterns and extract domain-specific extended fields beyond what the base schema gives. The spec defines the schema format and the composition rules; it does **not** dictate which schemas a particular corpus should have.
 
 Custom classification schemas live in the corpus's `schema/classification/` directory. They are portable with the corpus but are not universal — different corpora carry different custom schemas reflecting their own concerns.
 
@@ -727,7 +752,7 @@ Custom classification schemas live in the corpus's `schema/classification/` dire
 
 - **`content_type`** — exact MIME match or MIME-prefix match (e.g., `audio/*`).
 - **`uri_pattern`** — a regex evaluated against any entry in the artifact's `uris[]`. A typical use is matching a domain (e.g., `^https?://[^/]*example\\.com/`).
-- **`has_tags`** — list of tags the artifact must already carry (after base-schema or earlier-classification application).
+- **`has_classifications`** — list of schema names the artifact must already carry in its `classifications:[]` audit trail (i.e., the listed schemas have already been applied).
 - **`field_match`** — required values for already-extracted extended fields (e.g., `pdf_producer: "TexLive"`).
 
 A match is a logical AND across the listed conditions. To express disjunction, author multiple schemas — they compose naturally (see below).
@@ -738,13 +763,10 @@ A match is a logical AND across the listed conditions. To express disjunction, a
 schema_type: classification
 match:
   content_type: "audio/mpeg"
-  has_tags: []                                  # optional
+  has_classifications: []                       # optional
   uri_pattern: ""                               # optional
   field_match:                                  # optional
     # field_name: required_value
-
-classification:
-  add_tags: [musical-recording]
 
 extended_fields:
   artist:
@@ -765,7 +787,7 @@ extended_fields:
     description: "Track position on album."
 ```
 
-**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `classification.add_tags` and `extended_fields` to the artifact. Multiple schemas may match — their fields merge (last-write-wins on collision; tag lists are unioned).
+**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `extended_fields` to the artifact and adds an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match — their fields merge (last-write-wins on collision). The schema's *application* — the entry in `classifications:[]` — is itself the artifact-side classification signal; there is no separate `tags` field on artifacts.
 
 **Audit trail (`classifications` array).** Every applied custom classification schema is also recorded on the artifact in a top-level `classifications:` array (§3.1.2). Each entry has only two fields:
 
@@ -782,25 +804,25 @@ classifications:
 
 The contract is uniform: every applied schema produces a `classifications` entry, every entry carries a justification. The shape is the same regardless of how mechanical or judgmental the match was. Re-runs, schema iteration, and curator review all read the same audit trail.
 
-The array does **not** duplicate the schema's contributed fields or tags — those live in the merged top-level frontmatter per the composition rule above. The array is purely the log of *which schemas applied and the reasoning for each*. Field provenance ("which schema contributed `thread_id`?") is reconstructed by walking the schemas referenced in `classifications:` against their declarations — the schema files are the source of truth for what each schema contributes.
+The array does **not** duplicate the schema's contributed fields — those live in the merged top-level frontmatter per the composition rule above. The array is purely the log of *which schemas applied and the reasoning for each*. Field provenance ("which schema contributed `thread_id`?") is reconstructed by walking the schemas referenced in `classifications:` against their declarations — the schema files are the source of truth for what each schema contributes.
 
-**Layered matching.** Because a schema's match conditions can include `has_tags`, a schema can layer on top of an earlier match. A general-platform schema might add a tag (e.g., `video-platform-x`) and a few generic fields; a more-specific schema gated on `has_tags: [video-platform-x]` plus a `uri_pattern` can then add fields specific to a particular show or section of that platform. This is how a corpus grows from coarse to fine classification without duplicating match logic.
+**Layered matching.** Because a schema's match conditions can include `has_classifications`, a schema can layer on top of an earlier match. A general-platform schema might apply (recording itself in `classifications:[]`) and add a few generic fields; a more-specific schema gated on `has_classifications: [video-platform-x]` plus a `uri_pattern` can then add fields specific to a particular show or section of that platform. This is how a corpus grows from coarse to fine classification without duplicating match logic.
 
 **Examples (illustrative — concrete schemas are corpus-author choices).**
-- An artifact captured from a video-hosting platform: a domain-keyed schema adds `upload_date`, `like_count`, `channel_name`, `view_count`.
-- An artifact from a specific recurring show on that platform: a layered schema (`has_tags: [hosted-video]` + a channel-specific `uri_pattern`) adds `episode_date`, `hosts`, `guests`, `topics_discussed`.
-- An artifact from a specific forum-platform signature: a `uri_pattern` schema adds `thread_id`, `op_username`, `reply_count`.
-- Audio with populated ID3 tags: as in the example above, adds `artist`, `album`, `track_number` and the `musical-recording` tag.
+- An artifact captured from a video-hosting platform: a domain-keyed schema (e.g., `video-platform-x`) records itself in `classifications:[]` and adds `upload_date`, `like_count`, `channel_name`, `view_count`.
+- An artifact from a specific recurring show on that platform: a layered schema (`has_classifications: [video-platform-x]` + a channel-specific `uri_pattern`) adds `episode_date`, `hosts`, `guests`, `topics_discussed`.
+- An artifact from a specific forum-platform signature: a `uri_pattern` schema (e.g., `forum-thread`) adds `thread_id`, `op_username`, `reply_count`.
+- Audio with populated ID3 tags: as in the example above, the `musical-recording` schema applies and adds `artist`, `album`, `track_number`.
 
-**Unclassified artifacts.** An artifact that matches no custom classification schema is fully valid — it carries its base-schema fields and whatever tags the normalizer or operator assigned. Custom classification can be deferred to a later pass when more context is available.
+**Unclassified artifacts.** An artifact that matches no custom classification schema is fully valid — it carries its base-schema fields and an empty `classifications:[]` audit trail. Custom classification can be deferred to a later pass when more context is available.
 
-**Tag vocabulary conventions.** A corpus MAY maintain a conventions file listing its tag vocabulary with one-line descriptions. This is guidance for normalizers and curators, not a schema constraint. Unknown tags are valid — they signal vocabulary growth. High-frequency unknown tags are candidates for formalization, often via a new custom classification schema.
+**Schema vocabulary conventions.** Schema names (the filename stems under `schema/classification/`) are the corpus-side classification vocabulary. A corpus's conventions file (or `schema/README.md`) MAY document the available schemas with one-line descriptions. Unknown / freshly-authored schemas are always valid — they signal vocabulary growth.
 
 #### 3.3.3 Custom classification as a living curatorial artifact
 
 Custom classification schemas are not authored upfront; they emerge from how the corpus is used.
 
-**The feedback loop.** Codex-record and compendium-record authoring reveals patterns. Authors keep reaching for the same metadata about the same kind of content; tag clusters form around recurring topics; a domain dominates a slice of the corpus. The curator notices these patterns and authors a custom classification schema that captures them — declaring the fields the authors keep wanting and the tag that names the pattern. A re-normalization sweep applies the new schema to every existing artifact whose match conditions are satisfied. Subsequent authoring is now richer because the metadata is already on the artifacts.
+**The feedback loop.** Codex-record and compendium-record authoring reveals patterns. Authors keep reaching for the same metadata about the same kind of content; classification clusters form around recurring URI domains, MIME families, or extracted-field shapes; a domain dominates a slice of the corpus. The curator notices these patterns and authors a custom classification schema that captures them — declaring the fields the authors keep wanting and a schema name that identifies the pattern. A re-normalization sweep applies the new schema to every existing artifact whose match conditions are satisfied. Subsequent authoring is now richer because the metadata is already on the artifacts.
 
 This loop is the corpus's classification layer growing in step with its actual usage. A corpus with no codex layer above it yet has only base schemas — and that's fine. A corpus whose codex layer is rich and active will grow a substantial custom classification library over time. The schemas, the artifacts, and the records co-evolve.
 
@@ -847,7 +869,6 @@ hashes:
   sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 status: normalized
 visibility: visible
-tags: [brake-caliper, caliper-rebuild, forum-thread, community-validated]
 normalization_confidence: 0.92
 normalization_type: extraction
 normalization_model: "claude-sonnet-4-5-20250514"
@@ -936,9 +957,13 @@ Classification in v10 uses tags, the codex graph, and computed similarity — no
 
 #### 3.5.1 Tags
 
-Tags handle categorical classification. An artifact tagged `brake-caliper` is findable by topic. A codex record tagged `brake-caliper` and `vehicle-platform-x` is discoverable at the intersection. Tags are flat (no hierarchy), portable (no external dependencies), and container-local on the side they live in (a tag means whatever the corpus's or codex's conventions say it means).
+Tags handle categorical classification on **codex records**. A codex record tagged `brake-caliper` and `vehicle-platform-x` is discoverable at the intersection. Tags are flat (no hierarchy), portable (no external dependencies), and codex-local — a tag means whatever the codex's conventions say it means. Tags appear in frontmatter (whole-record scope) and may also appear inline in the body (`%% #tag %%`, §3.2.4).
 
-A corpus MAY maintain a conventions file (`schema/tags.md` or similar) listing its tag vocabulary with one-line descriptions. This is guidance, not constraint — unknown tags are valid and signal vocabulary growth.
+A codex MAY maintain a conventions file or use `codex.yaml` to list its tag vocabulary with one-line descriptions. This is guidance, not constraint — unknown tags are valid and signal vocabulary growth.
+
+**Artifact records do not carry tags.** Artifact classification is recorded entirely in the `classifications:[]` audit trail (§3.3.2): every applied custom classification schema is logged with a justification, and the schema's contributed extended fields are merged into the artifact's top-level frontmatter. Tags as a curatorial primitive belong to the editorial layer, not the captured-content layer.
+
+**Compendium records do not carry tags.** A compendium organizes by chapter structure and synthesis-system-prompt-driven taxonomy, not by tag classification.
 
 #### 3.5.2 The Codex Graph
 
@@ -1074,7 +1099,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, applies matching custom classification schemas (recording each application in the artifact's `classifications:` array as `{schema, justification}`), generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
 
-**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their tags and extended fields, merging into the record (last-write-wins on field collisions). Multiple custom schemas may match.
+**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their extended fields, merging into the record (last-write-wins on field collisions), and append entries to `classifications:[]`. Multiple custom schemas may match. Artifacts do not carry frontmatter `tags` (tags live on codex records only — see §3.5.1).
 
 **Output:** Record with refined body, extended fields populated, and `status: normalized`.
 
@@ -1168,7 +1193,7 @@ Brings an artifact stub to `status: normalized`.
 
 **Scope:** One artifact per invocation.
 
-**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, the resulting tags, a `normalization_type` reflecting how the body was derived, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, a `normalization_type` reflecting how the body was derived, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Artifact records do not carry frontmatter `tags` (see §3.5.1). Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
 Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
 
@@ -1302,13 +1327,13 @@ Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permit
 
 ### A.2 Classification examples
 
-A corpus typically authors custom classification schemas to recognize content patterns it cares about. Examples of content-pattern schemas:
+A corpus typically authors custom classification schemas to recognize content patterns it cares about. Each schema's *application* (its entry in `classifications:[]`) is itself the artifact-side classification signal. Examples of content-pattern schemas:
 
-- **Forum threads** — text/html on a known forum domain → `add_tags: [forum-thread]`, extended fields `username`, `thread_url`, `reply_count`.
-- **Voting-community threads** — text/html on aggregator-style platforms → `community_slug`, `post_url`, `score`, `comment_count`.
-- **Web articles** — text/html on publisher domains → `article_url`, `publication`, `byline`.
-- **Service manuals** — application/pdf with publisher metadata matching a manual pattern → `service_section`, `vehicle_platform`, `manufacturer`.
-- **Musical recordings** — audio/* with populated ID3 artist/album → `artist`, `track_title`, `album`, `track_number`.
+- **Forum threads** — text/html on a known forum domain → adds extended fields `username`, `thread_url`, `reply_count`.
+- **Voting-community threads** — text/html on aggregator-style platforms → adds `community_slug`, `post_url`, `score`, `comment_count`.
+- **Web articles** — text/html on publisher domains → adds `article_url`, `publication`, `byline`.
+- **Service manuals** — application/pdf with publisher metadata matching a manual pattern → adds `service_section`, `vehicle_platform`, `manufacturer`.
+- **Musical recordings** — audio/* with populated ID3 artist/album → adds `artist`, `track_title`, `album`, `track_number`.
 
 Credibility signals are also custom classifications — each signal is its own narrow schema. There is no universal credibility scheme; corpora invent their own vocabulary as patterns emerge. Some illustrative examples:
 
@@ -1318,8 +1343,6 @@ schema_type: classification
 match:
   content_type: "application/pdf"
   uri_pattern: "^https?://(www\\.sciencedirect|link\\.springer|onlinelibrary\\.wiley|nature)\\.com/"
-classification:
-  add_tags: [peer-reviewed]
 ```
 
 ```yaml
@@ -1328,8 +1351,6 @@ schema_type: classification
 match:
   content_type: "application/pdf"
   uri_pattern: "^https?://(arxiv\\.org|biorxiv\\.org|medrxiv\\.org)/"
-classification:
-  add_tags: [preprint]
 ```
 
 ```yaml
@@ -1339,39 +1360,35 @@ match:
   content_type: "*"
   # LLM judgment: matches when contextualization recognizes
   # promotional / corporate-PR framing in the content.
-classification:
-  add_tags: [corporate-bias]
 ```
 
 ```yaml
 # schema/classification/community-validated.yaml
 schema_type: classification
 match:
-  has_tags: [forum-thread]
+  has_classifications: [forum-thread]
   # LLM judgment: applies when thread shows clear consensus
   # across multiple independent users and no dissent.
-classification:
-  add_tags: [community-validated]
 ```
 
 ```yaml
 # schema/classification/anecdotal-claim.yaml
 schema_type: classification
 match:
-  has_tags: [forum-thread]
+  has_classifications: [forum-thread]
   # LLM judgment: applies when content is a single user's
   # unconfirmed experience report.
-classification:
-  add_tags: [anecdotal-claim]
 ```
 
-Different corpora carry different credibility vocabularies. A research-paper corpus might add `retracted`, `predatory-journal`, `industry-funded`. A forum corpus might add `op-claim`, `consensus-supported`, `disputed`. A news corpus might add `wire-service`, `op-ed`, `sponsored-content`. The vocabulary evolves as the curator notices what kinds of credibility distinctions actually matter for the corpus's downstream synthesis use cases — the §3.3.3 schema-feedback loop applies to credibility signals like any other custom classification.
+These schemas record themselves in the matched artifact's `classifications:[]` audit trail (with required justification, §3.3.2). They contribute no extended fields — the schema name itself is the signal that a compendium synthesis can weight.
+
+Different corpora carry different credibility vocabularies. A research-paper corpus might define schemas like `retracted`, `predatory-journal`, `industry-funded`. A forum corpus might define `op-claim`, `consensus-supported`, `disputed`. A news corpus might define `wire-service`, `op-ed`, `sponsored-content`. The vocabulary evolves as the curator notices what kinds of credibility distinctions actually matter for the corpus's downstream synthesis use cases — the §3.3.3 schema-feedback loop applies to credibility signals like any other custom classification.
 
 Custom classification schemas are corpus-local and optional. The same MIME can carry different custom classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
 
 ### A.3 When to author a codex record
 
-A rule of thumb: when multiple artifacts share strong tag overlap and would benefit from synthesized prose, author a codex record. Examples where authored records pay off:
+A rule of thumb: when multiple artifacts share strong classification overlap (the same custom classification schemas applied across them) and would benefit from synthesized prose, author a codex record. Examples where authored records pay off:
 
 - Multiple artifacts about the same album → an album record in a music-focused codex that synthesizes across the metadata page, the audio, and reviews.
 - Many artifacts about products in a line → a product-line record that summarizes shared attributes and links to per-product records in the same codex.
