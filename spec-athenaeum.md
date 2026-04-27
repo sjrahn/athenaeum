@@ -1,12 +1,33 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.7
+version: 10.8
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.8
+    date: 2026-04-26
+    summary: >
+      Refinement pass H. Storage layout made parallel across the three layers,
+      with one shared name for tracked markdown (`records/`) and a clear
+      tracked-vs-untracked split. Corpus directories renamed: the previous
+      `artifacts/` (markdown records) becomes `records/` (tracked); the previous
+      `binary/` (raw bytes) becomes `artifacts/` (untracked cache, listed in
+      .gitignore, regenerable from blake3 plus capture provenance — implementation
+      may store the bytes anywhere as long as a blake3 lookup produces them).
+      Codex `documents/` becomes `records/`. Compendium directory layout spec'd
+      for the first time: `compendium-{name}/records/` holds Compendium Records
+      with author-chosen filenames (e.g., `01-introduction.md`); no sharding,
+      no UUIDs. §2.1 layout diagrams rewritten for all three layers; §2.1
+      directory-purpose prose rewritten with explicit tracked/untracked
+      annotations; §2.2 binary-storage paragraph updated to point at the
+      `artifacts/` cache. impl-corpus.md §2.7 rewritten with `.gitignore`
+      callout and explicit "implementation may store the bytes anywhere"
+      language. impl-codex.md §2 retitled and rewritten; new §2A defines the
+      compendium directory layout. Pure layout rename — the data contract
+      (records locatable by identity) is unchanged.
   - version: 10.7
     date: 2026-04-26
     summary: >
@@ -252,35 +273,43 @@ The system has three layers of container:
 | **Codex** | Codex records authored by a particular author or team. | Codex name. | Downward: artifacts (any loaded corpus) and other records in the same codex. |
 | **Compendium** | Compendium records — authored chapters of a published reference work drawn from one or more codices and corpora. | Compendium name. | Downward: codices (`[[codex-name:slug]]`), artifacts (`[[blake3]]`). |
 
+All three layers use a `records/` directory for tracked markdown records. The corpus additionally maintains an `artifacts/` cache for raw binary content; the cache is **untracked** (regenerable from blake3 plus capture provenance).
+
 **Corpus directory layout (high level):**
 
 ```
 corpus-{name}/
-├── artifacts/   — artifact records (content-addressed by blake3)
-├── binary/      — content-addressed binary store, keyed by blake3
-├── capture/     — staging area for in-progress captures
-└── schema/      — base and custom classification schemas (see §3.3)
+├── records/      — Artifact Records (tracked markdown, content-addressed by blake3)
+├── artifacts/    — raw binary cache (UNTRACKED, .gitignore'd)
+├── capture/      — staging for in-progress captures
+└── schema/       — base + custom classification schemas (see §3.3)
 ```
 
 **Codex directory layout (high level):**
 
 ```
 codex-{name}/
-└── documents/   — codex records (UUID-named)
+├── codex.yaml    — codex-level metadata (optional; see §2.5)
+└── records/      — Codex Records (tracked markdown, UUID-named)
 ```
 
-(A codex may also carry a small `codex.yaml` with display metadata; see §2.5.)
+**Compendium directory layout (high level):**
 
-**Compendium structure.** A compendium holds compendium records — author-named markdown chapters under a `records/` directory. The chapter filenames are an authoring choice (e.g., `01-introduction.md`, `02-history.md`); compendium records do not carry the content-addressing or UUID naming used by the layers below them. See §6.
+```
+compendium-{name}/
+└── records/      — Compendium Records (tracked markdown, author-chosen filenames)
+```
 
-**Directory purposes (corpus side):**
+Compendium-record filenames are an authoring choice (e.g., `01-introduction.md`, `02-history.md`); compendium records do not carry the content-addressing or UUID naming used by the layers below them. See §6.
 
-- **`artifacts/`** — Artifact records, content-addressed by the blake3 hash of the underlying binary. Concrete on-disk layout (e.g., sharding) is an implementation concern; the only invariant is that an artifact record is locatable by its blake3 hash.
-- **`binary/`** — Content-addressed binary store. Each captured file is locatable by its blake3 hash; concrete layout is an implementation concern.
-- **`capture/`** — Staging area for in-progress captures. No identity assigned yet. Failed captures remain here without consuming corpus resources.
-- **`schema/`** — Schemas governing normalization and custom classification (see §3.3).
+**Directory purposes:**
 
-There is no nesting beyond the top-level separation in either container. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy. Concrete on-disk paths and sharding conventions live in the implementation guides (`impl-corpus.md` for corpus side, `impl-codex.md` for codex side).
+- **`records/`** (all three layers) — Tracked markdown records. Layout under `records/` (sharding, etc.) is an implementation concern; the spec only requires that a record be locatable by its identity (blake3 for artifacts, UUID for codex records, file path for compendium records).
+- **`artifacts/`** (corpus only) — Raw binary cache. **Untracked**, listed in `.gitignore`. Implementations choose where the bytes actually live (local FS shard, object store, S3-compatible bucket, …); the data contract is just "given a blake3, the implementation can produce the bytes." The cache is regenerable from blake3 plus capture provenance and is not the source of truth.
+- **`capture/`** (corpus only) — Staging area for in-progress captures. No identity assigned yet. Failed captures remain here without consuming corpus resources.
+- **`schema/`** (corpus only) — Schemas governing normalization and custom classification (see §3.3).
+
+There is no nesting beyond the top-level separation in any container. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy. Concrete on-disk paths and sharding conventions live in the implementation guides (`impl-corpus.md` for corpus side, `impl-codex.md` for codex and compendium sides).
 
 ### 2.2 Artifacts
 
@@ -290,7 +319,7 @@ An artifact record represents a single captured file. It is named by the blake3 
 
 - **Body:** A normalized markdown rendering of the artifact, faithful to the original content's structure and meaning. For HTML: stripped-and-cleaned markdown preserving document structure. For audio: a transcript. For images: OCR text and/or visual description. For PDFs: extracted text with structural markup. Cross-references in the original content (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds where the targets exist in the corpus, preserving the original content's link structure. See §3.2 for body format rules.
 
-- **Binary storage:** The actual file is stored in the content-addressed binary store under `binary/`, retrievable by the same blake3 hash.
+- **Binary storage:** The actual file is stored in the corpus's `artifacts/` binary cache, retrievable by the same blake3 hash. The cache is untracked and regenerable; implementations may store the bytes wherever serves them best as long as a blake3 lookup produces them.
 
 **Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `capture_dates` entry, and any URI not already in `uris[]` is appended. Git sees a metadata-only diff.
 
@@ -346,7 +375,7 @@ A **codex** is a named container holding authored codex records. Codices live ou
 
 **Codex contents:**
 
-- **`documents/`** — codex records (UUID-named, with optional codex-unique slugs).
+- **`records/`** — codex records (UUID-named, with optional codex-unique slugs).
 - **`codex.yaml`** (optional) — codex-level metadata: display name, description, an optional default tag vocabulary or tag-conventions reference. The spec does not mandate any particular fields here; this is a place for codex-author convention.
 
 **Codex naming.** A codex is identified by name. The runtime maintains a mapping from codex name to on-disk location (or remote URI). When a compendium-record body wikilinks `[[codex-name:slug]]`, the runtime looks up `codex-name` against the loaded codices.

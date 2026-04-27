@@ -28,13 +28,13 @@ A codex is a named container holding authored codex records. The on-disk shape:
 ```
 codex-{name}/
 ├── codex.yaml                 — codex-level metadata (optional)
-└── documents/
+└── records/
     ├── {first-2-of-uuid}/     — sharded by first 2 hex chars of UUID
     │   └── {full-uuid}.md
     └── ...
 ```
 
-**Sharding policy.** Codex records are sharded one level deep by the first two hex characters of the UUID, mirroring the corpus's artifact sharding. Same depth as artifact records and binary cache in the corpus. Flat layout is acceptable below ~1k records; sharded once a codex's record count crosses that threshold. The convention is identical to the corpus: full UUID kept in the filename so files are self-identifying when copied outside their shard.
+**Sharding policy.** Codex records are sharded one level deep by the first two hex characters of the UUID, mirroring the corpus's artifact sharding. Same depth as artifact records and the binary cache in the corpus. Flat layout is acceptable below ~1k records; sharded once a codex's record count crosses that threshold. The convention is identical to the corpus: full UUID kept in the filename so files are self-identifying when copied outside their shard.
 
 **`codex.yaml`** is optional and may carry codex-level metadata such as:
 
@@ -47,7 +47,31 @@ tag_vocabulary_url: "..."     # optional pointer to a tag-conventions doc
 
 The spec does not mandate any of these fields. Tooling should treat `codex.yaml` as best-effort hints — the codex name (the directory) is the authoritative identity.
 
-**No top-level `binary/`, `schema/`, or `capture/` in a codex.** Those are corpus-side. A codex consumes artifacts from corpora it doesn't own.
+**No top-level `artifacts/`, `schema/`, or `capture/` in a codex.** Those are corpus-side. A codex consumes artifacts from corpora it doesn't own.
+
+---
+
+## 2A. Compendium directory layout
+
+A compendium is a named container holding compendium records — author-named markdown chapters that integrate across one or more codices and corpora. The on-disk shape:
+
+```
+compendium-{name}/
+├── compendium.yaml            — compendium-level metadata (optional)
+└── records/
+    ├── 01-introduction.md     — author-chosen filenames (chapter style)
+    ├── 02-history.md
+    ├── 03-overview.md
+    └── ...
+```
+
+**Naming.** Compendium-record filenames are an authoring choice — there is no UUID or content-addressing requirement. Numeric prefixes (`01-`, `02-`, …) are conventional for ordering but not required; the build process (§7) determines the navigation order from frontmatter or directory listing per the target output format.
+
+**No sharding.** Compendiums are typically small enough (single-digit to low-hundreds of chapters) that sharding adds complexity without payoff. Flat `records/` is the convention.
+
+**No top-level `artifacts/`, `schema/`, or `capture/` in a compendium.** Those are corpus-side. A compendium consumes artifacts from corpora and codex records from codices.
+
+**`compendium.yaml`** is optional and parallels `codex.yaml`: display name, description, references to the codices/corpora the compendium expects to be loaded against, and any synthesis-system-prompt pointer (spec §6.4). Tooling treats it as best-effort hints; the compendium name (the directory) is the authoritative identity.
 
 ---
 
@@ -93,7 +117,7 @@ Authoring a codex record follows the spec's `Author` agent contract (§5.4). The
 3. **Pick a slug** (the codex topic). Stable, kebab-case, codex-unique.
 4. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks (the most stable form). Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[slug]]` (preferred) or `[[uuid]]`.
 5. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records. Cross-codex citation is a compendium-record authoring job.
-6. **Save** under `documents/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
+6. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
 
 ### 4.2 Compendium authoring
 

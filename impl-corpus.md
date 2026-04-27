@@ -78,7 +78,7 @@ The body starts empty and is filled by normalization (§5).
 Look up the artifact by `blake3` against the existing corpus:
 
 - **Match.** The bytes are already in the corpus. Append capture provenance to the existing record (a new entry in `capture_dates[]`, and any new URI added to `uris[]`). Do not create a new record.
-- **No match.** This is a new artifact. Write the record to its on-disk path (§2.7) and the binary to the binary cache (§2.7).
+- **No match.** This is a new artifact. Write the record under `records/` and the binary under the `artifacts/` cache (§2.7).
 
 Dedup is the natural side effect of content addressing — bytes that match an existing hash hit the same record, no special "is this a duplicate?" check is needed.
 
@@ -93,30 +93,33 @@ That's it. The artifact record carries `uris[]` (every URI known to resolve to i
 
 ### 2.7 Storage layout
 
-When reconciliation completes, the artifact's record and binary live on disk. The implementation chooses sharding to keep individual filesystem directories tractable.
+When reconciliation completes, the artifact record (tracked markdown) lives under `records/`, and the raw bytes (untracked cache) live under `artifacts/`. The implementation chooses sharding to keep individual filesystem directories tractable.
 
 **Convention.**
 
 ```
-corpus/{name}/
-├── artifacts/
+corpus-{name}/
+├── records/                            ← tracked markdown (Artifact Records)
 │   └── {first-2-of-blake3}/
 │       └── {full-blake3}.md
-├── binary/
+├── artifacts/                          ← UNTRACKED raw-bytes cache
 │   └── {first-2-of-blake3}/
 │       └── {full-blake3}.{ext}
 ├── schema/
 │   ├── base/
 │   └── classification/
-└── capture/
+├── capture/
+└── .gitignore                          ← lists `artifacts/`
 ```
 
-- **Sharding depth: one level, by the first 2 hex characters of the blake3 hash.** Both `artifacts/` and `binary/` use the **same shard depth.** That gives 256 buckets at one level. At ~10k artifacts the average bucket holds ~40 records — well under any filesystem's pain threshold. At 100k it's ~400. Deeper sharding can be added later if buckets get crowded; it's a layout choice, not a contract.
+- **`records/` is tracked.** Markdown artifact records are the source of truth and live in version control.
+- **`artifacts/` is the binary cache and is NOT tracked.** A corpus's `.gitignore` MUST list `artifacts/`. The cache is regenerable from blake3 plus capture provenance — destroyable and rebuildable at any time. The data contract is just "given a blake3, this corpus can produce the bytes"; the contract says nothing about *how*. Concrete implementations may put the cache on local FS, an object store, an S3-compatible bucket, a content-addressed CAS, or any combination. The local-FS shard shown above is the conventional starting point.
+- **Sharding depth: one level, by the first 2 hex characters of the blake3 hash.** Both `records/` and `artifacts/` (when on local FS) use the **same shard depth.** That gives 256 buckets at one level. At ~10k records the average bucket holds ~40 — well under any filesystem's pain threshold. At 100k it's ~400. Deeper sharding can be added later if buckets get crowded; it's a layout choice, not a contract.
 - **Full hash kept in filename.** A copy of `a7f3b2c1...md` outside its shard directory still names itself fully — useful for moves, backups, ad-hoc inspection.
-- **Same shard depth for binary and artifacts.** Symmetric is simpler. Per-MIME asymmetry (e.g., deeper sharding for binary because cached derivations might inflate file count) is unnecessary at current and projected scale.
-- **Capture staging** lives at `corpus/{name}/capture/` for in-progress captures; failed or abandoned captures sit there without consuming corpus identity space.
+- **Same shard depth for `records/` and `artifacts/`.** Symmetric is simpler when both are on local FS.
+- **Capture staging** lives at `corpus-{name}/capture/` for in-progress captures; failed or abandoned captures sit there without consuming corpus identity space.
 
-The spec does not name these paths; it just requires that an artifact record be locatable from its blake3 hash, and the binary likewise. Future implementations may shard differently; consumers should not hard-code the path scheme — they should ask the corpus how to locate `{blake3}`.
+The spec is explicit that `records/` is tracked markdown and `artifacts/` is an untracked cache; everything else (path scheme inside `records/`, where `artifacts/` actually lives) is implementation-discretion. Consumers should not hard-code the path scheme — they should ask the corpus how to locate `{blake3}`.
 
 ---
 
