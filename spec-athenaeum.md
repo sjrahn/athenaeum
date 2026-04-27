@@ -1,12 +1,32 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.14
+version: 10.15
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-27
 changelog:
+  - version: 10.15
+    date: 2026-04-27
+    summary: >
+      Refinement pass O. §4 (Pipeline) and §5 (Pipeline Agents) trimmed to
+      data and output contracts; the procedural recipes (capture sub-steps,
+      normalize sub-steps, build mechanics) move to `impl-corpus.md` and
+      `impl-codex.md`. §4 collapses to a single per-step bullet list with
+      the contract for each step; phase-boundaries table renumbered §4.6
+      → §4.1 as the meta summary of independently re-runnable operations.
+      §4.1 staging / reconciliation, §4.2.1 conversion sub-step, §4.2.2
+      cross-reference-resolution sub-step, and §4.2.3 contextualization
+      sub-step are gone from the spec body. §4.5 Build collapsed into the
+      per-step bullet list; the per-layer build-target enumeration is
+      preserved but the step-by-step "how" recipe is gone. §5 keeps each
+      agent's model-class / scope / output contract; the procedural
+      detail and the redundant pointer to §5.7 are stripped from §5.3
+      Normalizer. §5.4 Author output contract updated to reference the
+      v10.14 reference primitives (footnote citations, functional-URI
+      embeds, intra-codex wikilinks). impl-corpus.md and impl-codex.md
+      remain canonical for "how"; this commit confirms that.
   - version: 10.14
     date: 2026-04-27
     summary: >
@@ -1127,113 +1147,27 @@ The transformation parameter set is deliberately minimal. Future extensions shou
 
 ## 4. Pipeline
 
-The path from raw content to a richly authored corpus is a pipeline of discrete steps: **capture**, **normalize**, optionally **author**, and optionally **re-normalize**. Each step is independently re-runnable. A separate **build** step materializes the corpus for consumption.
+The path from raw content to a richly authored corpus has discrete steps; each is independently re-runnable.
 
-### 4.1 Capture
+- **Capture** brings content into the corpus. Identity is the hash of the bytes; failed captures consume no identity space. Capture is the only step requiring network access. Every captured file becomes its own artifact record; bundles of related files (a page plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
 
-Capture brings raw content into the corpus. The flow is content-addressed end-to-end: identity is the hash of the bytes, not an assigned UUID.
+- **Normalize** transforms an artifact stub into a complete record: produces the body (extraction / transcription / description / metadata per the artifact's MIME, driven by the base schema), applies the matching base schema and any custom classification schemas, populates extended fields, records each schema application in `classifications:[]` with a required justification, resolves intra-corpus cross-references in the body to raw blake3 wikilinks and embeds, and refines the description. Bodies are faithful — normalization may improve accuracy but never adds information not present in the original.
 
-#### 4.1.1 Staging (optional)
+- **Author** creates or edits a codex record (in a codex) or a compendium record (in a compendium) that synthesizes knowledge across artifacts and other records. The author writes nothing outside the target container. Authoring is non-destructive: referenced artifacts and other records are unchanged and independently addressable.
 
-Captures may pass through `capture/` as a transient workspace for in-progress acquisition (multi-step downloads, multi-file scrapes, manual organization). Failed or abandoned captures remain here without consuming corpus resources.
+- **Re-normalize** is on-demand re-running of normalization when context, schemas, or models improve, or when newly captured artifacts resolve previously unresolved cross-references. Integrity is preserved — the new body remains a faithful rendering of the original artifact.
 
-#### 4.1.2 Reconciliation
+- **Build** materialises one or more layers for viewing. Each layer is independently exportable:
 
-When reconciliation completes for a captured file:
+  - **Corpus build** — a browsable artifact vault. Resolves intra-corpus wikilinks among artifacts; serves binaries via the corpus's `artifacts/` cache.
+  - **Codex build** — a browsable knowledge work (mdbook, static site, vault). Resolves intra-codex wikilinks (codex-record↔codex-record) and downward references (footnote URIs to artifacts, functional-URI embeds). The codex's referenced corpora must be loaded.
+  - **Compendium build** — the published reference work. Resolves all references across the integration set (intra-compendium wikilinks; footnote URIs to codex records and artifacts, resolved into APA-style citations; functional-URI embeds). The compendium's referenced codices and corpora must be loaded.
 
-- The file's binary content is locatable in the content-addressed binary store under its blake3 hash.
-- An artifact record exists for that blake3 hash. If a record for the hash already existed (the bytes had been captured before), reconciliation appended capture provenance to it rather than creating a duplicate. If no record existed, a new one was created with `blake3`, `content_type` (the MIME determined for the binary), capture provenance, and `status: stub` (body empty pending normalization).
-- The artifact record carries every hash declared by its base schema (§3.3.1) — at minimum `blake3`, plus any format-specific perceptual hashes and auxiliary hashes the schema lists.
-- Reconciliation has not classified *what the record is about* — only *what format it is in*. Classification (tags, custom classification schemas) happens during normalization or in later passes.
+  The build process can also generate a lookup index mapping any `uris[]` value to its artifact id, enabling consumers to find records by any URL known to resolve to them.
 
-The procedural detail — order of fetch / MIME-detect / hash / store, transient staging, in-memory record build — is implementation-specific (see `impl-corpus.md`).
+Procedural detail — fetch / hash / store ordering, MIME detection, conversion tooling, cross-reference-resolution mechanics, contextualization sub-steps, schema authoring, sharding, build mechanics, output formats — lives in `impl-corpus.md` and `impl-codex.md`.
 
-**Key principles:**
-
-- Capture is the **only step requiring network access**. Everything downstream is offline.
-- Identity is the hash. Failed captures consume no identity space.
-- Every captured file becomes its own artifact record. Bundles of related files (a page plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
-
-### 4.2 Normalize
-
-Normalization transforms an artifact stub into a complete, useful markdown record. It has three sub-steps: **conversion** (deterministic), **cross-reference resolution** (deterministic), and **contextualization** (LLM-driven).
-
-#### 4.2.1 Conversion
-
-**What:** Deterministic conversion of artifact bytes into a markdown body.
-
-**How:** MIME-driven, schema-guided. The base schema for the artifact's `content_type` selects the conversion path: extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text via VLM), or metadata summary (opaque binaries).
-
-**Output:** The artifact record's body is filled with the artifact's content as well-formed markdown. `status` set to `draft`.
-
-#### 4.2.2 Cross-reference resolution
-
-After producing the normalized body, the normalizer checks all hyperlinks and embedded resource references against the corpus's blake3 index. Targets that match a captured artifact are rewritten as blake3 wikilinks or embeds. Targets with no match remain as standard markdown URLs. This is a mechanical resolution, not an editorial judgment — the normalizer does not add links that didn't exist in the original content.
-
-Re-normalization passes can re-run cross-reference resolution as new artifacts are captured, turning previously unresolved URLs into wikilinks and embeds without altering anything else in the body.
-
-#### 4.2.3 Contextualization
-
-**What:** LLM-driven refinement of the body, informed by base schema guidance, custom classification schema matches, and any tag vocabulary conventions the corpus declares.
-
-**How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, applies matching custom classification schemas (recording each application in the artifact's `classifications:` array as `{schema, justification}`), generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
-
-**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their extended fields, merging into the record (last-write-wins on field collisions), and append entries to `classifications:[]`. Multiple custom schemas may match.
-
-**Output:** Record with refined body, extended fields populated, and `status: normalized`.
-
-### 4.3 Author
-
-**What:** Create or edit a codex record (in a codex) or a compendium record (in a compendium) that synthesizes knowledge across one or more artifacts and other records.
-
-**Outputs of an authoring pass (codex side):** A codex record with `id` (UUIDv7), title, description, tags, and a body composed of authored markdown prose. The body footnote-cites artifacts (`text[^N]` with `[^N]: corpus://{hash}` resolved to APA at build), embeds artifact content via functional URIs (`![[corpus://{hash}?params|alt text]]`), wikilinks to peer codex records in the same codex (`[[uuid|text]]`), and applies tags in frontmatter.
-
-A codex record's body never contains `codex://...` references — codices stay pure (§2.5). Cross-codex citation belongs in compendium-record bodies (§6).
-
-The body *is* the synthesis; the references in the body are the structural relationships.
-
-**Authoring is non-destructive.** Referenced artifacts and other records are unchanged and independently addressable. Removing a reference from a codex-record body simply removes that reference — no cascade, no mutation of the target.
-
-**Codex records may be authored in layers within a codex.** A specific subject's how-to record may be referenced by a higher-level overview record, which is in turn referenced by a top-level entry record. Each level adds context. The link graph (within the codex) is the hierarchy.
-
-### 4.4 Re-normalize
-
-**What:** Re-run normalization on existing artifact records, taking advantage of newly available context (newly captured artifacts that resolve previously unresolved cross-references), tooling improvements (better extraction, better OCR, better transcription), or model upgrades.
-
-**When:**
-
-- A previously unresolved cross-reference now has a captured target.
-- A schema (base or classification) has been improved.
-- The normalization model has been upgraded.
-- An artifact has known issues that re-processing might resolve.
-
-**How:** On-demand, triggered by the operator or Curator. Re-normalization MAY rewrite the body but MUST preserve normalization integrity — the new body remains a faithful rendering of the original artifact. Cross-reference resolution is re-run automatically.
-
-**Re-normalization is optional.** Many artifacts will never be re-normalized — the initial normalization is sufficient. The capability exists for cases where new context or improved tooling meaningfully improves accuracy.
-
-### 4.5 Build
-
-**What:** Materialize one or more of the three layers into a browsable or publishable form. Each layer is independently exportable for viewing.
-
-**Per-layer build targets.**
-
-- **Corpus build** — produces a browsable artifact vault. Resolves intra-corpus wikilinks among artifacts; serves binaries via the corpus's `artifacts/` cache. Useful for inspecting captured content as a self-contained archive.
-- **Codex build** — produces a browsable knowledge work (mdbook, static site, or Obsidian-style vault). Resolves wikilinks within the codex (codex-record↔codex-record) and downward to corpus artifacts (codex-record↔artifact). The codex's referenced corpora must be loaded for artifact wikilinks to resolve.
-- **Compendium build** — produces the published reference work. Resolves all wikilinks across the integration set (compendium-record↔codex-record, compendium-record↔artifact, plus the codex- and corpus-side intra-layer wikilinks the references reach into). The compendium's referenced codices and corpora must be loaded.
-
-**How:** Each build is a deterministic process that reads the source layer (and any layers below it for cross-layer wikilinks), resolves references, and produces output suitable for consumption (static site, browsable vault, mdbook, JSON API, or other format).
-
-**Steps (any layer):**
-
-1. Resolve all wikilinks and embeds — within the source layer and downward — to whatever the target format expects (file paths, anchored URLs, inlined content).
-2. Resolve all functional URIs in codex- and compendium-record bodies — compute transformations, write derived artifacts to the build's output directory, substitute paths.
-3. Generate index and navigation structures appropriate to the output format (tag indexes for codex builds, navigation menus, backlink panels).
-
-**Origin-URL routing.** The build process can generate a lookup index mapping any `uris[]` value to its artifact blake3 hash, enabling consumers to find records by any of the URLs known to resolve to them.
-
-Build mechanics are an implementation concern — this spec defines what each layer contains; how it gets published is up to the implementer.
-
-### 4.6 Phase Boundaries and Re-processing
+### 4.1 Phase Boundaries and Re-processing
 
 Pipeline steps are independently re-runnable:
 
@@ -1280,9 +1214,7 @@ Brings an artifact stub to `status: normalized`.
 
 **Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a raw blake3 wikilink or embed (intra-corpus); targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
-Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
-
-The split between deterministic (conversion, cross-reference resolution, schema-driven extraction) and LLM-driven (contextual refinement, description, classification-schema match where the conditions require interpretation) is described in §5.7. Procedural detail lives in `impl-corpus.md`.
+Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `id` field must match the binary's blake3 hash.
 
 ### 5.4 Author
 
@@ -1292,7 +1224,7 @@ Creates or edits codex records in a codex (or compendium records in a compendium
 
 **Scope:** One record per invocation, in one container.
 
-**Output contract:** When the author finishes successfully, a codex record exists in the target codex with a UUID, title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations of artifact content, and links to peer records in the same codex. Backlinks and related-record candidates within the codex are surfaced for follow-up. When the author writes a codex record, it writes nothing outside the target codex; cross-codex synthesis is a compendium-record authoring job (§6), not a codex-record authoring job.
+**Output contract:** When the author finishes successfully, a record exists in the target container with the layer-appropriate `id` (UUIDv7 in a codex; author-chosen slug in a compendium), title, description, status, and (codex only) tags. The body is authored markdown prose: footnote-cites artifacts (`[^N]: corpus://{hash}` resolved to APA at build); embeds artifact-derived views via functional URIs (`![[corpus://{hash}?params]]`); wikilinks peer records in the same container (`[[uuid]]` for codex, `[[slug]]` for compendium); applies tags in frontmatter (codex only). A compendium-record body may additionally footnote-cite codex records (`[^N]: codex://{name}/{uuid}`). Backlinks and related-record candidates within the container are surfaced for follow-up. The author writes nothing outside the target container.
 
 ### 5.5 Curator
 
