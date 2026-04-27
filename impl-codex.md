@@ -2,7 +2,7 @@
 
 **Status:** living document. Updates as implementation matures.
 
-**Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), the authoritative data contract. This guide describes the *implementation* of the codex / document-layer side of the system, plus the compendium build process that sits above it. Choices here may change as tooling evolves; the spec must not.
+**Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), the authoritative data contract. This guide describes the *implementation* of the codex layer, plus the compendium build process that sits above it. Choices here may change as tooling evolves; the spec must not.
 
 The corpus / artifact-layer counterpart is [`impl-corpus.md`](impl-corpus.md).
 
@@ -10,7 +10,7 @@ The corpus / artifact-layer counterpart is [`impl-corpus.md`](impl-corpus.md).
 
 ## 1. Scope
 
-This guide covers the codex side: codex directory layout, slug-as-topic conventions, document authoring workflow, runtime resolution of wikilinks across codices and corpora, codex regeneration mechanics, and the compendium build process.
+This guide covers the codex side: codex directory layout, slug-as-topic conventions, codex-record authoring workflow, runtime resolution of wikilinks across codices and corpora, codex regeneration mechanics, the compendium directory layout, and the compendium build process.
 
 What lives in this guide vs in the spec:
 
@@ -23,7 +23,7 @@ If the two ever conflict, the spec wins; this guide gets corrected.
 
 ## 2. Codex directory layout
 
-A codex is a named container holding authored document records. The on-disk shape:
+A codex is a named container holding authored codex records. The on-disk shape:
 
 ```
 codex-{name}/
@@ -34,7 +34,7 @@ codex-{name}/
     └── ...
 ```
 
-**Sharding policy.** Documents are sharded one level deep by the first two hex characters of the UUID, mirroring the corpus's artifact sharding. Same depth as artifacts and binary in the corpus. Flat layout is acceptable below ~1k documents; sharded once a codex's document count crosses that threshold. The convention is identical to the corpus: full UUID kept in the filename so files are self-identifying when copied outside their shard.
+**Sharding policy.** Codex records are sharded one level deep by the first two hex characters of the UUID, mirroring the corpus's artifact sharding. Same depth as artifact records and binary cache in the corpus. Flat layout is acceptable below ~1k records; sharded once a codex's record count crosses that threshold. The convention is identical to the corpus: full UUID kept in the filename so files are self-identifying when copied outside their shard.
 
 **`codex.yaml`** is optional and may carry codex-level metadata such as:
 
@@ -86,14 +86,14 @@ A few patterns SHOULD be avoided to keep the resolution rules clean:
 
 ### 4.1 Codex-side authoring
 
-Authoring a document in a codex follows the spec's `Author` agent contract (§5.4). The implementation:
+Authoring a codex record follows the spec's `Author` agent contract (§5.4). The implementation:
 
 1. **Pick the codex.** The author works in exactly one codex per invocation.
 2. **Pick a synthesis target.** A topic that benefits from authored prose — a how-to guide, a concept page, a synthesis across several artifacts. The trigger may come from the curator, from a tag cluster, from operator direction, or from a compendium gap.
 3. **Pick a slug** (the codex topic). Stable, kebab-case, codex-unique.
-4. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks (the most stable form). Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer documents within the same codex via `[[slug]]` (preferred) or `[[uuid]]`.
-5. **Never write `[[codex-name:…]]`.** A codex is pure — its docs only reference downward to artifacts and locally to peer docs. Cross-codex citation is a compendium-build job.
-6. **Save** under `documents/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Document frontmatter is deliberately thin (spec §3.1.3) — there is no document-side credibility field. Compendiums weight a document's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
+4. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks (the most stable form). Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[slug]]` (preferred) or `[[uuid]]`.
+5. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records. Cross-codex citation is a compendium-record authoring job.
+6. **Save** under `documents/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
 
 ### 4.2 Compendium authoring
 
@@ -106,7 +106,7 @@ A compendium body is the integration point — where multi-codex / multi-corpus 
    - `[[codex-name:slug]]` for codex topic citations (preferred form for codex citations — survives regeneration).
    - `[[codex-name:uuid]]` only when there's no slug and no artifact equivalent. Discouraged because it orphans across regeneration.
    - `![[blake3://hash?params]]` for derived views.
-3. **Applies the lowest-level-source preference.** When a compendium chapter is about a particular subject and an artifact directly says it, cite the artifact, not a codex topic that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex topic that already did that synthesis. The hierarchy is: artifact > codex topic by slug > codex doc by UUID (avoid).
+3. **Applies the lowest-level-source preference.** When a compendium record is about a particular subject and an artifact directly says it, cite the artifact, not a codex topic that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex topic that already did that synthesis. The hierarchy is: artifact > codex topic by slug > codex record by UUID (avoid).
 
 ---
 
@@ -146,17 +146,17 @@ Per spec §3.6:
 1. `[[blake3]]` → any artifact in any loaded corpus that has a matching blake3.
 2. Anything else → unresolved.
 
-**In a codex's document body:**
+**In a codex record's body:**
 1. `[[blake3]]` → any artifact in any loaded corpus.
-2. `[[slug]]` → a document in the same codex with that slug.
-3. `[[uuid]]` → a document in the same codex with that UUID.
+2. `[[slug]]` → a codex record in the same codex with that slug.
+3. `[[uuid]]` → a codex record in the same codex with that UUID.
 4. Anything else → unresolved.
 
-**In a compendium body:**
+**In a compendium record's body:**
 1. `[[blake3]]` → any artifact in any loaded corpus (collision detection: if two loaded corpora have the same blake3, that's fine — it's by definition the same bytes).
 2. `[[corpus-name:blake3]]` → that artifact in the named corpus, asserting provenance.
 3. `[[codex-name:slug]]` → the codex topic in the named codex.
-4. `[[codex-name:uuid]]` → the doc instance in the named codex.
+4. `[[codex-name:uuid]]` → the codex record instance in the named codex.
 5. Anything else → unresolved.
 
 ### 5.3 Unresolved-link handling
@@ -171,7 +171,7 @@ When a reference cannot be resolved, the runtime should:
 
 Same blake3 in two corpora — fine, they are by definition the same bytes; the corpora may both have it. The reference resolves to either copy.
 
-Same slug in two codices — fine, slugs are codex-scoped. A bare `[[slug]]` reference within a codex's doc resolves locally; a qualified `[[other-codex:slug]]` reference in a compendium resolves to the named codex.
+Same slug in two codices — fine, slugs are codex-scoped. A bare `[[slug]]` reference within a codex record resolves locally; a qualified `[[other-codex:slug]]` reference in a compendium record resolves to the named codex.
 
 Same UUID in two codices — should not happen by design (UUIDv4 collision is astronomical). If it does, the runtime should warn and let the qualified form resolve unambiguously.
 
@@ -190,7 +190,7 @@ Regeneration is a contemplated future workflow: re-derive an entire codex from a
 
 - **UUIDs.** Each regeneration mints fresh UUIDs. Compendium references that targeted UUIDs may orphan.
 - **Body prose.** A new authoring pass produces new prose.
-- **Wikilinks within the codex.** A regenerated doc may reference different artifacts or different sibling slugs depending on what the synthesis prompts produce.
+- **Wikilinks within the codex.** A regenerated codex record may reference different artifacts or different sibling slugs depending on what the synthesis prompts produce.
 
 ### 6.3 Migration / rebuild discipline
 
@@ -202,7 +202,7 @@ If a regeneration produces materially different output (slug renames, topic rest
 - An authoring prompt has been substantially improved.
 - A new model is meaningfully better and the cost of re-running is justified.
 
-A codex that is hand-authored doc-by-doc without a regeneration prompt is not regenerable — it's a hand-built artifact, like any other. Regeneration is opt-in and applies to codices whose authoring is procedural enough to support it.
+A codex that is hand-authored record-by-record without a regeneration prompt is not regenerable — it's a hand-built artifact, like any other. Regeneration is opt-in and applies to codices whose authoring is procedural enough to support it.
 
 ---
 
@@ -244,5 +244,5 @@ Functional URI results, derived images, transcoded media — all ephemeral. They
 - **Codex sharding crossover.** Same as the corpus side: at what doc count do we move to two-level sharding? Likely a `codex.yaml` flag.
 - **Cross-codex slug discovery.** When a compendium author wants to see what slugs are available in a codex they're loading, the runtime needs an index. Currently rebuildable on mount; persistent index is a perf optimization.
 - **Conflicting slugs across codices in the same compendium build.** Two codices each define `brake-bleeding`. The compendium author cites both via qualified `[[codex-name:slug]]` form, so there's no ambiguity, but the build should warn when the same slug exists in multiple loaded codices for the author's awareness.
-- **Compendium chapter granularity.** A compendium body could be a single doc or many. Convention: split chapters into separate files when the chapter is large enough that scrolling through it gets in the way; otherwise keep the compendium as a small set of files. The build process flattens or paginates per the target output format.
+- **Compendium chapter granularity.** A compendium could be a single compendium record or many. Convention: split chapters into separate records when the chapter is large enough that scrolling through it gets in the way; otherwise keep the compendium as a small set of records. The build process flattens or paginates per the target output format.
 - **Codex regeneration tooling.** When sjrahn wants to actually do a regeneration, the tooling will need: corpus-snapshot pinning, prompt versioning, slug-preservation enforcement, and a diff report. Out of scope for v10 implementation.

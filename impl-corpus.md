@@ -4,13 +4,13 @@
 
 **Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), which is the authoritative data contract. This guide describes the *implementation* of the corpus / artifact-layer pipeline. The spec says what each artifact carries; this guide says how the pipeline produces it. Choices here may change as tooling evolves; the spec must not.
 
-The codex / document-layer counterpart is [`impl-codex.md`](impl-codex.md).
+The codex-layer counterpart is [`impl-codex.md`](impl-codex.md).
 
 ---
 
 ## 1. Scope
 
-This guide covers the corpus side of the system: capture, reconciliation, normalization, custom-classification feedback, and re-normalization. It does **not** cover document authoring, codex regeneration, compendium build, or any cross-corpus runtime resolution — those live in `impl-codex.md`.
+This guide covers the corpus side of the system: capture, reconciliation, normalization, custom-classification feedback, and re-normalization. It does **not** cover codex-record authoring, codex regeneration, compendium build, or any cross-corpus runtime resolution — those live in `impl-codex.md`.
 
 What lives in this guide vs in the spec:
 
