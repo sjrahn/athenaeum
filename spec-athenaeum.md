@@ -1,12 +1,31 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.12
+version: 10.13
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-04-26
+date_modified: 2026-04-27
 changelog:
+  - version: 10.13
+    date: 2026-04-27
+    summary: >
+      Refinement pass M. §1 cleanup and layer-purpose framing. §1.1 drops the
+      strict-downward diagram and the runtime-resolution paragraph (both pre-empted
+      vocabulary the reader hadn't met yet) and leads with the three layers' purposes:
+      the corpus is the foundation (truth, baseline); the codex is where knowledge is
+      decomposed and organized (where connections are built and signals emerge for
+      new captures); the compendium is the funnel that focuses the knowledge graph
+      on a topic. §1.2 design principles renumbered and reordered: principle 1 is
+      now "Layered foundation" (absorbing the prior principle 6 "Strictly downward
+      references"); principles 2–8 follow the prior order with the strict-downward
+      content folded into 1; principle 9 reframed from "LLM-native" to
+      "LLM-informed" (the LLM mechanics live in the impl docs now, the spec is
+      shaped by what LLM agents can produce reliably); principle 10 unchanged
+      (offline-first). Stable-identity principle (now 8) updated to mention the
+      unified `id` field foreshadowed in refinement N. Cross-references "principle
+      6" → "principle 1" updated in §1.3 terminology and §2.3 codex records.
+      Pure prose cleanup; no semantic changes.
   - version: 10.12
     date: 2026-04-26
     summary: >
@@ -296,43 +315,33 @@ changelog:
 
 The Athenaeum is a knowledge normalization and synthesis system. It captures content from external sources, normalizes each captured file into a uniform markdown representation, supports authoring codex records that synthesize knowledge across many captured artifacts, and compiles cross-cutting reference works (compendiums) that draw across multiple authored bodies of work.
 
-The system is structured as **three layers, with strictly downward references**:
+The system has three layers, each with a distinct purpose:
 
-```
-   compendium  (cross-codex + cross-corpus integration; published reference work)
-        ↓                  ↓
-     codex  ────────►  codex  ────────►  codex
-        ↓                  ↓                  ↓
-                 corpus  ────────►  corpus
-```
+- **The corpus is the foundation.** It is the truth, the baseline — a content-addressed archive of captured artifacts, faithful to what was captured. The corpus is the unit of tenant isolation; a "private" corpus and a "public" corpus are separate corpora, and their content should be mutually exclusive.
 
-- **The corpus (artifact layer).** A content-addressed archive of captured artifacts. Each artifact is one record, named by the blake3 hash of its binary content, with a body that's a faithful normalized rendering of the original. Cross-references inside an artifact's body (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds when the targets exist in the corpus. The corpus is the ground truth — it preserves what was captured, exactly as it was. **A corpus is the unit of tenant isolation**: a "private" corpus and a "public" corpus are separate corpora, and their content should be mutually exclusive.
+- **The codex is where knowledge is decomposed and organized.** It is where connections are built across the corpus, where the signals emerge that drive the next capture, and where authored interpretation lives.
 
-- **The codex layer.** Authored markdown compositions, named by UUID, organized into named **codices**. A codex's records reference artifacts (citation, embed, functional URI) and other records within the same codex (cross-link, embed). A codex is the home of a particular author's or team's interpretation of one or more corpora.
-
-- **The compendium layer.** Compiled, published reference works that integrate across codices and corpora. A compendium is composed of compendium records — author-named markdown chapters drawing on codices and corpora. A compendium has a defined scope, a point of view, and a domain taxonomy. **Compendiums are the integration layer** — when knowledge spans multiple codices or multiple corpora, the synthesis happens here, not at the codex level.
-
-The downward-references invariant (no upward references, no cross-codex references at the codex layer) is principle 6 in §1.2; the consequences for the reference graph are §2.4. Codices and corpora do not declare runtime joins; **content addressing handles the join at runtime** — a `[[blake3]]` reference resolves into any corpus the runtime has loaded that contains the hash, and a `[[codex-name:uuid]]` reference (only valid in a compendium record) resolves into any codex the runtime has loaded.
+- **The compendium is the funnel.** It takes the codex's knowledge graph and focuses it on a topic, producing a concise, targeted reference work richly built up from the corpus's foundation.
 
 ### 1.2 Design Principles
 
-1. **Every record is independently valid.** A single captured page and a fully synthesized monograph are both complete, addressable, useful markdown documents.
+1. **Layered foundation.** The corpus is the foundation, fully independent of the layers above it. Codices depend on corpora; compendiums depend on codices and corpora. References point downward only — a layer's records know nothing about layers above them. Codex regeneration triggers compendium re-build (compendium references into a codex are tied to that codex's current instance), and that is the intended behavior.
 
-2. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a new entry to the existing record's `capture_dates` rather than creating a new record.
+2. **Every record is independently valid.** A single captured page and a fully synthesized monograph are both complete, addressable, useful markdown documents.
 
-3. **Normalization integrity.** An artifact's body is a faithful normalized rendering of its original content. Normalization may produce a more accurate representation (resolve encoding ambiguity, fix format-conversion artifacts, surface OCR text from images) but it MUST NOT add information that didn't exist in the original. Editorial work happens in codex records and compendium records, not in artifacts.
+3. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a new entry to the existing record's `capture_dates` rather than creating a new record.
 
-4. **The normalized body as universal representation.** Every artifact record carries a text body: a normalized rendering of the original file appropriate to its content type. This body projects all modalities into a common representational space — text — enabling universal computation across the corpus. Search, similarity, clustering, and embeddings all operate on this body. The body is the durable, auditable, git-versioned input; everything derived from it is ephemeral cache, rebuildable when models improve or normalization is refined.
+4. **Normalization integrity.** An artifact's body is a faithful normalized rendering of its original content. Normalization may produce a more accurate representation (resolve encoding ambiguity, fix format-conversion artifacts, surface OCR text from images) but it MUST NOT add information that didn't exist in the original. Editorial work happens in codex records and compendium records, not in artifacts.
 
-5. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose — wikilinks, embeds, and tags. The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties.
+5. **The normalized body as universal representation.** Every artifact record carries a text body: a normalized rendering of the original file appropriate to its content type. This body projects all modalities into a common representational space — text — enabling universal computation across the corpus. Search, similarity, clustering, and embeddings all operate on this body. The body is the durable, auditable, git-versioned input; everything derived from it is ephemeral cache, rebuildable when models improve or normalization is refined.
 
-6. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. Each layer is self-contained; codex regeneration triggers compendium re-build (the compendium's `[[codex-name:uuid]]` references are tied to a particular codex instance), and that's the intended behavior.
+6. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose — wikilinks, embeds, and tags. The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties.
 
 7. **Metadata-driven organization.** Classification, grouping, and discovery are tag and link operations, not filesystem operations. Reorganizing the corpus means editing references, never moving or renaming files.
 
-8. **Stable identity.** An artifact's blake3 hash never changes (the bytes are immutable). A codex record's UUID never changes within a codex instance. References are permanent within a layer; codex regeneration mints fresh UUIDs and dependent compendiums must be re-built.
+8. **Stable identity.** Every record carries an `id`: an artifact's id is its blake3 hash (immutable with the bytes); a codex record's id is a UUIDv7 minted when the record is authored; a compendium record's id is the author-chosen slug. References are permanent within a layer; codex regeneration mints fresh UUIDs and dependent compendiums must be re-built.
 
-9. **LLM-native.** The pipeline leverages LLM capabilities for semantic tasks (normalization, cross-reference resolution, codex- and compendium-record authoring) while keeping mechanical tasks (capture, hashing, format conversion, functional URI evaluation) deterministic and reproducible.
+9. **LLM-informed.** The data contract is shaped by what the pipeline's LLM agents can produce reliably (faithful normalization, semantic classification, synthesis). The spec describes the data; pipeline mechanics — including which steps are LLM-driven and which are deterministic — live in `impl-corpus.md` and `impl-codex.md`.
 
 10. **Offline-first.** Only capture requires network access. Everything else operates on local data — including normalization (when the local model is sufficient), record authoring, similarity, and compendium synthesis.
 
@@ -350,7 +359,7 @@ The downward-references invariant (no upward references, no cross-codex referenc
 | **Content-Addressed Naming** | Artifact records are named by the blake3 hash of their binary content. Byte-identical files produce the same hash and therefore the same record — structural deduplication is automatic. Codex records use UUID-based naming; compendium records use author-chosen filenames. |
 | **Blake3** | The 256-bit content hash that identifies an artifact record and its underlying binary. 64-character lowercase hex string. Functions as identity, filename stem, and content-addressed storage key. |
 | **UUID** | Universally unique identifier for a codex record (v4, RFC 9562). Stable and permanent within a codex instance; codex regeneration mints fresh UUIDs and invalidates dependent compendiums (which must be rebuilt). Not used on artifact records or compendium records. |
-| **Reference** | A wikilink or embed in a record's body that points to another record. References live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. References point downward only — see §1.2 principle 6 and §2.4. |
+| **Reference** | A wikilink or embed in a record's body that points to another record. References live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. References point downward only — see §1.2 principle 1 and §2.4. |
 | **Wikilink** | `[[target\|display]]` — a clickable cross-reference. Bare targets are blake3 hashes (artifacts in any loaded corpus) or, in a codex, the codex's own record UUIDs. Qualified targets `codex-name:uuid` and `corpus-name:blake3` are valid only in compendium-record bodies. The display text is optional. |
 | **Embed** | `![[target]]` — inline content inclusion. Renders the target's normalized body at that position. For images, this surfaces the text description; in compiled outputs the actual binary can be substituted. |
 | **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are corpus-local on artifacts and codex-local on codex records — no external concept document required. |
@@ -369,7 +378,7 @@ A **record** is the universal unit of the Athenaeum. Every record is a single ma
 
 - **Artifact records** — one per captured file, named by the blake3 hash of the binary content. Artifact records live in **a corpus**.
 
-- **Codex records** — authored compositions, named by UUID v4. Codex records live in **a codex** — never inside the corpus.
+- **Codex records** — authored compositions, named by UUID v4. Codex records live in **a codex**.
 
 - **Compendium records** — authored chapters of a compiled reference work, with author-chosen filenames. Compendium records live in **a compendium**.
 
@@ -441,7 +450,7 @@ A codex record is an authored markdown composition representing synthesized know
 
 - **Body:** Authored markdown prose with wikilinks to other records within the same codex, wikilinks and embeds referencing artifacts (by blake3 hash, resolved against any loaded corpus), and optionally functional URIs for computed transformations of artifact content. The body *is* the composition — it is the authoritative record of what knowledge the codex record synthesizes and what evidence it draws on.
 
-A codex record's references go to artifacts (citation, embed, functional URI) and to other records within the same codex (cross-link, embed). A codex's records do not reference other codices (see §1.2 principle 6); cross-codex integration happens at the compendium layer (§6).
+A codex record's references go to artifacts (citation, embed, functional URI) and to other records within the same codex (cross-link, embed). A codex's records do not reference other codices (see §1.2 principle 1); cross-codex integration happens at the compendium layer (§6).
 
 **Codex records are where editorial work lives.** Unlike artifact bodies (which faithfully mirror their original content), codex-record bodies are written by curators or synthesis agents. Codex records may add interpretation, analysis, and context that no single artifact contains; structure knowledge for a particular audience or purpose; reconcile disagreements across artifacts; and carry the editorial voice that artifacts intentionally lack.
 
@@ -467,7 +476,7 @@ Across the three layers:
 
 - **Artifact records (corpus)** — bodies may reference other artifacts in the same corpus, but only when the original content's hyperlinks/embeds resolve to captured targets. Artifacts never reference codices or compendiums; artifact bodies are faithful to original content, which has no knowledge of the codex/compendium layer.
 - **Codex records (codex)** — bodies reference artifacts (any loaded corpus) and other records within the same codex. **A codex record never references another codex's records.** When that integration is needed, lift it to a compendium.
-- **Compendium records (compendium)** — bodies reference codices (`[[codex-name:uuid]]`), artifacts (`[[blake3]]`, optionally qualified `[[corpus-name:blake3]]`), and may use functional URIs for derived views.
+- **Compendium records (compendium)** — bodies reference codices (`[[codex-name:uuid]]`), artifacts (`[[blake3]]` and may use functional URIs for derived views.
 
 **Properties:**
 
