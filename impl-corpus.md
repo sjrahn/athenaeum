@@ -49,7 +49,7 @@ The `content_type` field on the artifact record is set from this step.
 
 Hashes are computed per the artifact's MIME's base schema (§3.3.1 of the spec). At minimum:
 
-- **`blake3`** — always. This is the artifact's identity.
+- **blake3** — always. This is the artifact's `id`.
 - **Format-specific perceptual hashes** as the base schema declares. Examples (illustrative; the canonical list lives in the schema files):
   - `image/*` → `phash` and/or `dhash`
   - `audio/*` → `chromaprint`
@@ -63,19 +63,19 @@ If a base schema is missing or incomplete for a MIME, fall back to blake3-only. 
 
 Build the artifact record's frontmatter in memory:
 
-- `blake3` — from §2.3.
+- `id` — the blake3 hash from §2.3 (the artifact's identity and filename stem).
 - `content_type` — from §2.2.
 - Capture provenance — see §2.6.
-- `hashes` — populate per the base schema's declarations.
+- `hashes` — populate per the base schema's declarations (other declared hashes; blake3 is the `id`).
 - Base-schema extended fields — extract format-intrinsic metadata (file headers, embedded metadata: ID3 tags, EXIF, PDF info dict, HTML `<meta>` etc.).
 - Custom classification schema fields — see §4.
 - `status: stub` initially; flips to `draft` or `normalized` as later stages run.
 
-The body starts empty and is filled by normalization (§5).
+The body starts empty and is filled by normalization (§3).
 
 ### 2.5 Dedup
 
-Look up the artifact by `blake3` against the existing corpus:
+Look up the artifact by `id` (blake3 hash) against the existing corpus:
 
 - **Match.** The bytes are already in the corpus. Append capture provenance to the existing record (a new entry in `capture_dates[]`, and any new URI added to `uris[]`). Do not create a new record.
 - **No match.** This is a new artifact. Write the record under `records/` and the binary under the `artifacts/` cache (§2.7).
@@ -139,14 +139,14 @@ Conversion produces the artifact's body as well-formed markdown. It is MIME-driv
 - **`text/markdown`, `text/plain`** → passthrough with minimal cleanup. `conversion_method: passthrough`.
 - **`unknown`** → best-effort fallback; emit a `metadata` body summarizing what little can be determined.
 
-Conversion writes provenance to `conversion_method`, `conversion_tool`, `conversion_date` for targeted bulk re-conversion later.
+Conversion writes pipeline-state metadata (`conversion_method`, `conversion_tool`, `conversion_date`) into a tracking sidecar or a frontmatter section the implementation reserves for re-run targeting. These fields are an implementation concern, not a record-contract requirement.
 
 ### 3.2 Cross-reference resolution (deterministic)
 
 After the body exists, scan it for hyperlinks and embedded-resource references. For each:
 
 1. Map the URL → blake3 by querying the corpus's URI index (any artifact whose `uris[]` contains this URL).
-2. If matched, rewrite as a wikilink (`[[blake3|original link text]]`) or embed (`![[blake3]]`).
+2. If matched, rewrite as a raw intra-corpus wikilink (`[[blake3|original link text]]`) or embed (`![[blake3]]`). No URI scheme prefix — these are layer-local references.
 3. If unmatched, leave as a standard markdown URL or image embed. The link points outside the corpus and may be resolved by a future re-normalization pass when the target is captured.
 
 This is purely mechanical. The normalizer does not invent links the original content didn't contain.
@@ -181,7 +181,7 @@ For artifact records, contextualization MUST preserve normalization integrity �
 Before declaring the record normalized, the normalizer confirms:
 
 - The `content_type` matches the actual MIME of the stored binary.
-- The `blake3` field matches the binary's hash.
+- The `id` field (blake3 hash) matches the binary's hash.
 - The on-disk record path matches the shard convention.
 
 Failures here are bugs in the pipeline; they should fail loudly.
@@ -256,8 +256,8 @@ Re-normalization is the general capability to re-process existing artifacts when
 
 The curator scopes the sweep using the most-precise selector possible:
 
-- By `conversion_tool` version, when re-running improved conversion.
-- By `normalization_model`, when re-running improved contextualization.
+- By conversion-tooling generation (the implementation's pipeline-state tracking), when re-running improved conversion.
+- By normalization-model generation, when re-running improved contextualization.
 - By `uri` pattern, when applying a URI-targeted custom classification schema.
 - By prior classification (the artifact already carries a particular classification), when applying a layered schema.
 - By `content_type`, when applying a MIME-keyed change.

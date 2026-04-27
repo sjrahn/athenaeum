@@ -29,12 +29,12 @@ A codex is a named container holding authored codex records. The on-disk shape:
 codex-{name}/
 ├── codex.yaml                 — codex-level metadata (optional)
 └── records/
-    ├── {first-2-of-uuid}/     — sharded by first 2 hex chars of UUID
-    │   └── {full-uuid}.md
+    ├── {first-2-of-id}/       — sharded by first 2 hex chars of the UUIDv7 id
+    │   └── {full-uuidv7}.md
     └── ...
 ```
 
-**Sharding policy.** Codex records are sharded one level deep by the first two hex characters of the UUID, mirroring the corpus's artifact sharding. Same depth as artifact records and the binary cache in the corpus. Flat layout is acceptable below ~1k records; sharded once a codex's record count crosses that threshold. The convention is identical to the corpus: full UUID kept in the filename so files are self-identifying when copied outside their shard.
+**Sharding policy.** Codex records are sharded one level deep by the first two hex characters of the UUIDv7 id, mirroring the corpus's artifact sharding. Same depth as artifact records and the binary cache in the corpus. Flat layout is acceptable below ~1k records; sharded once a codex's record count crosses that threshold. The convention is identical to the corpus: full UUIDv7 kept in the filename so files are self-identifying when copied outside their shard. UUIDv7 ids are time-ordered, so shard distribution remains roughly uniform as the codex grows.
 
 **`codex.yaml`** is optional and may carry codex-level metadata such as:
 
@@ -83,27 +83,28 @@ Authoring a codex record follows the spec's `Author` agent contract (§5.4). The
 
 1. **Pick the codex.** The author works in exactly one codex per invocation.
 2. **Pick a synthesis target.** A topic that benefits from authored prose — a how-to guide, a concept page, a synthesis across several artifacts. The trigger may come from the curator, from a tag cluster, from operator direction, or from a compendium gap.
-3. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks. Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[uuid]]`.
-4. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records (see spec §1.2). Cross-codex citation is a compendium-record authoring job.
-5. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3); credibility weighting happens at the compendium layer by reading the credibility-signal classifications on the evidentiary artifacts a codex record cites.
+3. **Mint a UUIDv7.** The codex record's `id` is a freshly minted UUIDv7. Time-ordered ids let tooling list a codex's records in creation order without reading the body.
+4. **Compose the body.** Footnote-cite artifacts (`text[^N]` with `[^N]: corpus://{hash}`, optionally `corpus://{hash}#anchor` or `corpus://{hash}?page=4`). Embed artifact content via functional URI (`![[corpus://{hash}?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Wikilink peer codex records via `[[uuid]]`.
+5. **Never write `codex://...`.** A codex is pure — its records only reference downward to artifacts and locally to peer records (see spec §1.2). Cross-codex citation is a compendium-record authoring job.
+6. **Save** under `records/{first-2-of-id}/{full-uuidv7}.md`. Frontmatter is just `id`, `title`, `description`, `status`, `tags`. Codex-record frontmatter is deliberately thin (spec §3.1.3); credibility weighting happens at the compendium layer by reading the credibility-signal classifications on the evidentiary artifacts a codex record cites.
 
 ### 4.2 Compendium authoring
 
 A compendium body is the integration point — where multi-codex / multi-corpus synthesis happens. The compendium author:
 
-1. **Identifies inputs.** Which codices, which codex topics, which artifacts. Often starts by selecting a small set of seed topics across one or more codices and following references outward.
-2. **Drafts chapters.** Markdown prose with:
-   - `[[blake3]]` for artifact citations (any loaded corpus).
-   - `[[corpus-name:blake3]]` for provenance disambiguation when blake3 alone is ambiguous (rare but useful for cases where both a private and public corpus contain the same content and the compendium needs to be specific).
-   - `[[codex-name:uuid]]` for codex-record citations.
-   - `![[blake3://hash?params]]` for derived views.
-3. **Applies the lowest-source preference.** When a compendium record is about a particular subject and an artifact directly says it, cite the artifact, not a codex record that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex record that already did that synthesis. Codex-record citations are bound to the cited codex's current instance — codex regeneration mints fresh UUIDs and dependent compendiums must be re-built (spec §2.5, §6.5).
+1. **Identifies inputs.** Which codices, which codex records, which artifacts. Often starts by selecting a small set of seed records across one or more codices and following references outward.
+2. **Picks a slug.** The compendium record's `id` is an author-chosen slug (also the filename stem; e.g., `01-introduction`, `inspection-procedure`).
+3. **Drafts chapters.** Markdown prose with:
+   - **Footnote citations** for downward references: `text[^N]` with `[^N]: corpus://{hash}` (artifact; provenance form `corpus://{name}/{hash}` when needed) or `[^N]: codex://{name}/{uuid}` (codex record).
+   - **Functional URI embeds** for inline artifact-derived views: `![[corpus://{hash}?params]]`.
+   - **Wikilinks** for intra-compendium peer-chapter references: `[[slug]]`.
+4. **Applies the lowest-source preference.** When a compendium record is about a particular subject and an artifact directly says it, cite the artifact (`corpus://...`), not a codex record that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex record that already did that synthesis (`codex://...`). Codex-record citations are bound to the cited codex's current instance — codex regeneration mints fresh UUIDs and dependent compendiums must be re-built (spec §2.5, §6.5).
 
 ---
 
 ## 5. Runtime resolution
 
-Wikilink resolution is the runtime's job. The runtime mounts a set of codices and corpora and answers reference lookups.
+Reference resolution is the runtime's job. The runtime mounts a set of codices, corpora, and compendiums and answers reference lookups for wikilinks, footnote URIs, and embed URIs.
 
 ### 5.1 Mounting
 
@@ -131,25 +132,25 @@ Multiple codices may coexist with no relationship to one another beyond what com
 
 ### 5.2 Resolution rules
 
-The per-container wikilink resolution algorithm is canonical in spec §3.6; the runtime applies it as written. Implementation notes:
+The per-primitive resolution algorithm is canonical in spec §3.6; the runtime applies it as written. Implementation notes:
 
-- **Lookup performance.** A codex's UUID-based intra-codex lookups are constant-time against an in-memory map keyed by UUID. Corpus-side blake3 lookups are similarly constant-time against the corpus's blake3 → record-path map. Both maps are built at mount time (§5.1).
-- **Cross-corpus blake3 identity.** When multiple corpora are loaded, a bare `[[blake3]]` reference may match more than one loaded corpus. Because content addressing means the bytes are by definition identical, the runtime resolves to either copy. Compendiums use the qualified `[[corpus-name:blake3]]` form when provenance disambiguation matters.
-- **Display text.** The optional `|display-text` portion of a wikilink is preserved through resolution and used at render time. Resolution failures fall back to display text per spec §3.6.
+- **Lookup performance.** Wikilinks are intra-layer: a codex's UUIDv7 → record-path map and a corpus's blake3 → record-path map are both built at mount time (§5.1) and queried in constant time. A compendium's slug → record-path map is similar. Footnote URIs (`corpus://{hash}`, `codex://{name}/{uuid}`) parse to (corpus-name?, hash) or (codex-name, uuid) tuples and resolve against the same maps.
+- **Cross-corpus blake3 identity.** When multiple corpora are loaded, a bare `corpus://{hash}` URI may match more than one loaded corpus. Because content addressing means the bytes are by definition identical, the runtime resolves to either copy. Compendium URIs use the qualified `corpus://{name}/{hash}` form when provenance disambiguation matters.
+- **Display text and APA resolution.** Wikilink `|display-text` portions are preserved through resolution and used at render time. Footnote URIs resolve at build/export time into APA-style citation text drawn from the target record's frontmatter (artifact: `byline`, `published_date`, `title`, primary URI from `uris[]`; codex record: `title`, `description`, codex name).
 
-### 5.3 Unresolved-link handling
+### 5.3 Unresolved-reference handling
 
 When a reference cannot be resolved, the runtime should:
 
-- In Obsidian-style raw browsing, fall back to the alt text or display text and surface the link as broken (Obsidian's standard treatment).
-- In compiled outputs, log the unresolved reference and substitute a clearly-marked fallback ("[unresolved]" or similar). Don't silently drop the link.
+- In Obsidian-style raw browsing, fall back to the display text or footnote-body URI and surface the reference as broken (Obsidian's standard treatment).
+- In compiled outputs, log the unresolved reference and substitute a clearly-marked fallback ("[unresolved]" or similar). Don't silently drop it.
 - In tooling backlink panels, list unresolved references as authoring follow-ups.
 
 ### 5.4 Collision detection
 
 Same blake3 in two corpora — fine, they are by definition the same bytes; the corpora may both have it. The reference resolves to either copy.
 
-Same UUID in two codices — should not happen by design (UUIDv4 collision is astronomical). If it does, the runtime should warn and let the qualified `[[codex-name:uuid]]` form resolve unambiguously.
+Same UUIDv7 in two codices — astronomically unlikely. If it does occur, the runtime should warn and let the qualified `codex://{name}/{uuid}` URI resolve unambiguously.
 
 ---
 
@@ -170,9 +171,9 @@ Regeneration is a contemplated future workflow: re-derive an entire codex from a
 
 ### 6.3 Compendium cascade
 
-A regenerated codex is a new instance: its UUIDs are fresh, so any compendium citing `[[<this-codex>:uuid]]` becomes invalidated and must be re-built against the regenerated codex. Tooling SHOULD:
+A regenerated codex is a new instance: its UUIDs are fresh, so any compendium citing `codex://{this-codex}/{uuid}` becomes invalidated and must be re-built against the regenerated codex. Tooling SHOULD:
 
-1. Identify dependent compendiums before triggering regeneration (by walking each loaded compendium's wikilinks for `[[<this-codex>:…]]` matches).
+1. Identify dependent compendiums before triggering regeneration (by walking each loaded compendium's footnote URIs for `codex://{this-codex}/...` matches).
 2. Surface the cascade to the operator for confirmation.
 3. After codex regeneration completes, re-run compendium synthesis for each dependent compendium against the new codex.
 
@@ -199,10 +200,11 @@ The build process compiles outputs (mdbook, static site, browsable vault) for a 
 ### 7.2 Resolution pass
 
 1. Walk the target's body (and all body fragments: chapters, sub-pages).
-2. Resolve every wikilink and embed per the rules in §5.
-3. Resolve every functional URI: compute the transformation, write the derived artifact to the build's output directory, substitute the path.
-4. Build navigation: tag indexes, navigation menus, backlink panels (Obsidian-style).
-5. Generate origin-URI redirects: for every artifact referenced by the target, expose all of its `uris[]` entries as redirect entries pointing at the artifact's compiled-output path.
+2. Resolve every wikilink (intra-layer) per the rules in §5.
+3. Resolve every footnote URI: parse `corpus://{hash}` or `codex://{name}/{uuid}`, look up the target record, generate APA-style citation text from the target's frontmatter, substitute into the footnote body.
+4. Resolve every embed URI: compute the functional transformation (page extract, framegrab, crop), write the derived artifact to the build's output directory, substitute the path.
+5. Build navigation: tag indexes (codex), chapter ordering (compendium), navigation menus, backlink panels.
+6. Generate origin-URI redirects: for every artifact referenced by the target, expose all of its `uris[]` entries as redirect entries pointing at the artifact's compiled-output path.
 
 ### 7.3 Output formats
 
