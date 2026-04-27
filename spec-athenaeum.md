@@ -1,12 +1,35 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.10
+version: 10.11
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.11
+    date: 2026-04-26
+    summary: >
+      Refinement pass K. Closing structural cleanup. (1) §1.2 design principles
+      renumbered to a clean 1–10 (the dropped principle 11 from refinement I
+      already left a gap; the inserted principle 6 had been numbered 10; the
+      remaining principles 6–9 had been numbered 6–9 out of order). (2) §4.5
+      Build rewritten to enumerate the three layers (corpus / codex /
+      compendium) as independent build targets — each layer is exportable for
+      viewing on its own. Per-layer build descriptions added; the previous
+      corpus-centric framing is gone. (3) Strictly-downward-references rule
+      cross-referenced rather than restated: §1.1 layered-architecture prose
+      tightened (drops the standalone "Codices reference downward only"
+      assertion and the closing "References point downward only" sentence,
+      replacing them with a pointer to §1.2 principle 6 and §2.4); §1.3
+      terminology Reference entry shortened to a cross-reference; §2.3
+      tightened to point at §1.2. (4) §3.3.4 MIME table replaced with a
+      one-paragraph cross-reference to Appendix A.1 (which has the richer
+      Notes-column version); the per-row table is no longer duplicated.
+      (5) impl-corpus.md §6 sharding-crossover question reframed to apply to
+      both corpus and codex sides, with `impl-codex.md §8` deferring to it
+      as canonical. impl-codex.md §8 sharding entry rewritten as a
+      cross-reference. No semantic changes; pure structural cleanup.
   - version: 10.10
     date: 2026-04-26
     summary: >
@@ -251,11 +274,11 @@ The system is structured as **three layers, with strictly downward references**:
 
 - **The corpus (artifact layer).** A content-addressed archive of captured artifacts. Each artifact is one record, named by the blake3 hash of its binary content, with a body that's a faithful normalized rendering of the original. Cross-references inside an artifact's body (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds when the targets exist in the corpus. The corpus is the ground truth — it preserves what was captured, exactly as it was. **A corpus is the unit of tenant isolation**: a "private" corpus and a "public" corpus are separate corpora, and their content should be mutually exclusive.
 
-- **The codex layer.** Authored markdown compositions, named by UUID, organized into named **codices**. A codex's records reference artifacts (citation, embed, functional URI) and other records within the same codex (cross-link, embed). **Codices reference downward only**: a codex's body never references another codex. A codex is the home of a particular author's or team's interpretation of one or more corpora.
+- **The codex layer.** Authored markdown compositions, named by UUID, organized into named **codices**. A codex's records reference artifacts (citation, embed, functional URI) and other records within the same codex (cross-link, embed). A codex is the home of a particular author's or team's interpretation of one or more corpora.
 
 - **The compendium layer.** Compiled, published reference works that integrate across codices and corpora. A compendium is composed of compendium records — author-named markdown chapters drawing on codices and corpora. A compendium has a defined scope, a point of view, and a domain taxonomy. **Compendiums are the integration layer** — when knowledge spans multiple codices or multiple corpora, the synthesis happens here, not at the codex level.
 
-References point downward only. Codices and corpora do not declare runtime joins; **content addressing handles the join at runtime** — a `[[blake3]]` reference resolves into any corpus the runtime has loaded that contains the hash, and a `[[codex-name:uuid]]` reference (only valid in a compendium record) resolves into any codex the runtime has loaded.
+The downward-references invariant (no upward references, no cross-codex references at the codex layer) is principle 6 in §1.2; the consequences for the reference graph are §2.4. Codices and corpora do not declare runtime joins; **content addressing handles the join at runtime** — a `[[blake3]]` reference resolves into any corpus the runtime has loaded that contains the hash, and a `[[codex-name:uuid]]` reference (only valid in a compendium record) resolves into any codex the runtime has loaded.
 
 ### 1.2 Design Principles
 
@@ -269,15 +292,15 @@ References point downward only. Codices and corpora do not declare runtime joins
 
 5. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose: wikilinks, embeds, and tags. There is no stored frontmatter "constituents," "part_of," "is_a," or "same_as." The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties, not asserted.
 
-10. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. Each layer is self-contained; codex regeneration triggers compendium re-build (the compendium's `[[codex-name:uuid]]` references are tied to a particular codex instance), and that's the intended behavior.
+6. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. Each layer is self-contained; codex regeneration triggers compendium re-build (the compendium's `[[codex-name:uuid]]` references are tied to a particular codex instance), and that's the intended behavior.
 
-6. **Metadata-driven organization.** Classification, grouping, and discovery are tag and link operations, not filesystem operations. Reorganizing the corpus means editing references, never moving or renaming files.
+7. **Metadata-driven organization.** Classification, grouping, and discovery are tag and link operations, not filesystem operations. Reorganizing the corpus means editing references, never moving or renaming files.
 
-7. **Stable identity.** An artifact's blake3 hash never changes (the bytes are immutable). A codex record's UUID never changes. References are permanent.
+8. **Stable identity.** An artifact's blake3 hash never changes (the bytes are immutable). A codex record's UUID never changes within a codex instance. References are permanent within a layer; codex regeneration mints fresh UUIDs and dependent compendiums must be re-built.
 
-8. **LLM-native.** The pipeline leverages LLM capabilities for semantic tasks (normalization, cross-reference resolution, codex- and compendium-record authoring) while keeping mechanical tasks (capture, hashing, format conversion, functional URI evaluation) deterministic and reproducible.
+9. **LLM-native.** The pipeline leverages LLM capabilities for semantic tasks (normalization, cross-reference resolution, codex- and compendium-record authoring) while keeping mechanical tasks (capture, hashing, format conversion, functional URI evaluation) deterministic and reproducible.
 
-9. **Offline-first.** Only capture requires network access. Everything else operates on local data — including normalization (when the local model is sufficient), record authoring, similarity, and compendium synthesis.
+10. **Offline-first.** Only capture requires network access. Everything else operates on local data — including normalization (when the local model is sufficient), record authoring, similarity, and compendium synthesis.
 
 ### 1.3 Terminology
 
@@ -293,7 +316,7 @@ References point downward only. Codices and corpora do not declare runtime joins
 | **Content-Addressed Naming** | Artifact records are named by the blake3 hash of their binary content. Byte-identical files produce the same hash and therefore the same record — structural deduplication is automatic. Codex records use UUID-based naming; compendium records use author-chosen filenames. |
 | **Blake3** | The 256-bit content hash that identifies an artifact record and its underlying binary. 64-character lowercase hex string. Functions as identity, filename stem, and content-addressed storage key. |
 | **UUID** | Universally unique identifier for a codex record (v4, RFC 9562). Stable and permanent within a codex instance; codex regeneration mints fresh UUIDs and invalidates dependent compendiums (which must be rebuilt). Not used on artifact records or compendium records. |
-| **Reference** | A wikilink or embed in a record's body that points to another record. References live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. References point downward only — codex records reference artifacts; compendium records reference codices and artifacts; artifacts never reference upward. |
+| **Reference** | A wikilink or embed in a record's body that points to another record. References live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. References point downward only — see §1.2 principle 6 and §2.4. |
 | **Wikilink** | `[[target\|display]]` — a clickable cross-reference. Bare targets are blake3 hashes (artifacts in any loaded corpus) or, in a codex, the codex's own record UUIDs. Qualified targets `codex-name:uuid` and `corpus-name:blake3` are valid only in compendium-record bodies. The display text is optional. |
 | **Embed** | `![[target]]` — inline content inclusion. Renders the target's normalized body at that position. For images, this surfaces the text description; in compiled outputs the actual binary can be substituted. |
 | **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are corpus-local on artifacts and codex-local on codex records — no external concept document required. |
@@ -384,7 +407,7 @@ A codex record is an authored markdown composition representing synthesized know
 
 - **Body:** Authored markdown prose with wikilinks to other records within the same codex, wikilinks and embeds referencing artifacts (by blake3 hash, resolved against any loaded corpus), and optionally functional URIs for computed transformations of artifact content. The body *is* the composition — it is the authoritative record of what knowledge the codex record synthesizes and what evidence it draws on.
 
-A codex record's references point downward: to artifacts (citation, embed, functional URI) and to other records within the same codex (cross-link, embed). **A codex's records do not reference other codices** — that integration happens at the compendium layer (§6).
+A codex record's references go to artifacts (citation, embed, functional URI) and to other records within the same codex (cross-link, embed). A codex's records do not reference other codices (see §1.2 principle 6); cross-codex integration happens at the compendium layer (§6).
 
 **Codex records are where editorial work lives.** Unlike artifact bodies (which faithfully mirror their original content), codex-record bodies are written by curators or synthesis agents. Codex records may add interpretation, analysis, and context that no single artifact contains; structure knowledge for a particular audience or purpose; reconcile disagreements across artifacts; and carry the editorial voice that artifacts intentionally lack.
 
@@ -832,23 +855,9 @@ The Curator agent (§5.5) is responsible for monitoring the codex layer for patt
 
 #### 3.3.4 MIME Type Reference
 
-A concise per-type reference for the most commonly captured MIME types. Each row lists the canonical MIME, the normalization method, and the extended fields the base schema typically extracts. This is illustrative, not closed — any IANA MIME type is valid.
+The per-MIME normalization-method-and-extracted-fields reference is in **Appendix A.1**. It lists the canonical MIME, the normalization method, the typical base-schema extended fields, and notes per type. The set is illustrative, not closed — any IANA MIME type is valid as a `content_type` value.
 
-| MIME | Method | Typical extended fields |
-|------|--------|------------------------|
-| `text/html`, `application/xhtml+xml` | extraction | `page_title`, `meta_description`, `canonical_url`, `og_title`, `og_description`, `og_image`, `og_type`, `language` |
-| `text/markdown` | extraction (passthrough) | `word_count` |
-| `text/plain` | extraction (passthrough) | `word_count`, `language` |
-| `application/pdf` | extraction | `page_count`, `pdf_author`, `pdf_title`, `pdf_creation_date`, `pdf_producer`, `is_scanned` |
-| `application/epub+zip` | extraction | `work_title`, `epub_author`, `language`, `chapter_count`, `word_count` |
-| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` |
-| `video/mp4`, `video/webm`, `video/mkv`, `video/quicktime` | transcription | `duration_seconds`, `width_px`, `height_px`, `frame_rate`, `video_codec`, `audio_codec` |
-| `image/jpeg`, `image/png`, `image/webp`, `image/gif` | description | `width_px`, `height_px`, `color_space`, `exif_date`, `exif_gps_lat`, `exif_gps_lon`, `exif_camera` |
-| `message/rfc822` (email) | extraction | `from`, `to`, `subject`, `message_date`, `in_reply_to` |
-| `application/json` | extraction (passthrough) | `top_level_keys` (when reasonable) |
-| `unknown` or unmatched | metadata | `byte_size`, `magic_bytes_summary` |
-
-A corpus authoring its own custom classification schemas adds further extended fields on top of these (see §3.3.2).
+A corpus authoring its own custom classification schemas adds further extended fields on top of the base-schema reference (see §3.3.2).
 
 ### 3.4 Examples
 
@@ -1134,19 +1143,25 @@ There is no merge ceremony, no constituent list, no merge rationale field. The b
 
 ### 4.5 Build
 
-**What:** Materialize the corpus into a browsable or publishable form.
+**What:** Materialize one or more of the three layers into a browsable or publishable form. Each layer is independently exportable for viewing.
 
-**How:** A build process reads the corpus and produces output suitable for consumption (static site, browsable vault, mdbook, or other format).
+**Per-layer build targets.**
 
-**Steps:**
+- **Corpus build** — produces a browsable artifact vault. Resolves intra-corpus wikilinks among artifacts; serves binaries via the corpus's `artifacts/` cache. Useful for inspecting captured content as a self-contained archive.
+- **Codex build** — produces a browsable knowledge work (mdbook, static site, or Obsidian-style vault). Resolves wikilinks within the codex (codex-record↔codex-record) and downward to corpus artifacts (codex-record↔artifact). The codex's referenced corpora must be loaded for artifact wikilinks to resolve.
+- **Compendium build** — produces the published reference work. Resolves all wikilinks across the integration set (compendium-record↔codex-record, compendium-record↔artifact, plus the codex- and corpus-side intra-layer wikilinks the references reach into). The compendium's referenced codices and corpora must be loaded.
 
-1. Resolve all wikilinks and embeds (artifact↔artifact, codex-record↔artifact, codex-record↔codex-record, compendium-record↔codex-record, compendium-record↔artifact) to whatever the target format expects (file paths, anchored URLs, inlined content).
+**How:** Each build is a deterministic process that reads the source layer (and any layers below it for cross-layer wikilinks), resolves references, and produces output suitable for consumption (static site, browsable vault, mdbook, JSON API, or other format).
+
+**Steps (any layer):**
+
+1. Resolve all wikilinks and embeds — within the source layer and downward — to whatever the target format expects (file paths, anchored URLs, inlined content).
 2. Resolve all functional URIs in codex- and compendium-record bodies — compute transformations, write derived artifacts to the build's output directory, substitute paths.
-3. Generate index and navigation structures appropriate to the output format (tag indexes, navigation menus, backlink panels).
+3. Generate index and navigation structures appropriate to the output format (tag indexes for codex builds, navigation menus, backlink panels).
 
 **Origin-URL routing.** The build process can generate a lookup index mapping any `uris[]` value to its artifact blake3 hash, enabling consumers to find records by any of the URLs known to resolve to them.
 
-Build is an implementation detail — this spec defines what the corpus contains, not how it's published.
+Build mechanics are an implementation concern — this spec defines what each layer contains; how it gets published is up to the implementer.
 
 ### 4.6 Phase Boundaries and Re-processing
 
@@ -1215,7 +1230,7 @@ Autonomous orchestration skill that assesses corpus state, prioritizes work, and
 
 **Operating loop:**
 
-1. **Assess.** Scan loaded corpora's `records/` and any active codex's `records/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, unresolved cross-references, and authoring opportunities. Check the corpus's `capture/` for completed captures awaiting reconciliation. Watch the codex layer for recurring patterns (tag clusters, URI-domain frequency, repeated extended-field demand) that might warrant a new custom classification schema in the corpus.
+1. **Assess.** Scan loaded corpora's `records/` and any active codex's `records/` for record statuses (`stub`, `draft`, `normalized`), unresolved issues, unresolved cross-references, and authoring opportunities. Check the corpus's `capture/` for completed captures awaiting reconciliation. Watch the codex layer for tag clusters that might warrant a new custom classification schema in the corpus, and watch the corpus side for URI-domain frequency or repeated extended-field demand that suggests the same.
 2. **Prioritize.** Apply decision framework: compendium blockers first, then high-priority new captures, then normalization of existing stubs, then re-resolution sweeps, then re-normalization driven by tool/model upgrades or by newly authored custom classification schemas.
 3. **Propose.** Present the prioritized work plan to the operator for approval. Surface schema-authoring proposals when patterns warrant them.
 4. **Execute.** Spawn capturer, normalizer, and author agents, managing parallelism by launching multiple agents concurrently.

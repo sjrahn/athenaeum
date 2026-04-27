@@ -282,7 +282,7 @@ A lightweight sweep that re-runs only §3.2 (cross-reference resolution) against
 
 These are flagged for follow-up; not all are blockers.
 
-- **Sharding crossover.** When does single-level sharding stop being adequate? At what corpus size do we move to two-level (`a7/f3/...`)? Likely a tooling-driven flag — `corpus.toml` could declare the shard depth and tooling could rebalance on change.
+- **Sharding crossover** (applies to both corpus and codex). When does single-level hex-prefix sharding stop being adequate? At what record count do we move to two-level (`a7/f3/...`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change. `impl-codex.md §8` defers to this entry as the canonical write-up.
 - **Binary cache GC.** Is the binary cache append-only forever, or does it have a GC pass for orphaned binaries (records deleted, hash unreferenced)? Deferred until corpus deletion semantics are needed.
 - **URI index storage.** The URI → blake3 lookup needs an index. Build it on server start (rebuild from records) or maintain a side-file (`corpus/index/uri.db`)? Currently rebuilt-on-start; persistent index is a perf optimization for later.
 - **Schema validation.** Should schema files themselves be validated (their match conditions parseable, their declared fields well-formed)? A `validate-schemas` tooling command would be useful.

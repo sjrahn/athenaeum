@@ -223,6 +223,6 @@ Functional URI results, derived images, transcoded media — all ephemeral. They
 
 ## 8. Open implementation questions
 
-- **Codex sharding crossover.** Same as the corpus side (impl-corpus.md §6): at what record count do we move to two-level sharding? Likely a `codex.yaml` flag.
+- **Sharding crossover** (consolidated). At what record count does single-level hex-prefix sharding stop being adequate, and how do tooling rebalance moves work? Same question on both the corpus and codex sides; the canonical write-up is `impl-corpus.md §6`. Codex-side specifics: the threshold likely lands at a `codex.yaml` flag rather than `corpus.toml`.
 - **Compendium chapter granularity.** A compendium could be a single compendium record or many. Convention: split chapters into separate records when the chapter is large enough that scrolling through it gets in the way; otherwise keep the compendium as a small set of records. The build process flattens or paginates per the target output format.
 - **Codex regeneration tooling.** When sjrahn wants to actually do a regeneration, the tooling will need: corpus-snapshot pinning, prompt versioning, dependent-compendium cascade detection (§6.3), and a diff report. Out of scope for v10 implementation.
