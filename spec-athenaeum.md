@@ -1,12 +1,29 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.5
+version: 10.6
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.6
+    date: 2026-04-26
+    summary: >
+      Refinement pass F. Two cleanups. (1) `record_type` field removed entirely.
+      The field was redundant: container, filename pattern (64-char blake3 hex vs.
+      UUID v4), and required field presence (`blake3` vs. `uuid`) all
+      independently signal record type. §3.1.1 Core Fields row dropped, prose
+      mentions in §2.1 / §2.2 / §2.3 / §3.1.2 / §3.1.3 / §3.4 examples /
+      §4.1.2 / §4.3 / §5.4 scrubbed. New one-liner in §3.1.1 explicitly
+      documents the three signals that determine record type. impl-corpus.md
+      §2.4 in-memory build bullet removed. (2) Functional URI scheme (§3.7)
+      simplified to single-form: `blake3://hash?params` regardless of
+      container. The previously-allowed `corpus-name:blake3://hash`
+      compendium-only form removed — it duplicated provenance assertion that
+      already lives on the wikilink-citation form `[[corpus-name:blake3]]`.
+      Functional URIs are about content transformation; provenance is a
+      citation concern, handled separately.
   - version: 10.5
     date: 2026-04-26
     summary: >
@@ -197,9 +214,9 @@ References point downward only. Codices and corpora do not declare runtime joins
 
 A **record** is the universal unit of the Athenaeum. Every record is a single markdown file with YAML frontmatter and a body. Records are one of two kinds, and they live in different containers:
 
-- **Artifact records** (`record_type: artifact`) — one per captured file, named by the blake3 hash of the binary content. Artifact records live in **a corpus**.
+- **Artifact records** — one per captured file, named by the blake3 hash of the binary content. Artifact records live in **a corpus**.
 
-- **Document records** (`record_type: document`) — authored compositions, named by UUID v4. Document records live in **a codex** — never inside the corpus.
+- **Document records** — authored compositions, named by UUID v4. Document records live in **a codex** — never inside the corpus.
 
 The system has three layers of container:
 
@@ -253,8 +270,6 @@ An artifact record represents a single captured file. It is named by the blake3 
 
 **Re-capture of changed content.** If a previously captured URL returns different content, the new content produces a different hash and therefore a new artifact record. Both records will list the URL in their `uris[]`, making them discoverable as captures of the same origin URL at different points in time. Cross-URI succession (the same content at a new URL) has no automatic mechanism in v10.
 
-**Record type.** Artifact records use `record_type: artifact`.
-
 ### 2.3 Documents (in Codices)
 
 A document record is an authored markdown composition representing synthesized knowledge. **Documents live in a codex**, never inside the corpus. A document is named by a UUID (`{uuid}.md`) and contains:
@@ -266,8 +281,6 @@ A document record is an authored markdown composition representing synthesized k
 A document body's references point downward: to artifacts (citation, embed, functional URI) and to other documents within the same codex (cross-link, embed). **A codex's documents do not reference other codices** — that integration happens at the compendium layer (§6).
 
 **Documents are where editorial work lives.** Unlike artifact bodies (which faithfully mirror their original content), document bodies are written by curators or synthesis agents. Documents may add interpretation, analysis, and context that no single artifact contains; structure knowledge for a particular audience or purpose; reconcile disagreements across artifacts; and carry the editorial voice that artifacts intentionally lack.
-
-**Record type.** Document records use `record_type: document`.
 
 ### 2.4 The Layered Reference Graph
 
@@ -359,7 +372,6 @@ Present on every record (unless noted as record-type-specific).
 
 | Field | Type | Required | Applies to | Description |
 |-------|------|----------|------------|-------------|
-| `record_type` | enum | yes | both | One of `artifact` or `document`. |
 | `blake3` | string | yes (artifacts) | artifact records | The blake3 hash of the artifact's binary content. 64-character lowercase hex string. Serves as the record's identity, filename stem, and content-addressed storage key. |
 | `uuid` | UUID | yes (documents) | document records | Standard v4 UUID. Not used on artifact records — artifact identity is the blake3 hash. |
 | `slug` | string | no | both (typically documents) | Optional corpus-unique, human-readable identifier. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Used for readable wikilinks. Uniqueness enforced corpus-wide; slug changes require updating all references. |
@@ -376,9 +388,11 @@ On document records, `tags` classify what the authored knowledge covers. They ar
 
 `visibility` lets a curator retire low-quality records from normal surfaces without deleting them. Use cases: low-content pages caught in a bulk scrape; superseded captures that remain valuable as historical versions; records flagged for further review. Default search and list queries show only `visible` records.
 
+**Record type signaling.** Whether a record is an artifact or a document is signaled three ways, none requiring a dedicated field: by the **container** (artifacts in `artifacts/` under a corpus, documents in `documents/` under a codex), by the **filename** (64-character lowercase hex blake3 hash for artifacts, UUID v4 for documents), and by **required field presence** (`blake3` on artifacts, `uuid` on documents). No separate `record_type` frontmatter field is recorded — the three signals are independently sufficient and never disagree.
+
 #### 3.1.2 Artifact-Specific Fields
 
-Present only on artifact records (`record_type: artifact`).
+Present only on artifact records.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -394,7 +408,6 @@ Example artifact frontmatter fragment:
 
 ```yaml
 blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
-record_type: artifact
 content_type: text/html
 uris:
   - "https://forum.example.com/threads/caliper-rebuild.4521/"
@@ -413,9 +426,9 @@ The same bytes encountered twice append a new entry to `capture_dates` — they 
 
 #### 3.1.3 Document-Specific Fields
 
-Present only on document records (`record_type: document`).
+Present only on document records.
 
-Document frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `record_type`, `status`, optional `slug`, `visibility`, `tags`) and the common quality and pipeline fields below, documents carry no structural metadata. A document's references to artifacts and other documents are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the document synthesizes and what evidence it draws on.
+Document frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `status`, optional `slug`, `visibility`, `tags`) and the common quality and pipeline fields below, documents carry no structural metadata. A document's references to artifacts and other documents are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the document synthesizes and what evidence it draws on.
 
 There is no `constituents` list, no `part_of`, no `same_as`, no `is_a`. All structural relationships are body references or computed similarity (see §3.5).
 
@@ -747,7 +760,6 @@ A corpus authoring its own custom classification schemas adds further extended f
 blake3: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
 title: "Caliper Rebuild Thread"
 description: "Enthusiast-forum thread documenting a front caliper rebuild on a sedan, with photos of bore wear and discussion of remanufactured units."
-record_type: artifact
 content_type: text/html
 uris:
   - "https://forum.example.com/threads/caliper-rebuild.4521/"
@@ -807,7 +819,6 @@ uuid: "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6"
 slug: "brake-caliper-rebuild"
 title: "Brake Caliper Rebuild"
 description: "Authored guide to rebuilding the front calipers on a sliding-caliper braking system, drawing on the service manual, a community forum thread, and a video walkthrough."
-record_type: document
 status: draft
 visibility: visible
 tags: [brake-caliper, caliper-rebuild]
@@ -906,7 +917,7 @@ In a compendium body:
 
 Codex documents and compendiums may reference computed transformations of artifacts using functional URIs. **Functional URIs are not used in artifact bodies** — artifact bodies use plain blake3 wikilinks and embeds only.
 
-**Base syntax:** `blake3://{hash}` — resolves to the artifact's binary content. In a compendium, `corpus-name:blake3://{hash}` may be used when blake3 alone needs provenance disambiguation.
+**Base syntax:** `blake3://{hash}` — resolves to the artifact's binary content. The functional URI scheme carries no corpus prefix; provenance assertion (when a compendium needs to be specific about which corpus it drew from) lives on the wikilink citation form `[[corpus-name:blake3]]` (§3.6, §6.2), separately from any embed or derived view.
 
 **Fragment navigation:** `blake3://{hash}#anchor` — navigates to a named section of the artifact's normalized body.
 
@@ -956,7 +967,7 @@ Captures may pass through `capture/` as a transient workspace for in-progress ac
 When reconciliation completes for a captured file:
 
 - The file's binary content is locatable in the content-addressed binary store under its blake3 hash.
-- An artifact record exists for that blake3 hash. If a record for the hash already existed (the bytes had been captured before), reconciliation appended capture provenance to it rather than creating a duplicate. If no record existed, a new one was created with `record_type: artifact`, `blake3`, `content_type` (the MIME determined for the binary), capture provenance, and `status: stub` (body empty pending normalization).
+- An artifact record exists for that blake3 hash. If a record for the hash already existed (the bytes had been captured before), reconciliation appended capture provenance to it rather than creating a duplicate. If no record existed, a new one was created with `blake3`, `content_type` (the MIME determined for the binary), capture provenance, and `status: stub` (body empty pending normalization).
 - The artifact record carries every hash declared by its base schema (§3.3.1) — at minimum `blake3`, plus any format-specific perceptual hashes and auxiliary hashes the schema lists.
 - Reconciliation has not classified *what the record is about* — only *what format it is in*. Classification (tags, custom classification schemas) happens during normalization or in later passes.
 
@@ -1000,7 +1011,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **What:** Create or edit a document record in a codex that synthesizes knowledge across one or more artifacts and other documents in the same codex.
 
-**Outputs of an authoring pass:** A document record (in a codex) with `record_type: document`, a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks (`[[blake3|text]]`), embeds artifact content where it pays off (`![[blake3]]`), uses functional URIs for computed transformations (`![[blake3://hash?params|alt text]]`), links to peer documents in the same codex (`[[slug|text]]` or `[[uuid|text]]`), and applies tags in frontmatter.
+**Outputs of an authoring pass:** A document record (in a codex) with a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks (`[[blake3|text]]`), embeds artifact content where it pays off (`![[blake3]]`), uses functional URIs for computed transformations (`![[blake3://hash?params|alt text]]`), links to peer documents in the same codex (`[[slug|text]]` or `[[uuid|text]]`), and applies tags in frontmatter.
 
 A codex doc body never contains `[[codex-name:…]]` — codices stay pure (§2.5). Cross-codex citation belongs in compendium bodies (§6).
 
@@ -1100,7 +1111,7 @@ Creates or edits document records in a codex.
 
 **Scope:** One document per invocation, in one codex.
 
-**Output contract:** When the author finishes successfully, a document record exists in the target codex with `record_type: document`, a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations of artifact content, and links to peer documents in the same codex. Backlinks and related-document candidates within the codex are surfaced for follow-up. The author writes nothing outside the target codex; cross-codex synthesis is a compendium-build job (§6), not an authoring job.
+**Output contract:** When the author finishes successfully, a document record exists in the target codex with a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations of artifact content, and links to peer documents in the same codex. Backlinks and related-document candidates within the codex are surfaced for follow-up. The author writes nothing outside the target codex; cross-codex synthesis is a compendium-build job (§6), not an authoring job.
 
 ### 5.5 Curator
 

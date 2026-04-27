@@ -64,7 +64,6 @@ If a base schema is missing or incomplete for a MIME, fall back to blake3-only. 
 Build the artifact record's frontmatter in memory:
 
 - `blake3` — from §2.3.
-- `record_type: artifact`.
 - `content_type` — from §2.2.
 - Capture provenance — see §2.6.
 - `hashes` — populate per the base schema's declarations.
