@@ -1,12 +1,40 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.8
+version: 10.9
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.9
+    date: 2026-04-26
+    summary: >
+      Refinement pass I. Slugs dropped entirely. The "regen-safe codex
+      citation" goal — that compendiums citing `[[codex-name:slug]]` could
+      survive codex regeneration — is replaced with the simpler invariant:
+      **codex regeneration invalidates dependent compendiums**, which must be
+      re-built. This drops the entire slug mechanism and tightens the model.
+      §3.6 retitled "Wikilink Resolution" and rewritten as the single canonical
+      per-container resolution algorithm (artifact body → blake3 only; codex
+      record → blake3 + uuid; compendium record → blake3 + corpus-name:blake3
+      + codex-name:uuid). §3.6's prior slug-stability and slug-renaming prose
+      removed. §1.2 design-principle 11 ("Reference stability hierarchy")
+      dropped — without slugs it collapses into principle 10. §1.3 terminology
+      removes Slug and Codex Topic entries; Wikilink and Compendium entries
+      tightened to the new wikilink shapes. §2.3 / §2.5 / §3.1.1 / §3.1.3 /
+      §3.2.4 / §3.2.5 / §3.4 example / §4.3 / §4.5 / §5.4 / §6.x scrubbed of
+      `slug` field references and `[[codex-name:slug]]` wikilinks; codex
+      citations now use `[[codex-name:uuid]]`. §3.2.4 inline-annotation syntax
+      label corrected from `%% #slug %%` to `%% #tag %%`. §6.5 rewritten with
+      explicit "codex regeneration invalidates dependent compendiums" rule.
+      impl-codex.md §3 (Slug-as-topic conventions) deleted wholesale; §4.1
+      and §4.2 scrubbed; §5.2 replaced with cross-reference to spec §3.6 plus
+      implementation notes; §5.4 collision detection trimmed; §6 codex-
+      regeneration rewritten with explicit compendium-cascade discipline;
+      §8 open questions pruned of slug-related items. impl-codex.md sections
+      renumbered: deleted slug §3 closes the gap, new compendium-layout
+      section becomes §3, others (§4–§8) unchanged.
   - version: 10.8
     date: 2026-04-26
     summary: >
@@ -200,7 +228,7 @@ The system is structured as **three layers, with strictly downward references**:
 
 - **The compendium layer.** Compiled, published reference works that integrate across codices and corpora. A compendium is composed of compendium records — author-named markdown chapters drawing on codices and corpora. A compendium has a defined scope, a point of view, and a domain taxonomy. **Compendiums are the integration layer** — when knowledge spans multiple codices or multiple corpora, the synthesis happens here, not at the codex level.
 
-References point downward only. Codices and corpora do not declare runtime joins; **content addressing handles the join at runtime** — a `[[blake3]]` reference resolves into any corpus the runtime has loaded that contains the hash, and a `[[codex-name:slug]]` reference (only valid in a compendium) resolves into any codex the runtime has loaded.
+References point downward only. Codices and corpora do not declare runtime joins; **content addressing handles the join at runtime** — a `[[blake3]]` reference resolves into any corpus the runtime has loaded that contains the hash, and a `[[codex-name:uuid]]` reference (only valid in a compendium record) resolves into any codex the runtime has loaded.
 
 ### 1.2 Design Principles
 
@@ -214,9 +242,7 @@ References point downward only. Codices and corpora do not declare runtime joins
 
 5. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose: wikilinks, embeds, and tags. There is no stored frontmatter "constituents," "part_of," "is_a," or "same_as." The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties, not asserted.
 
-10. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. This keeps each layer self-contained and the system regeneration-safe.
-
-11. **Reference stability hierarchy.** When citing content, prefer the lowest level that suffices: artifact (`[[blake3]]`) is always stable; a codex topic by slug (`[[slug]]` locally or `[[codex-name:slug]]` from a compendium) survives codex regeneration; a UUID is bound to a specific authored doc instance and may orphan across regeneration. The spec calls this out so authoring tools and curators know which form is canonical.
+10. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. Each layer is self-contained; codex regeneration triggers compendium re-build (the compendium's `[[codex-name:uuid]]` references are tied to a particular codex instance), and that's the intended behavior.
 
 6. **Metadata-driven organization.** Classification, grouping, and discovery are tag and link operations, not filesystem operations. Reorganizing the corpus means editing references, never moving or renaming files.
 
@@ -233,19 +259,17 @@ References point downward only. Codices and corpora do not declare runtime joins
 | **Record** | The universal unit. A markdown file with YAML frontmatter and a normalized or authored body. One of three kinds: an artifact record (in a corpus), a codex record (in a codex), or a compendium record (in a compendium). |
 | **Corpus** | A content-addressed archive of artifacts. Identified by name. The unit of tenant isolation — a "private" corpus and a "public" corpus are separate corpora and never merged. Contains artifact records, the binary store, and any base/custom classification schemas the corpus uses. |
 | **Codex** | A named container holding authored codex records. Lives outside any corpus. References artifacts (across any loaded corpus) and other records within the same codex; never references another codex. Multiple codices may coexist; the runtime determines which are loaded. |
-| **Compendium** | A compiled reference work that integrates across codices and corpora. Composed of compendium records (author-named markdown chapters). The cross-cutting integration layer — when synthesis spans codices, that synthesis happens here. References codices (`[[codex-name:slug]]`), artifacts (`[[blake3]]`), and may use functional URIs for derived views of artifact content. |
+| **Compendium** | A compiled reference work that integrates across codices and corpora. Composed of compendium records (author-named markdown chapters). The cross-cutting integration layer — when synthesis spans codices, that synthesis happens here. References codices (`[[codex-name:uuid]]`), artifacts (`[[blake3]]`), and may use functional URIs for derived views of artifact content. |
 | **Artifact Record** | A record representing a single captured file, named by the blake3 hash of its binary content (`{blake3-hash}.md`). One record per file, one content type per record. The body is a normalized text rendering of the artifact. The actual binary file is stored in content-addressed storage indexed by the same hash. Artifact records are the ground truth of the corpus. |
 | **Codex Record** | A record representing authored knowledge, named by a UUID (`{uuid}.md`), living within a codex. The body is a markdown composition that references artifacts (as evidence) and other codex records in the same codex (as cross-references). Codex records are where editorial work lives. |
 | **Compendium Record** | A markdown chapter that composes a compendium, with an author-chosen filename (e.g., `01-introduction.md`, `02-history.md`) under the compendium's `records/` directory. Compendium records are the integration-layer units where multi-codex / multi-corpus synthesis is written. |
-| **Codex Topic** | A slug within a codex naming a stable synthesis target. The slug is the topic's identity for cross-codex citation (from a compendium) and survives codex regeneration that preserves topic naming. |
 | **Content-Addressed Naming** | Artifact records are named by the blake3 hash of their binary content. Byte-identical files produce the same hash and therefore the same record — structural deduplication is automatic. Codex records use UUID-based naming; compendium records use author-chosen filenames. |
 | **Blake3** | The 256-bit content hash that identifies an artifact record and its underlying binary. 64-character lowercase hex string. Functions as identity, filename stem, and content-addressed storage key. |
-| **UUID** | Universally unique identifier for a codex record (v4, RFC 9562). Stable and permanent. Not used on artifact records or compendium records. |
+| **UUID** | Universally unique identifier for a codex record (v4, RFC 9562). Stable and permanent within a codex instance; codex regeneration mints fresh UUIDs and invalidates dependent compendiums (which must be rebuilt). Not used on artifact records or compendium records. |
 | **Reference** | A wikilink or embed in a record's body that points to another record. References live in the body, not in frontmatter, and are visible in Obsidian's graph and backlink views. References point downward only — codex records reference artifacts; compendium records reference codices and artifacts; artifacts never reference upward. |
-| **Wikilink** | `[[target\|display]]` — a clickable cross-reference. Bare targets are blake3 hashes (artifacts in any loaded corpus) or, in a codex, the codex's own record UUIDs/slugs. Qualified targets `codex-name:slug` and `corpus-name:blake3` are valid only in compendium-record bodies. The display text is optional. |
+| **Wikilink** | `[[target\|display]]` — a clickable cross-reference. Bare targets are blake3 hashes (artifacts in any loaded corpus) or, in a codex, the codex's own record UUIDs. Qualified targets `codex-name:uuid` and `corpus-name:blake3` are valid only in compendium-record bodies. The display text is optional. |
 | **Embed** | `![[target]]` — inline content inclusion. Renders the target's normalized body at that position. For images, this surfaces the text description; in compiled outputs the actual binary can be substituted. |
 | **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are corpus-local on artifacts and codex-local on codex records — no external concept document required. |
-| **Slug** | An optional, container-unique, human-readable identifier (`[a-z0-9]+(-[a-z0-9]+)*`). For codex records, the slug is unique within its codex and serves as the codex topic. For artifacts, slugs are rare; when present, they are unique within the corpus. Enables readable wikilinks. |
 | **Capture** | An encounter event recorded only by date. Re-encountering identical bytes appends a new entry to the artifact's `capture_dates`; the bytes themselves never move and never produce a new record. |
 | **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original; no editorialization beyond inline topic annotations. |
 | **Functional URI** | A composable URI scheme (`blake3://{hash}?page=4&crop=…`) used in codex and compendium bodies to reference deterministic transformations of artifact content. Never used in artifact bodies. Resolved at compile/render time. |
@@ -271,7 +295,7 @@ The system has three layers of container:
 |-----------|-------|-----------|--------------------|
 | **Corpus** | Artifact records, the binary cache, schemas, capture staging. | Corpus name. | None outbound (corpora reference nothing). |
 | **Codex** | Codex records authored by a particular author or team. | Codex name. | Downward: artifacts (any loaded corpus) and other records in the same codex. |
-| **Compendium** | Compendium records — authored chapters of a published reference work drawn from one or more codices and corpora. | Compendium name. | Downward: codices (`[[codex-name:slug]]`), artifacts (`[[blake3]]`). |
+| **Compendium** | Compendium records — authored chapters of a published reference work drawn from one or more codices and corpora. | Compendium name. | Downward: codices (`[[codex-name:uuid]]`), artifacts (`[[blake3]]`). |
 
 All three layers use a `records/` directory for tracked markdown records. The corpus additionally maintains an `artifacts/` cache for raw binary content; the cache is **untracked** (regenerable from blake3 plus capture provenance).
 
@@ -329,7 +353,7 @@ An artifact record represents a single captured file. It is named by the blake3 
 
 A codex record is an authored markdown composition representing synthesized knowledge. **Codex records live in a codex**, never inside the corpus. A codex record is named by a UUID (`{uuid}.md`) and contains:
 
-- **Frontmatter:** `uuid`, `title`, optional `slug` (the codex topic), `tags` (classification), and minimal metadata. Codex-record frontmatter is deliberately thin — structural relationships live in the body.
+- **Frontmatter:** `uuid`, `title`, `tags` (classification), and minimal metadata. Codex-record frontmatter is deliberately thin — structural relationships live in the body.
 
 - **Body:** Authored markdown prose with wikilinks to other records within the same codex, wikilinks and embeds referencing artifacts (by blake3 hash, resolved against any loaded corpus), and optionally functional URIs for computed transformations of artifact content. The body *is* the composition — it is the authoritative record of what knowledge the codex record synthesizes and what evidence it draws on.
 
@@ -359,7 +383,7 @@ Across the three layers:
 
 - **Artifact records (corpus)** — bodies may reference other artifacts in the same corpus, but only when the original content's hyperlinks/embeds resolve to captured targets. Artifacts never reference codices or compendiums; artifact bodies are faithful to original content, which has no knowledge of the codex/compendium layer.
 - **Codex records (codex)** — bodies reference artifacts (any loaded corpus) and other records within the same codex. **A codex record never references another codex's records.** When that integration is needed, lift it to a compendium.
-- **Compendium records (compendium)** — bodies reference codices (`[[codex-name:slug]]` or `[[codex-name:uuid]]`), artifacts (`[[blake3]]`, optionally qualified `[[corpus-name:blake3]]`), and may use functional URIs for derived views.
+- **Compendium records (compendium)** — bodies reference codices (`[[codex-name:uuid]]`), artifacts (`[[blake3]]`, optionally qualified `[[corpus-name:blake3]]`), and may use functional URIs for derived views.
 
 **Properties:**
 
@@ -375,22 +399,21 @@ A **codex** is a named container holding authored codex records. Codices live ou
 
 **Codex contents:**
 
-- **`records/`** — codex records (UUID-named, with optional codex-unique slugs).
+- **`records/`** — codex records (UUID-named).
 - **`codex.yaml`** (optional) — codex-level metadata: display name, description, an optional default tag vocabulary or tag-conventions reference. The spec does not mandate any particular fields here; this is a place for codex-author convention.
 
-**Codex naming.** A codex is identified by name. The runtime maintains a mapping from codex name to on-disk location (or remote URI). When a compendium-record body wikilinks `[[codex-name:slug]]`, the runtime looks up `codex-name` against the loaded codices.
-
-**Codex topics (slugs as stable handles).** A codex record's slug is unique within its codex and serves as the **codex topic** — the stable identifier external references can point to. Topics survive codex regeneration (see below); UUIDs do not.
+**Codex naming.** A codex is identified by name. The runtime maintains a mapping from codex name to on-disk location (or remote URI). When a compendium-record body wikilinks `[[codex-name:uuid]]`, the runtime looks up `codex-name` against the loaded codices.
 
 **Reference rules.** A codex record's body may wikilink:
 
 - `[[blake3]]` → any artifact in any loaded corpus.
-- `[[uuid]]` → another codex record in the same codex (rarely the most stable choice).
-- `[[slug]]` → another codex record in the same codex by topic slug (preferred for stability).
+- `[[uuid]]` → another codex record in the same codex.
+
+See §3.6 for the full per-container wikilink resolution algorithm.
 
 A codex record's body may **not** wikilink `[[codex-name:…]]` or `[[other-corpus-name:blake3]]`. Cross-codex / cross-corpus references happen at the compendium layer (§6).
 
-**Codex regeneration.** A codex may be authored by hand, by an LLM agent, or by a regeneration pass that re-derives the codex from a corpus snapshot plus authoring prompts. Regeneration is a contemplated future workflow — not part of v10's required behavior — but the design supports it. What MUST stay stable across regeneration: the slug→topic mapping (so external references survive). What MAY change: UUIDs, body prose, exact wikilinks within a record. Cross-codex references in compendiums that target a codex by slug stay valid; references that targeted a record by UUID may orphan.
+**Codex regeneration.** A codex may be authored by hand, by an LLM agent, or by a regeneration pass that re-derives the codex from a corpus snapshot plus authoring prompts. Regeneration is a contemplated future workflow — not part of v10's required behavior — but the design supports it. Regeneration mints fresh UUIDs and produces new prose; the codex's name (the directory) is preserved, but its records are otherwise replaced. **Codex regeneration invalidates dependent compendiums** — any compendium that cites this codex via `[[codex-name:uuid]]` must be re-built against the regenerated codex. This is by design: a regenerated codex is conceptually a new instance, and the compendiums that draw on it are re-derived. Tooling assists by surfacing dependent compendiums when a regeneration is requested.
 
 **Multiple codices, no declared joins.** A user may have many codices (personal, professional, project-specific). Each codex is structurally independent. Two people independently maintaining codices that happen to satisfy the same compendium's references is a feature — content addressing makes the join just work at runtime.
 
@@ -429,7 +452,6 @@ Present on every record (unless noted as record-type-specific).
 |-------|------|----------|------------|-------------|
 | `blake3` | string | yes (artifacts) | artifact records | The blake3 hash of the artifact's binary content. 64-character lowercase hex string. Serves as the record's identity, filename stem, and content-addressed storage key. |
 | `uuid` | UUID | yes (codex records) | codex records | Standard v4 UUID. Not used on artifact records — artifact identity is the blake3 hash. Not used on compendium records — their identity is the author-chosen filename. |
-| `slug` | string | no | both (typically codex records) | Optional corpus-unique, human-readable identifier. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Used for readable wikilinks. Uniqueness enforced corpus-wide; slug changes require updating all references. |
 | `title` | string | yes | all | Short descriptive label. |
 | `description` | string | yes | all | 1–3 sentence description. Primary mechanism for discovery and relevance assessment. |
 | `content_type` | string | yes (artifacts) | artifact records | IANA MIME type of the captured artifact (e.g., `text/html`, `application/pdf`, `image/jpeg`). `unknown` is permitted as a sentinel when the MIME cannot be determined. Codex records and compendium records do not carry `content_type` — they are markdown by construction. |
@@ -483,7 +505,7 @@ The same bytes encountered twice append a new entry to `capture_dates` — they 
 
 Present only on codex records.
 
-Codex-record frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `status`, optional `slug`, `visibility`, `tags`) and the common quality and pipeline fields below, codex records carry no structural metadata. A codex record's references to artifacts and other records are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the record synthesizes and what evidence it draws on.
+Codex-record frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `status`, `visibility`, `tags`) and the common quality and pipeline fields below, codex records carry no structural metadata. A codex record's references to artifacts and other records are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the record synthesizes and what evidence it draws on.
 
 There is no `constituents` list, no `part_of`, no `same_as`, no `is_a`. All structural relationships are body references or computed similarity (see §3.5).
 
@@ -586,7 +608,7 @@ The same syntax in codex-record and compendium-record bodies has the same meanin
 
 Artifact bodies may contain topic annotations in Obsidian-style comment blocks. These are the *only* permitted editorialization in an artifact body — they are metadata annotations classifying what the surrounding content discusses, not additions to the content.
 
-**Syntax:** `%% #slug %%` or `%% #slug-1 #slug-2 %%`
+**Syntax:** `%% #tag %%` or `%% #tag-1 #tag-2 %%`
 
 **Scoping rules:**
 
@@ -607,7 +629,7 @@ Codex-record bodies are authored compositions with full editorial freedom. Unlik
 - Reference artifacts as evidence using wikilinks: `[[{blake3-hash}|display text]]`
 - Embed artifact content inline: `![[{blake3-hash}]]`
 - Use functional URIs for computed transformations: `![[blake3://{hash}?params|alt text]]`
-- Link to other codex records: `[[{uuid}|display text]]` or `[[slug|display text]]`
+- Link to other codex records: `[[{uuid}|display text]]`
 - Use tags for topical classification (in frontmatter and optionally inline).
 
 #### 3.2.6 Referencing Artifacts from Codex Records
@@ -871,7 +893,6 @@ The inline image is embedded via `![[blake3-hash]]` — this embeds the image ar
 ```yaml
 ---
 uuid: "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6"
-slug: "brake-caliper-rebuild"
 title: "Brake Caliper Rebuild"
 description: "Authored guide to rebuilding the front calipers on a sliding-caliper braking system, drawing on the service manual, a community forum thread, and a video walkthrough."
 status: draft
@@ -902,12 +923,12 @@ replaced — the bore cannot be honed back to spec on this design. See
 
 ## Related
 
-- [[brake-bleeding|Brake Bleeding Procedure]] — must bench-bleed before reassembly
-- [[rotor-replacement|Rotor Replacement]] — often done at the same time
-- [[brake-system-overview|Brake System Overview]] — parent document
+- [[e1f2a3b4...|Brake Bleeding Procedure]] — must bench-bleed before reassembly
+- [[f2a3b4c5...|Rotor Replacement]] — often done at the same time
+- [[a3b4c5d6...|Brake System Overview]] — parent record
 ```
 
-The codex record uses both plain blake3 wikilinks (for direct artifact references) and functional URIs (for computed transformations like page extraction and framegrabs). Links to other codex records use slugs for readability.
+The codex record uses both plain blake3 wikilinks (for direct artifact references) and functional URIs (for computed transformations like page extraction and framegrabs). Links to other codex records use UUIDs (rendered with display text for readability).
 
 ### 3.5 Classification
 
@@ -937,36 +958,31 @@ Deduplication and similarity are handled entirely through intrinsic properties o
 
 All three tiers produce queries, not stored edges. The spec defines the inputs (binary artifact + normalized body); tooling builds the indices.
 
-### 3.6 Slugs
+### 3.6 Wikilink Resolution
 
-Slugs provide human-readable addressability for records.
+Wikilink resolution is the runtime's mapping from a link's target string to the record (or unresolved sentinel) the link refers to. The rules depend on which kind of body the link lives in.
 
-**Documents (in codices)** routinely have slugs. The slug is **the codex topic** — the stable handle external references can point at. Slug uniqueness is **codex-scoped**: two codices may each define a `brake-bleeding` slug for their own purposes, with no collision.
+**In an artifact body:**
 
-**Artifact records (in corpora)** rarely have slugs but may carry one for a significant, frequently-referenced capture. Artifact slug uniqueness is **corpus-scoped**.
+1. `[[blake3]]` → any artifact in any loaded corpus that has a matching blake3.
+2. Anything else → unresolved.
 
-**Slug stability across regeneration.** When a codex is regenerated (re-derived from a corpus snapshot plus authoring prompts), slugs are the contract — they MUST be preserved. UUIDs are not preserved. This is why cross-codex references from compendiums (§6) prefer `[[codex-name:slug]]` over `[[codex-name:uuid]]`.
+**In a codex-record body:**
 
-**Slug renaming.** Renaming a slug breaks references that target it. Tooling SHOULD provide a rename helper that walks the affected codex and any compendiums that reference it, rewriting references in a single pass.
+1. `[[blake3]]` → any artifact in any loaded corpus.
+2. `[[uuid]]` → another codex record in the same codex with that UUID.
+3. Anything else → unresolved.
 
-**Wikilink resolution order** depends on the body's container:
+**In a compendium-record body:**
 
-In an artifact body:
-1. Exact match against `blake3` (any artifact in any loaded corpus).
-2. Otherwise, an unresolved link — surfaced as a backlink candidate.
+1. `[[blake3]]` → any artifact in any loaded corpus. (If two loaded corpora share the same blake3, the bytes are by definition identical; the reference resolves to either copy.)
+2. `[[corpus-name:blake3]]` → that artifact in the named corpus, asserting provenance. Use when blake3 alone needs provenance disambiguation.
+3. `[[codex-name:uuid]]` → the codex record with that UUID in the named codex. References are tied to the codex's current instance; codex regeneration mints fresh UUIDs and dependent compendiums must be re-built (§2.5).
+4. Anything else → unresolved.
 
-In a codex's document body:
-1. Exact match against `blake3` (any artifact in any loaded corpus).
-2. Exact match against `slug` within the local codex.
-3. Exact match against `uuid` within the local codex.
-4. Otherwise, unresolved.
+**Unresolved-link handling.** When a reference cannot be resolved, the runtime should fall back to the link's display text (or target string) and surface the link as broken — Obsidian's standard treatment in raw browsing. Compiled outputs (mdbook, static site) log unresolved references and substitute a clearly-marked fallback rather than silently dropping the link. Tooling backlink panels list unresolved references as authoring follow-ups.
 
-In a compendium body:
-1. Bare `[[blake3]]` — any artifact in any loaded corpus.
-2. Qualified `[[corpus-name:blake3]]` — that artifact in the named corpus (used when blake3 alone needs provenance disambiguation).
-3. Qualified `[[codex-name:slug]]` — the codex topic in the named codex.
-4. Qualified `[[codex-name:uuid]]` — a specific doc instance in the named codex (discouraged; orphans across regeneration).
-5. Otherwise, unresolved.
+**Same-bytes collision.** Two corpora may both contain a record for the same blake3; this is harmless because the bytes are identical. A bare `[[blake3]]` reference resolves to either copy. Compendiums use the qualified `[[corpus-name:blake3]]` form when provenance matters.
 
 ### 3.7 Functional URI Scheme
 
@@ -1066,7 +1082,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **What:** Create or edit a codex record (in a codex) or a compendium record (in a compendium) that synthesizes knowledge across one or more artifacts and other records.
 
-**Outputs of an authoring pass (codex side):** A codex record with a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks (`[[blake3|text]]`), embeds artifact content where it pays off (`![[blake3]]`), uses functional URIs for computed transformations (`![[blake3://hash?params|alt text]]`), links to peer records in the same codex (`[[slug|text]]` or `[[uuid|text]]`), and applies tags in frontmatter.
+**Outputs of an authoring pass (codex side):** A codex record with a UUID, title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks (`[[blake3|text]]`), embeds artifact content where it pays off (`![[blake3]]`), uses functional URIs for computed transformations (`![[blake3://hash?params|alt text]]`), links to peer records in the same codex (`[[uuid|text]]`), and applies tags in frontmatter.
 
 A codex record's body never contains `[[codex-name:…]]` — codices stay pure (§2.5). Cross-codex citation belongs in compendium-record bodies (§6).
 
@@ -1101,7 +1117,7 @@ There is no merge ceremony, no constituent list, no merge rationale field. The b
 
 1. Resolve all wikilinks and embeds (artifact↔artifact, codex-record↔artifact, codex-record↔codex-record, compendium-record↔codex-record, compendium-record↔artifact) to whatever the target format expects (file paths, anchored URLs, inlined content).
 2. Resolve all functional URIs in codex- and compendium-record bodies — compute transformations, write derived artifacts to the build's output directory, substitute paths.
-3. Generate index and navigation structures appropriate to the output format (tag indexes, slug routes, backlink panels).
+3. Generate index and navigation structures appropriate to the output format (tag indexes, navigation menus, backlink panels).
 
 **Origin-URL routing.** The build process can generate a lookup index mapping any `uris[]` value to its artifact blake3 hash, enabling consumers to find records by any of the URLs known to resolve to them.
 
@@ -1166,7 +1182,7 @@ Creates or edits codex records in a codex (or compendium records in a compendium
 
 **Scope:** One record per invocation, in one container.
 
-**Output contract:** When the author finishes successfully, a codex record exists in the target codex with a UUID, optional slug (the codex topic), title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations of artifact content, and links to peer records in the same codex. Backlinks and related-record candidates within the codex are surfaced for follow-up. When the author writes a codex record, it writes nothing outside the target codex; cross-codex synthesis is a compendium-record authoring job (§6), not a codex-record authoring job.
+**Output contract:** When the author finishes successfully, a codex record exists in the target codex with a UUID, title, description, tags, quality fields, and a body composed of authored markdown prose. The body cites artifacts via wikilinks, embeds artifact content where useful, may use functional URIs for computed transformations of artifact content, and links to peer records in the same codex. Backlinks and related-record candidates within the codex are surfaced for follow-up. When the author writes a codex record, it writes nothing outside the target codex; cross-codex synthesis is a compendium-record authoring job (§6), not a codex-record authoring job.
 
 ### 5.5 Curator
 
@@ -1218,34 +1234,33 @@ A compendium is opinionated. Multiple compendiums can draw from the same codices
 
 ### 6.2 How Compendiums Use Records
 
-Compendiums select records and codex topics from one or more codices and corpora and synthesize them into chapters organized by a domain taxonomy:
+Compendiums select codex records and artifacts from one or more codices and corpora and synthesize them into chapters organized by a domain taxonomy:
 
-1. **Select inputs.** Using tags, codex-topic slugs, descriptions, and tier-3 body-embedding similarity, identify the codices, codex topics, and artifacts relevant to the compendium's domain. Codex topics are preferred when they exist (someone has already done the synthesis); raw artifacts are cited directly when the compendium needs primary-source precision.
+1. **Select inputs.** Using tags, codex-record titles, descriptions, and tier-3 body-embedding similarity, identify the codices, codex records, and artifacts relevant to the compendium's domain. Codex records are preferred when they exist (someone has already done the synthesis); raw artifacts are cited directly when the compendium needs primary-source precision.
 2. **Organize by taxonomy.** Group selected inputs by the compendium's chapter structure.
-3. **Synthesize chapters.** Distill grouped inputs into coherent prose, reconciling conflicts, identifying patterns, and citing identifiers per the reference stability hierarchy (§6.3). Functional URIs may be used to cite specific pages, frames, or crops of artifacts.
+3. **Synthesize chapters.** Distill grouped inputs into coherent prose, reconciling conflicts, identifying patterns, and citing the appropriate identifier per §6.3. Functional URIs may be used to cite specific pages, frames, or crops of artifacts.
 4. **Build navigation.** Generate cross-references and supplementary sections (FAQ, glossary, quick reference).
 
 **Compendium body references.** Inside a compendium body, wikilinks may use:
 
 - `[[blake3]]` or `![[blake3]]` — any artifact in any loaded corpus.
 - `[[corpus-name:blake3]]` — disambiguation form when the artifact's provenance matters.
-- `[[codex-name:slug]]` — a codex topic (preferred form for codex citations).
-- `[[codex-name:uuid]]` — a specific authored codex record instance (discouraged; orphans across codex regeneration).
+- `[[codex-name:uuid]]` — a codex record in the named codex. Bound to the codex's current instance; codex regeneration mints fresh UUIDs and dependent compendiums must be re-built (§2.5).
 - `![[blake3://hash?params]]` — functional URI for a derived view of artifact content.
 
 **Anonymized examples.**
-- A user's personal compendium for a specific subject draws from their *private* corpus (personal records, history) AND *public* corpora (manuals, advisories) for context. It cites codex topics from the user's personal codex and artifacts from both corpora.
+- A user's personal compendium for a specific subject draws from their *private* corpus (personal records, history) AND *public* corpora (manuals, advisories) for context. It cites codex records from the user's personal codex and artifacts from both corpora.
 - A general compendium for the same subject category draws only from *public* corpora and from any general-purpose codex that synthesizes the public material. The personal corpus is not in scope.
 
 ### 6.3 Synthesis Principles
 
-- **Reference stability hierarchy.** Prefer the lowest level of reference that suffices: artifact (`[[blake3]]`) is always stable across regeneration; a codex topic by slug (`[[codex-name:slug]]`) is stable across codex regeneration that preserves topic naming; a codex doc UUID is bound to a specific instance and may orphan. Compendiums that cite slugs survive their codices being rebuilt; compendiums that cite UUIDs are tied to a specific codex instance.
+- **Cite the lowest source that suffices.** When an artifact directly says it, cite the artifact (`[[blake3]]`); when interpretation that no single artifact provides is needed, cite the codex record that already did that synthesis (`[[codex-name:uuid]]`). Artifacts are stable across all regeneration; codex-record references are stable only as long as the cited codex isn't regenerated, in which case the compendium must be re-built (§2.5, §6.5).
 - **Cite records.** Every factual claim references the identifier(s) it derives from. Use functional URIs when citing specific pages, frames, or crops where precision matters.
 - **Represent disagreement.** When sources conflict, the compendium presents both positions with whatever credibility-signal classifications they carry (see §3.3.2). Where the corpus expresses no credibility signals, surface the disagreement neutrally and let the reader judge.
 - **Aggregate patterns.** If many artifacts describe the same phenomenon, the compendium captures the pattern (common conditions, symptoms, root cause) rather than citing each artifact individually.
 - **Weight by credibility signals.** Records carrying classifications the compendium treats as authoritative (e.g., `peer-reviewed`, `community-validated`) carry more weight in synthesis than records carrying classifications it treats as weaker (e.g., `preprint`, `anecdotal-claim`, `corporate-bias`). The specific weighting is a compendium-author choice — different compendiums on the same domain may weight the same signals differently. The synthesis system prompt (§6.4) is the natural place to encode the compendium's weighting policy.
 - **Respect issues.** Records with unresolved `critical` or `major` issues should be weighted accordingly and gaps noted.
-- **Leverage codex topics and tags.** Codex topics are the strongest input — a well-authored codex doc already encodes synthesis a compendium chapter wants. Compendium chapters typically start by selecting a small set of seed topics from one or more codices and following their references outward into the underlying corpora.
+- **Leverage codex records and tags.** Codex records are the strongest input — a well-authored codex record already encodes synthesis a compendium chapter wants. Compendium chapters typically start by selecting a small set of seed records from one or more codices and following their references outward into the underlying corpora.
 - **Leverage similarity.** Tier-3 body embeddings surface cross-modal connections (an audio transcript and an HTML article on the same topic) that tags alone may miss.
 
 ### 6.4 System Prompts
@@ -1256,11 +1271,11 @@ System prompts are iterable. When synthesis produces gaps or errors, the system 
 
 ### 6.5 Incremental Re-synthesis
 
-Compendiums track which inputs were used to produce each chapter — codex topics by slug, artifacts by blake3, with the relevant timestamps. When an artifact is re-normalized, a codex doc is re-authored, or a codex is regenerated, only affected chapters need re-synthesis.
+Compendiums track which inputs were used to produce each chapter — codex records by `codex-name + uuid`, artifacts by blake3, with the relevant timestamps. When an artifact is re-normalized or a codex record is re-authored, only affected chapters need re-synthesis.
 
-**Codex regeneration is regen-safe for compendiums that cite slugs.** A regenerated codex preserves its topic slugs (§2.5); compendium references that targeted those slugs continue to resolve. Compendium references that targeted codex UUIDs may orphan and require manual repair — which is why slug citations are the canonical form.
+**Codex regeneration invalidates dependent compendiums.** A regenerated codex mints fresh UUIDs (§2.5); compendium references of the form `[[codex-name:uuid]]` are tied to the previous codex instance and no longer resolve. Compendiums that drew on a regenerated codex must be re-built. Tooling SHOULD surface dependent compendiums when a codex regeneration is requested so the operator can plan the cascade.
 
-A record or topic that has been updated triggers re-synthesis only in chapters that cite it. This keeps re-synthesis proportional to actual content change.
+A record updated in place (re-authored, re-normalized) triggers re-synthesis only in chapters that cite it. This keeps incremental re-synthesis proportional to actual content change. Codex regeneration, by contrast, is a wholesale event that re-runs every chapter that drew on the regenerated codex.
 
 ---
 
@@ -1364,4 +1379,4 @@ A rule of thumb: when multiple artifacts share strong tag overlap and would bene
 
 Cross-codex synthesis is not a codex's job — when multiple codices need to come together, that's a compendium (§6).
 
-Codex records (and their codex topics) are cheap to create and cheap to retire. Do not over-plan. Start with the syntheses that the corpus's actual usage makes valuable, and let the codex graph grow organically.
+Codex records are cheap to create and cheap to retire. Do not over-plan. Start with the syntheses that the corpus's actual usage makes valuable, and let the codex graph grow organically.

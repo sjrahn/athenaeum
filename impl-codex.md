@@ -10,11 +10,11 @@ The corpus / artifact-layer counterpart is [`impl-corpus.md`](impl-corpus.md).
 
 ## 1. Scope
 
-This guide covers the codex side: codex directory layout, slug-as-topic conventions, codex-record authoring workflow, runtime resolution of wikilinks across codices and corpora, codex regeneration mechanics, the compendium directory layout, and the compendium build process.
+This guide covers the codex side: codex directory layout, codex-record authoring workflow, runtime resolution of wikilinks across codices and corpora, codex regeneration mechanics, the compendium directory layout, and the compendium build process.
 
 What lives in this guide vs in the spec:
 
-- **Spec (authoritative).** What records carry, how layers reference each other, what the reference stability hierarchy is, what slug uniqueness scoping means. The data contract and the layering invariants.
+- **Spec (authoritative).** What records carry and how layers reference each other. The data contract and the layering invariants.
 - **This guide.** How a codex is laid out on disk, how the runtime mounts codices and corpora, how the build process resolves the layered references and produces compiled outputs.
 
 If the two ever conflict, the spec wins; this guide gets corrected.
@@ -51,7 +51,7 @@ The spec does not mandate any of these fields. Tooling should treat `codex.yaml`
 
 ---
 
-## 2A. Compendium directory layout
+## 3. Compendium directory layout
 
 A compendium is a named container holding compendium records — author-named markdown chapters that integrate across one or more codices and corpora. The on-disk shape:
 
@@ -75,37 +75,6 @@ compendium-{name}/
 
 ---
 
-## 3. Slug-as-topic conventions
-
-Slugs in a codex are the codex's stable topic handles. Their job is to survive codex regeneration so that compendium references targeting them continue to resolve.
-
-### 3.1 Choosing a slug
-
-A slug is the document's topical name, not the document's title. Aim for:
-
-- **Kebab-case, lowercase, ASCII-safe** — matches `[a-z0-9]+(-[a-z0-9]+)*` per spec §1.3.
-- **Stable across regeneration** — picked from the topic, not the document's instance details. A document about a how-to guide for X gets the slug `how-to-x`, not `how-to-x-rev3-by-author-y`.
-- **Codex-unique** — uniqueness is enforced at write time. Slug collisions within a codex are an authoring bug.
-
-### 3.2 Renaming a slug
-
-A slug rename breaks references that target it: in-codex wikilinks pointing at it, plus any compendium that cites `[[codex-name:old-slug]]`. A rename helper should:
-
-1. Find every reference to the old slug within the codex.
-2. Find every reference of the form `[[{this-codex-name}:old-slug]]` across loaded compendiums.
-3. Rewrite all of them to the new slug.
-4. Commit as a single change so the rename is atomic in version control.
-
-### 3.3 Reserved slug-like patterns
-
-A few patterns SHOULD be avoided to keep the resolution rules clean:
-
-- A slug shaped like a UUID (`xxxxxxxx-xxxx-...`) — the resolver will treat it as a UUID match.
-- A slug containing a colon (`:`) — the colon is the cross-codex/cross-corpus delimiter in compendium bodies.
-- A slug that's purely numeric — ambiguous with `page=N`-style references.
-
----
-
 ## 4. Authoring workflows
 
 ### 4.1 Codex-side authoring
@@ -114,10 +83,9 @@ Authoring a codex record follows the spec's `Author` agent contract (§5.4). The
 
 1. **Pick the codex.** The author works in exactly one codex per invocation.
 2. **Pick a synthesis target.** A topic that benefits from authored prose — a how-to guide, a concept page, a synthesis across several artifacts. The trigger may come from the curator, from a tag cluster, from operator direction, or from a compendium gap.
-3. **Pick a slug** (the codex topic). Stable, kebab-case, codex-unique.
-4. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks (the most stable form). Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[slug]]` (preferred) or `[[uuid]]`.
-5. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records. Cross-codex citation is a compendium-record authoring job.
-6. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, slug (if used), title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
+3. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks. Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[uuid]]`.
+4. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records (see spec §1.2). Cross-codex citation is a compendium-record authoring job.
+5. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
 
 ### 4.2 Compendium authoring
 
@@ -127,10 +95,9 @@ A compendium body is the integration point — where multi-codex / multi-corpus 
 2. **Drafts chapters.** Markdown prose with:
    - `[[blake3]]` for artifact citations (any loaded corpus).
    - `[[corpus-name:blake3]]` for provenance disambiguation when blake3 alone is ambiguous (rare but useful for cases where both a private and public corpus contain the same content and the compendium needs to be specific).
-   - `[[codex-name:slug]]` for codex topic citations (preferred form for codex citations — survives regeneration).
-   - `[[codex-name:uuid]]` only when there's no slug and no artifact equivalent. Discouraged because it orphans across regeneration.
+   - `[[codex-name:uuid]]` for codex-record citations.
    - `![[blake3://hash?params]]` for derived views.
-3. **Applies the lowest-level-source preference.** When a compendium record is about a particular subject and an artifact directly says it, cite the artifact, not a codex topic that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex topic that already did that synthesis. The hierarchy is: artifact > codex topic by slug > codex record by UUID (avoid).
+3. **Applies the lowest-source preference.** When a compendium record is about a particular subject and an artifact directly says it, cite the artifact, not a codex record that paraphrases it. When the compendium needs interpretation/synthesis that no single artifact provides, cite the codex record that already did that synthesis. Codex-record citations are bound to the cited codex's current instance — codex regeneration mints fresh UUIDs and dependent compendiums must be re-built (spec §2.5, §6.5).
 
 ---
 
@@ -164,24 +131,11 @@ Multiple codices may coexist with no relationship to one another beyond what com
 
 ### 5.2 Resolution rules
 
-Per spec §3.6:
+The per-container wikilink resolution algorithm is canonical in spec §3.6. The runtime applies it as written; there are no codex-side variations. Implementation notes:
 
-**In an artifact body** (read-only at this stage; the runtime is just rendering):
-1. `[[blake3]]` → any artifact in any loaded corpus that has a matching blake3.
-2. Anything else → unresolved.
-
-**In a codex record's body:**
-1. `[[blake3]]` → any artifact in any loaded corpus.
-2. `[[slug]]` → a codex record in the same codex with that slug.
-3. `[[uuid]]` → a codex record in the same codex with that UUID.
-4. Anything else → unresolved.
-
-**In a compendium record's body:**
-1. `[[blake3]]` → any artifact in any loaded corpus (collision detection: if two loaded corpora have the same blake3, that's fine — it's by definition the same bytes).
-2. `[[corpus-name:blake3]]` → that artifact in the named corpus, asserting provenance.
-3. `[[codex-name:slug]]` → the codex topic in the named codex.
-4. `[[codex-name:uuid]]` → the codex record instance in the named codex.
-5. Anything else → unresolved.
+- **Lookup performance.** A codex's UUID-based intra-codex lookups are constant-time against an in-memory map keyed by UUID. Corpus-side blake3 lookups are similarly constant-time against the corpus's blake3 → record-path map. Both maps are built at mount time (§5.1).
+- **Cross-corpus blake3 identity.** When multiple corpora are loaded, a bare `[[blake3]]` reference may match more than one loaded corpus. Because content addressing means the bytes are by definition identical, the runtime resolves to either copy. Compendiums use the qualified `[[corpus-name:blake3]]` form when provenance disambiguation matters.
+- **Display text.** The optional `|display-text` portion of a wikilink is preserved through resolution and used at render time. Resolution failures fall back to display text per spec §3.6.
 
 ### 5.3 Unresolved-link handling
 
@@ -195,30 +149,34 @@ When a reference cannot be resolved, the runtime should:
 
 Same blake3 in two corpora — fine, they are by definition the same bytes; the corpora may both have it. The reference resolves to either copy.
 
-Same slug in two codices — fine, slugs are codex-scoped. A bare `[[slug]]` reference within a codex record resolves locally; a qualified `[[other-codex:slug]]` reference in a compendium record resolves to the named codex.
-
-Same UUID in two codices — should not happen by design (UUIDv4 collision is astronomical). If it does, the runtime should warn and let the qualified form resolve unambiguously.
+Same UUID in two codices — should not happen by design (UUIDv4 collision is astronomical). If it does, the runtime should warn and let the qualified `[[codex-name:uuid]]` form resolve unambiguously.
 
 ---
 
 ## 6. Codex regeneration
 
-Regeneration is a contemplated future workflow: re-derive an entire codex from a corpus snapshot plus authoring prompts. Not part of v10's required behavior, but the design supports it via the slug-as-stable-topic principle.
+Regeneration is a contemplated future workflow: re-derive an entire codex from a corpus snapshot plus authoring prompts. Not part of v10's required behavior, but the design supports it.
 
 ### 6.1 What regeneration preserves
 
-- **Slug → topic mapping.** Every slug present before regeneration maps to a topic in the regenerated codex. The slug is the contract; compendium references that target the slug continue to resolve.
-- **Codex name.** The codex itself keeps its identity.
+- **Codex name.** The codex itself keeps its identity (the directory).
+- **Tag vocabulary.** The codex's `codex.yaml` and any tag-conventions reference survive regeneration unchanged unless the operator explicitly amends them.
 
-### 6.2 What regeneration may change
+### 6.2 What regeneration replaces
 
-- **UUIDs.** Each regeneration mints fresh UUIDs. Compendium references that targeted UUIDs may orphan.
+- **UUIDs.** Each regeneration mints fresh UUIDs. The set of records is replaced wholesale.
 - **Body prose.** A new authoring pass produces new prose.
-- **Wikilinks within the codex.** A regenerated codex record may reference different artifacts or different sibling slugs depending on what the synthesis prompts produce.
+- **Wikilinks within the codex.** A regenerated codex record may reference different artifacts or different sibling records depending on what the synthesis prompts produce.
 
-### 6.3 Migration / rebuild discipline
+### 6.3 Compendium cascade
 
-If a regeneration produces materially different output (slug renames, topic restructuring), it's not pure regeneration anymore — it's an edit. Treat it as such: surface diffs, propagate changes to compendiums that cite the codex, run rename helpers.
+Compendiums citing the regenerated codex via `[[codex-name:uuid]]` are invalidated by definition — the cited UUIDs no longer exist. Dependent compendiums must be re-built against the regenerated codex. Tooling SHOULD:
+
+1. Identify dependent compendiums before triggering regeneration (by walking each loaded compendium's wikilinks for `[[<this-codex>:…]]` matches).
+2. Surface the cascade to the operator for confirmation.
+3. After codex regeneration completes, re-run compendium synthesis for each dependent compendium against the new codex.
+
+This is by design. The previous "slug-preserving" approach pretended codex regeneration could be a transparent operation; in practice the regenerated codex *is* a new instance and the compendiums that drew on it are re-derived. Coupling the cascade explicitly is simpler and more honest.
 
 ### 6.4 When regeneration makes sense
 
@@ -226,7 +184,7 @@ If a regeneration produces materially different output (slug renames, topic rest
 - An authoring prompt has been substantially improved.
 - A new model is meaningfully better and the cost of re-running is justified.
 
-A codex that is hand-authored record-by-record without a regeneration prompt is not regenerable — it's a hand-built artifact, like any other. Regeneration is opt-in and applies to codices whose authoring is procedural enough to support it.
+A codex that is hand-authored record-by-record without a regeneration prompt is not regenerable — it's a hand-built collection, like any other. Regeneration is opt-in and applies to codices whose authoring is procedural enough to support it.
 
 ---
 
@@ -245,7 +203,7 @@ The build process compiles outputs (mdbook, static site, browsable vault) for a 
 1. Walk the target's body (and all body fragments: chapters, sub-pages).
 2. Resolve every wikilink and embed per the rules in §5.
 3. Resolve every functional URI: compute the transformation, write the derived artifact to the build's output directory, substitute the path.
-4. Build navigation: tag indexes, slug routes, backlink panels (Obsidian-style).
+4. Build navigation: tag indexes, navigation menus, backlink panels (Obsidian-style).
 5. Generate origin-URI redirects: for every artifact referenced by the target, expose all of its `uris[]` entries as redirect entries pointing at the artifact's compiled-output path.
 
 ### 7.3 Output formats
@@ -265,8 +223,6 @@ Functional URI results, derived images, transcoded media — all ephemeral. They
 
 ## 8. Open implementation questions
 
-- **Codex sharding crossover.** Same as the corpus side: at what doc count do we move to two-level sharding? Likely a `codex.yaml` flag.
-- **Cross-codex slug discovery.** When a compendium author wants to see what slugs are available in a codex they're loading, the runtime needs an index. Currently rebuildable on mount; persistent index is a perf optimization.
-- **Conflicting slugs across codices in the same compendium build.** Two codices each define `brake-bleeding`. The compendium author cites both via qualified `[[codex-name:slug]]` form, so there's no ambiguity, but the build should warn when the same slug exists in multiple loaded codices for the author's awareness.
+- **Codex sharding crossover.** Same as the corpus side (impl-corpus.md §6): at what record count do we move to two-level sharding? Likely a `codex.yaml` flag.
 - **Compendium chapter granularity.** A compendium could be a single compendium record or many. Convention: split chapters into separate records when the chapter is large enough that scrolling through it gets in the way; otherwise keep the compendium as a small set of records. The build process flattens or paginates per the target output format.
-- **Codex regeneration tooling.** When sjrahn wants to actually do a regeneration, the tooling will need: corpus-snapshot pinning, prompt versioning, slug-preservation enforcement, and a diff report. Out of scope for v10 implementation.
+- **Codex regeneration tooling.** When sjrahn wants to actually do a regeneration, the tooling will need: corpus-snapshot pinning, prompt versioning, dependent-compendium cascade detection (§6.3), and a diff report. Out of scope for v10 implementation.
