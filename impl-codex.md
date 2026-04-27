@@ -65,7 +65,7 @@ compendium-{name}/
     └── ...
 ```
 
-**Naming.** Compendium-record filenames are an authoring choice — there is no UUID or content-addressing requirement. Numeric prefixes (`01-`, `02-`, …) are conventional for ordering but not required; the build process (§7) determines the navigation order from frontmatter or directory listing per the target output format.
+**Naming.** Compendium-record filenames are an authoring choice — pick a chapter-style name (`overview.md`, `01-introduction.md`). Numeric prefixes are conventional for ordering but not required; the build process (§7) determines the navigation order from frontmatter or directory listing per the target output format.
 
 **No sharding.** Compendiums are typically small enough (single-digit to low-hundreds of chapters) that sharding adds complexity without payoff. Flat `records/` is the convention.
 
@@ -85,7 +85,7 @@ Authoring a codex record follows the spec's `Author` agent contract (§5.4). The
 2. **Pick a synthesis target.** A topic that benefits from authored prose — a how-to guide, a concept page, a synthesis across several artifacts. The trigger may come from the curator, from a tag cluster, from operator direction, or from a compendium gap.
 3. **Compose the body.** Cite artifacts via `[[blake3]]` wikilinks. Embed artifact content via `![[blake3]]` where useful. Use functional URIs (`![[blake3://hash?params|alt text]]`) for derived views (PDF page extraction, video framegrab, image crop). Link to peer records within the same codex via `[[uuid]]`.
 4. **Never write `[[codex-name:…]]`.** A codex is pure — its records only reference downward to artifacts and locally to peer records (see spec §1.2). Cross-codex citation is a compendium-record authoring job.
-5. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3) — there is no codex-record-side credibility field. Compendiums weight a codex record's evidentiary artifacts by the credibility-signal classifications those artifacts carry.
+5. **Save** under `records/{first-2-of-uuid}/{full-uuid}.md`. Frontmatter populated with UUID, title, description, tags, status. Codex-record frontmatter is deliberately thin (spec §3.1.3); credibility weighting happens at the compendium layer by reading the credibility-signal classifications on the evidentiary artifacts a codex record cites.
 
 ### 4.2 Compendium authoring
 
@@ -131,7 +131,7 @@ Multiple codices may coexist with no relationship to one another beyond what com
 
 ### 5.2 Resolution rules
 
-The per-container wikilink resolution algorithm is canonical in spec §3.6. The runtime applies it as written; there are no codex-side variations. Implementation notes:
+The per-container wikilink resolution algorithm is canonical in spec §3.6; the runtime applies it as written. Implementation notes:
 
 - **Lookup performance.** A codex's UUID-based intra-codex lookups are constant-time against an in-memory map keyed by UUID. Corpus-side blake3 lookups are similarly constant-time against the corpus's blake3 → record-path map. Both maps are built at mount time (§5.1).
 - **Cross-corpus blake3 identity.** When multiple corpora are loaded, a bare `[[blake3]]` reference may match more than one loaded corpus. Because content addressing means the bytes are by definition identical, the runtime resolves to either copy. Compendiums use the qualified `[[corpus-name:blake3]]` form when provenance disambiguation matters.
@@ -170,13 +170,11 @@ Regeneration is a contemplated future workflow: re-derive an entire codex from a
 
 ### 6.3 Compendium cascade
 
-Compendiums citing the regenerated codex via `[[codex-name:uuid]]` are invalidated by definition — the cited UUIDs no longer exist. Dependent compendiums must be re-built against the regenerated codex. Tooling SHOULD:
+A regenerated codex is a new instance: its UUIDs are fresh, so any compendium citing `[[<this-codex>:uuid]]` becomes invalidated and must be re-built against the regenerated codex. Tooling SHOULD:
 
 1. Identify dependent compendiums before triggering regeneration (by walking each loaded compendium's wikilinks for `[[<this-codex>:…]]` matches).
 2. Surface the cascade to the operator for confirmation.
 3. After codex regeneration completes, re-run compendium synthesis for each dependent compendium against the new codex.
-
-This is by design. The previous "slug-preserving" approach pretended codex regeneration could be a transparent operation; in practice the regenerated codex *is* a new instance and the compendiums that drew on it are re-derived. Coupling the cascade explicitly is simpler and more honest.
 
 ### 6.4 When regeneration makes sense
 

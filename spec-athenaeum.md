@@ -1,12 +1,46 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 10.11
+version: 10.12
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
 date_modified: 2026-04-26
 changelog:
+  - version: 10.12
+    date: 2026-04-26
+    summary: >
+      Refinement pass L. Migratory prose removed throughout the spec body and
+      impl docs. The spec now describes the present-tense system; references
+      to dropped concepts (constituents, part_of, is_a, same_as, merge DAG /
+      ceremony / rationale, the v10 invariant framing, the prior
+      slug-preserving regen approach) and meta-version phrasing ("in v10",
+      "no longer", "the previous") are gone where they served no purpose for
+      a fresh reader. Specifically: §1.2 principle 5 drops the "no stored
+      constituents/part_of/is_a/same_as" tail; §2.2 re-capture paragraph
+      reframes "no automatic mechanism in v10" as a present-tense out-of-band
+      concern; §2.4 layered-graph intro drops the "no constituents list, no
+      part_of field, no merge DAG metadata" tail; §2.4 strictly-downward
+      bullet drops "the v10 invariant"; §3.1.1 record-type-signaling reframed
+      from "no dedicated record_type field" to a positive three-signal list;
+      §3.1.3 drops the "no constituents/part_of/same_as/is_a" sentence;
+      §3.2.7 drops "no stored structural relations"; §3.3.2 composition drops
+      "no separate tags field on artifacts"; §3.5 / §3.5.1 / §3.5.2 / §3.5.3
+      reframed positively (Tags section opens with codex-record scope rather
+      than absent-on-artifacts, codex-graph drops "not through frontmatter
+      relations", dedup drops "not through stored relations"); §3.7
+      functional-URI scheme reframed positively (codex / compendium primitive,
+      no "not used in artifact bodies" defensive negative); §4.3 Author drops
+      "no merge ceremony, no constituent list, no merge rationale field";
+      §4.2.3 / §5.3 normalizer output contracts drop "Artifacts do not carry
+      frontmatter tags" defensive notes. impl-codex.md §3 (Compendium
+      directory layout) reframed positively; §4.1 Save step drops "no
+      codex-record-side credibility field" framing in favour of stating the
+      compendium-side weighting model directly; §5.2 drops "no codex-side
+      variations"; §6.3 strips the "previous slug-preserving approach"
+      commentary that explained the v10.7-series design choice — the spec
+      describes what it is, not what it isn't anymore. Pure prose cleanup;
+      no semantic changes.
   - version: 10.11
     date: 2026-04-26
     summary: >
@@ -290,7 +324,7 @@ The downward-references invariant (no upward references, no cross-codex referenc
 
 4. **The normalized body as universal representation.** Every artifact record carries a text body: a normalized rendering of the original file appropriate to its content type. This body projects all modalities into a common representational space — text — enabling universal computation across the corpus. Search, similarity, clustering, and embeddings all operate on this body. The body is the durable, auditable, git-versioned input; everything derived from it is ephemeral cache, rebuildable when models improve or normalization is refined.
 
-5. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose: wikilinks, embeds, and tags. There is no stored frontmatter "constituents," "part_of," "is_a," or "same_as." The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties, not asserted.
+5. **Compositional structure lives in the body.** Codex records and compendium records express composition through their prose — wikilinks, embeds, and tags. The link graph itself is the hierarchy. Equivalence is computed from intrinsic properties.
 
 6. **Strictly downward references.** A corpus's artifacts never reference upward (codices or compendiums don't exist from an artifact's perspective). A codex's records reference local-codex records and any artifacts the runtime can resolve, but never another codex's records. Compendiums reference codices and corpora — they're the integration layer. Each layer is self-contained; codex regeneration triggers compendium re-build (the compendium's `[[codex-name:uuid]]` references are tied to a particular codex instance), and that's the intended behavior.
 
@@ -374,7 +408,7 @@ compendium-{name}/
 └── records/      — Compendium Records (tracked markdown, author-chosen filenames)
 ```
 
-Compendium-record filenames are an authoring choice (e.g., `01-introduction.md`, `02-history.md`); compendium records do not carry the content-addressing or UUID naming used by the layers below them. See §6.
+Compendium-record filenames are an authoring choice (e.g., `01-introduction.md`, `02-history.md`) — chapter-style names rather than the content-addressed hashes of artifact records or the UUIDs of codex records. See §6.
 
 **Directory purposes:**
 
@@ -397,7 +431,7 @@ An artifact record represents a single captured file. It is named by the blake3 
 
 **Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `capture_dates` entry, and any URI not already in `uris[]` is appended. Git sees a metadata-only diff.
 
-**Re-capture of changed content.** If a previously captured URL returns different content, the new content produces a different hash and therefore a new artifact record. Both records will list the URL in their `uris[]`, making them discoverable as captures of the same origin URL at different points in time. Cross-URI succession (the same content at a new URL) has no automatic mechanism in v10.
+**Re-capture of changed content.** If a captured URL is later re-fetched and returns different content, the new content produces a different hash and therefore a new artifact record. Both records list the URL in their `uris[]`, making them discoverable as captures of the same origin URL at different points in time. Cross-URI succession — recognising that the same content has moved to a new URL — is an out-of-band concern, not something the artifact record asserts.
 
 ### 2.3 Codex Records
 
@@ -413,7 +447,7 @@ A codex record's references go to artifacts (citation, embed, functional URI) an
 
 ### 2.4 The Layered Reference Graph
 
-Composition is expressed through references in record bodies — there is no stored "constituents" list, no `part_of` field, no merge DAG metadata. The link graph itself is the hierarchy.
+Composition is expressed through references in record bodies. The link graph itself is the hierarchy.
 
 References point downward only. Within a single codex:
 
@@ -441,7 +475,7 @@ Across the three layers:
 - **Acyclic by convention within a layer.** Cycles are technically possible (a record linking to another that links back) but conventionally avoided in compositional structures. Cross-references between peer records at the same layer are fine and frequently desirable.
 - **Non-destructive.** Authoring a parent record does not modify or consume its referenced children. References are pointers; targets remain independent.
 - **Multi-parent.** A single record may be referenced by many records at higher layers. An interview-transcript artifact might be cited by an artist-profile codex record in one codex, a documentary-film codex record in another codex, and a compendium record that synthesizes both.
-- **Strictly downward.** This is the v10 invariant. References don't cycle across layers; a layer's records know nothing about layers above them.
+- **Strictly downward.** References don't cycle across layers; a layer's records know nothing about layers above them.
 
 ### 2.5 Codices
 
@@ -513,7 +547,11 @@ On codex records, `tags` classify what the authored knowledge covers. They are s
 
 `visibility` lets a curator retire low-quality records from normal surfaces without deleting them. Use cases: low-content pages caught in a bulk scrape; superseded captures that remain valuable as historical versions; records flagged for further review. Default search and list queries show only `visible` records.
 
-**Record type signaling.** Whether a record is an artifact, a codex record, or a compendium record is signaled by independent signals, with no dedicated `record_type` field. By the **container**: artifacts in a corpus's `records/` directory, codex records in a codex's `records/` directory, compendium records in a compendium's `records/` directory. By the **filename**: 64-character lowercase hex blake3 hash for artifacts, UUID v4 for codex records, author-chosen names (e.g., `01-introduction.md`) for compendium records. By **required field presence**: `blake3` on artifacts, `uuid` on codex records, neither on compendium records (their identity is the file path). The three signals are independently sufficient and never disagree.
+**Record type signaling.** A record's type is determined by three independent signals that always agree:
+
+- **Container**: artifacts live in a corpus's `records/`, codex records in a codex's `records/`, compendium records in a compendium's `records/`.
+- **Filename**: 64-character lowercase hex blake3 hash for artifacts, UUID v4 for codex records, author-chosen names (e.g., `01-introduction.md`) for compendium records.
+- **Required field presence**: `blake3` on artifacts, `uuid` on codex records, neither on compendium records (their identity is the file path).
 
 #### 3.1.2 Artifact-Specific Fields
 
@@ -553,9 +591,7 @@ The same bytes encountered twice append a new entry to `capture_dates` — they 
 
 Present only on codex records.
 
-Codex-record frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `status`, `visibility`, `tags`) and the common quality and pipeline fields below, codex records carry no structural metadata. A codex record's references to artifacts and other records are visible in its body as wikilinks and embeds; the body is the authoritative record of what knowledge the record synthesizes and what evidence it draws on.
-
-There is no `constituents` list, no `part_of`, no `same_as`, no `is_a`. All structural relationships are body references or computed similarity (see §3.5).
+Codex-record frontmatter is deliberately thin. Beyond the core fields (`uuid`, `title`, `description`, `status`, `visibility`, `tags`) and the common quality and pipeline fields below, codex records carry no structural metadata. Structural relationships are body references (wikilinks and embeds) and computed similarity (see §3.5); the body is the authoritative record of what knowledge the record synthesizes and what evidence it draws on.
 
 #### 3.1.4 Quality Fields
 
@@ -619,7 +655,7 @@ Records may carry frontmatter fields beyond those in §3.1.1–§3.1.6. Extended
 
 Extended fields are tolerated by the core loader but not required. A record carrying only the base-schema fields its MIME yields is fully valid — classification can be deferred to a later pass.
 
-If a field is genuinely required for a kind of content the corpus cares about, the strongest practice is to author a custom classification schema declaring the requirement and a tag the normalizer applies when the schema matches.
+If a field is genuinely required for a kind of content the corpus cares about, the strongest practice is to author a custom classification schema that declares the requirement and applies to matching artifacts; the resulting `classifications:[]` entry is the discoverability signal.
 
 ### 3.2 Body Format
 
@@ -666,7 +702,7 @@ Codex-record bodies may contain topic annotations in Obsidian-style comment bloc
 
 Scopes are additive. Annotate at topical transition points, not on every line.
 
-**Inline annotations are valid only in codex-record bodies.** Artifact bodies must remain faithful to the original content (§3.2.1) and do not carry tags or annotations; their classification is recorded in the `classifications:[]` audit trail (§3.1.2, §3.3.2). Compendium-record bodies organize by chapter rather than by tag.
+**Inline annotations are valid only in codex-record bodies.** Artifact bodies must remain faithful to the original content (§3.2.1); their classification lives in the `classifications:[]` audit trail (§3.1.2, §3.3.2). Compendium-record bodies organize by chapter structure.
 
 #### 3.2.5 Codex-Record Bodies
 
@@ -698,7 +734,7 @@ Codex records connect to each other through standard Obsidian primitives:
 - **Tags** — shared classification. Codex records tagged `#brake-caliper` are discoverable together.
 - **Embeds** — inline inclusion of one codex record's body in another.
 
-There are no stored structural relations (`is_a`, `part_of`). Compositional structure is expressed through the codex graph itself: a "Brake System Overview" codex record that wikilinks to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" records *is* the compositional structure. The links in the body are the hierarchy.
+Compositional structure is expressed through the codex graph itself: a "Brake System Overview" codex record that wikilinks to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" records *is* the compositional structure. The links in the body are the hierarchy.
 
 ### 3.3 Schema Library
 
@@ -810,7 +846,7 @@ extended_fields:
     description: "Track position on album."
 ```
 
-**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `extended_fields` to the artifact and adds an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match — their fields merge (last-write-wins on collision). The schema's *application* — the entry in `classifications:[]` — is itself the artifact-side classification signal; there is no separate `tags` field on artifacts.
+**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `extended_fields` to the artifact and adds an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match — their fields merge (last-write-wins on collision). The schema's *application* — the entry in `classifications:[]` — is itself the artifact-side classification signal.
 
 **Audit trail (`classifications` array).** Every applied custom classification schema is also recorded on the artifact in a top-level `classifications:` array (§3.1.2). Each entry has only two fields:
 
@@ -962,27 +998,27 @@ The codex record uses both plain blake3 wikilinks (for direct artifact reference
 
 ### 3.5 Classification
 
-Classification in v10 uses tags, the codex graph, and computed similarity — no stored structural relations.
+Classification uses three mechanisms: tags (on codex records), the codex graph (wikilinks among codex records), and computed similarity (over normalized bodies and perceptual hashes).
 
 #### 3.5.1 Tags
 
-Tags handle categorical classification on **codex records**. A codex record tagged `brake-caliper` and `vehicle-platform-x` is discoverable at the intersection. Tags are flat (no hierarchy), portable (no external dependencies), and codex-local — a tag means whatever the codex's conventions say it means. Tags appear in frontmatter (whole-record scope) and may also appear inline in the body (`%% #tag %%`, §3.2.4).
+Tags are a codex-record primitive — they handle categorical classification on codex records exclusively. A codex record tagged `brake-caliper` and `vehicle-platform-x` is discoverable at the intersection. Tags are flat (no hierarchy), portable (no external dependencies), and codex-local — a tag means whatever the codex's conventions say it means. Tags appear in frontmatter (whole-record scope) and may also appear inline in the body (`%% #tag %%`, §3.2.4).
 
 A codex MAY maintain a conventions file or use `codex.yaml` to list its tag vocabulary with one-line descriptions. This is guidance, not constraint — unknown tags are valid and signal vocabulary growth.
 
-**Artifact records do not carry tags.** Artifact classification is recorded entirely in the `classifications:[]` audit trail (§3.3.2): every applied custom classification schema is logged with a justification, and the schema's contributed extended fields are merged into the artifact's top-level frontmatter. Tags as a curatorial primitive belong to the editorial layer, not the captured-content layer.
+Artifact classification works differently: every applied custom classification schema is recorded in the artifact's `classifications:[]` audit trail with a justification, and the schema's contributed extended fields merge into top-level frontmatter (§3.3.2). The schema-application *is* the artifact's classification signal.
 
-**Compendium records do not carry tags.** A compendium organizes by chapter structure and synthesis-system-prompt-driven taxonomy, not by tag classification.
+Compendium records organize by chapter structure and synthesis-system-prompt-driven taxonomy.
 
 #### 3.5.2 The Codex Graph
 
-The codex graph handles structural organization. A "Brake System Overview" codex record that links to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" records expresses compositional structure through its body, not through frontmatter relations. The link graph is the hierarchy.
+The codex graph handles structural organization. A "Brake System Overview" codex record that links to "Caliper Rebuild," "Rotor Replacement," and "Brake Bleeding" records expresses compositional structure through its body. The link graph is the hierarchy.
 
-A codex record representing a concept (a category, a person, a place, a thing) is just a record with descriptive prose. Other records reference it by wikilink. There is no special "concept record" status — the role is emergent from the graph.
+A codex record that represents a concept (a category, a person, a place, a thing) is just a regular codex record with descriptive prose; other records reference it by wikilink. The role is emergent from the graph.
 
 #### 3.5.3 Deduplication and Similarity
 
-Deduplication and similarity are handled entirely through intrinsic properties of artifacts, not through stored relations:
+Deduplication and similarity are computed from intrinsic properties of artifacts:
 
 **Tier 1: Blake3 (exact).** Same bytes → same hash → same record. Structural, automatic, zero-cost.
 
@@ -1020,9 +1056,9 @@ Wikilink resolution is the runtime's mapping from a link's target string to the 
 
 ### 3.7 Functional URI Scheme
 
-Codex records and compendium records may reference computed transformations of artifacts using functional URIs. **Functional URIs are not used in artifact bodies** — artifact bodies use plain blake3 wikilinks and embeds only.
+Functional URIs are a codex- and compendium-record primitive — they reference computed transformations of artifacts (page extracts, framegrabs, crops). Artifact bodies use plain blake3 wikilinks and embeds.
 
-**Base syntax:** `blake3://{hash}` — resolves to the artifact's binary content. The functional URI scheme carries no corpus prefix; provenance assertion (when a compendium needs to be specific about which corpus it drew from) lives on the wikilink citation form `[[corpus-name:blake3]]` (§3.6, §6.2), separately from any embed or derived view.
+**Base syntax:** `blake3://{hash}` — resolves to the artifact's binary content in any loaded corpus that contains the hash. Provenance assertion (when a compendium needs to be specific about which corpus it drew from) lives on the wikilink citation form `[[corpus-name:blake3]]` (§3.6, §6.2), separately from any embed or derived view.
 
 **Fragment navigation:** `blake3://{hash}#anchor` — navigates to a named section of the artifact's normalized body.
 
@@ -1044,14 +1080,13 @@ Codex records and compendium records may reference computed transformations of a
 
 - Functional URIs are **deterministic** — same inputs always produce the same output (the underlying artifact is immutable by content addressing).
 - Results are **cacheable** — the cache key is the full URI string. Cache can be blown away and regenerated at any time.
-- Results are **ephemeral** — they are not stored as records. They exist at compile/render time.
-- Functional URIs are **codex / compendium-only** — artifact bodies never contain them.
+- Results are **ephemeral** — they exist at compile/render time and are not stored as records.
 
 **In Obsidian (raw browsing):** Functional URIs that can't be resolved at browse time fall back to displaying the alt text. Tooling or plugins can resolve them.
 
 **In compiled outputs (mdbook, static site):** The build process resolves all functional URIs, computes transformations, and substitutes results (rendered images, extracted audio clips, etc.).
 
-The v10 parameter set is deliberately minimal. Future extensions should be added conservatively — each parameter must be deterministic over immutable inputs.
+The parameter set is deliberately minimal. Future extensions should be added conservatively — each parameter must be deterministic over immutable inputs.
 
 ---
 
@@ -1108,7 +1143,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 **How:** The normalizer loads the record, the matching base schema, and any custom classification schemas whose match conditions apply. It refines the body, fills extended fields, applies matching custom classification schemas (recording each application in the artifact's `classifications:` array as `{schema, justification}`), generates or refines `description`, and surfaces issues. For artifact records the body MUST remain a faithful normalized rendering — contextualization may improve accuracy but MUST NOT add information.
 
-**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their extended fields, merging into the record (last-write-wins on field collisions), and append entries to `classifications:[]`. Multiple custom schemas may match. Artifacts do not carry frontmatter `tags` (tags live on codex records only — see §3.5.1).
+**Schema composition.** Base schema fields are extracted first. Matching custom classification schemas add their extended fields, merging into the record (last-write-wins on field collisions), and append entries to `classifications:[]`. Multiple custom schemas may match.
 
 **Output:** Record with refined body, extended fields populated, and `status: normalized`.
 
@@ -1120,7 +1155,7 @@ Re-normalization passes can re-run cross-reference resolution as new artifacts a
 
 A codex record's body never contains `[[codex-name:…]]` — codices stay pure (§2.5). Cross-codex citation belongs in compendium-record bodies (§6).
 
-There is no merge ceremony, no constituent list, no merge rationale field. The body *is* the synthesis; the references in the body are the structural relationships.
+The body *is* the synthesis; the references in the body are the structural relationships.
 
 **Authoring is non-destructive.** Referenced artifacts and other records are unchanged and independently addressable. Removing a reference from a codex-record body simply removes that reference — no cascade, no mutation of the target.
 
@@ -1208,7 +1243,7 @@ Brings an artifact stub to `status: normalized`.
 
 **Scope:** One artifact per invocation.
 
-**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, a `normalization_type` reflecting how the body was derived, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Artifact records do not carry frontmatter `tags` (see §3.5.1). Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, a `normalization_type` reflecting how the body was derived, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a blake3 wikilink or embed; targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
 
 Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `blake3` field must match the binary's hash.
 
@@ -1313,7 +1348,7 @@ System prompts are iterable. When synthesis produces gaps or errors, the system 
 
 Compendiums track which inputs were used to produce each chapter — codex records by `codex-name + uuid`, artifacts by blake3, with the relevant timestamps. When an artifact is re-normalized or a codex record is re-authored, only affected chapters need re-synthesis.
 
-**Codex regeneration invalidates dependent compendiums.** A regenerated codex mints fresh UUIDs (§2.5); compendium references of the form `[[codex-name:uuid]]` are tied to the previous codex instance and no longer resolve. Compendiums that drew on a regenerated codex must be re-built. Tooling SHOULD surface dependent compendiums when a codex regeneration is requested so the operator can plan the cascade.
+**Codex regeneration invalidates dependent compendiums.** A regenerated codex mints fresh UUIDs (§2.5); compendium references of the form `[[codex-name:uuid]]` are tied to a specific codex instance, so once that codex is regenerated, every dependent compendium must be re-built against the new instance. Tooling SHOULD surface dependent compendiums when a codex regeneration is requested so the operator can plan the cascade.
 
 A record updated in place (re-authored, re-normalized) triggers re-synthesis only in chapters that cite it. This keeps incremental re-synthesis proportional to actual content change. Codex regeneration, by contrast, is a wholesale event that re-runs every chapter that drew on the regenerated codex.
 
