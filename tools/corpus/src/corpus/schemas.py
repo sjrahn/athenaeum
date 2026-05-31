@@ -2,17 +2,24 @@
 
 The four reserved top-level namespaces:
 
-- `mime/<type>/<type>_<subtype>.yaml` — media-type schemas. Layered universal →
-  type → subtype.
-- `atom/<atom>/<atom>_<id>.yaml` — atomic overlays on segments. Layered
-  universal-per-atom → overlay.
-- `origin/<id>.yaml` — origin overlays (flat layout per spec §7.2; the reference's
-  `web/` / `otherwise/` split is dropped). The universal `origin/origin.yaml` ships
-  in the package; per-host overlays are corpus-local.
+- `mime/<type>/<type>_<subtype>.yaml` — media-type schemas. **Format-universal,
+  packaged.** Layered universal → type → subtype.
+- `atom/<atom>/<atom>_<id>.yaml` — atomic overlays on segments. **Format-universal,
+  packaged.** Layered universal-per-atom → overlay.
+- `origin/<id>.yaml` — origin overlays (flat layout per spec §7.2). **Per-corpus
+  concern; not packaged.** Both the universal `origin/origin.yaml` (uri/snapshot
+  declarations) and per-host overlays live corpus-local. `corpus init` seeds the
+  universal at scaffold time.
 - `composite/<namespace>/<namespace>.yaml` (+ `<sub_id>.yaml`) — user-defined
-  classification namespaces (corpus-local, never bundled). `composite/issue/<id>.yaml`
-  carries issue overlays — the universal `composite/issue/issue.yaml` ships in the
-  package; per-id issue overlays may live in either source.
+  classification namespaces. **Per-corpus concern; not packaged.**
+  `composite/issue/<id>.yaml` carries issue overlays — the universal
+  `composite/issue/issue.yaml` ships in the package; per-id issue overlays may
+  live in either source.
+
+Why the split: `mime` and `atom` describe *format and fidelity* (a PDF is a PDF;
+a transcript is a transcript) — universal. `origin` describes *sources of
+retrieval* and `composite` describes *classification axes* — both are corpus-
+specific decisions.
 
 Resolution model (the keystone):
 

@@ -12,13 +12,14 @@ def test_scaffold_creates_minimal_seam(tmp_path):
     out = scaffold.scaffold(target, namespace="document")
     assert out == target.resolve()
     assert (target / "records").is_dir()
+    # Per-corpus concerns: origin universal + composite namespace.
+    assert (target / "schema" / "origin" / "origin.yaml").is_file()
     assert (target / "schema" / "composite" / "document" / "document.yaml").is_file()
     assert (target / ".gitignore").is_file()
     assert (target / "README.md").is_file()
-    # NOT created: universal schemas come from the package.
+    # NOT created: mime and atom universals come from the package.
     assert not (target / "schema" / "mime").exists()
     assert not (target / "schema" / "atom").exists()
-    assert not (target / "schema" / "origin" / "origin.yaml").exists()
 
 
 def test_scaffolded_corpus_is_discoverable_by_find_corpus_root(tmp_path):

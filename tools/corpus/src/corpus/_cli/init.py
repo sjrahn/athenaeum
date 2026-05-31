@@ -32,9 +32,10 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     out = scaffold.scaffold(Path(args.target), namespace=args.namespace, force=args.force)
     print(f"scaffolded corpus at {out}")
-    print(f"  records/                    (empty)")
+    print(f"  records/                          (empty)")
+    print(f"  schema/origin/origin.yaml         (universal — corpus-local)")
     print(f"  schema/composite/{args.namespace}/  (stub)")
     print(f"  .gitignore, README.md")
     print()
-    print("Universal mime/origin/atom/composite-issue schemas resolve from the package.")
+    print("Universal mime/atom/composite-issue schemas resolve from the package.")
     return 0

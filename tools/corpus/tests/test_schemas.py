@@ -236,9 +236,24 @@ def test_composite_namespace_is_corpus_local(tmp_path):
 # ---------- origin overlays: universal packaged, per-host local ---------- #
 
 
-def test_origin_overlay_universal_packaged_per_host_local(tmp_path):
+def test_origin_overlays_are_corpus_local(tmp_path):
+    """Origin is a per-corpus concern (sources of retrieval are corpus-specific).
+    Neither the universal `origin/origin.yaml` nor per-host overlays ship in the
+    package; both live corpus-local. The scaffold writes the universal at
+    `corpus init` time (see test_scaffold)."""
     root = _make_corpus(tmp_path)
-    # Define a per-host overlay locally (the package ships none).
+    # Vendor a universal origin overlay (what `corpus init` writes for real corpora).
+    _write_yaml(
+        root / "schema" / "origin" / "origin.yaml",
+        {
+            "description": "Universal origin fields.",
+            "extended_fields": {
+                "uri": {"type": "string_or_list", "required": True, "semantic_type": "uri"},
+                "snapshot": {"type": "string", "required": True, "semantic_type": "timestamp"},
+            },
+        },
+    )
+    # Define a per-host overlay locally.
     _write_yaml(
         root / "schema" / "origin" / "example.com.yaml",
         {
@@ -256,9 +271,20 @@ def test_origin_overlay_universal_packaged_per_host_local(tmp_path):
     extended = overlay.get("extended_fields") or {}
     # Local per-host fields present:
     assert "publisher_section" in extended
-    # Packaged universal `uri`/`snapshot` fields layer in:
+    # Local universal uri/snapshot fields layer in:
     assert "uri" in extended
     assert "snapshot" in extended
     # Matching by URI uses the host pattern:
     matched = schemas.origin_overlays_for_uris(root, ["https://www.example.com/page"])
     assert any(id_ == "example.com" for id_, _ in matched)
+
+
+def test_origin_universal_does_not_ship_in_package(tmp_path):
+    """Sanity: the packaged source has no origin/origin.yaml — only corpora supply it."""
+    root = _make_corpus(tmp_path)
+    schemas._sources.cache_clear()
+    sources = schemas._sources(root)
+    packaged = sources[1]  # corpus-local, package
+    assert not packaged.exists("origin/origin.yaml"), (
+        "package must not ship origin/origin.yaml — origin is a per-corpus concern"
+    )
