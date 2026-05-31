@@ -1,0 +1,25 @@
+# Transcription-unavailable — a time-based media artifact (video / audio) could not be
+# transcribed into a faithful text body. The record still exists; it just carries no
+# transcript sections until the transcription is produced.
+
+description: |
+  The drafter could not obtain a usable transcript for a video / audio artifact.
+  Causes: no transcription adapter is configured (the NoOp default), the backend was
+  unreachable or errored, or the adapter returned an empty transcript (no detectable
+  speech).
+
+  Severity guidance: `warning` when the transcript is unavailable (adapter missing or
+  backend failed — re-runnable once a backend is configured); `info` when the backend
+  ran but found no speech (an empty transcript is faithful, not an error). The
+  `fields.reason` carries the adapter's diagnostic.
+
+applies_at: [record]
+
+extended_fields:
+  reason:
+    type: string
+    required: false
+    description: |
+      The adapter's diagnostic — why the transcript is unavailable (e.g. "no
+      transcription adapter configured", "whisper backend unreachable at …", "empty
+      transcript (no detectable speech)").

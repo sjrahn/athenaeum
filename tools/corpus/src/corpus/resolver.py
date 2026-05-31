@@ -18,7 +18,8 @@ Storage is pluggable: a `LocalArtifactStore` (default) reads/writes
 `artifacts/<shard>/<id>.<ext>`; cloud adapters (Azure, S3) drop in via the same
 Protocol in P3.
 
-P2 supports the image / pdf / html transforms. Audio / video / transcribe land in P5.
+P2 ships image / pdf / html transforms. P5 adds video (extract_audio, frame) and
+audio (transcribe, via the configured TranscriptionAdapter pulled from the context).
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from . import functional_uri as furi
 from . import mime as mime_mod
 from . import paths, records, transforms
 from .store import ArtifactStore, get_store
-from .transcription import TranscriptionAdapter
+from .transcription import TranscriptionAdapter, get_transcriber
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,11 @@ _INITIAL_KIND_FOR_MIME: dict[str, str] = {
     "image/gif": "image",
     "image/webp": "image",
     "image/avif": "image",
+    "video/mp4": "video",
+    "video/webm": "video",
+    "video/quicktime": "video",
+    "video/x-matroska": "video",
+    "audio/mpeg": "audio",
 }
 
 
@@ -65,11 +71,13 @@ _INITIAL_KIND_FOR_MIME: dict[str, str] = {
 KIND_TO_EXTENSION: dict[str, str] = {
     "image": "png",
     "text": "txt",
+    "audio": "mp3",
 }
 
 KIND_TO_MIME: dict[str, str] = {
     "image": "image/png",
     "text": "text/plain",
+    "audio": "audio/mpeg",
 }
 
 
@@ -96,6 +104,8 @@ def resolve(
     media_type = records.media_type_for(artifact_record)
     if store is None:
         store = get_store(corpus_root)
+    if transcriber is None:
+        transcriber = get_transcriber(corpus_root)
     artifact_binary = store.ensure_local(parsed.hash, mime_mod.extension_for(media_type))
 
     # Bare URI — no derivation; the caller wants the source binary.
@@ -135,10 +145,12 @@ def resolve(
         if dpi_value < 1:
             raise ValueError(f"dpi= must be positive, got {dpi_value}")
         ctx["dpi"] = dpi_value
-    # Lazy-attach the transcriber so audio transforms (P5) can pull it from the
-    # context without forcing the resolver to import every adapter on every URI.
-    if transcriber is not None:
-        ctx["transcriber"] = transcriber
+    # Audio transforms pull the transcriber from the context; the video `frame`
+    # transform range-checks against the source duration when it's known.
+    ctx["transcriber"] = transcriber
+    duration = _record_duration(artifact_record)
+    if duration is not None:
+        ctx["video_duration_seconds"] = duration
 
     # Initialize working value.
     working: Any
@@ -153,6 +165,10 @@ def resolve(
         with Image.open(artifact_binary) as im:
             im.load()
             working = im.copy()
+    elif initial_kind in ("video", "audio"):
+        # The working value is the artifact path itself — ffmpeg and the transcriber
+        # stream from disk rather than loading the whole media into memory.
+        working = artifact_binary
     else:
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")
 
@@ -212,6 +228,9 @@ def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
         working.save(cache_p, format="PNG")
     elif kind == "text":
         cache_p.write_text(working, encoding="utf-8")
+    elif kind == "audio":
+        # `working` is a Path to ffmpeg's temp output; move it into the cache.
+        shutil.move(str(working), cache_p)
     else:
         raise NotImplementedError(f"no cache writer for kind {kind!r}")
 
@@ -221,6 +240,16 @@ def _load_record(corpus_root: Path, record_hash: str):
     if not record_file.is_file():
         raise FileNotFoundError(f"no record for hash {record_hash}: {record_file}")
     return records.load(record_file)
+
+
+def _record_duration(artifact_record: Any) -> float | None:
+    """Best-effort source duration (seconds) from the artifact block's fields, if a
+    prior video draft recorded it. Used to range-check `?frame=` timecodes."""
+    artifact = records.artifact_block(artifact_record) or {}
+    dur = (artifact.get("fields") or {}).get("duration")
+    if isinstance(dur, (int, float)):
+        return float(dur)
+    return None
 
 
 def _write_sidecar(

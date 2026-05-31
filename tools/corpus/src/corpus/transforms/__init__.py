@@ -23,9 +23,15 @@ from typing import Any, TypedDict
 
 class RenderContext(TypedDict, total=False):
     dpi: int
-    # Audio transforms (P5) consume `transcriber` to call out to the
-    # configured TranscriptionAdapter. P3 wires the injection seam.
+    # Audio transforms consume `transcriber` to call out to the configured
+    # TranscriptionAdapter. P3 wires the injection seam; the resolver defaults it.
     transcriber: object  # corpus.transcription.TranscriptionAdapter
+    # The audio `transcribe` transform stashes the adapter's raw payload here so a
+    # future resolver enhancement can persist it next to the rendered cache file.
+    transcription_payload: object  # dict
+    # The video `frame` transform range-checks the requested timecode against this
+    # when the resolver plumbs the source record's duration through.
+    video_duration_seconds: float
 
 
 HandlerFunc = Callable[[Any, str | None, RenderContext], Any]
@@ -59,7 +65,8 @@ def lookup(input_kind: str, param_name: str) -> Handler | None:
 
 
 # Importing the per-kind submodules registers their handlers.
-# (Audio/video transforms defer to P5.)
+from . import audio as _audio  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
+from . import video as _video  # noqa: E402, F401

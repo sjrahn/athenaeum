@@ -35,7 +35,6 @@ identifier). Reconciliation #2.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, TypedDict
 
 
@@ -74,7 +73,7 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
 # Importing the per-MIME submodules registers their drafters.
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
+from . import video as _video  # noqa: E402, F401
 
-# HTML drafter is a larger lift; lands as P2.7 — comment out to avoid
-# `module not found` until then.
-# from . import html as _html  # noqa: E402, F401
+# HTML drafter is a larger lift; lands later.
+# from . import html as _html
