@@ -33,6 +33,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream the content-zone body to stdout"),
     "lint":            ("Inspect",                "Conformance check (the verification gate)"),
+    "health":          ("Inspect",                "Offline corpus-wide health signals (JSON or --summary)"),
     # Edit (P1)
     "decompose":       ("Edit",                   "Explode a record into a working dir (manifest + body/desc files)"),
     "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
