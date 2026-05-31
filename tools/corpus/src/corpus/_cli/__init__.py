@@ -19,7 +19,10 @@ __all__ = ["dispatch", "main"]
 _COMMANDS: dict[str, tuple[str, str]] = {
     # Scaffolding (P1)
     "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/composite/<ns>/)"),
-    # Capture & ingest (P2+)  — declared but not yet implemented; lazy import errors out.
+    # Capture & ingest (P2)
+    "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
+    "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
+    "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
     # Inspect (P1)
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
