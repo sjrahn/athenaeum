@@ -37,6 +37,7 @@ from . import functional_uri as furi
 from . import mime as mime_mod
 from . import paths, records, transforms
 from .store import ArtifactStore, get_store
+from .transcription import TranscriptionAdapter
 
 log = logging.getLogger(__name__)
 
@@ -78,14 +79,16 @@ def resolve(
     *,
     regenerate: bool = False,
     store: ArtifactStore | None = None,
+    transcriber: TranscriptionAdapter | None = None,
 ) -> Path:
     """Resolve a functional URI to a file path. Cache-backed.
 
-    `store` defaults to the configured `ArtifactStore` for `corpus_root` (currently
-    always `LocalArtifactStore`; P3 will read config). Pass an explicit store for
-    tests or alternate backends.
+    `store` defaults to the configured `ArtifactStore` for `corpus_root` (Local /
+    Azure / S3 per `corpus.toml` + env). `transcriber` defaults to the configured
+    `TranscriptionAdapter` (NoOp / HTTPWhisper). P3 wires the injection seam;
+    P5's audio transform consumes it via the RenderContext.
 
-    Returns an absolute path. The caller may Read the file, copy it, etc.
+    Returns an absolute path. The caller may read the file, copy it, etc.
     """
     parsed = furi.parse(uri)
     canonical_uri = furi.canonical(parsed)
@@ -132,6 +135,10 @@ def resolve(
         if dpi_value < 1:
             raise ValueError(f"dpi= must be positive, got {dpi_value}")
         ctx["dpi"] = dpi_value
+    # Lazy-attach the transcriber so audio transforms (P5) can pull it from the
+    # context without forcing the resolver to import every adapter on every URI.
+    if transcriber is not None:
+        ctx["transcriber"] = transcriber
 
     # Initialize working value.
     working: Any

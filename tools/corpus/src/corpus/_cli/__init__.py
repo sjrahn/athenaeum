@@ -32,6 +32,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Edit (P1)
     "decompose":       ("Edit",                   "Explode a record into a working dir (manifest + body/desc files)"),
     "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
+    # Storage (P3)
+    "store":           ("Storage",                "Status / push / pull / fetch against the configured ArtifactStore"),
     # Query (P1)
     "find":            ("Query",                  "List records matching status / mime / origin / classification"),
     "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
@@ -46,6 +48,7 @@ _GROUP_ORDER: tuple[str, ...] = (
     "Capture & ingest",
     "Inspect",
     "Edit",
+    "Storage",
     "Query",
 )
 

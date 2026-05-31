@@ -74,8 +74,32 @@ class ArtifactStore(Protocol):
 def get_store(corpus_root: Path) -> ArtifactStore:
     """Resolve the configured store for `corpus_root`.
 
-    P2: always returns `LocalArtifactStore`. P3 will read `<corpus_root>/corpus.toml`
-    + env (`CORPUS_STORE`, `CORPUS_AZURE_*`, etc.) and dispatch to the appropriate
-    adapter.
+    Reads `corpus.toml` + env (see `corpus.config`) and dispatches to the matching
+    adapter. Cloud adapters are lazy-imported so missing extras don't break the
+    base install — a configured-but-missing extra raises a clear `ImportError`.
     """
-    return LocalArtifactStore(corpus_root)
+    from corpus.config import load_config
+
+    cfg = load_config(corpus_root).store
+    backend = cfg["backend"]
+    if backend == "local":
+        return LocalArtifactStore(corpus_root)
+    if backend == "azure":
+        from .azure import AzureBlobStore
+
+        return AzureBlobStore(
+            corpus_root,
+            account=str(cfg["account"]),
+            container=str(cfg["container"]),
+            prefix=str(cfg.get("prefix", "")),
+        )
+    if backend == "s3":
+        from .s3 import S3Store
+
+        return S3Store(
+            corpus_root,
+            bucket=str(cfg["bucket"]),
+            prefix=str(cfg.get("prefix", "")),
+            region=cfg.get("region"),
+        )
+    raise ValueError(f"unknown store backend: {backend!r}")

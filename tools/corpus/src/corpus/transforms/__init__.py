@@ -23,6 +23,9 @@ from typing import Any, TypedDict
 
 class RenderContext(TypedDict, total=False):
     dpi: int
+    # Audio transforms (P5) consume `transcriber` to call out to the
+    # configured TranscriptionAdapter. P3 wires the injection seam.
+    transcriber: object  # corpus.transcription.TranscriptionAdapter
 
 
 HandlerFunc = Callable[[Any, str | None, RenderContext], Any]
