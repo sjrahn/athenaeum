@@ -2,7 +2,7 @@
 
 **Status:** living document. Updates as implementation matures.
 
-**Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), which is the authoritative data contract. This guide describes the *implementation* of the corpus / artifact-layer pipeline. The spec says what each artifact carries; this guide says how the pipeline produces it. Choices here may change as tooling evolves; the spec must not.
+**Companion to:** [`spec-corpus.md`](spec-corpus.md), the authoritative corpus-layer data contract — and [`spec-athenaeum.md`](spec-athenaeum.md) for how the corpus sits beneath the codex / compendium layers. This guide describes the *implementation* of the corpus / artifact-layer pipeline. The spec says what each artifact carries; this guide says how the pipeline produces it. Choices here may change as tooling evolves; the spec must not. (Note: this guide is still v10.15-shaped and predates `spec-corpus.md`'s model; a rewrite to the current corpus model is pending.)
 
 The codex-layer counterpart is [`impl-codex.md`](impl-codex.md).
 

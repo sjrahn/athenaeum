@@ -5,7 +5,7 @@ version: 11
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-04-27
+date_modified: 2026-05-31
 ---
 
 # Athenaeum — Architecture Specification
@@ -30,7 +30,7 @@ The system has three layers, each with a distinct purpose:
 
 2. **Every record is independently valid.** A single captured page and a fully synthesized monograph are both complete, addressable, useful markdown documents.
 
-3. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes appends a new entry to the existing record's `capture_dates` rather than creating a new record.
+3. **Artifact immutability via content addressing.** Captured artifacts are identified by the blake3 hash of their binary content. The bytes never change; if they did, the hash would change and the record would be a different record. Re-encountering the same bytes records another capture against the existing record rather than creating a new one (the corpus tracks that provenance; see `spec-corpus.md`).
 
 4. **Normalization integrity.** An artifact's body is a faithful normalized rendering of its original content. Normalization may produce a more accurate representation (resolve encoding ambiguity, fix format-conversion artifacts, surface OCR text from images) but it MUST NOT add information that didn't exist in the original. Editorial work happens in codex records and compendium records, not in artifacts.
 
@@ -65,11 +65,11 @@ The system has three layers, each with a distinct purpose:
 | **Wikilink** | `[[id\|display]]` — an intra-layer cross-reference. The id is local to the container (blake3 in artifact bodies, UUIDv7 in codex-record bodies, slug in compendium-record bodies). Wikilinks never cross containers. The display text is optional. |
 | **Footnote Citation** | `text[^N]` with `[^N]: <bare-uri>` at the bottom of the record. The cross-layer downward-citation form. Footnote URIs are `corpus://{hash}` (artifact) or `codex://{name}/{uuid}` (codex record); the build/export step resolves them into APA-style citations. |
 | **Embed** | `![[target]]` — inline content inclusion. In artifact bodies: raw `![[blake3]]` for intra-corpus cross-refs that mirror the original content's embeds. In codex- and compendium-record bodies: functional URI `![[corpus://hash?params]]` (or no params for the identity transform); always targets an artifact. Codex records are not embedded — they are wikilinked. |
-| **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are codex-local — they live on codex records only. Artifact records classify via the `classifications:[]` audit trail; compendium records organize by chapter structure. |
-| **Capture** | An encounter event recorded only by date. Re-encountering identical bytes appends a new entry to the artifact's `capture_dates`; the bytes themselves never move and never produce a new record. |
+| **Tag** | A flat, kebab-case classification label matching `[a-z0-9]+(-[a-z0-9]+)*`. Tags are codex-local — they live on codex records only. Artifact records classify through a corpus-layer derived view (see `spec-corpus.md`); compendium records organize by chapter structure. |
+| **Capture** | An encounter event recorded against an artifact. Re-encountering identical bytes records another capture on the existing artifact (the corpus tracks the provenance; see `spec-corpus.md`); the bytes themselves never move and never produce a new record. |
 | **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original. |
 | **Functional URI** | A composable URI scheme used in codex and compendium bodies. `corpus://{hash}` references an artifact (whole, by anchor `#section`, or by transformation `?page=4&crop=…`); `codex://{name}/{uuid}` references a codex record from a compendium footnote. Resolved at compile/render time. |
-| **Schema** | A reference document describing how to normalize or classify content. Two kinds: **base schemas** (MIME-type-keyed, universal, foundational data contract) and **custom classification schemas** (corpus-local, optional, corpus-author-driven). |
+| **Schema** | A corpus-layer reference document describing how to normalize or classify content. The corpus model organizes schemas into four namespaces (`mime` / `origin` / `atom` / `composite`), with MIME-base as the required floor and composite as the optional, corpus-author-driven layer; see `spec-corpus.md`. |
 
 ---
 
@@ -102,7 +102,7 @@ corpus-{name}/
 ├── records/      — Artifact Records (tracked markdown, content-addressed by blake3)
 ├── artifacts/    — raw binary cache (UNTRACKED, .gitignore'd)
 ├── capture/      — staging for in-progress captures
-└── schema/       — base + custom classification schemas (see §3.3)
+└── schema/       — corpus schemas (specified by spec-corpus.md)
 ```
 
 **Codex directory layout (high level):**
@@ -125,25 +125,15 @@ Compendium-record filenames are an authoring choice (e.g., `01-introduction.md`,
 **Directory purposes:**
 
 - **`records/`** (all three layers) — Tracked markdown records. Layout under `records/` (sharding, etc.) is an implementation concern; the spec only requires that a record be locatable by its identity (blake3 for artifacts, UUID for codex records, file path for compendium records).
-- **`artifacts/`** (corpus only) — Raw binary cache. **Untracked**, listed in `.gitignore`. Implementations choose where the bytes actually live (local FS shard, object store, S3-compatible bucket, …); the data contract is just "given a blake3, the implementation can produce the bytes." The cache is regenerable from blake3 plus capture provenance and is not the source of truth.
-- **`capture/`** (corpus only) — Staging area for in-progress captures. No identity assigned yet. Failed captures remain here without consuming corpus resources.
-- **`schema/`** (corpus only) — Schemas governing normalization and custom classification (see §3.3).
+- **`artifacts/` / `capture/` / `schema/`** (corpus only) — the corpus's untracked binary cache (regenerable from blake3 + capture provenance), capture staging, and schemas. These corpus internals are specified by **`spec-corpus.md`** (§2.2).
 
 There is no nesting beyond the top-level separation in any container. Organization is expressed through tags, wikilinks, embeds, and computed similarity — not through directory hierarchy. Concrete on-disk paths and sharding conventions live in the implementation guides (`impl-corpus.md` for corpus side, `impl-codex.md` for codex and compendium sides).
 
-### 2.2 Artifacts
+### 2.2 The Corpus Layer
 
-An artifact record represents a single captured file. It is named by the blake3 hash of the file's binary content (`{blake3-hash}.md`) and contains:
+The corpus layer — the artifact-record format, frontmatter, normalized body, classification, provenance, schemas, deduplication, and the `corpus://` functional-URI scheme — is specified by **`spec-corpus.md`** (ATH-CORPUS), the authoritative contract for everything inside a corpus. This document specifies the architecture and the layers above (codex, compendium); it does not restate the corpus contract.
 
-- **Frontmatter:** `content_type` (MIME type), `uris[]` (all known URIs that resolve to this artifact, none canonical), `capture_dates[]` (timestamps these bytes were encountered), schema-extracted extended fields, and standard metadata fields.
-
-- **Body:** A normalized markdown rendering of the artifact, faithful to the original content's structure and meaning. For HTML: stripped-and-cleaned markdown preserving document structure. For audio: a transcript. For images: OCR text and/or visual description. For PDFs: extracted text with structural markup. Cross-references in the original content (hyperlinks, embedded images) are resolved to blake3 wikilinks and embeds where the targets exist in the corpus, preserving the original content's link structure. See §3.2 for body format rules.
-
-- **Binary storage:** The actual file is stored in the corpus's `artifacts/` binary cache, retrievable by the same blake3 hash. The cache is untracked and regenerable; implementations may store the bytes wherever serves them best as long as a blake3 lookup produces them.
-
-**Content-addressed deduplication.** If the same file is encountered again, the hash matches an existing record. No new record is created — the existing record gains a new `capture_dates` entry, and any URI not already in `uris[]` is appended. Git sees a metadata-only diff.
-
-**Re-capture of changed content.** If a captured URL is later re-fetched and returns different content, the new content produces a different hash and therefore a new artifact record. Both records list the URL in their `uris[]`, making them discoverable as captures of the same origin URL at different points in time. Cross-URI succession — recognising that the same content has moved to a new URL — is an out-of-band concern, not something the artifact record asserts.
+At architecture altitude: a **corpus** is a content-addressed archive of **artifact records**, each identified by the blake3 hash of its captured bytes (the record's `id`, also the `{blake3}.md` filename stem) and carrying a normalized text body — a faithful rendering of the original file into markdown that projects every modality into a common representational space, enabling universal computation (search, similarity, embeddings) across the corpus. Byte-identical captures deduplicate to a single record. Artifacts are immutable (the bytes define the identity), reference nothing in the layers above them, and are the ground truth the whole system rests on. Codices and compendiums reference artifacts downward via footnote citations and functional-URI embeds (§3.6, §3.7), both using the `corpus://` scheme that `spec-corpus.md` defines.
 
 ### 2.3 Codex Records
 
@@ -214,18 +204,9 @@ A codex record never references another codex's records. Cross-codex integration
 
 **Multiple codices, no declared joins.** A user may have many codices (personal, professional, project-specific). Each codex is structurally independent. Two people independently maintaining codices that happen to satisfy the same compendium's references is a feature — content addressing makes the join just work at runtime.
 
-### 2.6 Re-normalization Context Flow
+### 2.6 Re-normalization
 
-Normalization is on-demand, not a one-time event. A given artifact may be re-normalized when:
-
-- New artifacts are captured whose presence resolves previously unresolved cross-references (turning external URLs into blake3 wikilinks).
-- The normalization model is upgraded.
-- Schema guidance for the artifact's MIME type is improved.
-- A bulk re-normalization sweep is triggered by tooling improvements.
-
-Re-normalization MUST preserve normalization integrity — the new body remains faithful to the original artifact's content. It may produce a more accurate representation, but it MUST NOT introduce information not present in the original. Editorial enrichment that draws on context outside the artifact belongs in codex-record bodies, not in artifact bodies.
-
-Codex records are re-authored, not re-normalized. They are edited by humans or synthesis agents like any other authored markdown.
+Normalization and re-normalization of artifact bodies — when and how an artifact is (re)rendered — are corpus-layer mechanics specified by **`spec-corpus.md`** (its `stub → draft → normalized` lifecycle and re-run model). Normalization integrity holds throughout (§1.2 principle 4): a re-normalized body stays faithful to the original bytes, and editorial enrichment that draws on outside context lives in codex records, never in artifacts. Codex and compendium records are re-authored, not re-normalized.
 
 ### 2.7 Every Record Is a Valid Markdown Document
 
@@ -239,61 +220,27 @@ There is no "incomplete" state in terms of record validity. A freshly captured a
 
 All record metadata lives in YAML frontmatter at the top of each `.md` file. There are no separate configuration files — the markdown file is the single source of truth for both metadata and content.
 
-The schema library (`schema/`) provides normalization and classification guidance (see §3.3); extended fields beyond the core schema are tolerated freely (see §3.1.5). Appendix A provides a concise per-MIME field reference.
+Artifact frontmatter — and the schema library that drives it — is a corpus-layer concern specified by `spec-corpus.md` (§2.2, §3.3). The fields below are the cross-layer core plus the codex- and compendium-record specifics.
 
 #### 3.1.1 Core Fields
 
-Present on every record (unless noted as record-type-specific).
+Every record carries an `id`, a `description`, and a `status`. Codex and compendium records additionally carry a frontmatter `title`; codex records carry `tags`. **Artifact-record frontmatter is specified separately by `spec-corpus.md`** (§3.1.2) — in the corpus model an artifact's title, media type, and most metadata live in its body blocks, not frontmatter.
 
 | Field | Type | Required | Applies to | Description |
 |-------|------|----------|------------|-------------|
 | `id` | string | yes | all | Record identifier and filename stem under the container's `records/` directory. **Artifact:** the blake3 hash of the binary content, 64-character lowercase hex. **Codex record:** UUIDv7 (RFC 9562, time-ordered, monotonic-by-creation). **Compendium record:** author-chosen slug matching `[a-z0-9]+(-[a-z0-9]+)*`. |
-| `title` | string | yes | all | Short descriptive label. |
+| `title` | string | yes (codex, compendium) | codex + compendium records | Short descriptive label. An artifact's title lives in its corpus body block, not frontmatter (see `spec-corpus.md`). |
 | `description` | string | yes | all | 1–3 sentence description. Primary mechanism for discovery and relevance assessment. |
-| `content_type` | string | yes (artifacts) | artifact records | IANA MIME type of the captured artifact (e.g., `text/html`, `application/pdf`, `image/jpeg`). `unknown` is permitted as a sentinel when the MIME cannot be determined. Codex records and compendium records are markdown by construction and do not carry `content_type`. |
-| `status` | enum | yes | all | Pipeline state: `stub` (captured, no body), `draft` (converted, body filled), `normalized` (LLM-refined, ready for use). Codex records and compendium records typically begin at `draft` since authoring fills the body directly. |
-| `visibility` | enum | no | artifact records only | Editorial curation layer for artifacts, independent of `status`. One of `visible` (default), `deranked` (appears in results at lower priority), `hidden` (excluded from default results, still accessible by direct identifier). Lets a curator retire low-quality artifacts (low-content pages caught in a bulk scrape, superseded captures, flagged-for-review) without deleting them. Codex and compendium records are deleted or rewritten rather than retired. |
+| `status` | enum | yes | all | Lifecycle state: `stub` (captured, no body), `draft` (body filled), `normalized` (refined, ready for use). Codex and compendium records typically begin at `draft` since authoring fills the body directly. |
 | `tags` | string[] | no | codex records only | Classification tags. Kebab-case, lowercase, matching `[a-z0-9]+(-[a-z0-9]+)*`. Declare what this codex record is about. Tags are codex-local — a codex MAY define a tag vocabulary in its `codex.yaml` or a conventions file for consistency. Frontmatter tags declare whole-record topical coverage; inline `%% #tag %%` annotations (§3.2.5) provide positional precision within the body. |
 
-Artifact classification is recorded in the `classifications:[]` audit trail (§3.1.2, §3.3.2); compendium-record organization is the author's chapter structure.
+Artifact classification is a corpus-layer concern — derived from the artifact's body blocks, specified by `spec-corpus.md`, not declared in frontmatter here. Compendium-record organization is the author's chapter structure. (`visibility`, the editorial curation layer for retiring low-quality artifacts without deleting them, is an artifact frontmatter field in the corpus model — see `spec-corpus.md`.)
 
-**Record type signaling.** A record's type is determined by three independent signals that always agree:
+**Record type signaling.** A record's type is determined by independent signals that always agree: its **container** (a corpus's, codex's, or compendium's `records/`) and its **`id` shape** (64-character lowercase hex blake3 for artifacts, UUIDv7 for codex records, author-chosen slug for compendium records).
 
-- **Container**: artifacts live in a corpus's `records/`, codex records in a codex's `records/`, compendium records in a compendium's `records/`.
-- **`id` shape**: 64-character lowercase hex blake3 hash for artifacts, UUIDv7 for codex records, author-chosen slug for compendium records.
-- **Required field presence**: `content_type` on artifacts; codex and compendium records have neither `content_type` nor visibility.
+#### 3.1.2 Artifact Frontmatter
 
-#### 3.1.2 Artifact-Specific Fields
-
-Present only on artifact records.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `uris` | string[] | yes (≥1) | All known URIs that resolve to this artifact's bytes. None canonical — request URLs, redirect targets, mirror URLs, DOIs, IPFS CIDs, `file://` paths are all equivalent labels. URIs may be added at any time (e.g., a DOI assigned later, a mirror discovered) and become valid retroactively for the artifact. |
-| `capture_dates` | ISO-8601[] | yes (≥1) | Timestamps at which these bytes were encountered. Re-encountering identical bytes appends a new entry. |
-| `hashes` | map | no | Per-artifact instances of the cryptographic and perceptual hashes the base schema (§3.3.1) declares for this MIME. blake3 is the artifact's `id`; other declared hashes (e.g., `chromaprint`, `phash`, `sha256`) live here. |
-| `classifications` | object[] | no | Audit log of custom classification schemas applied to this artifact. Each entry is `{schema, justification}`; see §3.3.2. The schemas' contributed extended fields merge into top-level frontmatter (this array does not duplicate them). Absent when no custom classifications have been applied. |
-
-Example artifact frontmatter fragment:
-
-```yaml
-id: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
-content_type: text/html
-uris:
-  - "https://forum.example.com/threads/caliper-rebuild.4521/"
-  - "https://forum.example.com/threads/caliper-rebuild-2024/"   # redirect target
-  - "doi:10.5555/forum.thread.4521"                              # added retroactively
-capture_dates:
-  - 2026-03-15T14:22:00Z
-  - 2026-04-02T09:11:00Z
-hashes:
-  simhash: "f7e8d9c0b1a24c3d"
-  sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-```
-
-The same bytes encountered twice append a new entry to `capture_dates` — they never produce a second record. New URIs discovered for already-captured bytes are appended to `uris[]` whenever they're discovered, including long after the original capture.
-
-Author identity, publication dates, and similar provenance attributes surface as extended fields contributed by base or custom classification schemas (e.g., a `web-article` schema contributes `byline` and `published_date`; an `epub` base schema contributes `epub_author` and `pub_date`). They are not core fields.
+Artifact-record frontmatter is specified by **`spec-corpus.md`**, not here. In the corpus model it is bytes-identity only (`id`, `description`, `status`, byte-hash fields, the `touch[]` provenance chain, `visibility`); everything else an artifact carries — its media type, origins/URIs, capture timestamps, classifications, and schema-extracted fields — lives in the record's **body blocks**, not frontmatter, and is exposed through on-demand derived views. The codex and compendium layers never read artifact frontmatter directly; they reference artifacts through the `corpus://` scheme (§3.6, §3.7).
 
 #### 3.1.3 Codex-Record-Specific Fields
 
@@ -301,80 +248,33 @@ Present only on codex records.
 
 Codex-record frontmatter is deliberately thin. The complete set of frontmatter fields on a codex record is the core fields `id`, `title`, `description`, `status`, `tags` — and that is it. No `content_type` (codex records are markdown by construction), no `visibility`, no quality or pipeline metadata. Structural relationships are body references — wikilinks to peer codex records, footnote citations of artifacts, functional-URI embeds — and computed similarity (see §3.5). The body is the authoritative record of what knowledge the codex record synthesizes and what evidence it draws on.
 
-Credibility, when relevant, is consulted by reading the credibility-signal classifications on the evidentiary artifacts the codex record cites (§3.3.2, Appendix A.2). The codex record itself carries no credibility field.
+Credibility, when relevant, is consulted by reading the credibility-signal classifications on the evidentiary artifacts the codex record cites — a corpus-layer derived view (see `spec-corpus.md`). The codex record itself carries no credibility field.
 
 Compendium records carry the same minimal core fields as codex records (excluding `tags`); they organize by chapter structure rather than tag classification.
 
 #### 3.1.4 Issues
 
-Optional array of known quality or completeness problems. Absence means "no known issues."
-
-```yaml
-issues:
-  - type: "missing_media"
-    severity: "major"
-    description: "3 of 5 embedded images unavailable — showed step-by-step assembly procedure"
-    remediation: "wayback_snapshot"
-    resolved: false
-```
-
-**Issue types:**
-
-| Type | Description |
-|------|-------------|
-| `missing_media` | Images, videos, or embedded content unavailable |
-| `broken_links` | Referenced URLs are dead |
-| `partial_content` | Content was truncated, paywalled, or incompletely captured |
-| `content_modified` | Content edited since original publication |
-| `encoding_corruption` | Garbled text, mojibake, mangled characters |
-| `format_loss` | Tables, diagrams, or formatting didn't survive conversion |
-
-**Severity:** `critical` (unusable without fix), `major` (significant loss but partially useful), `minor` (cosmetic or non-essential).
-
-**Remediation:** `wayback_snapshot`, `alternate_source`, `original_author`, `re_capture`, `manual_reconstruction`, `none`.
-
-The `resolved` boolean tracks whether the issue has been addressed. Resolved issues remain in frontmatter as historical record.
+Quality and completeness problems on artifacts (missing media, broken links, partial capture, content modified since publication, encoding corruption, format loss) are a corpus-layer concern — recorded as `issue` blocks and surfaced through the corpus's derived `issues` view, specified by **`spec-corpus.md`**. They are not record frontmatter in this spec.
 
 #### 3.1.5 Extended Fields
 
-Records may carry frontmatter fields beyond those in §3.1.1–§3.1.4. Extended fields come from two sources:
-
-- **Base schema extraction.** Format-intrinsic fields read from the artifact's binary (file headers, embedded metadata). Examples: `page_title` and `meta_description` for HTML, `duration_seconds` and `bitrate_kbps` for audio, `width_px` and `height_px` for images, `page_count` for PDFs. The base schema for each MIME type defines which fields the normalizer extracts (see §3.3.1).
-
-- **Custom classification schema extraction.** Domain-specific fields added when a custom classification schema (§3.3.2) matches the record. Examples: `artist`, `album`, `track_number` when an audio file's ID3 tags identify it as a musical recording; `service_section`, `vehicle_platform` when a PDF is recognized as a service manual page. Custom classification schemas are corpus-local and corpus-author-driven.
-
-Extended fields are tolerated by the core loader but not required. A record carrying only the base-schema fields its MIME yields is fully valid — classification can be deferred to a later pass.
-
-If a field is genuinely required for a kind of content the corpus cares about, the strongest practice is to author a custom classification schema that declares the requirement and applies to matching artifacts; the resulting `classifications:[]` entry is the discoverability signal.
+Format-intrinsic and classification-derived fields (a web article's `byline` / `published_date`, an audio file's `artist` / `album`, a PDF's `page_count`) are a corpus-layer concern. In the corpus model they live in the artifact's body blocks and schema-declared namespaces and surface through derived views, specified by **`spec-corpus.md`** — not as record frontmatter here.
 
 ### 3.2 Body Format
 
-The body of a record is the markdown content below the frontmatter closing `---`. The rules differ sharply between artifact bodies and codex-record bodies. Compendium-record bodies follow the codex-record body conventions (with the added freedom of cross-codex / cross-corpus citation forms; see §6).
+The body of a record is the markdown content below the frontmatter closing `---`. **Artifact bodies** are a corpus-layer concern — their structure (the normalized rendering and the metadata / content / annotation block grammar) is specified by **`spec-corpus.md`**. This section covers **codex-record and compendium-record bodies**; compendium-record bodies follow the codex-record conventions with the added freedom of cross-codex / cross-corpus citation forms (see §6).
 
 #### 3.2.1 Artifact Body Integrity
 
-An artifact's body is a faithful normalized rendering of the original content. The normalizer MUST NOT add editorial content, interpretation, or connections that did not exist in the original. The body mirrors the original's structure: its headings, paragraphs, lists, links, and embedded media, translated into markdown.
+An artifact's body is a faithful normalized rendering of its original content — it adds no editorial content, interpretation, or connection that wasn't in the original (§1.2 principle 4). The block-structured body grammar and the normalization rules are specified by **`spec-corpus.md`**.
 
 #### 3.2.2 Cross-Reference Resolution
 
-The original content's hyperlinks and embedded resources are resolved during normalization to **intra-corpus** wikilinks and embeds. The reference is layer-local — within the same corpus — so the raw form is used; no scheme prefix is needed:
-
-- **Captured target exists in corpus:** Replace the URL with a raw blake3 wikilink or embed.
-  - Hyperlinks become wikilinks: `[[{blake3}|original link text]]`
-  - Embedded images become embeds: `![[{blake3}]]`
-  - Embedded media become embeds with alt text: `![[{blake3}|description]]`
-
-- **Captured target does not exist:** Leave as a standard markdown URL: `[link text](https://original-url.com)` or `![alt](https://original-url.com/image.jpg)`. The link is unresolved — it points outside the corpus. If the target is captured later, a re-normalization pass can resolve it.
-
-Cross-reference resolution is the *only* way artifacts link to each other. No artifact body contains wikilinks or embeds that the normalizer invented — every link corresponds to a link or embed in the original content.
-
-Wikilinks SHOULD use the full 64-character blake3 hash. Tooling MAY accept unambiguous hash prefixes for human-edited contexts, but generated artifact bodies use the full hash.
+Resolving an artifact's original hyperlinks and embedded resources to intra-corpus references (raw `[[blake3]]` wikilinks / `![[blake3]]` embeds) is a corpus-layer concern, specified by **`spec-corpus.md`**. Codex and compendium bodies do not use raw blake3 references; they reference artifacts via the `corpus://` scheme (§3.6, §3.7).
 
 #### 3.2.3 What Embeds Mean
 
-In an artifact body, `![[blake3]]` is an intra-corpus raw embed (§3.2.2): it mirrors a captured target's appearance in the original content. Obsidian renders the target artifact's normalized body inline at that position; for an image artifact, that means OCR text and visual description appear where the original image was.
-
-In codex- and compendium-record bodies, embeds are functional URIs targeting an artifact: `![[corpus://{hash}?params]]`. The `params` may transform the artifact (page extract, framegrab, crop); a bare `![[corpus://{hash}]]` is the identity transform. Codex records are not embedded — they are wikilinked or footnote-cited.
+In codex- and compendium-record bodies, embeds are functional URIs targeting an artifact: `![[corpus://{hash}?params]]`. The `params` may transform the artifact (page extract, framegrab, crop); a bare `![[corpus://{hash}]]` is the identity transform. Codex records are not embedded — they are wikilinked or footnote-cited. (Within an artifact body, a raw `![[blake3]]` embed means something narrower — an intra-corpus mirror of the original content; that is a corpus-layer concern, see `spec-corpus.md`.)
 
 In compiled outputs (mdbook, static site), the tooling substitutes the actual binary (renders the image, embeds the audio) once the URI is resolved.
 
@@ -403,7 +303,7 @@ Codex-record bodies may contain topic annotations in Obsidian-style comment bloc
 
 Scopes are additive. Annotate at topical transition points, not on every line.
 
-Inline annotations are valid only in codex-record bodies. Artifact bodies remain faithful to the original content (§3.2.1); their classification lives in the `classifications:[]` audit trail (§3.1.2, §3.3.2). Compendium-record bodies organize by chapter structure.
+Inline annotations are valid only in codex-record bodies. Artifact bodies remain faithful to the original content (§3.2.1); their classification is a corpus-layer derived view (see `spec-corpus.md`). Compendium-record bodies organize by chapter structure.
 
 #### 3.2.6 Referencing Artifacts from Codex Records
 
@@ -425,214 +325,13 @@ Codex records are not embedded — when one codex record needs to draw on anothe
 
 ### 3.3 Schema Library
 
-Classification has a clear hierarchy:
+Schemas — how an artifact's media type drives normalization, what fields are extracted, and how classification works — are a corpus-layer concern, specified by **`spec-corpus.md`**. The corpus model organizes them into four namespaces (`mime` / `origin` / `atom` / `composite`): MIME-base classification is the required data-contract floor, and custom (composite) classification is the optional, corpus-author-driven layer on top.
 
-1. **MIME-based classification (base schemas) is the foundational and required step.** Every artifact gets a base schema applied, driven by its `content_type`. The base schema dictates the normalization method, declares the hashes that ship with the artifact, and lists the extended fields the normalizer extracts. This is the data-contract floor. Tooling consuming the corpus can rely on every base-schema-declared field and hash being present absolutely.
-
-2. **Custom classification is an optional layer on top.** A corpus author MAY define custom classification schemas to recognize content patterns and extract domain-specific fields and tags. The spec describes the *mechanism* (match conditions, field/tag declarations, schema composition rules); it does **not** prescribe what schemas a particular corpus should have or how the corpus's authors should choose to maintain them. Custom classification is a curatorial artifact — it lives entirely with the corpus.
-
-The two kinds of schemas live under `schema/base/` and `schema/classification/` respectively (concrete layout in `impl-corpus.md`).
-
-#### 3.3.1 Base Schemas (MIME type)
-
-Base schemas are keyed by `content_type`. **They are part of the data contract** — every conforming corpus carries the fields and hashes its base schemas declare for the MIMEs it contains. Tooling consuming the corpus relies on these guarantees absolutely.
-
-A base schema defines:
-
-- **Normalization method:** `extraction`, `transcription`, `description`, or `metadata`.
-- **Normalization guidance:** prose instructions for the normalizer.
-- **Hashes:** the cryptographic and perceptual hashes that ship with every artifact of this MIME. `blake3` is always present (it is the artifact's identity). Format-specific perceptual hashes (e.g., `chromaprint` for audio, `phash` for images) are declared here. Any auxiliary hashes (e.g., `sha256`, `md5`) the schema chooses to publish are also declared here. The per-artifact instances of these hashes live in the artifact record's `hashes` field (§3.1.2).
-- **Extended fields:** structured metadata mechanically extractable from any file of this type. These are format-intrinsic — they come from file headers and embedded metadata.
-
-Base schemas are universal. They apply to any corpus using this MIME type. They travel with the Athenaeum toolkit, not with individual corpora.
-
-**Schema document format:**
-
-```yaml
-schema_type: base
-content_type: "audio/mpeg"
-
-normalization:
-  method: "transcription"
-  guidance: |
-    Extract audio metadata from file headers. Read ID3v2 tags
-    when present, falling back to ID3v1.
-
-hashes:
-  - blake3         # required for every artifact (its identity)
-  - chromaprint    # perceptual hash for audio
-  - sha256         # auxiliary, for interoperability with external systems
-
-extended_fields:
-  duration_seconds:
-    type: number
-    required: true
-    source: file_metadata
-    description: "Total duration in seconds."
-  bitrate_kbps:
-    type: number
-    required: false
-    source: file_metadata
-    description: "Encoding bitrate in kbps."
-  sample_rate_hz:
-    type: number
-    required: false
-    source: file_metadata
-    description: "Sample rate in Hz."
-  channels:
-    type: number
-    required: false
-    source: file_metadata
-    description: "Audio channels (1=mono, 2=stereo)."
-```
-
-The procedural side — how a normalizer detects MIME, in what order it computes these hashes, where the resulting binary lands on disk — is an implementation concern (see `impl-corpus.md`). What the spec mandates is that each artifact of this MIME ends up carrying every declared hash and every required field.
-
-#### 3.3.2 Custom Classification Schemas
-
-Custom classification schemas are optional. A corpus author authors them to recognize content patterns and extract domain-specific extended fields beyond what the base schema gives. The spec defines the schema format and the composition rules; it does **not** dictate which schemas a particular corpus should have.
-
-Custom classification schemas live in the corpus's `schema/classification/` directory. They are portable with the corpus but are not universal — different corpora carry different custom schemas reflecting their own concerns.
-
-**Match conditions.** A schema's `match` block declares the conditions under which it applies. Any of these condition types may be combined; all listed conditions must be satisfied for the schema to match:
-
-- **`content_type`** — exact MIME match or MIME-prefix match (e.g., `audio/*`).
-- **`uri_pattern`** — a regex evaluated against any entry in the artifact's `uris[]`. A typical use is matching a domain (e.g., `^https?://[^/]*example\\.com/`).
-- **`has_classifications`** — list of schema names the artifact must already carry in its `classifications:[]` audit trail (i.e., the listed schemas have already been applied).
-- **`field_match`** — required values for already-extracted extended fields (e.g., `pdf_producer: "TexLive"`).
-
-A match is a logical AND across the listed conditions. To express disjunction, author multiple schemas — they compose naturally (see below).
-
-**Schema document format.**
-
-```yaml
-schema_type: classification
-match:
-  content_type: "audio/mpeg"
-  has_classifications: []                       # optional
-  uri_pattern: ""                               # optional
-  field_match:                                  # optional
-    # field_name: required_value
-
-extended_fields:
-  artist:
-    type: string
-    source: id3_tag
-    description: "Performing artist from ID3 metadata."
-  track_title:
-    type: string
-    source: id3_tag
-    description: "Track title from ID3 metadata."
-  album:
-    type: string
-    source: id3_tag
-    description: "Album name from ID3 metadata."
-  track_number:
-    type: number
-    source: id3_tag
-    description: "Track position on album."
-```
-
-**Composition.** The normalizer applies the base schema first (format extraction, declared hashes, base-schema fields). It then evaluates all custom classification schemas in the corpus; every schema whose `match` is satisfied contributes its `extended_fields` to the artifact and adds an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match — their fields merge (last-write-wins on collision). The schema's *application* — the entry in `classifications:[]` — is itself the artifact-side classification signal.
-
-**Audit trail (`classifications` array).** Every applied custom classification schema is also recorded on the artifact in a top-level `classifications:` array (§3.1.2). Each entry has only two fields:
-
-```yaml
-classifications:
-  - schema: forum-thread
-    justification: "URL matched forum.example.com domain pattern"
-  - schema: community-validated
-    justification: "Repair confirmed across 5+ replies with photos; OP follow-up reports successful resolution; no dissenting comments"
-```
-
-- **`schema`** — the schema's name (filename stem under `schema/classification/`).
-- **`justification`** — required prose explaining *why* this schema was applied. For deterministic matches the justification is mechanical ("matched id3v2 TPE1 + TALB populated", "URL matched forum.example.com domain pattern"). For LLM-judgment matches the justification is substantive prose summarising the evidence ("thread shows consensus across 5+ users on the symptoms and the remedy").
-
-The contract is uniform: every applied schema produces a `classifications` entry, every entry carries a justification. The shape is the same regardless of how mechanical or judgmental the match was. Re-runs, schema iteration, and curator review all read the same audit trail.
-
-The array does **not** duplicate the schema's contributed fields — those live in the merged top-level frontmatter per the composition rule above. The array is purely the log of *which schemas applied and the reasoning for each*. Field provenance ("which schema contributed `thread_id`?") is reconstructed by walking the schemas referenced in `classifications:` against their declarations — the schema files are the source of truth for what each schema contributes.
-
-**Layered matching.** Because a schema's match conditions can include `has_classifications`, a schema can layer on top of an earlier match. A general-platform schema might apply (recording itself in `classifications:[]`) and add a few generic fields; a more-specific schema gated on `has_classifications: [video-platform-x]` plus a `uri_pattern` can then add fields specific to a particular show or section of that platform. This is how a corpus grows from coarse to fine classification without duplicating match logic.
-
-**Examples (illustrative — concrete schemas are corpus-author choices).**
-- An artifact captured from a video-hosting platform: a domain-keyed schema (e.g., `video-platform-x`) records itself in `classifications:[]` and adds `upload_date`, `like_count`, `channel_name`, `view_count`.
-- An artifact from a specific recurring show on that platform: a layered schema (`has_classifications: [video-platform-x]` + a channel-specific `uri_pattern`) adds `episode_date`, `hosts`, `guests`, `topics_discussed`.
-- An artifact from a specific forum-platform signature: a `uri_pattern` schema (e.g., `forum-thread`) adds `thread_id`, `op_username`, `reply_count`.
-- Audio with populated ID3 tags: as in the example above, the `musical-recording` schema applies and adds `artist`, `album`, `track_number`.
-
-**Unclassified artifacts.** An artifact that matches no custom classification schema is fully valid — it carries its base-schema fields and an empty `classifications:[]` audit trail. Custom classification can be deferred to a later pass when more context is available.
-
-**Schema vocabulary conventions.** Schema names (the filename stems under `schema/classification/`) are the corpus-side classification vocabulary. A corpus's conventions file (or `schema/README.md`) MAY document the available schemas with one-line descriptions. Unknown / freshly-authored schemas are always valid — they signal vocabulary growth.
-
-#### 3.3.3 Custom classification as a living curatorial artifact
-
-Custom classification schemas are not authored upfront; they emerge from how the corpus is used.
-
-**The feedback loop.** Codex-record and compendium-record authoring reveals patterns. Authors keep reaching for the same metadata about the same kind of content; classification clusters form around recurring URI domains, MIME families, or extracted-field shapes; a domain dominates a slice of the corpus. The curator notices these patterns and authors a custom classification schema that captures them — declaring the fields the authors keep wanting and a schema name that identifies the pattern. A re-normalization sweep applies the new schema to every existing artifact whose match conditions are satisfied. Subsequent authoring is now richer because the metadata is already on the artifacts.
-
-This loop is the corpus's classification layer growing in step with its actual usage. A corpus with no codex layer above it yet has only base schemas — and that's fine. A corpus whose codex layer is rich and active will grow a substantial custom classification library over time. The schemas, the artifacts, and the records co-evolve.
-
-The pipeline mechanics of pattern detection, schema authoring, and re-normalization sweeps live in `impl-corpus.md`.
-
-The Curator agent (§5.5) is responsible for monitoring the codex layer for pattern emergence and proposing new custom classification schemas to the operator.
-
-#### 3.3.4 MIME Type Reference
-
-The per-MIME normalization-method-and-extracted-fields reference is in **Appendix A.1**. It lists the canonical MIME, the normalization method, the typical base-schema extended fields, and notes per type. The set is illustrative, not closed — any IANA MIME type is valid as a `content_type` value.
-
-A corpus authoring its own custom classification schemas adds further extended fields on top of the base-schema reference (see §3.3.2).
+Custom classification is a *living curatorial artifact*: patterns that emerge while authoring codex records — a recurring source type, a credibility signal worth capturing — become new corpus classification schemas, applied retroactively by re-normalization so that subsequent authoring is richer. That feedback loop, where the codex layer surfaces signals that drive corpus classification, is the Curator's job (§5.5); the schema mechanics live in `spec-corpus.md`.
 
 ### 3.4 Examples
 
-#### Artifact Record
-
-```yaml
----
-id: "a7f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5..."
-title: "Caliper Rebuild Thread"
-description: "Enthusiast-forum thread documenting a front caliper rebuild on a sedan, with photos of bore wear and discussion of remanufactured units."
-content_type: text/html
-uris:
-  - "https://forum.example.com/threads/caliper-rebuild.4521/"
-capture_dates:
-  - 2026-03-15T14:22:00Z
-hashes:
-  simhash: "f7e8d9c0b1a24c3d"
-  sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-status: normalized
-visibility: visible
-
-# Schema-extracted extended fields (from text/html base schema)
-page_title: "Caliper Rebuild Thread"
-meta_description: "Discussion of front caliper rebuild"
-language: "en"
-
-# Custom classification audit trail
-classifications:
-  - schema: forum-thread
-    justification: "URL matched forum.example.com domain pattern"
-  - schema: community-validated
-    justification: "Repair confirmed across 5+ replies with photos; OP follow-up reports successful resolution; no dissenting comments"
----
-
-## Caliper Rebuild Thread
-
-**Original post by user_alpha, 2024-08-12:**
-
-Had to rebuild the front calipers on my sedan at 180k km.
-Here's what the bore looked like after pulling the piston:
-
-![[b8c9d0e1f2a3b4c5...]]
-
-Scoring was bad enough that I decided to replace rather than hone.
-Ordered a remanufactured unit from [a parts retailer](https://parts.example.com/caliper-xyz).
-
-If you're seeing similar wear, check out the
-[[c9d0e1f2a3b4c5d6...|brake bleeding procedure thread]]
-before reassembling — I made the mistake of not bench-bleeding first.
-```
-
-The inline image is embedded via raw `![[blake3]]` — intra-corpus, mirroring the original post's image. The link to the bleeding thread is a raw blake3 wikilink to another artifact record in the same corpus. The parts-retailer link stays as a plain markdown URL because that page wasn't captured. No editorialization in the body — it faithfully mirrors the original forum post's structure and content.
+For an **artifact-record** example — frontmatter, body blocks, and classifications — see `spec-corpus.md`. The example below is a **codex record**.
 
 #### Codex Record
 
@@ -676,11 +375,11 @@ the forum-thread discussion[^2] for additional commentary.
 [^2]: corpus://d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5...
 ```
 
-The codex record uses footnote citations for downward artifact references (resolved to APA at build time), functional-URI embeds for inline artifact-derived views (page extracts, framegrabs), and intra-codex wikilinks (`[[uuid]]`) for peer codex records. The footnote bodies carry bare `corpus://` URIs that the build resolves into proper APA-style citations, drawing author / publication-date / title / source from the cited artifact's frontmatter.
+The codex record uses footnote citations for downward artifact references (resolved to APA at build time), functional-URI embeds for inline artifact-derived views (page extracts, framegrabs), and intra-codex wikilinks (`[[uuid]]`) for peer codex records. The footnote bodies carry bare `corpus://` URIs that the build resolves into proper APA-style citations, drawing author / publication-date / title / source from the cited artifact's metadata (its corpus body blocks and derived views; see `spec-corpus.md`).
 
 ### 3.5 Classification
 
-Classification uses three mechanisms: tags (on codex records), the codex graph (wikilinks among codex records), and computed similarity (over normalized bodies and perceptual hashes).
+Classification uses three mechanisms: tags (on codex records), the codex graph (wikilinks among codex records), and computed similarity (a corpus-layer capability over normalized bodies and perceptual hashes; see `spec-corpus.md`).
 
 #### 3.5.1 Tags
 
@@ -688,7 +387,7 @@ Tags are a codex-record primitive — they handle categorical classification on 
 
 A codex MAY maintain a conventions file or use `codex.yaml` to list its tag vocabulary with one-line descriptions. This is guidance, not constraint — unknown tags are valid and signal vocabulary growth.
 
-Artifact classification works differently: every applied custom classification schema is recorded in the artifact's `classifications:[]` audit trail with a justification, and the schema's contributed extended fields merge into top-level frontmatter (§3.3.2). The schema-application *is* the artifact's classification signal.
+Artifact classification works differently: it is a corpus-layer concern, derived from the artifact's body blocks rather than declared in frontmatter (see `spec-corpus.md`). Each applied classification carries a justification; the schema-application *is* the artifact's classification signal.
 
 Compendium records organize by chapter structure and synthesis-system-prompt-driven taxonomy.
 
@@ -700,15 +399,7 @@ A codex record that represents a concept (a category, a person, a place, a thing
 
 #### 3.5.3 Deduplication and Similarity
 
-Deduplication and similarity are computed from intrinsic properties of artifacts:
-
-**Tier 1: Blake3 (exact).** Same bytes → same hash → same record. Structural, automatic, zero-cost.
-
-**Tier 2: Perceptual hashes (format-specific, cached).** Same perceptible content, different bytes. pHash/dHash for images, chromaprint for audio, simhash for text/HTML. Computed from the binary artifact. Cached for performance, rebuildable from inputs that are already stored.
-
-**Tier 3: Body embeddings (cross-modal, cached).** The normalized body projects every modality into text. Embeddings of that text enable universal semantic similarity. An audio transcript and an HTML transcript of the same interview land near each other because their normalized text says the same things. Cached, rebuildable, model-upgradeable.
-
-All three tiers produce queries, not stored edges. The spec defines the inputs (binary artifact + normalized body); tooling builds the indices.
+Deduplication and similarity over artifacts — exact (blake3), perceptual (per-format hashes), and semantic (embeddings of the normalized body) — are computed from intrinsic artifact properties and are a corpus-layer concern, specified by **`spec-corpus.md`**. The codex and compendium layers consume the results (e.g., finding related artifacts to cite) but do not define them.
 
 ### 3.6 Reference Resolution
 
@@ -716,7 +407,7 @@ Three reference primitives express the layered graph. Each has a single resoluti
 
 **Wikilinks `[[id]]` — intra-layer only.**
 
-- Artifact body: `[[blake3]]` → an artifact in the same corpus. Same-bytes blake3 collision across loaded corpora is harmless — the bytes are by definition identical; either copy resolves correctly.
+- Artifact body: `[[blake3]]` → an artifact in the same corpus (intra-corpus; a corpus-layer concern, see `spec-corpus.md`). Same-bytes blake3 collision across loaded corpora is harmless — the bytes are by definition identical; either copy resolves correctly.
 - Codex-record body: `[[uuid]]` → another codex record in the same codex (UUIDv7).
 - Compendium-record body: `[[slug]]` → another compendium record in the same compendium.
 
@@ -728,11 +419,11 @@ Wikilinks never cross containers. A codex record never wikilinks an artifact, an
 - Compendium body → artifact: `[^N]: corpus://{hash}` (or `corpus://{name}/{hash}` for provenance disambiguation).
 - Compendium body → codex record: `[^N]: codex://{name}/{uuid}` (with optional `#anchor`).
 
-The footnote body carries a bare URI; the build/export step resolves it into a proper APA-style citation, generating author / publication-date / title / source from the target record's metadata. The footnote label is author-chosen (numeric or short slug) and is preserved through resolution.
+The footnote body carries a bare URI; the build/export step resolves it into a proper APA-style citation, generating author / publication-date / title / source from the target's metadata — for an artifact, from its corpus body blocks and derived views (`spec-corpus.md`); for a codex record, from its frontmatter. The footnote label is author-chosen (numeric or short slug) and is preserved through resolution.
 
 **Embeds `![[…]]` — cross-layer functional inclusion (or intra-corpus raw cross-ref).**
 
-- Artifact body: `![[blake3]]` → intra-corpus raw embed (§3.2.2). Mirrors the original content's embeds; no scheme prefix, no transformation.
+- Artifact body: `![[blake3]]` → intra-corpus raw embed (a corpus-layer concern, §3.2.2, `spec-corpus.md`). Mirrors the original content's embeds; no scheme prefix, no transformation.
 - Codex- and compendium-record body: `![[corpus://{hash}?params]]` → functional URI embed of an artifact. A bare `![[corpus://{hash}]]` is the identity transform.
 
 Codex records are never embedded — when one codex record needs to draw on another, wikilink it; when a compendium needs to integrate a codex record, footnote-cite it.
@@ -743,47 +434,20 @@ Codex records are never embedded — when one codex record needs to draw on anot
 
 ### 3.7 Functional URI Scheme
 
-Functional URIs are a codex- and compendium-record primitive. They appear in footnote citations (resolved to APA at build time) and in embeds (resolved to inline content). Two URI schemes:
+Functional URIs are a codex- and compendium-record primitive. They appear in footnote citations (resolved to APA at build time) and in embeds (resolved to inline content). Two schemes:
 
-- **`corpus://`** — references an artifact, by content hash. Used in footnote citations and embeds.
-- **`codex://`** — references a codex record, by codex name and UUIDv7. Used only in compendium-record footnotes.
+- **`corpus://`** — references an artifact by content hash. Used in footnote citations and embeds. **Its grammar, transformation parameters (`page`, `crop`/`bbox`, `resize`, `framegrab`/`time_range`, `grayscale`, …), resolver contract, and caching are defined by `spec-corpus.md` (§6);** the upper layers use the scheme as-is.
+- **`codex://`** — references a codex record by codex name and UUIDv7. Used only in compendium-record footnotes. Defined here, since codex records are this spec's concern.
 
-**`corpus://` artifact URIs.**
-
-- **Base form:** `corpus://{hash}` — resolves to an artifact in any loaded corpus that has the hash.
-- **Provenance form:** `corpus://{name}/{hash}` — asserts which corpus. Used in compendium contexts where two loaded corpora share a hash and the compendium needs to be specific.
-- **Fragment navigation:** `corpus://{hash}#anchor` — navigates to a named section of the artifact's normalized body.
-- **Transformation parameters:** appended as query parameters, composed left-to-right (each function operates on the output of the previous):
-
-| Parameter | Applies to | Meaning |
-|-----------|-----------|---------|
-| `page={n}` | PDF | Extract page n (1-indexed). |
-| `page={n}-{m}` | PDF | Extract page range. |
-| `crop={x},{y},{w},{h}` | Image, PDF page | Crop to region (origin top-left, pixels or percentage). |
-| `resize={w}x{h}` | Image | Resize to dimensions. |
-| `framegrab={t}` | Video | Extract frame at timestamp (seconds or `m:ss`). |
-| `range={t1}-{t2}` | Audio, Video | Extract time range. |
-| `grayscale` | Image | Convert to grayscale. |
-
-**Composition example:** `corpus://{hash}?page=4&crop=50,100,550,400` — extract page 4 from a PDF, then crop to the indicated region. The result is an image.
+**`corpus://` (summary).** Base form `corpus://{hash}` resolves to an artifact in any loaded corpus that has the hash; `corpus://{name}/{hash}` asserts which corpus (provenance, for when two loaded corpora share a hash); `corpus://{hash}#anchor` navigates to a named region; query parameters compose left-to-right into a derived view (e.g. `corpus://{hash}?page=4&crop=50,100,550,400`). The authoritative form and parameter set live in `spec-corpus.md` §6.
 
 **`codex://` codex-record URIs.**
 
 - **Base form:** `codex://{name}/{uuid}` — resolves to the codex record with the given UUIDv7 in the codex named `{name}`.
 - **Fragment navigation:** `codex://{name}/{uuid}#anchor` — navigates to a named section of the codex record's body.
-- **No transformation parameters.** Codex records are not embedded or cropped or page-extracted; the URI exists for citation, not for derived views.
+- **No transformation parameters.** Codex records are not embedded, cropped, or page-extracted; the URI exists for citation, not for derived views.
 
-**Semantics:**
-
-- Functional URIs are **deterministic** — same inputs always produce the same output (the underlying artifact is immutable by content addressing; a codex record's UUID is stable within its codex instance).
-- Results are **cacheable** — the cache key is the full URI string. Cache can be blown away and regenerated at any time.
-- Results are **ephemeral** — they exist at compile/render time and are not stored as records.
-
-**In Obsidian (raw browsing):** URIs that can't be resolved at browse time fall back to displaying the alt text or footnote label. Tooling or plugins can resolve them.
-
-**In compiled outputs (mdbook, static site):** The build process resolves all functional URIs — computing artifact transformations for embeds, generating APA-style citations from footnote URIs.
-
-The transformation parameter set is deliberately minimal. Future extensions should be added conservatively — each parameter must be deterministic over immutable inputs.
+**Semantics.** Functional URIs are **deterministic** (the underlying artifact is immutable by content addressing; a codex record's UUID is stable within its codex instance), **cacheable** (the cache key is the full URI string), and **ephemeral** (they exist at compile/render time, not as stored records). In raw Obsidian browsing, an unresolved URI falls back to its alt text or footnote label. In compiled outputs (mdbook, static site), the build resolves every functional URI — computing artifact transformations for embeds, and generating APA-style citations from footnote URIs (drawing author / date / title from the target's metadata: an artifact's via its corpus body blocks and derived views, a codex record's via its frontmatter).
 
 ---
 
@@ -793,7 +457,7 @@ The path from raw content to a richly authored corpus has discrete steps; each i
 
 - **Capture** brings content into the corpus. Identity is the hash of the bytes; failed captures consume no identity space. Capture is the only step requiring network access. Every captured file becomes its own artifact record; bundles of related files (a page plus its embedded images, a video plus its description page) become multiple artifact records, related through cross-references in their normalized bodies.
 
-- **Normalize** transforms an artifact stub into a complete record: produces the body (extraction / transcription / description / metadata per the artifact's MIME, driven by the base schema), applies the matching base schema and any custom classification schemas, populates extended fields, records each schema application in `classifications:[]` with a required justification, resolves intra-corpus cross-references in the body to raw blake3 wikilinks and embeds, and refines the description. Bodies are faithful — normalization may improve accuracy but never adds information not present in the original.
+- **Normalize** transforms an artifact stub into a complete record — producing the faithful normalized body, applying classification, and resolving intra-corpus cross-references. The corpus-layer mechanics (the `stub → draft → normalized` lifecycle, the schema namespaces, and where classification and extracted fields live in the record) are specified by `spec-corpus.md`. Bodies are faithful — normalization may improve accuracy but never adds information not present in the original.
 
 - **Author** creates or edits a codex record (in a codex) or a compendium record (in a compendium) that synthesizes knowledge across artifacts and other records. The author writes nothing outside the target container. Authoring is non-destructive: referenced artifacts and other records are unchanged and independently addressable.
 
@@ -805,9 +469,9 @@ The path from raw content to a richly authored corpus has discrete steps; each i
   - **Codex build** — a browsable knowledge work (mdbook, static site, vault). Resolves intra-codex wikilinks (codex-record↔codex-record) and downward references (footnote URIs to artifacts, functional-URI embeds). The codex's referenced corpora must be loaded.
   - **Compendium build** — the published reference work. Resolves all references across the integration set (intra-compendium wikilinks; footnote URIs to codex records and artifacts, resolved into APA-style citations; functional-URI embeds). The compendium's referenced codices and corpora must be loaded.
 
-  The build process can also generate a lookup index mapping any `uris[]` value to its artifact id, enabling consumers to find records by any URL known to resolve to them.
+  The build process can also generate a lookup index mapping any known URI to its artifact id, enabling consumers to find records by any URL known to resolve to them.
 
-Procedural detail — fetch / hash / store ordering, MIME detection, conversion tooling, cross-reference-resolution mechanics, contextualization sub-steps, schema authoring, sharding, build mechanics, output formats — lives in `impl-corpus.md` and `impl-codex.md`.
+Procedural detail — fetch / hash / store ordering, MIME detection, conversion tooling, cross-reference-resolution mechanics, contextualization sub-steps, schema authoring, sharding, build mechanics, output formats — lives in `impl-corpus.md` and `impl-codex.md`. The corpus-layer data contract (record format, schemas, lifecycle) is specified by `spec-corpus.md`.
 
 ### 4.1 Phase Boundaries and Re-processing
 
@@ -832,7 +496,7 @@ Each operation can target specific records via metadata queries. The implementat
 
 The pipeline is operated by specialized agents — lightweight, single-purpose workers that each handle one item per invocation. Agents have focused responsibilities, process exactly one item, and report results to a coordinator. There is no inter-agent communication and no shared state beyond the corpus filesystem.
 
-Agents consult base schemas and any custom classification schemas under `schema/` to apply consistent normalization and classification per content type.
+Agents consult the corpus's schemas (specified by `spec-corpus.md`) to apply consistent normalization and classification per content type.
 
 ### 5.2 Capturer
 
@@ -842,7 +506,7 @@ Brings a single content item into the corpus.
 
 **Scope:** One content item per invocation.
 
-**Output contract:** When the capturer finishes successfully, the artifact record for the captured bytes exists (newly created or augmented with this capture's provenance), and the binary lives in the content-addressed store keyed by its blake3 hash. The artifact's MIME has been determined, and every hash declared by its base schema has been computed and recorded. The capturer reports whether the record is new or existing, plus any warnings.
+**Output contract:** When the capturer finishes successfully, the artifact record for the captured bytes exists (newly created or augmented with this capture's provenance), and the binary lives in the content-addressed store keyed by its blake3 hash. The artifact's MIME has been determined, and every hash declared by its schema has been computed and recorded. The capturer reports whether the record is new or existing, plus any warnings.
 
 The capturer is a reliable executor, not a decision maker — it does not choose what to capture or how to classify content. The procedural details (fetch tooling, MIME-detect ordering, in-memory vs on-disk staging) live in `impl-corpus.md`.
 
@@ -854,9 +518,9 @@ Brings an artifact stub to `status: normalized`.
 
 **Scope:** One artifact per invocation.
 
-**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized markdown body, every base-schema-declared field that can be extracted, every field declared by any custom classification schema whose match conditions are satisfied, a `classifications:` array entry for every custom classification schema that was applied (each with a required `justification`), a refined `description`, and `status: normalized`. Any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as a raw blake3 wikilink or embed (intra-corpus); targets that don't exist in the corpus remain as plain URLs. The normalizer never invents links the original content didn't contain.
+**Output contract:** When the normalizer finishes successfully, the artifact record carries a faithful normalized body, its classifications and extracted fields, a refined `description`, and `status: normalized`; any hyperlink or embed in the original content whose target exists in the corpus has been rewritten as an intra-corpus reference (targets not in the corpus remain plain URLs), and the normalizer never invents links the original didn't contain. Exactly where classifications and extracted fields live in the record, and the block grammar of the body, are the corpus normalization contract — specified by `spec-corpus.md`.
 
-Self-verification responsibilities: the artifact's `content_type` must match the MIME of the stored binary, and the `id` field must match the binary's blake3 hash.
+Self-verification responsibilities: the artifact's declared media type must match the MIME of the stored binary, and the `id` field must match the binary's blake3 hash.
 
 ### 5.4 Author
 
@@ -870,7 +534,7 @@ Creates or edits codex records in a codex (or compendium records in a compendium
 
 ### 5.5 Curator
 
-Autonomous orchestration skill that assesses corpus state, prioritizes work, and dispatches agents. Also responsible for the schema-feedback loop (§3.3.3) — monitoring the codex layer for emerging patterns and proposing new custom classification schemas to the operator.
+Autonomous orchestration skill that assesses corpus state, prioritizes work, and dispatches agents. Also responsible for the schema-feedback loop (§3.3) — monitoring the codex layer for emerging patterns and proposing new custom classification schemas to the operator (the schema mechanics themselves are specified by `spec-corpus.md`).
 
 **Operating loop:**
 
@@ -941,7 +605,7 @@ Compendiums select codex records and artifacts from one or more codices and corp
 
 - **Cite the lowest source that suffices.** When an artifact directly says it, footnote-cite the artifact (`[^N]: corpus://{hash}`); when interpretation that no single artifact provides is needed, footnote-cite the codex record that already did that synthesis (`[^N]: codex://{name}/{uuid}`). Artifacts are stable across all regeneration; codex-record references are stable only as long as the cited codex isn't regenerated, in which case the compendium must be re-built (§2.5, §6.5).
 - **Cite records.** Every factual claim references the identifier(s) it derives from. Use functional URI fragments and parameters (`corpus://{hash}#section`, `corpus://{hash}?page=4`) when citing specific pages, frames, or crops where precision matters.
-- **Represent disagreement.** When sources conflict, the compendium presents both positions with whatever credibility-signal classifications they carry (see §3.3.2). Where the corpus expresses no credibility signals, surface the disagreement neutrally and let the reader judge.
+- **Represent disagreement.** When sources conflict, the compendium presents both positions with whatever credibility-signal classifications they carry (a corpus-layer derived view; see `spec-corpus.md`). Where the corpus expresses no credibility signals, surface the disagreement neutrally and let the reader judge.
 - **Aggregate patterns.** If many artifacts describe the same phenomenon, the compendium captures the pattern (common conditions, symptoms, root cause) rather than citing each artifact individually.
 - **Weight by credibility signals.** Records carrying classifications the compendium treats as authoritative (e.g., `peer-reviewed`, `community-validated`) carry more weight in synthesis than records carrying classifications it treats as weaker (e.g., `preprint`, `anecdotal-claim`, `corporate-bias`). The specific weighting is a compendium-author choice — different compendiums on the same domain may weight the same signals differently. The synthesis system prompt (§6.4) is the natural place to encode the compendium's weighting policy.
 - **Respect issues.** Records with unresolved `critical` or `major` issues should be weighted accordingly and gaps noted.
@@ -964,89 +628,7 @@ A record updated in place (re-authored, re-normalized) triggers re-synthesis onl
 
 ---
 
-## Appendix A: MIME Reference
-
-This appendix is a concise overview of MIME types commonly encountered in practice. The authoritative source for normalization guidance per MIME is the base schema in `schema/base/`. Extended fields beyond `content_type` are extracted by base schemas (format-intrinsic) and custom classification schemas (corpus-local, optional, domain-specific).
-
-Any IANA-registered MIME is valid as a `content_type` value. `unknown` is permitted as a sentinel.
-
-### A.1 Common artifact MIMEs
-
-| MIME | Method | Typical extended fields | Notes |
-|------|--------|------------------------|-------|
-| `text/html`, `application/xhtml+xml` | extraction | `page_title`, `meta_description`, `canonical_url`, `og_title`, `og_description`, `og_image`, `og_type`, `language` | Strip navigation, chrome, advertising. Preserve primary content, headings, tables, code blocks. The largest MIME by volume in most corpora. |
-| `application/pdf` | extraction | `page_count`, `pdf_author`, `pdf_title`, `pdf_creation_date`, `pdf_producer`, `is_scanned` | Extract text and tables. OCR if scanned. Page boundaries surface as section anchors usable from functional URIs. |
-| `application/epub+zip` | extraction | `work_title`, `epub_author`, `language`, `chapter_count`, `word_count` | Parse chapter structure; one heading per chapter. Internal links resolve via cross-reference resolution if other captures match. |
-| `text/markdown`, `text/plain` | extraction (passthrough) | `word_count`, `language` | Minimal cleanup; the body is the file's contents. |
-| `video/mp4`, `video/webm`, `video/mkv`, `video/quicktime` | transcription | `duration_seconds`, `width_px`, `height_px`, `frame_rate`, `video_codec`, `audio_codec` | Transcribe audio with timestamps. Frame descriptions per schema guidance. |
-| `audio/mpeg`, `audio/flac`, `audio/wav`, `audio/ogg` | transcription | `duration_seconds`, `bitrate_kbps`, `sample_rate_hz`, `channels` | Transcribe with timestamps. Speaker turn markers where determinable. ID3-tagged audio that a corpus-local custom classification schema recognizes as musical recordings gains `artist`, `track_title`, `album`, `track_number`. |
-| `image/jpeg`, `image/png`, `image/webp`, `image/gif` | description | `width_px`, `height_px`, `color_space`, `exif_date`, `exif_gps_lat`, `exif_gps_lon`, `exif_camera` | Visual description and OCR text in body. Embedded in artifact bodies via raw `![[blake3]]` (intra-corpus); embedded in codex- or compendium-record bodies via functional URI `![[corpus://hash?params]]`. |
-| `message/rfc822` | extraction | `from`, `to`, `subject`, `message_date`, `in_reply_to` | Body is the message text; headers extracted to extended fields. Multipart bodies flatten to text/plain or text/html as primary. |
-| `application/json` | extraction (passthrough) | `top_level_keys` | Prettify; preserve structure. |
-| `unknown` | metadata | `byte_size`, `magic_bytes_summary` | Best-effort fallback. Record the gap in `issues[]`. |
-
-### A.2 Classification examples
-
-A corpus typically authors custom classification schemas to recognize content patterns it cares about. Each schema's *application* (its entry in `classifications:[]`) is itself the artifact-side classification signal. Examples of content-pattern schemas:
-
-- **Forum threads** — text/html on a known forum domain → adds extended fields `username`, `thread_url`, `reply_count`.
-- **Voting-community threads** — text/html on aggregator-style platforms → adds `community_slug`, `post_url`, `score`, `comment_count`.
-- **Web articles** — text/html on publisher domains → adds `article_url`, `publication`, `byline`.
-- **Service manuals** — application/pdf with publisher metadata matching a manual pattern → adds `service_section`, `vehicle_platform`, `manufacturer`.
-- **Musical recordings** — audio/* with populated ID3 artist/album → adds `artist`, `track_title`, `album`, `track_number`.
-
-Credibility signals are also custom classifications — each signal is its own narrow schema. There is no universal credibility scheme; corpora invent their own vocabulary as patterns emerge. Some illustrative examples:
-
-```yaml
-# schema/classification/peer-reviewed.yaml
-schema_type: classification
-match:
-  content_type: "application/pdf"
-  uri_pattern: "^https?://(www\\.sciencedirect|link\\.springer|onlinelibrary\\.wiley|nature)\\.com/"
-```
-
-```yaml
-# schema/classification/preprint.yaml
-schema_type: classification
-match:
-  content_type: "application/pdf"
-  uri_pattern: "^https?://(arxiv\\.org|biorxiv\\.org|medrxiv\\.org)/"
-```
-
-```yaml
-# schema/classification/corporate-bias.yaml
-schema_type: classification
-match:
-  content_type: "*"
-  # LLM judgment: matches when contextualization recognizes
-  # promotional / corporate-PR framing in the content.
-```
-
-```yaml
-# schema/classification/community-validated.yaml
-schema_type: classification
-match:
-  has_classifications: [forum-thread]
-  # LLM judgment: applies when thread shows clear consensus
-  # across multiple independent users and no dissent.
-```
-
-```yaml
-# schema/classification/anecdotal-claim.yaml
-schema_type: classification
-match:
-  has_classifications: [forum-thread]
-  # LLM judgment: applies when content is a single user's
-  # unconfirmed experience report.
-```
-
-These schemas record themselves in the matched artifact's `classifications:[]` audit trail (with required justification, §3.3.2). They contribute no extended fields — the schema name itself is the signal that a compendium synthesis can weight.
-
-Different corpora carry different credibility vocabularies. A research-paper corpus might define schemas like `retracted`, `predatory-journal`, `industry-funded`. A forum corpus might define `op-claim`, `consensus-supported`, `disputed`. A news corpus might define `wire-service`, `op-ed`, `sponsored-content`. The vocabulary evolves as the curator notices what kinds of credibility distinctions actually matter for the corpus's downstream synthesis use cases — the §3.3.3 schema-feedback loop applies to credibility signals like any other custom classification.
-
-Custom classification schemas are corpus-local and optional. The same MIME can carry different custom classifications across corpora. Unclassified artifacts are fully valid — the base schema fields are sufficient on their own.
-
-### A.3 When to author a codex record
+## Appendix A: When to Author a Codex Record
 
 A rule of thumb: when multiple artifacts share strong classification overlap (the same custom classification schemas applied across them) and would benefit from synthesized prose, author a codex record. Examples where authored records pay off:
 

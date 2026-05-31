@@ -10,9 +10,10 @@ If you are Claude Code and this is the start of a session working on Athenaeum, 
 
 ```
 athenaeum/
-├── spec-athenaeum.md        # Canonical specification (v10) — data contract for records, frontmatter, body, schema library
+├── spec-athenaeum.md        # Architecture spec (v11) — three layers, codex + compendium contracts; corpus layer defers to spec-corpus.md
+├── spec-corpus.md           # Corpus spec (ATH-CORPUS v1.0) — artifact record format, body blocks, schemas, functional URIs
 ├── impl-corpus.md           # Implementation guide for the corpus / artifact-layer pipeline
-├── impl-codex.md            # Implementation guide for the codex / document-layer pipeline
+├── impl-codex.md            # Implementation guide for the codex layer + compendium build
 ├── docs/
 │   ├── CONTENT-TYPES.md     # Content type enumeration and metadata attributes
 │   ├── NEW-CORPUS.md        # Corpus planning notes
@@ -58,7 +59,7 @@ cd crates/ath-gui && trunk build
 
 ## Key design principles
 
-- **`spec-athenaeum.md` is the spec.** Code must conform to it. When code needs something the spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md` and `impl-codex.md`, not in the spec.
+- **The specs are `spec-athenaeum.md` (architecture + codex/compendium contracts) and `spec-corpus.md` (the corpus layer).** Code must conform to them. When code needs something a spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md` and `impl-codex.md`, not in the specs.
 - **Two corpora, always separate.** `../corpus-private` and `../corpus-public` are hardcoded in ath-server. They are distinct collections with a corpus switcher, never merged.
 - **Client-server architecture.** Both desktop and web targets are HTTP clients. The GUI never reads the filesystem directly.
 - **SQLite is in-memory.** Rebuilt from corpus files on every server start. It's a query engine, not a data store.

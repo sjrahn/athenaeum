@@ -2,7 +2,7 @@
 
 **Status:** living document. Updates as implementation matures.
 
-**Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), the authoritative data contract. This guide describes the *implementation* of the codex layer, plus the compendium build process that sits above it. Choices here may change as tooling evolves; the spec must not.
+**Companion to:** [`spec-athenaeum.md`](spec-athenaeum.md), the authoritative architecture + codex/compendium contract — the corpus layer it references is specified by [`spec-corpus.md`](spec-corpus.md). This guide describes the *implementation* of the codex layer, plus the compendium build process that sits above it. Choices here may change as tooling evolves; the spec must not.
 
 The corpus / artifact-layer counterpart is [`impl-corpus.md`](impl-corpus.md).
 
