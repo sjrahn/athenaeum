@@ -19,11 +19,15 @@ __all__ = ["dispatch", "main"]
 _COMMANDS: dict[str, tuple[str, str]] = {
     # Scaffolding (P1)
     "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/composite/<ns>/)"),
-    # Capture & ingest (P2)
+    # Capture & ingest (P2; capture added P4)
+    "capture":         ("Capture & ingest",       "Capture a URL into capture/, then ingest to a record stub"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
+    # Crawl & discovery (P4)
+    "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
+    "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
     # Inspect (P1)
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
@@ -46,6 +50,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
 _GROUP_ORDER: tuple[str, ...] = (
     "Scaffolding",
     "Capture & ingest",
+    "Crawl & discovery",
     "Inspect",
     "Edit",
     "Storage",

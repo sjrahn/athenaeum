@@ -591,6 +591,71 @@ def primary_origin_uri(post: frontmatter.Post) -> str:
     return ""
 
 
+def iter_origin_uris(post: frontmatter.Post) -> Iterator[str]:
+    """Yield every URI across all origin blocks (string and list forms flattened).
+
+    The corpus-wide complement to `primary_origin_uri`: used to build the
+    URI → record-id index that capture/crawl/links consult for dedup.
+    """
+    for origin in iter_origin_blocks(post):
+        fields = origin.get("fields") or {}
+        uri = fields.get("uri")
+        if isinstance(uri, list):
+            yield from (str(u) for u in uri if u)
+        elif uri:
+            yield str(uri)
+
+
+# ---------- corpus-wide URI index (spec §9.3 `uris` view, consumer side) ---------- #
+
+
+def build_uri_index(corpus_root: Path) -> dict[str, str]:
+    """Map every record's canonical origin URI → that record's id.
+
+    One glob pass over `records/`. Unparseable records are skipped (tolerant
+    parse, per the project's parse-tolerantly principle). When two records claim
+    the same canonical URI the later one (sorted by path) wins — a corpus-health
+    concern surfaced elsewhere, not here.
+
+    This is the lightweight index `corpus links` / `corpus crawl` need; P5's
+    `health` module builds a richer `RecordRef`-based variant for diagnostics.
+    """
+    from . import urls as _urls
+
+    index: dict[str, str] = {}
+    for md in sorted((corpus_root / "records").glob("*/*.md")):
+        try:
+            post = load(md)
+        except Exception:
+            continue
+        record_id = str(post.metadata.get("id") or md.stem)
+        for uri in iter_origin_uris(post):
+            try:
+                key = _urls.normalize(uri)
+            except Exception:
+                continue
+            if key:
+                index[key] = record_id
+    return index
+
+
+def find_by_uri(url: str, *, corpus_root: Path) -> str | None:
+    """Return the id of the record whose origin URIs include `url`, else None.
+
+    `url` is canonicalized (`urls.normalize`) before lookup so trailing-slash /
+    query-order / case differences don't cause a miss. Rebuilds the index per
+    call — fine for the handful of seed/frontier checks the crawler makes; a
+    caller doing many lookups should `build_uri_index` once and index directly.
+    """
+    from . import urls as _urls
+
+    try:
+        target = _urls.normalize(url)
+    except Exception:
+        target = url
+    return build_uri_index(corpus_root).get(target)
+
+
 # ---------- mutators ---------- #
 
 

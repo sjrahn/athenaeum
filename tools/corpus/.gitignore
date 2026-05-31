@@ -7,3 +7,6 @@ build/
 .ruff_cache/
 .mypy_cache/
 *.pyc
+
+# Optional vendored SingleFile bundle (~900KB; fetched per vendor/README.md)
+src/corpus/vendor/single-file.js

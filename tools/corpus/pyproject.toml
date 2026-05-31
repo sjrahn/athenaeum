@@ -38,9 +38,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/corpus"]
 
-# Ship the bundled universal schemas (YAML) inside the wheel as package data.
+# Ship the bundled universal schemas (YAML) + the vendor dir (README, and the
+# SingleFile bundle when an operator has dropped it in) inside the wheel.
 [tool.hatch.build.targets.wheel.force-include]
 "src/corpus/schemas_default" = "corpus/schemas_default"
+"src/corpus/vendor" = "corpus/vendor"
 
 [tool.uv]
 package = true
@@ -72,6 +74,9 @@ select = [
 "src/corpus/_cli/__init__.py" = ["E501"]
 "src/corpus/lint.py" = ["E501"]
 "src/corpus/recordbuild.py" = ["E501"]
+# Static regex/signature catalog — long compiled patterns + intentional mojibake
+# literals (ambiguous Unicode is the point, not a typo).
+"src/corpus/quality/signatures.py" = ["E501", "RUF001", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
