@@ -16,7 +16,7 @@ date_modified: 2026-05-30
 
 A **corpus** is a content-addressed archive of captured artifacts, accessed through faithfully represented markdown proxies called **records**. Artifacts are deconstructed into addressable segments and normalized to text, either losslessly or by description. Artifacts can stack classifications for the purposes of discoverability and improved normalization.
 
-A record is a single markdown file. The YAML frontmatter at its head carries a small bytes-identity header — what these bytes ARE (their hashes), the editorial summary, the audit log of processing passes. The **record body** below the frontmatter is organized into three **zones**: a **metadata zone** declaring what the artifact is, where it came from, what classifications apply to it, and what assets it embeds; a **content zone** carrying the rendered content as sections and segments; and an **annotations zone** carrying observations about the record. Each zone holds a small set of HTML-comment block families; §4.3 specifies the grammar.
+A record is a single markdown file. The YAML frontmatter at its head carries a small bytes-identity header — what these bytes ARE (their hashes), the editorial summary, the provenance chain of processing passes. The **record body** below the frontmatter is organized into three **zones**: a **metadata zone** declaring what the artifact is, where it came from, what classifications apply to it, and what assets it embeds; a **content zone** carrying the rendered content as sections and segments; and an **annotations zone** carrying observations about the record. Each zone holds a small set of HTML-comment block families; §4.3 specifies the grammar.
 
 ### 1.2 The transport model
 
@@ -24,8 +24,8 @@ Every captured file is a **transport** — a media-type-shaped container — tha
 
 - A transport's **intrinsic information** surfaces in the record's metadata zone — primarily in the artifact block for transport-intrinsic fields.
 - A transport's **content** decomposes into a flat sequence of addressable segments in the record's content zone. Each segment carries one of four **content atoms** (text, image, audio, video) and an **address** indicating its location inside the transport.
-- A transport's content MAY itself contain a **nested transport**. How it surfaces is set by the media-type schema's container disposition: a **self-contained** transport lifts the nested transport's intrinsic metadata into the outer record's artifact block (e.g. per-stream fields for a multi-stream media file) and addresses its content per stream / per member, while an asset the transport merely references is described as an embed in the metadata zone. A transport with no declared disposition (a raw archive) defaults to **decomposable** (next bullet).
-- A transport MAY be declared **decomposable** by its media-type schema, in which case the ingestor treats it as a folder of files: each member becomes its own captured artifact, and the container itself produces no record.
+- A transport's **container disposition** is declared by its media-type schema (`artifact_kind`, §7.1) and is **required** — there is no default. A **self-contained** transport produces a single record; when it contains a **nested transport**, it lifts that nested transport's intrinsic metadata into the outer record's artifact block (e.g. per-stream fields for a multi-stream media file) and addresses its content per stream / per member, while an asset it merely references is described as an embed in the metadata zone. An ordinary single-content file (a plain HTML page, a PDF) is `self_contained` — it simply has no nested transport to lift.
+- A transport MAY instead be declared **decomposable** by its media-type schema (a raw archive), in which case the ingestor treats it as a folder of files: each member becomes its own captured artifact, and the container itself produces no record.
 
 ### 1.3 The atom / segment model
 
@@ -55,7 +55,7 @@ captured bytes              (no identity yet — staging only)
  normalized record          ready for use
 ```
 
-Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. Re-running any stage is an expected refinement pattern, not a fallback; every stage appends a `touch[]` entry to the record's audit log.
+Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. Re-running any stage is an expected refinement pattern, not a fallback; every stage from ingest onward appends a `touch[]` entry to the record's provenance chain (which `re-stub` may reset, §8.4).
 
 ### 1.5 Design principles
 
@@ -63,7 +63,7 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 2. **Content addressing.** Every artifact's identity is the blake3 hash of its bytes. Bytes don't change; if they did, the hash would change and the record would be a different record.
 
-3. **Faithfulness.** A record body is a faithful, lossless rendering of the transport's content. Normalization may resolve ambiguity (encoding, broken layout, OCR for scans) but never adds information not present in the source. Descriptive content (a summary of what an image shows, a paraphrase of what was said) is lossy by definition and lives on the embed's description field, **not** in a segment body. Re-segmentation is structural, never editorial.
+3. **Faithfulness.** A record body is a faithful, lossless rendering of the transport's content. Normalization may resolve ambiguity (encoding, broken layout, OCR for scans) but never adds information not present in the source. Descriptive content (a summary of what an image shows, a paraphrase of what was said) is lossy by definition and lives on the matching embed's description field — or, when no embed exists, on the addressing segment's or section's `description:` — **not** in a segment body. Re-segmentation is structural, never editorial.
 
 4. **The record body as universal representation.** Every artifact carries a markdown body composed of segments. This projects every modality — text, image, audio, video — into a common representational space. Search, similarity, and embeddings all operate on the body.
 
@@ -77,9 +77,9 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 9. **Offline-first.** Only `capture` requires network access. Ingest, draft, normalize, and URI resolution all operate on local data.
 
-10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the audit log, the editorial summary. Everything else — title, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block.
+10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial summary. Everything else — title, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block.
 
-11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (walk semantic-tagged schema fields).
+11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
 
 ---
 
@@ -138,7 +138,7 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
-| `description` | string | yes | 1–3 sentence summary. Empty (`''`) at stub/draft; populated at `normalized`. The primary mechanism for discovery. |
+| `description` | string | yes | 1–3 sentence summary. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. The primary mechanism for discovery. |
 | `status` | enum | yes | `stub`, `draft`, or `normalized`. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
 | `canonical` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | A canonicalized-content hash, set at draft time by the matching media-type schema's canonicalization strategy. Lets two records be compared for "same content?" even when ever-changing metadata (timestamps, producer strings) differs. Optional. |
@@ -148,13 +148,13 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 
 #### 4.2.2 Touch identifiers
 
-A touch identifier is a short bare string distinguishing a processing pass. The sequence is `touch[]` — a bare string when the chain has one entry, a list otherwise; the chain itself is the audit log.
+A touch identifier is a short bare string distinguishing a processing pass. The sequence is `touch[]` — a bare string when the chain has one entry, a list otherwise; the chain records the record's **current-shape provenance** (which passes produced the shape it has now). It is not an immutable history: `re-stub` resets it (§8.4), so a re-stubbed record's chain reflects its post-reset lineage, not every pass it ever saw.
 
-- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>`. The `<package>.<module>` identifies the code path; `<version>` is its installed version.
+- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>`, where `<module>` may be a dotted path (e.g. `draft.<mime-type-id>`, `classify.<namespace>-<id>`). The `<package>.<module>` identifies the code path; `<version>` is its installed version.
 - **LLM models** use the canonical model identifier with any context modifier in brackets — e.g. `<model-id>[<modifier>]`.
 - **Combined tooling + model** — a single pass that is both a deterministic re-assembly and the LLM pass it carries joins the two with `+`: `<package>.<module>@<version>+<model-id>`.
 
-Consecutive identical passes coalesce rather than repeat: a second identical identifier becomes `<identifier>_2`, a third `<identifier>_3`, and so on; a different identifier resets the count.
+Consecutive identical passes coalesce rather than repeat: a second identical identifier becomes `<identifier>_2`, a third `<identifier>_3`, and so on; a different identifier resets the count. The counter reflects the current chain, so a `re-stub` (which collapses the chain, §8.4) resets it.
 
 The latest touch's tooling version implicitly encodes the spec era under which the record's current shape was produced.
 
@@ -167,12 +167,12 @@ Every block has the same shape: an HTML comment whose opener line carries a keyw
 ```
 ─── metadata zone ────────────────────────
 <!--artifact <mime-type>-->               # exactly 1
-<!--origin [<id>[/<subtype>]]-->          # 0..N
-<!--embed <mime-type>-->                  # 0..N
+<!--origin [<id>[/<subtype>]]-->          # 1..N
 <!--classify <namespace>/<id>-->          # 0..N
+<!--embed <mime-type>-->                  # 0..N
 
 ─── content zone ─────────────────────────
-<!--section [<namespace>/<id>]-->         # 0..N (each contains 1..N segments)
+<!--section [<namespace>/<id>]-->         # 0..N (each contains 0..N segments)
 or
 <!--segment <atom>-->                     # 0..N (sectionless top-level segments)
 
@@ -180,7 +180,7 @@ or
 <!--issue <id>[/<subtype>]-->             # 0..N (record- or segment-scoped via address:)
 ```
 
-Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
+Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant (only the order among classify blocks matters — §4.3.1.3); the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
 
 #### 4.3.1 The metadata zone
 
@@ -202,7 +202,7 @@ Contributes one entry — `mime/<mime-type>` — to the derived classifications 
 
 ##### 4.3.1.2 The origin block
 
-Zero or more per record. Each block describes one origin (one source of retrieval). The required body fields are `uri:` (string or list-of-strings — a canonical URL plus its shortlinks/redirects collapse to one block whose `uri:` is a list) and `snapshot:` (ISO-8601 timestamp of when this origin was observed). Multiple origin blocks describe genuinely separate sources.
+One or more per record. Each block describes one origin (one source of retrieval). The required body fields are `uri:` (string or list-of-strings — a canonical URL plus its shortlinks/redirects collapse to one block whose `uri:` is a list) and `snapshot:` (ISO-8601 timestamp of when this origin was observed). Multiple origin blocks describe genuinely separate sources. A capture with no retrieval URL (a local file) still records an origin, using a `file://` or filesystem-path `uri:`.
 
 ```
 <!--origin <id>
@@ -299,7 +299,7 @@ Embeds are deduplicated by `transport` — identical content collapses to one em
 
 Segments link to embeds by **address membership**, not by an explicit reference field. A segment whose address appears (scalar or list-member) in an embed's `address` is described by that embed. Orphan embeds — embeds with no segment pointing at them — are tolerated as a record of available imagery; the normalizer may prune them.
 
-Every image, audio, and video segment's address must appear in some embed's address — **except artifact-self-slices**. When a segment's address is a region of the record's *own* artifact that the resolver can materialize on demand (a `frame=`/`time=`/`time_range=` into a video, a `page=` render of a PDF, a `bbox=` into a single-image record), no embed is required: the bytes already live in the artifact and the functional URI (§6) produces the slice. An embed is needed only for assets the artifact does *not* itself contain — an inline image referenced by an HTML page, a nested transport, an externally-sourced clip.
+Every image, audio, and video segment's address must appear in some embed's address — **except artifact-self-slices**. When a segment's address is a region of the record's *own* artifact that the resolver can materialize on demand (a `frame=`/`time=`/`time_range=` into a video, a `page=` render of a PDF, a `bbox=` into a single-image record), no embed is required: the bytes already live in the artifact and the functional URI (§6) produces the slice. An embed is needed only for assets the artifact does *not* itself contain — an inline image referenced by an HTML page, a nested transport, an externally-sourced clip. A self-slice carries any description on the addressing segment's (or section's) own `description:`, since there is no embed to host it.
 
 #### 4.3.2 The content zone
 
@@ -328,7 +328,7 @@ address: <next-address>
 ...
 ```
 
-A section's closer (`-->`) is followed **directly** by its first child segment opener. Markdown prose between a section closer and its first segment opener is a parse error — sections have no body region.
+A section's closer (`-->`) is followed **directly** by its first child segment opener — or, for an empty section (a TOC node with no content of its own), by the next section opener or the end of the body. Markdown prose between a section closer and the next opener is a parse error — sections have no body region.
 
 A section's child segments arrange themselves along the media's natural axis:
 - **Parallel** (temporal media) — segments within a section are simultaneous along time.
@@ -340,8 +340,9 @@ A section's child segments arrange themselves along the media's natural axis:
 |---|---|---|
 | `address` | Required | Address inside the transport in the scheme defined by the media-type schema. The section's identity. |
 | `entry` | Optional | The TOC label — written by the drafter when the source has a natural title; by the normalizer otherwise. |
+| `description` | Optional | Scope-specific description of what this section IS — used when the section's address is a self-materializable asset (an artifact-self-slice with no embed, §4.3.1.4) and no child segment carries the description. Normalizer-written. |
 
-The section's composite classification, if any, rides on the opener line as `<!--section <namespace>/<id>-->` — exactly as an atomic overlay rides a segment opener (§4.3.2.2) and a namespaced id rides a classify block (§4.3.1.3). A section carries at most one composite; the composite's extended fields sit flat in the section header. The overlay's declaring schema must permit section scope (`applies_at: section`, §4.4).
+The section's composite classification, if any, rides on the opener line as `<!--section <namespace>/<id>-->` — exactly as an atomic overlay rides a segment opener (§4.3.2.2) and a namespaced id rides a classify block (§4.3.1.3). A section carries at most one composite; the composite's extended fields sit flat in the section header. The overlay's declaring schema must permit section scope (its `applies_at` must include `section`, §7.4).
 
 ###### Section emission
 
@@ -396,13 +397,13 @@ Segment-scope issues live as standalone issue blocks in the annotations zone wit
 ###### The four content atoms
 
 - **`text`** — the atom whose segments carry segment bodies, with one exception. Plain prose by default; shaped by a `text/<overlay>` for structured lossless forms. A `text/<overlay>` declaring `enables_lossless: false` is a body-empty marker like the non-text atoms, with its meaning on the segment `description:` (see the body permission rule).
-- **`image`** — a static image at the addressed region. Body-empty positioning marker; description on the matching embed at the same address.
-- **`audio`** — an audio range. Body-empty positioning marker; description on the matching embed. Transcripts live as separate `text` segments at the same address.
-- **`video`** — a video stream over the addressed time range. Body-empty positioning marker; description on the matching embed. Captions and scene transcripts live as separate `text` segments at the same address.
+- **`image`** — a static image at the addressed region. Body-empty positioning marker; description on the matching embed at the same address — or, for an artifact-self-slice with no embed (§4.3.1.4), on this segment's own `description:`.
+- **`audio`** — an audio range. Body-empty positioning marker; description on the matching embed (or, for a self-slice, on the segment's `description:`). Transcripts live as separate `text` segments at the same address.
+- **`video`** — a video stream over the addressed time range. Body-empty positioning marker; description on the matching embed (or, for a self-slice, on the segment's `description:`). Captions and scene transcripts live as separate `text` segments at the same address.
 
 ###### Faithfulness
 
-The segment body MUST be a faithful, lossless rendering of the addressed content. Descriptive content (a summary of what an image shows, a paraphrase of what was said, or what a live/computed region contains) is **lossy** by definition and belongs on the matching embed's `description` field — or, for a non-lossless `text/<id>` overlay, on the segment's own `description:` — NOT in a segment body. Re-segmentation is structural; content within remains faithful.
+The segment body MUST be a faithful, lossless rendering of the addressed content. Descriptive content (a summary of what an image shows, a paraphrase of what was said, or what a live/computed region contains) is **lossy** by definition and belongs on the matching embed's `description` field — or, when no embed exists (an artifact-self-slice, §4.3.1.4, or a non-lossless `text/<id>` overlay), on the addressing segment's or section's own `description:` — NOT in a segment body. Re-segmentation is structural; content within remains faithful.
 
 ###### Cross-references in segment bodies
 
@@ -416,7 +417,7 @@ Segment bodies may carry:
 
 ###### Body-draft mode contract
 
-A pass operating in body-draft mode **completely overwrites** any existing content zone in the record body. No dependency on prior content; no expectation that future content survives; same bytes always produce the same content zone (modulo extractor version). Body-drafting is total replacement.
+The mime schema is the **only** body-drafter — it alone owns the content zone. A pass operating in body-draft mode **completely overwrites** any existing content zone in the record body. No dependency on prior content; no expectation that future content survives; same bytes always produce the same content zone (modulo extractor version). Body-drafting is total replacement. Mechanical classifications are metadata-only and never body-draft (§7.4).
 
 #### 4.3.3 The annotations zone
 
@@ -455,7 +456,7 @@ The universal issue overlay declares fields every issue carries:
 - `detector` — touch identifier of the pass that emitted the issue.
 - `address` (optional) — segment address when the issue is segment-scoped.
 
-Per-id overlays extend with id-specific fields.
+Per-id overlays extend with id-specific fields. The `severity`/`resolution` value sets are corpus-local (schema-declared); cross-corpus tooling should treat unknown values gracefully rather than assuming a fixed vocabulary.
 
 ###### Provenance
 
@@ -476,7 +477,7 @@ Every classification falls along one of four conceptual axes. Each axis has its 
 | Axis | What it identifies | Block | Schema namespace |
 |---|---|---|---|
 | **media-type** | The format / container / transport of the bytes. | artifact block (exactly 1) | `mime` |
-| **origin** | Where the bytes came from. | origin block (0..N) | `origin` |
+| **origin** | Where the bytes came from. | origin block (1..N) | `origin` |
 | **atomic** | What kind of atomic content a segment carries. | segment-block opener | `atom` |
 | **composite** | A named recurring pattern that combines axes. | classify block at record scope; section opener at section scope | `composite` |
 
@@ -484,14 +485,14 @@ Every classification falls along one of four conceptual axes. Each axis has its 
 
 Atomic-axis schemas declare two extra keys beyond the universal classification fields:
 
-- `applies_to.atom` — which atom this overlay attaches to (`text`, `image`, `audio`, or `video`). Must match the id's namespace prefix.
+- `applies_to.atom` — which atom this overlay attaches to (`text`, `image`, `audio`, or `video`). Must match the id's axis segment (e.g. `text` in `atom/text/data-table`).
 - `enables_lossless` (boolean, default false) — when `true`, this overlay licenses a shaped lossless body in the text-atom segment that carries it. Only valid on `applies_to.atom: text` overlays. The overlay's declaration describes what shape the body takes.
 
 A segment carries **exactly one** atomic class id, on the opener line. When multiple representations apply to the same source region, each becomes its own segment.
 
 #### 4.4.2 Three scopes
 
-Classifications attach at three structural scopes:
+Classifications attach at three structural scopes — record, section, segment — plus the **embed**, where the media-type axis attaches via each embed's MIME:
 
 | Axis | Record | Section | Segment | Embed |
 |---|---|---|---|---|
@@ -512,7 +513,7 @@ A composite schema's extended fields decompose into three field groups by scope 
 
 - **Descriptive** — common across scopes the schema declares.
 - **Structural** — record-scope only.
-- **Citation** — section-scope only (`source_uri`, `source_url`, `attribution_text`, `cited_by_reason`, `in_point`, `out_point`).
+- **Citation** — section-scope only: the resolvable-source fields `attribution_text`, `source_url`, `source_uri` (the §4.4.5 ladder). The further fields `cited_by_reason`, `in_point`, `out_point` belong to the **deferred** dual-composite citation model (§4.4.3) and are not yet a usable contract.
 
 #### 4.4.5 Three-tier lineage ladder
 
@@ -528,7 +529,7 @@ Host records never change shape — enrichment happens at the linked target.
 
 #### 4.4.6 Mechanical vs interpretive kind
 
-Each classification schema declares `kind: mechanical` or `kind: interpretive` (§7.4).
+Each **composite** classification schema declares `kind: mechanical` or `kind: interpretive` (§7.4). (The other axes fix their kind: atom schemas declare `kind: atomic` (§7.3); origin overlays are always `kind: interpretive` (§7.2).)
 
 | Kind | When it runs | What it does |
 |---|---|---|
@@ -539,7 +540,7 @@ Block ordering reflects execution order: mechanical first (drafter-declared orde
 
 #### 4.4.7 Re-run lifetime
 
-Classify blocks persist across re-runs **unless their declaring schema is itself re-run**. A re-draft of the mime schema refreshes only the artifact block. A re-draft of a specific mechanical classification refreshes only that classify block. A re-normalize refreshes only the interpretive classify blocks (and may re-segment the content zone). To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
+Classify blocks persist across re-runs **unless their declaring schema is itself re-run**. A re-draft of the mime schema refreshes the artifact block and, for a body-draft mime schema, re-runs the body draft (re-segmenting the content zone and re-emitting embeds). A re-draft of a specific mechanical classification refreshes only that classify block. A re-normalize refreshes only the interpretive classify blocks (and may re-segment the content zone). To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
 
 ---
 
@@ -559,15 +560,15 @@ If the same bytes are encountered again, the record's identity is unchanged. The
 
 If a URL re-fetched later yields different bytes, the new content produces a different hash and therefore a different record.
 
-### 5.3 Referencing a specific segment in another record
+### 5.3 Referencing a region in another record
 
-A segment's identity is `(opener-id, address)`. To reference a specific segment from outside the record that contains it, encode the address in the functional URI's query string:
+A functional URI addresses a **region** of a record — encode the address in its query string:
 
 ```
 corpus://<hash>?<address-keys>
 ```
 
-The same form serves both navigation (wikilink) and rendering (embed).
+The same form serves both navigation (wikilink) and rendering (embed). It carries the **address only**, so it resolves to the region (and the asset or derived view at it), not to one specific representation: where same-region stacking places several segments at one address (a segment's in-record identity is `(opener-id, address)`, §4.3.2.2), those representations are distinguished only within the record, not by a cross-record reference.
 
 ---
 
@@ -591,16 +592,15 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `page=<N>` | PDF | image | Render page N (1-indexed) as an image. |
 | `time_range=<s>-<e>` | video / audio | media slice | Extract a time range. |
 | `stream_id=<id>` | multi-stream media | stream-isolated | Select a specific stream. |
-| `bbox=<x>,<y>,<w>,<h>` | image | image | Crop relative region. Floats in `[0.0, 1.0]`, origin top-left. |
-| `crop=<x>,<y>,<w>,<h>` | image | image | Alias for `bbox`. |
+| `bbox=<x>,<y>,<w>,<h>` | image / spreadsheet | image / cell-range | Crop a relative region (image: floats in `[0.0, 1.0]`, origin top-left) or narrow a worksheet (spreadsheet: an A1 range, e.g. `bbox=B2:G30`). Polymorphic — see below. |
+| `crop=<x>,<y>,<w>,<h>` | image / spreadsheet | image / cell-range | Alias for `bbox` (inherits its polymorphism). |
 | `resize=<W>x<H>` | image | image | Resize to absolute pixel dimensions. |
 | `grayscale` | image | image | Convert to single-channel grayscale. |
-| `el=<N>` | HTML | image | Resolve to an `<img>` element by 1-indexed addressable-element position; extract embedded base64-encoded bytes. |
 | `dpi=<N>` | (render config) | (config) | Rasterization DPI for `page=<N>`. Position-independent. Default 200. |
 
 A parameter applied to an incompatible working type is a hard error.
 
-Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. Pure **address selectors** that locate a region without transforming it (`sheet=<name>`, `el=<N>`, and any others) are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
+Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<N>` (a 1-indexed index to *any* element in an HTML artifact; what it materializes is determined by the element, e.g. an `<img>`'s image bytes or a text element's region), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
 
 ### 6.3 The resolver
 
@@ -625,7 +625,7 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 - `description` — prose definition.
 - `applies_to.content_types` — list of canonical MIME types this schema covers.
 - `mode` — `extract-only` or `body-draft`.
-- `artifact_kind` — `self_contained` or `decomposable`.
+- `artifact_kind` (required) — `self_contained` (produces one record, lifting nested-stream metadata when present — the disposition for ordinary single-content files too) or `decomposable` (a raw archive that explodes into one record per member). No default.
 - `address_scheme` — the parameters the schema expects in segment `address:` values.
 - `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag.
 - `transport_algos` — additional byte-hash algorithms to compute beyond the primary blake3 `id`.
@@ -648,7 +648,7 @@ The drafter iterates every origin block in the record. For each origin schema, i
 
 The universal `origin` overlay declares the two fields every origin block carries:
 
-- `uri` — string or list-of-strings; the URI(s) by which the origin was reached.
+- `uri` — string or list-of-strings; the URI(s) by which the origin was reached (a `file://` or filesystem path for a local capture).
 - `snapshot` — ISO-8601 timestamp of observation.
 
 ### 7.3 The atom namespace
@@ -657,13 +657,13 @@ An `atom` schema declares an atomic-axis overlay that may attach to a segment.
 
 - `kind: atomic`
 - `description` — prose definition.
-- `applies_to.atom` — `text`, `image`, `audio`, or `video`. Must match the id's namespace prefix.
+- `applies_to.atom` — `text`, `image`, `audio`, or `video`. Must match the id's axis segment (e.g. `text` in `atom/text/data-table`).
 - `applies_to.cues` (optional) — heuristic patterns for the normalizer.
 - `enables_lossless` (boolean, default `false`) — when `true`, this overlay licenses a shaped lossless body in the text-atom segment that carries it. Only valid on `applies_to.atom: text` overlays. The overlay's other declarations describe what shape the body takes.
 - `extended_fields` (optional) — id-specific fields. For lossless-enabling overlays these typically describe address-shape requirements.
 - `normalization.guidance` (string) — markdown prose tactics.
 
-A segment carries exactly one atomic class id, on the opener line. Atomic overlays on **embeds** are always descriptive — embeds have no body to shape.
+A segment carries exactly one atomic class id, on the opener line.
 
 ### 7.4 The composite namespace
 
@@ -677,18 +677,17 @@ A classification schema (mechanical or interpretive) declares:
 
 - `kind: mechanical` or `kind: interpretive`.
 - `description` — prose definition.
-- `applies_at` — list of scopes (subset of `[record, section, segment]`). Default `[record]`.
+- `applies_at` — list of scopes (subset of `[record, section]`). Default `[record]`.
 - `applies_to.content_types` (mechanical only) — MIMEs the classification can apply to.
 - `applies_to.cues` (optional) — heuristic patterns.
-- `mode` (mechanical only) — `extract-only` or `body-draft`.
-- `script` (mechanical only) — reference to the extraction script.
+- `script` (mechanical only) — reference to the extraction script. A mechanical classification extracts metadata only — it emits/fills classify blocks and never drafts the record body (the mime schema is the sole body-drafter; §4.3.2.2).
 - `normalization.guidance` (interpretive only) — class-specific tactics in prose.
 - `extended_fields` — fields the matching classify block carries.
 - `subclasses` (optional, interpretive) — finer-grained categories.
 
 #### Scope-aware extended fields
 
-A composite schema's `extended_fields` decompose into three field groups by scope (§4.4):
+A composite schema's `extended_fields` decompose into three field groups by scope:
 
 - **Descriptive** — apply at every scope the schema declares in `applies_at`.
 - **Structural** — apply at record scope only.
@@ -703,8 +702,8 @@ A closed list of seven types. Schemas tag extended-field declarations with one o
 | Type | Aggregated into | Notes |
 |---|---|---|
 | `uri` | `uris` derived view | String. Deduplicated across all uri-tagged fields and origin-block `uri:` values. |
-| `timestamp` | `timeline` derived view | ISO-8601 instant or interval. |
-| `identifier` | `identifiers` derived view | Vendor-issued opaque ID. |
+| `timestamp` | `timeline` derived view | ISO-8601 instant or interval. Aggregated with origin-block `snapshot:` values (§9.4). |
+| `identifier` | `identifiers` derived view | Vendor-issued opaque ID. The view also includes the record's own `id` (§9.5). |
 | `hash` | (no view) | Cryptographic hash. |
 | `fingerprint` | (no view) | Non-cryptographic content fingerprint. The segment-header field is spelled `perceptual:` (§7.7), but the semantic-type tag spelling remains `fingerprint`. |
 | `person` | (no view) | A single alias string identifying one person. |
@@ -745,7 +744,7 @@ The strategies are normative.
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
 | `ingest` | blake3 of bytes → `id`; additional algorithms per the mime schema's `transport_algos` → `transport:`; MIME detect → artifact-block opener; evaluate the mime schema's `artifact_kind`; emit stub with first origin block from capture context; persist binary in the corpus's binary store. | `<pkg>.ingest@<v>` |
-| `draft` | Run the mime schema first, then each mechanical classification in declared order; mechanical classify blocks emitted; embed blocks emitted; drafter-detected issue blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>`, then `<pkg>.classify.<namespace>-<id>@<v>` per mechanical classification |
+| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then each mechanical classification in declared order (each emits/fills its classify block — metadata only); drafter-detected issue blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>`, then `<pkg>.classify.<namespace>-<id>@<v>` per mechanical classification |
 | `normalize` | Interpretive classifications run via LLM; may fill classify-block fields, re-segment the content zone, surface issue blocks; description authored. | `<model-id>` |
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
@@ -756,7 +755,7 @@ Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-de
 |---|---|---|
 | Hashing, MIME detection, mime schema lookup | deterministic | mechanical |
 | Container disposition | deterministic | schema-declared |
-| Mime schema's body draft + artifact-block field extraction | deterministic | scriptable |
+| Mime schema's body draft, artifact-block field extraction, and `canonical` hashing | deterministic | scriptable |
 | Mechanical classification field extraction | deterministic | scripted |
 | Origin-host matching | deterministic | mechanical |
 | Functional URI evaluation | deterministic | spec mandates |
@@ -784,7 +783,7 @@ Each re-run appends a new `touch[]` entry.
 | What survives | What is reset |
 |---|---|
 | `id`, `transport` — byte-intrinsic. | `description` → empty; `canonical`, `perceptual` (record-scope). |
-| The artifact block's opener (the MIME) and any first origin blocks with their `uri:` history. | The artifact block's body fields, all classify blocks, all embed blocks, all sections/segments, all issue blocks. |
+| The artifact block's opener (the MIME) and the first origin blocks with their `uri:` history. | The artifact block's body fields, all classify blocks, all embed blocks, all sections/segments, all issue blocks. |
 | `visibility`. | `status` → `stub`; record body's content zone → empty. |
 | `touch[]` collapses to its first entry (the original ingest touch) plus the re-stub touch. | |
 | The persisted bytes. | |
@@ -819,7 +818,7 @@ on <!--classify <namespace>/<id>[/<subtype>]-->:
 dedupe preserving body order
 ```
 
-Embed blocks and issue blocks are NOT included.
+Embed blocks and issue blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications.
 
 A record carrying an artifact block, one qualified origin block, and one classify block yields:
 
@@ -859,7 +858,7 @@ Aggregates:
 - Every origin-block `snapshot:` value.
 - Every body-block extended field tagged `semantic_type: timestamp`.
 
-Returns an ordered list of `(timestamp, source, value)` tuples sorted ascending.
+Returns an ordered list of `(timestamp, source)` tuples sorted ascending, where `source` names the origin block or semantic-tagged field the timestamp came from.
 
 ### 9.5 The `identifiers` view
 
@@ -886,7 +885,7 @@ A record renders correctly only inside its corpus, because segment bodies embed 
 Embed rewrite contract:
 
 ```
-![[corpus://<hash>?<params>|<description>]]   →   ![<description>](<local-file>)
+![[corpus://<hash>?<params>|<alt-text>]]   →   ![<alt-text>](<local-file>)
 ```
 
 Export is idempotent and untracked. The output layout (filenames, directory structure) is implementation-defined.
@@ -898,7 +897,7 @@ Export is idempotent and untracked. The output layout (filenames, directory stru
 Genuinely deferred items for this spec version:
 
 - **OCR for scanned PDFs** — the deterministic draft step records the scanned flag and an issue block; OCR is future work.
-- **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified.
+- **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified. (Building it requires reconciling the `<algo>:<hex>` embed `transport` encoding with the bare-hex record `id` — strip the prefix and confirm `algo == blake3` before matching.)
 - **Range-aware navigation** for content the resolver doesn't materialize.
 - **`page=<N>-<M>` ranges** and other open transforms beyond §6.2.
 - **Whole-corpus build tooling** — single-record export is in scope; bulk operations are not.
@@ -1000,7 +999,7 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 
 | Axis | Example | Typical source |
 |---|---|---|
-| element | `el=<N>` / `el=<N>-<M>` | marked-up text (paragraph / element index) |
+| element | `el=<N>` / `el=<N>-<M>` | marked-up / HTML text (any element by 1-indexed position; output determined by the element) |
 | page | `page=<N>` | paginated documents |
 | block | `block=<N>` | block-structured documents without fixed pages |
 | sheet | `sheet=<name>` (+ `bbox=<A1-range>`) | spreadsheets |
@@ -1008,7 +1007,7 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 | frame | `frame=<tc>` | video stills |
 | region | `bbox=<x>,<y>,<w>,<h>` | image crops (relative floats) |
 | turn | `turn=<N>` | turn-structured transcripts / sessions |
-| stream | `&stream_id=<id>` | multi-stream media (composed onto another axis) |
+| stream | `stream_id=<id>` | multi-stream media (composed onto another axis) |
 
 Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single address or an ordered list (for non-contiguous spans, in reading order); query-reserved characters in a value are percent-encoded.
 
@@ -1029,20 +1028,20 @@ Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single addr
 | **Segment body** | The markdown prose inside a single `text`-atom segment block. |
 | **Zone** | One of three partitions of the record body: metadata, content, annotations. |
 | **Artifact block** | `<!--artifact <mime-type>-->` — exactly one per record. Opener arg is the authoritative media-type declaration. |
-| **Origin block** | `<!--origin [<id>[/<subtype>]]-->` — zero or more per record. Carries `uri:` and `snapshot:`. |
+| **Origin block** | `<!--origin [<id>[/<subtype>]]-->` — one or more per record. Carries `uri:` and `snapshot:`. |
 | **Classify block** | `<!--classify <namespace>/<id>[/<subtype>]-->` — zero or more per record. |
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
-| **Section block** | `<!--section [<namespace>/<id>]-->` — structural grouping; the TOC unit. May carry one composite on the opener. Contains segments. |
+| **Section block** | `<!--section [<namespace>/<id>]-->` — structural grouping; the TOC unit. May carry one composite on the opener. Contains zero or more segments. |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
 | **Issue block** | `<!--issue <id>[/<subtype>]-->` — record-scope or segment-scope (via `address:`). |
 | **Namespace** | One of `mime`, `origin`, `atom`, `composite`. Each is a schema axis with its own block-keyword role. |
 | **Mechanical classification** | `kind: mechanical` schema + associated script. Runs at draft time. |
 | **Interpretive classification** | `kind: interpretive` schema with LLM-guidance prose. Runs at normalize time. |
-| **Self-contained / decomposable** | Container disposition declared by the mime schema. |
-| **Mode** | A schema's drafting behavior: `extract-only` or `body-draft`. |
+| **Self-contained / decomposable** | Container disposition declared by the mime schema (`artifact_kind`, required). `self_contained` produces one record (lifting nested-stream metadata when present; also the disposition for ordinary single-content files); `decomposable` explodes a raw archive into one record per member. |
+| **Mode** | A mime schema's drafting behavior: `extract-only` or `body-draft`. Mechanical classifications are metadata-only and never body-draft. |
 | **Capture, Ingest, Draft, Normalize** | Pipeline stages. |
 | **Touch** | A single processing pass. Recorded in `touch[]`. |
-| **Touch chain** | The ordered list `touch[0..N]`. The chain itself is the audit log. |
+| **Touch chain** | The ordered list `touch[0..N]`. Records current-shape provenance; reset by re-stub (§8.4). |
 | **Re-stub** | A deliberate reset that discards body and accumulated metadata, leaving only byte-intrinsic state and the touch chain. See §8.4. |
 | **Resolver** | The corpus-provided mechanism that materializes a functional URI to a deterministic result. |
 | **Functional URI** | A `corpus://<hash>?<params>` URI naming a derived view. |
