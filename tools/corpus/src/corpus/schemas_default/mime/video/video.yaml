@@ -1,0 +1,81 @@
+description: |
+  Video-file artifacts. The artifact bytes are the canonical source. The deterministic drafter probes the file via `ffprobe` for codec, dimensions, duration, and lifts per-stream metadata to the frontmatter `streams:` map. When a Whisper backend is configured, it transcribes the audio track into `text/transcript` segments addressed by `time_range=<s>-<e>&stream_id=<id>` and emits body-empty `<!--segment image-->` positioning markers at periodic frame intervals (`frame=HH:MM:SS`) for the normalizer to classify and refine. Covers the common container MIMEs (MP4, WebM, QuickTime, Matroska).
+
+  This schema knows nothing about where the video came from. A video file is a video file: bytes, codec, dimensions, duration, and audio that may or may not contain speech. Source-side concepts — who uploaded it, what channel it lives on, the description text supplied alongside it, audience comments, view counts — are not properties of a video file. They belong to whatever source supplied the file, and live on classification overlays whose extended fields and body contributions stack on top of the file shape declared here. This media-type schema describes only the file.
+
+  Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in `video_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+normalization:
+  guidance: |
+    The drafter emits a flat sequence of `<!--segment text/transcript-->` segments (one per diarization turn, addressed `time_range=<start>-<end>&stream_id=<id>`) plus body-empty `<!--segment image-->` positioning markers at periodic frame intervals (addressed `frame=HH:MM:SS`). The image segments are derived slices of the artifact's own bytes — the resolver renders each frame on demand via `corpus resolve 'corpus://<hash>?frame=HH:MM:SS'`. There is no separate `<!--embed image/...-->` for these frames; the artifact IS the source. The lint rule `embed-missing-target` carves out artifact-self-slice addresses (`frame=` / `time=` / `time_range=`) on video records, so unembedded frame-segments don't trigger errors.
+
+    **Per-frame normalize pass.**
+
+    For each image segment the drafter emitted, materialize the frame via `corpus resolve 'corpus://<hash>?frame=HH:MM:SS'` and look at the bytes. Then do one of:
+
+    1. **Classify** the segment with the appropriate `image/<sub>` atom overlay when the frame depicts a specific kind: `image/presentation-slide` for slide-deck content, `image/chart`, `image/diagram`, `image/photo`, etc. The opener becomes `<!--segment image/<sub>-->`. The body stays empty (per the image-atom contract). The overlay's own guidance covers what to do next.
+
+    2. **Add a sibling lossless text segment** when the frame contains transcribable text (slide titles + bullets, on-screen data tables, captions, code). Emit a `<!--segment text/ocr-->`, `<!--segment text/data-table-->`, `<!--segment text/captions-->`, `<!--segment text/code-->`, etc. at the same `frame=HH:MM:SS` address (or chained `frame=HH:MM:SS&bbox=...` when the text occupies only a region of the frame). The text-atom's body carries the verbatim transcription.
+
+    3. **Prune** the segment when the frame duplicates an adjacent slide / scene with no informational gain. A long stretch of identical screen-share is one segment, not one-per-30-seconds.
+
+    4. **Add new image segments** at timestamps where the drafter's periodic sampling missed a meaningful transition (slide changes, demo handoffs, in-room speaker swaps). Use the surrounding transcript's wording ("on this next slide", "switching over to", new speaker introduction) as cues.
+
+    **Frame-segment placement.** Inside a sectioned body (most meetings/webinars after topic-reorganization), each image segment belongs in the topic section whose `time_range` contains the frame's timestamp — siblings to the surrounding `text/transcript` segments. Don't bunch frames at the top of the body; the in-flow placement is what makes the visual context useful while reading.
+
+    **Topic-naming context.** Frame content is useful context for the normalizer's other passes: a frame showing an Asana board with project names confirms topic boundaries; a slide titled "Q2 revenue" anchors a section's topic; a frame showing several people in a room helps cross-check speaker mapping. Look at frames early in the normalize pass — before topic-reorganization and speaker-mapping decisions — so this context is available.
+
+    **No wikilink embeds for own frames.** Don't write `![[corpus://<this-record-hash>?frame=...|...]]` references in transcript bodies. The image segment + sibling text segment ARE the home for slide/frame content; the reader materializes via the resolver. Wikilinks to OTHER records (e.g. the slide-deck PDF as a separate record) ARE fine and useful — those reference separate assets.
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: time_range
+  type: range
+  description: <start>-<end> in seconds (float). Both bounds inclusive.
+- param: stream_id
+  type: string
+  description: |-
+    Stream identifier (`v0`, `v1`, ..., `a0`, `a1`, ...) matching a key in the frontmatter `streams:` map.
+transport_algos:
+- sha256
+extended_fields:
+  duration:
+    type: number
+    required: true
+    source: file_metadata
+    description: Duration of the video in seconds (float, ffprobe-reported).
+  width:
+    type: number
+    required: true
+    source: file_metadata
+    description: Pixel width of the primary video stream.
+  height:
+    type: number
+    required: true
+    source: file_metadata
+    description: Pixel height of the primary video stream.
+  frame_rate:
+    type: number
+    required: false
+    source: file_metadata
+    description: Frame rate of the primary video stream (frames per second).
+  video_codec:
+    type: string
+    required: false
+    source: file_metadata
+    description: Codec name from ffprobe (e.g. 'h264', 'vp9', 'av1').
+  video_format:
+    type: string
+    required: true
+    source: file_metadata
+    description: Container format (mp4, webm, mov, mkv) — derived from the file extension.
+  video_size_bytes:
+    type: number
+    required: true
+    source: file_metadata
+    description: On-disk size of the artifact in bytes.
+  streams:
+    type: object
+    required: true
+    source: file_metadata
+    description: |
+      Per-stream metadata lifted from the container. Keyed by stream id (`v0`, `v1`, ..., `a0`, `a1`, ...). Each entry carries `kind` (`video` | `audio`), `codec`, and kind-specific fields: video streams include `width`/`height`/`frame_rate`; audio streams include `sampling_rate`/`channels`/`language`. The address-scheme's `stream_id` parameter selects from this map.

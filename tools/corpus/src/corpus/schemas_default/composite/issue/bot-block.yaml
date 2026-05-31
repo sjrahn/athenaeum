@@ -1,0 +1,21 @@
+# Bot-block / WAF challenge detected at capture time. The capture returned a Cloudflare /
+# Akamai / Imperva interstitial page rather than the requested content. Emitted by the
+# HTML drafter when a known signature matches the captured bytes.
+
+description: |
+  The capture pipeline returned a bot-block or WAF challenge page (Cloudflare, Akamai,
+  Imperva, etc.) rather than the requested content. Typically blocking — the record's
+  bytes are the challenge page, not the intended artifact. Resolution requires re-capture
+  via a path that bypasses the challenge (CDP-attached real browser session, alternative
+  capture host, etc.).
+
+applies_at: [record]
+
+extended_fields:
+  signature:
+    type: string
+    required: false
+    description: |
+      Short identifier for the detected challenge type (e.g. `akamai-bot-manager`,
+      `cloudflare-challenge`, `imperva-incapsula`). Drawn from the drafter's
+      `_BLOCK_PAGE_SIGNATURES` catalog.

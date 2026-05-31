@@ -1,0 +1,25 @@
+# The drafter could not derive a canonical URI for the artifact (no
+# `<link rel="canonical">`, no `og:url`, no `corpus-capture-url` meta).
+# Historically emitted by drafters in v0.3 — surfaced here as a v1.0
+# overlay so the type is schema-defined when re-emitted on fresh records.
+
+description: |
+  The drafter found no canonical-URL signal in the captured artifact. The
+  origin block's `uri:` field will fall back to whatever URL the capture
+  pipeline knew (the request URL or `final_url`), which may differ from
+  the publisher's preferred canonical address. Informational — the record
+  remains usable; the canonical-URL gap is documented for later remediation
+  (re-fetch when a canonical signal is added; normalize-time inference from
+  external knowledge).
+
+applies_at: [record]
+
+extended_fields:
+  attempted_sources:
+    type: list[string]
+    required: false
+    description: |
+      Optional list of which canonical-URL signals the drafter looked for
+      and didn't find (e.g. `["link[rel=canonical]", "meta[property=og:url]",
+      "meta[name=corpus-capture-url]"]`). Useful for diagnosing which
+      conventions the source publisher doesn't use.

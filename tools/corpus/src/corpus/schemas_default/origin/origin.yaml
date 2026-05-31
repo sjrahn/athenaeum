@@ -1,0 +1,29 @@
+# Universal origin-block fields — applied to every <!--origin--> block regardless
+# of qualifier. Per-origin-schema extensions live at schema/origin/<id>.yaml.
+#
+# See SPEC.md §7.2.2 (origin namespace).
+
+description: |
+  Universal fields every origin block carries, regardless of whether the block opener
+  names a specific origin schema. The bare form <!--origin--> uses just these fields;
+  qualified forms (<!--origin <id>-->) layer additional fields from the per-id yaml.
+
+extended_fields:
+  uri:
+    type: string_or_list
+    required: true
+    semantic_type: uri
+    description: |
+      One or more URIs from which the artifact's bytes are retrievable for this origin.
+      String when there's one URI; YAML list when canonical + shortlinks + post-redirect
+      final URLs collapse to a single logical origin. The drafter / normalizer canonicalizes
+      for dedup. Aggregated into the `uris` derived view (§9.3).
+  snapshot:
+    type: string
+    required: true
+    semantic_type: timestamp
+    description: |
+      ISO-8601 timestamp of when this origin was observed (replaces v0.3's
+      `discovered_at`). For an origin block emitted at ingest, this is the capture
+      timestamp; for re-captures appended later, the most-recent observation. Aggregated
+      into the `timeline` derived view (§9.4).

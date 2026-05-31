@@ -1,0 +1,67 @@
+class_id: text/data-table-dynamic
+kind: atomic
+description: |
+  A body-empty positioning marker for a tabular region whose cells are a LIVE
+  computation — formula cells, externally-linked cells, pivot output, or other
+  derived values — rather than stable stored data. The displayed values are a
+  volatile, one-execution snapshot, not a faithful rendering of what the region
+  *is* (the computation), so they are NOT transcribed. Instead the segment
+  carries a `description:` of what the live table computes.
+
+  This is the non-lossless sibling of `text/data-table`. Per the body⟺lossless
+  rule (SPEC §4.3.2.3) it declares `enables_lossless: false` and therefore
+  carries NO body — exactly like an `image` segment marks where an asset sits
+  without transcribing it. What the table computes lives in the segment
+  `description:`; the values live only in the source artifact, reachable via the
+  segment's address.
+
+  Choosing between the two table overlays:
+  - `text/data-table` (lossless, body) — static stored data; the cells ARE the
+    content, stable across re-opens (reference tables, lookup catalogs,
+    manually-entered inputs, cover/title key-value blocks, a genuinely fixed
+    worked example). The body is a verbatim markdown-table transcription.
+  - `text/data-table-dynamic` (non-lossless, no body) — a live/formula-driven
+    region; mark its position and describe what it computes. Do not transcribe
+    the snapshot values.
+
+  When a live region is uninformative on its own (empty, or all-zero /
+  placeholder inputs awaiting a run), do NOT emit a marker for it at all — let
+  the enclosing section composite (e.g. `spreadsheet/calculator`) describe what
+  the sheet computes.
+applies_to:
+  atom: text
+enables_lossless: false
+extended_fields:
+  row_count:
+    type: integer
+    required: false
+    description: |
+      Number of data rows the live region spans (excluding header), when known.
+  column_count:
+    type: integer
+    required: false
+    description: |
+      Number of columns the live region spans, when known.
+  has_header_row:
+    type: boolean
+    required: false
+    description: |
+      Whether the region's first row is a header (column titles).
+normalization:
+  guidance: |
+    This is a body-empty marker. Leave the segment body empty and write a
+    `description:` on the segment header saying what the live table computes —
+    its inputs, outputs, and column structure as discernible — NOT a transcription
+    of the displayed values (those are a one-execution snapshot whose formula /
+    named-range / external-link layer is not captured here; it lives in the source
+    artifact, reachable via the segment's address). Never paraphrase a cached value
+    as if it were an input.
+
+    Because the overlay intrinsically encodes the lost computation layer, do NOT
+    also log a per-segment `format-loss` issue for "formulas not captured" — that
+    is redundant. A single record-scope `format-loss` note about the workbook's
+    computation engine is sufficient when one is wanted at all.
+
+    If the region's cells are genuinely static and stable (a fixed worked example,
+    a reference table), it is NOT dynamic — transcribe it losslessly as
+    `text/data-table` instead. Use this overlay only for live / volatile regions.

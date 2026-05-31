@@ -1,0 +1,29 @@
+class_id: text/footnote
+kind: atomic
+description: |
+  The segment body is a lossless transcription of a footnote, endnote, or
+  margin annotation from the source. Linked to its referencing segment
+  via the body's reading-order proximity and/or an explicit footnote
+  marker in the referencing text.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  marker:
+    type: string
+    required: false
+    description: |
+      The footnote marker as it appears in the source (`1`, `*`, `†`,
+      `[a]`, etc.).
+  reference_address:
+    type: string
+    required: false
+    description: |
+      The address of the segment where this footnote is referenced.
+      Optional; useful when the footnote sits at the end of a page or
+      document while the reference appears elsewhere.
+normalization:
+  guidance: |
+    Transcribe the footnote text verbatim. Preserve any citations, URLs, or
+    cross-references within the footnote. Do not merge multiple footnotes
+    into one segment; each footnote gets its own segment.

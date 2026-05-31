@@ -1,0 +1,19 @@
+class_id: video
+kind: atomic
+description: |
+  Common guidance for video-atom classifications. A video-atom segment
+  declares its specific classification on the opener line —
+  `<!--segment video/motion-->`, `<!--segment video/slide-->`, etc. The
+  bare `<!--segment video-->` form is permitted for video segments whose
+  specific kind isn't (yet) declared.
+
+  Video-atom segments are positioning markers in document flow: their
+  body must be empty. The asset's description lives on the matching embed.
+
+  Video-atom overlays never set `enables_lossless: true`. A video's
+  closed-caption stream or scene transcript lives on a separate text-atom
+  segment with `text/captions` or `text/transcript` at the same
+  `time_range=` address.
+applies_to:
+  atom: video
+enables_lossless: false

@@ -1,0 +1,30 @@
+# UTF-8 misdecoded as Latin-1/cp1252 somewhere upstream of capture — body
+# contains classic mojibake signatures (`Ã©`, `â€™`, etc.). Emitted by the
+# drafter-stage detector in corpus.draft.html.
+
+description: |
+  The decoded text contains 3+ distinct UTF-8 misdecode signatures (e.g. `Ã©`
+  for `é`, `â€™` for a smart quote). This usually means the upstream pipeline
+  read UTF-8 bytes as Latin-1/cp1252 somewhere — the source server, an
+  intermediate proxy, or a misconfigured charset header. Warning rather than
+  blocking — the captured bytes are still recoverable (the visible text is
+  faithful to what the server delivered; the corruption is real and present
+  on the source). Resolution requires re-fetching with corrected charset
+  headers or normalize-time character repair.
+
+applies_at: [record, segment]
+
+extended_fields:
+  signatures_matched:
+    type: list[string]
+    required: true
+    description: |
+      Up to 10 distinct mojibake byte-pair strings observed in the body.
+      Drawn from `corpus.quality.signatures.MOJIBAKE_SIGNATURES`.
+  distinct_signature_count:
+    type: int
+    required: true
+    description: |
+      Total number of distinct mojibake signatures observed. The detector
+      requires this to be at least 3 to fire (single occurrences can be
+      coincidental — e.g. a legitimate quote of a French phrase).

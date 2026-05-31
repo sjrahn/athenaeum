@@ -1,0 +1,30 @@
+# Captured HTML's `<title>` text matched a known placeholder / loading state
+# / empty pattern rather than article content. Emitted by the drafter-stage
+# detector in corpus.draft.html.
+
+description: |
+  The page title is a generic placeholder, loading-state string, or empty
+  value rather than a meaningful article title. Examples: `Just a moment...`
+  (Cloudflare interstitial leaked into the title), `Loading...` (JS-rendered
+  page that didn't materialize), `Untitled`, plain `404`, or whitespace.
+  Warning rather than blocking — the body may still contain real content
+  even if the title didn't render, but the discrepancy is worth surfacing
+  for normalization (the normalizer may want to derive a title from the
+  body's `<h1>` instead).
+
+applies_at: [record]
+
+extended_fields:
+  signature:
+    type: string
+    required: true
+    description: |
+      Short identifier for the matched pattern (`empty-title`,
+      `just-a-moment`, `loading`, `please-wait`, `untitled`, `plain-404`,
+      `plain-error`). Drawn from
+      `corpus.quality.signatures.GENERIC_TITLE_PATTERNS`.
+  title:
+    type: string
+    required: true
+    description: |
+      The actual title text (truncated to 200 chars) for human inspection.

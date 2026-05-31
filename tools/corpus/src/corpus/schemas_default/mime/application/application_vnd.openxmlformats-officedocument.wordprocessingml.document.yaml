@@ -1,0 +1,183 @@
+description: |
+  Office Open XML word-processing document — Word-shaped documents. The
+  artifact is a ZIP container holding a structured set of XML parts
+  (`word/document.xml` body, styles, numbering, docProps metadata, and any
+  `word/media/` images). Address scheme follows SPECv2 §4.3 for OOXML by
+  block position: `block=<N>` identifies the Nth block-level element
+  (paragraph or table) in `word/document.xml` document order.
+
+  The container is `artifact_kind: self_contained` — the document is the
+  artifact, not a folder of XML members. Decomposable disposition (where
+  the container produces no record and each member is captured separately)
+  is for raw `application/zip`, not for OOXML containers.
+applies_to:
+  content_types:
+  - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  - application/vnd.ms-word.document.macroEnabled.12
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: block
+  type: string
+  description: |-
+    1-indexed ordinal of a block-level element (a paragraph `<w:p>` or a table `<w:tbl>`) in `word/document.xml` document order, after `<w:sdt>` content controls are unwrapped. A single element is `block=<N>`; a span is `block=<start>-<end>`. Word documents carry no fixed pages in the XML (pagination is render-time), so block position — not page — is the stable structural locator. Unlike `pdf`'s `page=` axis, `block=` addresses are NOT resolvable to rasterized images; the resolver does not render docx.
+transport_algos:
+- sha256
+normalization:
+  guidance: |
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The docx drafter is the structural-content authority for a docx record: deterministically, it walks `word/document.xml` (unwrapping `<w:sdt>` content controls), populates frontmatter (`paragraph_count`, `table_count`, `page_count`, `word_count`, `docx_*` from docProps, `has_images`), and emits one `<!--section-->` per top-level heading — `entry:` written directly from the heading text, so a fresh-draft TOC is already useful (no normalizer pass required to populate it). Each section holds one `atom: text` segment whose body is the rendered markdown for that section.
+
+    ## The draft body is high-fidelity — trust it, don't re-render
+
+    This is the single most important difference from `pdf`. A docx body is extracted from the document's own XML, not from a rasterized page via OCR or pypdf. There is **no extraction-noise layer** to see through: the text the drafter emitted IS the text the author typed — paragraph breaks, headings, table cells, prose, all faithful. **The resolver does not rasterize docx** (`block=` addresses are not page renders), so the "resolve pages and look at them" tactic from `pdf.yaml` does NOT apply here. Do not attempt `corpus resolve 'corpus://<hash>?page=N'` on a docx record — it has no page axis.
+
+    When you need ground-truth drafter signals — what the fresh draft routed where, whether the current body is still faithful after a prior re-pass — pull a fresh draft ephemerally rather than trusting the body in front of you:
+
+        uv run --directory scripts python -c "
+        from pathlib import Path
+        from corpus import paths
+        from corpus.draft import docx
+        corpus_root = paths.find_corpus_root()
+        record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
+        artifact = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.docx'
+        result = docx.draft(artifact)
+        print('fields:', result['fields'])
+        for s in result['segments']:
+            entry = getattr(s, 'entry', None)
+            seg = s.segments[0] if hasattr(s, 'segments') else s
+            print(f'  {s.address}  entry={entry!r}  body_len={len(seg.body)}')
+        "
+
+    Note: `uv run --directory scripts` makes the spawned Python's cwd `scripts/`, NOT the corpus root. Always build artifact paths from `paths.find_corpus_root()` rather than relative paths.
+
+    ## When you DO need to read the source XML
+
+    The one case where the draft body is lossy is **math** (see Equations below) and **embedded figures** (see Images below). For both, the precise source is the raw OOXML, which you read directly from the zip rather than via the resolver:
+
+        uv run --directory scripts python -c "
+        import zipfile
+        from corpus import paths
+        corpus_root = paths.find_corpus_root()
+        record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
+        art = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.docx'
+        xml = zipfile.ZipFile(art).read('word/document.xml').decode('utf-8','replace')
+        print(xml[<start>:<end>])  # slice to the <m:oMath> region of interest
+        "
+
+    ## Sections — heading-driven grouping (SPECv2 §4.3)
+
+    A docx body's top-level blocks are sections, one per top-level heading (a paragraph whose style is `Heading1` / `SDMHead1`, or which carries `outlineLvl 0`). The drafter emits:
+
+    - `address: block=<start>-<end>` — the block-ordinal span the section covers.
+    - `entry: <heading text>` — written directly from the heading paragraph.
+
+    A synthetic `entry: Preamble` section wraps content before the first top-level heading — the cover/title block (which lives inside `<w:sdt>` content controls the drafter unwraps: document-class label, title, version line, "Sectoral scope(s):") and the table of contents. Sub-headings (level ≥2) render as markdown `##`/`###` inside the section they belong to, not as their own sections.
+
+    **docx with no detectable headings** → the drafter emits a single flat top-level `atom: text` segment covering the whole body (mirroring the outline-less PDF case). The normalizer MAY introduce sections during re-segmentation if structure is genuinely present in the prose.
+
+    Re-segment within each section to structural-unit grain per `document.yaml` — split tables, equations, and figures into their own segments. The drafter packs a whole section (prose + sub-headings + inline tables) into one text segment as a faithful starting point; the structural-unit decomposition is the normalizer's job.
+
+    ## Forward reference
+
+    The bulk of body-refinement tactics — paragraph reflow, heading promotion, tables (markdown vs HTML), equation LaTeX rendering, footnote renumbering, definitions sections, image alt text, re-segmentation — live on the `document` composite (see `corpus overlay document`). Its guidance is media-type-agnostic (it explicitly names docx as a substrate); apply it if its cues match. Publisher overlays (`cdm/methodology`, `verra/methodology`, etc.) stack on top and add source-specific tactics (e.g. CDM paragraph-numbering strip, version-history-table drop).
+
+    ## Reading the drafter's signals
+
+    - Each `<!--section-->` carries `entry:` = the document's own heading text. The section's single `atom: text` child segment carries the rendered markdown.
+    - The body markdown already promotes the document's heading hierarchy (`##` for sub-headings within a section), renders paragraphs as prose (one paragraph per markdown block, internal tabs/line-breaks collapsed to spaces), and renders tables as GitHub-flavored markdown.
+    - Frontmatter `page_count` is the **last-saved page count from `docProps/app.xml`** — a soft render-time value, not a structural axis. `word_count` is likewise app.xml's count. Don't treat either as authoritative document structure.
+
+    ## Equations — OMML, flattened in the draft
+
+    Word stores display and inline math as OMML (`<m:oMath>`). The drafter extracts the math **text** (the `<m:t>` runs) inline at the equation's position, but OMML *structure* — fractions, superscripts, multi-character subscripts, summations — is flattened: `$BE_y$` comes through as `BEy`, `$V_{F,y}$` as `VF,y`, a fraction as its numerator-then-denominator runs glued together. CDM and similar methodologies place each equation in a one-cell table followed by a "Where:" variable-definition table — the same shape `pdf.yaml`/`document.yaml` describe, so the same equation-as-LaTeX reconstruction applies.
+
+    Reconstruct LaTeX per `document.yaml`'s equation guidance. Two source options, in order of precision:
+
+    1. **Read the OMML directly.** `word/document.xml`'s `<m:oMath>` blocks are structured math (more precise than pypdf's PDF output ever is) — `<m:sSub>` is a subscript, `<m:f>` is a fraction (`<m:num>`/`<m:den>`), `<m:nary>` a summation/integral, `<m:sup>` a superscript. Walk the OMML for the equation to recover exact structure, then render `$$...\tag{N}$$`.
+    2. **Reconstruct from the variable table.** When the OMML is ambiguous, the "Where:" table that follows each equation tells you each symbol's intended subscripting (`BEy` row → `$BE_y$`, `NCVRG,F,y` row → `$NCV_{RG,F,y}$`). This is the same tactic as the PDF path.
+
+    Do not leave equations as the flattened ASCII shorthand — that's worse than a flagged gap (`document.yaml` is explicit on this).
+
+    ## Tables
+
+    The drafter renders every `<w:tbl>` as a GitHub-flavored markdown table: first row as header, `<br>` for multi-paragraph cells, `gridSpan` (horizontal merge) expanded to blank placeholder columns to keep widths aligned. Two drafter limitations to repair during normalize per `document.yaml`'s Tables tactic:
+
+    - **Merged cells / nested headers.** `gridSpan` is expanded to blanks and `vMerge` (vertical merge) continuation cells render as whatever text they carry. When the merge structure is load-bearing, switch to an HTML `<table>` with `rowspan`/`colspan` — read the merge structure from the source XML (`<w:gridSpan>`, `<w:vMerge>`).
+    - **Nested tables.** A table nested inside a cell is NOT descended into — only the cell's direct paragraphs render. If a cell's content is genuinely a sub-table, reconstruct it from the source and note any genuine loss in a segment-scope `format-loss` issue scoped to that table.
+
+    ## Images and embedded objects
+
+    `has_images: true` means the zip carries `word/media/` parts. **The v1 drafter does not emit `atom: image` segments or embeds for docx** — inline figures (CDM "Figure 1 / Figure 2" project-boundary diagrams, often stored as `word/media/*` images or `<w:object>` OLE embeds) are not yet surfaced as image segments. If a docx genuinely centers on figures, note the gap in your report (and a record-scope `partial-content` issue if a figure is load-bearing and absent from the body) — surfacing the limitation is correct; do not invent alt text for an image you can't see. Drafter image support for docx is a deferred enhancement.
+
+    ## Faithfulness
+
+    The body is a faithful normalized rendering of the source. Re-segmentation is structural; the content within remains what the document says. Do not invent column names, do not paraphrase equations into prose, do not editorialize.
+extended_fields:
+  paragraph_count:
+    type: number
+    required: true
+    source: file_metadata
+    description: |-
+      Count of block-level paragraphs (`<w:p>`) in `word/document.xml` document order, after sdt-unwrapping. Excludes paragraphs inside tables.
+  table_count:
+    type: number
+    required: true
+    source: file_metadata
+    description: Count of top-level tables (`<w:tbl>`) in the document body.
+  page_count:
+    type: number
+    required: false
+    source: file_metadata
+    description: |-
+      Last-saved page count from `docProps/app.xml`'s `<Pages>`. A soft render-time value (the page count when the document was last saved by Word), not a structural axis — docx has no fixed pages in the XML. Omitted when app.xml doesn't carry it.
+  word_count:
+    type: number
+    required: false
+    source: file_metadata
+    description: '`<Words>` from `docProps/app.xml`, if present.'
+  has_images:
+    type: boolean
+    required: true
+    source: file_metadata
+    description: |-
+      True iff the OOXML zip contains any `word/media/` part. A discoverability signal; the v1 drafter does not yet emit image segments for docx (see normalization guidance).
+  docx_title:
+    type: string
+    required: false
+    source: file_metadata
+    description: '`<dc:title>` from `docProps/core.xml`, if set by the author. Often a document-management code (e.g. `EB125_repan05_AMS-II.G_(ver14.0)`) rather than a readable title — the normalizer promotes the real title per the document/publisher overlay.'
+  docx_creator:
+    type: string
+    semantic_type: person
+    required: false
+    source: file_metadata
+    description: '`<dc:creator>` from `docProps/core.xml` — the author. Format-agnostic per SPECv2 §7.4.'
+  docx_modified_by:
+    type: string
+    semantic_type: person
+    required: false
+    source: file_metadata
+    description: '`<cp:lastModifiedBy>` from `docProps/core.xml`.'
+  docx_created_at:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: '`<dcterms:created>` from `docProps/core.xml` (ISO-8601).'
+  docx_modified_at:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: '`<dcterms:modified>` from `docProps/core.xml` (ISO-8601).'
+  docx_application:
+    type: string
+    required: false
+    source: file_metadata
+    description: '`<Application>` from `docProps/app.xml` — e.g. `Microsoft Office Word`, `LibreOffice/24.8`.'
+  docx_template:
+    type: string
+    required: false
+    source: file_metadata
+    description: |-
+      `<Template>` from `docProps/app.xml` — the .dotm/.dotx the document was created from. A strong provenance cue: CDM methodologies and tools are authored from `CDM_Methodology.dotm`.

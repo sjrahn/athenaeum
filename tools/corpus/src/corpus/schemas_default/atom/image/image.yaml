@@ -1,0 +1,36 @@
+class_id: image
+kind: atomic
+description: |
+  Common guidance for image-atom classifications. An image-atom segment
+  declares its specific classification on the opener line —
+  `<!--segment image/chart-->`, `<!--segment image/photo-->`, etc. The
+  bare `<!--segment image-->` form is permitted for image segments whose
+  specific kind isn't (yet) declared.
+
+  Image-atom segments are positioning markers in document flow: their
+  body must be empty. The image's description goes in one of two places,
+  depending on whether a separate asset exists:
+
+  - **Artifact-self-slice (no embed)** — when the address is a crop of the
+    record's own artifact bytes (a `page=N&bbox=...` region of a PDF, a
+    `bbox=` of a single-image record, a `frame=`/`time=` of a video), there
+    is no separate asset to embed; the resolver renders the slice on demand.
+    The description lives on the **segment's own `description:` header
+    field**. This is the common case for figures/diagrams on a document
+    page and slides grabbed from a video.
+  - **Separate embedded asset (has embed)** — when the segment points at a
+    genuinely distinct asset the drafter extracted (e.g. an inline `<img>`
+    decoded from an HTML page, addressed `el=N`), the matching `<!--embed-->`
+    block carries the whole-asset description.
+
+  Normalizers do not create embeds — those are drafter output. For a
+  self-slice, write the segment `description:`; never fabricate an embed or
+  a transport hash from a rendered crop.
+
+  Image-atom overlays never set `enables_lossless: true` — they are
+  purely descriptive of an image kind. A lossless transcription of image
+  content lives on a separate text-atom segment (e.g. `<!--segment
+  text/data-table-->`, `<!--segment text/ocr-->`) at the same address.
+applies_to:
+  atom: image
+enables_lossless: false

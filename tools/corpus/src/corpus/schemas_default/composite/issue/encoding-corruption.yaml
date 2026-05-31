@@ -1,0 +1,15 @@
+# Encoding-corruption issues — text decoded from the source carries character-encoding
+# artifacts (e.g. double-encoded UTF-8 mojibake on author names).
+#
+# Subtypes:
+#   encoding-corruption/charset-mismatch — UTF-8 misdecoded as Latin-1/cp1252;
+#     classic mojibake signatures (Ã©, â€™, etc.) appear in the body.
+
+description: |
+  Text decoded from the source carries character-encoding artifacts. Faithfulness
+  requires preserving the mojibake as-is; this issue documents the corruption for
+  later remediation (e.g. re-fetch with corrected encoding, or normalize-time repair).
+  See the subtype yamls in `schema/issue/encoding-corruption/` for specific detection
+  signatures.
+
+applies_at: [record, segment]

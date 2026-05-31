@@ -1,0 +1,35 @@
+class_id: text/captions
+kind: atomic
+description: |
+  The segment body is a lossless time-stamped closed-caption (CC) stream
+  for an addressed video range. Distinct from `text/transcript` in that
+  captions are a separate stream embedded in or alongside the video and
+  carry their own timing — they are not derived from speech-to-text.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  language:
+    type: string
+    required: false
+    description: |
+      ISO 639-1 language code of the caption stream.
+  source_track:
+    type: string
+    required: false
+    description: |
+      Identifier of the caption track within the video container (e.g.
+      `subtitles-en`, `cc-1`).
+normalization:
+  guidance: |
+    Preserve each caption cue's timing and text verbatim. Use the format:
+
+        [HH:MM:SS.mmm] cue text
+
+    Multi-line cues become multi-line entries within the same timestamp.
+    Speaker labels (when present in the caption stream) come first on the
+    line: `[HH:MM:SS.mmm] [Speaker N] cue text`.
+
+    A captions segment may coexist with a `text/transcript` segment at the
+    same address — both are lossless, but they record different streams
+    (the captions stream as authored vs. the audio as transcribed).

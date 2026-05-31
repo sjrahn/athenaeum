@@ -1,0 +1,118 @@
+"""Unified `corpus` CLI dispatcher.
+
+Adding a subcommand: drop a module `corpus._cli.<name>` exposing `configure(parser)`
+and `run(args)`, then register the name in `_COMMANDS` below. Modules are
+lazy-imported per invocation so cold start stays cheap.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import sys
+from collections.abc import Sequence
+
+__all__ = ["dispatch", "main"]
+
+
+# (group, one-line help). Order within a group preserved at render time.
+_COMMANDS: dict[str, tuple[str, str]] = {
+    # Scaffolding (P1)
+    "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/composite/<ns>/)"),
+    # Capture & ingest (P2+)  — declared but not yet implemented; lazy import errors out.
+    "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
+    # Inspect (P1)
+    "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
+    "toc":             ("Inspect",                "Top-level block table of contents"),
+    "body":            ("Inspect",                "Stream the content-zone body to stdout"),
+    "lint":            ("Inspect",                "Conformance check (the verification gate)"),
+    # Edit (P1)
+    "decompose":       ("Edit",                   "Explode a record into a working dir (manifest + body/desc files)"),
+    "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
+    # Query (P1)
+    "find":            ("Query",                  "List records matching status / mime / origin / classification"),
+    "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
+    "classifications": ("Query",                  "List composite namespaces declared in schema/"),
+    "hosts":           ("Query",                  "Count records by origin host"),
+    "schemas":         ("Query",                  "List packaged + corpus-local schemas (debug)"),
+}
+
+# Render groups in this order in `corpus --help`.
+_GROUP_ORDER: tuple[str, ...] = (
+    "Scaffolding",
+    "Capture & ingest",
+    "Inspect",
+    "Edit",
+    "Query",
+)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Console-script entry point."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        _print_top_help()
+        return 0
+    if args[0] in ("--version", "-V"):
+        from corpus import __version__
+
+        print(__version__)
+        return 0
+    cmd = args[0]
+    if cmd not in _COMMANDS:
+        print(f"corpus: unknown command {cmd!r}", file=sys.stderr)
+        print("Run 'corpus --help' to see available commands.", file=sys.stderr)
+        return 2
+    return dispatch([cmd, *args[1:]])
+
+
+def dispatch(argv: Sequence[str]) -> int:
+    """Dispatch a fully-formed argv (subcommand first)."""
+    if not argv:
+        _print_top_help()
+        return 0
+    cmd, *rest = argv
+    if cmd not in _COMMANDS:
+        print(f"corpus: unknown command {cmd!r}", file=sys.stderr)
+        return 2
+    try:
+        module = importlib.import_module(f"corpus._cli.{_module_name(cmd)}")
+    except ImportError as e:
+        print(f"corpus: subcommand {cmd!r} not yet implemented: {e}", file=sys.stderr)
+        return 2
+    parser = argparse.ArgumentParser(
+        prog=f"corpus {cmd}",
+        description=(module.__doc__ or "").strip() or None,
+    )
+    module.configure(parser)
+    args = parser.parse_args(rest)
+    return int(module.run(args) or 0)
+
+
+# ---------- internals ---------- #
+
+
+def _module_name(cmd: str) -> str:
+    """Map a subcommand name to its module name (dashes → underscores)."""
+    return cmd.replace("-", "_").replace(".", "_")
+
+
+def _print_top_help() -> None:
+    """Render the grouped help banner for `corpus --help`."""
+    print("usage: corpus <command> [options...]")
+    print()
+    print("Corpus tooling — parse, lint, draft, resolve, derive views.")
+    print()
+    by_group: dict[str, list[tuple[str, str]]] = {}
+    for cmd, (group, help_text) in _COMMANDS.items():
+        by_group.setdefault(group, []).append((cmd, help_text))
+    width = max(len(c) for c in _COMMANDS) + 2
+    for group in _GROUP_ORDER:
+        items = by_group.get(group)
+        if not items:
+            continue
+        print(f"{group}:")
+        for name, help_text in items:
+            print(f"  {name:<{width}}{help_text}")
+        print()
+    print("Use 'corpus <command> --help' for command-specific options.")

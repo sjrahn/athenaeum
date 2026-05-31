@@ -1,0 +1,29 @@
+# The drafter found `<a href="...">` references whose targets are
+# unreachable / malformed / clearly dead. Historically emitted by drafters
+# in v0.3 — surfaced here as a v1.0 overlay so the type is schema-defined
+# when re-emitted on fresh records.
+
+description: |
+  One or more `<a href="...">` links in the captured artifact point at
+  URLs that are demonstrably broken (HTTP 4xx/5xx on probe, malformed
+  URI, anchor-only references that don't resolve). The link text is
+  preserved as-is in the body for faithfulness; this issue documents the
+  brokenness so the normalizer can flag affected segments or the corpus
+  reader knows not to follow these references. Severity is typically
+  `minor` — the record itself is intact; only its outbound references
+  are degraded.
+
+applies_at: [record, segment]
+
+extended_fields:
+  broken_count:
+    type: int
+    required: false
+    description: |
+      Number of distinct broken-link URLs observed. Optional — some
+      drafters may emit one issue per broken link rather than aggregate.
+  examples:
+    type: list[string]
+    required: false
+    description: |
+      Up to 10 example broken-link URLs for human inspection.

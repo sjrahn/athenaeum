@@ -1,0 +1,74 @@
+description: |
+  Raster image artifacts — photographs, diagrams, charts, screenshots, maps, scanned documents, table-as-image renderings. The artifact bytes are the canonical source. Covers the common web-image MIMEs (PNG, JPEG, GIF, WebP, AVIF). Vector formats (SVG) and animated/multi-frame formats (animated GIF, animated WebP) fall under this schema for v1; specialized handling can split off later.
+
+  Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in `image_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: bbox
+  type: rect
+  description: |-
+    <x>,<y>,<w>,<h> — relative floats in [0.0, 1.0]. Origin top-left. The default address `bbox=0,0,1,1` names the whole image.
+transport_algos:
+- sha256
+canonical_strategy:
+  algo: blake3-canonical-image
+  canonicalization:
+  - rasterize to a canonical resolution (longest side 1024px) and color mode (RGB)
+  - blake3 the raw pixel bytes
+extended_fields:
+  image_width:
+    type: number
+    required: true
+    source: file_metadata
+    description: Pixel width of the image.
+  image_height:
+    type: number
+    required: true
+    source: file_metadata
+    description: Pixel height of the image.
+  image_format:
+    type: string
+    required: true
+    source: file_metadata
+    description: Pillow's format label — PNG, JPEG, GIF, WEBP, AVIF, etc.
+  image_mode:
+    type: string
+    required: false
+    source: file_metadata
+    description: Pillow's mode label — RGB, RGBA, P (palettised), L (grayscale), CMYK, etc.
+  image_size_bytes:
+    type: number
+    required: true
+    source: file_metadata
+    description: On-disk size of the artifact in bytes.
+  description:
+    type: string
+    required: false
+    source: normalizer
+    description: |-
+      Normalizer-written summary of what the artifact depicts (whole-image). Distinct from per-segment `description:` fields that scope to a sub-bbox under an overlay.
+  exif_make:
+    type: string
+    required: false
+    source: file_metadata
+    description: Camera make from EXIF, when present (e.g. 'Canon', 'Apple').
+  exif_model:
+    type: string
+    required: false
+    source: file_metadata
+    description: Camera model from EXIF, when present (e.g. 'EOS R5', 'iPhone 15 Pro').
+  exif_datetime:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: |-
+      EXIF DateTimeOriginal — when the photograph was taken. Distinct from `first_touch` (when the record was first ingested). May be in the source's local time without a tzinfo suffix.
+  exif_gps:
+    type: string
+    semantic_type: geolocation
+    required: false
+    source: file_metadata
+    description: |-
+      EXIF GPS coordinates as 'lat,lon' decimal-degrees, when present (e.g. '37.7749,-122.4194'). Negative values for southern/western hemispheres.

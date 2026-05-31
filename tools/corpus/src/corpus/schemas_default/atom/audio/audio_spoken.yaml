@@ -1,0 +1,9 @@
+class_id: audio/spoken
+kind: atomic
+description: |
+  Speech audio — human voice (mono or multi-speaker). When a transcript
+  is available, pair this overlay with a sibling `text/transcript` segment
+  at the same `time_range=` address.
+applies_to:
+  atom: audio
+enables_lossless: false

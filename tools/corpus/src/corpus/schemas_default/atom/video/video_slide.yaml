@@ -1,0 +1,11 @@
+class_id: video/slide
+kind: atomic
+description: |
+  Slide-deck video — a screencast or presentation recording where the
+  visual content is dominated by static slides with occasional
+  transitions. When slides carry losslessly transcribable text or data,
+  pair this overlay with sibling `text/ocr` or `text/data-table` segments
+  at sub-region addresses on specific frames (`time=<t>&bbox=<region>`).
+applies_to:
+  atom: video
+enables_lossless: false

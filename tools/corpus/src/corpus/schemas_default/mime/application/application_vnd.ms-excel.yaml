@@ -1,0 +1,155 @@
+description: |
+  Excel 97-2003 binary spreadsheets — legacy OLE2 Compound Document
+  workbooks. The format predates the OOXML xlsx container by a decade;
+  cells, formulas, formats, charts, and macros are all stored as BIFF
+  records inside OLE2 streams rather than as XML parts in a zip.
+
+  The artifact is `artifact_kind: self_contained` — the workbook is the
+  record, not a folder of streams. Address scheme uses `sheet=<name>`
+  (workbook tab name); xls has no xpath equivalent.
+
+  See `xlsx.yaml` for the parallel OOXML schema. The xls drafter and
+  schema diverge from xlsx in deliberate, format-driven ways listed in
+  the normalization guidance below — the most important one is **the
+  drafter cannot detect formula cells** (xlrd 2.x doesn't surface
+  `XL_CELL_FORMULA`), so the normalizer carries more weight in judging
+  per-sheet which sheets are live calculators vs static data than it
+  does for xlsx.
+applies_to:
+  content_types:
+  - application/vnd.ms-excel
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: sheet
+  type: string
+  description: |-
+    Workbook tab name (e.g. `sheet=INPUTS`). OLE2 has no XPath-style
+    addressing inside the stream — both sections and their cell-grid
+    segments use the `sheet=<name>` address; the segment's atom +
+    body distinguish it from the section header. Same scheme as xlsx,
+    including percent-encoding of query-reserved chars in the tab name
+    (`&`→`%26`, `#`→`%23`, `%`→`%25`; spaces and `=` left raw).
+- param: bbox
+  type: string
+  description: |-
+    A cell range in A1 notation within the addressed sheet, composing
+    after `sheet=` (e.g. `sheet=INPUTS&bbox=A6:E11`, or a single cell
+    `bbox=A1`). Carves a sub-sheet region for a segment when a sheet
+    splits into more than one. `bbox` is per-MIME — for a spreadsheet
+    it is an A1 cell range, not the relative-float crop used by
+    image/PDF. Identical to the xlsx scheme.
+transport_algos:
+- sha256
+normalization:
+  guidance: |
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xls drafter is the structural-content authority for an xls record: deterministically, it walks the OLE2 workbook via xlrd, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `workbook_modified_by` if present, `named_ranges` if any user-defined names exist), and renders one section per visible worksheet (hidden sheets are skipped). Every populated sheet is rendered as a static cell-grid (a `text/data-table` segment) by default — the drafter cannot detect formula cells, so deciding which sheets are actually live calculators falls to the normalizer.
+
+    Don't re-extract content from the artifact yourself; let the drafter do it. As with xlsx, prior normalize passes may have rewritten segment bodies, promoted markdown to HTML, or added segment-scope classifications. When you need ground-truth drafter signals — "what cells does the artifact contain?", "is the current body still faithful?" — pull a fresh draft ephemerally rather than trusting the current body:
+
+        uv run --directory scripts python -c "
+        import json
+        from corpus import paths
+        from corpus.draft import xls
+        corpus_root = paths.find_corpus_root()
+        record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
+        artifact = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.xls'
+        result = xls.draft(artifact)
+        print('fields:', json.dumps(result['fields'], indent=2, default=str))
+        for seg in result['segments']:
+            issues = seg.extra.get('issues', [])
+            print(f'  {seg.address}  body_len={len(seg.body)}  issues={len(issues)}')
+        "
+
+    Note: `uv run --directory scripts` makes the spawned Python's cwd `scripts/`, NOT the corpus root. Always build artifact paths from `paths.find_corpus_root()` rather than relative paths.
+
+    ## Format gaps the xls drafter cannot close
+
+    Three signals that the xlsx drafter detects automatically are unavailable for xls without a deeper OLE2 parser:
+
+    1. **Formula cells.** xlrd 2.x exposes cached cell values and their types (TEXT, NUMBER, DATE, BOOLEAN, ERROR, BLANK, EMPTY) but does NOT expose a formula-cell type. A cell holding `=SUM(A1:A10)` looks identical in xlrd to a cell holding the literal number `42`. Every sheet is rendered as a static cell-grid regardless of whether it's user-entered values or computed results.
+    2. **External workbook links.** No equivalent of xlsx's `xl/externalLinks/` part detection.
+    3. **Macros / pivot tables.** No equivalent of xlsx's `xl/vbaProject.bin` / `xl/pivotTables/` member checks. The fields `has_macros` and `has_pivot_tables` are not declared on xls records.
+
+    The practical consequence is that the normalizer carries more weight for xls records than for xlsx ones: the drafter renders everything as static `text/data-table`, and the normalizer judges per-sheet whether a sheet is actually a live calculator. When a sheet's purpose is clearly a calculator (a small number of user inputs feeding a derived output, with cells laid out as labeled-parameter columns rather than tabular data), classify the SECTION `spreadsheet/calculator`: keep the literally-present labels / inputs (and any genuinely fixed table) as `text/data-table`, mark a live-calculation region with a body-empty `text/data-table-dynamic` segment described on its header (never transcribe its volatile values), and put the computation summary on the section `description`. The `text/data-table-dynamic` overlay already encodes the lost formula layer, so a separate per-sheet `format-loss` issue is not needed.
+
+    Use the artifact's surrounding context to inform the call. CDM/UNFCCC methodology calculators almost always have sheets named `INPUTS`, `OPTION A`/`OPTION B`/…, `Given_parameters`, `Requirements for options` — those are calculator sections where cached values are post-input snapshots and the formulas in the source artifact carry the methodology. Reference / static-data sheets in the same workbook (`INTRODUCTION`, `PROJECT TITLE`, `Sheet1`) stay static `text/data-table`.
+
+    ## Sections — sheet-driven grouping (SPECv2 §4.3)
+
+    An xls body's top-level blocks are sections, one per visible worksheet. The drafter emits:
+
+    - `address: sheet=<worksheet-name>` — the worksheet's tab name, in workbook order.
+    - `entry: <worksheet-name>` — written by the drafter directly; the sheet name IS the TOC label.
+
+    Each section's child segment is the cell-grid render, addressed at `sheet=<name>` (same as the section). The drafter emits one whole-sheet segment, but the normalizer may carve a sheet into multiple regions — e.g. a calculator sheet's static parameter block (`text/data-table`) plus its live value matrix (`text/data-table-dynamic`) — narrowing each segment with a cell range: `sheet=<name>&bbox=<A1-range>` (e.g. `sheet=INPUTS&bbox=A6:E11`). Chart sheets / embedded objects / dashboard shapes are not surfaced by xlrd and would require olefile-level inspection; surface those as a `format-loss` issue if you encounter one.
+
+    ### In-section segments don't carry `entry:`
+
+    Per SPEC §4.3: when a record has sections, in-section segments don't carry `entry:` — the section is the TOC unit (the parser rejects `entry:` on a section's child segment). The sheet name lives on the section header; the section opener also carries the sheet-kind composite (`<!--section spreadsheet/calculator-->`, `/simple-table`, …); child segments identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
+
+    ## Refining transcribed cell-grid segments — rendering decision first, then cleanup
+
+    Same principles as xlsx: the drafter's markdown table is the safe deterministic fallback. The normalizer's first decision is whether a table is actually the right rendering for this sheet's cells. Cells that mark sections around content, cells that are captions / headings — render them as what they are. Don't force them through a table just because the drafter did.
+
+    When a table IS the right rendering, refine for compactness and meaning (these are corrections, not losses — no `format-loss` issue required):
+
+    - **Strip column padding.** The drafter pads cells to the widest cell in each column for raw-markdown alignment; renderers ignore the padding and on tables with one long cell next to short ones it produces grotesque whitespace runs. Re-emit with no inter-column padding.
+    - **Header row decision.** The drafter takes the first non-empty row as the markdown header. Wrong on sparse key-value sheets where column A is labels and column B is values; re-emit with a blank header row (`|  |  |` + `| --- | --- |`) and demote the original row to the first data row. Synthesized `Col A / Col B / …` placeholder headers also become blank rather than verbatim.
+    - **Drop leading, trailing, and visual-spacing blank rows.** Excel authors leave gaps for readability; the non-empty rows carry meaning.
+    - **Drop all-empty columns** (symmetric to blank rows). A column with no populated cell across the region is layout noise — collapse to the populated columns (a sheet whose only populated columns are A, B, and P becomes a tight 3-column table, not a 16-column one with empty `Col C … Col O`). Keep an interior empty column only when it genuinely separates two distinct tables that should instead be re-segmented into their own `bbox` regions.
+    - **Merge multi-row headers** (top row = group label, second row = sub-label) into a single column-label row using `Group / Sub` or `Group: Sub` form.
+
+    Sparse key-value sheets collapse into a tight 2-column table — one row per labeled value. That's the "simplest table preserving meaning" target.
+
+    Faithfulness still applies — do not invent column names, do not reorder rows, do not coerce values.
+
+    ## Cover every populated block — no silent drops
+
+    When you carve a sheet into multiple `bbox` regions, account for **every populated cell**: it falls inside some `text/data-table` segment's `bbox` (transcribed losslessly), inside a `text/data-table-dynamic` marker's range (a live region, described not transcribed), or is a label folded into the section `description`. Don't transcribe the obvious tables and silently skip a smaller populated block off to the side — that is a faithfulness loss. Cross-check against a fresh ephemeral draft (the one-liner above): its single whole-sheet body is the full used range; the union of your segment `bbox` ranges should cover every non-empty cell it shows.
+
+    ## Switching to HTML tables
+
+    Markdown table syntax cannot express merged cells, nested multi-level headers, very wide tables, or cells with internal newlines / markdown-significant characters. Use an HTML `<table>` inside the segment body for those cases. xlrd does NOT surface merge information by default; if you suspect merges in the source, the segment-scope `format-loss / minor` issue should note that merge-fidelity wasn't verified. The segment's overlay (`text/data-table` or `text/data-table-dynamic`) is unchanged by the switch.
+
+    ## Promoting workbook title
+
+    `workbook_title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. The record's drafter-stamped `title` is then the URL-derived filename. Replace it with the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
+
+    ## Forward reference
+
+    The canonical interpretive overlay for spreadsheet artifacts is `spreadsheet` (see `corpus overlay spreadsheet`). Test its subclasses first — `spreadsheet/{simple-table, calculator, dataset, dashboard}` covers the common shapes, and the same vocabulary applies at both record scope and section scope (SPEC §4.4). See xlsx.yaml's forward-reference section for the full reasoning; it applies unchanged to xls.
+
+    ## Faithfulness reminder
+
+    Cell values surfaced by xlrd are cached computed values — the same Excel would display. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's `spreadsheet/calculator` `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
+extended_fields:
+  sheet_names:
+    type: list[string]
+    required: true
+    source: file_metadata
+    description: |-
+      Visible worksheet tab names in workbook order, from xlrd's `book.sheets()` filtered to `visibility == 0`. Hidden sheets are not enumerated here and don't appear as sections in the body.
+  sheet_count:
+    type: number
+    required: true
+    source: file_metadata
+    description: Number of visible worksheets in the workbook.
+  workbook_modified_by:
+    type: string
+    semantic_type: person
+    required: false
+    source: file_metadata
+    description: |-
+      `user_name` from the OLE2 workbook globals — the "last saved by" field. Often a display name; format-agnostic per SPECv2 §7.4. Omitted when xlrd reports an empty string.
+  named_ranges:
+    type: list[string]
+    required: false
+    source: file_metadata
+    description: |
+      User-defined named ranges from the workbook's defined-name list,
+      in declaration order. Excel internals (`_FilterDatabase`,
+      `_xlnm.*`, `_xlfn.*`, `Print_Area`, `Print_Titles`) are filtered
+      out. Referent cell ranges live in the source artifact and are
+      not part of the draft body. Omitted when the workbook declares
+      no author-meaningful named ranges.

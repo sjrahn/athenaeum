@@ -1,0 +1,25 @@
+class_id: text/code
+kind: atomic
+description: |
+  The segment body is a lossless transcription of source code or
+  configuration text. The body is rendered as a markdown fenced code block.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  language:
+    type: string
+    required: false
+    description: |
+      Language identifier for the fenced code block (`python`, `yaml`,
+      `bash`, `sql`, …). Omitted when unknown or polyglot.
+normalization:
+  guidance: |
+    Preserve the code byte-for-byte: same indentation, same whitespace,
+    same comments, same line breaks. Use a fenced code block with the
+    language tag when known.
+
+    Output a single fenced block per segment; do not interleave code with
+    prose. If the source contains both code and explanatory prose, split
+    into multiple segments (one `text/code` for the code, plain text or
+    other overlays for surrounding prose).

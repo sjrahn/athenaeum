@@ -1,0 +1,12 @@
+description: |
+  Common guidance for `application/*` MIME schemas. Per-subtype schemas
+  (`application_pdf.yaml`, `application_vnd.ms-excel.yaml`,
+  `application_vnd.openxmlformats-officedocument.spreadsheetml.sheet.yaml`,
+  `application_zip.yaml`, `application_x-ndjson.yaml`, …) declare their
+  `applies_to.content_types` and subtype-specific fields; this eponymous
+  file is the merge base for cross-subtype defaults.
+
+  The `application/*` family is intentionally heterogeneous — there are
+  no body-shape defaults that hold across all subtypes. Common content
+  here is limited to provenance / disposition hints; the subtype files
+  carry everything else.

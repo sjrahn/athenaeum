@@ -1,0 +1,22 @@
+class_id: text
+kind: atomic
+description: |
+  Common guidance for text-atom segments. A text segment's body is markdown
+  prose by default. Subtype overlays (`text/data-table`, `text/transcript`,
+  `text/captions`, `text/ocr`, `text/code`, `text/equation`, …) shape the
+  body into specific lossless forms.
+
+  The text atom is the only atom whose segments carry bodies. Image, audio,
+  and video segments are body-empty positioning markers; their descriptions
+  live on the matching embeds. See SPEC §4.3.2.3.
+
+  Subtype overlays whose declaring schema sets `enables_lossless: true`
+  certify that the body losslessly transcribes the addressed content. A
+  segment carries exactly one atomic class id on its opener line — there
+  is no segment-scope `classifications:` field. When multiple
+  representations apply to the same source region (e.g. a photograph's bbox
+  is both a markdown-table view and an OCR view), each becomes its own
+  segment with its own opener.
+applies_to:
+  atom: text
+enables_lossless: false

@@ -1,0 +1,8 @@
+description: |
+  Common guidance for `text/*` MIME schemas. Per-subtype schemas
+  (`text_html.yaml`, …) declare their `applies_to.content_types` and
+  any subtype-specific fields; this eponymous file is the merge base
+  for cross-subtype defaults.
+
+  Today the `text/*` family is single-subtype (HTML). Common fields can
+  be lifted up here as additional subtypes are added.

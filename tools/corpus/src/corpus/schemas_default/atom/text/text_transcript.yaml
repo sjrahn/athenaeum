@@ -1,0 +1,54 @@
+class_id: text/transcript
+kind: atomic
+description: |
+  The segment body is a lossless transcript of an audio or video range.
+  Sourced from automated speech-to-text (Whisper, etc.) or, when present,
+  a hand-prepared transcript stream. The address chain must reach a time
+  range (`time_range=<start>-<end>`) over an audio or video transport.
+
+  Considered lossless even though speech-to-text is imperfect — the
+  transcript is the canonical textual record of what was said. Disfluencies
+  (um, uh, false starts) are preserved verbatim; whisper-style segment
+  boundaries are preserved.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  source:
+    type: string
+    required: false
+    description: |
+      Where the transcript came from: `whisper`, `cc-stream`, `manual`, etc.
+  language:
+    type: string
+    required: false
+    description: |
+      ISO 639-1 language code of the spoken language (`en`, `es`, …).
+normalization:
+  guidance: |
+    Never paraphrase — the body must reflect what was *said*, not what was
+    meant. But the correction policy depends on the transcript source:
+
+    - `source: whisper` (and other automated speech-to-text) — corrections
+      to grammar errors, typos, and obvious mistranscriptions are not just
+      allowed but **necessary** to make the segment a faithful representation.
+      Whisper's output is an approximation of the audio; verbatim-copying it
+      would faithfully represent Whisper, not the speaker. When you're
+      confident a word was misheard, fix it. When you're not, leave the
+      Whisper output as-is. The lossless contract is to the audio, not to
+      the STT output.
+    - `source: cc-stream` (closed-caption stream embedded in the source) or
+      `source: manual` (hand-prepared transcript) — leave verbatim. The
+      author already made the editorial decisions; their typos, choices, and
+      stylings ARE the transcript and altering them would be editorial.
+
+    Speaker turns within the transcript become `[Speaker N] ...` prefixes
+    when the source provides diarization. Disfluencies (um, uh, false starts)
+    follow the same source-dependent policy: Whisper may add or drop them
+    inconsistently — match what the speaker actually said; for hand-prepared
+    transcripts, preserve whatever the author chose to include.
+
+    A transcript segment sits at the same `time_range=` address as the
+    matching `audio` or `video` positioning segment. The position segment
+    marks where the audio/video appears in document flow; the transcript
+    segment provides the lossless textual representation.

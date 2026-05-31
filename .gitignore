@@ -13,3 +13,12 @@ clients/**/*.xcodeproj/xcuserdata/
 
 # macOS Finder metadata
 .DS_Store
+
+# tools/corpus (Python) build/venv/cache
+tools/corpus/.venv/
+tools/corpus/dist/
+tools/corpus/build/
+tools/corpus/**/__pycache__/
+tools/corpus/**/*.egg-info/
+tools/corpus/.pytest_cache/
+tools/corpus/.ruff_cache/

@@ -1,0 +1,25 @@
+# Partial-content issues — the captured artifact does not contain the full intended
+# content. Used as the namespace for several capture/ingest/drafter detectors that
+# all signal "the bytes are partial relative to what the source URL was supposed to
+# deliver":
+#
+#   partial-content/http-error      — server returned 200 + error template body
+#   partial-content/redirect-drift  — final URL drifted to login/cookie/error/root
+#   partial-content/login-wall      — page is a sign-in wall, not the article
+#   partial-content/paywall         — page is a subscribe wall, not the article
+#   partial-content/captcha         — page is a captcha challenge
+#   partial-content/tiny            — artifact byte size under per-MIME threshold
+#   partial-content/empty-body      — parsed <body> has no visible content
+#
+# Bare `partial-content` (no subtype) is also valid, used by the normalizer when
+# no subtype fits (e.g. an OCR pass that failed on scanned PDF pages).
+
+description: |
+  The artifact is incomplete relative to the intended content. The bytes are valid
+  but represent only a portion of what the source URL was meant to deliver — paywalled
+  content, OCR-failed pages, stub fetches, truncated downloads, captures gated by
+  login walls or captchas, server-error templates served at HTTP 200, etc. See the
+  subtype yamls in `schema/issue/partial-content/` for the specific detection
+  signatures and remediation paths.
+
+applies_at: [record, segment]

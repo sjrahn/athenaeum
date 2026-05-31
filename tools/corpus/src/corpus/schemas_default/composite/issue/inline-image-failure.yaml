@@ -1,0 +1,34 @@
+# Playwright-side image pre-fetch (`_inline_image_srcs`) failed to retrieve
+# a meaningful fraction of external `<img src>` URLs. Emitted by the
+# capture-stage detector in capture-url.py.
+
+description: |
+  Capture-time, the pre-fetch pass that downloads external image URLs and
+  swaps them to `data:` URIs encountered a non-trivial failure rate. The
+  resulting snapshot is missing some images that would have been inlined on
+  a clean run. Severity scales with the rate: `info` at >10% failures,
+  `warning` at >50%. Causes typically include: CDN anti-hotlinking (the
+  Wikimedia case), permission-required images, transient network errors,
+  CORS-shaped responses returning HTML error pages instead of the image
+  bytes. Investigating per-record may be useful when the rate is high.
+
+applies_at: [record]
+
+extended_fields:
+  inlined_count:
+    type: int
+    required: true
+    description: Number of `<img>` srcs successfully pre-fetched + inlined.
+  failed_count:
+    type: int
+    required: true
+    description: |
+      Number of `<img>` srcs the pre-fetch couldn't retrieve (network error,
+      HTTP 4xx/5xx, empty body). These remained as `data:,` placeholders or
+      were left as external URLs depending on SingleFile fallback behavior.
+  failure_rate:
+    type: float
+    required: true
+    description: |
+      `failed_count / (inlined_count + failed_count)`, rounded to 3 decimal
+      places. Always in [0.0, 1.0].

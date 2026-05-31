@@ -1,0 +1,80 @@
+[project]
+name = "ath-corpus"
+version = "0.1.0"
+description = "Corpus tooling for ATH-CORPUS v1.0 — capture, ingest, draft, resolve, lint."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "CC-BY-SA-4.0"
+authors = [{ name = "Steven Rahn", email = "steven@rahn.dev" }]
+dependencies = [
+    # base floor: model + IO + schema layer + lint + resolver(image/pdf/html) + drafters(pdf/html/image)
+    "blake3>=1.0.4",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+    "pypdf>=5.1",
+    "pypdfium2>=4.30",
+    "Pillow>=11.0",
+    "pillow-avif-plugin>=1.5",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+capture        = ["playwright>=1.49"]
+media          = ["yt-dlp>=2024.10", "yt-dlp-ejs>=0.8"]
+office         = ["openpyxl>=3.1", "xlrd>=2.0.1", "python-docx>=1.1"]
+fingerprint    = ["imagehash>=4.3", "pyacoustid>=1.3", "simhash>=2.1"]
+azure          = ["azure-storage-blob>=12.20", "azure-identity>=1.17"]
+s3             = ["boto3>=1.34"]
+crypto         = ["cryptography>=48.0.0"]
+claude-session = []
+
+[project.scripts]
+corpus = "corpus._cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/corpus"]
+
+# Ship the bundled universal schemas (YAML) inside the wheel as package data.
+[tool.hatch.build.targets.wheel.force-include]
+"src/corpus/schemas_default" = "corpus/schemas_default"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/corpus/_cli/*.py" = ["E501", "SIM"]
+"src/corpus/_cli/__init__.py" = ["E501"]
+"src/corpus/lint.py" = ["E501"]
+"src/corpus/recordbuild.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: tests that require network access (skipped by default)",
+]

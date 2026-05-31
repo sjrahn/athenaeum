@@ -1,0 +1,230 @@
+description: |
+  Claude Code session-log artifacts. The artifact bytes are an append-only newline-delimited JSON (NDJSON / JSONL) transcript emitted by the Claude Code harness at `~/.claude/projects/<project>/<session-uuid>.jsonl` (parent sessions) and `~/.claude/projects/<project>/<session-uuid>/subagents/agent-<agent-id>.jsonl` (subagent forks). Each line is one typed event — user message, assistant message (text / thinking / tool_use blocks), user tool_result, attachment, queue-operation, ai-title, last-prompt, file-history-snapshot, system / hook callback, permission-mode change, and harness-level housekeeping. The deterministic drafter walks the JSONL in chronological order, derives per-session extended fields (session UUID, project cwd, model id, event counts, tool names, subagent invocations, agent identifiers), and renders the conversation as a flat sequence of segments addressed by `jsonpath=<expr>&line=<N>` — text turns and tool outputs as `atom: text` segments, inline base64 images as `atom: image` segments at the JSONL location where they appeared.
+
+  This media-type schema knows nothing about *what* the session was about — it captures conversation shape, tool fan-out, image embeds, and subagent cross-references. Tenant-specific framing (CarbonAi people glossary, internal-project naming, model-version-specific tactics) belongs on a future `claude-code` classification overlay whose extended fields and body contributions stack on top of the universal shape declared here.
+applies_to:
+  content_types:
+  - application/x-ndjson
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: line
+  type: integer
+  description: 1-indexed line number in the source NDJSON.
+- param: jsonpath
+  type: string
+  description: |-
+    JSONPath expression rooted at the line's JSON object, naming a sub-element (e.g. `$.message.content[0].text`, `$.message.content[2].source.data` for an inline image).
+transport_algos:
+- sha256
+canonical_strategy:
+  algo: blake3-canonical-claude-session
+  canonicalization:
+  - iterate NDJSON lines in order
+  - |-
+    for each message-bearing line, extract its content text blocks (joined by newline)
+  - concatenate all extracted text in line order
+  - blake3 the concatenation
+normalization:
+  method: refinement
+  guidance: |
+    After draft, a claude-session record carries one `<!--section-->` per
+    user-message boundary (`address: turn=<N>`) and 1+ `<!--segment-->` children
+    per section (atom `text` or `image`, addressed `jsonpath=<expr>&line=<N>`).
+    The normalizer's job is to refine `description` and to fold the
+    fine-grained turn sections into ~8-15 phase-aligned sections with
+    descriptive entries — same shape as the meeting subclass's topic-based
+    reorganization.
+
+    **`description` is the summary surface.** Like meetings, claude-sessions
+    keep their narrative summary in YAML frontmatter `description`, not as a
+    `## Summary` body header. Write 1-3 sentences naming: what task this
+    session was performing, what artifact/target it was working against, the
+    rough shape of work (which tools, how many turns, any subagent spawns),
+    and how the session concluded (if observable from the events — e.g.
+    "ended with a commit", "terminated on an error", "wrapped with a summary
+    report to the parent"). Stay faithful — describe what HAPPENED, not
+    WHETHER the agent did a good job.
+
+    **The one interpretive operation: phase-based reorganization.** The
+    drafter emits one section per user-turn — for sessions driven by tool
+    use, that's roughly one section per tool call. A 200-event session
+    yields ~100 sections, way too granular to scan. The normalizer's
+    interpretive licence is exactly one operation: collapse those
+    turn-grained sections into ~8-15 phase sections with descriptive `entry:`
+    labels naming what the agent was doing in each phase (e.g. "Read schema
+    and normalizer guidance", "Walk pages 1-8 with image embeds", "Convert
+    tables 1-5 to markdown", "Final commit and report"). Group by activity,
+    not by tool name. Preserve source order — phases are contiguous slices
+    of the timeline, never reordered.
+
+    Everything else is faithful preservation. Don't summarize tool inputs or
+    outputs beyond what they actually said. Don't drop failed tool calls,
+    error responses, or harness events — they're audit trail. Don't
+    editorialize ("the agent struggled here", "this was the right approach").
+    Don't fabricate phases the agent didn't actually perform.
+
+    **Bulk re-segmentation: write a script.** A session with more than ~50
+    turn-grained sections is impractical to reshape Edit-by-Edit. Write a
+    throwaway Python script that loads the record body with
+    `corpus.records.load` + `corpus.segments.iter_blocks`, identifies phase
+    boundaries (regex matches on tool names, opening text, or the agent's own
+    phase-naming language), and re-emits via `corpus.segments.emit`. The
+    script lives in the workspace just long enough to produce the normalized
+    file; delete it after the commit.
+
+    **Subagent cross-references.** The drafter leaves
+    `[[claude_session:<agent-id>|...]]` placeholders for any `Agent` tool_use
+    sub-spawn. On the normalize pass, attempt resolution by searching
+    `records/` for a sibling claude-session record whose
+    `claude_session_agent_id` matches; if found, rewrite the placeholder as
+    `[[corpus://<sibling-hash>|<original-text>]]`. If not found, leave the
+    placeholder and add a `partial-content` minor issue naming the missing
+    agent id. Skip this resolution pass entirely when
+    `claude_session_is_subagent: true` (sub-agents rarely spawn further
+    sub-agents — the Agent tool isn't visible inside a fork).
+
+    **Target-artifact cross-references.** A claude-session is almost always
+    working AGAINST one or more other corpus artifacts — the PDF a normalize
+    pass targets, the records a curate run audits, the capture-url output a
+    research pass ingests. When the session body references a corpus artifact
+    by hash (full or shortened), file path under `records/<shard>/`, or
+    `corpus://<hash>` URI form, the normalizer surfaces the relationship at
+    the frontmatter level rather than rewriting body text.
+
+    - Identify each distinct target hash referenced in the body (grep for
+      64-char hex strings under `records/`, bare hash mentions in the task
+      prompt, or `corpus://` URI prefixes).
+    - For each, look up the corresponding record. If it exists, write a
+      Markdown cross-reference into the frontmatter `description` (e.g.
+      `...full normalize pass on [[corpus://<hash>|<target-title>]] (...)`),
+      using the target record's `title` as the wikilink display text.
+    - The body itself stays faithful — paths, hashes, and URIs the agent
+      actually typed or saw remain verbatim in segment bodies. Cross-
+      referencing happens in `description` only. Faithfulness lives in the
+      body; machine linkability lives in the frontmatter.
+
+    **Verification.**
+    - Every top-level section carries a descriptive `entry:` label.
+    - No segment inside a section carries an `entry:` (segments are not TOC
+      units when nested; the parser will reject it).
+    - Image-segment alt text describes what's *visible* in the image, not
+      what the surrounding text says about it (the universal faithfulness
+      rule).
+    - Subagent placeholder count in the normalized body matches either (a)
+      zero remaining placeholders + zero `partial-content` issues (all
+      resolved), or (b) some remaining placeholders + matching
+      `partial-content` issues naming them, or (c) all remaining placeholders
+      with no issues for sub-agent sessions (resolution pass skipped).
+    - Re-draft is deterministic; the normalize pass MAY rebuild section
+      groupings but MUST NOT alter individual segment bodies or addresses.
+extended_fields:
+  claude_session_id:
+    type: string
+    semantic_type: identifier
+    required: true
+    source: derived
+    description: |-
+      The session UUID. Every JSONL event carries a `sessionId` field; the drafter records the first occurrence. For subagent JSONLs this is the parent's session UUID — both files share it.
+  claude_session_project:
+    type: string
+    required: false
+    source: derived
+    description: |-
+      The project's working directory (`cwd` from the first event that carries it). Identifies the codebase the session ran against.
+  claude_session_model:
+    type: string
+    required: false
+    source: derived
+    description: |-
+      The model identifier seen on the last assistant message (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`). When the session used multiple models, this is the last one observed.
+  claude_session_started_at:
+    type: string
+    semantic_type: timestamp
+    required: true
+    source: derived
+    description: ISO 8601 timestamp of the earliest event in the JSONL.
+  claude_session_ended_at:
+    type: string
+    semantic_type: timestamp
+    required: true
+    source: derived
+    description: ISO 8601 timestamp of the latest event in the JSONL.
+  claude_session_event_count:
+    type: number
+    required: true
+    source: derived
+    description: Total count of JSONL events (lines) parsed.
+  claude_session_user_count:
+    type: number
+    required: true
+    source: derived
+    description: 'Count of `type: user` events.'
+  claude_session_assistant_count:
+    type: number
+    required: true
+    source: derived
+    description: 'Count of `type: assistant` events.'
+  claude_session_tools_used:
+    type: array
+    required: false
+    source: derived
+    description: Deduplicated, sorted list of tool names invoked across the session.
+  claude_session_subagent_ids:
+    type: array
+    required: false
+    source: derived
+    description: |-
+      Agent IDs of subagents spawned by this session. Matches the suffix of the corresponding subagent JSONL filename. Empty array when the session spawned no subagents.
+  claude_session_image_count:
+    type: number
+    required: true
+    source: derived
+    description: 'Count of inline base64 image content blocks decoded into `atom: image` segments.'
+  claude_session_functional_image_count:
+    type: number
+    required: false
+    source: derived
+    description: |-
+      Count of image content blocks emitted as functional-URI references (`![[corpus://<hash>?<transforms>|<alt>]]`) instead of inline-decoded image segments. The drafter detects deterministic-render provenance and uses the functional form to avoid duplicate-artifact bloat.
+  claude_session_is_subagent:
+    type: boolean
+    required: true
+    source: derived
+    description: |-
+      True if this JSONL is a subagent fork's transcript. False for top-level sessions.
+  claude_session_parent_session_id:
+    type: string
+    semantic_type: identifier
+    required: false
+    source: derived
+    description: 'When `is_subagent: true`, the parent''s session UUID.'
+  claude_session_agent_id:
+    type: string
+    semantic_type: identifier
+    required: false
+    source: derived
+    description: |-
+      When `is_subagent: true`, the agent identifier (the suffix of the subagent JSONL filename, matching the `agentId: <hex>` the parent's `Agent` tool_result returned).
+  claude_session_agent_type:
+    type: string
+    required: false
+    source: derived
+    description: |-
+      When `is_subagent: true`, the subagent_type the parent's `Agent` tool_use requested. Populated by looking up the parent record's matching `Agent` tool_use entry; empty until the parent is ingested.
+  claude_session_agent_description:
+    type: string
+    required: false
+    source: derived
+    description: |-
+      When `is_subagent: true`, the description the parent's `Agent` tool_use carried. Populated by looking up the parent record's matching `Agent` tool_use entry; empty until the parent is ingested.
+  claude_session_cli_version:
+    type: string
+    required: false
+    source: derived
+    description: The Claude Code CLI version observed on any event's `version` field.
+  claude_session_git_branch:
+    type: string
+    required: false
+    source: derived
+    description: The git branch reported on any event's `gitBranch` field.

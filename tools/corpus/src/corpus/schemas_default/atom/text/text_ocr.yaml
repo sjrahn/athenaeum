@@ -1,0 +1,42 @@
+class_id: text/ocr
+kind: atomic
+description: |
+  The segment body is a lossless OCR transcription of text content found
+  in an image region. The address chain must end at an image-shaped region
+  (`bbox=...` over an image atom or a video-frame image).
+
+  Use this when the addressed image is *primarily* a rendering of textual
+  content — a screenshot of a paragraph, a scanned page, an image-of-text.
+  For structured tabular content within an image use `text/data-table`
+  instead; for code use `text/code`.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  ocr_engine:
+    type: string
+    required: false
+    description: |
+      Engine used: `tesseract`, `vlm`, `manual`, etc.
+  language:
+    type: string
+    required: false
+    description: |
+      ISO 639-1 language code.
+  confidence:
+    type: number
+    required: false
+    description: |
+      Overall OCR confidence score in [0, 1] when the engine reports one.
+normalization:
+  guidance: |
+    Transcribe text verbatim — same word order, same line breaks, same
+    capitalization. Preserve paragraph breaks; preserve bullet/list markers
+    when present. Do not paraphrase or summarize.
+
+    When OCR confidence is low on specific words, mark them inline:
+    `[unclear: <best guess>]`. Do not silently drop unreadable spans.
+
+    Layout artifacts (page numbers, running headers/footers) belong in
+    separate segments addressing those specific regions, not folded into
+    the body OCR.

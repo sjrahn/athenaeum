@@ -1,0 +1,9 @@
+class_id: audio/music
+kind: atomic
+description: |
+  Music or musical content — composition, performance, jingle, score.
+  The embed's `description` carries the LLM's reading (genre, tempo,
+  recognizable identity if any).
+applies_to:
+  atom: audio
+enables_lossless: false

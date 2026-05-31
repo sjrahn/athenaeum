@@ -1,0 +1,20 @@
+# Page served a captcha / human-verification challenge instead of the requested
+# content. Distinct from `bot-block` (which is WAF-level chrome — Cloudflare,
+# Akamai, Imperva). Emitted by the capture-stage detector in capture-url.py.
+
+description: |
+  The captured page is a captcha challenge (hCaptcha, reCAPTCHA, or a prose
+  human-verification prompt). The bytes are the challenge, not the article.
+  Blocking — re-capture would re-trigger the challenge; bypassing requires
+  either a session with cleared challenge state or human intervention.
+
+applies_at: [record]
+
+extended_fields:
+  signature:
+    type: string
+    required: true
+    description: |
+      Short identifier for the matched signature (`hcaptcha`, `recaptcha`,
+      `verify-you-are-human`, `image-challenge`). Drawn from
+      `corpus.quality.signatures.CAPTCHA_SIGNATURES`.

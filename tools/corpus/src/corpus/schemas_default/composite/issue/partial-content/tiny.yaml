@@ -1,0 +1,27 @@
+# Captured artifact's byte size is below the per-MIME minimum reasonable
+# threshold. Emitted by the ingest-stage detector in ingest.py.
+
+description: |
+  The artifact file size is below the per-MIME-family threshold for a
+  "real" record (5KB for HTML, 10KB for PDF, 100KB for video, etc.).
+  Almost always indicates an error page, empty stub, or truncated capture
+  rather than legitimate content. Warning rather than blocking — small
+  artifacts CAN be legitimate (a 1-byte plain text file is fine, a tiny
+  icon image is fine for the right media type). Threshold catalog lives
+  in `corpus.quality.signatures.TINY_ARTIFACT_THRESHOLDS`.
+
+applies_at: [record]
+
+extended_fields:
+  size_bytes:
+    type: int
+    required: true
+    description: The actual file size in bytes.
+  threshold_bytes:
+    type: int
+    required: true
+    description: The threshold the file fell below.
+  media_type:
+    type: string
+    required: true
+    description: The MIME type used for threshold lookup.

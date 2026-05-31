@@ -1,0 +1,11 @@
+# Format-loss issues — content that could not be faithfully represented in markdown.
+# Typically emitted by drafters for chart-only spreadsheet sheets, complex tables that
+# can't round-trip, embedded media that lost detail in conversion.
+
+description: |
+  Content present in the source could not be faithfully represented in the body's
+  markdown rendering. Examples: an xlsx chart sheet (chart graphics lost to the
+  markdown projection); a complex merged-cell table flattened to plain markdown; an
+  embedded font / vector graphic that didn't survive extraction.
+
+applies_at: [record, segment]

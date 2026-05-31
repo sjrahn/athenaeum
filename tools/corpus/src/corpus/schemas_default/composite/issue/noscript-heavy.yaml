@@ -1,0 +1,34 @@
+# Page's primary visible text lives in `<noscript>` fallback blocks — the
+# JS-required page didn't render on capture. Emitted by the drafter-stage
+# detector in corpus.draft.html.
+
+description: |
+  After parsing, the `<noscript>` blocks contained more text than the rest of
+  the body combined (and at least 200 characters total in noscript). This
+  usually indicates a JS-rendered page that didn't materialize during
+  capture — Playwright's scroll-and-hydrate pass wasn't enough to trigger
+  the JS that builds the real content. The captured bytes are mostly the
+  "you need JavaScript to view this" fallback. Warning — the noscript text
+  itself is still informative (often summarizes the page), but the article
+  body is missing. Resolution typically requires capture with a longer
+  network-idle wait or a real browser session.
+
+applies_at: [record]
+
+extended_fields:
+  noscript_chars:
+    type: int
+    required: true
+    description: Total visible-text length inside `<noscript>` blocks.
+  rest_chars:
+    type: int
+    required: true
+    description: |
+      Total visible-text length elsewhere in the body (excluding `<script>`,
+      `<style>`, `<noscript>`).
+  noscript_ratio:
+    type: float
+    required: true
+    description: |
+      `noscript_chars / (noscript_chars + rest_chars)`, rounded to 3 decimal
+      places. Detector fires when this exceeds 0.50.

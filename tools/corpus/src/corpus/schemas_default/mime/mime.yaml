@@ -1,0 +1,19 @@
+# Universal artifact-block fields — applied to every <!--artifact <mime-type>--> block
+# regardless of media-type. Per-type extensions live at schema/mime/<type>.yaml;
+# per-subtype at schema/mime/<type>/<subtype>.yaml. Field declarations layer:
+# mime.yaml -> <type>.yaml -> <type>/<subtype>.yaml.
+#
+# See SPEC.md §7.1 (namespace yaml convention) and §7.2.1 (mime namespace).
+
+description: |
+  Universal fields every artifact carries on its <!--artifact-->  block, regardless
+  of media-type. Per-type yamls in this directory extend with format-specific fields.
+
+extended_fields:
+  title:
+    type: string
+    required: true
+    description: |
+      Short descriptive label for the artifact. The drafter refines from extracted
+      metadata where possible (PDF /Info Title, HTML <title>, og:title, xlsx workbook
+      title, etc.); the normalizer may refine further during normalize.

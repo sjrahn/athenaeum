@@ -1,0 +1,256 @@
+description: |
+  HyperText Markup Language — web pages, captured as SingleFile-style snapshots with CSS, fonts, and images inlined as `data:` URIs. Covers the single canonical MIME `text/html`. The drafter performs chrome-stripping (nav/header/footer/scripts/styles, ARIA chrome roles, cookie-banner-class patterns), assigns positional `el=N` indices to every addressable element in the raw artifact, dedup'd-by-content image embeds, and emits a single wrapping text segment containing the cleaned unstyled HTML annotated with `data-el="N"` attributes. That wrapper's address is `el=1-<max>` (a range across every addressable element in the artifact; some indices may have been chrome-stripped — gaps are expected). `<img>` tags in the cleaned HTML have their `src` stripped — `data-el="N"` IS the address, and consumers construct `corpus://<hash>?el=N` from it when they need the bytes. The normalizer parses that HTML, decides section/segment structure, and emits markdown segments addressed by `el=N` (or `el=N-M` for aggregated prose). Image positioning segments link to top-of-body embed blocks by address membership. Structural recovery (heading hierarchy, table reconstruction, list rendering, equation extraction, link preservation) is the normalizer's job.
+applies_to:
+  content_types:
+  - text/html
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: el
+  type: string
+  description: |-
+    1-indexed position of an addressable element in document order in the raw artifact. Single index (`el=42`) names one element; range (`el=42-45`) names a contiguous run, inclusive both ends — used for aggregated prose segments and section wrappers. Addressable: `section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`, `figure`, `h1`–`h6`, `img`. Layout wrappers (`div`, `span`) NOT addressable. Stable across drafter changes because the artifact is immutable. Resolver `corpus.transforms.html.extract_el` returns the decoded PIL image when the resolved element is `<img>`; non-img resolution via `el=` is not supported (the normalizer reads structural HTML from the record's body, not via the resolver).
+- param: selector
+  type: string
+  description: |-
+    [DEPRECATED, retained for legacy records drafted before v0.8.0.] CSS selector identifying a DOM element. New records use `el=` instead.
+- param: xpath
+  type: string
+  description: |-
+    XPath expression identifying the source DOM element. Alternative to `selector` for cases CSS can't express. Legacy.
+embeds:
+  media_types:
+  - image/png
+  - image/jpeg
+  - image/svg+xml
+  - image/webp
+  - image/gif
+  description: |-
+    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `byte_hash` (blake3 of decoded image bytes, 12 hex chars). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
+  fields:
+    address:
+      type: string-or-list
+      required: true
+      description: "Artifact address(es) where these bytes appear. Scalar (`address: el=12`) when bytes appear once; YAML list (`address: [el=78, el=145]`) when at multiple equivalent positions. Same polymorphic shape as Segment.address (SPECv2 §4.3)."
+    byte_hash:
+      type: object
+      required: true
+      description: "Shape `{algo: blake3, value: <hex>}`. Canonical id of the embed; dedup key."
+    width:
+      type: integer
+      required: true
+      description: "pixel width (decoded). 0 for SVGs when the SVG XML doesn't declare width=."
+    height:
+      type: integer
+      required: true
+      description: "pixel height (decoded). 0 for SVGs when the SVG XML doesn't declare height=."
+    alt:
+      type: string
+      required: false
+      description: "Original `<img alt>` text, verbatim. Omitted when empty."
+transport_algos:
+- sha256
+canonical_strategy:
+  algo: blake3-canonical-html
+  canonicalization:
+  - parse with BeautifulSoup; drop <script>, <style>, <svg> subtrees
+  - collapse whitespace runs to single spaces; trim node text
+  - serialize remaining DOM with canonical attribute order
+  - blake3 the serialization
+normalization:
+  method: refinement
+  guidance: |
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The HTML drafter (`scripts/src/corpus/draft/html.py`, v1.1+ for the embed-block shape; older drafts at v0.7.x used `selector=` addressing and have no embed manifest) is deliberately minimal: it strips known chrome, runs the `_convert_field_pairs` rewrite, collapses KaTeX to LaTeX, assigns 1-indexed `el=N` positions to every addressable element in the raw artifact, dedup'd-by-content `<!--embed image/<format>-->` blocks, and emits ONE `<!--segment text-->` whose body is the cleaned HTML for the chosen root (`<main>` > largest `<article>` > `<body>`) annotated with `data-el="N"` on every addressable element. Every structural decision past chrome-strip is the normalizer's job.
+
+    ## Drafter contract
+
+    The drafted body contains:
+
+    1. An `<!--artifact text/html-->` metadata block with standard fields (title, description, lang, canonical, og:site_name, capture-url, fetched-at).
+    2. Zero or more `<!--embed <media-type>-->` blocks — one per unique-content image in the cleaned-HTML root, dedup'd by `byte_hash`. Each carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `byte_hash` ({algo, value} shape), `width`, `height`, `alt`. The media type sits on the opener line (`<!--embed image/png-->`, `<!--embed image/svg+xml-->`).
+    3. One `<!--segment text-->` block whose body is the cleaned HTML. Every addressable element (`section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`, `figure`, `h1`–`h6`, `img`) carries `data-el="N"` where N is the element's position in the **raw artifact**. `<img>` tags have NO `src` — the addressing scheme (`data-el`) is the address; construct `corpus://<hash>?el=N` from the `data-el` value when you need to resolve the bytes.
+
+    Treat the cleaned HTML as your input. You'll be replacing the single `<!--segment text-->` block with N segments (text + image), optionally grouped into sections. Embeds at the top of the body stay where they are — you just reference them implicitly by addresses your segments emit.
+
+    When you need ground-truth drafter output (what a fresh draft pass would emit), invoke the drafter ephemerally:
+
+        uv run --directory scripts python -c "
+        from corpus import paths
+        from corpus.draft import html
+        corpus_root = paths.find_corpus_root()
+        record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
+        artifact = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.html'
+        result = html.draft(artifact, record_id=record_id)
+        print('fields:', result['fields'])
+        print('embeds:', len(result['embeds']))
+        for e in result['embeds'][:3]:
+            print(' ', e.media_type, e.address, e.byte_hash['value'], e.extra)
+        print('issues:', result['issues'])
+        seg = result['segments'][0]
+        print('segment address:', seg.address)
+        print('segment body length:', len(seg.body))
+        "
+
+    ## `description` is the summary surface
+
+    Like meetings, claude-sessions, and PDFs: an HTML record's narrative summary lives in YAML frontmatter `description`, not in a body header. Write 1-3 sentences in a single physical line naming: what the page covers, who published it, and what concrete claims / data / events it carries. For multi-author research papers, name the venue and authors only if the page itself does. For press releases, name the issuer. For news articles, name the outlet, byline (if present), and the headline event. Stay faithful — describe what the page SAYS, not whether what it says is true. No editorial assessment of the publisher's credibility, position, or rhetoric.
+
+    Don't pad `description` with cross-references to other corpus records; that's classification overlays' job. Don't embed wikilinks in `description` unless the page itself is *about* another corpus artifact (rare for HTML; common for claude-session records — see that schema).
+
+    ## Section structure — H1 → H2 fallback → sectionless
+
+    Parse the cleaned HTML in the input segment's body with BeautifulSoup. Identify section boundaries:
+
+    - **If 1+ `<h1>` elements are present**, group top-level content into `<!--section-->` blocks bounded by each `<h1>`. The H1 text becomes the section `entry:`. Pre-H1 content (rare — usually CMS preamble) goes into a synthetic `Preamble` section.
+    - **If no `<h1>` but the document has a clear hierarchy of `<h2>`-rooted sections** (typical for long technical documents — Isometric protocols, multi-section reports, structured methodologies, regulatory standards), group by `<h2>`. The H2 text becomes the section `entry:`. Pre-H2 content goes into a synthetic `Preamble` section.
+    - **If the document is short** (a press release, news brief, marketing one-pager, blog post) **and lacks a clear sub-heading hierarchy**, leave it sectionless — a flat segment list is the right shape.
+
+    Trust the source structure: don't fabricate sections. Don't merge two clearly-separate H2 sections into one because they're short. Don't split a single coherent section into pieces because it's long.
+
+    The H1 vs H2 choice is a per-document call, not a per-overlay rule — make it based on which heading level is the *primary structural axis* of THIS document. Most Isometric protocols, Verra methodologies (when captured as HTML), and CDM registry pages are H2-rooted in practice (their H1 is the document title, but the body's section breaks land at H2). When in doubt, check whether the H1 appears once (it's the title — use H2 as the section axis) or recurs at top-level structural breaks (use H1).
+
+    ## Segment shape — no heading-only segments
+
+    Each section contains one or more `<!--segment text-->` blocks. **A segment whose entire body is a single heading line (just `## My Heading` with no following prose) is wrong** — the heading text belongs in the containing section's `entry:`, not as a standalone segment.
+
+    Heading-level rule:
+    - The heading level used as section boundaries (H1 if H1-rooted, H2 if H2-rooted) is promoted to the section `entry:` and removed from segment bodies.
+    - Headings *deeper* than the section-bounding level (H3 / H4 / H5 / H6) CAN appear inline at the start of a segment body when they introduce the prose that follows — `### Sub-heading\n\nfollowing prose`. They're sub-structure within a section, not section roots.
+
+    Aggregate consecutive prose blocks (`<p>`, `<ul>`, `<ol>`, `<blockquote>`) into a single text segment that preserves their reading flow. Tables, `<pre>` / `<code>` blocks, and figures break aggregation and emit their own segments (rendering rules below).
+
+    ## Markdown rendering
+
+    Render the HTML to markdown faithfully:
+
+    - **Inline emphasis**: `<strong>` / `<b>` → `**bold**`, `<em>` / `<i>` → `*italic*`, `<code>` → `` `code` ``.
+    - **Links**: `<a href="...">text</a>` → `[text](url)`. Keep cross-reference anchors (`href="#term-id"`) — those are the document's internal navigation and the reader uses them to follow definitions and prior sections.
+    - **Lists**: `<ul>` → bulleted, `<ol>` → numbered; recursive nesting honored at deeper indents.
+    - **Code blocks**: `<pre><code class="language-X">…</code></pre>` → fenced ```X … ``` block.
+    - **Tables**: render as a markdown table when all rows have a single value per column. **Bail to raw HTML `<table>`** in the segment body when the source uses `rowspan` or `colspan` — markdown tables can't express merged cells, and methodology project-boundary tables routinely have "Baseline" / "Project" cells spanning multiple SSR rows.
+    - **Equations**: the drafter has already collapsed KaTeX wrappers to `$inline$` / `$$display$$` LaTeX inline in the cleaned HTML. Preserve the LaTeX verbatim; no further conversion needed. Multi-character subscripts should already be brace-wrapped (`$EF_{CO_2,grid,y}$`); if a stray un-wrapped subscript slipped through, fix it.
+    - **Figures**: emit one `<!--segment image-->` per `<img>` you decide to surface (see "Choosing which images to surface" below). Plus a text segment for any `<figcaption>` when present (the drafter doesn't have figure structure — you reconstruct from the cleaned HTML).
+
+    ## Segment addresses
+
+    Each emitted segment's `address` field is **read off the `data-el` attribute** the drafter annotated on the corresponding cleaned-HTML element. Single element → `address: el=N`. Aggregated prose spanning consecutive elements → `address: el=N-M` (range, inclusive both ends). Non-contiguous aggregations should be rare; if they happen, split into two segments. For `<!--section-->` wrappers: `address: el=<first-child-el>-<last-child-el>` covering the section's contents.
+
+    **Do NOT use `selector=`** — that's the deprecated address scheme for pre-v0.8.0 records. New records use `el=N`. The legacy `selector=` resolver stays registered for backward compatibility but no new addresses should use it.
+
+    ## Image segments — link to embeds by address
+
+    The drafter emits a top-of-body `<!--embed <media-type>-->` block per unique-content image. Each embed carries `address` (the artifact-position(s) where the image appears), `byte_hash`, `width`, `height`, `alt`. Use the embeds as your menu of available imagery.
+
+    For each `<img alt="..." data-el="N">` you decide to surface as an image segment:
+
+    - `address: el=N` (the `data-el` value on the `<img>`)
+    - `body:` — start empty; refine via the resolve + describe pass below.
+
+    No `embed:` reference field on the segment. The link from segment to embed is purely positional: the segment's `address: el=N` is described by whichever embed has `el=N` in its `address` field (scalar match for unique-occurrence; list membership for repeated). For unique images, segment-address and embed-address are equal (scalar match). For repeated images, the embed has a list like `address: [el=78, el=145]`, and you emit one segment per address you want to surface (typically all of them; you may surface fewer if some occurrences are obviously decorative even when the bytes are substantive).
+
+    ## Leaked chrome drops silently
+
+    The drafter's chrome strip is best-effort, not exhaustive. Template-driven sites leak chrome through: related-post tiles in article bodies, newsletter capture forms inline between paragraphs, share/social widget rows, author bios appended below the content, "more from this section" carousels, recommended-articles grids, "subscribe" or "log in" prompts as `<p>` segments. When you see leaked chrome in the cleaned HTML, don't emit segments for it — silently skip those DOM elements. The artifact bytes remain the source of truth; no audit-trail mechanism in the record body is needed.
+
+    Lean conservative: skip elements that are unambiguously chrome (cross-promotion of unrelated content, signup forms, share buttons). When an element is borderline (an author bio that names a domain expert; a "related coverage" list that references corpus-relevant articles), keep it. Faithfulness errs on the side of preservation.
+
+    ## Bot-block pages
+
+    When the drafter has emitted a record-scope `partial-content` issue naming an Akamai / Cloudflare / Imperva / similar bot-block detection, the cleaned HTML is the block-page chrome — the page that came back instead of the article. Render the body lightly (a flat segment list is fine; it's evidence of the block, not substantive content). Fill `description` to:
+
+    - Name the block source (`Akamai bot-detection block page`, `Cloudflare challenge page`, etc.) per the drafter's issue.
+    - Name the originating URL (from `origins[]`) that wasn't successfully retrieved.
+    - Optionally summarize what the underlying page was supposed to be about, ONLY when the title text or URL gives that signal (e.g. `/insight-alert/are-you-ready-new-eu-rules-methane-emissions-energy-sector` is suggestive even when the body is bot-block chrome).
+
+    Don't fabricate the underlying content. Don't remove the drafter's `partial-content` issue. Don't change the drafter's `severity` or `remediation` hint.
+
+    ## Paywall pages
+
+    When the cleaned HTML contains a clear lede + early paragraphs but cuts off before the article body — typical patterns: a partial paragraph followed by a "Subscribe to read more" call-to-action, a `<p>` containing literally `Continue reading with a subscription...`, paragraph count dropping abruptly at a soft-bound — the normalizer adds a record-scope `partial-content` issue naming the paywall and the paragraph count captured:
+
+        - type: partial-content
+          severity: minor
+          description: Capture contains the lede + first N paragraphs; the remainder of the article is gated behind <publisher>'s paywall.
+          remediation: recapture_with_authenticated_session
+          resolved: false
+
+    Render the captured lede / opening paragraphs faithfully — they're useful even partial. The normalizer judges paywall vs full article from segment density and trailing-segment signals; the drafter doesn't auto-detect paywalls (the signal is too varied).
+
+    ## Choosing which images to surface
+
+    The drafter emits one embed per unique-content image plus its address(es). Most of them you'll want to surface as segments; some you should drop:
+
+    - **Substantive imagery** — Figure / Diagram / Chart in alt text, larger dimensions (≥ 100×100 typically), appears once or in a small number of places, has a meaningful figcaption nearby. Surface as segments (one per `address` in the embed; for a single-occurrence embed that's one segment, for repeated bytes that's N segments).
+    - **Decorative chrome** — small dimensions (< 32×32 per the embed's `width`/`height`), empty alt + no surrounding figure context, the same icon repeated many times across UI cards. Skip — emit no segment. The embed stays in the body as a manifest entry (or you may prune unreferenced embeds — both defensible).
+
+    Scan the embed list once to plan; then walk the cleaned HTML emitting text and image segments together so reading order is preserved.
+
+    ## Image embeds — resolve and describe
+
+    Image segments are **body-empty positioning markers** (SPEC §4.3.2.3) — they mark where the image falls in reading order and carry no body. The faithful description of what the image SHOWS lives on the matching `<!--embed image/...-->` block's `description:` field, keyed by the embed's `address`. Don't paste the alt text in verbatim — it's a hint, not the description; describe what the image actually shows.
+
+    Resolve via the embed's `address`:
+
+        uv run --directory scripts corpus resolve 'corpus://<hash>?<embed.address>'
+
+    The command prints the cache PNG path to stdout. Read that file with the standard Read tool — you see the image — then write a faithful visible-content description into the embed's `description:` field. Per SPEC §4.3: describe what's *visible* in the image (shapes, text labels, axes, colors, structural elements, captions inside the image itself), not what the surrounding article text says about it. Don't editorialize image content. Don't infer photographer, location, or subject identity unless the image itself shows a caption that names them.
+
+    When a region of the image is losslessly transcribable text (a data table, OCR-able prose, code, an equation), emit a SEPARATE text segment with the matching atom overlay on its opener (`text/data-table`, `text/ocr`, `text/code`, `text/equation`) at the chained sub-address — that lossless transcription is a text body, distinct from the embed's whole-image description.
+
+    For survival-relevant images (in-body figures, charts, diagrams), this resolve + describe pass is the main interpretive lift.
+
+    When the resolver fails (corrupt data URI, unrecognized format, decode error) it raises a `ValueError`. Leave the embed `description:` empty and add a segment-scope `partial-content` issue (addressed at the image segment) naming the failure mode, then move on.
+
+    ## Verification
+
+    - Top-level body order: frontmatter → fields blocks → embed blocks → sections/segments. No embeds between segments.
+    - Top-level structure matches the rule above: H1-rooted sections, H2-rooted sections, or sectionless. No fabricated section breaks; no merged-across-natural-boundary sections.
+    - Every top-level section carries a descriptive `entry:` label (the heading text at the section-bounding level).
+    - No segment inside a section carries an `entry:` (segments are not TOC units when nested; the parser rejects it).
+    - **No segment body is a single heading line** — heading text at the section-bounding level promotes to section entries; deeper headings stay inline at the start of segment bodies.
+    - Segment addresses are `el=N` or `el=N-M` referencing addressable elements in the raw artifact (lifted from `data-el` annotations). No `selector=` addresses on new emissions.
+    - Every image segment's `address` appears in some embed's `address` field (scalar match or list membership). Orphan embeds (no segment surfaces them) MAY be pruned.
+    - Every image segment is body-empty; the visible-content description lives on the matching embed's `description:` field and describes what's *visible* in the image, not what the surrounding text says about it.
+    - `description` is a single physical line in frontmatter, populated for every normalized record.
+    - Drafter-emitted issues (e.g. bot-block `partial-content`) are preserved. The normalizer may ADD issues (e.g. paywall) but doesn't remove or modify the drafter's.
+extended_fields:
+  html_title:
+    type: string
+    required: false
+    source: file_metadata
+    description: Document <title> from the snapshot.
+  html_description:
+    type: string
+    required: false
+    source: file_metadata
+    description: Meta description or og:description, if declared.
+  html_lang:
+    type: string
+    required: false
+    source: file_metadata
+    description: <html lang> attribute.
+  canonical_url:
+    type: string
+    semantic_type: uri
+    required: false
+    source: file_metadata
+    description: rel=canonical link, if declared.
+  og_site_name:
+    type: string
+    required: false
+    source: file_metadata
+    description: og:site_name, if declared.
+  final_url:
+    type: string
+    semantic_type: uri
+    required: false
+    source: file_metadata
+    description: |
+      The post-redirect URL the browser settled on at capture time. Recovered from a `<meta name=corpus-capture-url>` tag injected by `corpus capture-url`; absent for snapshots saved by other means.
+  fetched_at:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: |
+      ISO-8601 timestamp the snapshot was taken. Recovered from a `<meta name=corpus-fetched-at>` tag injected by `corpus capture-url`; absent for snapshots saved by other means.

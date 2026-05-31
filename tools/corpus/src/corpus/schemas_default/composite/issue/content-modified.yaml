@@ -1,0 +1,29 @@
+# The drafter applied a transformation that materially modified the source
+# content (beyond format normalization — cropping, redaction, segment
+# pruning, etc.). Historically emitted in v0.3 — surfaced here as a v1.0
+# overlay so the type is schema-defined when re-emitted on fresh records.
+
+description: |
+  Drafter-time, content present in the source was modified (not merely
+  reformatted) in the body of this record. Examples: a PDF page was cropped
+  to remove watermarks; an HTML segment was pruned for clarity; an image
+  was redacted. The faithfulness contract usually mandates preserving the
+  source, so a `content-modified` issue is the record of where we made a
+  judgment call to depart. The body should still document what was changed
+  (typically in a body section), but this issue surfaces the modification
+  as machine-readable signal.
+
+applies_at: [record, segment]
+
+extended_fields:
+  modification:
+    type: string
+    required: false
+    description: |
+      Short identifier for the modification type (`cropped`, `redacted`,
+      `pruned`, `reordered`, etc.).
+  rationale:
+    type: string
+    required: false
+    description: |
+      One-line free-text explanation of why the modification was made.

@@ -1,0 +1,32 @@
+class_id: text/equation
+kind: atomic
+description: |
+  The segment body is a lossless transcription of a mathematical equation
+  as LaTeX (or another canonical math notation). For inline equations use
+  surrounding `text` prose; this overlay is for display equations large
+  enough to deserve their own segment.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  notation:
+    type: string
+    required: false
+    description: |
+      `latex` (default), `mathml`, `asciimath`, etc.
+  numbered:
+    type: boolean
+    required: false
+    description: |
+      Whether the equation carries a number in the source.
+  equation_number:
+    type: string
+    required: false
+    description: |
+      The equation number as it appears (e.g. `3.14`, `A.5`).
+normalization:
+  guidance: |
+    Transcribe the equation in the declared notation. Wrap LaTeX in `$$ ... $$`
+    delimiters for display equations. Preserve operator precedence exactly;
+    do not "simplify" or rearrange. When the source uses non-standard
+    notation, leave a comment noting the convention.

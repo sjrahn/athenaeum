@@ -1,0 +1,20 @@
+# Parsed HTML `<body>` contained no visible content. Emitted by the
+# drafter-stage detector in corpus.draft.html.
+
+description: |
+  After parsing the HTML and removing `<script>`/`<style>`/`<noscript>` chrome,
+  the `<body>` element contained neither visible text nor media elements
+  (`<img>`, `<video>`, `<audio>`, `<svg>`, `<canvas>`, `<iframe>`). The
+  captured bytes are a structural shell with no content. Blocking — there's
+  nothing to normalize. A page that consists only of an image (e.g. an
+  infographic) does NOT fire this issue; we explicitly admit image-only
+  records as legitimate.
+
+applies_at: [record]
+
+extended_fields:
+  description:
+    type: string
+    required: false
+    description: |
+      Free-text explanation of what the detector observed. Optional.

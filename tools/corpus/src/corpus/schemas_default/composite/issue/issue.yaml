@@ -1,0 +1,43 @@
+# Universal issue-block fields — applied to every <!--issue--> block regardless of
+# issue type. Per-type extensions live at schema/issue/<id>.yaml; subtype-specific at
+# schema/issue/<id>/<subtype>.yaml.
+#
+# See SPEC.md §4.3.3.1 (issue block) and §7.2.3 (issue namespace).
+
+description: |
+  Universal fields every issue carries on its <!--issue-->  block, regardless of
+  issue type. Per-type yamls in this directory extend with id-specific fields.
+
+applies_at: [record, segment]
+
+extended_fields:
+  severity:
+    type: string
+    required: true
+    description: |
+      The issue's severity. Closed enum: `blocking | warning | info`.
+      - `blocking` — the issue prevents downstream use of this content.
+      - `warning` — the issue affects fidelity or interpretation but does not block use.
+      - `info` — informational observation, no remediation expected.
+  resolution:
+    type: string
+    required: true
+    description: |
+      The issue's resolution state. Closed enum: `open | fixed | wontfix | superseded`.
+      - `open` — issue is current; needs action.
+      - `fixed` — issue was addressed in a subsequent pass.
+      - `wontfix` — issue is acknowledged but won't be remediated (out of scope, faithful).
+      - `superseded` — issue is no longer current (e.g. re-segmentation made the address obsolete).
+  detector:
+    type: string
+    required: true
+    description: |
+      Touch identifier of the pass that emitted the issue (e.g. `corpus.draft.html@1.0.0`,
+      `claude-opus-4-7[1m]`). Provides provenance — which pass detected this problem.
+  address:
+    type: string
+    required: false
+    description: |
+      Optional segment address. Presence makes the issue segment-scoped (refers to a
+      specific segment in the content zone); absence makes it record-scoped (applies to
+      the artifact as a whole). Replaces v0.3's segment-header inline `issues:` arrays.

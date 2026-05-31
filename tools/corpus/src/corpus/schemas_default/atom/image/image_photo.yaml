@@ -1,0 +1,10 @@
+class_id: image/photo
+kind: atomic
+description: |
+  A photograph — captured visual content, distinct from synthesized
+  graphics (charts, logos, diagrams). Typically descriptive rather than
+  data-bearing; the embed's `description` carries the LLM's reading of
+  what the photo depicts.
+applies_to:
+  atom: image
+enables_lossless: false

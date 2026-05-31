@@ -1,0 +1,22 @@
+# Page served behind a "subscribe to read" paywall rather than delivering the
+# requested content. Distinct from `login-wall` (free account behind a
+# sign-in). Emitted by the capture-stage detector in capture-url.py.
+
+description: |
+  The captured page is gated by a subscription paywall — the visible content
+  is the paywall prompt, not the article. The captured bytes are typically
+  partial: a teaser paragraph plus a subscribe CTA. Typically a warning;
+  resolution is either to capture via an authenticated session that has a
+  subscription, or to accept the partial content as the corpus's record of
+  what's publicly visible.
+
+applies_at: [record]
+
+extended_fields:
+  signature:
+    type: string
+    required: true
+    description: |
+      Short identifier for the matched signature (`subscribe-to-continue`,
+      `paywall-marker`). Drawn from
+      `corpus.quality.signatures.PAYWALL_SIGNATURES`.

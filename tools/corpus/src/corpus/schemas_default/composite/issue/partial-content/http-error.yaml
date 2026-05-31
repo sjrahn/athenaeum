@@ -1,0 +1,29 @@
+# Server returned HTTP 200 but the response body is a known error template
+# (Apache ErrorDocument, nginx default error page, IIS default, Wikimedia error,
+# generic 404 title). Emitted by the capture-stage detector in capture-url.py.
+# Distinct from honest 4xx/5xx responses — those don't fire this issue.
+
+description: |
+  The HTTP status was 200 but the response body matched a server-error template
+  signature. The server is reporting success while returning an error page in the
+  body (typical of misconfigured Apache ErrorDocument directives or
+  permission-redirect setups). The captured bytes look like content but represent
+  a server error. Typically blocking — the requested article was not retrieved.
+
+applies_at: [record]
+
+extended_fields:
+  http_status:
+    type: int
+    required: true
+    description: |
+      The HTTP status the server returned. Always 200 for this subtype — the
+      whole point is that the status disagreed with the body.
+  signature:
+    type: string
+    required: true
+    description: |
+      Short identifier for the matched signature (`apache-errordocument`,
+      `nginx-default-error`, `iis-default-error`, `wikimedia-error`,
+      `generic-page-not-found`). Drawn from
+      `corpus.quality.signatures.HTTP_ERROR_BODY_SIGNATURES`.

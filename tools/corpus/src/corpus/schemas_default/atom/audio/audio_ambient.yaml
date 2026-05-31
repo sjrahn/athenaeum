@@ -1,0 +1,9 @@
+class_id: audio/ambient
+kind: atomic
+description: |
+  Ambient or environmental audio — room tone, traffic, nature, mechanical
+  sounds. Not speech, not music. The embed's `description` characterizes
+  the soundscape (what the listener would identify if they heard it).
+applies_to:
+  atom: audio
+enables_lossless: false

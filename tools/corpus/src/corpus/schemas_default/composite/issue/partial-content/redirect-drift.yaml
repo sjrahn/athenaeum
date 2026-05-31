@@ -1,0 +1,32 @@
+# Final settled URL drifted away from the requested URL toward a login wall,
+# cookie consent, error page, or site root — the capture didn't reach the
+# intended article. Emitted by the capture-stage detector in capture-url.py.
+
+description: |
+  After navigation the page settled at a URL that suggests the requested content
+  was not delivered — either the hostname changed (cross-domain redirect, e.g.
+  to a partner login) or the path matched a known redirect-drift pattern (`/`,
+  `/login`, `/sign-in`, `/subscribe`, `/cookies`, `/captcha`, `/404`, `/error`).
+  Same-host trailing-slash / `www.` canonicalization is NOT a drift; only
+  redirects to a meaningfully different surface fire this issue.
+
+applies_at: [record]
+
+extended_fields:
+  drift:
+    type: string
+    required: true
+    description: |
+      Short identifier for the matched drift pattern: `hostname-change`,
+      `root-redirect`, `login-redirect`, `subscribe-redirect`, `cookie-wall`,
+      `error-redirect`, `captcha-redirect`. Drawn from
+      `corpus.quality.signatures.REDIRECT_DRIFT_PATH_PATTERNS`.
+  request_url:
+    type: string
+    required: true
+    description: The URL passed to capture-url.py.
+  final_url:
+    type: string
+    required: true
+    description: |
+      `page.url` after navigation settled (post-redirect).

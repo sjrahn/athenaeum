@@ -1,0 +1,45 @@
+class_id: text/data-table
+kind: atomic
+description: |
+  The segment body is a lossless markdown-table transcription of a tabular
+  region in the addressed content. The address chain must reach a region
+  capable of containing a table — a `bbox=` over an image, a region within
+  a PDF/HTML page, etc.
+
+  Use this overlay when the source data is genuinely tabular and the cells
+  can be transcribed verbatim. If a "table" is actually a layout artifact
+  (key-value pairs styled with table HTML, code blocks dressed up as tables),
+  use a more appropriate overlay (`text/code` for code, plain text for k-v
+  prose).
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  row_count:
+    type: integer
+    required: false
+    description: |
+      Number of data rows (excluding header).
+  column_count:
+    type: integer
+    required: false
+    description: |
+      Number of columns.
+  has_header_row:
+    type: boolean
+    required: false
+    description: |
+      Whether the first row is a header (column titles).
+normalization:
+  guidance: |
+    Transcribe column headers and cell values verbatim. Preserve cell layout:
+    merged cells become column-span markers; empty cells stay empty (write
+    them as `` || `` not `|—|`). Do not paraphrase, summarize, or omit cells.
+
+    If a cell contains structured content (a list, a sub-table, a multi-paragraph
+    block), preserve it as markdown — use `<br>` for line breaks within a cell.
+    Sub-tables collapse to one cell containing a serialized form when the
+    nested structure would break markdown table syntax.
+
+    Footnotes / table notes that sit alongside the table go in a separate
+    segment, not in the table cells.

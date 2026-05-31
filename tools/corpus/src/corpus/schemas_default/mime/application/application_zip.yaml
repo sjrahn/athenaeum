@@ -1,0 +1,20 @@
+description: |
+  Raw ZIP archive — a generic container, not a structured-document container
+  like OOXML xlsx / docx / pptx. Per SPECv2, the default disposition for
+  raw zip is `artifact_kind: decomposable`: the ingestor treats the file
+  like a folder of members, ingests each member as its own captured
+  artifact, and the container itself does not produce a record. The
+  unwrap happens in the `corpus ingest` dispatcher module
+  (`scripts/src/corpus/_cli/ingest.py`, `_ingest_decomposable`).
+
+  Structured-zip media types (xlsx, docx, pptx, epub, jar, …) are
+  detected one level deeper in `scripts/src/corpus/mime.py:_refine_zip`
+  by looking for telltale parts inside the zip (e.g. `xl/workbook.xml`
+  for xlsx). Those route to their own self-contained media-type schemas
+  and do not reach this entry.
+applies_to:
+  content_types:
+  - application/zip
+artifact_kind: decomposable
+transport_algos:
+- sha256
