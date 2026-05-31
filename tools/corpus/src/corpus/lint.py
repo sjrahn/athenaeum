@@ -67,6 +67,10 @@ _TOUCH_RE = re.compile(
 )
 
 _HASH_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{32,128}$", re.IGNORECASE)
+# Perceptual fingerprints (§7.7) are narrower than byte hashes: pHash and simhash are
+# 64-bit (16 hex). `transport`/`canonical` are byte hashes (blake3/sha256, ≥128-bit) and
+# keep `_HASH_RE`; perceptual values get this 64-bit-floor variant.
+_PERCEPTUAL_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{16,128}$", re.IGNORECASE)
 _BLAKE3_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_ATOMS = {"text", "image", "audio", "video"}
 _VALID_STATUSES = {"stub", "draft", "normalized"}
@@ -167,7 +171,7 @@ def _rule_perceptual_format(post, blocks, root) -> Iterator[Finding]:
         return
     values = raw if isinstance(raw, list) else [raw]
     for v in values:
-        if not isinstance(v, str) or not _HASH_RE.match(v):
+        if not isinstance(v, str) or not _PERCEPTUAL_RE.match(v):
             yield Finding(
                 rule_id="perceptual-format",
                 severity="error",
@@ -381,7 +385,7 @@ def _rule_segment_perceptual_format(post, blocks, root) -> Iterator[Finding]:
 def _check_perceptual_shape(seg: _segments.Segment) -> Iterator[Finding]:
     if seg.perceptual is None:
         return
-    if not isinstance(seg.perceptual, str) or not _HASH_RE.match(seg.perceptual):
+    if not isinstance(seg.perceptual, str) or not _PERCEPTUAL_RE.match(seg.perceptual):
         yield Finding(
             rule_id="segment-perceptual-format",
             severity="error",
@@ -403,8 +407,8 @@ def _rule_segment_entry_outside_top_level(post, blocks, root) -> Iterator[Findin
                         rule_id="segment-entry-in-section",
                         severity="error",
                         message=(
-                            f"segment carries `entry:` but is inside a section; "
-                            f"entry: is a top-level segment field only (spec §4.3.2.2)."
+                            "segment carries `entry:` but is inside a section; "
+                            "entry: is a top-level segment field only (spec §4.3.2.2)."
                         ),
                         address=_addr_str(seg.address),
                     )
