@@ -1,24 +1,30 @@
-"""Per-origin capture recipes — the capture-time analog of origin overlays.
+"""Per-origin capture recipes — read from the origin overlay's ``capture:`` section.
 
-A recipe is a YAML file at ``schema/capture/<name>.yaml``, resolved corpus-local
-first by the schema loader (exactly like ``schema/origin/<host>.yaml``). It
-selects and parameterises the capturer for matching origins::
+Capture is a retrieval concern of an origin, so its config lives **on the origin
+overlay** (``schema/origin/<host>.yaml``) rather than a separate namespace — one
+host-keyed file describes both what a source is and how to capture it. The
+``capture:`` block selects and parameterises the capturer for matching origins::
 
+    # schema/origin/instagram.com.yaml
     applies_to:
-      host_pattern: instagram.com      # or host_patterns: [a, b]; "*" = catch-all
+      host_pattern: instagram.com        # or host_patterns: [a, b]; "*" = catch-all
       include_subdomains: true
-    capturer: browser                  # packaged or corpus-local name (default: browser)
-    transport: headless                # headless | headed | cdp
-    interactions:                      # see corpus.capture.interactions
-      - scroll: full
-      - click: {selector: "button[aria-label*=Next i]", repeat: 12}
-    viewport: 1280x900
-    user_agent: "..."
+    extended_fields: {}                   # origin-block field overlays (validation)
+    capture:                              # capture-time behavior (read only at capture)
+      capturer: browser                   # packaged or corpus-local name (default: browser)
+      transport: headless                 # headless | headed | cdp
+      interactions:                       # see corpus.capture.interactions
+        - scroll: full
+        - click: {selector: "button[aria-label*=Next i]", repeat: 12}
+      viewport: 1280x900
+      user_agent: "..."
 
-The reference package ships **no** base recipe — absent a match, the browser
-capturer's built-in defaults apply (headless + ``interactions.DEFAULT_STEPS``).
-A corpus adds per-origin recipes (data) or, for the hard cases, a corpus-local
-capturer (code; see Phase C) that a recipe's ``capturer:`` names.
+Global defaults go on the universal ``schema/origin/origin.yaml`` ``capture:`` (it
+deep-merges under every per-host overlay via the schema loader); per-host
+``capture:`` overrides. The reference package ships **no** capture config — absent
+any match, the browser capturer's built-in defaults apply (headless +
+``interactions.DEFAULT_STEPS``). For the hard cases a corpus-local capturer (code;
+see Phase C) is named by a recipe's ``capturer:``.
 """
 
 from __future__ import annotations
@@ -32,25 +38,9 @@ from .. import urls as urlcanon
 
 log = logging.getLogger("corpus.capture.recipes")
 
-# schema/capture/<name>.yaml
-_RECIPE_DIR = "capture"
 
-
-def _load_all(corpus_root: Path) -> list[tuple[str, dict[str, Any]]]:
-    """Every capture recipe visible to `corpus_root` (corpus-local first), as
-    `(relpath, recipe)`. Reuses the schema loader so resolution/caching match
-    origin overlays."""
-    sources = schemas._sources(corpus_root)
-    out: list[tuple[str, dict[str, Any]]] = []
-    for relpath in schemas._discover_yaml(sources, _RECIPE_DIR):
-        data = schemas._read_yaml_first(sources, relpath)
-        if isinstance(data, dict):
-            out.append((relpath, data))
-    return out
-
-
-def _patterns(recipe: dict[str, Any]) -> tuple[list[str], bool]:
-    applies = recipe.get("applies_to") or {}
+def _patterns(overlay: dict[str, Any]) -> tuple[list[str], bool]:
+    applies = overlay.get("applies_to") or {}
     pats: list[str] = []
     if "host_pattern" in applies:
         pats.append(str(applies["host_pattern"]))
@@ -60,23 +50,29 @@ def _patterns(recipe: dict[str, Any]) -> tuple[list[str], bool]:
 
 
 def capture_recipe_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:
-    """Return the most-specific recipe matching `url`'s origin, or None.
+    """Return the `capture:` config of the most-specific origin overlay matching
+    `url`'s host, or None when no matching overlay declares one.
 
-    Match predicate mirrors `schemas.origin_overlays_for_uris`: each recipe's
-    `applies_to.host_pattern(s)` is tested with `urls.same_domain` (apex↔www
-    aware) honoring `include_subdomains`. `host_pattern: "*"` is a catch-all
-    (lowest priority). Ties break toward the longest pattern (most specific),
-    then path order — deterministic.
+    Match predicate mirrors `schemas.origin_overlays_for_uris` (the overlays are the
+    same files): each overlay's `applies_to.host_pattern(s)` is tested with
+    `urls.same_domain` (apex↔www aware) honoring `include_subdomains`.
+    `host_pattern: "*"` is a catch-all (lowest priority). Ties break toward the
+    longest pattern (most specific), then id — deterministic. The universal
+    `origin.yaml`'s `capture:` deep-merges under each per-host overlay (global
+    defaults), so the returned dict already carries any global + per-host layering.
     """
     matches: list[tuple[int, str, dict[str, Any]]] = []
-    for relpath, recipe in _load_all(corpus_root):
-        patterns, include_subdomains = _patterns(recipe)
+    for id_, overlay in schemas.load_origin_overlays(corpus_root):
+        capture_cfg = overlay.get("capture")
+        if not isinstance(capture_cfg, dict):
+            continue
+        patterns, include_subdomains = _patterns(overlay)
         for pattern in patterns:
             if pattern == "*":
-                matches.append((0, relpath, recipe))
+                matches.append((0, id_, capture_cfg))
                 break
             if urlcanon.same_domain(url, pattern, include_subdomains=include_subdomains):
-                matches.append((len(pattern), relpath, recipe))
+                matches.append((len(pattern), id_, capture_cfg))
                 break
     if not matches:
         return None

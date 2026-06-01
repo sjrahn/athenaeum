@@ -88,10 +88,14 @@ def test_interactions_skips_malformed_step():
 # ---------- recipe resolution ---------- #
 
 
-def _corpus(tmp_path, **files):
-    d = tmp_path / "schema" / "capture"
+def _corpus(tmp_path, **overlays):
+    """Write per-host origin overlays under schema/origin/ — each `name=body` is the
+    overlay YAML (applies_to + optional `capture:` section). Always seeds the universal
+    origin.yaml so the overlay loader layers exactly as it does in a real corpus."""
+    d = tmp_path / "schema" / "origin"
     d.mkdir(parents=True, exist_ok=True)
-    for name, body in files.items():
+    (d / "origin.yaml").write_text("description: test\nextended_fields: {}\n", encoding="utf-8")
+    for name, body in overlays.items():
         (d / f"{name}.yaml").write_text(body, encoding="utf-8")
     return tmp_path
 
@@ -99,7 +103,8 @@ def _corpus(tmp_path, **files):
 def test_recipe_match_and_miss(tmp_path):
     root = _corpus(
         tmp_path,
-        ig="applies_to: {host_pattern: instagram.com, include_subdomains: true}\ntransport: cdp\n",
+        ig="applies_to: {host_pattern: instagram.com, include_subdomains: true}\n"
+        "capture: {transport: cdp}\n",
     )
     r = recipes.capture_recipe_for_url(root, "https://www.instagram.com/p/x/")
     assert r and r["transport"] == "cdp"  # subdomain www matched
@@ -109,8 +114,8 @@ def test_recipe_match_and_miss(tmp_path):
 def test_recipe_specificity_beats_catchall(tmp_path):
     root = _corpus(
         tmp_path,
-        star="applies_to: {host_pattern: '*'}\ntransport: headless\n",
-        ig="applies_to: {host_pattern: instagram.com}\ntransport: cdp\n",
+        star="applies_to: {host_pattern: '*'}\ncapture: {transport: headless}\n",
+        ig="applies_to: {host_pattern: instagram.com}\ncapture: {transport: cdp}\n",
     )
     assert recipes.capture_recipe_for_url(root, "https://instagram.com/x")["transport"] == "cdp"
     assert recipes.capture_recipe_for_url(root, "https://other.com")["transport"] == "headless"
@@ -120,13 +125,15 @@ def test_recipe_specificity_beats_catchall(tmp_path):
 
 
 def test_router_recipe_selects_capturer(tmp_path):
-    root = _corpus(tmp_path, x="applies_to: {host_pattern: example.com}\ncapturer: video\n")
+    root = _corpus(
+        tmp_path, x="applies_to: {host_pattern: example.com}\ncapture: {capturer: video}\n"
+    )
     fn, recipe = capture.get_capturer(root, "https://example.com", opts=capture.CaptureOptions())
     assert fn is capture.REGISTRY["video"] and recipe["capturer"] == "video"
 
 
 def test_router_default_dispatch_when_no_recipe(tmp_path):
-    root = _corpus(tmp_path)  # empty schema/capture/
+    root = _corpus(tmp_path)  # no per-host capture config
     opts = capture.CaptureOptions()
     fn_v, _ = capture.get_capturer(root, "https://youtube.com/watch?v=x", opts=opts)
     fn_b, _ = capture.get_capturer(root, "https://example.com", opts=opts)
@@ -135,7 +142,9 @@ def test_router_default_dispatch_when_no_recipe(tmp_path):
 
 
 def test_router_unknown_capturer_raises(tmp_path):
-    root = _corpus(tmp_path, x="applies_to: {host_pattern: example.com}\ncapturer: bogus\n")
+    root = _corpus(
+        tmp_path, x="applies_to: {host_pattern: example.com}\ncapture: {capturer: bogus}\n"
+    )
     with pytest.raises(capture.CaptureError):
         capture.get_capturer(root, "https://example.com", opts=capture.CaptureOptions())
 
@@ -175,7 +184,7 @@ def test_corpus_local_capturer_loaded_and_selected(tmp_path):
         "    return CaptureResult(capture_path=capture_dir / 'x', used_video=False, issues=[])\n",
         encoding="utf-8",
     )
-    _corpus(tmp_path, e="applies_to: {host_pattern: example.com}\ncapturer: echo\n")
+    _corpus(tmp_path, e="applies_to: {host_pattern: example.com}\ncapture: {capturer: echo}\n")
     try:
         fn, recipe = capture.get_capturer(
             tmp_path, "https://example.com", opts=capture.CaptureOptions()

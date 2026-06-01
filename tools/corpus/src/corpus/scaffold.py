@@ -19,8 +19,8 @@ import yaml
 
 _GITIGNORE = """\
 # Untracked corpus state — regenerable from records/ + schema/. Root-anchored
-# (leading /) so same-named tracked dirs nested elsewhere — notably the
-# `schema/capture/` recipe dir vs the `capture/` staging dir — are NOT ignored.
+# (leading /) so the `capture/` staging dir is ignored without also ignoring any
+# same-named tracked dir nested elsewhere under schema/.
 /artifacts/
 /capture/
 /cache/
@@ -85,8 +85,7 @@ per-corpus concerns so they live here.
 ├── schema/
 │   ├── origin/
 │   │   ├── origin.yaml   # Universal origin fields (uri/snapshot) — corpus owns this
-│   │   └── <host>.yaml   # Per-host overlays as you add sources
-│   ├── capture/          # Per-origin capture recipes (schema/capture/<host>.yaml)
+│   │   └── <host>.yaml   # Per-host overlays: origin fields + optional `capture:` config
 │   └── composite/
 │       └── {namespace}/  # THIS corpus's classification namespace(s)
 ├── capturers/            # TRACKED — optional corpus-local capturer code (example.py)
@@ -108,22 +107,34 @@ corpus diagnose <hash>  # snapshot + classification candidates
 See `ath-corpus`'s README for the full surface.
 """
 
-_EXAMPLE_RECIPE_YAML = """\
-# Example capture recipe (DATA overlay) — the capture-time analog of
-# schema/origin/<host>.yaml. Copy to schema/capture/<host>.yaml, uncomment, and
-# edit. Matched against an origin's host (apex<->www aware); corpus-local first.
+_EXAMPLE_ORIGIN_OVERLAY_YAML = """\
+# Example per-host origin overlay. Copy to schema/origin/<host>.yaml, uncomment, and
+# edit. Matched against an origin's host (apex<->www aware); corpus-local first. One
+# host-keyed file carries BOTH the origin-block field overlays (extended_fields, for
+# record validation) AND, optionally, a `capture:` section (read only at capture time)
+# describing how to fetch this source.
 #
 # applies_to:
-#   host_pattern: example.com      # or host_patterns: [a, b]; "*" = catch-all
+#   host_pattern: example.com        # or host_patterns: [a, b]; "*" = catch-all
 #   include_subdomains: true
-# capturer: browser                # packaged (browser | video) or a corpus-local name
-# transport: headless              # headless | headed | cdp  (headed/cdp need a display
-#                                  # or a running Chrome -- see `corpus capture --transport`)
-# interactions:                    # run before the snapshot to surface ALL displayable
-#   - scroll: full                 # media (lazy-load, carousels, tabs, accordions)
-#   - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
-#   - expand: all
-# viewport: 1280x900
+#
+# # Origin-block extended fields beyond the universal uri:/snapshot:, if this source
+# # needs any. Validated on every <!--origin--> block for matching records.
+# extended_fields: {}
+#
+# # Capture-time behavior — surface ALL displayable media (lazy-load, carousels, tabs,
+# # accordions) before the self-contained snapshot. Absent, the browser capturer's
+# # built-in defaults apply (headless + scroll/expand). Global defaults can go on the
+# # universal origin.yaml `capture:`; per-host `capture:` here overrides.
+# capture:
+#   capturer: browser                # packaged (browser | video) or a corpus-local name
+#   transport: headless              # headless | headed | cdp  (headed/cdp need a display
+#                                    # or a running Chrome -- see `corpus capture --transport`)
+#   interactions:
+#     - scroll: full
+#     - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
+#     - expand: all
+#   viewport: 1280x900
 """
 
 _EXAMPLE_CAPTURER_PY = '''\
@@ -222,14 +233,13 @@ def scaffold(target: Path, *, namespace: str, force: bool = False) -> Path:
             encoding="utf-8",
         )
 
-    # Pluggable-capture seam (both tracked, both optional): per-origin capture
-    # recipes (data) under schema/capture/, and corpus-local capturer code under
-    # capturers/. Seeded with commented examples that are inert until edited.
-    capture_recipe_dir = schema_dir / "capture"
-    capture_recipe_dir.mkdir(parents=True, exist_ok=True)
-    example_recipe = capture_recipe_dir / "example.yaml"
-    if not example_recipe.exists() or force:
-        example_recipe.write_text(_EXAMPLE_RECIPE_YAML, encoding="utf-8")
+    # Pluggable-capture seam (both tracked, both optional): per-origin capture config
+    # lives under a `capture:` section on a per-host origin overlay (schema/origin/
+    # <host>.yaml), and corpus-local capturer code under capturers/. Seeded with
+    # commented examples that are inert until edited.
+    example_overlay = origin_dir / "example.com.yaml"
+    if not example_overlay.exists() or force:
+        example_overlay.write_text(_EXAMPLE_ORIGIN_OVERLAY_YAML, encoding="utf-8")
 
     capturers_dir = target / "capturers"
     capturers_dir.mkdir(parents=True, exist_ok=True)
