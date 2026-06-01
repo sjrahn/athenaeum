@@ -84,8 +84,10 @@ per-corpus concerns so they live here.
 │   ├── origin/
 │   │   ├── origin.yaml   # Universal origin fields (uri/snapshot) — corpus owns this
 │   │   └── <host>.yaml   # Per-host overlays as you add sources
+│   ├── capture/          # Per-origin capture recipes (schema/capture/<host>.yaml)
 │   └── composite/
 │       └── {namespace}/  # THIS corpus's classification namespace(s)
+├── capturers/            # TRACKED — optional corpus-local capturer code (example.py)
 ├── artifacts/            # UNTRACKED — binary store
 ├── capture/              # UNTRACKED — capture staging
 ├── cache/                # UNTRACKED — resolver output cache
@@ -103,6 +105,49 @@ corpus diagnose <hash>  # snapshot + classification candidates
 
 See `ath-corpus`'s README for the full surface.
 """
+
+_EXAMPLE_RECIPE_YAML = """\
+# Example capture recipe (DATA overlay) — the capture-time analog of
+# schema/origin/<host>.yaml. Copy to schema/capture/<host>.yaml, uncomment, and
+# edit. Matched against an origin's host (apex<->www aware); corpus-local first.
+#
+# applies_to:
+#   host_pattern: example.com      # or host_patterns: [a, b]; "*" = catch-all
+#   include_subdomains: true
+# capturer: browser                # packaged (browser | video) or a corpus-local name
+# transport: headless              # headless | headed | cdp  (headed/cdp need a display
+#                                  # or a running Chrome -- see `corpus capture --transport`)
+# interactions:                    # run before the snapshot to surface ALL displayable
+#   - scroll: full                 # media (lazy-load, carousels, tabs, accordions)
+#   - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
+#   - expand: all
+# viewport: 1280x900
+"""
+
+_EXAMPLE_CAPTURER_PY = '''\
+"""Corpus-local capturer template (CODE replacement tier).
+
+Drop a single-file module in this directory and decorate a function with
+`@register("<name>")`; a capture recipe's `capturer: <name>` then routes matching
+origins to it. The `ath-corpus` package imports this directory ONLY when a recipe
+names a capturer it doesn't ship -- and it imports (executes) your code, so treat
+this as your corpus's own trusted code.
+
+Uncomment to use.
+"""
+
+# from corpus.capture import CaptureResult, register
+#
+#
+# @register("example")
+# def capture_example(url, *, corpus_root, capture_dir, opts, recipe):
+#     """Retrieve `url` however you like, write the bytes under `capture_dir`, and
+#     return a CaptureResult pointing at the file. Raise
+#     `corpus.capture.CaptureError` on failure. `recipe` is the matched recipe dict."""
+#     out = capture_dir / "example.bin"
+#     out.write_bytes(b"...")  # your custom retrieval here
+#     return CaptureResult(capture_path=out, used_video=False, issues=[])
+'''
 
 
 def scaffold(target: Path, *, namespace: str, force: bool = False) -> Path:
@@ -174,6 +219,21 @@ def scaffold(target: Path, *, namespace: str, force: bool = False) -> Path:
             ),
             encoding="utf-8",
         )
+
+    # Pluggable-capture seam (both tracked, both optional): per-origin capture
+    # recipes (data) under schema/capture/, and corpus-local capturer code under
+    # capturers/. Seeded with commented examples that are inert until edited.
+    capture_recipe_dir = schema_dir / "capture"
+    capture_recipe_dir.mkdir(parents=True, exist_ok=True)
+    example_recipe = capture_recipe_dir / "example.yaml"
+    if not example_recipe.exists() or force:
+        example_recipe.write_text(_EXAMPLE_RECIPE_YAML, encoding="utf-8")
+
+    capturers_dir = target / "capturers"
+    capturers_dir.mkdir(parents=True, exist_ok=True)
+    example_capturer = capturers_dir / "example.py"
+    if not example_capturer.exists() or force:
+        example_capturer.write_text(_EXAMPLE_CAPTURER_PY, encoding="utf-8")
 
     gi = target / ".gitignore"
     if not gi.exists() or force:

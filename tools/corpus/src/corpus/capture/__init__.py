@@ -45,13 +45,14 @@ import logging
 import os
 import re
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
-from . import hashing, mime, paths, records, touches
-from . import urls as urlcanon
+from .. import hashing, mime, paths, records, touches
+from .. import urls as urlcanon
 
 log = logging.getLogger("corpus.capture")
 
@@ -129,6 +130,7 @@ class CaptureOptions:
     viewport: tuple[int, int] = DEFAULT_VIEWPORT
     user_agent: str = DEFAULT_USER_AGENT
     cdp_url: str | None = None
+    transport: str | None = None  # CLI override: headless | headed | cdp (else recipe/config)
     video: bool = False  # force yt-dlp dispatch regardless of host
     no_video: bool = False  # force Playwright even for video hosts
     no_comments: bool = False  # skip yt-dlp comment scrape
@@ -142,6 +144,130 @@ class CaptureResult:
     capture_path: Path
     used_video: bool
     issues: list[dict] = field(default_factory=list)
+
+
+# ---------- pluggable capturer seam ---------- #
+
+
+@runtime_checkable
+class Capturer(Protocol):
+    """A capture handler for a single URL.
+
+    Packaged defaults are `browser` (Playwright) and `video` (yt-dlp); a corpus
+    can register its own with `@register("<name>")` and route origins to it (the
+    routing lives in `get_capturer`). `recipe` is the resolved per-origin capture
+    recipe (a later phase) or None.
+    """
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        corpus_root: Path,
+        capture_dir: Path,
+        opts: CaptureOptions,
+        recipe: dict[str, Any] | None,
+    ) -> CaptureResult: ...
+
+
+CapturerFn = Callable[..., CaptureResult]
+
+# name → capturer. Populated at import time by the `@register` decorators below.
+REGISTRY: dict[str, CapturerFn] = {}
+
+
+def register(name: str) -> Callable[[CapturerFn], CapturerFn]:
+    """Register a capturer under `name` (mirrors `draft.register` / `transforms.register`)."""
+
+    def decorator(fn: CapturerFn) -> CapturerFn:
+        if name in REGISTRY:
+            raise ValueError(f"capturer already registered: {name!r}")
+        REGISTRY[name] = fn
+        return fn
+
+    return decorator
+
+
+def get_capturer(
+    corpus_root: Path, url: str, *, opts: CaptureOptions
+) -> tuple[CapturerFn, dict[str, Any] | None]:
+    """Resolve `(capturer, recipe)` for `url`.
+
+    A per-origin recipe (`schema/capture/<host>.yaml`) may name the capturer via
+    its `capturer:` field; otherwise the historical dispatch applies — video hosts
+    (the packaged set unioned with `[corpus.capture] video_hosts`) → `video`,
+    everything else → `browser`. The resolved recipe rides along so the chosen
+    capturer can apply its transport / interactions / viewport.
+    """
+    from corpus.config import load_config
+
+    from .recipes import capture_recipe_for_url
+
+    recipe = capture_recipe_for_url(corpus_root, url)
+    if recipe and (raw_name := recipe.get("capturer")):
+        name = str(raw_name)
+        fn = REGISTRY.get(name)
+        if fn is None:
+            _load_corpus_capturers(corpus_root)  # corpus-local code capturers
+            fn = REGISTRY.get(name)
+        if fn is None:
+            raise CaptureError(
+                f"capture recipe selects unknown capturer {name!r} "
+                f"(registered: {sorted(REGISTRY)})"
+            )
+        return fn, recipe
+
+    extra_hosts = frozenset(load_config(corpus_root).capture.get("video_hosts") or ())
+    if _should_use_video(url, force=opts.video, skip=opts.no_video, extra_hosts=extra_hosts):
+        return REGISTRY["video"], recipe
+    return REGISTRY["browser"], recipe
+
+
+# Corpus roots whose `capturers/` have already been imported this process.
+_loaded_capturer_roots: set[str] = set()
+_capturer_load_seq = 0
+
+
+def _load_corpus_capturers(corpus_root: Path) -> None:
+    """Import a corpus's local `capturers/*.py` so their `@register`-decorated
+    capturers populate `REGISTRY`. Idempotent per `corpus_root`.
+
+    Each file is loaded **by path** (via `importlib.util.spec_from_file_location`,
+    not `sys.path`), so distinct corpora can't collide on a shared package name and
+    test corpora stay isolated. Single-file capturers only — relative imports
+    between corpus-local modules aren't supported.
+
+    **Trust boundary**: this executes Python from `corpus_root`. That code is
+    authored by the corpus owner — which is the entire point of the
+    capturer-replacement tier — but it IS code execution from the corpus directory.
+    """
+    global _capturer_load_seq
+
+    key = str(corpus_root.resolve())
+    if key in _loaded_capturer_roots:
+        return
+    _loaded_capturer_roots.add(key)  # mark before loading so a failure won't retry-loop
+
+    cap_dir = corpus_root / "capturers"
+    if not cap_dir.is_dir():
+        return
+
+    import importlib.util
+
+    seq = _capturer_load_seq
+    _capturer_load_seq += 1
+    for py in sorted(cap_dir.glob("*.py")):
+        if py.stem.startswith("_"):
+            continue
+        modname = f"_corpus_capturers_{seq}_{py.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(modname, py)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            log.warning("failed to load corpus-local capturer %s: %s", py.name, exc)
 
 
 # ---------- public API ---------- #
@@ -158,30 +284,11 @@ def capture(url: str, *, corpus_root: Path, opts: CaptureOptions | None = None) 
     canonical = _canonicalize(url)
     capture_dir = corpus_root / "capture"
     capture_dir.mkdir(parents=True, exist_ok=True)
-
-    from corpus.config import load_config
-
-    extra_video_hosts = frozenset(load_config(corpus_root).capture.get("video_hosts") or ())
-    use_video = _should_use_video(
-        canonical, force=opts.video, skip=opts.no_video, extra_hosts=extra_video_hosts
-    )
     log.info("capturing %s", canonical)
-    if use_video:
-        path = _capture_video_with_cookies(canonical, capture_dir=capture_dir, opts=opts)
-        return CaptureResult(capture_path=path, used_video=True, issues=[])
-
-    cdp_url = _resolve_cdp_endpoint(opts.cdp_url)
-    path, issues = _capture_via_playwright(
-        url=canonical, capture_dir=capture_dir, opts=opts, cdp_url=cdp_url
+    capturer, recipe = get_capturer(corpus_root, canonical, opts=opts)
+    return capturer(
+        canonical, corpus_root=corpus_root, capture_dir=capture_dir, opts=opts, recipe=recipe
     )
-    if issues:
-        log.info(
-            "capture-stage detectors fired: %s",
-            ", ".join(
-                f"{i['id']}" + (f"/{i['subtype']}" if i.get("subtype") else "") for i in issues
-            ),
-        )
-    return CaptureResult(capture_path=path, used_video=use_video, issues=issues)
 
 
 def capture_and_ingest(
@@ -229,6 +336,20 @@ def _capture_video_with_cookies(
         if cookiefile is not None:
             with contextlib.suppress(OSError):
                 cookiefile.unlink()
+
+
+@register("video")
+def _capture_with_video(
+    url: str,
+    *,
+    corpus_root: Path,
+    capture_dir: Path,
+    opts: CaptureOptions,
+    recipe: dict[str, Any] | None,
+) -> CaptureResult:
+    """Packaged yt-dlp capturer."""
+    path = _capture_video_with_cookies(url, capture_dir=capture_dir, opts=opts)
+    return CaptureResult(capture_path=path, used_video=True, issues=[])
 
 
 def _capture_video(
@@ -376,7 +497,12 @@ class _YtDlpLogger:
 
 
 def _capture_via_playwright(
-    *, url: str, capture_dir: Path, opts: CaptureOptions, cdp_url: str | None
+    *,
+    url: str,
+    capture_dir: Path,
+    opts: CaptureOptions,
+    cdp_url: str | None,
+    recipe: dict[str, Any] | None = None,
 ) -> tuple[Path, list[dict]]:
     """Drive Playwright; branch on response content-type.
 
@@ -384,6 +510,11 @@ def _capture_via_playwright(
     DOM) with corpus-* meta injection and capture-stage detectors. Anything else
     → raw bytes re-fetched via the browser session, written with a MIME-derived
     extension. Returns `(capture_path, issues)`.
+
+    A `recipe` (resolved per-origin) may override the transport (`headless` |
+    `headed` | `cdp`), the viewport / user-agent, and the pre-snapshot
+    `interactions:` pass. Absent a recipe the historical defaults apply (headless
+    or autodetected CDP; `interactions.DEFAULT_STEPS`).
     """
     try:
         from playwright.sync_api import Error as PlaywrightError
@@ -395,25 +526,47 @@ def _capture_via_playwright(
             "uv pip install 'ath-corpus[capture]' && playwright install chromium"
         ) from e
 
+    from . import interactions
+
     timeout_ms = opts.timeout_s * 1000
     fetched_at = touches.now_iso()
     base = _sanitize_filename(url)
     bundle = _resolve_singlefile_bundle()
 
+    recipe = recipe or {}
+    transport = (str(recipe.get("transport") or "").strip().lower()) or None
+    if (recipe.get("auth") or {}).get("cdp"):
+        transport = "cdp"
+    viewport = _recipe_viewport(recipe) or opts.viewport
+    user_agent = str(recipe.get("user_agent") or "") or opts.user_agent
+    interaction_steps = recipe.get("interactions")
+
     with sync_playwright() as p:
-        if cdp_url:
+        # `transport` (recipe) wins; absent a recipe, preserve the historical
+        # behaviour of using an autodetected CDP endpoint when one is reachable.
+        using_cdp = transport == "cdp" or (transport is None and bool(cdp_url))
+        if using_cdp:
+            if not cdp_url:
+                raise CaptureError(
+                    "capture recipe requested `transport: cdp` but no CDP endpoint is "
+                    "reachable — start Chrome with --remote-debugging-port=9222, or set "
+                    "--cdp-url / CAPTURE_CDP_URL"
+                )
             log.info("connecting to CDP browser at %s", cdp_url)
             browser = p.chromium.connect_over_cdp(cdp_url)
         else:
-            browser = p.chromium.launch(headless=True)
+            headed = transport == "headed"
+            browser = p.chromium.launch(headless=not headed)
+            if headed:
+                log.info("launched headed browser (recipe transport: headed)")
         page = None
         try:
-            if cdp_url:
+            if using_cdp:
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             else:
                 ctx = browser.new_context(
-                    viewport={"width": opts.viewport[0], "height": opts.viewport[1]},
-                    user_agent=opts.user_agent,
+                    viewport={"width": viewport[0], "height": viewport[1]},
+                    user_agent=user_agent,
                     accept_downloads=True,
                 )
             page = ctx.new_page()
@@ -450,7 +603,7 @@ def _capture_via_playwright(
                         "networkidle did not settle within %dms — snapshotting anyway",
                         NETWORKIDLE_BUDGET_MS,
                     )
-                _scroll_and_hydrate(page)
+                interactions.run(page, interaction_steps)
                 image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 final_url = page.url
                 snapshot = _snapshot_html(page=page, fetched_at=fetched_at, bundle=bundle)
@@ -478,7 +631,7 @@ def _capture_via_playwright(
                     len(raw),
                     ct,
                 )
-                raw, ct = _plain_http_get(url, user_agent=opts.user_agent, timeout_s=opts.timeout_s)
+                raw, ct = _plain_http_get(url, user_agent=user_agent, timeout_s=opts.timeout_s)
                 log.info("urllib fallback: %d bytes, ct=%s", len(raw), ct)
             ext = mime.extension_for(ct, fallback="bin")
             capture_path = capture_dir / f"{base}.{ext}"
@@ -492,27 +645,50 @@ def _capture_via_playwright(
             browser.close()
 
 
-def _scroll_and_hydrate(page: Any) -> None:
-    """Scroll top-to-bottom to trigger IntersectionObserver / lazy-load image
-    hydration so the snapshot captures real URLs, not `data:,` placeholders.
+@register("browser")
+def _capture_with_browser(
+    url: str,
+    *,
+    corpus_root: Path,
+    capture_dir: Path,
+    opts: CaptureOptions,
+    recipe: dict[str, Any] | None,
+) -> CaptureResult:
+    """Packaged Playwright capturer: HTML snapshot (SingleFile or rendered DOM) +
+    binary re-fetch + the capture-stage detector suite."""
+    from corpus.config import load_config
 
-    Stays at the bottom afterward — some sites unmount above-the-fold components
-    when scrolled past, so returning to top would lose them.
-    """
-    try:
-        page.evaluate(
-            """async () => {
-                const step = window.innerHeight;
-                const total = document.documentElement.scrollHeight;
-                for (let y = 0; y <= total; y += step) {
-                    window.scrollTo(0, y);
-                    await new Promise(r => setTimeout(r, 300));
-                }
-            }"""
+    # Transport precedence: CLI `--transport` > recipe `transport:` > config default.
+    eff_recipe = dict(recipe or {})
+    chosen = opts.transport or eff_recipe.get("transport") or load_config(
+        corpus_root
+    ).capture.get("default_transport")
+    if chosen:
+        eff_recipe["transport"] = chosen
+    cdp_url = _resolve_cdp_endpoint(opts.cdp_url)
+    path, issues = _capture_via_playwright(
+        url=url, capture_dir=capture_dir, opts=opts, cdp_url=cdp_url, recipe=eff_recipe
+    )
+    if issues:
+        log.info(
+            "capture-stage detectors fired: %s",
+            ", ".join(
+                f"{i['id']}" + (f"/{i['subtype']}" if i.get("subtype") else "") for i in issues
+            ),
         )
-        page.wait_for_timeout(2000)
-    except Exception as exc:
-        log.warning("scroll-and-hydrate failed: %s — snapshotting anyway", exc)
+    return CaptureResult(capture_path=path, used_video=False, issues=issues)
+
+
+def _recipe_viewport(recipe: dict[str, Any]) -> tuple[int, int] | None:
+    """Parse a recipe's `viewport: WxH`, or None when absent/invalid."""
+    spec = recipe.get("viewport")
+    if not spec:
+        return None
+    try:
+        return parse_viewport(str(spec))
+    except ValueError:
+        log.warning("ignoring invalid recipe viewport %r", spec)
+        return None
 
 
 def _inline_image_srcs(*, page: Any, request_api: Any) -> tuple[int, int]:
@@ -616,7 +792,8 @@ def _resolve_singlefile_bundle() -> Path | None:
             return p
         log.warning("CORPUS_SINGLEFILE_BUNDLE points at a missing file: %s", p)
         return None
-    packaged = Path(__file__).resolve().parent / "vendor" / "single-file.js"
+    # parents[1] is the `corpus` package dir (this module is corpus/capture/__init__.py).
+    packaged = Path(__file__).resolve().parents[1] / "vendor" / "single-file.js"
     return packaged if packaged.is_file() else None
 
 

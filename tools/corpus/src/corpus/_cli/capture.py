@@ -58,6 +58,16 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "with CAPTURE_NO_CDP=1)."
         ),
     )
+    p.add_argument(
+        "--transport",
+        choices=("headless", "headed", "cdp"),
+        default=None,
+        help=(
+            "browser transport for HTML capture; overrides any recipe / config default. "
+            "headed needs a display (xvfb-run on a headless box); cdp attaches to a running "
+            "Chrome (see --cdp-url) to reuse login state."
+        ),
+    )
     p.add_argument("--video", action="store_true", help="force yt-dlp dispatch (override the host check)")
     p.add_argument(
         "--no-video",
@@ -91,6 +101,7 @@ def run(args: argparse.Namespace) -> int:
         viewport=viewport,
         user_agent=args.user_agent,
         cdp_url=args.cdp_url,
+        transport=args.transport,
         video=args.video,
         no_video=args.no_video,
         no_comments=args.no_comments,

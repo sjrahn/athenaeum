@@ -146,8 +146,25 @@ def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
     set (YouTube/Vimeo). Lets a corpus opt a host in (PeerTube, a lecture host, …) without
     forking the package. File list + comma-separated `CORPUS_VIDEO_HOSTS` env (unioned)."""
     out: dict[str, Any] = dict(file_c)
-    hosts: list[str] = [str(h).strip().lower().rstrip(".") for h in (out.get("video_hosts") or []) if str(h).strip()]
+    hosts: list[str] = [
+        str(h).strip().lower().rstrip(".")
+        for h in (out.get("video_hosts") or [])
+        if str(h).strip()
+    ]
     if env := os.environ.get("CORPUS_VIDEO_HOSTS"):
         hosts += [h.strip().lower().rstrip(".") for h in env.split(",") if h.strip()]
     out["video_hosts"] = sorted(set(hosts))
+
+    # default_transport: the browser transport applied when a capture recipe (and
+    # the CLI `--transport`) leave it unset. File `default_transport` + env
+    # `CORPUS_CAPTURE_TRANSPORT` (env wins). Absent → key omitted (browser default).
+    transport = str(file_c.get("default_transport") or "").strip().lower()
+    if env := os.environ.get("CORPUS_CAPTURE_TRANSPORT"):
+        transport = env.strip().lower()
+    if transport:
+        if transport not in ("headless", "headed", "cdp"):
+            raise ValueError(
+                f"unknown default_transport {transport!r}; use headless | headed | cdp."
+            )
+        out["default_transport"] = transport
     return out
