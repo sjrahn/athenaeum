@@ -18,11 +18,13 @@ from pathlib import Path
 import yaml
 
 _GITIGNORE = """\
-# Untracked corpus state — regenerable from records/ + schema/.
-artifacts/
-capture/
-cache/
-export/
+# Untracked corpus state — regenerable from records/ + schema/. Root-anchored
+# (leading /) so same-named tracked dirs nested elsewhere — notably the
+# `schema/capture/` recipe dir vs the `capture/` staging dir — are NOT ignored.
+/artifacts/
+/capture/
+/cache/
+/export/
 
 # Editor / OS scratch
 .DS_Store
