@@ -212,18 +212,17 @@ def draft(
         fields["html_lang"] = v
     if v := _og_site_name(soup):
         fields["og_site_name"] = v
-    # Origin-alias metadata our `text/html` schema declares as artifact
-    # extended_fields. (The CarbonAi reference routed canonical/capture-url
-    # into a separate `origin_uri_aliases` return key for its orchestrator
-    # to fold into the origin block; our pipeline keeps the origin block at
-    # ingest, so we surface these in the artifact block where the schema
-    # documents them and drop the bespoke return key.)
+    # URLs that ALIAS the captured origin — the page's self-declared canonical
+    # (`<link rel=canonical>`) and the post-redirect final URL (the capture-injected
+    # `corpus-capture-url` meta). These belong on the ORIGIN block's uri: list, not the
+    # artifact block (spec §7.2 — canonical / shortlink / final URLs collapse into one
+    # origin). `_apply_drafter_result` folds them in. `fetched_at` is already the origin
+    # block's snapshot: (set at ingest), so the drafter doesn't re-emit it.
+    origin_uri_aliases: list[str] = []
     if v := _canonical_url(soup):
-        fields["canonical_url"] = v
+        origin_uri_aliases.append(v)
     if v := _meta_content(soup, "corpus-capture-url"):
-        fields["final_url"] = v
-    if v := _meta_content(soup, "corpus-fetched-at"):
-        fields["fetched_at"] = v
+        origin_uri_aliases.append(v)
 
     issues: list[dict[str, Any]] = []
     if source := _detect_block_page(soup, title):
@@ -295,6 +294,7 @@ def draft(
         "title": title,
         "issues": issues,
         "canonical": canonical,
+        "origin_uri_aliases": origin_uri_aliases,
     }
 
 

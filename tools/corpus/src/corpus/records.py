@@ -690,6 +690,38 @@ def append_origin_block(
     origins.append({"id": schema_id, "subtype": subtype, "fields": block_fields})
 
 
+def add_origin_uri_alias(post: frontmatter.Post, alias: str) -> bool:
+    """Fold `alias` into the most-recent origin block's `uri:` list, unless it already
+    appears on some origin block. Returns True when added.
+
+    Drafters that discover a canonical (`<link rel=canonical>`) or post-redirect URL of
+    the captured page use this to collapse those forms into the origin's uri list (spec
+    §7.2 — canonical / shortlink / final URLs are one logical origin), rather than
+    stranding them on the artifact block. The most-recent origin block is the one the
+    current capture seeded, so its uri list is where the current page's aliases belong.
+    """
+    alias = (alias or "").strip()
+    if not alias:
+        return False
+    origins = post.metadata.get("_origins") or []
+    if not origins:
+        return False
+    for origin in origins:
+        uri = (origin.get("fields") or {}).get("uri")
+        existing = uri if isinstance(uri, list) else [uri]
+        if any(str(u).strip() == alias for u in existing if u):
+            return False
+    target = origins[-1].setdefault("fields", {})
+    uri = target.get("uri")
+    if isinstance(uri, list):
+        uri.append(alias)
+    elif uri:
+        target["uri"] = [str(uri).strip(), alias]
+    else:
+        target["uri"] = alias
+    return True
+
+
 def append_classify_block(
     post: frontmatter.Post,
     *,

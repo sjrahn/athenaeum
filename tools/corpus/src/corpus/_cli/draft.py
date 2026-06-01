@@ -133,6 +133,11 @@ def _apply_drafter_result(
             fields=emb.get("fields") or None,
         )
 
+    # Origin-alias URLs the drafter discovered (canonical / post-redirect final) — fold
+    # into the origin block's uri: list, not the artifact block (spec §7.2).
+    for alias in result.get("origin_uri_aliases") or []:
+        records.add_origin_uri_alias(post, str(alias))
+
     # Content-zone body — body-draft schemas REPLACE the content zone (spec §7.1).
     mode = str(mt_schema.get("mode", "body-draft")).lower()
     if mode == "body-draft" and (segs := result.get("segments")) is not None:

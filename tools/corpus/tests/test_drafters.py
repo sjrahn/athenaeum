@@ -160,15 +160,20 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
     assert drafter is not None
     result = drafter(binary, corpus_root=root, record_id=rid, record_metadata={})
 
-    # Metadata fields lifted from the snapshot, routed to our schema's extended_fields.
+    # Artifact fields are document metadata only — the canonical/final URLs and the
+    # capture timestamp belong on the ORIGIN block, not here (spec §7.2).
     fields = result.get("fields") or {}
     assert fields["html_title"] == "Sample Article — Demo Publisher"
     assert fields["html_lang"] == "en"
     assert fields["og_site_name"] == "Demo Publisher"
-    assert fields["canonical_url"] == "https://example.com/sample-article"
-    assert fields["final_url"] == "https://example.com/sample-article"  # from corpus-capture-url
-    assert fields["fetched_at"] == "2026-05-31T12:00:00Z"
+    assert "canonical_url" not in fields
+    assert "final_url" not in fields
+    assert "fetched_at" not in fields
     assert result.get("title") == "Sample Article — Demo Publisher"
+    # Canonical (<link rel=canonical>) + final URL (corpus-capture-url meta) come back as
+    # origin aliases for the origin block, not artifact fields.
+    aliases = result.get("origin_uri_aliases") or []
+    assert "https://example.com/sample-article" in aliases
 
     # Canonical: blake3-canonical-html → `blake3:<64hex>`.
     canonical = result.get("canonical") or ""
@@ -252,6 +257,14 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
 
     # Metadata zone carries the three dedup'd embed blocks.
     assert len(list(records.iter_embed_blocks(post))) == 3
+    # canonical/final URL re-homed to the origin block's uri list; off the artifact block.
+    art_fields = records.artifact_block(post).get("fields") or {}
+    assert not ({"canonical_url", "final_url", "fetched_at"} & set(art_fields))
+    origin_uris: list[str] = []
+    for o in records.iter_origin_blocks(post):
+        u = (o.get("fields") or {}).get("uri")
+        origin_uris += u if isinstance(u, list) else [u]
+    assert "https://example.com/sample-article" in origin_uris
     # Content zone is the single wrapping text segment.
     blocks = segments.iter_blocks(post.content or "")
     assert len(blocks) == 1

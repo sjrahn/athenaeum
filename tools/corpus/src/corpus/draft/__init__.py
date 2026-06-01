@@ -26,6 +26,8 @@ Interface (per spec §7.1 / §7.4):
     title        — refined artifact title or None
     issues       — spec §4.3.3.1 issue dicts: {id, severity, resolution, detector, address?, ...}
     canonical    — `<algo>:<hex>` if the mime schema declared a canonical_strategy; else None
+    origin_uri_aliases — URLs aliasing the captured origin (canonical/final); folded into
+                   the origin block's uri: list, not artifact fields (spec §7.2)
 
 Issues emitted by the drafter MUST use our spec's vocabulary (severity ∈ {blocking,
 warning, info}; resolution ∈ {open, fixed, wontfix, superseded}; detector as a touch
@@ -47,6 +49,10 @@ class DrafterResult(TypedDict, total=False):
     title: str | None
     issues: list[dict[str, Any]]
     canonical: str | None
+    # URLs the drafter discovers that are aliases of the captured origin (canonical
+    # link, post-redirect final URL). Merged into the origin block's uri: list by
+    # `_apply_drafter_result` — NOT artifact fields (spec §7.2).
+    origin_uri_aliases: list[str]
 
 
 DrafterFn = Callable[..., DrafterResult]

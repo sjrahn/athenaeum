@@ -68,7 +68,7 @@ normalization:
 
     The drafted body contains:
 
-    1. An `<!--artifact text/html-->` metadata block with standard fields (title, description, lang, canonical, og:site_name, capture-url, fetched-at).
+    1. An `<!--artifact text/html-->` metadata block with the document fields (html_title, html_description, html_lang, og_site_name). The page's canonical (`<link rel=canonical>`) and post-redirect final URL are folded into the origin block's `uri:` list as aliases, and the capture time is the origin's `snapshot:` — none of these are artifact fields.
     2. Zero or more `<!--embed <media-type>-->` blocks — one per unique-content image in the cleaned-HTML root, dedup'd by `transport`. Each carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `transport` (`blake3:<hex>` of the decoded bytes), `width`, `height`, `alt`. The media type sits on the opener line (`<!--embed image/png-->`, `<!--embed image/svg+xml-->`).
     3. One `<!--segment text-->` block whose body is the cleaned HTML. Every addressable element (`section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`, `figure`, `h1`–`h6`, `img`) carries `data-el="N"` where N is the element's position in the **raw artifact**. `<img>` tags have NO `src` — the addressing scheme (`data-el`) is the address; construct `corpus://<hash>?el=N` from the `data-el` value when you need to resolve the bytes.
 
@@ -233,28 +233,12 @@ extended_fields:
     required: false
     source: file_metadata
     description: <html lang> attribute.
-  canonical_url:
-    type: string
-    semantic_type: uri
-    required: false
-    source: file_metadata
-    description: rel=canonical link, if declared.
   og_site_name:
     type: string
     required: false
     source: file_metadata
     description: og:site_name, if declared.
-  final_url:
-    type: string
-    semantic_type: uri
-    required: false
-    source: file_metadata
-    description: |
-      The post-redirect URL the browser settled on at capture time. Recovered from a `<meta name=corpus-capture-url>` tag injected by `corpus capture-url`; absent for snapshots saved by other means.
-  fetched_at:
-    type: string
-    semantic_type: timestamp
-    required: false
-    source: file_metadata
-    description: |
-      ISO-8601 timestamp the snapshot was taken. Recovered from a `<meta name=corpus-fetched-at>` tag injected by `corpus capture-url`; absent for snapshots saved by other means.
+# NOTE: the page's canonical URL (`<link rel=canonical>`) and post-redirect final URL
+# (`<meta name=corpus-capture-url>`) are NOT artifact fields — the drafter folds them into
+# the ORIGIN block's `uri:` list as aliases (spec §7.2; canonical/shortlink/final collapse
+# to one origin). The capture timestamp is the origin block's `snapshot:` (set at ingest).
