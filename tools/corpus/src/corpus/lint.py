@@ -29,6 +29,7 @@ from typing import Any
 import frontmatter
 
 from corpus import records as _records
+from corpus import schemas as _schemas
 from corpus import segments as _segments
 
 VERSION = "0.1.0"
@@ -59,7 +60,10 @@ class Finding:
 #   generic   <tool>@<version>                  third-party tooling
 # Each form may carry a trailing `_<N>` dedup counter (consecutive identical passes
 # coalesce: ...@0.1.0 → ...@0.1.0_2).
-_TOUCH_MODEL = r"[a-z][\w.\-]*\[\w+\]"
+# §4.2.2: an LLM-model touch is the model id "with any context modifier in brackets" —
+# the `[<modifier>]` is OPTIONAL, so a bare id (`gpt-4o`, `claude-opus-4-8`) is valid both
+# standalone and in the combined `…@<ver>+<model-id>` form.
+_TOUCH_MODEL = r"[a-z][\w.\-]*(?:\[\w+\])?"
 _TOUCH_SCRIPT = r"corpus\.[a-z0-9_./\-]+@[\w.\-]+"
 _TOUCH_GENERIC = r"[\w\-]+@[\w.\-]+"
 _TOUCH_RE = re.compile(
@@ -75,6 +79,9 @@ _BLAKE3_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_ATOMS = {"text", "image", "audio", "video"}
 _VALID_STATUSES = {"stub", "draft", "normalized"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}
+# Universal FALLBACK vocab for issue severity/resolution. The authoritative set is the
+# `enum:` declared on the layered `composite/issue` schema (a corpus may extend it); these
+# constants apply only when the schema declares no enum. See `_issue_vocab`.
 _VALID_SEVERITIES = {"blocking", "warning", "info"}
 _VALID_RESOLUTIONS = {"open", "fixed", "wontfix", "superseded"}
 
@@ -385,16 +392,19 @@ def _rule_segment_perceptual_format(post, blocks, root) -> Iterator[Finding]:
 def _check_perceptual_shape(seg: _segments.Segment) -> Iterator[Finding]:
     if seg.perceptual is None:
         return
-    if not isinstance(seg.perceptual, str) or not _PERCEPTUAL_RE.match(seg.perceptual):
-        yield Finding(
-            rule_id="segment-perceptual-format",
-            severity="error",
-            message=(
-                f"segment `perceptual: {seg.perceptual!r}` is not `<algo>:<hex>` "
-                f"(spec §7.7)."
-            ),
-            address=_addr_str(seg.address),
-        )
+    # §7.6: a perceptual field is `str` OR `list[str]` (multi-region segments). Validate
+    # each entry, mirroring the record-scope `_rule_perceptual_format`.
+    values = seg.perceptual if isinstance(seg.perceptual, list) else [seg.perceptual]
+    for v in values:
+        if not isinstance(v, str) or not _PERCEPTUAL_RE.match(v):
+            yield Finding(
+                rule_id="segment-perceptual-format",
+                severity="error",
+                message=(
+                    f"segment `perceptual: {v!r}` is not `<algo>:<hex>` (spec §7.7)."
+                ),
+                address=_addr_str(seg.address),
+            )
 
 
 def _rule_segment_entry_outside_top_level(post, blocks, root) -> Iterator[Finding]:
@@ -451,32 +461,46 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
 # ---------- annotation-zone (issue) rules ---------- #
 
 
+def _issue_vocab(root, id_: str) -> tuple[set[str], set[str]]:
+    """Allowed (severity, resolution) value sets for an issue id, read from the layered
+    `composite/issue` schema's `enum:` declarations (spec §4.3.3.1: the vocab is
+    schema-declared and corpus-local). Falls back to the universal constants when the
+    schema declares no enum."""
+    schema = _schemas.load_issue_schema(root, id_) or {}
+    ext = schema.get("extended_fields") or {}
+    sev = set((ext.get("severity") or {}).get("enum") or ()) or _VALID_SEVERITIES
+    res = set((ext.get("resolution") or {}).get("enum") or ()) or _VALID_RESOLUTIONS
+    return sev, res
+
+
 def _rule_issue_shape(post, blocks, root) -> Iterator[Finding]:
     """Reconciliation #2: every `<!--issue-->` block carries the spec §4.3.3.1 shape.
 
-    Required: severity ∈ {blocking, warning, info}; resolution ∈ {open, fixed,
-    wontfix, superseded}; detector (a touch identifier).
+    Required: severity + resolution drawn from the schema-declared vocab (universal default
+    {blocking, warning, info} / {open, fixed, wontfix, superseded}, extensible per corpus);
+    detector (a touch identifier).
     """
     for idx, issue in enumerate(_records.iter_issue_blocks(post)):
         fields = issue.get("fields") or {}
+        valid_sev, valid_res = _issue_vocab(root, str(issue.get("id") or ""))
         sev = fields.get("severity")
-        if sev not in _VALID_SEVERITIES:
+        if sev not in valid_sev:
             yield Finding(
                 rule_id="issue-severity-invalid",
                 severity="error",
                 message=(
                     f"issue #{idx + 1} `severity: {sev!r}`; expected one of "
-                    f"{sorted(_VALID_SEVERITIES)}."
+                    f"{sorted(valid_sev)}."
                 ),
             )
         res = fields.get("resolution")
-        if res not in _VALID_RESOLUTIONS:
+        if res not in valid_res:
             yield Finding(
                 rule_id="issue-resolution-invalid",
                 severity="error",
                 message=(
                     f"issue #{idx + 1} `resolution: {res!r}`; expected one of "
-                    f"{sorted(_VALID_RESOLUTIONS)}."
+                    f"{sorted(valid_res)}."
                 ),
             )
         det = fields.get("detector")

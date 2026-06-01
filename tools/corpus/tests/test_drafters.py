@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import frontmatter
+import pytest
 
 from corpus import draft, paths, records, schemas, segments
 from corpus._cli import draft as draft_cli
@@ -121,3 +122,18 @@ def test_draft_cli_pipeline_against_image(tmp_path):
     assert len(blocks) == 1
     assert isinstance(blocks[0], segments.Segment)
     assert blocks[0].atom == "image"
+
+
+def test_draft_cli_refuses_non_stub(tmp_path):
+    """Re-running `draft` on an already-drafted record is refused (it would otherwise
+    append duplicate embed/issue blocks); the clean re-run path is `re-stub` then `draft`."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest(root, "sample.png", "image/png", "png")
+
+    class Args:
+        target = rid
+        corpus_root = str(root)
+
+    assert draft_cli.run(Args()) == 0  # stub → draft
+    with pytest.raises(SystemExit):
+        draft_cli.run(Args())  # status is now 'draft' → refused

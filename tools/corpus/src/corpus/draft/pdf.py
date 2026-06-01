@@ -22,7 +22,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from pypdf import PdfReader
 
-from corpus import content_hash
+from corpus import content_hash, records
 from corpus.draft import DrafterResult, register
 from corpus.segments import Section, Segment
 
@@ -40,6 +40,7 @@ def draft(
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
 ) -> DrafterResult:
     reader = PdfReader(str(pdf_path))
 
@@ -73,8 +74,11 @@ def draft(
     else:
         blocks = list(page_segments)
 
-    # Compute canonical hash per the PDF schema's `canonical_strategy.algo`.
-    canonical = f"blake3:{content_hash.compute('blake3-canonical-pdf', pdf_path)}"
+    # Canonical hash per the mime schema's `canonical_strategy.algo` (the strategy id
+    # encodes its hash family, e.g. `blake3-canonical-pdf` → `blake3:`); falls back to the
+    # PDF default when the schema/caller doesn't override it.
+    algo = canonical_algo or "blake3-canonical-pdf"
+    canonical = records.format_hash(algo.split("-", 1)[0], content_hash.compute(algo, pdf_path))
 
     return {
         "fields": fields,

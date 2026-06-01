@@ -79,7 +79,7 @@ class Segment:
 
     atom: str
     address: str | list[str]
-    perceptual: str | None = None
+    perceptual: str | list[str] | None = None  # §7.6: scalar or list (multi-region)
     entry: str | None = None
     description: str | None = None
     body: str = ""
@@ -88,11 +88,6 @@ class Segment:
     # e.g. "text/data-table", "image/photo". On disk: `<atom>/<id>`; bundled schema
     # filename flattens to `schema/atom/<atom>/<atom>_<id>.yaml`.
     overlay: str | None = None
-
-    @property
-    def fingerprint(self) -> str | None:
-        """Back-compat alias for callers reading the v0.3 field name."""
-        return self.perceptual
 
     def to_header_dict(self) -> dict[str, Any]:
         """Return the dict that would be YAML-dumped between the header comment
@@ -304,12 +299,6 @@ def iter_blocks(body: str) -> list[Block]:
     return blocks
 
 
-# Deprecated alias kept for any caller that still uses the v0.3 name.
-def iter_segments(body: str) -> list[Block]:
-    """Deprecated alias for `iter_blocks`."""
-    return iter_blocks(body)
-
-
 def _opener_kind(line: str) -> str | None:
     """Return 'section', 'segment', or None for a given line.
 
@@ -445,7 +434,14 @@ def _parse_segment_block(
     perceptual_raw = header.pop("perceptual", None)
     if perceptual_raw is None:
         perceptual_raw = header.pop("fingerprint", None)
-    perceptual = str(perceptual_raw).strip() if perceptual_raw is not None else None
+    # §7.6: a perceptual field is scalar OR a list (multi-region segment); preserve the
+    # list shape rather than stringifying it.
+    if isinstance(perceptual_raw, list):
+        perceptual = [str(x).strip() for x in perceptual_raw]
+    elif perceptual_raw is not None:
+        perceptual = str(perceptual_raw).strip()
+    else:
+        perceptual = None
     entry_raw = header.pop("entry", None)
     entry = str(entry_raw).strip() if entry_raw is not None else None
     description_raw = header.pop("description", None)

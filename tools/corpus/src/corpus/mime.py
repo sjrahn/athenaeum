@@ -28,7 +28,8 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"\xff\xd8\xff", "image/jpeg"),
     (0, b"GIF87a", "image/gif"),
     (0, b"GIF89a", "image/gif"),
-    (0, b"RIFF", "image/webp"),
+    # NOTE: RIFF containers (WebP / WAV / AVI) all share the `RIFF` magic at offset 0;
+    # they are disambiguated by the four-byte form-type at offset 8 — see `_refine_riff`.
     # AVIF: ISOBMFF container with the `ftyp` box brand `avif` at offset 4.
     (4, b"ftypavif", "image/avif"),
     # Video ISOBMFF brands.
@@ -55,6 +56,11 @@ def detect(path: Path) -> str:
     with path.open("rb") as fh:
         head = fh.read(_SNIFF_BYTES)
 
+    if head[0:4] == b"RIFF":
+        refined = _refine_riff(head)
+        if refined:
+            return refined
+
     for offset, prefix, mime in _SIGNATURES:
         if head[offset : offset + len(prefix)] == prefix:
             if mime == "application/zip":
@@ -63,6 +69,25 @@ def detect(path: Path) -> str:
 
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or "unknown"
+
+
+# RIFF form-types at offset 8 (the four bytes following `RIFF<4-byte size>`). WebP, WAV,
+# and AVI all carry the `RIFF` magic; only the form-type tells them apart.
+_RIFF_FORMS: tuple[tuple[bytes, str], ...] = (
+    (b"WEBP", "image/webp"),
+    (b"WAVE", "audio/x-wav"),
+    (b"AVI ", "video/x-msvideo"),
+)
+
+
+def _refine_riff(head: bytes) -> str | None:
+    """Disambiguate a `RIFF` container by its offset-8 form-type. Returns the MIME, or
+    None for an unknown form (the caller then falls back to extension-based detection)."""
+    form = head[8:12]
+    for brand, mime in _RIFF_FORMS:
+        if form == brand:
+            return mime
+    return None
 
 
 # Telltale central-directory member paths that distinguish a structured zip-shaped
@@ -112,10 +137,12 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "image/webp": "webp",
         "image/avif": "avif",
         "audio/mpeg": "mp3",
+        "audio/x-wav": "wav",
         "video/mp4": "mp4",
         "video/webm": "webm",
         "video/quicktime": "mov",
         "video/x-matroska": "mkv",
+        "video/x-msvideo": "avi",
         "application/zip": "zip",
         "application/x-ndjson": "jsonl",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",

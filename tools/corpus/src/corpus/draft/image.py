@@ -13,7 +13,7 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
-from corpus import content_hash
+from corpus import content_hash, records
 from corpus.draft import DrafterResult, register
 from corpus.segments import Segment
 
@@ -41,6 +41,7 @@ def draft(
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
 ) -> DrafterResult:
     fields: dict[str, Any] = {
         "image_size_bytes": image_path.stat().st_size,
@@ -71,7 +72,10 @@ def draft(
                 fields["exif_gps"] = gps
 
     segments = [Segment(atom="image", address="bbox=0,0,1,1", body="")]
-    canonical = f"blake3:{content_hash.compute('blake3-canonical-image', image_path)}"
+    # Canonical hash per the mime schema's `canonical_strategy.algo`; the strategy id
+    # encodes its hash family (e.g. `blake3-canonical-image` → `blake3:`).
+    algo = canonical_algo or "blake3-canonical-image"
+    canonical = records.format_hash(algo.split("-", 1)[0], content_hash.compute(algo, image_path))
 
     return {
         "fields": fields,

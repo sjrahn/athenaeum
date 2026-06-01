@@ -77,12 +77,18 @@ def test_touch_grammar(tmp_path):
         "corpus.draft.mime/application/pdf@0.1.0_2",
         "claude-opus-4-8[1m]",
         "corpus.compile@0.1.0+claude-opus-4-8[1m]",
+        # §4.2.2: the model modifier is optional — bare model ids are valid, standalone
+        # and in the combined form (this is what `compile --model gpt-4o` produces).
+        "gpt-4o",
+        "claude-opus-4-8",
+        "corpus.compile@0.1.0+gpt-4o",
     ]:
         post.metadata["touch"] = v
         assert not any(f.rule_id.startswith("touch") for f in _lint(post, root)), v
-    # Invalid:
-    post.metadata["touch"] = "nope"
-    assert any(f.rule_id == "touch-format" for f in _lint(post, root))
+    # Invalid — structurally malformed (whitespace / empty / no valid leading token):
+    for bad in ["has space", "", "  ", "@noversion"]:
+        post.metadata["touch"] = bad
+        assert any(f.rule_id == "touch-format" for f in _lint(post, root)), repr(bad)
 
 
 def test_origin_missing_or_uri_missing(tmp_path):
@@ -153,6 +159,61 @@ def test_perceptual_malformed_is_an_error(tmp_path):
     assert any(f.rule_id == "segment-perceptual-format" for f in findings)
 
 
+def test_perceptual_list_is_accepted(tmp_path):
+    """§7.6 — a multi-region segment may carry a list of perceptual hashes."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(
+        atom="text",
+        address="page=1",
+        body="t",
+        perceptual=["simhash:" + "a" * 16, "phash:" + "b" * 16],
+    )
+    post.content = segments.emit([seg])
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "segment-perceptual-format" for f in findings)
+
+
+def test_perceptual_list_with_bad_entry_is_an_error(tmp_path):
+    """A list-valued perceptual is validated per-element (not bypassed)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(
+        atom="text",
+        address="page=1",
+        body="t",
+        perceptual=["simhash:" + "a" * 16, "not-a-hash"],
+    )
+    post.content = segments.emit([seg])
+    findings = _lint(post, root)
+    assert any(f.rule_id == "segment-perceptual-format" for f in findings)
+
+
+def test_issue_vocab_is_schema_extensible(tmp_path):
+    """§4.3.3.1 — issue severity/resolution vocab is schema-declared, not hardcoded; a
+    corpus may extend it in its local `composite/issue/issue.yaml`."""
+    root = _make_corpus(tmp_path)
+    issue_dir = root / "schema" / "composite" / "issue"
+    issue_dir.mkdir(parents=True)
+    (issue_dir / "issue.yaml").write_text(
+        "extended_fields:\n"
+        "  severity:\n"
+        "    type: string\n"
+        "    enum: [blocking, warning, info, critical]\n",
+        encoding="utf-8",
+    )
+    post = _clean_post()
+    records.append_issue_block(
+        post,
+        id="format-loss",
+        severity="critical",  # corpus-extended value, not in the universal default
+        resolution="open",
+        detector="corpus.ingest@0.1.0",
+    )
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "issue-severity-invalid" for f in findings)
+
+
 def test_image_segment_with_body_caught(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
@@ -170,9 +231,9 @@ def test_issue_shape_validation(tmp_path):
     records.append_issue_block(
         post,
         id="format-loss",
-        severity="major",  # not in our enum
-        resolution="needs-human-review",  # not in our enum
-        detector="weird",  # not a touch identifier
+        severity="major",  # not in the schema enum
+        resolution="needs-human-review",  # not in the schema enum
+        detector="not a touch id",  # whitespace → not a valid touch identifier
     )
     findings = _lint(post, root)
     rule_ids = {f.rule_id for f in findings}

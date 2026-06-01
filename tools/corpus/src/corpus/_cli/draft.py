@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Any
 
 from corpus import draft as draft_pkg
@@ -35,6 +34,16 @@ def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
     record_id, record_file = paths.resolve_record(corpus_root, args.target)
     post = records.load(record_file)
+
+    # `draft` is a stub→draft transition. Re-running it would append duplicate embed/issue
+    # blocks (the metadata zone isn't reset here), so refuse a non-stub record and point at
+    # the clean re-run path: `re-stub` (which collapses the body) then `draft`.
+    status = str(post.metadata.get("status") or "").lower()
+    if status and status != "stub":
+        sys.exit(
+            f"record status is {status!r}, not 'stub'; `corpus draft` only runs on a stub. "
+            f"Run `corpus re-stub {args.target}` first to re-draft."
+        )
 
     media_type = records.media_type_for(post)
     if not media_type:
@@ -63,11 +72,16 @@ def run(args: argparse.Namespace) -> int:
     except ArtifactMissing as exc:
         sys.exit(str(exc))
 
+    # The mime schema owns the canonical-hash strategy; pass its algo to the drafter so a
+    # corpus that overrides `canonical_strategy.algo` is honoured (drafters fall back to
+    # their built-in default when this is None).
+    canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
     result = drafter(
         binary_file,
         corpus_root=corpus_root,
         record_id=record_id,
         record_metadata=post.metadata,
+        canonical_algo=canonical_algo,
     )
 
     _apply_drafter_result(post, result, mt_schema, mime_schema_id)
@@ -124,13 +138,19 @@ def _apply_drafter_result(
     if mode == "body-draft" and (segs := result.get("segments")) is not None:
         post.content = segments.emit(segs)
 
-    # Drafter-detected issues (spec-shaped, reconciliation #2).
+    # Drafter-detected issues (spec-shaped, reconciliation #2). Skip a malformed dict
+    # missing the required `severity` rather than crashing the whole draft — parity with
+    # the ingest replay path's guard.
     for issue in result.get("issues") or []:
+        severity = issue.get("severity")
+        if not severity:
+            print(f"  WARN: drafter issue missing `severity`, skipped: {issue!r}", file=sys.stderr)
+            continue
         records.append_issue_block(
             post,
             id=str(issue.get("id") or "unknown"),
             subtype=issue.get("subtype"),
-            severity=str(issue["severity"]),
+            severity=str(severity),
             resolution=str(issue.get("resolution", "open")),
             detector=str(
                 issue.get("detector")

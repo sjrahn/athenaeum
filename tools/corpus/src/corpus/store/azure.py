@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from corpus import paths
+from corpus.store._errors import classify_remote_error
 
 log = logging.getLogger(__name__)
 
@@ -154,16 +155,20 @@ class AzureBlobStore:
         paths.ensure_parent(dst)
         client = self._container_client().get_blob_client(blob_name)
         try:
+            # download_blob() AND readinto() are both inside the try: azure-storage-blob
+            # may defer the actual GET (and its 404) to the first read depending on SDK
+            # version, so a missing blob can raise from either site.
             stream = client.download_blob()
+            with dst.open("wb") as fh:
+                stream.readinto(fh)
         except Exception as e:
-            # azure.core.exceptions.ResourceNotFoundError is one common path; others
-            # surface as generic errors. Narrow by name string to avoid importing
-            # the exceptions module just to type-test.
-            if "ResourceNotFound" in type(e).__name__ or "404" in str(e):
+            dst.unlink(missing_ok=True)  # don't leave a partial/empty file behind
+            # Narrow by exception type-name + message (avoids importing the azure
+            # exceptions module just to type-test). Only a genuine "missing" maps to
+            # _RemoteNotFound; auth/operational errors propagate.
+            if classify_remote_error(f"{type(e).__name__} {e}") == "missing":
                 raise _RemoteNotFound(str(e)) from e
             raise
-        with dst.open("wb") as fh:
-            stream.readinto(fh)
 
     def _upload(self, src: Path, blob_name: str) -> None:
         client = self._container_client().get_blob_client(blob_name)

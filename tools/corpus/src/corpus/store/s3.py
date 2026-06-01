@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from corpus import paths
+from corpus.store._errors import classify_remote_error
 
 log = logging.getLogger(__name__)
 
@@ -134,25 +135,37 @@ class S3Store:
         return self._client
 
     def _remote_exists(self, key: str) -> bool:
-        _, ClientError = _lazy_import()
+        # `self._s3()` is called outside the try so a missing `[s3]` extra raises ImportError
+        # loudly. The presence check itself never raises — operational errors (network,
+        # throttle, auth) and access-denied alike collapse to "not available", matching
+        # AzureBlobStore and LocalArtifactStore (exists() is total across backends).
+        client = self._s3()
         try:
-            self._s3().head_object(Bucket=self._bucket, Key=key)
+            client.head_object(Bucket=self._bucket, Key=key)
             return True
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                return False
-            raise
+        except Exception as e:
+            log.debug("s3 exists() failed for %s: %s", key, e)
+            return False
 
     def _download(self, key: str, dst: Path) -> None:
+        client = self._s3()
         _, ClientError = _lazy_import()
         paths.ensure_parent(dst)
         try:
-            self._s3().download_file(self._bucket, key, str(dst))
+            client.download_file(self._bucket, key, str(dst))
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
-            if code in ("404", "NoSuchKey", "NotFound"):
+            kind = classify_remote_error(code)
+            if kind == "missing":
                 raise _RemoteNotFound(str(e)) from e
+            if kind == "denied":
+                # Under a restrictive IAM policy S3 returns 403 for a *missing* key, so a
+                # denial is ambiguous — surface ArtifactMissing with an actionable hint
+                # rather than a raw botocore traceback.
+                raise _RemoteNotFound(
+                    f"{key}: access denied ({code}) — object may be absent, or the IAM "
+                    f"principal lacks s3:GetObject / s3:ListBucket on the bucket."
+                ) from e
             raise
 
     def _upload(self, src: Path, key: str) -> None:

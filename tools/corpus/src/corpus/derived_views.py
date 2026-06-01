@@ -95,9 +95,12 @@ def _walk_schema_fields(
             continue
         if str(decl.get("semantic_type", "")).lower() != target_semantic.lower():
             continue
-        seen_fields.add(field_name)
         if field_name not in block_fields:
+            # Declared with the target semantic but not populated in THIS block — don't
+            # mark it seen, or a later block (origin/classify) that does populate the same
+            # field name would be silently suppressed.
             continue
+        seen_fields.add(field_name)
         yield field_name, block_fields[field_name]
 
 

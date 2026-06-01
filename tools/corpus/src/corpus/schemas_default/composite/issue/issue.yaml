@@ -14,14 +14,18 @@ extended_fields:
   severity:
     type: string
     required: true
+    enum: [blocking, warning, info]
     description: |
       The issue's severity. Closed enum: `blocking | warning | info`.
       - `blocking` — the issue prevents downstream use of this content.
       - `warning` — the issue affects fidelity or interpretation but does not block use.
       - `info` — informational observation, no remediation expected.
+      A corpus may extend this `enum:` in its local `composite/issue/issue.yaml`; lint
+      validates against the schema-declared set, not a hardcoded vocabulary.
   resolution:
     type: string
     required: true
+    enum: [open, fixed, wontfix, superseded]
     description: |
       The issue's resolution state. Closed enum: `open | fixed | wontfix | superseded`.
       - `open` — issue is current; needs action.

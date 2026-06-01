@@ -62,6 +62,7 @@ def draft(
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
 ) -> DrafterResult:
     fields: dict[str, Any] = {}
 

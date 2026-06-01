@@ -8,6 +8,23 @@ import pytest
 
 from corpus import paths
 from corpus.store import ArtifactMissing, ArtifactStore, LocalArtifactStore, get_store
+from corpus.store._errors import classify_remote_error
+
+
+def test_classify_remote_error():
+    """Pure error classifier (no SDK import) — covers the cloud error paths that the
+    boto3/azure-gated tests can't exercise in a base-install CI."""
+    # botocore-style codes.
+    assert classify_remote_error("404") == "missing"
+    assert classify_remote_error("NoSuchKey") == "missing"
+    assert classify_remote_error("403") == "denied"
+    assert classify_remote_error("AccessDenied") == "denied"
+    assert classify_remote_error("SlowDown") == "operational"
+    assert classify_remote_error("RequestTimeout") == "operational"
+    assert classify_remote_error("") == "operational"
+    # azure-style exception type names (substring match) classify too.
+    assert classify_remote_error("ResourceNotFoundError no blob") == "missing"
+    assert classify_remote_error("HttpResponseError 404") == "missing"
 
 
 def _make_corpus(tmp_path: Path) -> Path:
