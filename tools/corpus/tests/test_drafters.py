@@ -6,10 +6,13 @@ from pathlib import Path
 
 import frontmatter
 import pytest
+from PIL import Image
 
-from corpus import draft, paths, records, schemas, segments
+from corpus import draft, lint, paths, records, resolver, schemas, segments
 from corpus._cli import draft as draft_cli
+from corpus.draft import html as draft_html
 from corpus.store import LocalArtifactStore
+from corpus.transforms import html as transforms_html
 
 _FIXTURES = Path(__file__).parent / "data"
 
@@ -137,3 +140,146 @@ def test_draft_cli_refuses_non_stub(tmp_path):
     assert draft_cli.run(Args()) == 0  # stub → draft
     with pytest.raises(SystemExit):
         draft_cli.run(Args())  # status is now 'draft' → refused
+
+
+# ---------- HTML drafter ---------- #
+
+
+def test_html_drafter_registered_and_axis_aligned():
+    assert "text/text_html" in draft.REGISTRY
+    # The `el=N` index axis MUST match the resolver's addressable-tag set, or
+    # `corpus://<hash>?el=N` resolves to the wrong element (or out of range).
+    assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
+
+
+def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest(root, "article.html", "text/html", "html")
+    binary = LocalArtifactStore(root).local_path(rid, "html")
+    drafter = draft.get_drafter("text/text_html")
+    assert drafter is not None
+    result = drafter(binary, corpus_root=root, record_id=rid, record_metadata={})
+
+    # Metadata fields lifted from the snapshot, routed to our schema's extended_fields.
+    fields = result.get("fields") or {}
+    assert fields["html_title"] == "Sample Article — Demo Publisher"
+    assert fields["html_lang"] == "en"
+    assert fields["og_site_name"] == "Demo Publisher"
+    assert fields["canonical_url"] == "https://example.com/sample-article"
+    assert fields["final_url"] == "https://example.com/sample-article"  # from corpus-capture-url
+    assert fields["fetched_at"] == "2026-05-31T12:00:00Z"
+    assert result.get("title") == "Sample Article — Demo Publisher"
+
+    # Canonical: blake3-canonical-html → `blake3:<64hex>`.
+    canonical = result.get("canonical") or ""
+    assert canonical.startswith("blake3:")
+    assert len(canonical.split(":", 1)[1]) == 64
+
+    # Exactly one wrapping text segment spanning every addressable element (1..11).
+    segs = result.get("segments") or []
+    assert len(segs) == 1
+    seg = segs[0]
+    assert isinstance(seg, segments.Segment)
+    assert seg.atom == "text"
+    assert seg.address == "el=1-11"
+    assert (seg.perceptual or "").startswith("simhash:")
+
+    # Body is cleaned HTML: data-el annotations present; img src stripped; chrome gone.
+    body = seg.body
+    assert 'data-el="' in body
+    assert "src=" not in body  # <img src> dropped; the addressing scheme is data-el
+    for chrome in ("<nav", "<footer", "<script", "cookie-banner"):
+        assert chrome not in body
+
+    # Embeds are plain dicts keyed for `records.append_embed_block`; deduped by transport.
+    embeds = result.get("embeds") or []
+    by_type = {e["media_type"]: e for e in embeds}
+    assert set(by_type) == {"image/png", "image/gif", "image/svg+xml"}
+    for e in embeds:
+        assert e["transport"].startswith("blake3:")
+        assert len(e["transport"].split(":", 1)[1]) == 64
+    # The PNG appears twice (el=4 and el=7) → one embed with a list address.
+    png = by_type["image/png"]
+    assert png["address"] == ["el=4", "el=7"]
+    assert png["fields"]["width"] == 8 and png["fields"]["height"] == 6
+    assert png["fields"]["alt"] == "Diagram one"
+    # GIF appears once → scalar address.
+    assert by_type["image/gif"]["address"] == "el=9"
+    # SVG: PIL can't open it, so dimensions come from the SVG width=/height= attrs.
+    svg = by_type["image/svg+xml"]
+    assert svg["address"] == "el=11"
+    assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
+
+
+def test_html_drafter_flags_empty_body(tmp_path):
+    """Drafter-deterministic issue, emitted in our spec §4.3.3.1 shape."""
+    p = tmp_path / "empty.html"
+    p.write_text(
+        "<!DOCTYPE html><html><head><title>x</title></head>"
+        "<body><script>var a=1;</script></body></html>",
+        encoding="utf-8",
+    )
+    drafter = draft.get_drafter("text/text_html")
+    result = drafter(p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+    empties = [
+        i for i in result.get("issues") or []
+        if i["id"] == "partial-content" and i.get("subtype") == "empty-body"
+    ]
+    assert len(empties) == 1
+    issue = empties[0]
+    assert issue["severity"] == "blocking"
+    assert issue["resolution"] == "open"
+    assert issue["detector"].startswith("corpus.draft.text/text_html@")
+
+
+def test_html_draft_cli_pipeline_and_lint(tmp_path):
+    """End-to-end `corpus draft` against an ingested HTML snapshot, then lint."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest(root, "article.html", "text/html", "html")
+
+    class Args:
+        target = rid
+        corpus_root = str(root)
+
+    assert draft_cli.run(Args()) == 0  # type: ignore[arg-type]
+
+    post = records.load(paths.record_path(root, rid))
+    assert post.metadata["status"] == "draft"
+    assert post.metadata.get("canonical", "").startswith("blake3:")
+    chain = post.metadata.get("touch", [])
+    chain_list = chain if isinstance(chain, list) else [chain]
+    assert any("draft.text/text_html" in t for t in chain_list)
+
+    # Metadata zone carries the three dedup'd embed blocks.
+    assert len(list(records.iter_embed_blocks(post))) == 3
+    # Content zone is the single wrapping text segment.
+    blocks = segments.iter_blocks(post.content or "")
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], segments.Segment)
+    assert blocks[0].atom == "text"
+
+    # Lint the drafted record: no error-severity findings.
+    findings = lint.lint(post, blocks, root)
+    errors = [f for f in findings if f.severity == "error"]
+    assert not errors, [f"{f.rule_id}: {f.message}" for f in errors]
+
+
+def test_html_el_addressing_round_trips(tmp_path):
+    """The drafter's pre-strip `el=N` indices align with the resolver's raw-artifact
+    walk: resolving an embed's `el=N` returns the decoded image at the right size."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest(root, "article.html", "text/html", "html")
+
+    class Args:
+        target = rid
+        corpus_root = str(root)
+
+    assert draft_cli.run(Args()) == 0  # type: ignore[arg-type]
+
+    # el=4 is the first PNG occurrence (8x6); el=9 is the GIF (4x4).
+    png_path = resolver.resolve(f"corpus://{rid}?el=4", root)
+    with Image.open(png_path) as im:
+        assert im.size == (8, 6)
+    gif_path = resolver.resolve(f"corpus://{rid}?el=9", root)
+    with Image.open(gif_path) as im:
+        assert im.size == (4, 4)

@@ -28,16 +28,16 @@ embeds:
   - image/webp
   - image/gif
   description: |-
-    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `byte_hash` (blake3 of decoded image bytes, 12 hex chars). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
+    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `transport` (the `blake3:<hex>` hash of the decoded image bytes). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
   fields:
     address:
       type: string-or-list
       required: true
       description: "Artifact address(es) where these bytes appear. Scalar (`address: el=12`) when bytes appear once; YAML list (`address: [el=78, el=145]`) when at multiple equivalent positions. Same polymorphic shape as Segment.address (SPECv2 §4.3)."
-    byte_hash:
-      type: object
+    transport:
+      type: string
       required: true
-      description: "Shape `{algo: blake3, value: <hex>}`. Canonical id of the embed; dedup key."
+      description: "`<algo>:<hex>` content hash of the decoded image bytes (`blake3:<64-hex>`). The embed's content id and dedup key — identical bytes at multiple positions collapse to one embed. Universal embed field per spec §4.3.1.4 (handled by `records.append_embed_block`)."
     width:
       type: integer
       required: true
@@ -69,7 +69,7 @@ normalization:
     The drafted body contains:
 
     1. An `<!--artifact text/html-->` metadata block with standard fields (title, description, lang, canonical, og:site_name, capture-url, fetched-at).
-    2. Zero or more `<!--embed <media-type>-->` blocks — one per unique-content image in the cleaned-HTML root, dedup'd by `byte_hash`. Each carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `byte_hash` ({algo, value} shape), `width`, `height`, `alt`. The media type sits on the opener line (`<!--embed image/png-->`, `<!--embed image/svg+xml-->`).
+    2. Zero or more `<!--embed <media-type>-->` blocks — one per unique-content image in the cleaned-HTML root, dedup'd by `transport`. Each carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `transport` (`blake3:<hex>` of the decoded bytes), `width`, `height`, `alt`. The media type sits on the opener line (`<!--embed image/png-->`, `<!--embed image/svg+xml-->`).
     3. One `<!--segment text-->` block whose body is the cleaned HTML. Every addressable element (`section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`, `figure`, `h1`–`h6`, `img`) carries `data-el="N"` where N is the element's position in the **raw artifact**. `<img>` tags have NO `src` — the addressing scheme (`data-el`) is the address; construct `corpus://<hash>?el=N` from the `data-el` value when you need to resolve the bytes.
 
     Treat the cleaned HTML as your input. You'll be replacing the single `<!--segment text-->` block with N segments (text + image), optionally grouped into sections. Embeds at the top of the body stay where they are — you just reference them implicitly by addresses your segments emit.
@@ -86,7 +86,7 @@ normalization:
         print('fields:', result['fields'])
         print('embeds:', len(result['embeds']))
         for e in result['embeds'][:3]:
-            print(' ', e.media_type, e.address, e.byte_hash['value'], e.extra)
+            print(' ', e['media_type'], e['address'], e['transport'], e['fields'])
         print('issues:', result['issues'])
         seg = result['segments'][0]
         print('segment address:', seg.address)
@@ -141,7 +141,7 @@ normalization:
 
     ## Image segments — link to embeds by address
 
-    The drafter emits a top-of-body `<!--embed <media-type>-->` block per unique-content image. Each embed carries `address` (the artifact-position(s) where the image appears), `byte_hash`, `width`, `height`, `alt`. Use the embeds as your menu of available imagery.
+    The drafter emits a top-of-body `<!--embed <media-type>-->` block per unique-content image. Each embed carries `address` (the artifact-position(s) where the image appears), `transport`, `width`, `height`, `alt`. Use the embeds as your menu of available imagery.
 
     For each `<img alt="..." data-el="N">` you decide to surface as an image segment:
 
@@ -158,23 +158,25 @@ normalization:
 
     ## Bot-block pages
 
-    When the drafter has emitted a record-scope `partial-content` issue naming an Akamai / Cloudflare / Imperva / similar bot-block detection, the cleaned HTML is the block-page chrome — the page that came back instead of the article. Render the body lightly (a flat segment list is fine; it's evidence of the block, not substantive content). Fill `description` to:
+    When the drafter has emitted a record-scope `bot-block` issue (severity `blocking`) naming an Akamai / Cloudflare / Imperva / similar bot-block detection, the cleaned HTML is the block-page chrome — the page that came back instead of the article. Render the body lightly (a flat segment list is fine; it's evidence of the block, not substantive content). Fill `description` to:
 
     - Name the block source (`Akamai bot-detection block page`, `Cloudflare challenge page`, etc.) per the drafter's issue.
     - Name the originating URL (from `origins[]`) that wasn't successfully retrieved.
     - Optionally summarize what the underlying page was supposed to be about, ONLY when the title text or URL gives that signal (e.g. `/insight-alert/are-you-ready-new-eu-rules-methane-emissions-energy-sector` is suggestive even when the body is bot-block chrome).
 
-    Don't fabricate the underlying content. Don't remove the drafter's `partial-content` issue. Don't change the drafter's `severity` or `remediation` hint.
+    Don't fabricate the underlying content. Don't remove the drafter's `bot-block` issue. Don't change the drafter's `severity` or `remediation` hint.
 
     ## Paywall pages
 
     When the cleaned HTML contains a clear lede + early paragraphs but cuts off before the article body — typical patterns: a partial paragraph followed by a "Subscribe to read more" call-to-action, a `<p>` containing literally `Continue reading with a subscription...`, paragraph count dropping abruptly at a soft-bound — the normalizer adds a record-scope `partial-content` issue naming the paywall and the paragraph count captured:
 
-        - type: partial-content
-          severity: minor
-          description: Capture contains the lede + first N paragraphs; the remainder of the article is gated behind <publisher>'s paywall.
-          remediation: recapture_with_authenticated_session
-          resolved: false
+        <!--issue partial-content/paywall
+        severity: warning
+        resolution: open
+        detector: <normalizer-touch-id>
+        description: Capture contains the lede + first N paragraphs; the remainder of the article is gated behind <publisher>'s paywall.
+        remediation: recapture_with_authenticated_session
+        -->
 
     Render the captured lede / opening paragraphs faithfully — they're useful even partial. The normalizer judges paywall vs full article from segment density and trailing-segment signals; the drafter doesn't auto-detect paywalls (the signal is too varied).
 

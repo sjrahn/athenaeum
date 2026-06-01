@@ -75,11 +75,9 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
 # them here is safe without the `[office]` extra; docx uses only the stdlib.
 from . import audio as _audio  # noqa: E402, F401
 from . import docx as _docx  # noqa: E402, F401
+from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
 from . import xls as _xls  # noqa: E402, F401
 from . import xlsx as _xlsx  # noqa: E402, F401
-
-# HTML drafter is a larger lift; lands later.
-# from . import html as _html
