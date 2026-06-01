@@ -23,7 +23,7 @@ from typing import Any
 
 from corpus import touches
 from corpus.draft import DrafterResult, register
-from corpus.draft.xlsx import _col_label, _emit_markdown_table, _fmt_cell, loss_issue
+from corpus.draft.xlsx import _fmt_cell, _rows_to_markdown, loss_issue
 from corpus.fingerprint import text as text_fp
 from corpus.functional_uri import quote_value
 from corpus.segments import Section, Segment
@@ -52,6 +52,7 @@ def draft(
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
 ) -> DrafterResult:
     detector = touches.script_identifier("draft.xls")
     xlrd = _xlrd()
@@ -137,13 +138,14 @@ def _worksheet_segment(sheet, detector: str) -> tuple[Segment, list[dict[str, An
 
 
 def _render_worksheet(sheet, row_cap: int) -> tuple[str, bool]:
+    """xlrd cells → markdown table via the shared `_rows_to_markdown` tail (same trimming,
+    header synthesis, and trailing-blank-column handling as the xlsx drafter)."""
     nrows, ncols = sheet.nrows, sheet.ncols
     if nrows == 0 or ncols == 0:
         return ("", False)
 
     rows: list[list[str]] = []
     truncated = False
-    width = 0
     for r in range(nrows):
         if len(rows) >= row_cap:
             truncated = True
@@ -152,20 +154,7 @@ def _render_worksheet(sheet, row_cap: int) -> tuple[str, bool]:
         if not rows and not any(cell for cell in formatted):
             continue
         rows.append(formatted)
-        width = max(width, len(formatted))
-    while rows and not any(cell for cell in rows[-1]):
-        rows.pop()
-    if not rows:
-        return ("", truncated)
-    for row in rows:
-        if len(row) < width:
-            row.extend("" for _ in range(width - len(row)))
-    header = rows[0]
-    if all(not cell for cell in header):
-        header = [_col_label(i) for i in range(width)]
-    else:
-        header = [cell or _col_label(i) for i, cell in enumerate(header)]
-    return (_emit_markdown_table(header, rows[1:]), truncated)
+    return _rows_to_markdown(rows, truncated)
 
 
 def _cell_value(sheet, row: int, col: int) -> Any:

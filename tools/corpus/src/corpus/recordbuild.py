@@ -35,7 +35,6 @@ a lossless atom/overlay; `image` / `audio` / `video` and a text overlay declarin
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shlex
@@ -46,7 +45,7 @@ from typing import Any
 import frontmatter
 import yaml
 
-from corpus import records, schemas, segments
+from corpus import hashing, records, schemas, segments
 
 VERSION = "0.1.0"
 LOCK_NAME = ".corpus-decompose.json"
@@ -582,4 +581,6 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
 
 
 def sha256_file(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """`sha256:<hex>` for `path` — streamed in chunks via the shared hasher (no whole-file
+    slurp), formatted via the canonical `<algo>:<hex>` helper."""
+    return records.format_hash("sha256", hashing.hash_file(path, also=("sha256",))["sha256"])

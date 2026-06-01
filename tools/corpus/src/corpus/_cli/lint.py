@@ -54,7 +54,7 @@ def _lint_all(root) -> int:
         return 0
     any_err = 0
     any_record = False
-    for md in sorted(records_dir.glob("*/*.md")):
+    for md in records.iter_record_paths(root):
         any_record = True
         try:
             post = records.load(md)

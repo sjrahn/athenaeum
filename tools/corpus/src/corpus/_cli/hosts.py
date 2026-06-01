@@ -16,11 +16,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     counter: Counter[str] = Counter()
-    for md in sorted((root / "records").glob("*/*.md")):
-        try:
-            post = records.load(md)
-        except Exception:
-            continue
+    for _md, post in records.load_all(root):
         for ob in records.iter_origin_blocks(post):
             uri = (ob.get("fields") or {}).get("uri")
             uri_list = uri if isinstance(uri, list) else [uri]

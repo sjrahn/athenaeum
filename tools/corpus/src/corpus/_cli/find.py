@@ -22,7 +22,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     rows: list[dict] = []
-    for md in sorted((root / "records").glob("*/*.md")):
+    for md in records.iter_record_paths(root):
         try:
             post = records.load(md)
         except Exception as e:

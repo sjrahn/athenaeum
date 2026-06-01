@@ -10,6 +10,18 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_schema_cache():
+    """The schema loaders are `@lru_cache`d (keyed on corpus_root). Each test uses a fresh
+    tmp corpus, but clearing before+after keeps a test that writes schema files then loads
+    them from seeing a stale entry cached by an earlier load in the same process."""
+    from corpus import schemas
+
+    schemas.cache_clear()
+    yield
+    schemas.cache_clear()
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--run-network",

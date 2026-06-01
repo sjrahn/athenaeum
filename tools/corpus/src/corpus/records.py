@@ -21,7 +21,7 @@ Exposes:
   `iter_classify_blocks`, `iter_embed_blocks`, `iter_issue_blocks`, `primary_origin_uri`.
 - Mutators: `set_artifact_block`, `append_origin_block`, `append_classify_block`,
   `append_embed_block`, `append_issue_block`.
-- Hash helpers: `parse_hash(s)`, `format_hash(algo, hex_value)`.
+- Hash helpers: `format_hash(algo, hex_value)`.
 - Stub creation: `stub_frontmatter(...)` returns the minimal frontmatter dict; the
   caller emits the artifact + origin blocks via the mutators.
 
@@ -41,7 +41,6 @@ Block grammar (spec §4.3):
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,24 +76,7 @@ _BLOCK_CLOSER = "-->"
 _METADATA_OPENERS = (_ARTIFACT_OPENER, _ORIGIN_OPENER, _CLASSIFY_OPENER, _EMBED_OPENER)
 
 
-def _now_iso() -> str:
-    """ISO-8601 in the spec's `Z`-suffix style."""
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 # ---------- hash helpers ---------- #
-
-
-def parse_hash(s: str) -> tuple[str, str]:
-    """Parse an `<algo>:<hex>` hash string. Returns `(algo, hex_value)`.
-
-    Raises ValueError if the string has no colon (single-algo form is only valid for
-    the bare `id` field which is invariant blake3 per spec §4.2).
-    """
-    if ":" not in s:
-        raise ValueError(f"hash {s!r} missing <algo>:<hex> prefix")
-    algo, hex_value = s.split(":", 1)
-    return algo, hex_value
 
 
 def format_hash(algo: str, hex_value: str) -> str:
@@ -199,6 +181,17 @@ def dump(post: frontmatter.Post, path: Path) -> None:
 # ---------- block emit ---------- #
 
 
+def _emit_block(opener: str, fields: dict[str, Any]) -> str:
+    """Render a header-only block (artifact / origin / classify / issue): the opener line,
+    the optional YAML body, and the closing `-->`. The single home for the block-tail
+    serialization convention. (Embed differs — it always carries a payload — and emits its
+    own form.)"""
+    body_yaml = _dump_yaml_block(fields).rstrip("\n") if fields else ""
+    if body_yaml:
+        return f"{opener}\n{body_yaml}\n-->"
+    return f"{opener}\n-->"
+
+
 def _emit_artifact_block(artifact: dict[str, Any]) -> str:
     """Emit `<!--artifact <mime-type>\n<yaml>\n-->`.
 
@@ -206,10 +199,7 @@ def _emit_artifact_block(artifact: dict[str, Any]) -> str:
     """
     mime = artifact.get("mime", "")
     fields = artifact.get("fields") or {}
-    body_yaml = _dump_yaml_block(fields).rstrip("\n") if fields else ""
-    if body_yaml:
-        return f"<!--artifact {mime}\n{body_yaml}\n-->"
-    return f"<!--artifact {mime}\n-->"
+    return _emit_block(f"<!--artifact {mime}", fields)
 
 
 def _emit_origin_block(origin: dict[str, Any]) -> str:
@@ -226,31 +216,31 @@ def _emit_origin_block(origin: dict[str, Any]) -> str:
         opener = f"<!--origin {id_}"
     else:
         opener = "<!--origin"
-    body_yaml = _dump_yaml_block(fields).rstrip("\n") if fields else ""
-    if body_yaml:
-        return f"{opener}\n{body_yaml}\n-->"
-    return f"{opener}\n-->"
+    return _emit_block(opener, fields)
 
 
 def _emit_classify_block(classify: dict[str, Any]) -> str:
     """Emit `<!--classify <namespace>[/<id>[/<subtype>]]\n<yaml>\n-->`.
 
     `classify` carries `{namespace, id, subtype, fields}`. When the id equals the
-    namespace, the bare namespace is emitted (`<!--classify youtube-->`) rather than
-    the redundant `<!--classify youtube/youtube-->`. The parser accepts both shapes
-    and normalizes either to `(namespace, namespace, None)`.
+    namespace AND there is no subtype, the bare namespace is emitted
+    (`<!--classify youtube-->`) rather than the redundant `<!--classify youtube/youtube-->`;
+    the parser normalizes that to `(namespace, namespace, None)`. When a subtype IS present
+    the redundant id is kept (`<!--classify ns/ns/subtype-->`) so the three-part identity
+    survives the round-trip through `_split_namespaced` (collapsing to `ns/subtype` would
+    re-parse the subtype as the id).
     """
     namespace = classify.get("namespace", "")
     id_ = classify.get("id", "")
     subtype = classify.get("subtype")
     fields = classify.get("fields") or {}
-    qualified = namespace if not id_ or id_ == namespace else f"{namespace}/{id_}"
+    if not id_ or (id_ == namespace and not subtype):
+        qualified = namespace
+    else:
+        qualified = f"{namespace}/{id_}"
     if subtype:
         qualified = f"{qualified}/{subtype}"
-    body_yaml = _dump_yaml_block(fields).rstrip("\n") if fields else ""
-    if body_yaml:
-        return f"<!--classify {qualified}\n{body_yaml}\n-->"
-    return f"<!--classify {qualified}\n-->"
+    return _emit_block(f"<!--classify {qualified}", fields)
 
 
 def _emit_embed_block(embed: dict[str, Any]) -> str:
@@ -281,10 +271,7 @@ def _emit_issue_block(issue: dict[str, Any]) -> str:
     subtype = issue.get("subtype")
     fields = issue.get("fields") or {}
     qualified = f"{id_}/{subtype}" if subtype else id_
-    body_yaml = _dump_yaml_block(fields).rstrip("\n") if fields else ""
-    if body_yaml:
-        return f"<!--issue {qualified}\n{body_yaml}\n-->"
-    return f"<!--issue {qualified}\n-->"
+    return _emit_block(f"<!--issue {qualified}", fields)
 
 
 def _dump_yaml_block(block: dict[str, Any]) -> str:
@@ -609,25 +596,37 @@ def iter_origin_uris(post: frontmatter.Post) -> Iterator[str]:
 # ---------- corpus-wide URI index (spec §9.3 `uris` view, consumer side) ---------- #
 
 
+def iter_record_paths(corpus_root: Path) -> Iterator[Path]:
+    """Yield every record markdown path under `records/<shard>/*.md`, sorted. The single
+    source of the on-disk record layout — every command + health iterates through here, so
+    the shard convention lives in one place."""
+    yield from sorted((corpus_root / "records").glob("*/*.md"))
+
+
+def load_all(corpus_root: Path) -> Iterator[tuple[Path, frontmatter.Post]]:
+    """Yield `(path, post)` for every parseable record; unparseable records are silently
+    skipped (parse-tolerant, per the project principle), never crashing the whole sweep.
+    A caller that needs to report load failures should iterate `iter_record_paths` and
+    `load` each itself."""
+    for md in iter_record_paths(corpus_root):
+        try:
+            yield md, load(md)
+        except Exception:  # noqa: BLE001 — tolerant parse
+            continue
+
+
 def build_uri_index(corpus_root: Path) -> dict[str, str]:
     """Map every record's canonical origin URI → that record's id.
 
-    One glob pass over `records/`. Unparseable records are skipped (tolerant
-    parse, per the project's parse-tolerantly principle). When two records claim
-    the same canonical URI the later one (sorted by path) wins — a corpus-health
-    concern surfaced elsewhere, not here.
-
-    This is the lightweight index `corpus links` / `corpus crawl` need; P5's
-    `health` module builds a richer `RecordRef`-based variant for diagnostics.
+    One pass over `records/` via `load_all`. When two records claim the same canonical URI
+    the later one (sorted by path) wins — a corpus-health concern surfaced elsewhere, not
+    here. This is the lightweight index `corpus links` / `corpus crawl` need; P5's `health`
+    module builds a richer `RecordRef`-based variant for diagnostics.
     """
     from . import urls as _urls
 
     index: dict[str, str] = {}
-    for md in sorted((corpus_root / "records").glob("*/*.md")):
-        try:
-            post = load(md)
-        except Exception:
-            continue
+    for md, post in load_all(corpus_root):
         record_id = str(post.metadata.get("id") or md.stem)
         for uri in iter_origin_uris(post):
             try:
@@ -639,13 +638,14 @@ def build_uri_index(corpus_root: Path) -> dict[str, str]:
     return index
 
 
-def find_by_uri(url: str, *, corpus_root: Path) -> str | None:
+def find_by_uri(
+    url: str, *, corpus_root: Path, index: dict[str, str] | None = None
+) -> str | None:
     """Return the id of the record whose origin URIs include `url`, else None.
 
-    `url` is canonicalized (`urls.normalize`) before lookup so trailing-slash /
-    query-order / case differences don't cause a miss. Rebuilds the index per
-    call — fine for the handful of seed/frontier checks the crawler makes; a
-    caller doing many lookups should `build_uri_index` once and index directly.
+    `url` is canonicalized (`urls.normalize`) before lookup so trailing-slash / query-order
+    / case differences don't cause a miss. Pass a prebuilt `index` (`build_uri_index`) when
+    making many lookups — e.g. a crawl frontier — to avoid rebuilding it per call.
     """
     from . import urls as _urls
 
@@ -653,7 +653,9 @@ def find_by_uri(url: str, *, corpus_root: Path) -> str | None:
         target = _urls.normalize(url)
     except Exception:
         target = url
-    return build_uri_index(corpus_root).get(target)
+    if index is None:
+        index = build_uri_index(corpus_root)
+    return index.get(target)
 
 
 # ---------- mutators ---------- #

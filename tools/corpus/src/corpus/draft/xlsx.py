@@ -79,6 +79,7 @@ def draft(
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
 ) -> DrafterResult:
     detector = touches.script_identifier("draft.xlsx")
     fields: dict[str, Any] = {}
@@ -253,25 +254,17 @@ def _segment_address(sheet_title: str) -> str:
 # ---------- worksheet → markdown ---------- #
 
 
-def _render_worksheet(ws, row_cap: int) -> tuple[str, bool]:
-    """Stream cells via `iter_rows(values_only=True)` → markdown table. Returns
-    `(body, truncated)`."""
-    rows: list[list[str]] = []
-    truncated = False
-    width = 0
-    for row_values in ws.iter_rows(values_only=True):
-        if len(rows) >= row_cap:
-            truncated = True
-            break
-        formatted = [_fmt_cell(v) for v in row_values]
-        if not rows and not any(cell for cell in formatted):
-            continue
-        rows.append(formatted)
-        width = max(width, len(formatted))
+def _rows_to_markdown(rows: list[list[str]], truncated: bool) -> tuple[str, bool]:
+    """Shared worksheet-rows → markdown-table tail for the xlsx + xls drafters. `rows` are
+    already `_fmt_cell`'d strings, with leading all-blank rows skipped and the row cap
+    applied by the caller (those steps are iteration-specific). Trims trailing blank rows
+    AND trailing all-blank columns, synthesizes a header (column letters where the first
+    row is blank), and emits the table. Returns `(body, truncated)`."""
     while rows and not any(cell for cell in rows[-1]):
         rows.pop()
     if not rows:
         return ("", truncated)
+    width = max(len(r) for r in rows)
     for r in rows:
         if len(r) < width:
             r.extend("" for _ in range(width - len(r)))
@@ -286,6 +279,22 @@ def _render_worksheet(ws, row_cap: int) -> tuple[str, bool]:
     else:
         header = [cell or _col_label(i) for i, cell in enumerate(header)]
     return (_emit_markdown_table(header, rows[1:]), truncated)
+
+
+def _render_worksheet(ws, row_cap: int) -> tuple[str, bool]:
+    """Stream cells via `iter_rows(values_only=True)` → markdown table. Returns
+    `(body, truncated)`."""
+    rows: list[list[str]] = []
+    truncated = False
+    for row_values in ws.iter_rows(values_only=True):
+        if len(rows) >= row_cap:
+            truncated = True
+            break
+        formatted = [_fmt_cell(v) for v in row_values]
+        if not rows and not any(cell for cell in formatted):
+            continue
+        rows.append(formatted)
+    return _rows_to_markdown(rows, truncated)
 
 
 def _fmt_cell(value: Any) -> str:

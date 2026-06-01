@@ -55,6 +55,10 @@ def test_build_uri_index_and_find_by_uri(tmp_path):
     assert records.find_by_uri("https://EXAMPLE.com/page-a", corpus_root=root) == ID_A
     assert records.find_by_uri("https://example.com/missing", corpus_root=root) is None
 
+    # A prebuilt index is consulted directly (no rebuild) — the bulk-lookup affordance.
+    assert records.find_by_uri("https://example.com/page-b", corpus_root=root, index=idx) == ID_B
+    assert records.find_by_uri("https://example.com/page-a", corpus_root=root, index={}) is None
+
 
 def test_iter_origin_uris_flattens_list(tmp_path):
     root = _make_corpus(tmp_path)

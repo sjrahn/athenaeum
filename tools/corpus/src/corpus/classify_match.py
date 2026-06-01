@@ -91,9 +91,9 @@ def candidates(post: frontmatter.Post, corpus_root: Path) -> list[Candidate]:
 
             # Subclass inherits from namespace when its own axis isn't declared.
             cue_decl = sub_cue_decl or ns_cue_decl
-            cue_hits = sub_cue_hits if sub_cue_decl else (ns_cue_hits if not sub_cue_decl else [])
+            cue_hits = sub_cue_hits if sub_cue_decl else ns_cue_hits
             mime_decl = sub_mime_decl or ns_mime_decl
-            mime_match = sub_mime_match if sub_mime_decl else (ns_mime_match if not sub_mime_decl else None)
+            mime_match = sub_mime_match if sub_mime_decl else ns_mime_match
 
             basis = _basis_for(cue_decl, cue_hits, mime_decl, mime_match)
             if basis is None:
@@ -202,6 +202,10 @@ def _basis_for(
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+_BLOCK_RE = re.compile(
+    r"<!--(segment|section|embed|artifact|origin|classify|issue)\b[^>]*?-->",
+    re.DOTALL,
+)
 _BODY_TEXT_CAP = 200_000  # ~200 KB of plain text is plenty for cue matching
 
 
@@ -217,13 +221,9 @@ def _record_body_text(post: frontmatter.Post) -> str:
 
     pieces: list[str] = []
     total = 0
-    block_re = re.compile(
-        r"<!--(segment|section|embed|artifact|origin|classify|issue)\b[^>]*?-->",
-        re.DOTALL,
-    )
     last_end = 0
     in_segment = False
-    for match in block_re.finditer(body):
+    for match in _BLOCK_RE.finditer(body):
         if in_segment:
             chunk = body[last_end : match.start()]
             pieces.append(chunk)

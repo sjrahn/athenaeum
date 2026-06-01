@@ -19,9 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 import zipfile
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import frontmatter
 import yaml
@@ -207,17 +205,15 @@ def _read_sidecar(src: Path) -> dict:
 
 
 def _derive_capture_origin(src: Path, sidecar: dict) -> tuple[str, str]:
+    from corpus import touches
+
     uri = str(sidecar.get("source_url") or "").strip()
     discovered_at = str(sidecar.get("fetched_at") or "").strip()
     if not uri:
         uri = src.resolve().as_uri()
     if not discovered_at:
-        discovered_at = _now_iso()
+        discovered_at = touches.now_iso()
     return uri, discovered_at
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _cleanup_sidecar(src: Path) -> None:

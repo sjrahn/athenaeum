@@ -42,15 +42,9 @@ class RecordRef:
 
 
 def load_all_records(corpus_root: Path) -> list[RecordRef]:
-    """Load every record under `records/` in one glob pass. Unparseable records are
-    skipped (parse-tolerantly)."""
-    out: list[RecordRef] = []
-    for f in sorted((corpus_root / "records").glob("*/*.md")):
-        try:
-            out.append(RecordRef(path=f, post=records.load(f)))
-        except Exception:
-            continue
-    return out
+    """Load every record under `records/`. Unparseable records are skipped (tolerantly).
+    Shares the one discovery path in `records.load_all`."""
+    return [RecordRef(path=md, post=post) for md, post in records.load_all(corpus_root)]
 
 
 def build_uri_index(refs: list[RecordRef]) -> dict[str, str]:
@@ -180,9 +174,10 @@ def missing_artifacts(
         mime = records.media_type_for(r.post)
         if not mime:
             continue
+        # `extension_for` falls back to "bin" for an unknown MIME; the artifact was stored
+        # with that same fallback at ingest, so a record whose bytes are genuinely lost is
+        # still checkable — don't skip it just because its MIME has no canonical extension.
         ext = mime_mod.extension_for(mime)
-        if not ext or ext == "bin":
-            continue
         if store.is_local(r.record_id, ext):
             continue
         blob = f"{paths.shard(r.record_id)}/{r.record_id}.{ext.lstrip('.')}"

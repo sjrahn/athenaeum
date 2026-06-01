@@ -166,6 +166,19 @@ def _sources(corpus_root: Path) -> tuple[_SchemaSource, ...]:
     return (corpus_local, packaged)
 
 
+def cache_clear() -> None:
+    """Clear every schema cache. Schemas are immutable for the life of a CLI process, so
+    the per-record loaders are `@lru_cache`d (keyed on `(corpus_root, …)`); callers must
+    treat the returned dicts as read-only. Call this after writing/modifying schema files
+    in the same process — chiefly tests; a normal CLI run never mutates schemas post-load."""
+    _sources.cache_clear()
+    load_mime_schema.cache_clear()
+    mime_schema_id_for.cache_clear()
+    load_classification_schema.cache_clear()
+    load_origin_overlay_by_id.cache_clear()
+    load_issue_schema.cache_clear()
+
+
 # ---------- composition primitives ---------- #
 
 
@@ -248,6 +261,7 @@ def _iter_mime_subtype_paths(corpus_root: Path) -> list[str]:
     return [r for r in _discover_yaml(_sources(corpus_root), "mime") if _is_mime_subtype_path(r)]
 
 
+@lru_cache(maxsize=256)
 def load_mime_schema(corpus_root: Path, mime: str) -> dict[str, Any] | None:
     """Return the layered mime schema dict matching the IANA `mime` (e.g. `application/pdf`).
 
@@ -285,6 +299,7 @@ def load_mime_schema(corpus_root: Path, mime: str) -> dict[str, Any] | None:
     )
 
 
+@lru_cache(maxsize=256)
 def mime_schema_id_for(corpus_root: Path, mime: str) -> str | None:
     """Return the mime schema id (e.g. `application/application_pdf`) for `mime`, or
     None when no schema claims it."""
@@ -389,6 +404,7 @@ def list_classifications(corpus_root: Path) -> list[str]:
     return _classification_namespaces(corpus_root)
 
 
+@lru_cache(maxsize=256)
 def load_classification_schema(
     corpus_root: Path, class_id: str
 ) -> dict[str, Any] | None:
@@ -554,6 +570,7 @@ def load_origin_overlays(
     return out
 
 
+@lru_cache(maxsize=256)
 def load_origin_overlay_by_id(
     corpus_root: Path, id_: str
 ) -> dict[str, Any] | None:
@@ -612,6 +629,7 @@ def origin_ids_for_uris(corpus_root: Path, uris: list[str]) -> list[str]:
 # ---------- issue schemas ---------- #
 
 
+@lru_cache(maxsize=256)
 def load_issue_schema(corpus_root: Path, id_: str) -> dict[str, Any] | None:
     """Return the layered issue overlay for `id_`.
 
