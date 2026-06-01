@@ -1,0 +1,79 @@
+description: |
+  Audio-file artifacts (podcasts, recordings, music, voice memos). The artifact bytes are
+  the canonical source. The deterministic drafter probes the file via `ffprobe` for codec,
+  duration, sampling rate, and channels. When a Whisper backend is configured it transcribes
+  the audio into `text/transcript` segments addressed `time_range=<s>-<e>` (one per
+  diarization turn); without a transcriber the record drafts to a metadata-only body plus a
+  spec-shaped `transcription-unavailable` issue.
+
+  This schema knows nothing about where the audio came from. An audio file is bytes, a codec,
+  a duration, and sound that may or may not contain speech. Source-side concepts — who
+  published it, the show it belongs to, episode notes, listener comments — are not properties
+  of an audio file; they belong to whatever source supplied it and live on classification
+  overlays. This media-type schema describes only the file.
+
+  Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in
+  `audio_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+normalization:
+  guidance: |
+    The drafter emits a flat sequence of `<!--segment text/transcript-->` segments (one per
+    diarization turn, addressed `time_range=<start>-<end>`, with `stream_id=<id>` only when
+    the file carries multiple audio tracks). `text/transcript` is the lossless atomic overlay
+    (spec §7.3): the body losslessly transcribes the addressed time-range. The adapter's
+    output is approximate; the normalizer corrects wording, fixes speaker attribution, and
+    reorganizes turns into topic-grain sections.
+# The resolver's initial working kind for the functional-URI transform pipeline (e.g.
+# `corpus://<hash>?transcribe`). Read schema-side so a new media type needs no resolver edit.
+working_kind: audio
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: time_range
+  type: range
+  description: <start>-<end> in seconds (float). Both bounds inclusive.
+- param: stream_id
+  type: string
+  description: |-
+    Audio stream identifier (`a0`, `a1`, ...) matching a key in the frontmatter `streams:`
+    map. Present in addresses only when the file carries more than one audio track.
+transport_algos:
+- sha256
+extended_fields:
+  duration:
+    type: number
+    required: true
+    source: file_metadata
+    description: Duration of the audio in seconds (float, ffprobe-reported).
+  audio_codec:
+    type: string
+    required: false
+    source: file_metadata
+    description: Codec name from ffprobe (e.g. 'mp3', 'aac', 'opus', 'flac', 'pcm_s16le').
+  sampling_rate:
+    type: number
+    required: false
+    source: file_metadata
+    description: Sample rate of the primary audio stream in Hz.
+  channels:
+    type: number
+    required: false
+    source: file_metadata
+    description: Channel count of the primary audio stream (1 = mono, 2 = stereo).
+  audio_format:
+    type: string
+    required: true
+    source: file_metadata
+    description: Container/format (mp3, wav, m4a, ogg, flac) — derived from the file extension.
+  audio_size_bytes:
+    type: number
+    required: true
+    source: file_metadata
+    description: On-disk size of the artifact in bytes.
+  streams:
+    type: object
+    required: false
+    source: file_metadata
+    description: |
+      Per-stream metadata lifted from the container, keyed by stream id (`a0`, `a1`, ...).
+      Each entry carries `kind: audio`, `codec`, and `sampling_rate`/`channels`/`language`.
+      Present only when the file carries more than one audio track.

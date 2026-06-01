@@ -73,6 +73,7 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
 # Importing the per-MIME submodules registers their drafters. The office drafters
 # lazy-import their heavy deps (openpyxl / xlrd) inside their functions, so importing
 # them here is safe without the `[office]` extra; docx uses only the stdlib.
+from . import audio as _audio  # noqa: E402, F401
 from . import docx as _docx  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401

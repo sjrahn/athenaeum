@@ -48,7 +48,10 @@ log = logging.getLogger(__name__)
 _NOOP_PARAMS: frozenset[str] = frozenset({"dpi", "stream_id", "time"})
 
 
-# Map MIME → initial working-value kind.
+# Built-in MIME → initial working-value kind. This is now a FALLBACK: the authoritative
+# source is the mime schema's `working_kind:` (see `_working_kind_for`), so a new corpus can
+# add a media type — schema + drafter + transforms — without editing this table. The table
+# keeps the bundled types resolving even if a schema omits the field.
 _INITIAL_KIND_FOR_MIME: dict[str, str] = {
     "application/pdf": "pdf",
     "text/html": "html",
@@ -116,11 +119,13 @@ def resolve(
     if all(k in _NOOP_PARAMS for k, _ in parsed.params):
         return artifact_binary.resolve()
 
-    # Initial kind (from source MIME) and final kind (predicted from chain).
-    initial_kind = _INITIAL_KIND_FOR_MIME.get(media_type)
+    # Initial kind (schema-declared `working_kind`, else the built-in table) and final
+    # kind (predicted from chain).
+    initial_kind = _working_kind_for(corpus_root, media_type)
     if initial_kind is None:
         raise NotImplementedError(
-            f"no transformation pipeline registered for media_type {media_type!r}"
+            f"no transformation pipeline registered for media_type {media_type!r} "
+            f"(declare `working_kind:` on its mime schema, or add it to the resolver table)"
         )
     final_kind = _predict_final_kind(parsed, initial_kind)
     if final_kind not in KIND_TO_EXTENSION:
@@ -233,6 +238,19 @@ def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
         shutil.move(str(working), cache_p)
     else:
         raise NotImplementedError(f"no cache writer for kind {kind!r}")
+
+
+def _working_kind_for(corpus_root: Path, media_type: str) -> str | None:
+    """The resolver's initial working kind for a media type. Schema-first — the mime
+    schema's `working_kind:` — falling back to the built-in `_INITIAL_KIND_FOR_MIME` table
+    so the bundled types keep resolving even if a schema omits the field."""
+    from . import schemas
+
+    schema = schemas.load_mime_schema(corpus_root, media_type) or {}
+    kind = schema.get("working_kind")
+    if isinstance(kind, str) and kind:
+        return kind
+    return _INITIAL_KIND_FOR_MIME.get(media_type)
 
 
 def _load_record(corpus_root: Path, record_hash: str):

@@ -2,6 +2,8 @@ description: |
   Raster image artifacts — photographs, diagrams, charts, screenshots, maps, scanned documents, table-as-image renderings. The artifact bytes are the canonical source. Covers the common web-image MIMEs (PNG, JPEG, GIF, WebP, AVIF). Vector formats (SVG) and animated/multi-frame formats (animated GIF, animated WebP) fall under this schema for v1; specialized handling can split off later.
 
   Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in `image_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+# Resolver's initial working kind for the functional-URI pipeline (read schema-side).
+working_kind: image
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:

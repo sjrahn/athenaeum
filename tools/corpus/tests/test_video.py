@@ -16,6 +16,7 @@ import frontmatter
 import pytest
 
 from corpus import paths, records, resolver
+from corpus.draft import _transcript as transcript_mod
 from corpus.draft import video as video_mod
 from corpus.transcription import TranscriptionResult, TranscriptionUnavailable
 from corpus.transforms import audio as audio_tf
@@ -157,7 +158,7 @@ _TRANSCRIPT = (
 
 
 def test_parse_transcript_sections_speaker_runs():
-    secs = video_mod._parse_transcript_sections(
+    secs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT,
         audio_stream_id="a0",
         video_stream_id="v0",
@@ -175,7 +176,7 @@ def test_parse_transcript_sections_speaker_runs():
 
 
 def test_parse_transcript_sections_no_video_stream_omits_frames():
-    secs = video_mod._parse_transcript_sections(
+    secs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT,
         audio_stream_id="a0",
         video_stream_id=None,
@@ -186,7 +187,7 @@ def test_parse_transcript_sections_no_video_stream_omits_frames():
 
 
 def test_parse_transcript_multi_audio_adds_stream_id():
-    secs = video_mod._parse_transcript_sections(
+    secs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT, audio_stream_id="a1", video_stream_id=None, multi_audio=True, multi_video=False
     )
     assert "&stream_id=a1" in secs[0].address
@@ -194,12 +195,12 @@ def test_parse_transcript_multi_audio_adds_stream_id():
 
 @pytest.mark.parametrize("s,tc", [(7, "00:07"), (75, "01:15"), (3661, "01:01:01")])
 def test_seconds_to_timecode(s, tc):
-    assert video_mod._seconds_to_timecode(s) == tc
+    assert transcript_mod.seconds_to_timecode(s) == tc
 
 
 def test_speaker_label_to_index():
-    assert video_mod._speaker_label_to_index("Speaker 3") == 3
-    assert video_mod._speaker_label_to_index("narrator") is None
+    assert transcript_mod.speaker_label_to_index("Speaker 3") == 3
+    assert transcript_mod.speaker_label_to_index("narrator") is None
 
 
 def test_unavailable_issue_is_spec_shaped():

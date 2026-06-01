@@ -25,6 +25,9 @@ normalization:
     **Topic-naming context.** Frame content is useful context for the normalizer's other passes: a frame showing an Asana board with project names confirms topic boundaries; a slide titled "Q2 revenue" anchors a section's topic; a frame showing several people in a room helps cross-check speaker mapping. Look at frames early in the normalize pass — before topic-reorganization and speaker-mapping decisions — so this context is available.
 
     **No wikilink embeds for own frames.** Don't write `![[corpus://<this-record-hash>?frame=...|...]]` references in transcript bodies. The image segment + sibling text segment ARE the home for slide/frame content; the reader materializes via the resolver. Wikilinks to OTHER records (e.g. the slide-deck PDF as a separate record) ARE fine and useful — those reference separate assets.
+# The resolver's initial working kind for the functional-URI transform pipeline. Read
+# schema-side (see resolver._working_kind_for) so a new media type needs no resolver edit.
+working_kind: video
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:

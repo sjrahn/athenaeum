@@ -3,6 +3,8 @@ description: |
 applies_to:
   content_types:
   - application/pdf
+# Resolver's initial working kind for the functional-URI pipeline (read schema-side).
+working_kind: pdf
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:
