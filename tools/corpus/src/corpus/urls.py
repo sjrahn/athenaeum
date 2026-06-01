@@ -49,22 +49,26 @@ def host_of(url: str) -> str:
 def same_domain(url: str, seed_host: str, *, include_subdomains: bool = False) -> bool:
     """Decide whether `url` shares the seed host.
 
-    Default is host-exact. With `include_subdomains`, the registered root is derived
-    by stripping a leading `www.` from the seed host (a heuristic that covers the
-    common case without pulling in a public-suffix library), then any host equal to
-    or under that root matches. So `www.example.com` with subdomains accepts
-    `example.com`, `www.example.com`, and any `*.example.com` — but not
-    `evilexample.com`.
+    Apex and `www` are treated as the same site by default — a leading `www.` is stripped
+    from BOTH the candidate host and the seed before comparing, so a crawl seeded at
+    `example.com` follows `www.example.com` links and vice-versa (the most common same-site
+    variation, and consistent with capture's redirect-drift www-normalization). With
+    `include_subdomains`, any deeper subdomain under that root also matches
+    (`x.example.com`) — but never a different registrable name (`evilexample.com`).
+
+    The `www.`-strip is a heuristic that covers the common case without pulling in a
+    public-suffix library.
     """
     host = host_of(url)
     if not host:
         return False
-    if host == seed_host:
+    h = host[4:] if host.startswith("www.") else host
+    root = seed_host[4:] if seed_host.startswith("www.") else seed_host
+    if h == root:
         return True
     if not include_subdomains:
         return False
-    root = seed_host[4:] if seed_host.startswith("www.") else seed_host
-    return host == root or host.endswith("." + root)
+    return h.endswith("." + root)
 
 
 def _normalize_netloc(

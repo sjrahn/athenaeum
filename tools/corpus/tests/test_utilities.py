@@ -49,6 +49,21 @@ def test_mime_detects_pdf_and_png(tmp_path):
     assert mime.detect(png) == "image/png"
 
 
+def test_mime_riff_disambiguation(tmp_path):
+    # WebP, WAV, and AVI all share the `RIFF` magic at offset 0; only the offset-8
+    # form-type distinguishes them. A bare RIFF prefix must NOT default to image/webp.
+    size = b"\x00\x00\x00\x00"
+    webp = tmp_path / "a.webp"
+    webp.write_bytes(b"RIFF" + size + b"WEBP" + b"\x00" * 4)
+    assert mime.detect(webp) == "image/webp"
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF" + size + b"WAVE" + b"\x00" * 4)
+    assert mime.detect(wav) == "audio/x-wav"
+    avi = tmp_path / "a.avi"
+    avi.write_bytes(b"RIFF" + size + b"AVI " + b"\x00" * 4)
+    assert mime.detect(avi) == "video/x-msvideo"
+
+
 def test_mime_extension_for():
     assert mime.extension_for("application/pdf") == "pdf"
     assert mime.extension_for("image/jpeg") == "jpg"
@@ -65,6 +80,19 @@ def test_urls_normalize_sorts_query_strips_fragment():
 def test_urls_same_domain_subdomain_match():
     assert urls.same_domain("https://x.example.com/p", "www.example.com", include_subdomains=True)
     assert not urls.same_domain("https://evilexample.com/p", "example.com", include_subdomains=True)
+
+
+def test_urls_same_domain_apex_www_by_default():
+    # apex ↔ www are the same site without --include-subdomains (the common cross-link).
+    assert urls.same_domain("https://www.example.com/about", "example.com")
+    assert urls.same_domain("https://example.com/about", "www.example.com")
+    assert urls.same_domain("https://example.com/a", "example.com")
+    # A different registrable name never matches.
+    assert not urls.same_domain("https://other.com/x", "example.com")
+    assert not urls.same_domain("https://evilexample.com/x", "example.com")
+    # Deeper subdomains still require the opt-in flag.
+    assert not urls.same_domain("https://api.example.com/p", "example.com")
+    assert urls.same_domain("https://api.example.com/p", "example.com", include_subdomains=True)
 
 
 def test_touches_coalesce_and_list_shape():

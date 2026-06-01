@@ -46,7 +46,6 @@ import os
 import re
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -160,7 +159,12 @@ def capture(url: str, *, corpus_root: Path, opts: CaptureOptions | None = None) 
     capture_dir = corpus_root / "capture"
     capture_dir.mkdir(parents=True, exist_ok=True)
 
-    use_video = _should_use_video(canonical, force=opts.video, skip=opts.no_video)
+    from corpus.config import load_config
+
+    extra_video_hosts = frozenset(load_config(corpus_root).capture.get("video_hosts") or ())
+    use_video = _should_use_video(
+        canonical, force=opts.video, skip=opts.no_video, extra_hosts=extra_video_hosts
+    )
     log.info("capturing %s", canonical)
     if use_video:
         path = _capture_video_with_cookies(canonical, capture_dir=capture_dir, opts=opts)
@@ -392,7 +396,7 @@ def _capture_via_playwright(
         ) from e
 
     timeout_ms = opts.timeout_s * 1000
-    fetched_at = _now_iso()
+    fetched_at = touches.now_iso()
     base = _sanitize_filename(url)
     bundle = _resolve_singlefile_bundle()
 
@@ -644,11 +648,6 @@ def _resolve_cdp_endpoint(cli_arg: str | None) -> str | None:
 # ---------- capture-stage detectors (spec §4.3.3.1 issue shape) ---------- #
 
 
-def _detector_id() -> str:
-    """The touch identifier stamped on capture-stage issues (`corpus.capture@<ver>`)."""
-    return touches.script_identifier("capture")
-
-
 def _run_capture_detectors(
     *,
     snapshot: str,
@@ -664,7 +663,7 @@ def _run_capture_detectors(
     fires both). Returns issue dicts in the shape `ingest` replays as
     `<!--issue-->` blocks.
     """
-    detector_id = _detector_id()
+    detector_id = touches.script_identifier("capture")
     issues: list[dict] = []
     for detector in (
         _detect_http_error_with_200_body,
@@ -700,6 +699,7 @@ def _detect_http_error_with_200_body(
                 "id": "partial-content",
                 "subtype": "http-error",
                 "severity": "blocking",
+                "resolution": "open",
                 "detector": detector_id,
                 "fields": {"http_status": 200, "signature": name},
             }
@@ -729,6 +729,7 @@ def _detect_final_url_drift(
             "id": "partial-content",
             "subtype": "redirect-drift",
             "severity": "warning",
+            "resolution": "open",
             "detector": detector_id,
             "fields": {
                 "drift": "hostname-change",
@@ -746,6 +747,7 @@ def _detect_final_url_drift(
                 "id": "partial-content",
                 "subtype": "redirect-drift",
                 "severity": "warning",
+                "resolution": "open",
                 "detector": detector_id,
                 "fields": {"drift": name, "request_url": request_url, "final_url": final_url},
             }
@@ -765,6 +767,7 @@ def _detect_login_wall(*, snapshot: str, detector_id: str, **_: Any) -> dict | N
                     "id": "partial-content",
                     "subtype": "login-wall",
                     "severity": "warning",
+                    "resolution": "open",
                     "detector": detector_id,
                     "fields": {"signature": sig_name},
                 }
@@ -773,6 +776,7 @@ def _detect_login_wall(*, snapshot: str, detector_id: str, **_: Any) -> dict | N
                 "id": "partial-content",
                 "subtype": "login-wall",
                 "severity": "warning",
+                "resolution": "open",
                 "detector": detector_id,
                 "fields": {"signature": sig_name},
             }
@@ -784,13 +788,14 @@ def _detect_paywall(*, snapshot: str, detector_id: str, **_: Any) -> dict | None
     from corpus.quality.signatures import PAYWALL_SIGNATURES
 
     body_text = _extract_visible_text(snapshot)
-    for name, _title_re, body_re in PAYWALL_SIGNATURES:
+    for name, _title_re, body_re, severity in PAYWALL_SIGNATURES:
         target = snapshot if name == "paywall-marker" else body_text
         if body_re.search(target):
             return {
                 "id": "partial-content",
                 "subtype": "paywall",
-                "severity": "warning",
+                "severity": severity,
+                "resolution": "open",
                 "detector": detector_id,
                 "fields": {"signature": name},
             }
@@ -809,6 +814,7 @@ def _detect_captcha(*, snapshot: str, detector_id: str, **_: Any) -> dict | None
                 "id": "partial-content",
                 "subtype": "captcha",
                 "severity": "blocking",
+                "resolution": "open",
                 "detector": detector_id,
                 "fields": {"signature": name},
             }
@@ -830,6 +836,7 @@ def _detect_inline_image_failure(
         "id": "inline-image-failure",
         "subtype": None,
         "severity": "warning" if rate > 0.50 else "info",
+        "resolution": "open",
         "detector": detector_id,
         "fields": {
             "inlined_count": inlined,
@@ -870,7 +877,11 @@ _BOT_CHALLENGE_MARKERS = (
 
 
 def _looks_like_bot_challenge(body: bytes, content_type: str) -> bool:
-    if len(body) > 16 * 1024:
+    # Challenge interstitials (Cloudflare/PerimeterX/Akamai) are typically 20-60 KB of
+    # markup + inline JS; cap well above that so real challenges are scanned, while a large
+    # body still short-circuits as genuine content (the CDN markers also appear in legit
+    # pages that merely use those services).
+    if len(body) > 128 * 1024:
         return False
     if content_type and not content_type.startswith(("text/html", "application/xhtml")):
         return False
@@ -928,7 +939,7 @@ def _ingest_capture(result: CaptureResult, *, original_url: str, corpus_root: Pa
     record_id = hashing.hash_file(capture_path, also=())["blake3"]
 
     sidecar = capture_path.with_suffix(capture_path.suffix + ".capture.yaml")
-    payload: dict[str, Any] = {"source_url": original_url, "fetched_at": _now_iso()}
+    payload: dict[str, Any] = {"source_url": original_url, "fetched_at": touches.now_iso()}
     if result.issues:
         payload["capture_issues"] = result.issues
     sidecar.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -957,9 +968,12 @@ def _move_video_sidecar(capture_path: Path, *, record_id: str, corpus_root: Path
 # ---------- small pure helpers ---------- #
 
 
-def _should_use_video(url: str, *, force: bool, skip: bool) -> bool:
-    """Decide whether to dispatch `url` to yt-dlp. `force`/`skip` override the
-    host check (and are mutually exclusive)."""
+def _should_use_video(
+    url: str, *, force: bool, skip: bool, extra_hosts: frozenset[str] = frozenset()
+) -> bool:
+    """Decide whether to dispatch `url` to yt-dlp. `force`/`skip` override the host check
+    (and are mutually exclusive). `extra_hosts` are corpus-configured hosts (see
+    `[corpus.capture] video_hosts`) unioned with the packaged default set."""
     if force and skip:
         raise CaptureError("video and no_video are mutually exclusive")
     if skip:
@@ -967,7 +981,7 @@ def _should_use_video(url: str, *, force: bool, skip: bool) -> bool:
     if force:
         return True
     host = (urlparse(url).hostname or "").lower().rstrip(".")
-    return host in VIDEO_HOSTS
+    return host in VIDEO_HOSTS or host in extra_hosts
 
 
 def _sanitize_filename(url: str) -> str:
@@ -1007,5 +1021,3 @@ def _canonicalize(url: str) -> str:
     return canonical
 
 
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

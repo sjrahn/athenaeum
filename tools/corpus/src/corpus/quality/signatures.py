@@ -90,7 +90,9 @@ REDIRECT_DRIFT_PATH_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 
 LOGIN_WALL_SIGNATURES: Final[tuple[tuple[tuple[str, re.Pattern[str]], re.Pattern[str] | None], ...]] = (
     (
-        ("login-required-title", re.compile(r"^\s*(?:sign\s*in|log\s*in|login\s+required)\s*[-:|]?", re.IGNORECASE)),
+        # End-anchored (GENERIC_TITLE convention): the WHOLE title must be the login
+        # phrase, so a real article like "Sign in sheets for events: a guide" doesn't match.
+        ("login-required-title", re.compile(r"^\s*(?:sign\s*in|log\s*in|login\s+required)\s*[-:|]?\s*$", re.IGNORECASE)),
         None,
     ),
     (
@@ -105,7 +107,11 @@ LOGIN_WALL_SIGNATURES: Final[tuple[tuple[tuple[str, re.Pattern[str]], re.Pattern
 # contains a subscribe CTA + truncation language. Conservative — many
 # articles legitimately mention subscriptions in passing.
 
-PAYWALL_SIGNATURES: Final[tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...]] = (
+# Each entry: (name, title_re, body_re, severity). Prose CTAs are strong evidence of a
+# real wall (`warning`); the raw-HTML class marker alone is weak (a free article may ship a
+# hidden `paywall-banner` element), so it's downgraded to `info` — a hint to review, not a
+# fidelity warning.
+PAYWALL_SIGNATURES: Final[tuple[tuple[str, re.Pattern[str], re.Pattern[str], str], ...]] = (
     (
         "subscribe-to-continue",
         re.compile(r".", re.DOTALL),
@@ -116,15 +122,18 @@ PAYWALL_SIGNATURES: Final[tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ..
             r"this\s+(?:story|article)\s+is\s+for\s+subscribers",
             re.IGNORECASE,
         ),
+        "warning",
     ),
     (
         "paywall-marker",
         re.compile(r".", re.DOTALL),
-        # Sites often expose data-paywall / class="paywall*" hooks.
+        # Sites often expose data-paywall / class="paywall*" hooks — but these can ship on
+        # free pages too, so the marker alone is informational, not a warning.
         re.compile(
             r'data-paywall|class="[^"]*\bpaywall\b|id="paywall',
             re.IGNORECASE,
         ),
+        "info",
     ),
 )
 

@@ -23,6 +23,10 @@ File schema (all keys optional):
     adapter  = "noop"            # "noop" (default) | "http-whisper"
     base_url = "..."             # http-whisper: server base URL
 
+    [corpus.capture]
+    video_hosts = ["peertube.example", ...]   # extra hosts routed to yt-dlp (unioned
+                                               # with the packaged YouTube/Vimeo defaults)
+
 Env vars override the file (later wins):
 
     CORPUS_STORE          → store.backend
@@ -34,6 +38,7 @@ Env vars override the file (later wins):
     CORPUS_S3_PREFIX      → store.prefix
     CORPUS_TRANSCRIBE     → transcription.adapter
     WHISPER_BASE_URL      → transcription.base_url (back-compat)
+    CORPUS_VIDEO_HOSTS    → capture.video_hosts (comma-separated, unioned with the file)
 
 `load_config(corpus_root)` returns a frozen `CorpusConfig` with two sub-dicts
 (`store`, `transcription`) carrying the merged settings.
@@ -59,6 +64,7 @@ class CorpusConfig:
 
     store: dict[str, Any] = field(default_factory=dict)
     transcription: dict[str, Any] = field(default_factory=dict)
+    capture: dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(corpus_root: Path) -> CorpusConfig:
@@ -78,11 +84,13 @@ def load_config(corpus_root: Path) -> CorpusConfig:
 
     file_store = dict(file_data.get("store") or {})
     file_transcription = dict(file_data.get("transcription") or {})
+    file_capture = dict(file_data.get("capture") or {})
 
     store = _resolve_store_section(file_store)
     transcription = _resolve_transcription_section(file_transcription)
+    capture = _resolve_capture_section(file_capture)
 
-    return CorpusConfig(store=store, transcription=transcription)
+    return CorpusConfig(store=store, transcription=transcription, capture=capture)
 
 
 def _resolve_store_section(file_store: dict[str, Any]) -> dict[str, Any]:
@@ -130,4 +138,16 @@ def _resolve_transcription_section(file_t: dict[str, Any]) -> dict[str, Any]:
             f"unknown transcription adapter {adapter!r}; must be noop | http-whisper."
         )
     out["adapter"] = adapter
+    return out
+
+
+def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
+    """`video_hosts`: extra hostnames to route to yt-dlp, on top of the packaged default
+    set (YouTube/Vimeo). Lets a corpus opt a host in (PeerTube, a lecture host, …) without
+    forking the package. File list + comma-separated `CORPUS_VIDEO_HOSTS` env (unioned)."""
+    out: dict[str, Any] = dict(file_c)
+    hosts: list[str] = [str(h).strip().lower().rstrip(".") for h in (out.get("video_hosts") or []) if str(h).strip()]
+    if env := os.environ.get("CORPUS_VIDEO_HOSTS"):
+        hosts += [h.strip().lower().rstrip(".") for h in env.split(",") if h.strip()]
+    out["video_hosts"] = sorted(set(hosts))
     return out

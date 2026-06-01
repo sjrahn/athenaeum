@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from corpus import capture
+from corpus import capture, touches
 from corpus.lint import _TOUCH_RE
 
 _VALID_SEVERITIES = {"blocking", "warning", "info"}
@@ -43,6 +43,20 @@ def test_should_use_video_force_and_skip_override():
 def test_should_use_video_mutually_exclusive():
     with pytest.raises(capture.CaptureError):
         capture._should_use_video("https://x.com", force=True, skip=True)
+
+
+def test_should_use_video_extra_hosts():
+    # #15: a corpus-configured host routes to yt-dlp without editing the packaged set.
+    url = "https://peertube.example/w/abc"
+    assert capture._should_use_video(url, force=False, skip=False) is False
+    assert (
+        capture._should_use_video(
+            url, force=False, skip=False, extra_hosts=frozenset({"peertube.example"})
+        )
+        is True
+    )
+    # Packaged defaults still match with no extra hosts.
+    assert capture._should_use_video("https://youtube.com/watch?v=x", force=False, skip=False)
 
 
 # ---------- small pure helpers ---------- #
@@ -142,6 +156,20 @@ def test_detect_paywall_marker():
     issue = capture._detect_paywall(snapshot=snap, detector_id=_DET)
     assert issue is not None
     assert issue["fields"]["signature"] == "paywall-marker"
+    # #17: the HTML-class marker alone is informational, not a warning.
+    assert issue["severity"] == "info"
+    assert issue["resolution"] == "open"
+
+
+def test_detect_login_wall_partial_title_does_not_fire():
+    # #16: an article whose title merely STARTS with "Sign in" is not a login wall; the
+    # title regex is end-anchored, and the body carries no login-prose.
+    snap = (
+        "<html><head><title>Sign in sheets for events: a complete guide</title></head>"
+        "<body>Here is how to make printable attendance sheets for your event.</body></html>"
+    )
+    issue = capture._detect_login_wall(snapshot=snap, detector_id=_DET)
+    assert issue is None
 
 
 def test_detect_captcha_recaptcha():
@@ -262,7 +290,7 @@ def test_detector_issues_are_spec_shaped_and_lint_valid():
             image_stats=(0, 0),
         ),
     ]
-    real_detector = capture._detector_id()
+    real_detector = touches.script_identifier("capture")
     assert _TOUCH_RE.match(real_detector), (
         f"production detector id {real_detector!r} must lint-validate"
     )
