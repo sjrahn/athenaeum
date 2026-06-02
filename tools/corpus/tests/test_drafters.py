@@ -250,6 +250,30 @@ def test_html_drafter_preserves_form_wrapped_content(tmp_path):
     assert any(e["media_type"] == "image/gif" for e in embeds)
 
 
+def test_html_title_falls_back_to_title_tag_when_og_title_is_generic():
+    """og:title is preferred normally, but a generic social-share CTA (realtor.ca's
+    "Check out this listing") loses to the real <title>."""
+    cta = (
+        "<html><head><title>123 Main St, Calgary - A1 | REALTOR.ca</title>"
+        '<meta property="og:title" content="Check out this listing"></head>'
+        "<body><p>x</p></body></html>"
+    )
+    assert (
+        draft_html._title(BeautifulSoup(cta, "html.parser"))
+        == "123 Main St, Calgary - A1 | REALTOR.ca"
+    )
+    # An informative og:title is still preferred over <title> (the common case).
+    clean = (
+        "<html><head><title>Headline | The Daily Site</title>"
+        '<meta property="og:title" content="Headline"></head>'
+        "<body><p>x</p></body></html>"
+    )
+    assert draft_html._title(BeautifulSoup(clean, "html.parser")) == "Headline"
+    # No og:title → <title>.
+    no_og = "<html><head><title>Just The Title</title></head><body><p>x</p></body></html>"
+    assert draft_html._title(BeautifulSoup(no_og, "html.parser")) == "Just The Title"
+
+
 def test_html_drafter_flags_empty_body(tmp_path):
     """Drafter-deterministic issue, emitted in our spec §4.3.3.1 shape."""
     p = tmp_path / "empty.html"

@@ -841,12 +841,39 @@ def _css_selector(tag: Tag) -> str:
 # ---------- metadata helpers ---------- #
 
 
+# og:title is usually the clean human headline, but some sites put a generic
+# social-share CTA there ("Check out this listing") while the page's real title
+# lives in <title> — prefer <title> in that case. Anchored at the start; the
+# trailing noun varies.
+_SHARE_CTA_TITLE_RE = re.compile(r"^\s*check\s+out\s+(?:this|the|my|our)\b", re.IGNORECASE)
+
+
+def _is_generic_title(title: str | None) -> bool:
+    """True when `title` is uninformative — a placeholder/loading/error value
+    (GENERIC_TITLE_PATTERNS) or a generic social-share CTA — rather than the
+    page's real title. Used to decide og:title vs <title> preference."""
+    from corpus.quality.signatures import GENERIC_TITLE_PATTERNS
+
+    raw = (title or "").strip()
+    if _SHARE_CTA_TITLE_RE.match(raw):
+        return True
+    return any(regex.match(raw) for _name, regex in GENERIC_TITLE_PATTERNS)
+
+
 def _title(soup: BeautifulSoup) -> str:
-    if v := _meta_content(soup, prop="og:title"):
-        return v
+    """Best available document title. Prefer og:title (usually the clean human
+    headline); fall back to the <title> tag when og:title is generic — a
+    placeholder or a social-share CTA (e.g. realtor.ca's "Check out this
+    listing", whose <title> carries the real address). Last resort: whichever
+    is non-empty."""
+    og = _meta_content(soup, prop="og:title")
+    title_tag = ""
     if (tag := soup.find("title")) and tag.string:
-        return tag.string.strip()
-    return ""
+        title_tag = tag.string.strip()
+    for candidate in (og, title_tag):
+        if candidate and not _is_generic_title(candidate):
+            return candidate
+    return og or title_tag
 
 
 def _meta_description(soup: BeautifulSoup) -> str:
