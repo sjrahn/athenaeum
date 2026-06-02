@@ -118,6 +118,28 @@ def test_interactions_remove_empty_is_noop():
     assert [c[0] for c in page.calls].count("evaluate") == 0
 
 
+# ---------- per-host url rewrite ---------- #
+
+
+def test_apply_url_rewrite():
+    base = "https://my.alldata.com/repair/#/vehicle/46076/component/3926/itype/421/nonstandard/1272273/isSelfReferenceLink/false"
+    recipe = {
+        "url_rewrite": [
+            {"pattern": r"#/vehicle/(.+/nonstandard/.+)$", "replacement": r"#/article/\1"}
+        ]
+    }
+    # nonstandard leaf → rewritten vehicle→article
+    assert capture._apply_url_rewrite(base, recipe).endswith(
+        "#/article/46076/component/3926/itype/421/nonstandard/1272273/isSelfReferenceLink/false"
+    )
+    # a non-leaf route (no /nonstandard/) is left untouched by the guard
+    index = "https://my.alldata.com/repair/#/vehicle/46076"
+    assert capture._apply_url_rewrite(index, recipe) == index
+    # no rules / no recipe → identity; a bad pattern is skipped, not raised
+    assert capture._apply_url_rewrite(base, {}) == base
+    assert capture._apply_url_rewrite(base, {"url_rewrite": [{"pattern": "("}]}) == base
+
+
 # ---------- recipe resolution ---------- #
 
 

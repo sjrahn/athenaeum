@@ -13,6 +13,11 @@ host-keyed file describes both what a source is and how to capture it. The
     capture:                              # capture-time behavior (read only at capture)
       capturer: browser                   # packaged or corpus-local name (default: browser)
       transport: headless                 # headless | headed | cdp
+      url_rewrite:                        # rewrite the NAV target before goto (regex sub,
+        - pattern: '#/vehicle/(.+/nonstandard/.+)$'   #   in order). The original URL stays
+          replacement: '#/article/\1'     #   the recorded origin; the rewritten form lands
+                                          #   as final_url. For hosts whose link form cold-
+                                          #   loads a stub but an alt form loads full content.
       interactions:                       # see corpus.capture.interactions
         - scroll: full
         - click: {selector: "button[aria-label*=Next i]", repeat: 12}

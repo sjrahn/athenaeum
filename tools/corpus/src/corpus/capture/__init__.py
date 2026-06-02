@@ -540,6 +540,11 @@ def _capture_via_playwright(
     viewport = _recipe_viewport(recipe) or opts.viewport
     user_agent = str(recipe.get("user_agent") or "") or opts.user_agent
     interaction_steps = recipe.get("interactions")
+    # Per-host nav-URL rewrite: some hosts link to a route form that cold-loads a stub
+    # while an equivalent form cold-loads the full content (ALLDATA's #/vehicle/.../
+    # nonstandard/ vs #/article/.../nonstandard/). Rewrite only the navigation target; the
+    # original URL stays the recorded origin and the rewritten form lands as `final_url`.
+    nav_url = _apply_url_rewrite(url, recipe)
 
     with sync_playwright() as p:
         # `transport` (recipe) wins; absent a recipe, preserve the historical
@@ -575,7 +580,7 @@ def _capture_via_playwright(
             response = None
             binary_fallback = False
             try:
-                response = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                response = page.goto(nav_url, wait_until="domcontentloaded", timeout=timeout_ms)
             except PlaywrightTimeout:
                 log.info("goto timed out (likely inline binary) — fetching via request API")
                 binary_fallback = True
@@ -1159,6 +1164,27 @@ def _should_use_video(
         return True
     host = (urlparse(url).hostname or "").lower().rstrip(".")
     return host in VIDEO_HOSTS or host in extra_hosts
+
+
+def _apply_url_rewrite(url: str, recipe: dict[str, Any]) -> str:
+    """Apply the recipe's per-host `url_rewrite` regex rules to the navigation URL and
+    return the result (unchanged when no rule matches). Each rule is `{pattern, replacement}`
+    applied in order via `re.sub`. Use when a host's link form differs from the form that
+    cold-loads full content — e.g. ALLDATA links to `#/vehicle/<v>/.../nonstandard/<id>`
+    (a cold-load stub) but the equivalent `#/article/<v>/.../nonstandard/<id>` cold-loads
+    the full article. Only the navigation target is rewritten; the original URL remains the
+    recorded origin URI and the rewritten form is captured as `final_url` (an origin alias)."""
+    out = url
+    for rule in recipe.get("url_rewrite") or []:
+        if not isinstance(rule, dict) or not (pattern := rule.get("pattern")):
+            continue
+        try:
+            out = re.sub(str(pattern), str(rule.get("replacement") or ""), out)
+        except re.error as exc:
+            log.warning("url_rewrite: bad pattern %r: %s", pattern, exc)
+    if out != url:
+        log.info("url_rewrite: %s -> %s", url, out)
+    return out
 
 
 def _sanitize_filename(url: str) -> str:
