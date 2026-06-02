@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import frontmatter
@@ -220,6 +221,45 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
     svg = by_type["image/svg+xml"]
     assert svg["address"] == "el=11"
     assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
+
+
+def test_svg_dimensions_reads_root_not_inner_elements():
+    """SVG sizing reads the ROOT <svg> only — never scrapes an inner element.
+
+    Regression for ALLDATA's interactive-color wiring SVGs: the root declares
+    `width="100%" height="100%"` with a real `viewBox`, and a naive whole-doc
+    `width=` scan returned a bogus 100x100 from an inner element."""
+    d = draft_html._svg_dimensions
+    # Percentage root width/height → fall through to the viewBox extent.
+    assert d(
+        b'<svg xmlns="x" width="100%" height="100%" '
+        b'viewBox="-1.2 -1801.2 1452.4 1802.4"><path d="M0 0"/></svg>'
+    ) == (1452, 1802)
+    # Plain integer root width/height win outright.
+    assert d(b'<svg width="40" height="30"><rect width="9" height="9"/></svg>') == (40, 30)
+    # No root size + an inner element with width/height must NOT be scraped (the old
+    # bug returned 100x100); report an honest unknown instead.
+    assert d(b'<svg xmlns="x"><rect width="100" height="100"/></svg>') == (0, 0)
+
+
+def test_svg_embed_falls_back_to_img_pixel_attrs():
+    """When an SVG declares no intrinsic size, the embed falls back to the <img>'s
+    own width/height attributes (ALLDATA stamps the display size on the element)."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg>'
+    uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    img = BeautifulSoup(
+        f'<img src="{uri}" width="725" height="900" alt="diagram">', "html.parser"
+    ).img
+    meta = draft_html._compute_img_embed_metadata(img)
+    assert meta is not None
+    assert meta["media_type"] == "image/svg+xml"
+    assert meta["width"] == 725 and meta["height"] == 900
+    # Percentage <img> sizes are not intrinsic pixels — ignored (stays 0).
+    img2 = BeautifulSoup(
+        f'<img src="{uri}" width="100%" height="100%">', "html.parser"
+    ).img
+    meta2 = draft_html._compute_img_embed_metadata(img2)
+    assert meta2 is not None and meta2["width"] == 0 and meta2["height"] == 0
 
 
 def test_html_drafter_preserves_form_wrapped_content(tmp_path):

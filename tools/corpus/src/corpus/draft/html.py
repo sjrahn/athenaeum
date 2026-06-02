@@ -145,9 +145,66 @@ _ADDRESSABLE_TAGS = (
 _DATA_URI_RE = re.compile(
     r"^data:([a-z0-9+./\-]+);base64,(.+)$", re.DOTALL | re.IGNORECASE
 )
-# SVG dimension fallbacks (PIL can't open SVG natively; parse attrs instead).
-_SVG_WIDTH_RE = re.compile(r'\bwidth\s*=\s*["\']?([0-9]+)', re.IGNORECASE)
-_SVG_HEIGHT_RE = re.compile(r'\bheight\s*=\s*["\']?([0-9]+)', re.IGNORECASE)
+# SVG intrinsic-size parsing (PIL can't open SVG natively). Read the ROOT
+# `<svg>` tag ONLY — scanning the whole document for `width=`/`height=` grabs
+# the first inner element's size, a real bug seen on ALLDATA's ~600KB wiring
+# SVGs, which declare no root size and yielded a bogus 100x100 from an inner
+# element. Prefer integer root width/height, else the viewBox extent, else fall
+# back (in the caller) to the <img>'s own width/height attributes.
+_SVG_ROOT_RE = re.compile(rb"<svg\b[^>]*>", re.IGNORECASE | re.DOTALL)
+_SVG_VIEWBOX_RE = re.compile(
+    r'\bviewBox\s*=\s*["\']?\s*[-+0-9.eE]+[\s,]+[-+0-9.eE]+[\s,]+'
+    r"([0-9.eE]+)[\s,]+([0-9.eE]+)",
+    re.IGNORECASE,
+)
+
+
+def _len_attr(tag: str, name: str) -> int:
+    """Integer pixel value of a length attribute (`width`/`height`) on a single
+    tag string, or 0. Percentage values (`width="100%"`) return 0 — they're not
+    intrinsic pixel sizes."""
+    m = re.search(
+        rf'\b{re.escape(name)}\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s/>]+))',
+        tag,
+        re.IGNORECASE,
+    )
+    if not m:
+        return 0
+    val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+    if val.endswith("%"):
+        return 0
+    num = re.match(r"([0-9]+(?:\.[0-9]+)?)", val)
+    return round(float(num.group(1))) if num else 0
+
+
+def _svg_dimensions(raw: bytes) -> tuple[int, int]:
+    """Best-effort intrinsic size of an SVG from its ROOT element only: prefer
+    integer `width`/`height` (ignoring percentages), else the `viewBox` extent.
+    Returns (0, 0) when the root declares no usable size — an honest 'unknown'
+    beats a number scraped from a random inner element."""
+    m = _SVG_ROOT_RE.search(raw)
+    if not m:
+        return 0, 0
+    root = m.group(0).decode("utf-8", errors="ignore")
+    w, h = _len_attr(root, "width"), _len_attr(root, "height")
+    if w and h:
+        return w, h
+    vb = _SVG_VIEWBOX_RE.search(root)
+    if vb:
+        return round(float(vb.group(1))), round(float(vb.group(2)))
+    return w, h
+
+
+def _attr_px(tag: Tag, name: str) -> int:
+    """Integer pixel value of a `width`/`height` attribute on a BeautifulSoup
+    element, or 0 (percentages and non-numerics return 0). Reads the attribute
+    directly rather than serializing the tag — `<img>` srcs can be 600KB+ data
+    URIs."""
+    val = str(tag.get(name) or "").strip()
+    if not val or val.endswith("%"):
+        return 0
+    num = re.match(r"([0-9]+(?:\.[0-9]+)?)", val)
+    return round(float(num.group(1))) if num else 0
 
 # Wrapper tags whose semantic content is just markup grouping. After
 # stripping their attributes they're indistinguishable from the parent
@@ -486,16 +543,15 @@ def _compute_img_embed_metadata(img: Tag) -> dict[str, Any] | None:
             width, height = im.size
     except Exception:
         if media_type == "image/svg+xml":
-            try:
-                svg_text = raw.decode("utf-8", errors="ignore")
-                w_match = _SVG_WIDTH_RE.search(svg_text)
-                h_match = _SVG_HEIGHT_RE.search(svg_text)
-                if w_match:
-                    width = int(w_match.group(1))
-                if h_match:
-                    height = int(h_match.group(1))
-            except Exception:
-                pass
+            width, height = _svg_dimensions(raw)
+            # Last resort: the <img>'s own declared pixel size. ALLDATA's
+            # interactive wiring SVGs declare no root size but the host stamps
+            # width/height on the <img> (e.g. 725x900), which is the real
+            # display size.
+            if not width:
+                width = _attr_px(img, "width")
+            if not height:
+                height = _attr_px(img, "height")
     alt = str(img.get("alt") or "").strip()
     return {
         "media_type": media_type,
