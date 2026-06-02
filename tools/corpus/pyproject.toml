@@ -20,13 +20,18 @@ dependencies = [
 
 [project.optional-dependencies]
 capture        = ["playwright>=1.49"]
-# The `[curl-cffi]` extra adds yt-dlp's browser-impersonation transport. Without it
-# some hosts (TikTok) serve a degraded, audio-less stream — or fail extraction
-# outright — so transcription has nothing to work with. Requesting it via yt-dlp's
-# own extra (rather than pinning curl_cffi ourselves) keeps the version inside the
-# range yt-dlp's handler accepts; a bare floor resolves too new and the handler
-# silently refuses to load. See gotchas (TikTok capture).
-media          = ["yt-dlp[curl-cffi]>=2024.10", "yt-dlp-ejs>=0.8"]
+# yt-dlp, full-featured and current. `[default]` is yt-dlp's recommended runtime set
+# (brotli, mutagen, pycryptodomex, websockets, certifi, requests/urllib3, and
+# yt-dlp-ejs — the YouTube JS-challenge solver); `[curl-cffi]` adds the browser-
+# impersonation transport. Without impersonation some hosts (TikTok) serve a
+# degraded, audio-less stream; requesting it via yt-dlp's own extra keeps curl_cffi
+# inside the version range its handler accepts (a bare floor resolves too new and the
+# handler silently refuses to load — see gotcha #38). Pinned to the NIGHTLY channel
+# (a `.dev` pre-release floor, which lets uv resolve pre-releases for this package):
+# the stable channel lagged months behind TikTok's page changes — extraction failed
+# to a video-only, audio-less stream — while nightly extracts every format with audio.
+# `uv lock --upgrade-package yt-dlp` pulls the newest nightly. See gotchas (TikTok).
+media          = ["yt-dlp[default,curl-cffi]>=2026.5.25.234532.dev0"]
 # docx drafting uses only the stdlib; xlsx needs openpyxl, xls needs xlrd.
 office         = ["openpyxl>=3.1", "xlrd>=2.0.1"]
 # text simhash is pure-Python (no dep); image pHash needs imagehash, audio
