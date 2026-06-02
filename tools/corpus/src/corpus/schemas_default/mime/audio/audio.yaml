@@ -77,3 +77,29 @@ extended_fields:
       Per-stream metadata lifted from the container, keyed by stream id (`a0`, `a1`, ...).
       Each entry carries `kind: audio`, `codec`, and `sampling_rate`/`channels`/`language`.
       Present only when the file carries more than one audio track.
+  social:
+    type: object
+    required: false
+    source: sidecar
+    description: |
+      Social-graph + engagement metadata produced from the capture's yt-dlp `.info.json`
+      enrichment sidecar (companion metadata staged in `capture/`, read at draft, then
+      deleted — never persisted to `artifacts/`). Present only for captures that carry a
+      sidecar. Sub-keys are copied verbatim from the info.json keys in `sidecar_keys` — the
+      mapping guidance the drafter applies. (Structural mappings are fixed: `title` → the
+      artifact title; `description` → the frontmatter description + a caption text segment;
+      `comments[]` → comment text segments; `webpage_url` → an origin alias.)
+    sidecar_keys:
+      - uploader
+      - uploader_id
+      - uploader_url
+      - channel
+      - channel_id
+      - channel_url
+      - upload_date
+      - view_count
+      - like_count
+      - comment_count
+      - repost_count
+      - track
+      - artists

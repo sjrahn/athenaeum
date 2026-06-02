@@ -95,6 +95,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         records.dump(post, record_file)
         src.unlink()
         _cleanup_sidecar(src)
+        _relocate_info_sidecar(src, record_id)
         print(f"re-encounter: {record_file.relative_to(corpus_root)}")
         if appended:
             print(f"  +origin: {origin_uri}")
@@ -126,6 +127,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     records.dump(post, record_file)
 
     _cleanup_sidecar(src)
+    _relocate_info_sidecar(src, record_id)
 
     print(f"new stub: {record_file.relative_to(corpus_root)}")
     print(f"  hash:       {record_id}")
@@ -220,6 +222,17 @@ def _cleanup_sidecar(src: Path) -> None:
     sidecar_path = src.with_suffix(src.suffix + ".capture.yaml")
     if sidecar_path.is_file():
         sidecar_path.unlink()
+
+
+def _relocate_info_sidecar(src: Path, record_id: str) -> None:
+    """Rename a yt-dlp `.info.json` companion of `src` to `capture/<hash>.info.json`.
+
+    It STAYS in the staging dir (`capture/`) — it is draft-time-only enrichment that the
+    drafter reads and then deletes. The hash name lets the drafter find it; the artifact
+    is the only `<hash>`-named file under `artifacts/`. No-op when absent (most mimes)."""
+    info_src = src.with_suffix(".info.json")
+    if info_src.is_file():
+        info_src.rename(src.parent / f"{record_id}.info.json")
 
 
 def _emit_sidecar_issues(post: frontmatter.Post, sidecar: dict) -> None:

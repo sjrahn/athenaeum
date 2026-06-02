@@ -28,12 +28,14 @@ import logging
 from pathlib import Path
 from typing import Any, TypedDict
 
-from corpus import paths
 from corpus.segments import Section, Segment
 
 log = logging.getLogger(__name__)
 
-# yt-dlp info.json keys lifted into the record's `social:` field map (present-only).
+# Fallback info.json keys lifted into the record's `social:` field map (present-only),
+# used when the mime schema declares no `extended_fields.social.sidecar_keys`. The schema
+# is the source of truth (see `_social_keys_for`); this keeps the drafter working for a
+# corpus whose schema predates the declaration.
 _SOCIAL_KEYS = (
     "uploader",
     "uploader_id",
@@ -72,15 +74,21 @@ def _empty() -> SidecarResult:
 
 
 def info_json_path(corpus_root: Path, record_id: str) -> Path:
-    """Where `_move_video_sidecar` relocates the yt-dlp `.info.json`."""
-    return corpus_root / "artifacts" / paths.shard(record_id) / f"{record_id}.info.json"
+    """The yt-dlp `.info.json` enrichment sidecar: staged in `capture/<hash>.info.json`,
+    read at draft, then deleted (`_cli/draft._cleanup_enrichment`). The artifact is the
+    only `<hash>`-named file under `artifacts/`."""
+    return corpus_root / "capture" / f"{record_id}.info.json"
 
 
-def parse_info_json_for_record(corpus_root: Path, record_id: str) -> SidecarResult:
-    """Read `artifacts/<id>.info.json` (if present) → fields + caption/comment sections.
+def parse_info_json_for_record(
+    corpus_root: Path, record_id: str, record_metadata: dict[str, Any] | None = None
+) -> SidecarResult:
+    """Read `capture/<id>.info.json` (if present) → fields + caption/comment sections.
 
-    Tolerant: a missing or unparseable sidecar returns the empty result (no crash) —
-    most captures (HTML/image/pdf) have no sidecar at all."""
+    The `social:` field set is schema-driven: the keys copied from the info.json are
+    declared on the record's mime schema (`extended_fields.social.sidecar_keys`), resolved
+    from `record_metadata`. Tolerant: a missing/unparseable sidecar returns the empty
+    result (no crash) — most captures (HTML/image/pdf) have no sidecar at all."""
     path = info_json_path(corpus_root, record_id)
     if not path.is_file():
         return _empty()
@@ -91,10 +99,26 @@ def parse_info_json_for_record(corpus_root: Path, record_id: str) -> SidecarResu
         return _empty()
     if not isinstance(info, dict):
         return _empty()
-    return _map_info(info)
+    return _map_info(info, _social_keys_for(corpus_root, record_metadata))
 
 
-def _map_info(info: dict[str, Any]) -> SidecarResult:
+def _social_keys_for(
+    corpus_root: Path, record_metadata: dict[str, Any] | None
+) -> tuple[str, ...]:
+    """The info.json keys mapped into `social:`, declared on the record's mime schema
+    (`extended_fields.social.sidecar_keys`); falls back to `_SOCIAL_KEYS`."""
+    from corpus import schemas
+
+    media_type = ((record_metadata or {}).get("_artifact") or {}).get("mime")
+    if media_type:
+        schema = schemas.load_mime_schema(corpus_root, str(media_type)) or {}
+        keys = ((schema.get("extended_fields") or {}).get("social") or {}).get("sidecar_keys")
+        if keys:
+            return tuple(str(k) for k in keys)
+    return _SOCIAL_KEYS
+
+
+def _map_info(info: dict[str, Any], social_keys: tuple[str, ...]) -> SidecarResult:
     out = _empty()
 
     title = info.get("title")
@@ -103,7 +127,7 @@ def _map_info(info: dict[str, Any]) -> SidecarResult:
     description = info.get("description")
     out["description"] = str(description) if description else None
 
-    social = {k: info[k] for k in _SOCIAL_KEYS if info.get(k) not in (None, "", [])}
+    social = {k: info[k] for k in social_keys if info.get(k) not in (None, "", [])}
     if social:
         out["fields"] = {"social": social}
 

@@ -1167,9 +1167,12 @@ def _attr_escape(s: str) -> str:
 
 def _ingest_capture(result: CaptureResult, *, original_url: str, corpus_root: Path) -> Path | None:
     """Write the `.capture.yaml` sidecar (source_url / fetched_at / issues) and
-    dispatch `ingest` in-process. Relocate a video `.info.json` sidecar next to
-    the artifact afterward. Returns the resulting record path, or None on a
+    dispatch `ingest` in-process. Returns the resulting record path, or None on a
     non-zero ingest exit.
+
+    A yt-dlp `.info.json` companion (enrichment metadata) is left in `capture/` and
+    renamed to `<hash>.info.json` by `ingest` itself — it stays in staging, is read at
+    draft, then deleted. The artifact is the only `<hash>`-named file under `artifacts/`.
     """
     import yaml
 
@@ -1189,20 +1192,7 @@ def _ingest_capture(result: CaptureResult, *, original_url: str, corpus_root: Pa
     if rc != 0:
         return None
 
-    _move_video_sidecar(capture_path, record_id=record_id, corpus_root=corpus_root)
     return paths.record_path(corpus_root, record_id)
-
-
-def _move_video_sidecar(capture_path: Path, *, record_id: str, corpus_root: Path) -> None:
-    """Relocate yt-dlp's `.info.json` next to the artifact (no-op if absent)."""
-    info_src = capture_path.with_suffix(".info.json")
-    if not info_src.is_file():
-        return
-    artifact_dir = corpus_root / "artifacts" / paths.shard(record_id)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    info_dst = artifact_dir / f"{record_id}.info.json"
-    log.info("relocating sidecar: %s -> %s", info_src, info_dst)
-    info_src.rename(info_dst)
 
 
 # ---------- small pure helpers ---------- #

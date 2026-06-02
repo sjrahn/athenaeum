@@ -125,6 +125,7 @@ def run(args: argparse.Namespace) -> int:
         )
         records.dump(original, original_path)
         _discard_duplicate(corpus_root, record_id, record_file, extension)
+        _cleanup_enrichment(corpus_root, record_id)
         print(
             f"content-duplicate of {original_id[:12]}: merged {added} url(s) into it; "
             f"removed this record ({record_id[:12]})."
@@ -132,6 +133,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     records.dump(post, record_file)
+    _cleanup_enrichment(corpus_root, record_id)
 
     print(f"drafted: {record_file.relative_to(corpus_root)}")
     print(f"  status: {post.metadata['status']}")
@@ -218,6 +220,18 @@ def _discard_duplicate(corpus_root, record_id: str, record_file, extension: str)
     record_file.unlink(missing_ok=True)
     artifact = corpus_root / "artifacts" / paths.shard(record_id) / f"{record_id}.{extension}"
     artifact.unlink(missing_ok=True)
+
+
+def _cleanup_enrichment(corpus_root, record_id: str) -> None:
+    """Delete the record's draft-time enrichment sidecars from `capture/` once the draft
+    has consumed them (the yt-dlp `.info.json`, and any `<hash>.*` enrichment a capturer
+    staged). Enrichment is one-shot — not persisted past draft; the extracted fields and
+    segments already live in the record. Best-effort; `capture/` is staging-only."""
+    capture_dir = corpus_root / "capture"
+    if not capture_dir.is_dir():
+        return
+    for p in capture_dir.glob(f"{record_id}.*"):
+        p.unlink(missing_ok=True)
 
 
 def _pkg_version() -> str:

@@ -108,7 +108,7 @@ def draft(
         fields["is_diarized"] = True
 
     # yt-dlp .info.json → title / description / social fields + caption & comment segments.
-    sidecar = parse_info_json_for_record(corpus_root, record_id)
+    sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
     fields.update(sidecar["fields"])
     sections = sidecar["caption_sections"] + sections + sidecar["comment_sections"]
 

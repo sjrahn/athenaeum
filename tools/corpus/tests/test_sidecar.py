@@ -28,7 +28,7 @@ _INFO: dict[str, Any] = {
 
 
 def test_map_info_fields_title_description_social():
-    r = _sidecar._map_info(_INFO)
+    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
     assert r["title"].startswith("i'm trying")
     assert r["description"].startswith("i'm trying")
     social = r["fields"]["social"]
@@ -40,7 +40,7 @@ def test_map_info_fields_title_description_social():
 
 
 def test_map_info_caption_section_is_text_segment():
-    r = _sidecar._map_info(_INFO)
+    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
     caps = r["caption_sections"]
     assert len(caps) == 1
     seg = caps[0].segments[0]
@@ -49,7 +49,7 @@ def test_map_info_caption_section_is_text_segment():
 
 
 def test_map_info_comment_segments_skip_blank_and_stay_unique():
-    r = _sidecar._map_info(_INFO)
+    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
     comments = r["comment_sections"]
     assert len(comments) == 1
     segs = comments[0].segments
@@ -72,3 +72,62 @@ def test_parse_info_json_for_record_reads_sidecar(tmp_path):
     r = _sidecar.parse_info_json_for_record(tmp_path, rid)
     assert r["title"].startswith("i'm trying")
     assert r["fields"]["social"]["uploader"] == "comrade.killjoy"
+
+
+def test_info_json_path_is_in_capture_not_artifacts(tmp_path):
+    p = _sidecar.info_json_path(tmp_path, "ab" + "0" * 62)
+    assert p.parent.name == "capture" and "artifacts" not in p.parts
+
+
+# ---------- schema-driven social keys ---------- #
+
+
+def test_map_info_respects_provided_social_keys():
+    # Only the passed keys land in `social:` — the mapping is the schema's, not hardcoded.
+    r = _sidecar._map_info(_INFO, ("uploader", "view_count"))
+    assert set(r["fields"]["social"]) == {"uploader", "view_count"}
+
+
+def test_social_keys_for_reads_video_schema(tmp_path):
+    # The packaged video mime schema declares extended_fields.social.sidecar_keys.
+    keys = _sidecar._social_keys_for(tmp_path, {"_artifact": {"mime": "video/mp4"}})
+    assert "uploader" in keys and "view_count" in keys and "artists" in keys
+
+
+def test_social_keys_for_falls_back_when_no_schema_declaration(tmp_path):
+    # No artifact / a mime whose schema declares no social.sidecar_keys → built-in default.
+    assert _sidecar._social_keys_for(tmp_path, None) == _sidecar._SOCIAL_KEYS
+    assert _sidecar._social_keys_for(tmp_path, {"_artifact": {"mime": "text/html"}}) == (
+        _sidecar._SOCIAL_KEYS
+    )
+
+
+# ---------- enrichment-sidecar lifecycle ---------- #
+
+
+def test_relocate_info_sidecar_renames_in_capture(tmp_path):
+    from corpus._cli.ingest import _relocate_info_sidecar
+
+    rid = "cd" + "0" * 62
+    cap = tmp_path / "capture"
+    cap.mkdir()
+    (cap / "www.x.com-vid.info.json").write_text("{}", encoding="utf-8")
+    _relocate_info_sidecar(cap / "www.x.com-vid.mp4", rid)
+    assert (cap / f"{rid}.info.json").is_file()  # renamed, in capture/
+    assert not (cap / "www.x.com-vid.info.json").exists()
+
+
+def test_cleanup_enrichment_deletes_only_matching(tmp_path):
+    from corpus._cli.draft import _cleanup_enrichment
+
+    rid = "ef" + "0" * 62
+    cap = tmp_path / "capture"
+    cap.mkdir()
+    (cap / f"{rid}.info.json").write_text("{}", encoding="utf-8")
+    (cap / f"{rid}.comments.html").write_text("<x>", encoding="utf-8")
+    keep = cap / "other-capture.mp4"
+    keep.write_bytes(b"\x00")
+    _cleanup_enrichment(tmp_path, rid)
+    assert not (cap / f"{rid}.info.json").exists()
+    assert not (cap / f"{rid}.comments.html").exists()
+    assert keep.is_file()  # unrelated staging file untouched

@@ -119,7 +119,7 @@ def draft(
 
     # yt-dlp .info.json → title / description / social fields + caption & comment
     # segments (so a no-audio capture still carries the post's text content).
-    sidecar = parse_info_json_for_record(corpus_root, record_id)
+    sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
     fields.update(sidecar["fields"])
     sections = sidecar["caption_sections"] + sections + sidecar["comment_sections"]
 
