@@ -298,7 +298,9 @@ def _expand(
 
 
 def _extract_links(artifact: Path, base_url: str) -> list[str]:
-    """Parse `<a href>` links from the HTML artifact (filters anchors/js/mailto/tel)."""
+    """Parse `<a href>` links from the HTML artifact. Keeps client-side routes
+    (`#/…`, `#!/…`); drops bare anchors + js/mailto/tel via the shared
+    `urls.is_crawlable_href` (same filter as `corpus links`)."""
     html = artifact.read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(html, "html.parser")
     out: list[str] = []
@@ -307,7 +309,7 @@ def _extract_links(artifact: Path, base_url: str) -> list[str]:
         if not href:
             continue
         href = href.strip()
-        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        if not urls.is_crawlable_href(href):
             continue
         out.append(href)
     return out

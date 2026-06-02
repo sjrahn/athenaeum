@@ -131,3 +131,25 @@ def test_links_all_domains(tmp_path, capsys):
     dispatch(["links", ID_A, "--all-domains", "--corpus-root", str(root)])
     out = capsys.readouterr().out
     assert "https://other.com/x" in out
+
+
+def test_links_hash_routed_spa(tmp_path, capsys):
+    """Hash-routed SPA: every link is `#/route`. The route is the resource identity, so
+    relative routes resolve against the record's hash-route origin, reconcile against the
+    uri-index (captured vs. frontier), and bare anchors are still dropped."""
+    root = _make_corpus(tmp_path)
+    seed_html = (
+        "<html><body>"
+        '<a href="#/page/b">captured sibling</a>'   # resolves to record B's origin
+        '<a href="#/page/c">frontier</a>'           # not captured -> a candidate
+        '<a href="#section">in-page anchor</a>'     # bare anchor -> dropped
+        "</body></html>"
+    )
+    _make_html_record(root, ID_A, "https://spa.example.com/app/#/page/a", seed_html)
+    _make_html_record(root, ID_B, "https://spa.example.com/app/#/page/b", "<html></html>")
+
+    dispatch(["links", ID_A, "--show-captured", "--corpus-root", str(root)])
+    out = capsys.readouterr().out
+    assert "https://spa.example.com/app/#/page/b [captured]" in out
+    assert "https://spa.example.com/app/#/page/c" in out
+    assert "#section" not in out  # bare anchor never becomes a candidate

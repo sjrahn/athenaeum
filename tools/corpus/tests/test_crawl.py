@@ -78,7 +78,10 @@ def test_extract_links_filters(tmp_path):
         "<html><body>"
         '<a href="https://e.com/x">x</a>'
         '<a href="/rel">rel</a>'
-        '<a href="#frag">frag</a>'
+        '<a href="#frag">frag</a>'              # bare in-page anchor -> dropped
+        '<a href="#">empty-frag</a>'            # bare anchor -> dropped
+        '<a href="#/vehicle/46076">route</a>'   # client-side route -> KEPT
+        '<a href="#!/legacy/route">bang</a>'    # hashbang route -> KEPT
         '<a href="mailto:a@b.com">m</a>'
         '<a href="javascript:void(0)">j</a>'
         "<a>noisy</a>"
@@ -88,7 +91,12 @@ def test_extract_links_filters(tmp_path):
     links = _extract_links(art, "https://e.com/")
     assert "https://e.com/x" in links
     assert "/rel" in links
-    assert not any(h.startswith(("#", "mailto:", "javascript:")) for h in links)
+    # Hash-routed SPA links are routes, not anchors — they must survive extraction.
+    assert "#/vehicle/46076" in links
+    assert "#!/legacy/route" in links
+    # Bare anchors + non-navigational schemes are still dropped.
+    assert "#frag" not in links and "#" not in links
+    assert not any(h.startswith(("mailto:", "javascript:")) for h in links)
 
 
 # ---------- offline dry-run BFS ---------- #

@@ -73,6 +73,31 @@ def same_domain(url: str, seed_host: str, *, include_subdomains: bool = False) -
     return h.endswith("." + root)
 
 
+def is_crawlable_href(href: str) -> bool:
+    """Decide whether an `<a href>` is a navigable link worth resolving + normalizing.
+
+    Rejects empty/whitespace hrefs, the non-navigational schemes (`javascript:`,
+    `mailto:`, `tel:`), and bare in-page anchor fragments (`#`, `#section`, `#top`).
+    KEEPS hash-routed SPA routes (`#/vehicle/46076`, hashbang `#!/path`): on a
+    client-side-routed site the fragment IS the route to a *distinct* resource, so it
+    must survive to be `urljoin`-resolved and normalized — mirrors the `/`-or-`!`
+    discriminator in `_normalize_fragment`. Everything else (relative paths, absolute
+    http(s) URLs, including absolute URLs that carry a `#/route`) is crawlable.
+
+    The shared filter behind `corpus links` / `corpus crawl` link extraction — keeping
+    it in one place is what stops the two extractors from re-drifting (they previously
+    each dropped every `#`-prefixed href, discarding SPA routes before normalize ran).
+    """
+    href = href.strip()
+    if not href:
+        return False
+    if href.startswith(("javascript:", "mailto:", "tel:")):
+        return False
+    if href.startswith("#"):
+        return href[1:2] in ("/", "!")
+    return True
+
+
 def _normalize_netloc(
     host: str | None,
     port: int | None,

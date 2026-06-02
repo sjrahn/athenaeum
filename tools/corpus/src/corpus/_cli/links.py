@@ -142,7 +142,9 @@ def _extract_hrefs(artifact: Path) -> list[str]:
         if not href:
             continue
         href = href.strip()
-        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        # Keep client-side routes (`#/…`, `#!/…`); drop bare anchors + js/mailto/tel.
+        # `urls.is_crawlable_href` is the single source of truth (shared with crawl).
+        if not urls.is_crawlable_href(href):
             continue
         out.append(href)
     return out

@@ -90,6 +90,22 @@ def test_urls_normalize_preserves_hash_route_fragment():
     assert "#" not in urls.normalize("https://x.example/page#section")
 
 
+def test_urls_is_crawlable_href():
+    # Client-side routes are crawlable (the fragment is the route, mirrors normalize).
+    assert urls.is_crawlable_href("#/vehicle/46076")
+    assert urls.is_crawlable_href("#!/legacy/path")
+    # Ordinary relative + absolute links, including absolutes carrying a hash-route.
+    assert urls.is_crawlable_href("/rel/path")
+    assert urls.is_crawlable_href("https://e.com/x")
+    assert urls.is_crawlable_href("https://my.alldata.com/repair/#/vehicle/1")
+    # Bare in-page anchors and non-navigational schemes are not crawlable.
+    not_crawlable = (
+        "", "  ", "#", "#section", "#top", "javascript:void(0)", "mailto:a@b.com", "tel:+1",
+    )
+    for href in not_crawlable:
+        assert not urls.is_crawlable_href(href), href
+
+
 def test_urls_same_domain_subdomain_match():
     assert urls.same_domain("https://x.example.com/p", "www.example.com", include_subdomains=True)
     assert not urls.same_domain("https://evilexample.com/p", "example.com", include_subdomains=True)

@@ -165,6 +165,8 @@ After the body exists, scan it for hyperlinks and embedded-resource references. 
 
 This is purely mechanical. The normalizer does not invent links the original content didn't contain.
 
+**Reconciliation tooling.** The on-demand counterpart to this resolution pass ships as `corpus links` (per-record) and `corpus crawl` (frontier BFS): both extract a record's `<a href>`, resolve relatives against its origin URI, normalize (`corpus.urls.normalize`), and look each up in `records.build_uri_index` — the map of every record's origin `uri:` list (including the dedup'd alias forms a page was reached by) to its id. A hit means the reference is already captured; a miss is the **crawl frontier** (what still needs capturing). `corpus links --show-captured` annotates which is which. Link extraction filters hrefs through `corpus.urls.is_crawlable_href`, which keeps **client-side routing fragments** (`#/route`, `#!/route`) — on a hash-routed SPA the fragment *is* the resource identity, so these are real outbound links, not in-page anchors — while dropping bare anchors (`#section`) and the `javascript:`/`mailto:`/`tel:` schemes. (Link-bearing navigation that a host renders as visual chrome — breadcrumbs, related-item rails — is therefore preserved at capture for crawl purposes via the origin overlay's `remove:` selectors, not stripped.)
+
 ### 3.3 Schema application
 
 For every artifact, apply the base schema first (extracts format-intrinsic fields, sets normalization guidance). Then walk the corpus's custom classification schemas, evaluating each one's match condition against the artifact:
