@@ -122,10 +122,13 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 # # needs any. Validated on every <!--origin--> block for matching records.
 # extended_fields: {}
 #
-# # Capture-time behavior — surface ALL displayable media (lazy-load, carousels, tabs,
-# # accordions) before the self-contained snapshot. Absent, the browser capturer's
-# # built-in defaults apply (headless + scroll/expand). Global defaults can go on the
-# # universal origin.yaml `capture:`; per-host `capture:` here overrides.
+# # Capture-time behavior. Two jobs: (1) surface ALL displayable media (lazy-load,
+# # carousels, tabs, accordions) before the self-contained snapshot, and (2) REMOVE
+# # page chrome (nav/header/footer/ads/cookie notices). The HTML drafter is purely
+# # mechanical -- it never guesses what is chrome, so removing it is a per-host decision
+# # made HERE, where the site's real structure is known. Absent a recipe, the browser
+# # capturer's defaults apply (headless + scroll/expand, no removal). Global defaults can
+# # go on the universal origin.yaml `capture:`; per-host `capture:` here overrides.
 # capture:
 #   capturer: browser                # packaged (browser | video) or a corpus-local name
 #   transport: headless              # headless | headed | cdp  (headed/cdp need a display
@@ -134,6 +137,9 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #     - scroll: full                   # hydrate lazy-loaded / below-the-fold media
 #     - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
 #     - expand: all                    # open <details> + aria-expanded accordions/tabs
+#     - remove: ['#header', 'footer', 'nav', '.cookie-banner', '.related', '#ad']
+#                                      # delete chrome so it isn't inlined/embedded or
+#                                      # leaked into the drafter's text segment
 #     # `eval` is the escape hatch for site-specific JS. Two common high-fidelity uses:
 #     #  (a) fetch+inject an AJAX-on-click tab/panel (same-origin fetch -> innerHTML).
 #     #  (b) promote a click-to-zoom HIGH-RES image into `src` so it gets inlined+embedded

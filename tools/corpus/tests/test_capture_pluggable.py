@@ -85,6 +85,39 @@ def test_interactions_skips_malformed_step():
     assert ("wait_for_timeout", 7) in page.calls
 
 
+def test_interactions_remove_step():
+    captured: list[str] = []
+
+    class _CapturePage(_FakePage):
+        def evaluate(self, js):
+            captured.append(str(js))
+
+    page = _CapturePage()
+    interactions.run(page, [{"remove": [".side", "#header"]}])
+    assert len(captured) == 1
+    js = captured[0]
+    # selectors embedded into a self-contained arrow fn that deletes matches
+    assert ".side" in js and "#header" in js and ".remove()" in js
+
+
+def test_interactions_remove_string_shorthand():
+    captured: list[str] = []
+
+    class _CapturePage(_FakePage):
+        def evaluate(self, js):
+            captured.append(str(js))
+
+    page = _CapturePage()
+    interactions.run(page, [{"remove": ".ad-banner"}])
+    assert len(captured) == 1 and ".ad-banner" in captured[0]
+
+
+def test_interactions_remove_empty_is_noop():
+    page = _FakePage()
+    interactions.run(page, [{"remove": []}])  # nothing to remove → no evaluate
+    assert [c[0] for c in page.calls].count("evaluate") == 0
+
+
 # ---------- recipe resolution ---------- #
 
 

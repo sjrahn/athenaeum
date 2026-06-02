@@ -1,10 +1,23 @@
 """HTML draft extraction (deterministic, no LLM).
 
-Minimal-structural drafter. The drafter's job is to deliver readable
+Mechanical drafter. The drafter's job is to deliver the page's body as
 cleaned HTML to the normalizer + a dedup'd embed manifest of every
 inline image; the normalizer does all structural work (section
 grouping, segment splitting, markdown rendering, embed-segment linking
 via address membership).
+
+The drafter is deliberately **mechanical** — it removes only
+intrinsically non-rendered infrastructure and never drops a content-
+bearing element by semantic/positional guess. A universal tool cannot
+own a correct global definition of "what is chrome" (nav vs. content,
+a real `<form>` vs. an ASP.NET WebForms page-wrapper, a decorative vs.
+a meaningful aside), and getting it wrong drops content *silently*.
+So **chrome removal is a capture-time, per-host concern**: declare the
+selectors to delete in the origin overlay's `capture.interactions[].remove`
+(or an `eval` step) — it runs in the live DOM before the snapshot, where
+the site's actual structure is known. With no overlay, page chrome simply
+leaks into the single text segment; the normalizer trims it. Better to
+over-include than to silently drop.
 
 Pipeline:
 
@@ -19,22 +32,20 @@ Pipeline:
    document order. For each `<img>` decode its base64 `data:` URI to
    compute embed metadata (blake3 byte_hash, format, width, height,
    alt) and dedup by byte_hash into the embed manifest.
-5. Chrome-strip: decompose known chrome tags, ARIA chrome roles, and
-   class/id patterns matching `cookie|consent|banner|modal|popup|
-   overlay|gdpr`.
+5. Strip non-rendered infrastructure ONLY: decompose `<script>` /
+   `<style>` / `<noscript>` / `<template>` / `<link>` and HTML comments.
+   No chrome/role/class heuristics — that is the capture layer's job.
 6. Rewrite label/value div pairs as `<p><strong>Label:</strong> Value</p>`.
 7. Collapse KaTeX (`<span class="katex">` and bare `<math>`) to LaTeX.
-8. Strip HTML comments.
-9. Annotate surviving addressable elements with `data-el="N"` and drop
+8. Annotate surviving addressable elements with `data-el="N"` and drop
    `<img src>`/`srcset` (the base64 URI is dead weight in the cleaned
    body; `data-el="N"` is the address — a consumer builds
    `corpus://<hash>?el=N` to fetch the bytes from the artifact).
-10. Strip attributes (keep whitelist + global `id` + `data-el`).
-11. Unwrap empty `<div>` / `<span>`.
-12. Pick a root via `_select_root`: `<main>` > largest `<article>` >
-    `<body>`. Serialize.
-13. Filter the embed manifest to embeds whose imgs survived chrome
-    strip; emit them.
+9. Strip attributes (keep whitelist + global `id` + `data-el`).
+10. Unwrap empty `<div>` / `<span>`.
+11. Root is always `<body>`. Serialize.
+12. Emit the embed manifest. Nothing content-bearing is stripped, so
+    every inline image survives and is embedded.
 
 Return: a `DrafterResult` — `fields` (record-level metadata), `embeds`
 (dedup'd image-asset descriptor dicts), one `<!--segment text-->` whose
@@ -73,29 +84,16 @@ from corpus.fingerprint import text as text_fp
 from corpus.segments import Segment
 from corpus.transforms.html import largest_img_src
 
-# Tags whose entire subtree is removed before serialization.
-_STRIP_TAGS = {
-    # Non-content infrastructure
-    "script", "style", "noscript", "link", "template", "svg", "iframe",
-    # Page chrome
-    "nav", "header", "footer", "aside",
-    # Interactive form / control elements (not content)
-    "form", "button", "input", "select", "textarea", "option", "optgroup",
-    "fieldset", "legend", "datalist", "output", "progress", "meter",
-    "map", "area", "menu", "dialog",
-}
-_STRIP_ROLES = {
-    "navigation", "banner", "contentinfo", "complementary", "search",
-    "dialog", "alertdialog",
-}
-_STRIP_CLASS_PATTERNS = re.compile(
-    # Word-bounded — so `post_banner` / `hero-banner` / `page-banner`
-    # (which usually wrap the article title block) survive, while
-    # `cookie-banner` / `banner-cookie` / `consent` / `gdpr` etc.
-    # still match.
-    r"\b(cookie|consent|banner|modal|popup|overlay|gdpr)\b",
-    re.IGNORECASE,
-)
+# Tags whose entire subtree is removed before serialization — non-rendered
+# infrastructure ONLY. These produce no rendered content in a saved snapshot,
+# so removing them never drops anything a reader would see. The drafter does
+# NOT remove page chrome (nav/header/footer/aside), interactive controls
+# (form/button/input), or anything by ARIA role or class/id pattern: a
+# universal tool cannot reliably tell chrome from content, and a wrong guess
+# drops content silently (e.g. ASP.NET WebForms wraps the whole page in one
+# `<form>`). Chrome removal is a capture-time, per-host concern — see the
+# origin overlay's `capture.interactions[].remove`.
+_STRIP_TAGS = {"script", "style", "noscript", "template", "link"}
 
 # Block-level tags relevant to `_convert_field_pairs` heuristic.
 _BLOCK_TAGS_FOR_FIELD_PAIRS = {
@@ -356,29 +354,11 @@ def _clean_html(
                         "alt": meta["alt"],
                     }
 
+    # Strip non-rendered infrastructure only (script/style/noscript/template/
+    # link). No chrome/role/class heuristics — chrome removal is a capture-time,
+    # per-host concern (origin overlay `capture.interactions[].remove`).
     for tag in work.find_all(_STRIP_TAGS):
         tag.decompose()
-
-    for tag in list(work.find_all(attrs={"role": True})):
-        if not isinstance(tag, Tag) or tag.attrs is None:
-            continue
-        role = tag.get("role", "")
-        if isinstance(role, list):
-            role = " ".join(role)
-        if role.lower() in _STRIP_ROLES:
-            tag.decompose()
-
-    for tag in list(work.find_all(True)):
-        if not isinstance(tag, Tag) or tag.attrs is None:
-            continue
-        if tag.name in {"html", "body"}:
-            continue
-        # Bracketed Tailwind tokens (`[--certify-banner-height:0px]`)
-        # would false-match `banner`; strip them before the class check.
-        classes = [c for c in (tag.get("class") or []) if not c.startswith("[")]
-        ident = " ".join([*classes, tag.get("id", "")]).strip()
-        if ident and _STRIP_CLASS_PATTERNS.search(ident):
-            tag.decompose()
 
     _convert_field_pairs(work)
     _collapse_katex(work)
@@ -388,7 +368,8 @@ def _clean_html(
     _strip_attrs(work)
     _unwrap_empty_wrappers(work)
 
-    root = _select_root(work)
+    # Root is always <body> — the drafter does not guess a content root.
+    root = work.find("body") or work
     if not isinstance(root, Tag):
         return "", "", [], 0
 
@@ -789,35 +770,6 @@ def _detect_charset_mismatch(raw_bytes: bytes) -> dict[str, Any] | None:
             "distinct_signature_count": len(hits),
         },
     }
-
-
-def _select_root(work: BeautifulSoup) -> Tag | None:
-    """Pick the DOM root that most likely contains the article body.
-
-    Strategy:
-    1. `<main>` is authoritative — use it when present.
-    2. `<article>`: when 1+ are present, pick the largest by text
-       content. Articles are overloaded in modern HTML — sites use
-       `<article>` for both the actual post body AND for related-post
-       tiles / author-bio cards / sidebar widgets. The largest by
-       text content is almost always the real body when one exists.
-       BUT: when the chosen `<article>` is much smaller than `<body>`
-       (i.e. it's a card-shaped element surrounded by a substantial
-       body that lives in `<div>`s), it's a chrome card, not the body
-       — fall back to `<body>`. Threshold: article ≥ body / 5.
-    3. Fall back to `<body>` (or the whole soup if no body).
-    """
-    if (main := work.find("main")) is not None:
-        return main
-    articles = work.find_all("article")
-    body = work.find("body")
-    if articles:
-        best = max(articles, key=lambda a: len(a.get_text(strip=True)))
-        best_text_len = len(best.get_text(strip=True))
-        body_text_len = len(body.get_text(strip=True)) if body else 0
-        if body_text_len == 0 or best_text_len * 5 >= body_text_len:
-            return best
-    return body or work
 
 
 def _convert_field_pairs(work: BeautifulSoup) -> None:

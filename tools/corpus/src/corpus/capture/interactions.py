@@ -18,12 +18,20 @@ Step grammar (each list item is a single-key mapping)::
     - wait: {ms: 1500}
     - wait: {selector: "img.loaded", timeout_ms: 8000}
     - hover: {selector: "..."}
+    - remove: ['#header', 'footer', '.ad']   # delete chrome before the snapshot
     - eval: "<javascript>"      # escape hatch
+
+``remove`` is the declarative way to strip page chrome (nav/header/footer/ads/
+cookie notices) per host: the HTML drafter is mechanical and never guesses what
+is chrome, so removing it is a capture-time, per-origin decision made here where
+the site's real structure is known. ``arg`` is a CSS selector or list of them;
+every matching element is deleted from the live DOM before the snapshot.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from typing import Any
 
@@ -98,10 +106,29 @@ def _run_step(page: Any, kind: str, arg: Any) -> None:
         selector = arg.get("selector") if isinstance(arg, dict) else arg
         if selector:
             page.locator(str(selector)).first.hover(timeout=5000)
+    elif kind == "remove":
+        _remove(page, arg)
     elif kind == "eval":
         page.evaluate(str(arg))
     else:
         log.debug("unknown interaction kind: %r", kind)
+
+
+def _remove(page: Any, arg: Any) -> None:
+    """Delete every element matching the given CSS selector(s) from the live DOM
+    before the snapshot. `arg` is a selector string or a list of them. The
+    selectors are embedded in a self-contained arrow fn (single-arg `evaluate`)
+    so they survive serialization without a second `evaluate` argument."""
+    selectors = [arg] if isinstance(arg, str) else [str(s) for s in arg or []]
+    selectors = [s for s in selectors if s.strip()]
+    if not selectors:
+        return
+    js = (
+        "() => { "
+        + json.dumps(selectors)
+        + ".forEach(s => document.querySelectorAll(s).forEach(e => e.remove())); }"
+    )
+    page.evaluate(js)
 
 
 def _click(page: Any, arg: Any) -> None:

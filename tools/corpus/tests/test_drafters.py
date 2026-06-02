@@ -190,12 +190,17 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
     assert seg.address == "el=1-11"
     assert (seg.perceptual or "").startswith("simhash:")
 
-    # Body is cleaned HTML: data-el annotations present; img src stripped; chrome gone.
+    # Mechanical drafter output: data-el annotations present; <img src> dropped
+    # (addressed by data-el); non-rendered infra (<script>/<style>) stripped.
     body = seg.body
     assert 'data-el="' in body
     assert "src=" not in body  # <img src> dropped; the addressing scheme is data-el
-    for chrome in ("<nav", "<footer", "<script", "cookie-banner"):
-        assert chrome not in body
+    assert "<script" not in body and "console.log" not in body  # infra stripped
+    # The drafter NO LONGER drops chrome — nav/footer/cookie content survives (removing
+    # it is the capture layer's per-host job). Nothing content-bearing is silently lost.
+    assert "<nav" in body
+    assert "<footer" in body
+    assert "We use cookies" in body
 
     # Embeds are plain dicts keyed for `records.append_embed_block`; deduped by transport.
     embeds = result.get("embeds") or []
@@ -215,6 +220,34 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
     svg = by_type["image/svg+xml"]
     assert svg["address"] == "el=11"
     assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
+
+
+def test_html_drafter_preserves_form_wrapped_content(tmp_path):
+    """Mechanical-drafter regression (realtor.ca / ASP.NET WebForms): the whole page
+    is wrapped in one `<form id="form1">`. The drafter must NOT decompose it — the
+    form-wrapped content stays addressable and its inline image still embeds."""
+    gif = (
+        "data:image/gif;base64,R0lGODdhBAAEAIEAAMgyMgAAAAAAAAAAACwAAAAABAAEAAAICQABC"
+        "BxIsCCAgAA7"
+    )
+    html = (
+        "<!DOCTYPE html><html lang='en'><head><title>Listing</title></head><body>"
+        "<form id='form1'>"
+        "<nav><a href='/'>Home</a></nav>"
+        "<h1>123 Main St</h1><p>2 beds, 2 baths.</p>"
+        f"<figure><img src='{gif}' alt='photo'></figure>"
+        "</form></body></html>"
+    )
+    p = tmp_path / "webforms.html"
+    p.write_text(html, encoding="utf-8")
+    drafter = draft.get_drafter("text/text_html")
+    result = drafter(p, corpus_root=tmp_path, record_id="a" * 64, record_metadata={})
+
+    body = (result.get("segments") or [None])[0].body
+    assert "123 Main St" in body and "2 beds, 2 baths." in body  # content survives the form
+    # The image inside the page-wrapping form is embedded (was silently dropped before).
+    embeds = result.get("embeds") or []
+    assert any(e["media_type"] == "image/gif" for e in embeds)
 
 
 def test_html_drafter_flags_empty_body(tmp_path):

@@ -121,6 +121,20 @@ corpus-{name}/
 
 The spec is explicit that `records/` is tracked markdown and `artifacts/` is an untracked cache; everything else (path scheme inside `records/`, where `artifacts/` actually lives) is implementation-discretion. Consumers should not hard-code the path scheme — they should ask the corpus how to locate `{blake3}`.
 
+### 2.8 Browser capture interactions (per-host recipes)
+
+A web capture renders the page in a headless browser, drives it to surface all displayable media, then writes a self-contained SingleFile snapshot (CSS/fonts/images inlined as `data:` URIs). What the browser does before the snapshot is an ordered list of **interactions**, declared in the matching origin overlay's `capture.interactions:` (absent a recipe, a conservative default of `scroll: full` → `expand: all` → `scroll: full` runs). Each step is a single-key mapping; steps are best-effort (a bad selector never aborts a capture):
+
+- `scroll: full` — scroll top-to-bottom, hydrating lazy-loaded / below-the-fold media.
+- `expand: all` (or `details`) — open `<details>` and click `[aria-expanded="false"]` accordions/tabs.
+- `click: {selector, repeat, delay_ms}` — advance carousels / load-more buttons.
+- `wait: {ms}` or `wait: {selector, timeout_ms}` — settle async loads.
+- `hover: {selector}` — trigger hover-reveal media.
+- **`remove: ['#header', 'footer', '.ad']`** — delete matching elements from the live DOM before the snapshot. This is **where page chrome is removed.** The HTML drafter (§3.1) is deliberately mechanical and never guesses what is chrome, so stripping nav/header/footer/ads/cookie-notices is a per-host decision made here, where the site's real structure is known. Removing chrome at capture also keeps its images from being inlined and embedded.
+- `eval: "<javascript>"` — escape hatch for site-specific DOM surgery (e.g. fetch-and-inject an AJAX-on-click tab, or promote a `data-*` high-res image URL into `src` so it gets inlined). An async-function string is awaited before the snapshot.
+
+Capture config (`capturer`, `transport`, `interactions`, `viewport`) lives on a per-host origin overlay (`schema/origin/<host>.yaml`) under a `capture:` section; global defaults can sit on the universal `origin.yaml`. See `scaffold.py`'s example overlay for the full annotated shape.
+
 ---
 
 ## 3. Normalization
@@ -131,7 +145,7 @@ Normalization brings an artifact from `status: stub` to `status: normalized`. Th
 
 Conversion produces the artifact's body as well-formed markdown. It is MIME-driven and shells out to deterministic tooling. Per-MIME mappings:
 
-- **`text/html`, `application/xhtml+xml`** → an HTML→markdown extractor that strips chrome, navigation, ads, scripts, and preserves headings, paragraphs, lists, tables, code blocks. Reference implementations: readability + html2md, or a server-rendered DOM extraction pipeline.
+- **`text/html`, `application/xhtml+xml`** → the **mechanical** HTML drafter (`draft/html.py`): it removes only non-rendered infrastructure (scripts/styles/comments), assigns `el=N` addressing to every element of the raw artifact, emits dedup'd image embeds, and emits one cleaned-`<body>` text segment. It does **not** strip page chrome — a universal tool can't reliably tell chrome from content (e.g. ASP.NET WebForms wraps the whole page in one `<form>`), and a wrong guess drops content silently. Chrome removal (nav/ads/cookie notices) is therefore a **capture-time, per-host** decision: list the selectors to delete in the origin overlay's `capture.interactions[].remove` (§2.8). Structural recovery (headings/tables/lists/equations) is the normalizer's job.
 - **`application/pdf`** → text + table extraction. OCR via `tesseract` if the PDF is image-only. Page boundaries surface as headings or anchor markers usable from functional URIs.
 - **`audio/*`** → speech-to-text transcription. Reference: Whisper. Output includes timestamps. Speaker turn markers where determinable.
 - **`video/*`** → audio transcription + per-keyframe descriptions when the schema asks for them.
