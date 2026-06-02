@@ -322,6 +322,8 @@ def _capture_video_with_cookies(
     cookiefile: Path | None = None
     cdp_url = _resolve_cdp_endpoint(opts.cdp_url)
     if cdp_url:
+        if recipe.get("cdp_prime"):
+            _prime_cdp_session(cdp_url, url=url, timeout_ms=opts.timeout_s * 1000)
         cookiefile = _extract_cdp_cookies_for_ytdlp(cdp_url, capture_dir, url=url, recipe=recipe)
     try:
         return _capture_video(
@@ -385,6 +387,16 @@ def _build_ydl_opts(
     opts: dict[str, Any] = {**defaults, **(ytdlp_opts or {})}
     if not include_comments:
         opts["getcomments"] = False
+    # `impersonate` is a CLI-style string in the overlay (e.g. `chrome` or
+    # `chrome-110:windows-10`); the Python API wants an ImpersonateTarget, which
+    # the CLI builds via from_str. Normalise here so the overlay stays string-based.
+    impersonate = opts.get("impersonate")
+    if isinstance(impersonate, str):
+        from yt_dlp.networking.impersonate import (  # type: ignore[import-untyped]
+            ImpersonateTarget,
+        )
+
+        opts["impersonate"] = ImpersonateTarget.from_str(impersonate)
     # FORCED: the overlay must not break output paths, logging, or auth.
     opts["outtmpl"] = outtmpl
     opts["logger"] = _YtDlpLogger()
@@ -472,6 +484,42 @@ def _cookie_scope_urls(url: str, recipe: dict[str, Any]) -> list[str]:
     if isinstance(setting, (list, tuple)):
         scopes += [str(s).strip() for s in setting if str(s).strip()]
     return scopes
+
+
+def _prime_cdp_session(cdp_url: str, *, url: str, timeout_ms: int) -> None:
+    """Warm the CDP browser's cookie jar by navigating it to `url` before we read
+    cookies for yt-dlp.
+
+    yt-dlp never tunnels through CDP — it borrows the jar's cookies and makes its own
+    (impersonated) requests. A logged-in, trusted browser session passes the
+    interstitials / anti-bot challenges that yt-dlp's request can trip; the
+    challenge-passed cookies it leaves behind (e.g. TikTok's `msToken` / `ttwid`) then
+    let yt-dlp's own fetch be served the real page instead of a block page. Opt-in via
+    the overlay's `capture.cdp_prime: true`. Best-effort: any failure is logged and
+    ignored — we still read whatever cookies already exist.
+    """
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return
+    log.info("priming CDP session: navigating browser to %s", url)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(cdp_url)
+            try:
+                ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = ctx.new_page()
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    with contextlib.suppress(PlaywrightTimeout):
+                        page.wait_for_load_state("networkidle", timeout=NETWORKIDLE_BUDGET_MS)
+                finally:
+                    page.close()
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning("CDP session priming failed: %s — continuing with existing cookies", exc)
 
 
 def _extract_cdp_cookies_for_ytdlp(

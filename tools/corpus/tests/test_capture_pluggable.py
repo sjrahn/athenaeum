@@ -244,11 +244,28 @@ def test_build_ydl_opts_merges_overlay_over_defaults():
         outtmpl="/x/%(ext)s",
         include_comments=True,
         cookiefile=None,
-        ytdlp_opts={"format": "best[vcodec^=avc]", "impersonate": "chrome", "retries": 3},
+        ytdlp_opts={"format": "b[vcodec^=h264]", "retries": 3},
     )
-    assert opts["format"] == "best[vcodec^=avc]"  # overlay overrode the default
-    assert opts["impersonate"] == "chrome" and opts["retries"] == 3  # passthrough
+    assert opts["format"] == "b[vcodec^=h264]"  # overlay overrode the default
+    assert opts["retries"] == 3  # passthrough
     assert opts["writeinfojson"] is True  # untouched default survives
+
+
+def test_build_ydl_opts_normalizes_impersonate_string():
+    """The overlay carries `impersonate` as a CLI-style string; the Python API needs
+    an ImpersonateTarget. `_build_ydl_opts` must convert it (the way yt-dlp's CLI does)
+    — passing the raw string crashes YoutubeDL() with an AssertionError."""
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+
+    opts = capture._build_ydl_opts(
+        outtmpl="/x/%(ext)s",
+        include_comments=True,
+        cookiefile=None,
+        ytdlp_opts={"impersonate": "chrome-110:windows-10"},
+    )
+    target = opts["impersonate"]
+    assert isinstance(target, ImpersonateTarget)
+    assert target.client == "chrome" and target.version == "110"
 
 
 def test_build_ydl_opts_forces_library_keys():
@@ -271,6 +288,37 @@ def test_build_ydl_opts_no_comments_forces_off():
         ytdlp_opts={"getcomments": True},  # overlay asked for comments
     )
     assert opts["getcomments"] is False
+
+
+def test_cdp_prime_flag_gates_session_priming(monkeypatch, tmp_path):
+    """`capture.cdp_prime: true` navigates the CDP browser to warm the cookie jar
+    before extraction; absent/false, priming is skipped (no browser navigation)."""
+    primed: list[str] = []
+    monkeypatch.setattr(capture, "_resolve_cdp_endpoint", lambda _arg: "http://localhost:9222")
+    monkeypatch.setattr(
+        capture,
+        "_prime_cdp_session",
+        lambda cdp_url, *, url, timeout_ms: primed.append(url),
+    )
+    monkeypatch.setattr(capture, "_extract_cdp_cookies_for_ytdlp", lambda *a, **k: None)
+    monkeypatch.setattr(capture, "_capture_video", lambda **k: tmp_path / "out.mp4")
+
+    capture._capture_video_with_cookies(
+        "https://www.tiktok.com/@a/video/1",
+        capture_dir=tmp_path,
+        opts=capture.CaptureOptions(),
+        recipe={"cdp_prime": True},
+    )
+    assert primed == ["https://www.tiktok.com/@a/video/1"]
+
+    primed.clear()
+    capture._capture_video_with_cookies(
+        "https://www.tiktok.com/@a/video/1",
+        capture_dir=tmp_path,
+        opts=capture.CaptureOptions(),
+        recipe={},  # no cdp_prime → no navigation
+    )
+    assert primed == []
 
 
 def test_cookie_scope_defaults_to_url_origin():
