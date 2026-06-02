@@ -131,9 +131,20 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   transport: headless              # headless | headed | cdp  (headed/cdp need a display
 #                                    # or a running Chrome -- see `corpus capture --transport`)
 #   interactions:
-#     - scroll: full
+#     - scroll: full                   # hydrate lazy-loaded / below-the-fold media
 #     - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
-#     - expand: all
+#     - expand: all                    # open <details> + aria-expanded accordions/tabs
+#     # `eval` is the escape hatch for site-specific JS. Two common high-fidelity uses:
+#     #  (a) fetch+inject an AJAX-on-click tab/panel (same-origin fetch -> innerHTML).
+#     #  (b) promote a click-to-zoom HIGH-RES image into `src` so it gets inlined+embedded
+#     #      -- for data-* zoom URLs SingleFile doesn't inline (WooCommerce
+#     #      data-large_image, magic/cloud-zoom data-zoom-image, etc.). A plain higher-res
+#     #      `srcset` is already embedded automatically by the drafter; this is only for
+#     #      the data-* case.
+#     - eval: |
+#         document.querySelectorAll('img[data-large_image], img[data-zoom-image]')
+#           .forEach((i) => i.setAttribute('src',
+#             i.getAttribute('data-large_image') || i.getAttribute('data-zoom-image')));
 #   viewport: 1280x900
 """
 
