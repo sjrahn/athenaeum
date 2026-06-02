@@ -6,6 +6,7 @@ from pathlib import Path
 
 import frontmatter
 import pytest
+from bs4 import BeautifulSoup
 from PIL import Image
 
 from corpus import draft, lint, paths, records, resolver, schemas, segments
@@ -296,3 +297,35 @@ def test_html_el_addressing_round_trips(tmp_path):
     gif_path = resolver.resolve(f"corpus://{rid}?el=9", root)
     with Image.open(gif_path) as im:
         assert im.size == (4, 4)
+
+
+def test_html_drafter_prefers_largest_srcset(tmp_path):
+    """The embed metadata and the `el=` resolver both use the largest inlined `srcset`
+    variant, not the displayed thumbnail `src` — so embeds are full-resolution."""
+    import base64
+    import io
+
+    def datauri(w, h):
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h), (10, 20, 30)).save(buf, "PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    small, large = datauri(10, 8), datauri(40, 32)
+    p = tmp_path / "srcset.html"
+    p.write_text(
+        "<html><body><p>lede</p>"
+        f'<figure><img src="{small}" srcset="{small} 1x, {large} 2x" alt="chart"></figure>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    drafter = draft.get_drafter("text/text_html")
+    result = drafter(p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+    embeds = result.get("embeds") or []
+    assert len(embeds) == 1
+    emb = embeds[0]
+    # the 2x variant (40x32), NOT the displayed 10x8 thumbnail
+    assert emb["fields"]["width"] == 40 and emb["fields"]["height"] == 32
+    # the el= resolver materialises the same largest variant (drafter/resolver agree)
+    n = str(emb["address"]).split("=", 1)[1]
+    img = transforms_html.extract_el(BeautifulSoup(p.read_bytes(), "html.parser"), n, {})
+    assert img.size == (40, 32)

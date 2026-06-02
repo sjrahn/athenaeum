@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import io
 import re
-from typing import Any
 
 # Side-effect: registers AVIF codec with PIL.
 import pillow_avif  # noqa: F401
@@ -34,6 +33,42 @@ _ADDRESSABLE_TAGS = (
     "h1", "h2", "h3", "h4", "h5", "h6",
     "img",
 )
+
+
+_SRCSET_CANDIDATE_RE = re.compile(r"(\S+)\s+(\d+(?:\.\d+)?)[wx]", re.IGNORECASE)
+
+
+def largest_img_src(tag: Tag) -> str | None:
+    """Return an `<img>`'s highest-resolution **inlined** source for materialisation.
+
+    In a self-contained snapshot SingleFile inlines both `src` and every `srcset`
+    candidate as `data:` URIs; the displayed `src` is the thumbnail, `srcset` carries
+    higher-resolution variants. Prefer the largest `srcset` candidate that is a `data:`
+    URI (by its `w`/`x` descriptor), falling back to `src`. Remote (non-`data:`)
+    candidates are skipped — only inlined bytes resolve offline. The drafter's embed
+    metadata and the `el=` resolver MUST both use this selection so they agree on which
+    image `el=N` names.
+
+    `srcset` is comma-separated but a `data:` URI itself contains a comma (`;base64,`),
+    so we don't split on commas. A `data:` URI has no whitespace, so each candidate's
+    URL is one `\\S+` token immediately followed by its descriptor — match those pairs
+    directly. Descriptor-less candidates (implicit `1x`) are ignored: never the largest.
+    """
+    best: str | None = None
+    best_score = -1.0
+    srcset = tag.get("srcset")
+    if isinstance(srcset, str) and srcset.strip():
+        for m in _SRCSET_CANDIDATE_RE.finditer(srcset):
+            url = m.group(1)
+            if not url.startswith("data:"):
+                continue
+            score = float(m.group(2))
+            if score > best_score:
+                best, best_score = url, score
+    if best is not None:
+        return best
+    src = tag.get("src")
+    return str(src).strip() if src else None
 
 
 @register("html", "el", "image")
@@ -93,7 +128,7 @@ def _img_tag_to_pil(tag: Tag, selector_for_error: str) -> Image.Image:
         raise ValueError(
             f"selector {selector_for_error!r} resolved to <{tag.name}>, expected <img>"
         )
-    src_raw = tag.get("src") or ""
+    src_raw = largest_img_src(tag) or ""
     src = str(src_raw).strip()
     if not src.startswith("data:"):
         raise ValueError(

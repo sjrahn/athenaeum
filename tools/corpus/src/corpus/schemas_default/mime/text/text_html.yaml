@@ -28,7 +28,7 @@ embeds:
   - image/webp
   - image/gif
   description: |-
-    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `transport` (the `blake3:<hex>` hash of the decoded image bytes). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
+    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `transport` (the `blake3:<hex>` hash of the decoded image bytes). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. When an `<img>` carries a `srcset`, the embed (and the `el=` resolver) use the largest inlined variant, not the displayed thumbnail `src` — so embeds are full-resolution. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
   fields:
     address:
       type: string-or-list

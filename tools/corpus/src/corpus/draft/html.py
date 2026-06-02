@@ -71,6 +71,7 @@ from corpus import content_hash, records, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import text as text_fp
 from corpus.segments import Segment
+from corpus.transforms.html import largest_img_src
 
 # Tags whose entire subtree is removed before serialization.
 _STRIP_TAGS = {
@@ -479,8 +480,12 @@ def _compute_img_embed_metadata(img: Tag) -> dict[str, Any] | None:
     bytes (the `transport`/dedup key, matching the artifact-identity
     hash convention). `width`/`height` come from PIL.Image.open for
     raster formats; for SVG we fall back to parsing `width=`/`height=`
-    attributes from the SVG XML (PIL can't open SVG natively)."""
-    src = str(img.get("src") or "").strip()
+    attributes from the SVG XML (PIL can't open SVG natively).
+
+    Reads the highest-resolution inline source (largest `srcset` candidate, else
+    `src`) via `largest_img_src` — the same selection the `el=` resolver uses, so the
+    embed's hash/dims match what `corpus://<hash>?el=N` materialises."""
+    src = (largest_img_src(img) or "").strip()
     if not src.startswith("data:") or src == "data:,":
         return None
     m = _DATA_URI_RE.match(src)
