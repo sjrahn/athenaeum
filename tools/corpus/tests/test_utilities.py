@@ -77,6 +77,19 @@ def test_urls_normalize_sorts_query_strips_fragment():
     assert "#" not in a
 
 
+def test_urls_normalize_preserves_hash_route_fragment():
+    # Hash-routed SPA: the fragment IS the route (a distinct resource), so it survives
+    # canonicalization — and distinct routes stay distinct.
+    one = urls.normalize("https://my.alldata.com/repair/#/vehicle/46076")
+    two = urls.normalize("https://my.alldata.com/repair/#/vehicle/99999")
+    assert one == "https://my.alldata.com/repair/#/vehicle/46076"
+    assert one != two
+    # hashbang routes preserved too
+    assert urls.normalize("https://x.example/#!/path").endswith("#!/path")
+    # plain anchor still dropped
+    assert "#" not in urls.normalize("https://x.example/page#section")
+
+
 def test_urls_same_domain_subdomain_match():
     assert urls.same_domain("https://x.example.com/p", "www.example.com", include_subdomains=True)
     assert not urls.same_domain("https://evilexample.com/p", "example.com", include_subdomains=True)

@@ -27,7 +27,8 @@ def normalize(url: str) -> str:
     Transformations:
     - Scheme and host lowercased.
     - Default port (80 for http, 443 for https) stripped.
-    - Fragment dropped.
+    - Plain anchor fragments dropped; client-side routing fragments preserved (see
+      `_normalize_fragment`).
     - Query parameters parsed and re-emitted in sorted (key, value) order; preserves
       repeated keys, preserves empty values.
     - Bare-host paths (`""` or `"/"`) collapsed to `""`; other paths left as-is.
@@ -38,7 +39,8 @@ def normalize(url: str) -> str:
     netloc = _normalize_netloc(parts.hostname, parts.port, parts.username, parts.password, scheme)
     path = _normalize_path(parts.path)
     query = _normalize_query(parts.query)
-    return urlunsplit((scheme, netloc, path, query, ""))
+    fragment = _normalize_fragment(parts.fragment)
+    return urlunsplit((scheme, netloc, path, query, fragment))
 
 
 def host_of(url: str) -> str:
@@ -95,6 +97,20 @@ def _normalize_path(path: str) -> str:
     if path in ("", "/"):
         return ""
     return quote(unquote(path), safe="/-._~!$&'()*+,;=:@%")
+
+
+def _normalize_fragment(fragment: str) -> str:
+    """Drop plain anchor fragments; preserve client-side routing fragments.
+
+    A fragment like `#section` / `#top` is an in-page element id — it addresses the
+    same resource, so it's dropped for dedup. But a hash-routed SPA encodes the actual
+    route in the fragment (`#/vehicle/46076`, hashbang `#!/path`), so the fragment
+    identifies a *distinct* resource and MUST survive canonicalization — both so the
+    captured page navigates to the right route and so two routes don't dedup to one
+    record. The discriminator: a routing fragment begins with `/` or `!` (no HTML
+    element id does), an anchor fragment does not.
+    """
+    return fragment if fragment[:1] in ("/", "!") else ""
 
 
 def _normalize_query(query: str) -> str:
