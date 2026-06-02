@@ -16,24 +16,12 @@ def _make_corpus(tmp_path: Path) -> Path:
     return root
 
 
-def test_capture_video_hosts(tmp_path, monkeypatch):
-    monkeypatch.delenv("CORPUS_VIDEO_HOSTS", raising=False)
+def test_capture_section_empty_by_default(tmp_path, monkeypatch):
+    # Video-host routing is no longer a config concern (declared per host in the
+    # origin overlay's `capture.capturer:`); the capture section is bare by default.
+    monkeypatch.delenv("CORPUS_CAPTURE_TRANSPORT", raising=False)
     root = _make_corpus(tmp_path)
-    # Default: no extra hosts.
-    assert config.load_config(root).capture == {"video_hosts": []}
-    # File hosts are normalized (lowercased, trailing dot stripped), deduped, sorted.
-    (root / "corpus.toml").write_text(
-        '[corpus.capture]\nvideo_hosts = ["PeerTube.example", "lectures.edu", "peertube.example"]\n',
-        encoding="utf-8",
-    )
-    assert config.load_config(root).capture["video_hosts"] == ["lectures.edu", "peertube.example"]
-    # Env unions with the file.
-    monkeypatch.setenv("CORPUS_VIDEO_HOSTS", "extra.tv, lectures.edu")
-    assert config.load_config(root).capture["video_hosts"] == [
-        "extra.tv",
-        "lectures.edu",
-        "peertube.example",
-    ]
+    assert config.load_config(root).capture == {}
 
 
 def test_no_config_no_env_defaults_to_local_and_noop(tmp_path, monkeypatch):

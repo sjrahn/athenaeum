@@ -77,16 +77,24 @@ from .http_whisper import HTTPWhisperTranscriber  # noqa: E402
 from .noop import NoOpTranscriber  # noqa: E402
 
 
-def get_transcriber(corpus_root: Path) -> TranscriptionAdapter:
+def get_transcriber(
+    corpus_root: Path, *, overrides: dict[str, Any] | None = None
+) -> TranscriptionAdapter:
     """Resolve the configured transcriber for `corpus_root`.
 
     Defaults to `NoOpTranscriber`. Reads `corpus.toml` + env to dispatch to
     `HTTPWhisperTranscriber` when configured (`CORPUS_TRANSCRIBE=http-whisper`,
     `WHISPER_BASE_URL=…` or `[corpus.transcription] base_url = …` in corpus.toml).
+
+    `overrides` (a per-host origin-overlay `transcription:` section — `adapter` /
+    `base_url`) layer over the global config before instantiation, so a host can
+    select its own backend even when the corpus default is `noop`.
     """
     from corpus.config import load_config
 
-    cfg = load_config(corpus_root).transcription
+    cfg = dict(load_config(corpus_root).transcription)
+    if overrides:
+        cfg.update({k: v for k, v in overrides.items() if v is not None})
     adapter = cfg["adapter"]
     if adapter == "noop":
         return NoOpTranscriber()

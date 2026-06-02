@@ -1,11 +1,15 @@
 """Capture a URL into the corpus.
 
-Three capture paths, chosen by URL:
+Three capture paths. Routing is **overlay-driven** — the origin overlay's
+`capture.capturer:` field (resolved per host) names the capturer; the CLI
+`--video` / `--no-video` flags are explicit overrides; absent both, the default
+is the browser. There is no hardcoded host knowledge (no built-in video-host list).
 
-    yt-dlp dispatch    → host matches a video host (YouTube, Vimeo). Downloads
-                         best-quality video+audio via yt-dlp's Python API and
-                         writes a sibling `.info.json` (metadata + top comments).
-                         Requires the ``[media]`` extra.
+    yt-dlp dispatch    → `capturer: video` (or `--video`). Downloads best-quality
+                         video+audio via yt-dlp's Python API and writes a sibling
+                         `.info.json` (metadata + top comments). yt-dlp options are
+                         declared in the overlay's `capture.ytdlp:` block and merged
+                         over library defaults. Requires the ``[media]`` extra.
     text/html (xhtml)  → Playwright renders the page; an optional vendored
                          SingleFile bundle inlines CSS / images / fonts as
                          `data:` URIs for a self-contained snapshot. Without the
@@ -78,20 +82,6 @@ NETWORKIDLE_BUDGET_MS = 10_000
 # of launching a fresh headless one.
 CDP_AUTODETECT_URL = "http://localhost:9222"
 
-# Hosts dispatched to yt-dlp instead of Playwright. Matched against the parsed
-# URL's hostname (lowercased, trailing dot stripped).
-VIDEO_HOSTS = frozenset(
-    {
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "music.youtube.com",
-        "youtu.be",
-        "vimeo.com",
-        "www.vimeo.com",
-    }
-)
-
 # SingleFile options. Tuned for archival: scripts stripped, hidden DOM kept,
 # styles minified, original resource URLs preserved alongside inlined data:
 # URIs. Spellings verified against the upstream bundle.
@@ -131,8 +121,8 @@ class CaptureOptions:
     user_agent: str = DEFAULT_USER_AGENT
     cdp_url: str | None = None
     transport: str | None = None  # CLI override: headless | headed | cdp (else recipe/config)
-    video: bool = False  # force yt-dlp dispatch regardless of host
-    no_video: bool = False  # force Playwright even for video hosts
+    video: bool = False  # --video: force the video (yt-dlp) capturer
+    no_video: bool = False  # --no-video: force the browser capturer
     no_comments: bool = False  # skip yt-dlp comment scrape
     force: bool = False  # re-capture even if the URL is already in the corpus
 
@@ -193,34 +183,41 @@ def get_capturer(
 ) -> tuple[CapturerFn, dict[str, Any] | None]:
     """Resolve `(capturer, recipe)` for `url`.
 
-    A per-origin recipe (`schema/capture/<host>.yaml`) may name the capturer via
-    its `capturer:` field; otherwise the historical dispatch applies — video hosts
-    (the packaged set unioned with `[corpus.capture] video_hosts`) → `video`,
-    everything else → `browser`. The resolved recipe rides along so the chosen
-    capturer can apply its transport / interactions / viewport.
-    """
-    from corpus.config import load_config
+    Routing precedence — no hardcoded host knowledge:
 
+      1. CLI override: `--video` → `video`, `--no-video` → `browser`.
+      2. The origin overlay's `capture.capturer:` field (the recipe; resolved
+         per host via `capture_recipe_for_url`).
+      3. Default: `browser`.
+
+    The chosen name resolves against `REGISTRY` (packaged `browser`/`video` plus
+    any corpus-local `capturers/*.py`). The resolved recipe rides along so the
+    capturer can apply its declared config (transport / interactions / ytdlp / …).
+    """
     from .recipes import capture_recipe_for_url
 
     recipe = capture_recipe_for_url(corpus_root, url)
-    if recipe and (raw_name := recipe.get("capturer")):
-        name = str(raw_name)
-        fn = REGISTRY.get(name)
-        if fn is None:
-            _load_corpus_capturers(corpus_root)  # corpus-local code capturers
-            fn = REGISTRY.get(name)
-        if fn is None:
-            raise CaptureError(
-                f"capture recipe selects unknown capturer {name!r} "
-                f"(registered: {sorted(REGISTRY)})"
-            )
-        return fn, recipe
 
-    extra_hosts = frozenset(load_config(corpus_root).capture.get("video_hosts") or ())
-    if _should_use_video(url, force=opts.video, skip=opts.no_video, extra_hosts=extra_hosts):
-        return REGISTRY["video"], recipe
-    return REGISTRY["browser"], recipe
+    if opts.video and opts.no_video:
+        raise CaptureError("--video and --no-video are mutually exclusive")
+    if opts.video:
+        name = "video"
+    elif opts.no_video:
+        name = "browser"
+    elif recipe and recipe.get("capturer"):
+        name = str(recipe["capturer"])
+    else:
+        name = "browser"
+
+    fn = REGISTRY.get(name)
+    if fn is None:
+        _load_corpus_capturers(corpus_root)  # corpus-local code capturers
+        fn = REGISTRY.get(name)
+    if fn is None:
+        raise CaptureError(
+            f"unknown capturer {name!r} (registered: {sorted(REGISTRY)})"
+        )
+    return fn, recipe
 
 
 # Corpus roots whose `capturers/` have already been imported this process.
@@ -318,19 +315,21 @@ def capture_and_ingest(
 
 
 def _capture_video_with_cookies(
-    url: str, *, capture_dir: Path, opts: CaptureOptions
+    url: str, *, capture_dir: Path, opts: CaptureOptions, recipe: dict[str, Any] | None
 ) -> Path:
     """yt-dlp dispatch with optional CDP-derived cookies; cleans the cookie file."""
+    recipe = recipe or {}
     cookiefile: Path | None = None
     cdp_url = _resolve_cdp_endpoint(opts.cdp_url)
     if cdp_url:
-        cookiefile = _extract_cdp_cookies_for_ytdlp(cdp_url, capture_dir)
+        cookiefile = _extract_cdp_cookies_for_ytdlp(cdp_url, capture_dir, url=url, recipe=recipe)
     try:
         return _capture_video(
             url=url,
             capture_dir=capture_dir,
             include_comments=not opts.no_comments,
             cookiefile=cookiefile,
+            ytdlp_opts=recipe.get("ytdlp"),
         )
     finally:
         if cookiefile is not None:
@@ -347,21 +346,72 @@ def _capture_with_video(
     opts: CaptureOptions,
     recipe: dict[str, Any] | None,
 ) -> CaptureResult:
-    """Packaged yt-dlp capturer."""
-    path = _capture_video_with_cookies(url, capture_dir=capture_dir, opts=opts)
+    """Packaged yt-dlp capturer. yt-dlp options come from the overlay's
+    `capture.ytdlp:` block (full passthrough over library defaults)."""
+    path = _capture_video_with_cookies(url, capture_dir=capture_dir, opts=opts, recipe=recipe)
     return CaptureResult(capture_path=path, used_video=True, issues=[])
 
 
+# yt-dlp options the library owns — an overlay's `ytdlp:` block cannot clobber them
+# (output path, logger, and the resolved cookie file are forced after the merge).
+_YTDLP_FORCED_KEYS = ("outtmpl", "logger", "cookiefile")
+
+
+def _build_ydl_opts(
+    *,
+    outtmpl: str,
+    include_comments: bool,
+    cookiefile: Path | None,
+    ytdlp_opts: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge library yt-dlp DEFAULTS ← overlay `capture.ytdlp:` passthrough ← FORCED
+    library-owned keys (`_YTDLP_FORCED_KEYS`). `include_comments=False` (CLI
+    `--no-comments`) force-disables `getcomments` (CLI > overlay > default)."""
+    # Library defaults — every one overridable by the overlay's `ytdlp:` block.
+    defaults: dict[str, Any] = {
+        "format": "bv*+ba/b",
+        "writeinfojson": True,
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+        "noplaylist": True,
+        "getcomments": True,
+        "quiet": False,
+        "no_warnings": False,
+        # YouTube needs an external JS runtime to decode signature/n challenges.
+        # Register node (any Node 18+ on PATH) + fetch the per-player EJS solver.
+        "js_runtimes": {"node": {}},
+        "remote_components": ["ejs:github"],
+    }
+    opts: dict[str, Any] = {**defaults, **(ytdlp_opts or {})}
+    if not include_comments:
+        opts["getcomments"] = False
+    # FORCED: the overlay must not break output paths, logging, or auth.
+    opts["outtmpl"] = outtmpl
+    opts["logger"] = _YtDlpLogger()
+    if cookiefile is not None:
+        opts["cookiefile"] = str(cookiefile)
+    return opts
+
+
 def _capture_video(
-    *, url: str, capture_dir: Path, include_comments: bool, cookiefile: Path | None
+    *,
+    url: str,
+    capture_dir: Path,
+    include_comments: bool,
+    cookiefile: Path | None,
+    ytdlp_opts: dict[str, Any] | None = None,
 ) -> Path:
     """Drive yt-dlp via its Python API; write video + `.info.json` sidecar.
 
-    Best video+audio yt-dlp can produce. Subtitles are skipped (transcription is
-    the canonical transcript source). When `cookiefile` is set, yt-dlp
-    authenticates with it (typically extracted from a running CDP browser's
-    login state) — most YouTube videos otherwise return "Sign in to confirm
-    you're not a bot".
+    Library DEFAULTS are merged under the overlay's `capture.ytdlp:` block
+    (``ytdlp_opts``, full passthrough into ``YoutubeDL``); then library-owned keys
+    (`_YTDLP_FORCED_KEYS`) are forced so the overlay can't break output paths,
+    logging, or auth. The CLI ``--no-comments`` flag force-disables ``getcomments``
+    (CLI > overlay > default).
+
+    Subtitles are skipped (transcription is the canonical transcript source). When
+    `cookiefile` is set, yt-dlp authenticates with it (typically extracted from a
+    running CDP browser's login state).
     """
     try:
         from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
@@ -373,27 +423,20 @@ def _capture_video(
 
     base = _sanitize_filename(url)
     outtmpl = str(capture_dir / f"{base}.%(ext)s")
-    ydl_opts: dict[str, Any] = {
-        "format": "bv*+ba/b",
-        "outtmpl": outtmpl,
-        "writeinfojson": True,
-        "writesubtitles": False,
-        "writeautomaticsub": False,
-        "noplaylist": True,
-        "getcomments": include_comments,
-        "quiet": False,
-        "no_warnings": False,
-        "logger": _YtDlpLogger(),
-        # YouTube needs an external JS runtime to decode signature/n challenges.
-        # Register node (any Node 18+ on PATH) + fetch the per-player EJS solver.
-        "js_runtimes": {"node": {}},
-        "remote_components": ["ejs:github"],
-    }
+    ydl_opts = _build_ydl_opts(
+        outtmpl=outtmpl,
+        include_comments=include_comments,
+        cookiefile=cookiefile,
+        ytdlp_opts=ytdlp_opts,
+    )
     if cookiefile is not None:
-        ydl_opts["cookiefile"] = str(cookiefile)
         log.info("yt-dlp cookies: %s", cookiefile)
-
-    log.info("yt-dlp: format=%s comments=%s", ydl_opts["format"], include_comments)
+    log.info(
+        "yt-dlp: format=%s comments=%s impersonate=%s",
+        ydl_opts.get("format"),
+        ydl_opts.get("getcomments"),
+        ydl_opts.get("impersonate"),
+    )
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         video_path = Path(ydl.prepare_filename(info))
@@ -412,34 +455,49 @@ def _capture_video(
     return video_path
 
 
-_YT_COOKIE_URLS = (
-    "https://www.youtube.com/",
-    "https://youtube.com/",
-    "https://m.youtube.com/",
-    "https://music.youtube.com/",
-    "https://youtu.be/",
-)
+def _cookie_scope_urls(url: str, recipe: dict[str, Any]) -> list[str]:
+    """Cookie URL scopes to pull from the CDP session for a video capture.
+
+    Host-generic (no hardcoded list): the default scope is the capture URL's own
+    origin (e.g. `https://www.tiktok.com/`). The overlay's `cookies_from_host`
+    disables it (`false`) or extends it (a list of extra origin URLs — e.g. a
+    separate login/CDN host)."""
+    setting = recipe.get("cookies_from_host", True)
+    if setting is False:
+        return []
+    scopes: list[str] = []
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        scopes.append(f"{parsed.scheme}://{parsed.netloc}/")
+    if isinstance(setting, (list, tuple)):
+        scopes += [str(s).strip() for s in setting if str(s).strip()]
+    return scopes
 
 
-def _extract_cdp_cookies_for_ytdlp(cdp_url: str, scratch_dir: Path) -> Path | None:
-    """Pull YouTube cookies from the CDP browser into a Netscape cookies file.
-
-    Returns the file path, or None on any failure (Playwright error, no cookies,
-    write failure) — yt-dlp then runs cookieless.
+def _extract_cdp_cookies_for_ytdlp(
+    cdp_url: str, scratch_dir: Path, *, url: str, recipe: dict[str, Any]
+) -> Path | None:
+    """Pull the capture host's cookies from the CDP browser into a Netscape cookies
+    file for yt-dlp. Scope = the capture URL's own origin (+ overlay extras; see
+    `_cookie_scope_urls`). Returns the file path, or None on any failure / no
+    cookies / disabled — yt-dlp then runs cookieless.
     """
+    scope_urls = _cookie_scope_urls(url, recipe)
+    if not scope_urls:
+        return None
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         return None
 
-    log.info("extracting YouTube cookies from CDP browser at %s", cdp_url)
-    cookies_path = scratch_dir / ".yt-cookies.txt"
+    log.info("extracting cookies for %s from CDP browser at %s", scope_urls, cdp_url)
+    cookies_path = scratch_dir / ".cdp-cookies.txt"
     try:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(cdp_url)
             try:
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-                raw = ctx.cookies(list(_YT_COOKIE_URLS))
+                raw = ctx.cookies(scope_urls)
             finally:
                 browser.close()
     except Exception as exc:
@@ -447,7 +505,7 @@ def _extract_cdp_cookies_for_ytdlp(cdp_url: str, scratch_dir: Path) -> Path | No
         return None
 
     if not raw:
-        log.info("no YouTube cookies in the CDP session — yt-dlp will run cookieless")
+        log.info("no cookies for %s in the CDP session — yt-dlp will run cookieless", scope_urls)
         return None
 
     lines = [
@@ -1148,22 +1206,6 @@ def _move_video_sidecar(capture_path: Path, *, record_id: str, corpus_root: Path
 
 
 # ---------- small pure helpers ---------- #
-
-
-def _should_use_video(
-    url: str, *, force: bool, skip: bool, extra_hosts: frozenset[str] = frozenset()
-) -> bool:
-    """Decide whether to dispatch `url` to yt-dlp. `force`/`skip` override the host check
-    (and are mutually exclusive). `extra_hosts` are corpus-configured hosts (see
-    `[corpus.capture] video_hosts`) unioned with the packaged default set."""
-    if force and skip:
-        raise CaptureError("video and no_video are mutually exclusive")
-    if skip:
-        return False
-    if force:
-        return True
-    host = (urlparse(url).hostname or "").lower().rstrip(".")
-    return host in VIDEO_HOSTS or host in extra_hosts
 
 
 def _apply_url_rewrite(url: str, recipe: dict[str, Any]) -> str:

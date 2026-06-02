@@ -651,6 +651,20 @@ The universal `origin` overlay declares the two fields every origin block carrie
 - `uri` — string or list-of-strings; the URI(s) by which the origin was reached (a `file://` or filesystem path for a local capture).
 - `snapshot` — ISO-8601 timestamp of observation.
 
+**Operational overlay sections.** Capture and transcription are retrieval concerns of an origin, so their per-host configuration lives on the origin overlay — one host-keyed file describes both *what* a source is and *how* to capture and process it. These sections are corpus-local (the package ships none) and read mechanically by the tooling; declaring them is how the tooling stays generic with **no hardcoded host knowledge**:
+
+- `capture:` — how to retrieve this origin (read at capture time).
+  - `capturer` — the capturer name: `browser` (Playwright/HTML; the default), `video` (yt-dlp), or a corpus-local capturer. This is the **sole router** for video vs. browser — there is no built-in video-host list. (`corpus capture --video` / `--no-video` override it for a one-off URL.)
+  - `transport` — `headless` | `headed` | `cdp` (browser capturer).
+  - `interactions` — an ordered list of pre-snapshot actions (scroll / click / expand / wait / hover / remove / eval).
+  - `url_rewrite` — `[{pattern, replacement}]` regex rules applied to the navigation target before fetch; the original URL stays the recorded origin and the rewritten form becomes an alias.
+  - `ytdlp:` — a mapping merged straight into yt-dlp's options (full passthrough; e.g. `format`, `getcomments`, `impersonate`). Library-owned keys (output path, logger, the resolved cookie file) are forced after the merge and cannot be overridden.
+  - `cookies_from_host` — `true` (default) pulls the capture URL's own-origin cookies from a running CDP browser session into yt-dlp; `false` disables; a list adds extra origin scopes. Lets a logged-in session unlock a host's full content.
+  - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded in as comment segments) rather than forming separate records.
+- `transcription:` — per-host audio transcription (read at draft time). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
+- `canonical:` — `content_selector` scoping the `canonical` hash to the article-content region (§7.1).
+- `metadata:` — how a capturer's metadata sidecar maps into the record. The built-in mapping is applied for every yt-dlp capture and is host-agnostic; this section is the hook to remap or disable it. The default yt-dlp `.info.json` mapping is: `title` → the artifact title; `description` → the frontmatter description **and** a caption `text` segment; `comments[]` → one `text` segment each (author / like_count on `extra`); `webpage_url` → an origin-URI alias; and a **`social:`** artifact-field map (`uploader`, `uploader_id`, `uploader_url`, `channel`, `channel_id`, `channel_url`, `upload_date`, `view_count`, `like_count`, `comment_count`, `repost_count`, `track`, `artists`). Caption and comments are addressed on the `sidecar=` axis (§ address axes).
+
 ### 7.3 The atom namespace
 
 An `atom` schema declares an atomic-axis overlay that may attach to a segment.
@@ -1008,6 +1022,7 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 | region | `bbox=<x>,<y>,<w>,<h>` | image crops (relative floats) |
 | turn | `turn=<N>` | turn-structured transcripts / sessions |
 | stream | `stream_id=<id>` | multi-stream media (composed onto another axis) |
+| sidecar | `sidecar=<field>` (e.g. `sidecar=description`, `sidecar=comment/<n>`) | companion-metadata content — a capturer's metadata sidecar (yt-dlp `.info.json`: a post's caption / comments) rather than a byte-slice of the media |
 
 Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single address or an ordered list (for non-contiguous spans, in reading order); query-reserved characters in a value are percent-encoded.
 

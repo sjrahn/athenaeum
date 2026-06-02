@@ -3,6 +3,8 @@ router order, and config default_transport. All deterministic — no browser/net
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import corpus.capture as capture
@@ -187,13 +189,43 @@ def test_router_recipe_selects_capturer(tmp_path):
     assert fn is capture.REGISTRY["video"] and recipe["capturer"] == "video"
 
 
-def test_router_default_dispatch_when_no_recipe(tmp_path):
-    root = _corpus(tmp_path)  # no per-host capture config
+def test_router_default_is_browser_no_host_knowledge(tmp_path):
+    # No overlay, no flags → browser for ANY host (no hardcoded video-host list).
+    root = _corpus(tmp_path)
     opts = capture.CaptureOptions()
-    fn_v, _ = capture.get_capturer(root, "https://youtube.com/watch?v=x", opts=opts)
-    fn_b, _ = capture.get_capturer(root, "https://example.com", opts=opts)
-    assert fn_v is capture.REGISTRY["video"]
-    assert fn_b is capture.REGISTRY["browser"]
+    fn_yt, _ = capture.get_capturer(root, "https://youtube.com/watch?v=x", opts=opts)
+    fn_ex, _ = capture.get_capturer(root, "https://example.com", opts=opts)
+    assert fn_yt is capture.REGISTRY["browser"]
+    assert fn_ex is capture.REGISTRY["browser"]
+
+
+def test_router_video_flag_forces_video(tmp_path):
+    # --video routes an un-overlay'd URL to yt-dlp.
+    root = _corpus(tmp_path)
+    fn, _ = capture.get_capturer(
+        root, "https://example.com", opts=capture.CaptureOptions(video=True)
+    )
+    assert fn is capture.REGISTRY["video"]
+
+
+def test_router_cli_flags_override_overlay_capturer(tmp_path):
+    # --no-video beats an overlay that declares capturer: video.
+    root = _corpus(
+        tmp_path, x="applies_to: {host_pattern: example.com}\ncapture: {capturer: video}\n"
+    )
+    fn, _ = capture.get_capturer(
+        root, "https://example.com", opts=capture.CaptureOptions(no_video=True)
+    )
+    assert fn is capture.REGISTRY["browser"]
+
+
+def test_router_video_and_no_video_mutually_exclusive(tmp_path):
+    with pytest.raises(capture.CaptureError):
+        capture.get_capturer(
+            _corpus(tmp_path),
+            "https://example.com",
+            opts=capture.CaptureOptions(video=True, no_video=True),
+        )
 
 
 def test_router_unknown_capturer_raises(tmp_path):
@@ -202,6 +234,60 @@ def test_router_unknown_capturer_raises(tmp_path):
     )
     with pytest.raises(capture.CaptureError):
         capture.get_capturer(root, "https://example.com", opts=capture.CaptureOptions())
+
+
+# ---------- video capturer: ytdlp passthrough + cookie scope ---------- #
+
+
+def test_build_ydl_opts_merges_overlay_over_defaults():
+    opts = capture._build_ydl_opts(
+        outtmpl="/x/%(ext)s",
+        include_comments=True,
+        cookiefile=None,
+        ytdlp_opts={"format": "best[vcodec^=avc]", "impersonate": "chrome", "retries": 3},
+    )
+    assert opts["format"] == "best[vcodec^=avc]"  # overlay overrode the default
+    assert opts["impersonate"] == "chrome" and opts["retries"] == 3  # passthrough
+    assert opts["writeinfojson"] is True  # untouched default survives
+
+
+def test_build_ydl_opts_forces_library_keys():
+    opts = capture._build_ydl_opts(
+        outtmpl="/real/%(ext)s",
+        include_comments=True,
+        cookiefile=Path("/tmp/c.txt"),
+        ytdlp_opts={"outtmpl": "/evil/%(ext)s", "logger": None},  # both clobber attempts
+    )
+    assert opts["outtmpl"] == "/real/%(ext)s"  # FORCED wins
+    assert opts["logger"] is not None
+    assert opts["cookiefile"] == "/tmp/c.txt"
+
+
+def test_build_ydl_opts_no_comments_forces_off():
+    opts = capture._build_ydl_opts(
+        outtmpl="/x/%(ext)s",
+        include_comments=False,  # CLI --no-comments
+        cookiefile=None,
+        ytdlp_opts={"getcomments": True},  # overlay asked for comments
+    )
+    assert opts["getcomments"] is False
+
+
+def test_cookie_scope_defaults_to_url_origin():
+    assert capture._cookie_scope_urls("https://www.tiktok.com/@a/video/1", {}) == [
+        "https://www.tiktok.com/"
+    ]
+
+
+def test_cookie_scope_disabled():
+    assert capture._cookie_scope_urls("https://x.com/v", {"cookies_from_host": False}) == []
+
+
+def test_cookie_scope_extends_with_list():
+    scopes = capture._cookie_scope_urls(
+        "https://x.com/v", {"cookies_from_host": ["https://login.x.com/"]}
+    )
+    assert scopes == ["https://x.com/", "https://login.x.com/"]
 
 
 # ---------- config default_transport ---------- #

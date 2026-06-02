@@ -68,11 +68,15 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "Chrome (see --cdp-url) to reuse login state."
         ),
     )
-    p.add_argument("--video", action="store_true", help="force yt-dlp dispatch (override the host check)")
+    p.add_argument(
+        "--video",
+        action="store_true",
+        help="force the video (yt-dlp) capturer, overriding the overlay's capturer",
+    )
     p.add_argument(
         "--no-video",
         action="store_true",
-        help="force Playwright (skip the yt-dlp host check, even for youtube.com etc.)",
+        help="force the browser capturer, overriding the overlay's capturer",
     )
     p.add_argument(
         "--no-comments",

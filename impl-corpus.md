@@ -135,6 +135,16 @@ A web capture renders the page in a headless browser, drives it to surface all d
 
 Capture config (`capturer`, `transport`, `interactions`, `viewport`) lives on a per-host origin overlay (`schema/origin/<host>.yaml`) under a `capture:` section; global defaults can sit on the universal `origin.yaml`. See `scaffold.py`'s example overlay for the full annotated shape.
 
+### 2.9 Capture routing & the video (yt-dlp) pathway
+
+**Routing is overlay-driven — no hardcoded host knowledge.** The capturer is chosen by the origin overlay's `capture.capturer:` field (`browser` | `video` | a corpus-local name), defaulting to `browser`; `corpus capture --video` / `--no-video` are one-off overrides. There is **no** built-in video-host list — a host that should go to yt-dlp declares `capturer: video` in its overlay (so an un-declared video URL captures as HTML, or you pass `--video`).
+
+The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp:` and merged straight into `YoutubeDL` (full passthrough — e.g. `format`, `getcomments`, `impersonate`); the library forces `outtmpl` / `logger` / the resolved cookie file so an overlay can't break output, logging, or auth. `capture.cookies_from_host` (default `true`) pulls the capture URL's own-origin cookies from a running CDP browser (`--remote-debugging-port=9222`) into yt-dlp, so a logged-in session unlocks a host's full content (e.g. TikTok serves its full format ladder rather than the degraded anonymous one). yt-dlp writes a `.info.json` sidecar (post metadata + comments) which `_move_video_sidecar` relocates next to the artifact.
+
+**Sidecar → record (draft time).** `draft/_sidecar.py` reads `artifacts/<id>.info.json` and folds it into the record: `title` → artifact title; `description` → the frontmatter description and a caption `text` segment; `comments[]` → one `text` segment each; a `social:` artifact-field map; `webpage_url` → an origin alias. Caption/comments are addressed on the `sidecar=` axis. So a no-audio capture still carries the post's text content. This is mechanical (any yt-dlp capture has the sidecar); the overlay's `metadata:` section is the hook to remap it.
+
+**Per-host transcription (draft time).** The audio/video drafters resolve the record's origin host and read the overlay's `transcription:` section (`draft/_hostcfg.py`): absent → the global `[corpus.transcription]` adapter; `enabled: false` → skip (an `info` issue, not a `warning`); `adapter`/`base_url` → a per-host backend that overrides the global even when the corpus default is `noop`.
+
 ---
 
 ## 3. Normalization

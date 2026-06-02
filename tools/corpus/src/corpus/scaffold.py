@@ -152,6 +152,22 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #           .forEach((i) => i.setAttribute('src',
 #             i.getAttribute('data-large_image') || i.getAttribute('data-zoom-image')));
 #   viewport: 1280x900
+#
+# # --- video hosts (yt-dlp) ---  `capturer: video` is the ONLY thing that routes a host
+# # to yt-dlp; there is no built-in video-host list. yt-dlp options pass straight through.
+# capture:
+#   capturer: video
+#   ytdlp:                             # merged into YoutubeDL(opts) (outtmpl/logger/cookies
+#     format: "bv*+ba/b"               #   stay library-owned). e.g. prefer muxed h264 on
+#     getcomments: true                #   TikTok: "best[vcodec^=avc]/bv*+ba/b"
+#     impersonate: chrome              # browser impersonation (needs the [media] extra)
+#   cookies_from_host: true            # pull this host's cookies from a CDP browser (login)
+#
+# # --- per-host transcription (read at DRAFT time) ---
+# transcription:
+#   enabled: true                      # false -> skip (no warning); absent -> global config
+#   adapter: http-whisper              # override the global [corpus.transcription] backend
+#   base_url: "http://localhost:9000"
 """
 
 _EXAMPLE_CAPTURER_PY = '''\

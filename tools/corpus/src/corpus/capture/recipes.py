@@ -93,6 +93,17 @@ def capture_recipe_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None
     return _overlay_section_for_url(corpus_root, url, "capture")
 
 
+def transcription_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:
+    """Return the per-host `transcription:` section for `url`'s host, or None.
+
+    A host declares whether/how its audio+video records transcribe at DRAFT time:
+    `enabled: false` skips transcription (no warning); `adapter`/`base_url` override
+    the global `[corpus.transcription]` backend. Absent the section, the global
+    config applies. Mirrors `canonical_content_selector_for_url`; consumed by the
+    audio/video drafters via `draft._hostcfg.resolve_transcription`."""
+    return _overlay_section_for_url(corpus_root, url, "transcription")
+
+
 def canonical_content_selector_for_url(
     corpus_root: Path, url: str
 ) -> str | list[str] | None:

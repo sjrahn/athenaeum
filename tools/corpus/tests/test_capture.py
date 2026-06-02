@@ -17,46 +17,8 @@ from corpus.lint import _TOUCH_RE
 _VALID_SEVERITIES = {"blocking", "warning", "info"}
 
 
-# ---------- video dispatch ---------- #
-
-
-@pytest.mark.parametrize(
-    "url,expected",
-    [
-        ("https://www.youtube.com/watch?v=abc", True),
-        ("https://youtu.be/abc", True),
-        ("https://vimeo.com/123", True),
-        ("https://music.youtube.com/watch?v=x", True),
-        ("https://example.com/video.html", False),
-        ("https://notyoutube.com/x", False),
-    ],
-)
-def test_should_use_video_host_match(url, expected):
-    assert capture._should_use_video(url, force=False, skip=False) is expected
-
-
-def test_should_use_video_force_and_skip_override():
-    assert capture._should_use_video("https://example.com/x", force=True, skip=False) is True
-    assert capture._should_use_video("https://youtu.be/x", force=False, skip=True) is False
-
-
-def test_should_use_video_mutually_exclusive():
-    with pytest.raises(capture.CaptureError):
-        capture._should_use_video("https://x.com", force=True, skip=True)
-
-
-def test_should_use_video_extra_hosts():
-    # #15: a corpus-configured host routes to yt-dlp without editing the packaged set.
-    url = "https://peertube.example/w/abc"
-    assert capture._should_use_video(url, force=False, skip=False) is False
-    assert (
-        capture._should_use_video(
-            url, force=False, skip=False, extra_hosts=frozenset({"peertube.example"})
-        )
-        is True
-    )
-    # Packaged defaults still match with no extra hosts.
-    assert capture._should_use_video("https://youtube.com/watch?v=x", force=False, skip=False)
+# Capturer routing (overlay `capturer:` + `--video`/`--no-video` overrides) is
+# covered in test_capture_pluggable.py — there is no hardcoded host dispatch.
 
 
 # ---------- small pure helpers ---------- #

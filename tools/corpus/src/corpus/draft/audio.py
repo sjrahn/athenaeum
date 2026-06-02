@@ -29,6 +29,8 @@ from typing import Any
 
 from corpus import resolver, touches
 from corpus.draft import DrafterResult, register
+from corpus.draft._hostcfg import resolve_transcription
+from corpus.draft._sidecar import parse_info_json_for_record
 from corpus.draft._transcript import parse_transcript_sections
 from corpus.segments import Section
 from corpus.transcription import TranscriptionUnavailable
@@ -61,30 +63,37 @@ def draft(
     issues: list[dict[str, Any]] = []
     sections: list[Section] = []
     transcript = ""
-    try:
-        transcript_path = resolver.resolve(
-            f"corpus://{record_id}?transcribe", corpus_root
-        )
-        transcript = transcript_path.read_text(encoding="utf-8")
-    except TranscriptionUnavailable as exc:
-        log.info("transcription unavailable: %s", exc)
-        issues.append(_unavailable_issue("warning", str(exc)))
-    except Exception as exc:  # ffmpeg/resolve failure — still produce a record
-        log.warning("transcript resolution failed: %s", exc)
-        issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
+    mode, per_host_transcriber = resolve_transcription(corpus_root, record_metadata)
+    if mode == "disabled":
+        log.info("transcription disabled for this origin host")
+        issues.append(_unavailable_issue("info", "transcription disabled for this origin host"))
     else:
-        if transcript.strip():
-            sections = parse_transcript_sections(
-                transcript,
-                audio_stream_id=probe["audio_stream_id"] or "a0",
-                video_stream_id=None,
-                multi_audio=probe["audio_count"] > 1,
-                multi_video=False,
+        try:
+            transcript_path = resolver.resolve(
+                f"corpus://{record_id}?transcribe",
+                corpus_root,
+                transcriber=per_host_transcriber,
             )
+            transcript = transcript_path.read_text(encoding="utf-8")
+        except TranscriptionUnavailable as exc:
+            log.info("transcription unavailable: %s", exc)
+            issues.append(_unavailable_issue("warning", str(exc)))
+        except Exception as exc:  # ffmpeg/resolve failure — still produce a record
+            log.warning("transcript resolution failed: %s", exc)
+            issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
         else:
-            issues.append(
-                _unavailable_issue("info", "empty transcript (no detectable speech)")
-            )
+            if transcript.strip():
+                sections = parse_transcript_sections(
+                    transcript,
+                    audio_stream_id=probe["audio_stream_id"] or "a0",
+                    video_stream_id=None,
+                    multi_audio=probe["audio_count"] > 1,
+                    multi_video=False,
+                )
+            else:
+                issues.append(
+                    _unavailable_issue("info", "empty transcript (no detectable speech)")
+                )
 
     distinct_speakers = sorted(
         {
@@ -98,12 +107,19 @@ def draft(
         fields["speakers"] = [{"id": idx, "name": None} for idx in distinct_speakers]
         fields["is_diarized"] = True
 
+    # yt-dlp .info.json → title / description / social fields + caption & comment segments.
+    sidecar = parse_info_json_for_record(corpus_root, record_id)
+    fields.update(sidecar["fields"])
+    sections = sidecar["caption_sections"] + sections + sidecar["comment_sections"]
+
     return {
         "fields": fields,
         "segments": sections,
         "embeds": [],
-        "title": None,
+        "title": sidecar["title"],
+        "description": sidecar["description"],
         "issues": issues,
+        "origin_uri_aliases": sidecar["origin_aliases"],
     }
 
 
@@ -180,7 +196,12 @@ def _probe_audio(audio_path: Path) -> dict[str, Any]:
         if audio_stream_id is None:
             audio_stream_id = sid
             # Lift the primary audio stream's metadata to the root fields.
-            for k_src, k_dst in (("codec", "audio_codec"), ("sampling_rate", "sampling_rate"), ("channels", "channels")):
+            stream_to_root = (
+                ("codec", "audio_codec"),
+                ("sampling_rate", "sampling_rate"),
+                ("channels", "channels"),
+            )
+            for k_src, k_dst in stream_to_root:
                 if k_src in meta:
                     root[k_dst] = meta[k_src]
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import threading
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -19,7 +18,6 @@ from corpus.transcription import (
     TranscriptionUnavailable,
     get_transcriber,
 )
-
 
 # ---------- NoOp ---------- #
 
@@ -76,6 +74,66 @@ def test_get_transcriber_http_whisper_requires_base_url(tmp_path, monkeypatch):
         get_transcriber(root)
 
 
+def test_get_transcriber_overrides_select_backend(tmp_path, monkeypatch):
+    # Global default is noop; a per-host override picks http-whisper.
+    for k in ("CORPUS_TRANSCRIBE", "WHISPER_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    root = _make_corpus(tmp_path)
+    t = get_transcriber(root, overrides={"adapter": "http-whisper", "base_url": "http://h:9000"})
+    assert isinstance(t, HTTPWhisperTranscriber) and t.base_url == "http://h:9000"
+
+
+# ---------- per-host transcription decision (draft-time) ---------- #
+
+
+def _overlay_corpus(tmp_path: Path, **overlays: str) -> Path:
+    root = _make_corpus(tmp_path)
+    d = root / "schema" / "origin"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "origin.yaml").write_text("description: t\nextended_fields: {}\n", encoding="utf-8")
+    for name, body in overlays.items():
+        (d / f"{name}.yaml").write_text(body, encoding="utf-8")
+    return root
+
+
+def _meta(uri: str) -> dict[str, Any]:
+    return {"_origins": [{"fields": {"uri": uri}}]}
+
+
+def test_resolve_transcription_global_when_no_section(tmp_path):
+    from corpus.draft._hostcfg import resolve_transcription
+
+    root = _overlay_corpus(tmp_path)
+    mode, t = resolve_transcription(root, _meta("https://example.com/v"))
+    assert mode == "global" and t is None
+
+
+def test_resolve_transcription_disabled(tmp_path):
+    from corpus.draft._hostcfg import resolve_transcription
+
+    root = _overlay_corpus(
+        tmp_path,
+        ex="applies_to: {host_pattern: example.com}\ntranscription: {enabled: false}\n",
+    )
+    mode, t = resolve_transcription(root, _meta("https://example.com/v"))
+    assert mode == "disabled" and t is None
+
+
+def test_resolve_transcription_per_host_override(tmp_path, monkeypatch):
+    for k in ("CORPUS_TRANSCRIBE", "WHISPER_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    from corpus.draft._hostcfg import resolve_transcription
+
+    root = _overlay_corpus(
+        tmp_path,
+        ex="applies_to: {host_pattern: example.com}\n"
+        "transcription: {adapter: http-whisper, base_url: 'http://h:9000'}\n",
+    )
+    mode, t = resolve_transcription(root, _meta("https://example.com/v"))
+    assert mode == "override"
+    assert isinstance(t, HTTPWhisperTranscriber) and t.base_url == "http://h:9000"
+
+
 # ---------- HTTPWhisper render contract (pure) ---------- #
 
 
@@ -126,8 +184,8 @@ class _FakeWhisperHandler(BaseHTTPRequestHandler):
     """Mock /transcribe + /result endpoints. Returns a queued state once then done."""
 
     JOB_ID = "job-abc-123"
-    POLL_COUNT = {"n": 0}
-    RESULT_PAYLOAD = {
+    POLL_COUNT: ClassVar[dict[str, int]] = {"n": 0}
+    RESULT_PAYLOAD: ClassVar[dict[str, Any]] = {
         "status": "done",
         "result": {
             "segments": [
@@ -167,7 +225,7 @@ class _FakeWhisperHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def log_message(self, format, *args):  # noqa: A002  — silence test output
+    def log_message(self, format, *args):
         pass
 
 

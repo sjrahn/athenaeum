@@ -24,8 +24,7 @@ File schema (all keys optional):
     base_url = "..."             # http-whisper: server base URL
 
     [corpus.capture]
-    video_hosts = ["peertube.example", ...]   # extra hosts routed to yt-dlp (unioned
-                                               # with the packaged YouTube/Vimeo defaults)
+    default_transport = "headless"   # browser transport when overlay + --transport unset
 
 Env vars override the file (later wins):
 
@@ -38,7 +37,7 @@ Env vars override the file (later wins):
     CORPUS_S3_PREFIX      → store.prefix
     CORPUS_TRANSCRIBE     → transcription.adapter
     WHISPER_BASE_URL      → transcription.base_url (back-compat)
-    CORPUS_VIDEO_HOSTS    → capture.video_hosts (comma-separated, unioned with the file)
+    CORPUS_CAPTURE_TRANSPORT → capture.default_transport
 
 `load_config(corpus_root)` returns a frozen `CorpusConfig` with two sub-dicts
 (`store`, `transcription`) carrying the merged settings.
@@ -142,18 +141,10 @@ def _resolve_transcription_section(file_t: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
-    """`video_hosts`: extra hostnames to route to yt-dlp, on top of the packaged default
-    set (YouTube/Vimeo). Lets a corpus opt a host in (PeerTube, a lecture host, …) without
-    forking the package. File list + comma-separated `CORPUS_VIDEO_HOSTS` env (unioned)."""
+    """Resolve the `[corpus.capture]` section. Video-host routing is no longer a
+    config concern — it is declared per host in the origin overlay's
+    `capture.capturer:` field (no hardcoded host list)."""
     out: dict[str, Any] = dict(file_c)
-    hosts: list[str] = [
-        str(h).strip().lower().rstrip(".")
-        for h in (out.get("video_hosts") or [])
-        if str(h).strip()
-    ]
-    if env := os.environ.get("CORPUS_VIDEO_HOSTS"):
-        hosts += [h.strip().lower().rstrip(".") for h in env.split(",") if h.strip()]
-    out["video_hosts"] = sorted(set(hosts))
 
     # default_transport: the browser transport applied when a capture recipe (and
     # the CLI `--transport`) leave it unset. File `default_transport` + env

@@ -160,6 +160,10 @@ def _apply_drafter_result(
         artifact_fields["title"] = title
     records.set_artifact_block(post, mime=artifact["mime"], fields=artifact_fields)
 
+    # Frontmatter description: set only when still empty (don't clobber a human edit).
+    if (desc := result.get("description")) and not str(post.metadata.get("description") or "").strip():
+        post.metadata["description"] = str(desc)
+
     # canonical (from mime schema's canonical_strategy).
     if canonical := result.get("canonical"):
         post.metadata["canonical"] = canonical
