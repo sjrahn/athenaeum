@@ -90,6 +90,29 @@ def run(args: argparse.Namespace) -> int:
     touch_module = "draft." + mime_schema_id  # e.g. draft.application/application_pdf
     touches.record_touch(post, touches.script_identifier(touch_module))
     post.metadata["status"] = "draft"
+
+    # Cross-URL content dedup: if another record already holds this exact content (same
+    # `canonical:` hash AND same embed set), fold THIS capture's URL(s) into that record
+    # and drop this duplicate instead of keeping a second record (spec §7.2 — canonical /
+    # alias URLs are one logical origin). This is what makes "the same aggregate page
+    # reached by N different links" collapse to one record with N URLs. It depends on
+    # capture-time chrome stripping: without it, per-page chrome perturbs the canonical
+    # hash and the duplicates never match.
+    dup = records.find_content_duplicate(post, record_id=record_id, corpus_root=corpus_root)
+    if dup is not None:
+        original_id, original_path = dup
+        original = records.load(original_path)
+        added = sum(
+            records.add_origin_uri_alias(original, uri) for uri in records.iter_origin_uris(post)
+        )
+        records.dump(original, original_path)
+        _discard_duplicate(corpus_root, record_id, record_file, extension)
+        print(
+            f"content-duplicate of {original_id[:12]}: merged {added} url(s) into it; "
+            f"removed this record ({record_id[:12]})."
+        )
+        return 0
+
     records.dump(post, record_file)
 
     print(f"drafted: {record_file.relative_to(corpus_root)}")
@@ -164,6 +187,15 @@ def _apply_drafter_result(
             address=issue.get("address"),
             fields=issue.get("fields") or None,
         )
+
+
+def _discard_duplicate(corpus_root, record_id: str, record_file, extension: str) -> None:
+    """Remove a content-duplicate record's `.md` + its local artifact after its URL was
+    folded into the original. Best-effort on the artifact (a remote store keeps its own
+    copy; the local capture is the orphan we clean). The artifacts dir is regenerable."""
+    record_file.unlink(missing_ok=True)
+    artifact = corpus_root / "artifacts" / paths.shard(record_id) / f"{record_id}.{extension}"
+    artifact.unlink(missing_ok=True)
 
 
 def _pkg_version() -> str:

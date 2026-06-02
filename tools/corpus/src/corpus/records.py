@@ -658,6 +658,52 @@ def find_by_uri(
     return index.get(target)
 
 
+# ---------- content-identity dedup (cross-URL) ---------- #
+
+
+def content_key(post: frontmatter.Post) -> tuple[str, tuple[str, ...]] | None:
+    """Content-identity key for cross-URL dedup: the `canonical:` content hash PLUS
+    the sorted set of embed transport hashes. Returns None when the record has no
+    `canonical:` yet (an undrafted stub can't be content-deduped).
+
+    The embed set guards against a false merge: `blake3-canonical-html` hashes the
+    page's *visible text* only (it ignores `<img>` bytes), so two genuinely different
+    image pages with identical sparse captions would share a canonical hash but not the
+    same images. Requiring the embed set to match too keeps distinct diagrams distinct
+    while still collapsing true duplicates (the same article reached by two URLs).
+
+    NB: meaningful only when capture strips page chrome — otherwise per-page chrome
+    text (breadcrumbs, personalized headers) perturbs the canonical hash so two
+    same-content pages never match. See the `remove:` capture interaction.
+    """
+    canonical = str(post.metadata.get("canonical") or "").strip()
+    if not canonical:
+        return None
+    transports = tuple(
+        sorted(str(e.get("transport") or "") for e in (post.metadata.get("_embeds") or []))
+    )
+    return (canonical, transports)
+
+
+def find_content_duplicate(
+    post: frontmatter.Post, *, record_id: str, corpus_root: Path
+) -> tuple[str, Path] | None:
+    """Return `(id, path)` of an existing OTHER record whose `content_key` equals
+    `post`'s, else None. Lets the draft step fold a same-content / different-URL capture
+    into the record that already holds that content (the original keeps its id; the
+    duplicate's URL is appended to the original's origin uri list). O(N) over the corpus
+    — fine at draft cadence; build an index if it ever needs to scale."""
+    key = content_key(post)
+    if key is None:
+        return None
+    for md, other in load_all(corpus_root):
+        if str(other.metadata.get("id") or md.stem) == record_id:
+            continue
+        if content_key(other) == key:
+            return str(other.metadata.get("id") or md.stem), md
+    return None
+
+
 # ---------- mutators ---------- #
 
 

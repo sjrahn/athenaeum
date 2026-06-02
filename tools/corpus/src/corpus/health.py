@@ -243,6 +243,26 @@ def validity_violations(refs: list[RecordRef], *, limit: int = 50) -> list[dict[
     return out[:limit]
 
 
+def canonical_duplicate_clusters(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
+    """Records that share a content identity (same `canonical:` hash AND the same embed
+    set) yet live as separate records — the same content reached by different URLs that
+    wasn't collapsed into one record. The draft step auto-merges these going forward
+    (folding the duplicate's URL into the original); this surfaces any that predate that
+    feature or slipped through. Each cluster lists its member ids for an operator to
+    merge. Undrafted stubs (no `canonical:`) are excluded — they aren't dedup-able yet."""
+    clusters: dict[tuple[str, tuple[str, ...]], list[str]] = defaultdict(list)
+    for r in refs:
+        key = records.content_key(r.post)
+        if key is not None:
+            clusters[key].append(r.record_id)
+    out = [
+        {"canonical": canonical, "count": len(ids), "ids": sorted(ids)}
+        for (canonical, _embeds), ids in clusters.items()
+        if len(ids) > 1
+    ]
+    return out[:limit]
+
+
 # ---------- aggregator ---------- #
 
 
@@ -255,6 +275,7 @@ SIGNAL_NAMES = (
     "missing_artifacts",
     "empty_description_normalized",
     "validity_violations",
+    "canonical_duplicate_clusters",
 )
 
 
@@ -288,4 +309,6 @@ def scan_all(
         report["empty_description_normalized"] = empty_description_normalized(refs, limit=limit)
     if "validity_violations" in selected:
         report["validity_violations"] = validity_violations(refs, limit=limit)
+    if "canonical_duplicate_clusters" in selected:
+        report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(refs, limit=limit)
     return report

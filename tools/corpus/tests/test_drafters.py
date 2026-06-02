@@ -52,6 +52,90 @@ def _ingest(corpus_root: Path, fixture: str, mime: str, ext: str) -> str:
     return rid
 
 
+def _ingest_html_str(corpus_root: Path, html: str, *, uri: str, name: str) -> str:
+    """Ingest an inline HTML string as a stub under a chosen origin URI."""
+    from corpus import hashing
+
+    src = corpus_root / f"{name}.html"
+    src.write_text(html, encoding="utf-8")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(corpus_root).put(rid, "html", src)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {
+            "id": rid,
+            "description": "",
+            "status": "stub",
+            "transport": f"sha256:{h['sha256']}",
+            "touch": "corpus.ingest@0.1.0",
+        }
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, uri=uri, snapshot="2026-06-02T00:00:00Z")
+    records.dump(post, paths.record_path(corpus_root, rid))
+    return rid
+
+
+def test_content_key_distinguishes_by_canonical_and_embeds():
+    # No canonical (undrafted stub) → not dedup-able.
+    stub = frontmatter.Post("")
+    stub.metadata.update({"id": "a" * 64})
+    assert records.content_key(stub) is None
+    # Same canonical + same embed set → equal keys.
+    p1 = frontmatter.Post("")
+    p1.metadata.update({"canonical": "blake3:abc", "_embeds": [{"transport": "blake3:img1"}]})
+    p2 = frontmatter.Post("")
+    p2.metadata.update({"canonical": "blake3:abc", "_embeds": [{"transport": "blake3:img1"}]})
+    assert records.content_key(p1) == records.content_key(p2)
+    # Same canonical TEXT but a different image → different key (guards false-merge of
+    # distinct image pages whose sparse caption text collides).
+    p3 = frontmatter.Post("")
+    p3.metadata.update({"canonical": "blake3:abc", "_embeds": [{"transport": "blake3:img2"}]})
+    assert records.content_key(p1) != records.content_key(p3)
+
+
+def test_draft_merges_same_content_reached_by_two_urls(tmp_path):
+    """Cross-URL content dedup: two URLs that render the same page (identical canonical
+    text + no images) collapse to ONE record carrying both URLs — not two records."""
+    root = _make_corpus(tmp_path)
+    # Identical visible text; bytes differ only inside <script>, which canonical-html
+    # drops — so different record ids but the same canonical content hash.
+    base = (
+        "<!doctype html><html lang=en><head><title>P Code Charts</title></head>"
+        "<body><h1>Code Chart</h1><p>P0300 random cylinder misfire.</p>{script}</body></html>"
+    )
+    rid_a = _ingest_html_str(
+        root, base.format(script="<script>var a=1;</script>"),
+        uri="https://x.test/#/p0300", name="a",
+    )
+    rid_b = _ingest_html_str(
+        root, base.format(script="<script>var b=2;</script>"),
+        uri="https://x.test/#/p0301", name="b",
+    )
+    assert rid_a != rid_b  # different bytes → genuinely two stubs
+
+    class ArgsA:
+        target = rid_a
+        corpus_root = str(root)
+
+    class ArgsB:
+        target = rid_b
+        corpus_root = str(root)
+
+    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]  first → the keeper
+    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  second → merges into A
+
+    # Same canonical proves they were detected as one content.
+    a = records.load(paths.record_path(root, rid_a))
+    assert a.metadata["canonical"].startswith("blake3:")
+    # B's record + artifact are gone; A now carries BOTH urls.
+    assert not paths.record_path(root, rid_b).exists()
+    assert not (root / "artifacts" / paths.shard(rid_b) / f"{rid_b}.html").exists()
+    uris = list(records.iter_origin_uris(a))
+    assert "https://x.test/#/p0300" in uris and "https://x.test/#/p0301" in uris
+
+
 def test_drafter_registry_has_pdf_and_images():
     assert "application/application_pdf" in draft.REGISTRY
     for sid in (
