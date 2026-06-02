@@ -59,6 +59,16 @@ canonical_strategy:
   - collapse whitespace runs to single spaces; trim node text
   - serialize remaining DOM with canonical attribute order
   - blake3 the serialization
+  # Optional per-host content scoping (opt-in): an origin overlay may declare
+  #   canonical:
+  #     content_selector: [<css>, ...]
+  # to hash ONLY the text inside the matching content region(s), excluding per-page
+  # framing (the <title>, breadcrumbs, entry-specific headings). This collapses pages
+  # that share one article reached by different links (e.g. ALLDATA DTC B0012/B0013 →
+  # one "DTC B0012 or B0013" article) into a single record via content-dedup. The
+  # selector is a UNION (one content region renders per route) and falls back to the
+  # whole document when it matches nothing. Sourced from the overlay, not this schema,
+  # because "what is the content region" is host-specific. See content_hash.compute.
 normalization:
   method: refinement
   guidance: |

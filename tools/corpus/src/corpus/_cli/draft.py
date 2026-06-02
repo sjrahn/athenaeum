@@ -19,8 +19,8 @@ import argparse
 import sys
 from typing import Any
 
+from corpus import content_hash, mime, paths, records, schemas, segments, touches
 from corpus import draft as draft_pkg
-from corpus import mime, paths, records, schemas, segments, touches
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 from corpus.store import ArtifactMissing, get_store
 
@@ -85,6 +85,24 @@ def run(args: argparse.Namespace) -> int:
     )
 
     _apply_drafter_result(post, result, mt_schema, mime_schema_id)
+
+    # Opt-in per-host canonical content-scoping: if the record's origin host declares a
+    # `canonical.content_selector` in its overlay, recompute the canonical hash over just
+    # that content region, overriding the drafter's whole-document hash. This makes the
+    # same article reached by different links (different title/breadcrumb framing) share a
+    # canonical → collapse via content-dedup below. Absent the overlay section, the
+    # drafter's whole-document canonical stands (no behaviour change for other corpora).
+    if canonical_algo and post.metadata.get("canonical"):
+        from corpus.capture import recipes
+
+        selector = recipes.canonical_content_selector_for_url(
+            corpus_root, records.primary_origin_uri(post)
+        )
+        if selector:
+            post.metadata["canonical"] = records.format_hash(
+                canonical_algo.split("-", 1)[0],
+                content_hash.compute(canonical_algo, binary_file, content_selector=selector),
+            )
 
     # Append draft touch + flip status.
     touch_module = "draft." + mime_schema_id  # e.g. draft.application/application_pdf

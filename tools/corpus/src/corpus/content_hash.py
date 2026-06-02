@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import blake3 as _blake3
 from bs4 import BeautifulSoup
@@ -30,10 +31,10 @@ from PIL import Image
 from pypdf import PdfReader
 
 
-def _canonicalize_pdf(path: Path) -> str:
+def _canonicalize_pdf(path: Path, *, content_selector: str | list[str] | None = None) -> str:
     """blake3-canonical-pdf — concatenate per-page extracted text, blake3 the result.
     Drops /Info dates and producer strings by construction (they're not in the
-    extracted text)."""
+    extracted text). `content_selector` is an HTML-only concept and ignored here."""
     reader = PdfReader(str(path))
     chunks: list[str] = []
     for page in reader.pages:
@@ -52,22 +53,51 @@ _HTML_DROP_TAGS = ("script", "style", "svg")
 _WS_RUN = re.compile(r"\s+")
 
 
-def _canonicalize_html(path: Path) -> str:
-    """blake3-canonical-html — drop <script>/<style>/<svg>, collapse whitespace,
-    blake3."""
+def _canonicalize_html(path: Path, *, content_selector: str | list[str] | None = None) -> str:
+    """blake3-canonical-html — drop <script>/<style>/<svg>, take the visible text,
+    collapse whitespace, blake3.
+
+    When `content_selector` is given (a CSS selector or list of them, sourced from the
+    origin overlay's `canonical.content_selector`), hash ONLY the text inside matching
+    elements — so per-page framing (the <title>, breadcrumb, entry-specific headings)
+    doesn't perturb the content identity, and two pages that share an article reached by
+    different links collapse to one record. Falls back to the WHOLE document when the
+    selector matches nothing: a page without that content region (a different page type)
+    must still hash distinctly, not collapse to an empty-text hash. Assumes the selected
+    regions aren't nested in each other (true for one-content-component-per-page apps);
+    duplicate matches are de-duped by identity."""
     raw = path.read_bytes()
     soup = BeautifulSoup(raw, "html.parser")
     for tag_name in _HTML_DROP_TAGS:
         for tag in soup(tag_name):
             tag.decompose()
-    text = soup.get_text(separator=" ", strip=True)
+    roots: list[Any] = []
+    if content_selector:
+        selectors = (
+            [content_selector] if isinstance(content_selector, str) else list(content_selector)
+        )
+        seen: set[int] = set()
+        for sel in selectors:
+            try:
+                matched = soup.select(str(sel))
+            except Exception:
+                continue
+            for el in matched:
+                if id(el) not in seen:
+                    seen.add(id(el))
+                    roots.append(el)
+    if roots:
+        text = " ".join(r.get_text(separator=" ", strip=True) for r in roots)
+    else:
+        text = soup.get_text(separator=" ", strip=True)  # whole-doc fallback
     canonical = _WS_RUN.sub(" ", text).strip().encode("utf-8")
     return _blake3.blake3(canonical).hexdigest()
 
 
-def _canonicalize_image(path: Path) -> str:
+def _canonicalize_image(path: Path, *, content_selector: str | list[str] | None = None) -> str:
     """blake3-canonical-image — rasterize to canonical resolution (longest side
-    1024px) and color mode (RGB), then blake3 the raw pixel bytes."""
+    1024px) and color mode (RGB), then blake3 the raw pixel bytes. `content_selector`
+    is an HTML-only concept and ignored here."""
     with Image.open(path) as im:
         canonical_im = im.convert("RGB")
         w, h = canonical_im.size
@@ -80,22 +110,26 @@ def _canonicalize_image(path: Path) -> str:
     return _blake3.blake3(pixel_bytes).hexdigest()
 
 
-_STRATEGIES: dict[str, Callable[[Path], str]] = {
+_STRATEGIES: dict[str, Callable[..., str]] = {
     "blake3-canonical-pdf": _canonicalize_pdf,
     "blake3-canonical-html": _canonicalize_html,
     "blake3-canonical-image": _canonicalize_image,
 }
 
 
-def compute(algo: str, path: Path) -> str:
+def compute(
+    algo: str, path: Path, *, content_selector: str | list[str] | None = None
+) -> str:
     """Run the named strategy against `path`; return the resulting hex hash.
 
-    Raises `ValueError` if the algo isn't registered.
+    `content_selector` (HTML only) scopes the canonical to a content region — see
+    `_canonicalize_html`; other strategies ignore it. Raises `ValueError` if the algo
+    isn't registered.
     """
     fn = _STRATEGIES.get(algo)
     if fn is None:
         raise ValueError(f"unknown canonical_strategy algo: {algo!r}")
-    return fn(path)
+    return fn(path, content_selector=content_selector)
 
 
 def available_algos() -> list[str]:

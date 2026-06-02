@@ -54,32 +54,55 @@ def _patterns(overlay: dict[str, Any]) -> tuple[list[str], bool]:
     return pats, bool(applies.get("include_subdomains", False))
 
 
-def capture_recipe_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:
-    """Return the `capture:` config of the most-specific origin overlay matching
-    `url`'s host, or None when no matching overlay declares one.
+def _overlay_section_for_url(
+    corpus_root: Path, url: str, section: str
+) -> dict[str, Any] | None:
+    """Return the named top-level section (e.g. `capture` / `canonical`) of the
+    most-specific origin overlay matching `url`'s host, or None.
 
     Match predicate mirrors `schemas.origin_overlays_for_uris` (the overlays are the
     same files): each overlay's `applies_to.host_pattern(s)` is tested with
     `urls.same_domain` (apex↔www aware) honoring `include_subdomains`.
     `host_pattern: "*"` is a catch-all (lowest priority). Ties break toward the
     longest pattern (most specific), then id — deterministic. The universal
-    `origin.yaml`'s `capture:` deep-merges under each per-host overlay (global
+    `origin.yaml`'s same section deep-merges under each per-host overlay (global
     defaults), so the returned dict already carries any global + per-host layering.
     """
     matches: list[tuple[int, str, dict[str, Any]]] = []
     for id_, overlay in schemas.load_origin_overlays(corpus_root):
-        capture_cfg = overlay.get("capture")
-        if not isinstance(capture_cfg, dict):
+        cfg = overlay.get(section)
+        if not isinstance(cfg, dict):
             continue
         patterns, include_subdomains = _patterns(overlay)
         for pattern in patterns:
             if pattern == "*":
-                matches.append((0, id_, capture_cfg))
+                matches.append((0, id_, cfg))
                 break
             if urlcanon.same_domain(url, pattern, include_subdomains=include_subdomains):
-                matches.append((len(pattern), id_, capture_cfg))
+                matches.append((len(pattern), id_, cfg))
                 break
     if not matches:
         return None
     matches.sort(key=lambda m: (m[0], m[1]), reverse=True)
     return matches[0][2]
+
+
+def capture_recipe_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:
+    """Return the `capture:` config of the most-specific origin overlay matching `url`'s
+    host, or None when no matching overlay declares one. See `_overlay_section_for_url`."""
+    return _overlay_section_for_url(corpus_root, url, "capture")
+
+
+def canonical_content_selector_for_url(
+    corpus_root: Path, url: str
+) -> str | list[str] | None:
+    """Return the per-host `canonical.content_selector` (a CSS selector or list) for
+    `url`'s host, or None. A host declares this to scope its canonical-content hash to the
+    article-content region — excluding per-page framing (title, breadcrumb, entry-specific
+    headings) — so the same article reached by different links collapses to one record via
+    the existing content-dedup. Opt-in: absent the section, canonical stays whole-document.
+    Consumed at draft time; see `content_hash._canonicalize_html`."""
+    cfg = _overlay_section_for_url(corpus_root, url, "canonical")
+    if not isinstance(cfg, dict):
+        return None
+    return cfg.get("content_selector") or None

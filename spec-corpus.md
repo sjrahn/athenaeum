@@ -629,7 +629,7 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 - `address_scheme` — the parameters the schema expects in segment `address:` values.
 - `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag.
 - `transport_algos` — additional byte-hash algorithms to compute beyond the primary blake3 `id`.
-- `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps the drafter performs before hashing.
+- `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps the drafter performs before hashing. The canonicalization MAY be scoped to a **content region** — hashing only the article-content text and excluding per-page framing (title, breadcrumb, entry-specific headings) — so two records holding the same content reached by different URLs share a `canonical` and collapse to one record (the duplicate's URL folded into the original). The content-region selector is host-specific and supplied by the origin overlay (not this schema); when it matches nothing the canonicalization falls back to the whole document.
 - `normalization.guidance` (optional) — prose guidance for the normalizer.
 
 ### 7.2 The origin namespace

@@ -510,3 +510,79 @@ def test_html_drafter_prefers_largest_srcset(tmp_path):
     n = str(emb["address"]).split("=", 1)[1]
     img = transforms_html.extract_el(BeautifulSoup(p.read_bytes(), "html.parser"), n, {})
     assert img.size == (40, 32)
+
+
+def test_canonical_html_content_selector_scopes_and_falls_back(tmp_path):
+    """canonical-html scoped to a content selector ignores per-page framing (title/h1);
+    a selector matching nothing falls back to whole-document hashing."""
+    from corpus import content_hash
+
+    base = (
+        "<html><head><title>{t}</title></head>"
+        "<body><h1>{t}</h1><main id=c><p>same body text</p></main></body></html>"
+    )
+    a = tmp_path / "a.html"
+    a.write_text(base.format(t="AAA"), encoding="utf-8")
+    b = tmp_path / "b.html"
+    b.write_text(base.format(t="BBB"), encoding="utf-8")
+    algo = "blake3-canonical-html"
+    # whole-document: the title/h1 differ → different hashes
+    assert content_hash.compute(algo, a) != content_hash.compute(algo, b)
+    # scoped to the shared #c region → identical
+    ha = content_hash.compute(algo, a, content_selector="#c")
+    hb = content_hash.compute(algo, b, content_selector="#c")
+    assert ha == hb
+    # list/union selector behaves the same (extra non-matching selector is harmless)
+    assert content_hash.compute(algo, a, content_selector=["#c", "#nope"]) == ha
+    # selector matching NOTHING → whole-doc fallback (so a and b stay distinct, not empty)
+    fa = content_hash.compute(algo, a, content_selector="#missing")
+    fb = content_hash.compute(algo, b, content_selector="#missing")
+    assert fa != fb
+    assert fa == content_hash.compute(algo, a)  # fallback == whole-document
+
+
+def test_draft_canonical_selector_merges_near_duplicate_articles(tmp_path):
+    """Opt-in per-host `canonical.content_selector`: two pages that share an article body
+    but differ in title/heading framing (the DTC B0012/B0013 shape) collapse to ONE record."""
+    from corpus import schemas
+
+    root = _make_corpus(tmp_path)
+    # Per-host overlay scoping canonical to the shared <article> region.
+    origin = root / "schema" / "origin"
+    origin.mkdir(parents=True, exist_ok=True)
+    (origin / "origin.yaml").write_text(
+        "description: test\nextended_fields: {}\n", encoding="utf-8"
+    )
+    (origin / "x.test.yaml").write_text(
+        "applies_to:\n  host_pattern: x.test\n  include_subdomains: true\n"
+        "canonical:\n  content_selector:\n    - article\n",
+        encoding="utf-8",
+    )
+    schemas._sources.cache_clear()
+
+    body = "<article><h2>Shared diagnostic</h2><p>Perform the check for X or Y.</p></article>"
+    page = (
+        "<!doctype html><html lang=en><head><title>Code {c}</title></head>"
+        "<body><h1>Code {c}</h1>{b}</body></html>"
+    )
+    rid_a = _ingest_html_str(root, page.format(c="X", b=body), uri="https://x.test/#/x", name="a")
+    rid_b = _ingest_html_str(
+        root, page.format(c="Y", b=body), uri="https://x.test/#/y", name="b"
+    )
+    assert rid_a != rid_b
+
+    class ArgsA:
+        target = rid_a
+        corpus_root = str(root)
+
+    class ArgsB:
+        target = rid_b
+        corpus_root = str(root)
+
+    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]
+    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  merges into A via scoped canonical
+
+    assert not paths.record_path(root, rid_b).exists()
+    a = records.load(paths.record_path(root, rid_a))
+    uris = list(records.iter_origin_uris(a))
+    assert "https://x.test/#/x" in uris and "https://x.test/#/y" in uris
