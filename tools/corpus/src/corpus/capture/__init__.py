@@ -24,6 +24,7 @@ drafter can recover capture provenance from the bytes alone::
 
     <meta name="corpus-capture-url" content="<final-url>">
     <meta name="corpus-fetched-at"  content="<ISO-8601 UTC timestamp>">
+    <meta name="corpus-fidelity"    content="<exact|balanced|lean>">
 
 The capture provenance is *also* written to a `<file>.capture.yaml` sidecar that
 ``corpus ingest`` reads to seed the record's first `<!--origin-->` block and to
@@ -107,6 +108,57 @@ SINGLEFILE_OPTIONS = {
     "insertMetaCSP": False,
 }
 
+# Capture fidelity tiers, layered over SINGLEFILE_OPTIONS at snapshot time. A
+# SingleFile snapshot inlines every asset for self-containment; on asset-heavy
+# SPAs that boilerplate (web/icon fonts shipped in redundant eot+ttf+woff+woff2
+# formats, app icon-sprite / illustration SVGs) dwarfs the content and is re-inlined
+# fresh into *every* page, so content-addressed dedup can't share it (each page's
+# whole-file hash differs). Fidelity trades snapshot completeness for size and is a
+# per-host choice: some sites ARE their presentation (design / art / layout-sensitive
+# pages) and want `exact`; others we keep only for the information and can run `lean`.
+# None of these options touch the drafted record — the mechanical drafter reads DOM
+# text/tables, not fonts/CSS — so records are identical across tiers; only the
+# gitignored `artifacts/` shrink. Spellings verified against the vendored bundle.
+FIDELITY_PRESETS: dict[str, dict[str, bool]] = {
+    "exact": {},  # byte-faithful; presentation IS content
+    "balanced": {  # ~-76%, no rendering risk: drop redundant font / image / media alternates
+        "removeAlternativeFonts": True,
+        "removeAlternativeImages": True,
+        "removeAlternativeMedias": True,
+    },
+    "lean": {  # ~-91%, information-faithful: also prune CSS rules with no matching element
+        "removeAlternativeFonts": True,
+        "removeAlternativeImages": True,
+        "removeAlternativeMedias": True,
+        "removeUnusedStyles": True,
+    },
+}
+# Global default. `balanced` is a strict improvement for virtually every site with
+# no rendering-fidelity risk; `exact` / `lean` are opt-in per host. Precedence:
+# CLI --fidelity > overlay `capture.fidelity` > `origin/origin.yaml` > this default.
+DEFAULT_FIDELITY = "balanced"
+
+
+def _resolve_fidelity(cli: str | None, recipe: dict[str, Any]) -> str:
+    """Resolve the capture fidelity tier by precedence: CLI override >
+    per-host overlay / ``origin/origin.yaml`` ``capture.fidelity`` (already
+    deep-merged into ``recipe`` by the schema loader, per-host winning) > the
+    tooling default (``balanced``). Unknown spellings warn and fall through."""
+    for source, val in (("--fidelity", cli), ("recipe", recipe.get("fidelity"))):
+        if val:
+            tier = str(val).strip().lower()
+            if tier in FIDELITY_PRESETS:
+                return tier
+            log.warning(
+                "ignoring unknown fidelity %r from %s (want exact|balanced|lean)", val, source
+            )
+    return DEFAULT_FIDELITY
+
+
+def _singlefile_options(fidelity: str) -> dict[str, Any]:
+    """``SINGLEFILE_OPTIONS`` with the fidelity preset merged over it."""
+    return {**SINGLEFILE_OPTIONS, **FIDELITY_PRESETS.get(fidelity, {})}
+
 
 class CaptureError(RuntimeError):
     """A capture could not be completed (extra missing, navigation failed, etc.)."""
@@ -121,6 +173,7 @@ class CaptureOptions:
     user_agent: str = DEFAULT_USER_AGENT
     cdp_url: str | None = None
     transport: str | None = None  # CLI override: headless | headed | cdp (else recipe/config)
+    fidelity: str | None = None  # CLI override: exact | balanced | lean (else recipe/default)
     video: bool = False  # --video: force the video (yt-dlp) capturer
     no_video: bool = False  # --no-video: force the browser capturer
     no_comments: bool = False  # skip yt-dlp comment scrape
@@ -645,6 +698,7 @@ def _capture_via_playwright(
         transport = "cdp"
     viewport = _recipe_viewport(recipe) or opts.viewport
     user_agent = str(recipe.get("user_agent") or "") or opts.user_agent
+    fidelity = _resolve_fidelity(opts.fidelity, recipe)
     interaction_steps = recipe.get("interactions")
     # Per-host nav-URL rewrite: some hosts link to a route form that cold-loads a stub
     # while an equivalent form cold-loads the full content (ALLDATA's #/vehicle/.../
@@ -739,7 +793,9 @@ def _capture_via_playwright(
                 )
                 image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 final_url = page.url
-                snapshot = _snapshot_html(page=page, fetched_at=fetched_at, bundle=bundle)
+                snapshot = _snapshot_html(
+                    page=page, fetched_at=fetched_at, bundle=bundle, fidelity=fidelity
+                )
                 issues = _run_capture_detectors(
                     snapshot=snapshot,
                     # Drift is measured against where we INTENDED to navigate (the rewritten
@@ -982,22 +1038,27 @@ def _walk_carousel(*, page: Any, request_api: Any, arg: Any) -> None:
     log.info("carousel: captured %d slide image(s) across the walk", total)
 
 
-def _snapshot_html(*, page: Any, fetched_at: str, bundle: Path | None) -> str:
+def _snapshot_html(
+    *, page: Any, fetched_at: str, bundle: Path | None, fidelity: str = DEFAULT_FIDELITY
+) -> str:
     """Produce the HTML snapshot string with corpus-* meta tags injected.
 
     With a SingleFile bundle, run `singlefile.getPageData()` for a self-contained
-    snapshot. Without one, fall back to the rendered DOM (`page.content()`); the
-    image srcs already inlined by `_inline_image_srcs` are preserved, only CSS /
-    fonts are left external.
+    snapshot, with the `fidelity` preset merged over `SINGLEFILE_OPTIONS` (see
+    `FIDELITY_PRESETS`). Without one, fall back to the rendered DOM
+    (`page.content()`); the image srcs already inlined by `_inline_image_srcs`
+    are preserved, only CSS / fonts are left external. The resolved `fidelity` is
+    stamped into a `corpus-fidelity` meta tag regardless, so the artifact records
+    how it was captured.
     """
     final_url = page.url
     if bundle is not None:
-        log.info("snapshotting via SingleFile bundle: %s", bundle)
+        log.info("snapshotting via SingleFile bundle: %s (fidelity=%s)", bundle, fidelity)
         page.add_script_tag(content=bundle.read_text())
         data = page.evaluate(
             "async (opts) => { const d = await singlefile.getPageData(opts); "
             "return { content: d.content, title: d.title }; }",
-            SINGLEFILE_OPTIONS,
+            _singlefile_options(fidelity),
         )
         snapshot = data["content"]
         log.info("snapshot %d bytes, title %r", len(snapshot.encode()), data["title"])
@@ -1009,7 +1070,9 @@ def _snapshot_html(*, page: Any, fetched_at: str, bundle: Path | None) -> str:
         )
         snapshot = page.content()
         log.info("rendered-DOM snapshot %d bytes, title %r", len(snapshot.encode()), page.title())
-    return _inject_corpus_metadata(snapshot, capture_url=final_url, fetched_at=fetched_at)
+    return _inject_corpus_metadata(
+        snapshot, capture_url=final_url, fetched_at=fetched_at, fidelity=fidelity
+    )
 
 
 def _resolve_singlefile_bundle() -> Path | None:
@@ -1312,11 +1375,14 @@ def _plain_http_get(url: str, *, user_agent: str, timeout_s: float) -> tuple[byt
 _HEAD_OPEN = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 
 
-def _inject_corpus_metadata(html: str, *, capture_url: str, fetched_at: str) -> str:
-    """Inject corpus-capture-url / corpus-fetched-at meta tags after `<head>`."""
+def _inject_corpus_metadata(
+    html: str, *, capture_url: str, fetched_at: str, fidelity: str = DEFAULT_FIDELITY
+) -> str:
+    """Inject corpus-capture-url / corpus-fetched-at / corpus-fidelity meta tags after `<head>`."""
     block = (
         f'<meta name="corpus-capture-url" content="{_attr_escape(capture_url)}">'
         f'<meta name="corpus-fetched-at" content="{_attr_escape(fetched_at)}">'
+        f'<meta name="corpus-fidelity" content="{_attr_escape(fidelity)}">'
     )
     if m := _HEAD_OPEN.search(html):
         idx = m.end()

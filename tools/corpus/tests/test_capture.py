@@ -67,6 +67,85 @@ def test_attr_escape():
     assert capture._attr_escape('a&b"c<d') == "a&amp;b&quot;c&lt;d"
 
 
+def test_inject_corpus_metadata_stamps_fidelity():
+    out = capture._inject_corpus_metadata(
+        "<html><head></head><body>x</body></html>",
+        capture_url="https://e.com/p",
+        fetched_at="2026-06-03T00:00:00Z",
+        fidelity="lean",
+    )
+    assert '<meta name="corpus-fidelity" content="lean">' in out
+
+
+# ---------- capture fidelity tiers ---------- #
+
+
+def test_resolve_fidelity_default_is_balanced():
+    # No CLI override, no recipe fidelity → the global default.
+    assert capture._resolve_fidelity(None, {}) == "balanced"
+    assert capture.DEFAULT_FIDELITY == "balanced"
+
+
+def test_resolve_fidelity_from_recipe():
+    assert capture._resolve_fidelity(None, {"fidelity": "lean"}) == "lean"
+    # Case / whitespace tolerant.
+    assert capture._resolve_fidelity(None, {"fidelity": " Exact "}) == "exact"
+
+
+def test_resolve_fidelity_cli_overrides_recipe():
+    assert capture._resolve_fidelity("exact", {"fidelity": "lean"}) == "exact"
+
+
+def test_resolve_fidelity_unknown_falls_back_to_default(caplog):
+    assert capture._resolve_fidelity("bogus", {}) == "balanced"
+    assert capture._resolve_fidelity(None, {"fidelity": "ultra"}) == "balanced"
+
+
+def test_singlefile_options_merge_per_tier():
+    exact = capture._singlefile_options("exact")
+    # exact == the base options, untouched.
+    assert exact == capture.SINGLEFILE_OPTIONS
+    assert exact is not capture.SINGLEFILE_OPTIONS  # a copy, not the shared dict
+
+    balanced = capture._singlefile_options("balanced")
+    assert balanced["removeAlternativeFonts"] is True
+    assert balanced["removeAlternativeImages"] is True
+    assert balanced["removeAlternativeMedias"] is True
+    assert balanced["removeUnusedStyles"] is False  # balanced does NOT prune CSS
+
+    lean = capture._singlefile_options("lean")
+    assert lean["removeUnusedStyles"] is True
+    assert lean["removeAlternativeFonts"] is True
+
+
+def test_snapshot_html_passes_resolved_fidelity_to_singlefile(tmp_path):
+    """The resolved tier's preset reaches `getPageData`'s options, and the tier is
+    stamped into the snapshot for provenance. Closes the integration loop without a
+    live browser: a fake page records the opts handed to `page.evaluate`."""
+    bundle = tmp_path / "sf.js"
+    bundle.write_text("// fake bundle", encoding="utf-8")
+    seen: dict = {}
+
+    class _FakePage:
+        url = "https://e.com/p"
+
+        def add_script_tag(self, *, content):  # bundle inject is a no-op here
+            pass
+
+        def evaluate(self, _js, opts=None):
+            seen["opts"] = opts
+            return {"content": "<html><head></head><body>x</body></html>", "title": "T"}
+
+    out = capture._snapshot_html(
+        page=_FakePage(), fetched_at="2026-06-03T00:00:00Z", bundle=bundle, fidelity="lean"
+    )
+    # lean preset reached SingleFile...
+    assert seen["opts"]["removeUnusedStyles"] is True
+    assert seen["opts"]["removeAlternativeImages"] is True
+    # ...and the resolved tier is recorded in the artifact.
+    assert '<meta name="corpus-fidelity" content="lean">' in out
+
+
 # ---------- SingleFile bundle resolution ---------- #
 
 

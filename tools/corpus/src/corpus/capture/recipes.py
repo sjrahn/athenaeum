@@ -14,6 +14,9 @@ host-keyed file describes both what a source is and how to capture it. The
     capture:                              # capture-time behavior (read only at capture)
       capturer: browser                   # packaged or corpus-local name (default: browser)
       transport: headless                 # headless | headed | cdp
+      fidelity: exact                     # exact | balanced | lean SingleFile snapshot tier
+                                          #   (default balanced; exact preserves presentation,
+                                          #   lean keeps only the info -- see FIDELITY_PRESETS)
       url_rewrite:                        # rewrite the NAV target before goto (regex sub,
         - pattern: '#/vehicle/(.+/nonstandard/.+)$'   #   in order). The original URL stays
           replacement: '#/article/\1'     #   the recorded origin; the rewritten form lands

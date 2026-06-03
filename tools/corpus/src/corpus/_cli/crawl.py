@@ -137,6 +137,7 @@ def run(args: argparse.Namespace) -> int:
             user_agent=args.user_agent,
             dry_run=args.dry_run,
             robots=robots,
+            fidelity=args.fidelity,
         )
         if seed_record is None and not args.dry_run:
             log.error("failed to capture seed; aborting")
@@ -176,6 +177,7 @@ def run(args: argparse.Namespace) -> int:
             user_agent=args.user_agent,
             dry_run=False,
             robots=None,  # already checked above
+            fidelity=args.fidelity,
         )
         if record_path is None:
             state.failed.append((url, "capture failed"))
@@ -221,6 +223,7 @@ def _capture_one(
     user_agent: str,
     dry_run: bool,
     robots: urllib.robotparser.RobotFileParser | None,
+    fidelity: str | None = None,
 ) -> Path | None:
     """Capture `url` in-process. Returns the resulting record path, or None on
     failure. In dry-run, returns the existing record path if the URL is already
@@ -236,7 +239,7 @@ def _capture_one(
         return paths.record_path(corpus_root, existing_id)
 
     log.info("capture %s", url)
-    opts = capture_lib.CaptureOptions(user_agent=user_agent)
+    opts = capture_lib.CaptureOptions(user_agent=user_agent, fidelity=fidelity)
     try:
         return capture_lib.capture_and_ingest(url, corpus_root=corpus_root, opts=opts)
     except capture_lib.CaptureError as exc:
@@ -397,6 +400,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--delay", type=float, default=DEFAULT_DELAY, help=f"inter-request sleep in seconds (default: {DEFAULT_DELAY})")
     p.add_argument("--include-subdomains", action="store_true", help="widen same-domain to all subdomains of the seed host")
     p.add_argument("--user-agent", default=DEFAULT_USER_AGENT, help=f"User-Agent for robots.txt + propagated to capture (default: {DEFAULT_USER_AGENT!r})")
+    p.add_argument("--fidelity", choices=("exact", "balanced", "lean"), default=None, help="snapshot fidelity for every page (exact|balanced|lean); overrides recipe/config. Useful for a whole-site lean re-crawl without editing the overlay")
     p.add_argument("--yes", action="store_true", help="skip the confirmation gate")
     p.add_argument("--resume", action="store_true", help="resume from the sidecar JSON")
     p.add_argument("--dry-run", action="store_true", help="discovery only; never capture")

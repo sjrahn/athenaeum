@@ -69,6 +69,17 @@ def configure(parser: argparse.ArgumentParser) -> None:
         ),
     )
     p.add_argument(
+        "--fidelity",
+        choices=("exact", "balanced", "lean"),
+        default=None,
+        help=(
+            "snapshot fidelity for HTML capture; overrides any recipe / config default. "
+            "exact = byte-faithful (presentation is content); balanced = drop redundant "
+            "font/image/media alternates (~-76%%, the default); lean = also prune unused "
+            "CSS (~-91%%, information-faithful). Records are identical across tiers."
+        ),
+    )
+    p.add_argument(
         "--video",
         action="store_true",
         help="force the video (yt-dlp) capturer, overriding the overlay's capturer",
@@ -106,6 +117,7 @@ def run(args: argparse.Namespace) -> int:
         user_agent=args.user_agent,
         cdp_url=args.cdp_url,
         transport=args.transport,
+        fidelity=args.fidelity,
         video=args.video,
         no_video=args.no_video,
         no_comments=args.no_comments,

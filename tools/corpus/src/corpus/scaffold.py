@@ -136,6 +136,11 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   capturer: browser                # packaged (browser | video) or a corpus-local name
 #   transport: headless              # headless | headed | cdp  (headed/cdp need a display
 #                                    # or a running Chrome -- see `corpus capture --transport`)
+#   fidelity: balanced               # exact | balanced | lean SingleFile snapshot tier.
+#                                    # exact = byte-faithful (presentation IS content); balanced
+#                                    # (default) drops redundant font/image/media alternates
+#                                    # (~-76%); lean also prunes unused CSS (~-91%, info-faithful).
+#                                    # Records are identical across tiers; only artifacts shrink.
 #   interactions:
 #     - scroll: full                   # hydrate lazy-loaded / below-the-fold media
 #     - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
