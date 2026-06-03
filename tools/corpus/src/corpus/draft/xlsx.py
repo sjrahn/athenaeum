@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
-from corpus import touches
+from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import text as text_fp
 from corpus.functional_uri import quote_value
@@ -76,6 +76,7 @@ def loss_issue(
 def draft(
     xlsx_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
@@ -110,9 +111,9 @@ def draft(
 
     sections, issues = _draft_sheet_sections(xlsx_path, complexity, detector)
 
+    recordbuild.add_blocks(build, sections)
     return {
         "fields": fields,
-        "segments": sections,
         "embeds": [],
         "title": fields.get("workbook_title"),
         "issues": issues,

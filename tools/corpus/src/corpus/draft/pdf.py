@@ -22,7 +22,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from pypdf import PdfReader
 
-from corpus import content_hash, records
+from corpus import content_hash, recordbuild, records
 from corpus.draft import DrafterResult, register
 from corpus.segments import Section, Segment
 
@@ -37,6 +37,7 @@ _BLANK_PAGE_THRESHOLD = 5
 def draft(
     pdf_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
@@ -80,9 +81,9 @@ def draft(
     algo = canonical_algo or "blake3-canonical-pdf"
     canonical = records.format_hash(algo.split("-", 1)[0], content_hash.compute(algo, pdf_path))
 
+    recordbuild.add_blocks(build, blocks)
     return {
         "fields": fields,
-        "segments": blocks,
         "embeds": [],
         "title": title,
         "issues": [],

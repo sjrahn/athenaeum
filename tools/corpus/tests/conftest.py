@@ -22,6 +22,24 @@ def _clear_schema_cache():
     schemas.cache_clear()
 
 
+@pytest.fixture
+def run_drafter():
+    """Drive a drafter through the Build contract (Part D) and return
+    `(result, blocks)` — `result` is the drafter's metadata-zone dict, `blocks` are
+    the content-zone Section/Segment objects it built on the Build (what tests used
+    to read from the old `result["segments"]`)."""
+    import frontmatter
+
+    from corpus import recordbuild
+
+    def _run(drafter, binary_path, *, corpus_root=None, **kwargs):
+        build = recordbuild.begin_from_post(frontmatter.Post(""), corpus_root)
+        result = drafter(binary_path, build=build, corpus_root=corpus_root, **kwargs)
+        return result, build.blocks
+
+    return _run
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--run-network",

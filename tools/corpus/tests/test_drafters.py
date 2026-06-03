@@ -148,13 +148,13 @@ def test_drafter_registry_has_pdf_and_images():
         assert sid in draft.REGISTRY
 
 
-def test_pdf_drafter_emits_canonical_and_metadata(tmp_path):
+def test_pdf_drafter_emits_canonical_and_metadata(tmp_path, run_drafter):
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "onepager.pdf", "application/pdf", "pdf")
     binary = LocalArtifactStore(root).local_path(rid, "pdf")
     drafter = draft.get_drafter("application/application_pdf")
     assert drafter is not None
-    result = drafter(binary, corpus_root=root, record_id=rid, record_metadata={})
+    result, _ = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
     assert "page_count" in (result.get("fields") or {})
     assert result.get("fields", {})["page_count"] == 2
     canonical = result.get("canonical") or ""
@@ -164,19 +164,18 @@ def test_pdf_drafter_emits_canonical_and_metadata(tmp_path):
     assert result.get("embeds") == []
 
 
-def test_image_drafter_emits_metadata_and_positioning_marker(tmp_path):
+def test_image_drafter_emits_metadata_and_positioning_marker(tmp_path, run_drafter):
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "sample.png", "image/png", "png")
     binary = LocalArtifactStore(root).local_path(rid, "png")
     drafter = draft.get_drafter("image/image_png")
     assert drafter is not None
-    result = drafter(binary, corpus_root=root, record_id=rid, record_metadata={})
+    result, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
     fields = result.get("fields") or {}
     assert fields["image_width"] == 200
     assert fields["image_height"] == 150
     assert fields["image_format"] == "PNG"
     # Spec §4.3.2.2: image segment is a body-empty positioning marker at bbox=0,0,1,1.
-    segs = result.get("segments") or []
     assert len(segs) == 1
     s = segs[0]
     assert isinstance(s, segments.Segment)
@@ -238,13 +237,13 @@ def test_html_drafter_registered_and_axis_aligned():
     assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
 
 
-def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
+def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "article.html", "text/html", "html")
     binary = LocalArtifactStore(root).local_path(rid, "html")
     drafter = draft.get_drafter("text/text_html")
     assert drafter is not None
-    result = drafter(binary, corpus_root=root, record_id=rid, record_metadata={})
+    result, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
 
     # Artifact fields are document metadata only — the canonical/final URLs and the
     # capture timestamp belong on the ORIGIN block, not here (spec §7.2).
@@ -267,7 +266,6 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path):
     assert len(canonical.split(":", 1)[1]) == 64
 
     # Exactly one wrapping text segment spanning every addressable element (1..11).
-    segs = result.get("segments") or []
     assert len(segs) == 1
     seg = segs[0]
     assert isinstance(seg, segments.Segment)
@@ -346,7 +344,7 @@ def test_svg_embed_falls_back_to_img_pixel_attrs():
     assert meta2 is not None and meta2["width"] == 0 and meta2["height"] == 0
 
 
-def test_html_drafter_preserves_form_wrapped_content(tmp_path):
+def test_html_drafter_preserves_form_wrapped_content(tmp_path, run_drafter):
     """Mechanical-drafter regression (realtor.ca / ASP.NET WebForms): the whole page
     is wrapped in one `<form id="form1">`. The drafter must NOT decompose it — the
     form-wrapped content stays addressable and its inline image still embeds."""
@@ -365,9 +363,11 @@ def test_html_drafter_preserves_form_wrapped_content(tmp_path):
     p = tmp_path / "webforms.html"
     p.write_text(html, encoding="utf-8")
     drafter = draft.get_drafter("text/text_html")
-    result = drafter(p, corpus_root=tmp_path, record_id="a" * 64, record_metadata={})
+    result, blocks = run_drafter(
+        drafter, p, corpus_root=tmp_path, record_id="a" * 64, record_metadata={}
+    )
 
-    body = (result.get("segments") or [None])[0].body
+    body = blocks[0].body
     assert "123 Main St" in body and "2 beds, 2 baths." in body  # content survives the form
     # The image inside the page-wrapping form is embedded (was silently dropped before).
     embeds = result.get("embeds") or []
@@ -398,7 +398,7 @@ def test_html_title_falls_back_to_title_tag_when_og_title_is_generic():
     assert draft_html._title(BeautifulSoup(no_og, "html.parser")) == "Just The Title"
 
 
-def test_html_drafter_flags_empty_body(tmp_path):
+def test_html_drafter_flags_empty_body(tmp_path, run_drafter):
     """Drafter-deterministic issue, emitted in our spec §4.3.3.1 shape."""
     p = tmp_path / "empty.html"
     p.write_text(
@@ -407,7 +407,7 @@ def test_html_drafter_flags_empty_body(tmp_path):
         encoding="utf-8",
     )
     drafter = draft.get_drafter("text/text_html")
-    result = drafter(p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+    result, _ = run_drafter(drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
     empties = [
         i for i in result.get("issues") or []
         if i["id"] == "partial-content" and i.get("subtype") == "empty-body"
@@ -480,7 +480,7 @@ def test_html_el_addressing_round_trips(tmp_path):
         assert im.size == (4, 4)
 
 
-def test_html_drafter_prefers_largest_srcset(tmp_path):
+def test_html_drafter_prefers_largest_srcset(tmp_path, run_drafter):
     """The embed metadata and the `el=` resolver both use the largest inlined `srcset`
     variant, not the displayed thumbnail `src` — so embeds are full-resolution."""
     import base64
@@ -500,7 +500,7 @@ def test_html_drafter_prefers_largest_srcset(tmp_path):
         encoding="utf-8",
     )
     drafter = draft.get_drafter("text/text_html")
-    result = drafter(p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+    result, _ = run_drafter(drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
     embeds = result.get("embeds") or []
     assert len(embeds) == 1
     emb = embeds[0]

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from corpus import recordbuild
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import text as text_fp
 from corpus.segments import Section, Segment
@@ -59,6 +60,7 @@ def _q(tag: str) -> str:
 def draft(
     docx_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
@@ -84,9 +86,9 @@ def draft(
     fields["paragraph_count"] = sum(1 for kind, _ in blocks if kind == "para")
     fields["table_count"] = sum(1 for kind, _ in blocks if kind == "table")
 
+    recordbuild.add_blocks(build, _build_segments(blocks))
     return {
         "fields": fields,
-        "segments": _build_segments(blocks),
         "embeds": [],
         "title": fields.get("docx_title") or None,
         "issues": [],

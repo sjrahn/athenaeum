@@ -165,6 +165,8 @@ Conversion produces the artifact's body as well-formed markdown. It is MIME-driv
 - **`text/markdown`, `text/plain`** → passthrough with minimal cleanup. `conversion_method: passthrough`.
 - **`unknown`** → best-effort fallback; emit a `metadata` body summarizing what little can be determined.
 
+**One construction path (the constituent model).** Every drafter builds the record's content zone through the **`recordbuild.Build` ops** — `add_blocks` → `open_section`/`add_segment` (which enforce body⟺lossless per segment) — and `recordbuild.finish` emits + grammar-validates it. These are the *same* ops `compile` replays from a decomposed `manifest.corpus`, so draft / redraft / decompose / compile / normalize all construct records identically and a drafted record decomposes then recompiles byte-for-byte. This is the substrate the LLM normalizer works on: it edits the decomposed **constituent files** (per-segment body / description sidecars + the ops manifest) and recompiles deterministically — never rewriting a monolithic markdown blob — which makes whole classes of structural corruption *unrepresentable*. (`begin_from_post` seeds the Build for the draft/redraft path; `begin` seeds it from a `meta.yaml` for compile.)
+
 Conversion writes pipeline-state metadata (`conversion_method`, `conversion_tool`, `conversion_date`) into a tracking sidecar or a frontmatter section the implementation reserves for re-run targeting. These fields are an implementation concern, not a record-contract requirement.
 
 ### 3.2 Cross-reference resolution (deterministic)

@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import Any
 
-from corpus import content_hash, mime, paths, records, schemas, segments, touches
+from corpus import content_hash, mime, paths, recordbuild, records, schemas, touches
 from corpus import draft as draft_pkg
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 from corpus.store import ArtifactMissing, get_store
@@ -76,15 +76,25 @@ def run(args: argparse.Namespace) -> int:
     # corpus that overrides `canonical_strategy.algo` is honoured (drafters fall back to
     # their built-in default when this is None).
     canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
+    # One construction path: the drafter populates a `Build` (content zone via the
+    # recordbuild ops — the same path `compile` replays from a manifest), and the
+    # caller applies the metadata-zone result + `finish` emits/validates.
+    build = recordbuild.begin_from_post(post, corpus_root)
     result = drafter(
         binary_file,
+        build=build,
         corpus_root=corpus_root,
         record_id=record_id,
         record_metadata=post.metadata,
         canonical_algo=canonical_algo,
     )
 
-    _apply_drafter_result(post, result, mt_schema, mime_schema_id)
+    _apply_drafter_result(post, result, mime_schema_id)
+
+    # Emit the content zone the drafter built on the Build — body-draft schemas only
+    # (spec §7.1). `finish` re-parses to surface grammar errors before any write.
+    if str(mt_schema.get("mode", "body-draft")).lower() == "body-draft":
+        recordbuild.finish(build)
 
     # Opt-in per-host canonical content-scoping: if the record's origin host declares a
     # `canonical.content_selector` in its overlay, recompute the canonical hash over just
@@ -146,10 +156,10 @@ def run(args: argparse.Namespace) -> int:
 def _apply_drafter_result(
     post,
     result: dict[str, Any],
-    mt_schema: dict[str, Any],
     mime_schema_id: str,
 ) -> None:
-    """Merge a drafter's result onto `post`."""
+    """Merge a drafter's metadata-zone result onto `post` (the content zone is built
+    on the Build via `recordbuild.add_blocks` + `finish`)."""
     # Artifact-block fields (merge drafter-supplied fields; refined title overrides).
     artifact = records.artifact_block(post) or {
         "mime": records.media_type_for(post),
@@ -193,10 +203,8 @@ def _apply_drafter_result(
     for alias in result.get("origin_uri_aliases") or []:
         records.add_origin_uri_alias(post, str(alias))
 
-    # Content-zone body — body-draft schemas REPLACE the content zone (spec §7.1).
-    mode = str(mt_schema.get("mode", "body-draft")).lower()
-    if mode == "body-draft" and (segs := result.get("segments")) is not None:
-        post.content = segments.emit(segs)
+    # The content zone is built by the drafter on the Build (via `recordbuild.add_blocks`)
+    # and emitted by `recordbuild.finish` in `run()` — not here.
 
     # Drafter-detected issues (spec-shaped, reconciliation #2). Skip a malformed dict
     # missing the required `severity` rather than crashing the whole draft — parity with

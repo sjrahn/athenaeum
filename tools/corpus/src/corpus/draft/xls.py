@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from corpus import touches
+from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft.xlsx import _fmt_cell, _rows_to_markdown, loss_issue
 from corpus.fingerprint import text as text_fp
@@ -49,6 +49,7 @@ def _xlrd():
 def draft(
     xls_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
@@ -83,9 +84,9 @@ def draft(
     finally:
         book.release_resources()
 
+    recordbuild.add_blocks(build, sections)
     return {
         "fields": fields,
-        "segments": sections,
         "embeds": [],
         "title": None,
         "issues": issues,

@@ -212,7 +212,7 @@ def test_apply_drafter_result_keeps_artifact_title_candidate_and_leaves_frontmat
         "origin_fields": {"ytdlp_title": "YT"},
         "origin_uri_aliases": [],
     }
-    _apply_drafter_result(post, result, {}, "video/video_mp4")
+    _apply_drafter_result(post, result, "video/video_mp4")
     assert (records.artifact_block(post).get("fields") or {})["title"] == "Artifact Candidate"
     assert post.metadata.get("title") == ""  # frontmatter title untouched (normalizer-owned)
     assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"

@@ -107,6 +107,19 @@ def begin(meta: dict, corpus_root: Path | None) -> Build:
     return Build(post=post, blocks=[], corpus_root=corpus_root)
 
 
+def begin_from_post(post: frontmatter.Post, corpus_root: Path | None) -> Build:
+    """Seed a Build from an already-loaded record `post` — the draft / redraft path.
+
+    Unlike `begin` (which reconstructs a post from a decomposed `meta.yaml`), this
+    wraps the live stub post so a drafter can populate the content zone through the
+    same ops and `finish` re-emits it. Byte/provenance + metadata-zone frontmatter
+    already on the post are preserved; the embed / issue lists default in place (a
+    fresh stub carries none; a re-stubbed record has them cleared)."""
+    post.metadata.setdefault("_embeds", [])
+    post.metadata.setdefault("_issues", [])
+    return Build(post=post, blocks=[], corpus_root=corpus_root)
+
+
 def add_embed(
     b: Build,
     *,
@@ -216,6 +229,52 @@ def add_issue(
         address=address,
         fields=f,
     )
+
+
+def add_blocks(b: Build, blocks: list) -> None:
+    """Feed pre-built content-zone blocks (`Section` / `Segment` objects produced by a
+    drafter's helpers) through the ops, in order — so drafter output enters the record
+    via the SAME validated construction path as `compile` (per-segment body⟺lossless
+    enforcement via `add_segment`, section nesting) instead of a parallel
+    `segments.emit`. Faithful: every Segment / Section field is replayed, so
+    `finish(b)` re-emits byte-identically to `segments.emit(blocks)`."""
+    for blk in blocks:
+        if isinstance(blk, segments.Section):
+            open_section(
+                b,
+                address=blk.address,
+                entry=blk.entry,
+                classification=blk.classification,
+                description=blk.description,
+                fields=blk.extra,
+            )
+            for seg in blk.segments:
+                add_segment(
+                    b,
+                    atom=seg.atom,
+                    overlay=seg.overlay,
+                    address=seg.address,
+                    body=seg.body or None,
+                    description=seg.description,
+                    perceptual=seg.perceptual,
+                    extra=seg.extra,
+                )
+            b._section = None  # close the section so a later top-level block isn't nested
+        elif isinstance(blk, segments.Segment):
+            b._section = None  # ensure top-level placement
+            add_segment(
+                b,
+                atom=blk.atom,
+                overlay=blk.overlay,
+                address=blk.address,
+                body=blk.body or None,
+                description=blk.description,
+                entry=blk.entry,
+                perceptual=blk.perceptual,
+                extra=blk.extra,
+            )
+        else:
+            raise ValueError(f"add_blocks: unexpected block type {type(blk).__name__}")
 
 
 def finish(b: Build) -> frontmatter.Post:
@@ -377,9 +436,7 @@ def write_workdir(
     ]
 
     # ----- Embeds (metadata zone, reconciliation #1) ----- #
-    emit_i = 0
-    for embed in post.metadata.get("_embeds") or []:
-        emit_i += 1
+    for emit_i, embed in enumerate(post.metadata.get("_embeds") or [], start=1):
         parts = [
             f"embed {embed.get('media_type', '')}",
             f"addr={_fmt_addr(embed.get('address'))}",

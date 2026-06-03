@@ -361,7 +361,7 @@ def _make_video_record_file(tmp_path: Path) -> tuple[Path, Path, str]:
     return root, vid, rid
 
 
-def test_video_draft_transcription_unavailable(tmp_path, monkeypatch):
+def test_video_draft_transcription_unavailable(tmp_path, monkeypatch, run_drafter):
     """NoOp/unavailable transcription → record with a warning issue, no sections."""
     root, vid, rid = _make_video_record_file(tmp_path)
 
@@ -369,32 +369,32 @@ def test_video_draft_transcription_unavailable(tmp_path, monkeypatch):
         raise TranscriptionUnavailable("no adapter")
 
     monkeypatch.setattr(resolver, "resolve", _raise)
-    result = video_mod.draft(vid, corpus_root=root, record_id=rid)
-    assert result["segments"] == []
+    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
+    assert blocks == []
     issues = result["issues"]
     assert len(issues) == 1
     assert issues[0]["id"] == "transcription-unavailable"
     assert issues[0]["severity"] == "warning"
 
 
-def test_video_draft_empty_transcript_info_issue(tmp_path, monkeypatch):
+def test_video_draft_empty_transcript_info_issue(tmp_path, monkeypatch, run_drafter):
     root, vid, rid = _make_video_record_file(tmp_path)
     empty = tmp_path / "empty.txt"
     empty.write_text("", encoding="utf-8")
     monkeypatch.setattr(resolver, "resolve", lambda *a, **k: empty)
-    result = video_mod.draft(vid, corpus_root=root, record_id=rid)
-    assert result["segments"] == []
+    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
+    assert blocks == []
     assert result["issues"][0]["severity"] == "info"
 
 
-def test_video_draft_with_transcript_builds_sections(tmp_path, monkeypatch):
+def test_video_draft_with_transcript_builds_sections(tmp_path, monkeypatch, run_drafter):
     root, vid, rid = _make_video_record_file(tmp_path)
     tx = tmp_path / "tx.txt"
     tx.write_text(_TRANSCRIPT, encoding="utf-8")
     monkeypatch.setattr(resolver, "resolve", lambda *a, **k: tx)
-    result = video_mod.draft(vid, corpus_root=root, record_id=rid)
+    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
     assert result["issues"] == []
-    assert len(result["segments"]) == 2
+    assert len(blocks) == 2
     assert result["fields"]["is_diarized"] is True
     assert {sp["id"] for sp in result["fields"]["speakers"]} == {1, 2}
 

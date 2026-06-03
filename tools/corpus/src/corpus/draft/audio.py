@@ -27,7 +27,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from corpus import resolver, touches
+from corpus import recordbuild, resolver, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
@@ -46,6 +46,7 @@ _AUDIO_SCHEMA_IDS = (
 def draft(
     audio_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path,
     record_id: str,
     record_metadata: dict[str, Any] | None = None,
@@ -112,9 +113,9 @@ def draft(
     # `ytdlp_*` fields, never the body/artifact/frontmatter. The body stays transcript-only.
     sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
 
+    recordbuild.add_blocks(build, sections)
     return {
         "fields": fields,
-        "segments": sections,
         "embeds": [],
         "issues": issues,
         "origin_fields": sidecar["origin_fields"],

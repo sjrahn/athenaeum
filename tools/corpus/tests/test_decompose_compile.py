@@ -142,3 +142,56 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     assert isinstance(chain, list)
     assert chain[0] == "corpus.ingest@0.1.0"
     assert chain[-1].startswith("corpus.re-stub@")
+
+
+def _assert_add_blocks_roundtrips(blocks):
+    """`recordbuild.add_blocks` + `finish()` must emit byte-identically to the direct
+    `segments.emit(blocks)` path drafters used to take."""
+    direct = segments.emit(blocks)
+    build = recordbuild.begin_from_post(frontmatter.Post(""), None)
+    recordbuild.add_blocks(build, blocks)
+    recordbuild.finish(build)
+    assert build.post.content == direct
+
+
+def test_add_blocks_matches_segments_emit_sections():
+    """Part D, sections-only (pdf-outline / video-transcript shape): nested segments,
+    a lead image keyframe marker, and a per-segment perceptual all round-trip."""
+    _assert_add_blocks_roundtrips(
+        [
+            segments.Section(
+                address="pages=1-2",
+                entry="Intro",
+                segments=[
+                    segments.Segment(atom="image", address="frame=00:00:00", body=""),
+                    segments.Segment(
+                        atom="text",
+                        address="page=1",
+                        body="hello",
+                        perceptual="simhash:" + "a" * 16,
+                    ),
+                ],
+            ),
+            segments.Section(
+                address="pages=3-4",
+                entry="Body",
+                segments=[segments.Segment(atom="text", address="page=3", body="world")],
+            ),
+        ]
+    )
+
+
+def test_add_blocks_matches_segments_emit_flat_segments():
+    """Part D, top-level segments (html-wrapper / pdf-flat shape), incl. a body-empty
+    image marker and a perceptual hash."""
+    _assert_add_blocks_roundtrips(
+        [
+            segments.Segment(
+                atom="text",
+                address="el=1-3",
+                body="lede paragraph",
+                perceptual="simhash:" + "b" * 16,
+            ),
+            segments.Segment(atom="image", address="bbox=0,0,1,1", body=""),
+        ]
+    )

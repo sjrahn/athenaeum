@@ -13,21 +13,30 @@ Interface (per spec §7.1 / §7.4):
     draft(
         binary_path: Path,
         *,
+        build: recordbuild.Build,
         corpus_root: Path,
         record_id: str,
         record_metadata: dict,
+        canonical_algo: str | None = None,
     ) -> DrafterResult
 
-`DrafterResult` is a TypedDict with these keys:
+The drafter builds the **content zone** by feeding its `Section` / `Segment` blocks
+through `recordbuild.add_blocks(build, blocks)` — so a record is constructed via the
+SAME validated ops (`add_segment` / `open_section` + body⟺lossless checks) that
+`compile` replays from a manifest, not a parallel `segments.emit`. The single
+construction path is shared by draft / redraft / decompose / compile / normalize, and
+`recordbuild.finish(build)` (run by the caller) emits + grammar-validates it. The
+drafter returns a `DrafterResult` carrying only the **metadata-zone** facts the caller
+merges onto the record:
 
     fields       — artifact-block extended fields (per the mime schema)
-    segments     — content-zone blocks (list of Section | Segment) or None
     embeds       — metadata-zone embeds (list of dicts: {media_type, address, transport, fields})
     title        — refined artifact title or None
     description  — frontmatter description; set only when the record's is still empty
                    (e.g. a yt-dlp caption). The normalizer may later refine it.
     issues       — spec §4.3.3.1 issue dicts: {id, severity, resolution, detector, address?, ...}
     canonical    — `<algo>:<hex>` if the mime schema declared a canonical_strategy; else None
+    origin_fields — non-primary-source enrichment (e.g. a media `ytdlp_*` set) → origin block
     origin_uri_aliases — URLs aliasing the captured origin (canonical/final); folded into
                    the origin block's uri: list, not artifact fields (spec §7.2)
 
@@ -43,15 +52,16 @@ from typing import Any, TypedDict
 
 
 class DrafterResult(TypedDict, total=False):
-    """Return value of a drafter."""
+    """Metadata-zone return value of a drafter (the content zone is built on the
+    passed-in `recordbuild.Build` via `add_blocks`)."""
 
     fields: dict[str, Any]
-    segments: list[Any] | None  # list[segments.Section | segments.Segment]
     embeds: list[dict[str, Any]]
     title: str | None
     description: str | None  # frontmatter description; applied only when currently empty
     issues: list[dict[str, Any]]
     canonical: str | None
+    origin_fields: dict[str, Any]  # enrichment → origin block (spec §7.2)
     # URLs the drafter discovers that are aliases of the captured origin (canonical
     # link, post-redirect final URL). Merged into the origin block's uri: list by
     # `_apply_drafter_result` — NOT artifact fields (spec §7.2).

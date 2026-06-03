@@ -78,7 +78,7 @@ import blake3 as _blake3
 from bs4 import BeautifulSoup, Comment, Tag
 from PIL import Image
 
-from corpus import content_hash, records, touches
+from corpus import content_hash, recordbuild, records, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import text as text_fp
 from corpus.segments import Segment
@@ -249,6 +249,7 @@ _DRAFTER_DETECTOR_ID = touches.script_identifier("draft.text/text_html")
 def draft(
     html_path: Path,
     *,
+    build: recordbuild.Build,
     corpus_root: Path | None = None,
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
@@ -343,10 +344,10 @@ def draft(
         algo.split("-", 1)[0], content_hash.compute(algo, html_path)
     )
 
+    recordbuild.add_blocks(build, segments)
     return {
         "fields": fields,
         "embeds": embeds,
-        "segments": segments,
         "title": title,
         "issues": issues,
         "canonical": canonical,
