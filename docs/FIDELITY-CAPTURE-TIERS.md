@@ -90,17 +90,31 @@ artifact records *how* it was captured (relevant when comparing or re-capturing 
 - `scaffold.py` — mention `fidelity` in the annotated `example.com.yaml` template.
 - CLI — add `--fidelity {exact,balanced,lean}` override on `capture` / `crawl`.
 
-## Validation gate (before AllData lean re-crawl)
+## Validation gate (before AllData lean re-crawl) — PASSED 2026-06-03
 
-PNG content diagrams are confirmed preserved under lean. The one untested case is **electrical SVG
+PNG content diagrams were confirmed preserved under lean; the one untested case was **electrical SVG
 wiring schematics** (the interactive Non-OE diagrams the overlay un-lazies via the
-`img[temp-src]` → `src` eval): confirm `removeAlternativeImages` does **not** drop a content SVG that
-lives inside `ad-repair-dynamic-content`.
+`img[temp-src]` → `src` eval): does `removeAlternativeImages` drop a content SVG inside
+`ad-repair-dynamic-content`?
 
-- Capture one electrical wiring-diagram leaf under `lean`; confirm the schematic SVG survives in the
-  content region.
-- If it is dropped: remove `removeAlternativeImages` from the `balanced`/`lean` presets. Fonts + CSS
-  alone still take 11.4 MB → ~5 MB without touching any images — a safe fallback.
+**Result: PASS.** A/B on a TSB leaf carrying 4.86 MB of real content SVG:
+
+| | exact | lean |
+|---|---|---|
+| File size | 17.14 MB | **6.83 MB** |
+| Content region | 5.78 MB | 5.78 MB — identical |
+| Content `<img src=data:svg>` diagrams | 11 | 11 |
+| Content SVG bytes | 4.86 MB | 4.86 MB |
+
+All 11 schematic figures survived lean **byte-for-byte** and the content region is identical — the
+entire 10.3 MB saving came from chrome *outside* the content region. `removeAlternativeImages` drops
+only *alternate* representations; a single-source inlined `<img src="data:image/svg…">` has no
+alternate, so it is untouchable. (This is why lean is **content-proportional**: a real-content-heavy
+page lands at 6.8 MB, not ~1 MB.) `removeAlternativeImages` **stays** in the `balanced`/`lean`
+presets — no tooling change. The fallback below was therefore not needed.
+
+- ~~If a content SVG is dropped: remove `removeAlternativeImages` from the `balanced`/`lean` presets
+  (fonts + CSS alone still 11.4 MB → ~5 MB).~~ Not needed — gate passed.
 
 ## Corpus-side follow-up (Curator, after this lands)
 
@@ -134,5 +148,6 @@ Implemented as specified, with `balanced` confirmed as the global default (sjrah
 **Caveat carried into gotcha #50:** "records identical across tiers" holds for the drafted *body*
 (the mechanical drafter reads DOM, not fonts/CSS) but **not** for record *identity* — `id =
 blake3(artifact)`, and the tiers exist to change the artifact bytes, so the same URL at two tiers is
-two distinct records (different id/filename/shard). The validation gate above is still **open** —
-run it before the lean re-crawl.
+two distinct records (different id/filename/shard). The validation gate above **passed** (2026-06-03,
+PASS table) — `removeAlternativeImages` does not touch single-source content SVGs, so lean is cleared
+for the AllData re-crawl.
