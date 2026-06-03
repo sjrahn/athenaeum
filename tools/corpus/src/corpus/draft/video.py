@@ -14,11 +14,16 @@ Produces a `draft`-status body from a video artifact:
    `transcription-unavailable` issue (reconciliation #2 vs the reference's
    CarbonAi `format_loss` shape).
 
-3. Parse the `[Speaker N] (HH:MM:SS)` transcript into one Section per speaker run.
-   Each section holds one `text/transcript` Segment per checkpoint (verbatim
-   utterance as body, speaker carried on `extra`), bookended by body-empty
-   `image` positioning markers at the run's start/end frames (when the source has a
-   video stream). `text/transcript` is the lossless atomic overlay (spec §7.3) — the
+3. Parse the `[Speaker N] (HH:MM:SS)` transcript into Sections. Default: one Section
+   per speaker run. When the capture's `.info.json` ships chapter markers, section by
+   the chapters instead (the uploader's outline beats the speaker-run heuristic) — the
+   chapter title becomes the section `entry` TOC label (§4.3.2.2; metadata structure,
+   not body content). Each section holds one `text/transcript` Segment per checkpoint
+   (verbatim utterance as body, speaker carried on `extra`), led by a body-empty `image`
+   keyframe marker at the section's start frame — the final section also closes with
+   one at the video's last frame (when the source has a video stream). Interior
+   boundary frames are shared between adjacent sections, so each is emitted once
+   (§4.3.2.2). `text/transcript` is the lossless atomic overlay (spec §7.3) — the
    body losslessly transcribes the addressed time-range; the adapter's output is
    approximate and the normalizer corrects it.
 
@@ -39,7 +44,7 @@ from corpus import resolver, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
-from corpus.draft._transcript import parse_transcript_sections
+from corpus.draft._transcript import parse_chaptered_sections, parse_transcript_sections
 from corpus.segments import Section
 from corpus.transcription import TranscriptionUnavailable
 
@@ -73,6 +78,15 @@ def draft(
     issues: list[dict[str, Any]] = []
     sections: list[Section] = []
     transcript = ""
+
+    # yt-dlp .info.json is non-primary-source enrichment → it goes to the origin block as
+    # `ytdlp_*` fields, never the body/artifact/frontmatter. Its `chapters[]` are the one
+    # structural exception: they section the body (a section's `entry` TOC label + address
+    # are metadata structure, not body content), so a chaptered video is sectioned by its
+    # chapters in preference to the speaker-run heuristic.
+    sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
+    chapters = sidecar.get("chapters")
+
     mode, per_host_transcriber = resolve_transcription(corpus_root, record_metadata)
     if mode == "disabled":
         log.info("transcription disabled for this origin host")
@@ -93,13 +107,17 @@ def draft(
             issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
         else:
             if transcript.strip():
-                sections = parse_transcript_sections(
-                    transcript,
-                    audio_stream_id=probe["audio_stream_id"] or "a0",
-                    video_stream_id=probe["video_stream_id"],
-                    multi_audio=probe["audio_count"] > 1,
-                    multi_video=probe["video_count"] > 1,
-                )
+                common = {
+                    "audio_stream_id": probe["audio_stream_id"] or "a0",
+                    "video_stream_id": probe["video_stream_id"],
+                    "multi_audio": probe["audio_count"] > 1,
+                    "multi_video": probe["video_count"] > 1,
+                }
+                if chapters:
+                    sections = parse_chaptered_sections(transcript, chapters, **common)
+                    log.info("sectioned by %d chapter marker(s)", len(chapters))
+                else:
+                    sections = parse_transcript_sections(transcript, **common)
             else:
                 issues.append(
                     _unavailable_issue("info", "empty transcript (no detectable speech)")
@@ -116,11 +134,6 @@ def draft(
     if distinct_speakers:
         fields["speakers"] = [{"id": idx, "name": None} for idx in distinct_speakers]
         fields["is_diarized"] = True
-
-    # yt-dlp .info.json is non-primary-source enrichment → it goes to the origin block as
-    # `ytdlp_*` fields, never the body/artifact/frontmatter. The body stays transcript-only
-    # (the transcript is the one thing derived from the primary artifact's own audio).
-    sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
 
     return {
         "fields": fields,

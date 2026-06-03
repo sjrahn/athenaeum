@@ -16,6 +16,12 @@ list there. `webpage_url`/`original_url` fold into the origin `uri:` alias list.
 
 Mechanical and host-agnostic: any yt-dlp capture has this sidecar. The lifted key set is
 schema-driven (the mime schema's `sidecar.ytdlp_keys`); `_YTDLP_KEYS` is the fallback.
+
+One non-field exception: `chapters[]` (the uploader's outline). It is *structural*, not a
+flat datum — the video drafter sections the body by it, each chapter title becoming a
+section `entry` TOC label (§4.3.2.2). It rides the `SidecarResult` as `chapters` (not an
+`ytdlp_*` origin field) and is consumed into the section structure, never copied to a
+metadata block.
 """
 
 from __future__ import annotations
@@ -55,10 +61,14 @@ class SidecarResult(TypedDict):
     origin_fields: dict[str, Any]
     # webpage_url / original_url, folded into the origin block's uri: alias list.
     origin_aliases: list[str]
+    # Video chapter markers `[{start, end?, title}, …]` (yt-dlp `chapters[]`) — structural,
+    # not a flat field: the video drafter sections the body by them (each chapter title
+    # becomes a section `entry` TOC label). None when the capture ships no chapters.
+    chapters: list[dict[str, Any]] | None
 
 
 def _empty() -> SidecarResult:
-    return {"origin_fields": {}, "origin_aliases": []}
+    return {"origin_fields": {}, "origin_aliases": [], "chapters": None}
 
 
 def info_json_path(corpus_root: Path, record_id: str) -> Path:
@@ -87,7 +97,9 @@ def parse_info_json_for_record(
         return _empty()
     if not isinstance(info, dict):
         return _empty()
-    return _map_info(info, _ytdlp_keys_for(corpus_root, record_metadata))
+    out = _map_info(info, _ytdlp_keys_for(corpus_root, record_metadata))
+    out["chapters"] = _chapters(info.get("chapters"))
+    return out
 
 
 def _ytdlp_keys_for(
@@ -106,24 +118,49 @@ def _ytdlp_keys_for(
     return _YTDLP_KEYS
 
 
-def _map_info(info: dict[str, Any], keys: tuple[str, ...]) -> SidecarResult:
-    out = _empty()
-
+def _map_info(info: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    """The flat `ytdlp_*` half of the sidecar: origin fields (+ `ytdlp_comments`) and uri
+    aliases. Returns just those two keys — chapters are structural and added separately by
+    `parse_info_json_for_record` (they section the body, they're not a flat origin field)."""
     fields: dict[str, Any] = {
         f"ytdlp_{k}": info[k] for k in keys if info.get(k) not in (None, "", [])
     }
     comments = _comments(info.get("comments"))
     if comments:
         fields["ytdlp_comments"] = comments
-    out["origin_fields"] = fields
 
     aliases = [
         str(info[k])
         for k in ("webpage_url", "original_url")
         if info.get(k) and str(info[k]).strip()
     ]
-    out["origin_aliases"] = list(dict.fromkeys(aliases))  # de-dupe, keep order
-    return out
+    return {
+        "origin_fields": fields,
+        "origin_aliases": list(dict.fromkeys(aliases)),  # de-dupe, keep order
+    }
+
+
+def _chapters(raw: Any) -> list[dict[str, Any]] | None:
+    """yt-dlp `chapters[]` → a validated `[{start, end?, title}, …]` (present-only),
+    used to section the video by its chapter markers (structural — drives section
+    boundaries + `entry` TOC labels, never body content). None when absent/malformed so
+    the drafter falls back to speaker-run sectioning."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[dict[str, Any]] = []
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
+        start, title = c.get("start_time"), c.get("title")
+        if start is None or not (title and str(title).strip()):
+            continue
+        chapter: dict[str, Any] = {"start": float(start), "title": str(title).strip()}
+        if c.get("end_time") is not None:
+            chapter["end"] = float(c["end_time"])
+        out.append(chapter)
+    if out:
+        log.info("info.json: %d chapter marker(s) → section by chapters", len(out))
+    return out or None
 
 
 def _comments(comments: Any) -> list[dict[str, Any]]:

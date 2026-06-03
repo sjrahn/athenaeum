@@ -170,9 +170,102 @@ def test_parse_transcript_sections_speaker_runs():
     transcripts = [s for s in first.segments if s.overlay == "text/transcript"]
     assert len(transcripts) == 2
     assert all(s.extra.get("speaker") == 1 for s in transcripts)
-    # Bookended by image framegrab markers (body-empty).
+    # Each section leads with a body-empty image framegrab marker.
     assert first.segments[0].atom == "image" and first.segments[0].body == ""
     assert first.address.startswith("time_range=00:07-")
+
+
+def test_parse_transcript_sections_frames_unique_lead_and_final_close():
+    # Regression: a boundary instant is shared by adjacent speaker runs (run k's end ==
+    # run k+1's begin). Each `frame=<t>` address must appear once (§4.3.2.2) — the old
+    # code bookended every run, emitting the boundary frame twice and failing lint.
+    transcript = (
+        "[Speaker 1] (00:00:00)\nA.\n\n"
+        "[Speaker 2] (00:00:10)\nB.\n\n"
+        "[Speaker 2] (00:00:15)\nC.\n"
+    )
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    frames = [seg.address for sec in secs for seg in sec.segments if seg.atom == "image"]
+    # No duplicate at the 00:10 boundary; the final section closes with the last frame.
+    assert frames == ["frame=00:00", "frame=00:10", "frame=00:15"]
+    assert len(frames) == len(set(frames))
+    # Every section leads with its keyframe; the final section also closes with one.
+    assert all(sec.segments[0].atom == "image" for sec in secs)
+    assert secs[-1].segments[-1].atom == "image"
+
+
+def test_parse_chaptered_sections_uses_chapter_outline():
+    # A video that ships chapter markers is sectioned by them (the uploader's outline),
+    # the chapter title riding as each section's `entry` TOC label (§4.3.2.2).
+    transcript = (
+        "[Speaker 1] (00:00:00)\nIntro line.\n\n"
+        "[Speaker 1] (00:00:20)\nFirst topic.\n\n"
+        "[Speaker 2] (00:00:50)\nSecond topic question.\n\n"
+        "[Speaker 1] (00:01:10)\nWrapping up.\n"
+    )
+    chapters = [
+        {"start": 0.0, "end": 40.0, "title": "Intro"},
+        {"start": 40.0, "end": 60.0, "title": "Discussion"},
+        {"start": 60.0, "end": 80.0, "title": "Outro"},
+    ]
+    secs = transcript_mod.parse_chaptered_sections(
+        transcript,
+        chapters,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    # One section per chapter, titled by the chapter.
+    assert [s.entry for s in secs] == ["Intro", "Discussion", "Outro"]
+    # Chapter time-ranges become the section addresses (contiguous; the last runs to the
+    # final checkpoint rather than its declared end_time).
+    assert secs[0].address == "time_range=00:00-00:40"
+    assert secs[1].address == "time_range=00:40-01:00"
+    assert secs[2].address.startswith("time_range=01:00-")
+    # Each checkpoint lands in the chapter containing its start.
+    def _txt(sec):
+        return [g.body for g in sec.segments if g.overlay == "text/transcript"]
+
+    def _spk(sec):
+        return [g.extra.get("speaker") for g in sec.segments if g.overlay == "text/transcript"]
+
+    assert _txt(secs[0]) == ["Intro line.", "First topic."]  # 0s, 20s → Intro [0,40)
+    assert _txt(secs[1]) == ["Second topic question."]  # 50s → Discussion [40,60)
+    # A chapter spanning two speakers keeps each segment's own speaker.
+    assert _spk(secs[1]) == [2] and _spk(secs[2]) == [1]
+    # Frame markers stay unique and each section leads with one (§4.3.2.2).
+    frames = [g.address for s in secs for g in s.segments if g.atom == "image"]
+    assert len(frames) == len(set(frames))
+    assert all(s.segments[0].atom == "image" for s in secs)
+
+
+def test_parse_chaptered_sections_no_chapters_with_text_still_emits_lead_frame():
+    # A chapter that contains no speech is still a structural section (kept, not dropped),
+    # carrying its lead keyframe.
+    transcript = "[Speaker 1] (00:00:05)\nOnly in the first chapter.\n"
+    chapters = [
+        {"start": 0.0, "end": 10.0, "title": "Talk"},
+        {"start": 10.0, "end": 20.0, "title": "Silence"},
+    ]
+    secs = transcript_mod.parse_chaptered_sections(
+        transcript,
+        chapters,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    assert [s.entry for s in secs] == ["Talk", "Silence"]
+    # The speechless chapter has its lead frame but no transcript segment.
+    assert all(g.overlay != "text/transcript" for g in secs[1].segments)
+    assert secs[1].segments[0].atom == "image"
 
 
 def test_parse_transcript_sections_no_video_stream_omits_frames():

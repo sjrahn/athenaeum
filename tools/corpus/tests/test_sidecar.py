@@ -84,6 +84,52 @@ def test_info_json_path_is_in_capture_not_artifacts(tmp_path):
     assert p.parent.name == "capture" and "artifacts" not in p.parts
 
 
+# ---------- chapters (structural → sectioning, not a flat origin field) ---------- #
+
+
+def test_chapters_validates_and_shapes():
+    raw = [
+        {"start_time": 0.0, "end_time": 16.0, "title": "Introduction"},
+        {"start_time": 16.0, "end_time": 61.0, "title": "  Compiler ABI  "},  # title trimmed
+        {"start_time": 61.0, "title": "No end is fine"},  # end_time optional
+        {"title": "no start → dropped"},
+        {"start_time": 99.0, "title": "   "},  # blank title → dropped
+        "not a dict",
+    ]
+    assert _sidecar._chapters(raw) == [
+        {"start": 0.0, "title": "Introduction", "end": 16.0},
+        {"start": 16.0, "title": "Compiler ABI", "end": 61.0},
+        {"start": 61.0, "title": "No end is fine"},
+    ]
+
+
+def test_chapters_absent_or_malformed_is_none():
+    assert _sidecar._chapters(None) is None
+    assert _sidecar._chapters([]) is None
+    assert _sidecar._chapters("nope") is None
+    assert _sidecar._chapters([{"start_time": 0}]) is None  # no title → all dropped → None
+
+
+def test_parse_info_json_surfaces_chapters_not_as_origin_field(tmp_path):
+    rid = "f0" + "0" * 62
+    p = _sidecar.info_json_path(tmp_path, rid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    info = dict(_INFO, chapters=[{"start_time": 0.0, "end_time": 5.0, "title": "A"}])
+    p.write_text(json.dumps(info), encoding="utf-8")
+    r = _sidecar.parse_info_json_for_record(tmp_path, rid)
+    assert r["chapters"] == [{"start": 0.0, "title": "A", "end": 5.0}]
+    # Chapters are structural (→ section boundaries/entries), never a flat origin field.
+    assert "ytdlp_chapters" not in r["origin_fields"]
+
+
+def test_parse_info_json_no_chapters_is_none(tmp_path):
+    rid = "f1" + "0" * 62
+    p = _sidecar.info_json_path(tmp_path, rid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(_INFO), encoding="utf-8")  # _INFO has no chapters
+    assert _sidecar.parse_info_json_for_record(tmp_path, rid)["chapters"] is None
+
+
 # ---------- schema-driven ytdlp keys ---------- #
 
 
