@@ -15,6 +15,11 @@ Step grammar (each list item is a single-key mapping)::
     - expand: details           # open <details> only
     - click: {selector: "...", repeat: 10, delay_ms: 400}
     - click: ".carousel-next"   # shorthand: selector only, repeat 1
+    - carousel: {next: "button[aria-label='Next']", max: 12}
+                                # walk a VIRTUALIZED image carousel (e.g. Instagram),
+                                # force-inlining each slide as it's reached so all N
+                                # survive — not just the 2 left in the DOM at snapshot.
+                                # Needs the capture's request API (caller-supplied).
     - wait: {ms: 1500}
     - wait: {selector: "img.loaded", timeout_ms: 8000}
     - hover: {selector: "..."}
@@ -33,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger("corpus.capture.interactions")
@@ -74,11 +80,21 @@ _EXPAND_ALL_JS = """() => {
 }"""
 
 
-def run(page: Any, steps: list[dict[str, Any]] | None) -> None:
+def run(
+    page: Any,
+    steps: list[dict[str, Any]] | None,
+    *,
+    carousel_handler: Callable[[Any, Any], None] | None = None,
+) -> None:
     """Execute an ordered list of interaction `steps` against `page` (best-effort).
 
     `None` runs :data:`DEFAULT_STEPS`. Settles with a short wait afterward so
     interaction-triggered network/image loads land before the snapshot.
+
+    `carousel_handler`, when given, services the `carousel` step — it needs the
+    capture's request API to force-inline each slide as the walk reaches it, so it
+    is supplied by the caller (`_capture_via_playwright`) rather than implemented
+    here. Absent a handler the step is a no-op.
     """
     for step in steps if steps is not None else DEFAULT_STEPS:
         if not isinstance(step, dict) or len(step) != 1:
@@ -86,20 +102,31 @@ def run(page: Any, steps: list[dict[str, Any]] | None) -> None:
             continue
         (kind, arg), = step.items()
         try:
-            _run_step(page, str(kind), arg)
+            _run_step(page, str(kind), arg, carousel_handler=carousel_handler)
         except Exception as exc:  # best-effort: never abort a capture on a step
             log.debug("interaction %s failed: %s — continuing", kind, exc)
     with contextlib.suppress(Exception):
         page.wait_for_timeout(2000)
 
 
-def _run_step(page: Any, kind: str, arg: Any) -> None:
+def _run_step(
+    page: Any,
+    kind: str,
+    arg: Any,
+    *,
+    carousel_handler: Callable[[Any, Any], None] | None = None,
+) -> None:
     if kind == "scroll":
         page.evaluate(_SCROLL_JS)
     elif kind == "expand":
         page.evaluate(_EXPAND_ALL_JS if arg == "all" else _EXPAND_DETAILS_JS)
     elif kind == "click":
         _click(page, arg)
+    elif kind == "carousel":
+        if carousel_handler is not None:
+            carousel_handler(page, arg)
+        else:
+            log.debug("carousel step with no handler — skipping")
     elif kind == "wait":
         _wait(page, arg)
     elif kind == "hover":

@@ -730,7 +730,13 @@ def _capture_via_playwright(
                         "networkidle did not settle within %dms — snapshotting anyway",
                         NETWORKIDLE_BUDGET_MS,
                     )
-                interactions.run(page, interaction_steps)
+                interactions.run(
+                    page,
+                    interaction_steps,
+                    carousel_handler=lambda pg, a: _walk_carousel(
+                        page=pg, request_api=ctx.request, arg=a
+                    ),
+                )
                 image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 final_url = page.url
                 snapshot = _snapshot_html(page=page, fetched_at=fetched_at, bundle=bundle)
@@ -822,14 +828,18 @@ def _recipe_viewport(recipe: dict[str, Any]) -> tuple[int, int] | None:
         return None
 
 
-def _inline_image_srcs(*, page: Any, request_api: Any) -> tuple[int, int]:
+def _inline_image_srcs(*, page: Any, request_api: Any, quiet: bool = False) -> tuple[int, int]:
     """Pre-fetch each external `<img src>` via Playwright's request API (no CORS)
     and swap it to a base64 `data:` URI in the live DOM.
 
     Works for both snapshot paths: SingleFile picks up the inlined srcs, and a
     plain `page.content()` serializes them too. The original URL is preserved as
     `data-corpus-original-src` for downstream dedup. Returns `(inlined, failed)`.
+
+    `quiet` logs the per-call counts at debug rather than info — used by the
+    carousel walk, which calls this once per slide and would otherwise be noisy.
     """
+    _log = log.debug if quiet else log.info
     items = page.evaluate(
         """() => {
             const out = [];
@@ -844,7 +854,7 @@ def _inline_image_srcs(*, page: Any, request_api: Any) -> tuple[int, int]:
     )
     if not items:
         return (0, 0)
-    log.info("pre-fetching %d external <img> srcs for inline embedding", len(items))
+    _log("pre-fetching %d external <img> srcs for inline embedding", len(items))
     inlined = 0
     failed = 0
     for item in items:
@@ -876,8 +886,100 @@ def _inline_image_srcs(*, page: Any, request_api: Any) -> tuple[int, int]:
         except Exception as exc:
             failed += 1
             log.debug("inline fetch %s: %s", img_url, exc)
-    log.info("inlined %d / failed %d external <img> srcs", inlined, failed)
+    _log("inlined %d / failed %d external <img> srcs", inlined, failed)
     return (inlined, failed)
+
+
+# Per-slide carousel walk. A virtualized carousel (Instagram: only the visible slide ±1
+# is in the DOM, and each slide's image is lazy-fetched via XHR only when it becomes
+# active) defeats a plain `click: Next` + the single end-of-run `_inline_image_srcs`:
+# off-screen slides are evicted before that one inline pass runs, so it keeps only the two
+# left in the DOM. The walk below force-inlines each slide AS the trusted click reaches it
+# and clones the inlined image into a persistent hidden stash that survives eviction.
+
+_CAROUSEL_STASH_JS = """
+() => {
+  let stash = document.getElementById('__corpus_carousel_stash');
+  if (!stash) {
+    stash = document.createElement('div');
+    stash.id = '__corpus_carousel_stash';
+    stash.style.display = 'none';
+    document.body.appendChild(stash);
+  }
+  const have = new Set([...stash.querySelectorAll('img')]
+    .map((i) => i.getAttribute('data-corpus-original-src') || i.src));
+  let added = 0;
+  document.querySelectorAll('img[data-corpus-original-src]').forEach((img) => {
+    const key = img.getAttribute('data-corpus-original-src') || img.src;
+    if (img.naturalWidth >= 600 && !have.has(key)) {
+      stash.appendChild(img.cloneNode(true));
+      have.add(key);
+      added += 1;
+    }
+  });
+  return added;
+}
+"""
+
+# After a Next click, wait (network-aware) for the new slide's large image to load — the
+# prior inline made every earlier <img> a data: URI, so a fresh http(s) src on a >=600px
+# image is the slide that just became active. Bounded so a missing slide never hangs.
+_CAROUSEL_WAIT_JS = """
+() => new Promise((resolve) => {
+  const t0 = Date.now();
+  const tick = () => {
+    const ready = [...document.querySelectorAll('img')].some(
+      (i) => /^https?:/.test(i.src || '') && i.complete && i.naturalWidth >= 600);
+    if (ready || Date.now() - t0 > 6000) resolve();
+    else setTimeout(tick, 150);
+  };
+  tick();
+})
+"""
+
+
+def _walk_carousel(*, page: Any, request_api: Any, arg: Any) -> None:
+    """Service a `carousel` interaction: walk a virtualized image carousel slide by
+    slide, force-inlining each slide's media as the walk reaches it.
+
+    `arg` is `{next: <selector>, max: <int>}` (or a bare selector string). Per step:
+    inline the currently-loaded externals (`_inline_image_srcs` force-fetches the
+    visible slide's image) and clone the large inlined ones into a persistent hidden
+    stash, then trusted-click `next` and wait (network-aware) for the new slide's image
+    to load. The stash survives the carousel's DOM eviction, so the final snapshot
+    carries every slide. The stash images dedup by `data-corpus-original-src`.
+    """
+    if isinstance(arg, dict):
+        next_sel = arg.get("next") or arg.get("selector")
+        max_clicks = int(arg.get("max", 12))
+    else:
+        next_sel, max_clicks = (str(arg) if arg else ""), 12
+    if not next_sel:
+        log.debug("carousel: no `next` selector — skipping")
+        return
+
+    def inline_and_stash() -> int:
+        _inline_image_srcs(page=page, request_api=request_api, quiet=True)
+        try:
+            return int(page.evaluate(_CAROUSEL_STASH_JS) or 0)
+        except Exception as exc:
+            log.debug("carousel stash eval failed: %s", exc)
+            return 0
+
+    total = inline_and_stash()  # the slide we land on
+    for _ in range(max(1, max_clicks)):
+        loc = page.locator(str(next_sel))
+        try:
+            if loc.count() == 0:
+                break
+            loc.first.click(timeout=3000)
+        except Exception as exc:  # ran out of "next" / control vanished — done
+            log.debug("carousel: next click stopped: %s", exc)
+            break
+        with contextlib.suppress(Exception):
+            page.evaluate(_CAROUSEL_WAIT_JS)
+        total += inline_and_stash()
+    log.info("carousel: captured %d slide image(s) across the walk", total)
 
 
 def _snapshot_html(*, page: Any, fetched_at: str, bundle: Path | None) -> str:

@@ -70,6 +70,27 @@ def test_interactions_click_shorthand():
     assert ("click", ".more") in page.calls
 
 
+def test_interactions_carousel_dispatches_to_handler():
+    # The `carousel` step is serviced by a caller-supplied handler (it needs the
+    # capture's request API to force-inline each slide), invoked with (page, arg).
+    page = _FakePage()
+    seen: list[tuple] = []
+    interactions.run(
+        page,
+        [{"carousel": {"next": ".next", "max": 5}}],
+        carousel_handler=lambda pg, arg: seen.append((pg, arg)),
+    )
+    assert seen == [(page, {"next": ".next", "max": 5})]
+
+
+def test_interactions_carousel_no_handler_is_noop():
+    # Absent a handler the step is a silent no-op (never aborts the capture).
+    page = _FakePage()
+    interactions.run(page, [{"carousel": {"next": ".next"}}, {"wait": {"ms": 3}}])
+    assert ("wait_for_timeout", 3) in page.calls
+    assert all(c[0] != "click" for c in page.calls)
+
+
 def test_interactions_best_effort_continues_past_failure():
     class Boom(_FakePage):
         def evaluate(self, js):
