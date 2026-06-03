@@ -682,6 +682,22 @@ def _capture_via_playwright(
                 )
             page = ctx.new_page()
 
+            # Relax CSP for the snapshot, BEFORE goto. CSP-strict sites (Instagram / all
+            # Meta properties, and many modern sites use nonce-based `script-src` with no
+            # `unsafe-inline`) block the SingleFile bundle that `_snapshot_html` injects via
+            # `add_script_tag` — a real, CSP-subject inline <script>. `Page.setBypassCSP` is
+            # what Playwright's `bypass_csp` context option does under the hood; we can't set
+            # that option here because the CDP transport attaches to a reused context, so we
+            # issue the CDP command directly. It must precede goto so the document commits
+            # with CSP relaxed. Safe: we snapshot the rendered DOM, not preserve runtime
+            # behaviour. Best-effort — a non-Chromium / unsupported transport just skips it.
+            try:
+                page.context.new_cdp_session(page).send(
+                    "Page.setBypassCSP", {"enabled": True}
+                )
+            except Exception as exc:
+                log.debug("Page.setBypassCSP unavailable: %s", exc)
+
             log.debug("navigating: %s", url)
             response = None
             binary_fallback = False
