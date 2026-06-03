@@ -720,7 +720,11 @@ def _capture_via_playwright(
                 snapshot = _snapshot_html(page=page, fetched_at=fetched_at, bundle=bundle)
                 issues = _run_capture_detectors(
                     snapshot=snapshot,
-                    request_url=url,
+                    # Drift is measured against where we INTENDED to navigate (the rewritten
+                    # nav target), not the pre-rewrite URL — else any `url_rewrite` that
+                    # changes host (e.g. www.reddit → old.reddit) self-reports a false
+                    # hostname-change drift. The original `url` remains the recorded origin.
+                    request_url=nav_url,
                     final_url=final_url,
                     response_status=response_status,
                     image_stats=image_stats,

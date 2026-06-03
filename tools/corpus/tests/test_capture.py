@@ -142,6 +142,25 @@ def test_detect_captcha_recaptcha():
     assert issue["severity"] == "blocking"
 
 
+def test_detect_captcha_css_class_does_not_fire():
+    # Regression: a `.g-recaptcha` / `.h-captcha` CSS RULE in an inlined stylesheet (styling a
+    # login form's captcha — often chrome that's been removed) is NOT a challenge page. The
+    # bare class token must appear in a `class="…"` attribute to count.
+    snap = (
+        "<html><head><style>.login-form-side .g-recaptcha{margin-top:10px}"
+        ".h-captcha{display:none}</style></head><body>real article text</body></html>"
+    )
+    assert capture._detect_captcha(snapshot=snap, detector_id=_DET) is None
+
+
+def test_detect_captcha_element_class_fires():
+    # A real widget — the class in an actual element attribute — still fires.
+    snap = '<html><body><div class="g-recaptcha" data-sitekey="x"></div></body></html>'
+    issue = capture._detect_captcha(snapshot=snap, detector_id=_DET)
+    assert issue is not None
+    assert issue["subtype"] == "captcha"
+
+
 def test_detect_http_error_with_200_body():
     snap = (
         "<html><head><title>404 Not Found</title></head>"
@@ -193,6 +212,17 @@ def test_detect_redirect_drift_canonical_noop():
     assert capture._detect_final_url_drift(
         request_url="https://example.com/page",
         final_url="https://www.example.com/page",
+        detector_id=_DET,
+    ) is None
+
+
+def test_detect_redirect_drift_rewrite_target_is_not_drift():
+    # Drift is measured against the rewritten nav target (capture now passes request_url=
+    # nav_url), not the pre-rewrite URL. A url_rewrite that changes host (www.reddit ->
+    # old.reddit) and lands exactly there is NOT drift. Regression for the wiring fix.
+    assert capture._detect_final_url_drift(
+        request_url="https://old.reddit.com/r/x/comments/1/t/?sort=top&limit=500",
+        final_url="https://old.reddit.com/r/x/comments/1/t/?sort=top&limit=500",
         detector_id=_DET,
     ) is None
 

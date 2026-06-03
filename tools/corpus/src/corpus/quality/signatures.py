@@ -145,13 +145,17 @@ PAYWALL_SIGNATURES: Final[tuple[tuple[str, re.Pattern[str], re.Pattern[str], str
 
 CAPTCHA_SIGNATURES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
+        # The api.js script is an unambiguous active load; the bare class must appear in a
+        # `class="…"` ATTRIBUTE (a real widget), not as a CSS selector `.h-captcha{…}` in an
+        # inlined stylesheet — a page that merely styles a (removed) login form's captcha is
+        # not itself a challenge.
         "hcaptcha",
-        re.compile(r"hcaptcha\.com/[0-9]?/api\.js|h-captcha\b", re.IGNORECASE),
+        re.compile(r'hcaptcha\.com/[0-9]?/api\.js|class=["\'][^"\']*\bh-captcha\b', re.IGNORECASE),
     ),
     (
         "recaptcha",
         re.compile(
-            r"google\.com/recaptcha/(?:api\.js|enterprise\.js)|g-recaptcha\b",
+            r'google\.com/recaptcha/(?:api\.js|enterprise\.js)|class=["\'][^"\']*\bg-recaptcha\b',
             re.IGNORECASE,
         ),
     ),
