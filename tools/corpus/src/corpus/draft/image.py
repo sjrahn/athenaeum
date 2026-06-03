@@ -43,6 +43,7 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,  # wired in Part B (phash/dhash/ahash/whash)
 ) -> DrafterResult:
     fields: dict[str, Any] = {
         "image_size_bytes": image_path.stat().st_size,

@@ -742,15 +742,17 @@ The `id` field is the exception — always bare blake3 hex (algorithm is invaria
 
 ### 7.7 Atom fingerprint strategies
 
-When a segment carries a `perceptual:` in its header, the strategy is determined by the segment's `atom:`, not by the source media-type.
+Perceptual fingerprinting is **opt-in** and **schema-gated**. A segment carries a `perceptual:` only when a `fingerprint` knob resolves on for its record — fingerprints are a near-duplicate / similarity-search signal, not part of a faithful first-pass draft, so the default is **off** and a record with no `perceptual:` is normal. The knob is a top-level field on a **mime schema** (the per-file-type default) and may be overridden on a **composite classification** (for records of that class). Values: `false` / absent = off; `true` = on with each atom's *default* algorithm; an algorithm name or a list = on with those algorithms (a list yields a list-valued `perceptual:`). Resolution precedence, most-specific first: `corpus draft --fingerprint` / `--no-fingerprint` › composite classification (assigned classify block, then mechanical composites) › mime schema › off. Only what is knowable at draft is consulted; an **interpretive** composite (assigned by the normalizer post-draft) takes effect on a later recompile.
 
-| Atom | Strategy | Algo prefix | Notes |
-|---|---|---|---|
-| `image` | perceptual hash (pHash, 64-bit) over the rendered image content | `phash` | Robust to re-encoding, mild crops, and small resamples. |
-| `audio` | acoustic fingerprint (chromaprint) over the audio range | `chromaprint` | Comparable across codec changes and bitrates. |
-| `text` | simhash (64-bit) over normalized text tokens | `simhash` | After Unicode normalization, lowercasing, and whitespace collapse. |
+When fingerprinting is on, the algorithm for a segment is determined by its `atom:`, not by the source media-type. Each atom has a default algorithm; the knob may select an alternative where the atom supports more than one:
 
-The strategies are normative.
+| Atom | Default algorithm | Algo prefix | Alternatives | Notes |
+|---|---|---|---|---|
+| `image` | perceptual hash (pHash, 64-bit) | `phash` | `dhash`, `ahash`, `whash` | Robust to re-encoding, mild crops, and small resamples. |
+| `audio` | acoustic fingerprint (chromaprint) | `chromaprint` | — | Comparable across codec changes and bitrates. |
+| `text` | simhash (64-bit) over normalized tokens | `simhash` | — | After Unicode normalization, lowercasing, and whitespace collapse. |
+
+The `<algo>:<hex>` value records which algorithm produced it, so a record self-documents how it was fingerprinted.
 
 ---
 

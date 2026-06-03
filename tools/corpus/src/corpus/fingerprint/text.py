@@ -21,12 +21,16 @@ _BITS = 64
 _WORD_RE = re.compile(r"\w+", flags=re.UNICODE)
 
 
-def fingerprint_text(text: str) -> str | None:
+def fingerprint_text(text: str, *, algo: str = ALGO) -> str | None:
     """Return `simhash:<16-hex>` for `text`, or None when it has no tokens.
 
-    Deterministic: token hashes come from blake2b (stdlib), so the same text always
-    yields the same fingerprint across runs and machines.
+    `algo` selects the text strategy; `simhash` is the only one today (the parameter
+    is the extension hook — a future text algorithm registers here). Deterministic:
+    token hashes come from blake2b (stdlib), so the same text always yields the same
+    fingerprint across runs and machines.
     """
+    if algo != ALGO:
+        raise ValueError(f"text fingerprinting supports only {ALGO!r}, not {algo!r}")
     counts = Counter(_tokens(text))
     if not counts:
         return None

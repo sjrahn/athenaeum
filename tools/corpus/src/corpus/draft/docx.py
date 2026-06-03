@@ -28,7 +28,7 @@ from xml.etree import ElementTree as ET
 
 from corpus import recordbuild
 from corpus.draft import DrafterResult, register
-from corpus.fingerprint import text as text_fp
+from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.segments import Section, Segment
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -65,6 +65,7 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,
 ) -> DrafterResult:
     fields: dict[str, Any] = {}
 
@@ -86,7 +87,7 @@ def draft(
     fields["paragraph_count"] = sum(1 for kind, _ in blocks if kind == "para")
     fields["table_count"] = sum(1 for kind, _ in blocks if kind == "table")
 
-    recordbuild.add_blocks(build, _build_segments(blocks))
+    recordbuild.add_blocks(build, _build_segments(blocks, algos_for_atom("text", fingerprint)))
     return {
         "fields": fields,
         "embeds": [],
@@ -132,7 +133,9 @@ class _SectionAcc:
         return "\n\n".join(self.lines).strip()
 
 
-def _build_segments(blocks: list[tuple[str, ET.Element]]) -> list[Section | Segment]:
+def _build_segments(
+    blocks: list[tuple[str, ET.Element]], text_algos: list[str]
+) -> list[Section | Segment]:
     """Heading-driven sections, or a single flat segment when there are no headings."""
     accs: list[_SectionAcc] = []
     current = _SectionAcc(entry=None, start=1)
@@ -174,7 +177,7 @@ def _build_segments(blocks: list[tuple[str, ET.Element]]) -> list[Section | Segm
             Segment(
                 atom="text",
                 address=_block_address(acc.start, acc.end),
-                perceptual=text_fp.fingerprint_text(body),
+                perceptual=text_fingerprints(body, text_algos),
                 body=body,
             )
         ]
@@ -184,7 +187,7 @@ def _build_segments(blocks: list[tuple[str, ET.Element]]) -> list[Section | Segm
         body = acc.body()
         addr = _block_address(acc.start, acc.end)
         child = Segment(
-            atom="text", address=addr, perceptual=text_fp.fingerprint_text(body), body=body
+            atom="text", address=addr, perceptual=text_fingerprints(body, text_algos), body=body
         )
         sections.append(Section(address=addr, entry=acc.entry, segments=[child]))
     return sections

@@ -51,6 +51,7 @@ def draft(
     record_id: str,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,  # transcript body is text; audio-atom fp not wired
 ) -> DrafterResult:
     fields: dict[str, Any] = {
         "audio_size_bytes": audio_path.stat().st_size,

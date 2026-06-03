@@ -271,7 +271,7 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     assert isinstance(seg, segments.Segment)
     assert seg.atom == "text"
     assert seg.address == "el=1-11"
-    assert (seg.perceptual or "").startswith("simhash:")
+    assert seg.perceptual is None  # fingerprinting is opt-in — off by default
 
     # Mechanical drafter output: data-el annotations present; <img src> dropped
     # (addressed by data-el); non-rendered infra (<script>/<style>) stripped.
@@ -303,6 +303,29 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     svg = by_type["image/svg+xml"]
     assert svg["address"] == "el=11"
     assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
+
+
+def test_html_drafter_fingerprint_opt_in(tmp_path, run_drafter):
+    """Perceptual fingerprinting is opt-in via the resolved `fingerprint` knob: off →
+    no perceptual; True / an algorithm name → a `simhash:` on the text segment; an
+    image algorithm requested on a text atom is ignored."""
+    p = tmp_path / "f.html"
+    p.write_text(
+        "<html><body><p>some words here for tokens</p></body></html>", encoding="utf-8"
+    )
+    drafter = draft.get_drafter("text/text_html")
+
+    _, off = run_drafter(drafter, p, record_id="0" * 64)
+    assert off[0].perceptual is None
+
+    _, on = run_drafter(drafter, p, record_id="0" * 64, fingerprint=True)
+    assert on[0].perceptual.startswith("simhash:")
+
+    _, named = run_drafter(drafter, p, record_id="0" * 64, fingerprint="simhash")
+    assert named[0].perceptual.startswith("simhash:")
+
+    _, wrong = run_drafter(drafter, p, record_id="0" * 64, fingerprint="phash")
+    assert wrong[0].perceptual is None  # phash is an image algorithm — ignored on text
 
 
 def test_svg_dimensions_reads_root_not_inner_elements():

@@ -31,7 +31,7 @@ from xml.etree import ElementTree as ET
 
 from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
-from corpus.fingerprint import text as text_fp
+from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.functional_uri import quote_value
 from corpus.segments import Section, Segment
 
@@ -81,6 +81,7 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,
 ) -> DrafterResult:
     detector = touches.script_identifier("draft.xlsx")
     fields: dict[str, Any] = {}
@@ -109,7 +110,9 @@ def draft(
     fields["has_pivot_tables"] = complexity["has_pivot_tables"]
     fields["has_macros"] = complexity["has_macros"]
 
-    sections, issues = _draft_sheet_sections(xlsx_path, complexity, detector)
+    sections, issues = _draft_sheet_sections(
+        xlsx_path, complexity, detector, algos_for_atom("text", fingerprint)
+    )
 
     recordbuild.add_blocks(build, sections)
     return {
@@ -127,7 +130,7 @@ register(_XLSX_SCHEMA_ID)(draft)
 
 
 def _draft_sheet_sections(
-    xlsx_path: Path, complexity: dict[str, Any], detector: str
+    xlsx_path: Path, complexity: dict[str, Any], detector: str, text_algos: list[str]
 ) -> tuple[list[Section], list[dict[str, Any]]]:
     """One Section per worksheet (+ chart-sheet sections). Returns (sections, issues)
     where issues are address-scoped format-loss entries."""
@@ -143,6 +146,7 @@ def _draft_sheet_sections(
                 formula_count=meta.get("formula_count", 0),
                 uses_external_ref=meta.get("uses_external_ref", False),
                 detector=detector,
+                text_algos=text_algos,
             )
             sections.append(_wrap_sheet_section(ws.title, seg))
             issues.extend(seg_issues)
@@ -160,7 +164,7 @@ def _wrap_sheet_section(sheet_title: str, child: Segment) -> Section:
 
 
 def _worksheet_segment(
-    ws, *, formula_count: int, uses_external_ref: bool, detector: str
+    ws, *, formula_count: int, uses_external_ref: bool, detector: str, text_algos: list[str]
 ) -> tuple[Segment, list[dict[str, Any]]]:
     """Render a worksheet to a Segment + any address-scoped issues."""
     address = _segment_address(ws.title)
@@ -192,7 +196,7 @@ def _worksheet_segment(
     seg = Segment(
         atom="text",
         address=address,
-        perceptual=text_fp.fingerprint_text(body),
+        perceptual=text_fingerprints(body, text_algos),
         body=body,
     )
     return seg, issues

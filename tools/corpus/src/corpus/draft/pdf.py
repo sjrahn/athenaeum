@@ -42,6 +42,7 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,  # PDF text isn't fingerprinted (yet)
 ) -> DrafterResult:
     reader = PdfReader(str(pdf_path))
 

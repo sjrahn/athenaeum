@@ -27,6 +27,17 @@ from corpus.store import ArtifactMissing, get_store
 
 def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("target", help="Hash, hex prefix, or record file path.")
+    parser.add_argument(
+        "--fingerprint",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "force perceptual fingerprinting on (--fingerprint) or off "
+            "(--no-fingerprint), overriding the schema `fingerprint` knob. Default "
+            "(unset): the schema decides — off unless a mime/composite schema opts in. "
+            "Algorithm selection is schema-only (e.g. `fingerprint: dhash`)."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
@@ -80,6 +91,12 @@ def run(args: argparse.Namespace) -> int:
     # recordbuild ops — the same path `compile` replays from a manifest), and the
     # caller applies the metadata-zone result + `finish` emits/validates.
     build = recordbuild.begin_from_post(post, corpus_root)
+    # Whether (and with which algorithm) to compute perceptual fingerprints: CLI
+    # override > composite classification > mime schema > off (spec §7.2). The drafter
+    # resolves the per-atom algorithms from this knob via `fingerprint.algos_for_atom`.
+    fingerprint = schemas.resolve_fingerprint(
+        corpus_root, media_type, post, getattr(args, "fingerprint", None)
+    )
     result = drafter(
         binary_file,
         build=build,
@@ -87,6 +104,7 @@ def run(args: argparse.Namespace) -> int:
         record_id=record_id,
         record_metadata=post.metadata,
         canonical_algo=canonical_algo,
+        fingerprint=fingerprint,
     )
 
     _apply_drafter_result(post, result, mime_schema_id)

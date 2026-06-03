@@ -66,6 +66,7 @@ def draft(
     record_id: str,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,  # transcript is text; frames body-empty
 ) -> DrafterResult:
     fields: dict[str, Any] = {
         "video_size_bytes": video_path.stat().st_size,

@@ -80,7 +80,7 @@ from PIL import Image
 
 from corpus import content_hash, recordbuild, records, touches
 from corpus.draft import DrafterResult, register
-from corpus.fingerprint import text as text_fp
+from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.segments import Segment
 from corpus.transforms.html import largest_img_src
 
@@ -254,8 +254,10 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,
 ) -> DrafterResult:
     raw = html_path.read_bytes()
+    text_algos = algos_for_atom("text", fingerprint)
     soup = BeautifulSoup(raw, "html.parser")
 
     fields: dict[str, Any] = {}
@@ -327,7 +329,7 @@ def draft(
             Segment(
                 atom="text",
                 address=wrapper_address,
-                perceptual=text_fp.fingerprint_text(cleaned_html),
+                perceptual=text_fingerprints(cleaned_html, text_algos),
                 body=cleaned_html,
             )
         ]

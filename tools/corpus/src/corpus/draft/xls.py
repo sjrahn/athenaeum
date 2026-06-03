@@ -24,7 +24,7 @@ from typing import Any
 from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft.xlsx import _fmt_cell, _rows_to_markdown, loss_issue
-from corpus.fingerprint import text as text_fp
+from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.functional_uri import quote_value
 from corpus.segments import Section, Segment
 
@@ -54,8 +54,10 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,
 ) -> DrafterResult:
     detector = touches.script_identifier("draft.xls")
+    text_algos = algos_for_atom("text", fingerprint)
     xlrd = _xlrd()
     fields: dict[str, Any] = {}
     sections: list[Section] = []
@@ -72,7 +74,7 @@ def draft(
             fields["named_ranges"] = named
 
         for sheet in visible_sheets:
-            seg, seg_issues = _worksheet_segment(sheet, detector)
+            seg, seg_issues = _worksheet_segment(sheet, detector, text_algos)
             sections.append(
                 Section(
                     address=f"sheet={quote_value(sheet.name)}",
@@ -99,7 +101,9 @@ register(_XLS_SCHEMA_ID)(draft)
 # ---------- per-sheet rendering ---------- #
 
 
-def _worksheet_segment(sheet, detector: str) -> tuple[Segment, list[dict[str, Any]]]:
+def _worksheet_segment(
+    sheet, detector: str, text_algos: list[str]
+) -> tuple[Segment, list[dict[str, Any]]]:
     address = f"sheet={quote_value(sheet.name)}"
     body, truncated = _render_worksheet(sheet, _ROW_CAP)
 
@@ -132,7 +136,7 @@ def _worksheet_segment(sheet, detector: str) -> tuple[Segment, list[dict[str, An
     seg = Segment(
         atom="text",
         address=address,
-        perceptual=text_fp.fingerprint_text(body),
+        perceptual=text_fingerprints(body, text_algos),
         body=body,
     )
     return seg, issues

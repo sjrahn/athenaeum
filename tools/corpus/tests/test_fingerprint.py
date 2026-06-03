@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from corpus import fingerprint as fp_pkg
 from corpus.fingerprint import audio as afp
 from corpus.fingerprint import image as ifp
 from corpus.fingerprint import text as tfp
@@ -43,6 +44,42 @@ def test_text_fingerprint_deterministic_and_normalized():
 
 def test_text_fingerprint_differs_for_different_text():
     assert tfp.fingerprint_text("alpha beta gamma") != tfp.fingerprint_text("x)delta epsilon zeta")
+
+
+def test_text_fingerprint_rejects_unknown_algo():
+    with pytest.raises(ValueError, match="simhash"):
+        tfp.fingerprint_text("words", algo="minhash")
+
+
+# ---------- the algorithm registry / knob resolution ---------- #
+
+
+def test_algos_for_atom_off_default_and_explicit():
+    # falsy / None → off.
+    assert fp_pkg.algos_for_atom("text", False) == []
+    assert fp_pkg.algos_for_atom("text", None) == []
+    # True → the atom's default algorithm.
+    assert fp_pkg.algos_for_atom("text", True) == ["simhash"]
+    assert fp_pkg.algos_for_atom("image", True) == ["phash"]
+    # explicit name / list (whitespace + case tolerant), de-duplicated, order-preserving.
+    assert fp_pkg.algos_for_atom("text", "simhash") == ["simhash"]
+    assert fp_pkg.algos_for_atom("image", ["dhash", "PHASH ", "dhash"]) == ["dhash", "phash"]
+
+
+def test_algos_for_atom_filters_wrong_atom_and_unknown(caplog):
+    # an image algorithm requested on a text atom is silently skipped.
+    assert fp_pkg.algos_for_atom("text", "phash") == []
+    assert fp_pkg.algos_for_atom("text", ["simhash", "phash"]) == ["simhash"]
+    # an unknown algorithm warns and is dropped.
+    assert fp_pkg.algos_for_atom("text", "bogus") == []
+
+
+def test_text_fingerprints_scalar_list_and_none():
+    assert fp_pkg.text_fingerprints("some words", []) is None
+    one = fp_pkg.text_fingerprints("some words", ["simhash"])
+    assert isinstance(one, str) and one.startswith("simhash:")
+    # empty body degrades to None even when requested.
+    assert fp_pkg.text_fingerprints("", ["simhash"]) is None
 
 
 # ---------- image (imagehash; dev group) ---------- #

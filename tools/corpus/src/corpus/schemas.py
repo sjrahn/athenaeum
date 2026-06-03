@@ -244,13 +244,11 @@ def _is_mime_subtype_path(relpath: str) -> bool:
     parts = relpath.split("/")
     if parts[0] != "mime" or not relpath.endswith(".yaml"):
         return False
-    # Universal
-    if len(parts) == 2 and parts[1] == "mime.yaml":
-        return False
-    # Axis-common file (e.g. mime/application/application.yaml)
-    if len(parts) == 3 and parts[2] == f"{parts[1]}.yaml":
-        return False
-    return True
+    # Per-id is every rung EXCEPT the universal `mime/mime.yaml` and an axis-common
+    # file (e.g. `mime/application/application.yaml`).
+    is_universal = len(parts) == 2 and parts[1] == "mime.yaml"
+    is_axis_common = len(parts) == 3 and parts[2] == f"{parts[1]}.yaml"
+    return not (is_universal or is_axis_common)
 
 
 def _mime_schema_id(relpath: str) -> str:
@@ -510,6 +508,58 @@ def mechanical_classifications_for(
             if not sub_applies or media_type in sub_applies:
                 out.append((f"{ns_id}/{sub_id}", merged))
     return out
+
+
+def resolve_fingerprint(
+    corpus_root: Path,
+    media_type: str,
+    post: Any,
+    cli_override: bool | None = None,
+) -> bool | str | list[str]:
+    """Resolve the `fingerprint` schema knob for a record at draft time. Precedence,
+    most-specific first: CLI override (`--fingerprint` / `--no-fingerprint`) >
+    composite classification > mime schema > ``False``. Returns the raw knob — `False`
+    (off), `True` (on, each atom's default algorithm), or an algorithm name / list —
+    which `fingerprint.algos_for_atom` then resolves per atom. Default off, so
+    fingerprinting is opt-in (spec §7.2).
+
+    Only what is knowable AT DRAFT is consulted: the mime default, **mechanical**
+    composites (deterministic from the MIME), and any `<!--classify-->` blocks already
+    on the record. Interpretive composites (e.g. `composite/document`) are assigned by
+    the normalizer *after* draft, so their override takes effect on a later recompile
+    (`corpus redraft`) once the classify block is present."""
+    if cli_override is not None:
+        return cli_override
+    comp = _composite_fingerprint(corpus_root, media_type, post)
+    if comp is not None:
+        return comp
+    mime_schema = load_mime_schema(corpus_root, media_type)
+    if isinstance(mime_schema, dict) and "fingerprint" in mime_schema:
+        return mime_schema["fingerprint"]
+    return False
+
+
+def _composite_fingerprint(
+    corpus_root: Path, media_type: str, post: Any
+) -> bool | str | list[str] | None:
+    """The most-specific composite `fingerprint` value, or None when no composite sets
+    it. Order: already-assigned classify blocks (subclass then namespace base), then
+    mechanical composites applicable to `media_type`. First explicit value wins (so a
+    specific `false` overrides a broader `true`)."""
+    from corpus import records  # lazy: records imports schemas
+
+    for blk in records.iter_classify_blocks(post):
+        ns = str(blk.get("namespace") or "")
+        cid = str(blk.get("id") or ns)
+        class_ids = ([f"{ns}/{cid}"] if cid and cid != ns else []) + ([ns] if ns else [])
+        for class_id in class_ids:
+            sch = load_classification_schema(corpus_root, class_id)
+            if isinstance(sch, dict) and "fingerprint" in sch:
+                return sch["fingerprint"]
+    for _class_id, sch in mechanical_classifications_for(corpus_root, media_type):
+        if isinstance(sch, dict) and "fingerprint" in sch:
+            return sch["fingerprint"]
+    return None
 
 
 def interpretive_classifications_for(

@@ -97,9 +97,29 @@ def test_docx_draft_and_lint(tmp_path):
     assert [s.entry for s in sections] == ["Preamble", "Introduction", "Conclusion"]
     assert post.metadata["status"] == "draft"
     assert post.metadata["_artifact"]["fields"].get("docx_title") == "My Document"
-    # Data segments carry a text simhash.
+    # Fingerprinting is opt-in (default off) — data segments carry no perceptual here.
     intro = next(s for s in sections if s.entry == "Introduction")
-    assert intro.segments[0].perceptual.startswith("simhash:")
+    assert intro.segments[0].perceptual is None
+
+
+def test_docx_fingerprint_opt_in(tmp_path, run_drafter):
+    """docx text segments carry a `simhash:` only when the `fingerprint` knob is on."""
+    from corpus.draft import docx as docx_mod
+
+    src = tmp_path / "doc.docx"
+    _make_docx(src)
+
+    def _text_segs(blocks):
+        out = []
+        for blk in blocks:
+            out.extend(getattr(blk, "segments", [blk]))
+        return [s for s in out if s.atom == "text"]
+
+    _, off = run_drafter(docx_mod.draft, src, record_id="d0" * 32)
+    assert all(s.perceptual is None for s in _text_segs(off))
+
+    _, on = run_drafter(docx_mod.draft, src, record_id="d0" * 32, fingerprint=True)
+    assert any((s.perceptual or "").startswith("simhash:") for s in _text_segs(on))
 
 
 # ---------- xlsx (openpyxl) ---------- #

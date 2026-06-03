@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+import frontmatter
 import yaml
 
 from corpus import schemas
@@ -288,3 +288,58 @@ def test_origin_universal_does_not_ship_in_package(tmp_path):
     assert not packaged.exists("origin/origin.yaml"), (
         "package must not ship origin/origin.yaml — origin is a per-corpus concern"
     )
+
+
+# ---------- resolve_fingerprint precedence (CLI > composite > mime > off) ---------- #
+
+
+def _post_with_classifies(classifies):
+    post = frontmatter.Post("")
+    post.metadata["_classifies"] = classifies
+    return post
+
+
+def _write_plain_mime(root, fingerprint=None):
+    data = {"applies_to": {"content_types": ["text/plain"]}, "mode": "body-draft"}
+    if fingerprint is not None:
+        data["fingerprint"] = fingerprint
+    _write_yaml(root / "schema" / "mime" / "text" / "text_plain.yaml", data)
+
+
+def test_resolve_fingerprint_cli_override_wins(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_plain_mime(root, fingerprint=True)  # schema says ON …
+    schemas.cache_clear()
+    post = _post_with_classifies([])
+    # … but the CLI override decides outright, either way.
+    assert schemas.resolve_fingerprint(root, "text/plain", post, True) is True
+    assert schemas.resolve_fingerprint(root, "text/plain", post, False) is False
+
+
+def test_resolve_fingerprint_mime_default_and_off(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_plain_mime(root, fingerprint="simhash")
+    _write_yaml(
+        root / "schema" / "mime" / "text" / "text_markdown.yaml",
+        {"applies_to": {"content_types": ["text/markdown"]}, "mode": "body-draft"},
+    )
+    schemas.cache_clear()
+    post = _post_with_classifies([])
+    # mime knob (an algorithm name) flows through; absent knob → off.
+    assert schemas.resolve_fingerprint(root, "text/plain", post, None) == "simhash"
+    assert schemas.resolve_fingerprint(root, "text/markdown", post, None) is False
+
+
+def test_resolve_fingerprint_composite_overrides_mime(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_plain_mime(root, fingerprint=True)  # mime defaults ON …
+    _write_yaml(
+        root / "schema" / "composite" / "document" / "document.yaml",
+        {"kind": "interpretive", "applies_to": {"content_types": []}, "fingerprint": False},
+    )
+    schemas.cache_clear()
+    # … but an assigned `document` classify block (most-specific) turns it OFF.
+    with_doc = _post_with_classifies([{"namespace": "document", "id": "document"}])
+    assert schemas.resolve_fingerprint(root, "text/plain", with_doc, None) is False
+    # No classify block → the interpretive composite doesn't apply at draft → mime wins.
+    assert schemas.resolve_fingerprint(root, "text/plain", _post_with_classifies([]), None) is True
