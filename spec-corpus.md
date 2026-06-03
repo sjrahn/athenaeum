@@ -131,13 +131,14 @@ A record is always at one of three statuses:
 
 ### 4.2 Frontmatter
 
-The frontmatter (`---...---` at the top of the file) holds **only the bytes-identity header** — at most eight fields. Everything else lives in body blocks (§4.3) or surfaces as derived views (§9).
+The frontmatter (`---...---` at the top of the file) holds **only the bytes-identity header** plus the two editorial display fields — at most nine fields. Everything else lives in body blocks (§4.3) or surfaces as derived views (§9).
 
 #### 4.2.1 Core fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
+| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (an artifact block's `title`, an origin block's `ytdlp_title`) or writes its own. |
 | `description` | string | yes | 1–3 sentence summary. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. The primary mechanism for discovery. |
 | `status` | enum | yes | `stub`, `draft`, or `normalized`. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
@@ -627,7 +628,8 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 - `mode` — `extract-only` or `body-draft`.
 - `artifact_kind` (required) — `self_contained` (produces one record, lifting nested-stream metadata when present — the disposition for ordinary single-content files too) or `decomposable` (a raw archive that explodes into one record per member). No default.
 - `address_scheme` — the parameters the schema expects in segment `address:` values.
-- `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. A field may declare `source: sidecar` to mark it as produced from a capturer's **enrichment sidecar** (e.g. a yt-dlp `.info.json`), and carry **`sidecar_keys`** — the sidecar keys copied into it (the mapping guidance the drafter applies). The enrichment sidecar is companion metadata staged in `capture/<hash>.<suffix>`, read at draft, then **deleted** — it is never persisted to `artifacts/` (only the artifact carries the `<hash>` name there).
+- `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. The artifact block holds only facts about the **primary-artifact bytes** (e.g. ffprobe codec / dimensions / streams); source metadata from a capturer's enrichment sidecar does NOT live here — see `sidecar`.
+- `sidecar` (optional) — for an artifact type a capturer enriches with a companion metadata sidecar (e.g. a yt-dlp `.info.json`), declares what is lifted and where. `source` names the sidecar (e.g. `ytdlp-info-json`); `ytdlp_keys` lists the info.json keys copied — each into the **origin block** as a flat `ytdlp_<key>` field (§7.2), the mapping guidance the drafter applies. The sidecar is companion metadata staged in `capture/<hash>.<suffix>`, read at draft, then **deleted** — never persisted to `artifacts/` (only the artifact carries the `<hash>` name there). It is *non-primary-source* metadata, so nothing from it goes to the artifact block, the body, or the frontmatter `description`.
 - `transport_algos` — additional byte-hash algorithms to compute beyond the primary blake3 `id`.
 - `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps the drafter performs before hashing. The canonicalization MAY be scoped to a **content region** — hashing only the article-content text and excluding per-page framing (title, breadcrumb, entry-specific headings) — so two records holding the same content reached by different URLs share a `canonical` and collapse to one record (the duplicate's URL folded into the original). The content-region selector is host-specific and supplied by the origin overlay (not this schema); when it matches nothing the canonicalization falls back to the whole document.
 - `normalization.guidance` (optional) — prose guidance for the normalizer.
@@ -642,7 +644,7 @@ An `origin` schema declares an overlay for one source of retrieval.
 - `applies_to.include_subdomains` (bool, default false).
 - `applies_to.cues` (optional) — non-host cues for the matcher.
 - `normalization.guidance` (string) — markdown prose tactics.
-- `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`.
+- `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`. A capturer's enrichment sidecar populates these — e.g. a yt-dlp capture's `ytdlp_<key>` fields (title, description, uploader, engagement counts, `ytdlp_comments`), declared by the artifact's mime schema `sidecar` section (§7.1) and merged onto the origin block at draft.
 
 The drafter iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), the drafter promotes that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The promoted opener contributes `origin/<id>[/<subtype>]` to the derived classifications view.
 
@@ -660,10 +662,10 @@ The universal `origin` overlay declares the two fields every origin block carrie
   - `url_rewrite` — `[{pattern, replacement}]` regex rules applied to the navigation target before fetch; the original URL stays the recorded origin and the rewritten form becomes an alias.
   - `ytdlp:` — a mapping merged straight into yt-dlp's options (full passthrough; e.g. `format`, `getcomments`, `impersonate`). Library-owned keys (output path, logger, the resolved cookie file) are forced after the merge and cannot be overridden.
   - `cookies_from_host` — `true` (default) pulls the capture URL's own-origin cookies from a running CDP browser session into yt-dlp; `false` disables; a list adds extra origin scopes. Lets a logged-in session unlock a host's full content.
-  - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded in as comment segments) rather than forming separate records.
+  - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded into the record's metadata) rather than forming separate records.
 - `transcription:` — per-host audio transcription (read at draft time). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
 - `canonical:` — `content_selector` scoping the `canonical` hash to the article-content region (§7.1).
-- `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the `social:` artifact-field map's keys come from the mime schema's `extended_fields.social.sidecar_keys` (§7.1). The structural parts of the yt-dlp `.info.json` mapping are fixed: `title` → the artifact title; `description` → the frontmatter description **and** a caption `text` segment; `comments[]` → one `text` segment each (author / like_count on `extra`); `webpage_url` → an origin-URI alias. Caption and comments are addressed on the `sidecar=` axis (§ address axes). The sidecar is **draft-time-only enrichment** — staged in `capture/`, consumed at draft, then deleted; it is one-shot (a re-draft after deletion does not re-apply it; the extracted fields/segments already persist in the record).
+- `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the keys lifted from the `.info.json` come from the artifact mime schema's `sidecar.ytdlp_keys` (§7.1). Because the sidecar is *non-primary-source* metadata, every lifted key lands on the **origin block** as a flat `ytdlp_<key>` field (e.g. `ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts) — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a `ytdlp_comments` list field; `webpage_url` / `original_url` fold into the origin `uri:` aliases. The sidecar is **draft-time-only enrichment** — staged in `capture/`, consumed at draft, then deleted; it is one-shot (a re-draft after deletion does not re-apply it; the extracted fields already persist on the record). The only content the media drafters write to the body is the **transcript**, derived from the primary artifact's own audio.
 
 ### 7.3 The atom namespace
 
@@ -1022,7 +1024,6 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 | region | `bbox=<x>,<y>,<w>,<h>` | image crops (relative floats) |
 | turn | `turn=<N>` | turn-structured transcripts / sessions |
 | stream | `stream_id=<id>` | multi-stream media (composed onto another axis) |
-| sidecar | `sidecar=<field>` (e.g. `sidecar=description`, `sidecar=comment/<n>`) | companion-metadata content — a capturer's metadata sidecar (yt-dlp `.info.json`: a post's caption / comments) rather than a byte-slice of the media |
 
 Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single address or an ordered list (for non-contiguous spans, in reading order); query-reserved characters in a value are percent-encoded.
 

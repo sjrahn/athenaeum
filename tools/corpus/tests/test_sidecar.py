@@ -1,10 +1,13 @@
-"""yt-dlp .info.json → record fields + caption/comment segments (draft/_sidecar)."""
+"""yt-dlp .info.json → `ytdlp_*` origin-block fields (draft/_sidecar + the placement)."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
+import frontmatter
+
+from corpus import records
 from corpus.draft import _sidecar
 
 _INFO: dict[str, Any] = {
@@ -27,36 +30,38 @@ _INFO: dict[str, Any] = {
 }
 
 
-def test_map_info_fields_title_description_social():
-    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
-    assert r["title"].startswith("i'm trying")
-    assert r["description"].startswith("i'm trying")
-    social = r["fields"]["social"]
-    assert social["uploader"] == "comrade.killjoy"
-    assert social["view_count"] == 33000 and social["like_count"] == 6398
-    assert social["track"] == "original sound"
-    assert "artists" not in social  # absent keys are not emitted
+def test_map_info_lifts_keys_to_flat_ytdlp_fields():
+    r = _sidecar._map_info(_INFO, _sidecar._YTDLP_KEYS)
+    f = r["origin_fields"]
+    # Every present key becomes a flat `ytdlp_<key>` field — incl. title/description.
+    assert f["ytdlp_title"].startswith("i'm trying")
+    assert f["ytdlp_description"].startswith("i'm trying")
+    assert f["ytdlp_uploader"] == "comrade.killjoy"
+    assert f["ytdlp_view_count"] == 33000 and f["ytdlp_like_count"] == 6398
+    assert f["ytdlp_track"] == "original sound"
+    assert "ytdlp_artists" not in f  # absent keys are not emitted
     assert r["origin_aliases"] == [_INFO["webpage_url"]]
 
 
-def test_map_info_caption_section_is_text_segment():
-    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
-    caps = r["caption_sections"]
-    assert len(caps) == 1
-    seg = caps[0].segments[0]
-    assert seg.atom == "text" and seg.address == "sidecar=description"
-    assert "keep my cool" in seg.body
+def test_map_info_produces_no_body_segments():
+    # Nothing from the (non-primary) sidecar goes to the body — origin fields + aliases only.
+    r = _sidecar._map_info(_INFO, _sidecar._YTDLP_KEYS)
+    assert set(r) == {"origin_fields", "origin_aliases"}
 
 
-def test_map_info_comment_segments_skip_blank_and_stay_unique():
-    r = _sidecar._map_info(_INFO, _sidecar._SOCIAL_KEYS)
-    comments = r["comment_sections"]
-    assert len(comments) == 1
-    segs = comments[0].segments
-    assert len(segs) == 2  # the blank-text comment is skipped
-    assert segs[0].body == "first comment"
-    assert segs[0].extra["author"] == "alice" and segs[0].extra["like_count"] == 12
-    assert segs[0].address != segs[1].address  # lint: (opener-id, address) unique
+def test_map_info_comments_become_ytdlp_comments_list():
+    r = _sidecar._map_info(_INFO, _sidecar._YTDLP_KEYS)
+    comments = r["origin_fields"]["ytdlp_comments"]
+    assert len(comments) == 2  # the blank-text comment is skipped
+    assert comments[0]["text"] == "first comment"
+    assert comments[0]["author"] == "alice" and comments[0]["like_count"] == 12
+    assert comments[1]["text"] == "no id comment"
+
+
+def test_map_info_no_comments_omits_field():
+    info = {k: v for k, v in _INFO.items() if k != "comments"}
+    r = _sidecar._map_info(info, _sidecar._YTDLP_KEYS)
+    assert "ytdlp_comments" not in r["origin_fields"]
 
 
 def test_parse_info_json_for_record_absent_is_empty(tmp_path):
@@ -70,8 +75,8 @@ def test_parse_info_json_for_record_reads_sidecar(tmp_path):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(_INFO), encoding="utf-8")
     r = _sidecar.parse_info_json_for_record(tmp_path, rid)
-    assert r["title"].startswith("i'm trying")
-    assert r["fields"]["social"]["uploader"] == "comrade.killjoy"
+    assert r["origin_fields"]["ytdlp_title"].startswith("i'm trying")
+    assert r["origin_fields"]["ytdlp_uploader"] == "comrade.killjoy"
 
 
 def test_info_json_path_is_in_capture_not_artifacts(tmp_path):
@@ -79,27 +84,93 @@ def test_info_json_path_is_in_capture_not_artifacts(tmp_path):
     assert p.parent.name == "capture" and "artifacts" not in p.parts
 
 
-# ---------- schema-driven social keys ---------- #
+# ---------- schema-driven ytdlp keys ---------- #
 
 
-def test_map_info_respects_provided_social_keys():
-    # Only the passed keys land in `social:` — the mapping is the schema's, not hardcoded.
+def test_map_info_respects_provided_keys():
+    # Only the passed keys are lifted — the mapping is the schema's, not hardcoded.
     r = _sidecar._map_info(_INFO, ("uploader", "view_count"))
-    assert set(r["fields"]["social"]) == {"uploader", "view_count"}
+    assert set(r["origin_fields"]) == {"ytdlp_uploader", "ytdlp_view_count", "ytdlp_comments"}
 
 
-def test_social_keys_for_reads_video_schema(tmp_path):
-    # The packaged video mime schema declares extended_fields.social.sidecar_keys.
-    keys = _sidecar._social_keys_for(tmp_path, {"_artifact": {"mime": "video/mp4"}})
-    assert "uploader" in keys and "view_count" in keys and "artists" in keys
+def test_ytdlp_keys_for_reads_video_schema(tmp_path):
+    # The packaged video mime schema declares sidecar.ytdlp_keys.
+    keys = _sidecar._ytdlp_keys_for(tmp_path, {"_artifact": {"mime": "video/mp4"}})
+    assert "title" in keys and "uploader" in keys and "artists" in keys
 
 
-def test_social_keys_for_falls_back_when_no_schema_declaration(tmp_path):
-    # No artifact / a mime whose schema declares no social.sidecar_keys → built-in default.
-    assert _sidecar._social_keys_for(tmp_path, None) == _sidecar._SOCIAL_KEYS
-    assert _sidecar._social_keys_for(tmp_path, {"_artifact": {"mime": "text/html"}}) == (
-        _sidecar._SOCIAL_KEYS
+def test_ytdlp_keys_for_falls_back_when_no_schema_declaration(tmp_path):
+    # No artifact / a mime whose schema declares no sidecar.ytdlp_keys → built-in default.
+    assert _sidecar._ytdlp_keys_for(tmp_path, None) == _sidecar._YTDLP_KEYS
+    assert _sidecar._ytdlp_keys_for(tmp_path, {"_artifact": {"mime": "text/html"}}) == (
+        _sidecar._YTDLP_KEYS
     )
+
+
+# ---------- placement: origin block, not artifact/body ---------- #
+
+
+def _post_with_origin() -> frontmatter.Post:
+    post = frontmatter.Post(content="")
+    records.append_origin_block(post, uri="https://x/v/1", snapshot="2026-06-02T00:00:00Z")
+    return post
+
+
+def test_merge_origin_fields_lands_on_origin_block():
+    post = _post_with_origin()
+    records.merge_origin_fields(post, {"ytdlp_title": "Cool", "ytdlp_view_count": 9})
+    fields = post.metadata["_origins"][-1]["fields"]
+    assert fields["ytdlp_title"] == "Cool" and fields["ytdlp_view_count"] == 9
+    assert fields["uri"] == "https://x/v/1"  # universal fields preserved
+
+
+def test_merge_origin_fields_noop_without_fields_or_origin():
+    post = _post_with_origin()
+    records.merge_origin_fields(post, {})  # empty → no-op, no crash
+    assert "ytdlp_title" not in post.metadata["_origins"][-1]["fields"]
+    bare = frontmatter.Post(content="")
+    records.merge_origin_fields(bare, {"ytdlp_title": "X"})  # no origin → no crash
+    assert not bare.metadata.get("_origins")
+
+
+def test_title_for_priority_frontmatter_then_artifact_then_ytdlp():
+    post = _post_with_origin()
+    records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
+    # 3) only an origin ytdlp_title → display falls all the way back to it.
+    assert records.title_for(post) == "From yt-dlp"
+    # 2) an artifact-block title (primary-artifact candidate) outranks ytdlp_title.
+    records.set_artifact_block(post, mime="video/mp4", fields={"title": "Artifact Title"})
+    assert records.title_for(post) == "Artifact Title"
+    # 1) the normalizer-authored frontmatter title is canonical.
+    post.metadata["title"] = "Normalized Title"
+    assert records.title_for(post) == "Normalized Title"
+
+
+def test_stub_frontmatter_carries_empty_title_and_description():
+    fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
+    assert fm["title"] == "" and fm["description"] == ""
+
+
+def test_apply_drafter_result_keeps_artifact_title_candidate_and_leaves_frontmatter_empty():
+    # A drafter-extracted title rides on the artifact block as a candidate; the
+    # frontmatter `title` is NOT auto-populated (normalizer-owned); origin gets ytdlp_*.
+    from corpus._cli.draft import _apply_drafter_result
+
+    fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
+    post = frontmatter.Post(content="", **fm)
+    records.set_artifact_block(post, mime="video/mp4", fields={"video_codec": "h264"})
+    records.append_origin_block(post, uri="https://x/v/1", snapshot="2026-06-02T00:00:00Z")
+    result = {
+        "fields": {},
+        "title": "Artifact Candidate",
+        "origin_fields": {"ytdlp_title": "YT"},
+        "origin_uri_aliases": [],
+    }
+    _apply_drafter_result(post, result, {}, "video/video_mp4")
+    assert (records.artifact_block(post).get("fields") or {})["title"] == "Artifact Candidate"
+    assert post.metadata.get("title") == ""  # frontmatter title untouched (normalizer-owned)
+    assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"
+    assert records.title_for(post) == "Artifact Candidate"  # frontmatter empty → candidate
 
 
 # ---------- enrichment-sidecar lifecycle ---------- #

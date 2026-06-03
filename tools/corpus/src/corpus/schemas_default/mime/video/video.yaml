@@ -82,29 +82,33 @@ extended_fields:
     source: file_metadata
     description: |
       Per-stream metadata lifted from the container. Keyed by stream id (`v0`, `v1`, ..., `a0`, `a1`, ...). Each entry carries `kind` (`video` | `audio`), `codec`, and kind-specific fields: video streams include `width`/`height`/`frame_rate`; audio streams include `sampling_rate`/`channels`/`language`. The address-scheme's `stream_id` parameter selects from this map.
-  social:
-    type: object
-    required: false
-    source: sidecar
-    description: |
-      Social-graph + engagement metadata produced from the capture's yt-dlp `.info.json`
-      enrichment sidecar (companion metadata staged in `capture/`, read at draft, then
-      deleted — never persisted to `artifacts/`). Present only for captures that carry a
-      sidecar. Sub-keys are copied verbatim from the info.json keys in `sidecar_keys` — the
-      mapping guidance the drafter applies. (The structural sidecar mappings are fixed:
-      `title` → the artifact title; `description` → the frontmatter description + a caption
-      text segment; `comments[]` → comment text segments; `webpage_url` → an origin alias.)
-    sidecar_keys:
-      - uploader
-      - uploader_id
-      - uploader_url
-      - channel
-      - channel_id
-      - channel_url
-      - upload_date
-      - view_count
-      - like_count
-      - comment_count
-      - repost_count
-      - track
-      - artists
+# Companion metadata from the yt-dlp `.info.json` enrichment sidecar. NOT an artifact
+# field — it describes the source post, not the media bytes — so the drafter lifts it into
+# the ORIGIN block as flat `ytdlp_<key>` fields.
+sidecar:
+  source: ytdlp-info-json
+  description: |
+    yt-dlp `.info.json` enrichment for media captured via the video/audio capturer
+    (companion metadata staged in `capture/`, read at draft, then deleted — never
+    persisted to `artifacts/`). It is NON-PRIMARY-source metadata, so the drafter lifts
+    each listed key into the ORIGIN block as a flat `ytdlp_<key>` field (e.g.
+    `ytdlp_title`, `ytdlp_view_count`) — never the artifact block, the body, or the
+    frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a
+    `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:`
+    aliases. Present only for captures that carry a sidecar.
+  ytdlp_keys:
+    - title
+    - description
+    - uploader
+    - uploader_id
+    - uploader_url
+    - channel
+    - channel_id
+    - channel_url
+    - upload_date
+    - view_count
+    - like_count
+    - comment_count
+    - repost_count
+    - track
+    - artists

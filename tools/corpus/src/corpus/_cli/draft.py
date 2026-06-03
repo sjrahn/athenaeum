@@ -158,6 +158,9 @@ def _apply_drafter_result(
     artifact_fields = dict(artifact.get("fields") or {})
     for key, value in (result.get("fields") or {}).items():
         artifact_fields[key] = value
+    # A drafter-extracted title is a primary-artifact title candidate → it rides on the
+    # artifact block (the normalizer chooses among candidates to author frontmatter
+    # `title`). yt-dlp media titles arrive instead as the origin's `ytdlp_title`.
     if title := result.get("title"):
         artifact_fields["title"] = title
     records.set_artifact_block(post, mime=artifact["mime"], fields=artifact_fields)
@@ -179,6 +182,11 @@ def _apply_drafter_result(
             transport=emb["transport"],
             fields=emb.get("fields") or None,
         )
+
+    # Source-provided enrichment fields (e.g. a yt-dlp capture's `ytdlp_*` metadata) →
+    # the origin block, not the artifact block (the artifact block is for facts about the
+    # primary-artifact bytes; this is where-it-came-from metadata — spec §7.2).
+    records.merge_origin_fields(post, result.get("origin_fields") or {})
 
     # Origin-alias URLs the drafter discovered (canonical / post-redirect final) — fold
     # into the origin block's uri: list, not the artifact block (spec §7.2).

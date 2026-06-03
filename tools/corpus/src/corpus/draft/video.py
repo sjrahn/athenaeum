@@ -117,19 +117,17 @@ def draft(
         fields["speakers"] = [{"id": idx, "name": None} for idx in distinct_speakers]
         fields["is_diarized"] = True
 
-    # yt-dlp .info.json → title / description / social fields + caption & comment
-    # segments (so a no-audio capture still carries the post's text content).
+    # yt-dlp .info.json is non-primary-source enrichment → it goes to the origin block as
+    # `ytdlp_*` fields, never the body/artifact/frontmatter. The body stays transcript-only
+    # (the transcript is the one thing derived from the primary artifact's own audio).
     sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
-    fields.update(sidecar["fields"])
-    sections = sidecar["caption_sections"] + sections + sidecar["comment_sections"]
 
     return {
         "fields": fields,
         "segments": sections,
         "embeds": [],
-        "title": sidecar["title"],
-        "description": sidecar["description"],
         "issues": issues,
+        "origin_fields": sidecar["origin_fields"],
         "origin_uri_aliases": sidecar["origin_aliases"],
     }
 

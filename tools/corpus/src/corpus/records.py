@@ -52,6 +52,7 @@ from . import paths
 # Spec §4.2 core-fields order.
 _CORE_FIELD_ORDER = [
     "id",
+    "title",
     "description",
     "status",
     "transport",
@@ -234,10 +235,9 @@ def _emit_classify_block(classify: dict[str, Any]) -> str:
     id_ = classify.get("id", "")
     subtype = classify.get("subtype")
     fields = classify.get("fields") or {}
-    if not id_ or (id_ == namespace and not subtype):
-        qualified = namespace
-    else:
-        qualified = f"{namespace}/{id_}"
+    qualified = (
+        namespace if (not id_ or (id_ == namespace and not subtype)) else f"{namespace}/{id_}"
+    )
     if subtype:
         qualified = f"{qualified}/{subtype}"
     return _emit_block(f"<!--classify {qualified}", fields)
@@ -534,12 +534,22 @@ def media_type_for(post: frontmatter.Post) -> str:
 
 
 def title_for(post: frontmatter.Post) -> str:
-    """Return the record's title. Reads from the artifact block's `title` field."""
+    """Return the record's display title.
+
+    The normalizer-authored frontmatter `title` is canonical. Before normalization it
+    is empty, so fall back to a **block-level title candidate** — the artifact block's
+    `title` (a primary-artifact title: PDF metadata, og:title, …), then an origin
+    block's `ytdlp_title` (source-provided). The normalizer ultimately chooses among
+    these candidates (or writes its own) to fill the frontmatter `title` (spec §4.2.1)."""
+    if title := str(post.metadata.get("title") or "").strip():
+        return title
     artifact = artifact_block(post)
-    if not artifact:
-        return ""
-    fields = artifact.get("fields") or {}
-    return str(fields.get("title") or "")
+    if artifact and (title := (artifact.get("fields") or {}).get("title")):
+        return str(title)
+    for origin in iter_origin_blocks(post):
+        if title := (origin.get("fields") or {}).get("ytdlp_title"):
+            return str(title)
+    return ""
 
 
 def iter_origin_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
@@ -611,7 +621,7 @@ def load_all(corpus_root: Path) -> Iterator[tuple[Path, frontmatter.Post]]:
     for md in iter_record_paths(corpus_root):
         try:
             yield md, load(md)
-        except Exception:  # noqa: BLE001 — tolerant parse
+        except Exception:  # tolerant parse — skip unloadable records
             continue
 
 
@@ -768,6 +778,24 @@ def add_origin_uri_alias(post: frontmatter.Post, alias: str) -> bool:
     return True
 
 
+def merge_origin_fields(post: frontmatter.Post, fields: dict[str, Any]) -> None:
+    """Merge extra fields into the most-recent origin block (the one the current capture
+    seeded), beside `uri:`/`snapshot:`.
+
+    Drafters attach source-provided enrichment here — e.g. a yt-dlp capture's `ytdlp_*`
+    fields (title/description/uploader/counts/`ytdlp_comments`). This is where-it-came-from
+    metadata, NOT facts about the artifact bytes, so it belongs on the origin block, never
+    the artifact block or the body (spec §7.2)."""
+    if not fields:
+        return
+    origins = post.metadata.get("_origins") or []
+    if not origins:
+        return
+    target = origins[-1].setdefault("fields", {})
+    for key, value in fields.items():
+        target[key] = value
+
+
 def append_classify_block(
     post: frontmatter.Post,
     *,
@@ -900,14 +928,15 @@ def stub_frontmatter(
 
     `record_id` is the bare blake3 hex (becomes `id`). `transport` is alternative
     byte hashes (`<algo>:<hex>` or list); the primary blake3 lives on `id` and is NOT
-    duplicated here. `touch_id` bootstraps the touch chain. `description` defaults to
-    empty (filled at normalize).
+    duplicated here. `touch_id` bootstraps the touch chain. `title` and `description`
+    default to empty (both filled at normalize from the block-level candidates).
 
     The caller is responsible for emitting the artifact + first origin blocks via
     `set_artifact_block()` and `append_origin_block()`.
     """
     fm: dict[str, Any] = {
         "id": record_id,
+        "title": "",
         "description": description,
         "status": "stub",
     }

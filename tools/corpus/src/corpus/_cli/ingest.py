@@ -113,7 +113,6 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     else:
         transport_value = transport_hashes
 
-    title = str(sidecar.get("title") or src.stem)
     fm = records.stub_frontmatter(
         record_id=record_id,
         transport=transport_value,
@@ -121,7 +120,12 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         description="",
     )
     post = frontmatter.Post(content="", **fm)
-    records.set_artifact_block(post, mime=media_type, fields={"title": title})
+    # The artifact block carries a `title` only when the capture provides a real one —
+    # a sanitized filename stem is not a meaningful title. The frontmatter `title` stays
+    # empty until the normalizer authors it from the block candidates (an artifact
+    # `title`, an origin `ytdlp_title`); see `records.title_for`.
+    artifact_fields = {"title": str(sidecar["title"])} if sidecar.get("title") else {}
+    records.set_artifact_block(post, mime=media_type, fields=artifact_fields)
     records.append_origin_block(post, uri=origin_uri, snapshot=origin_at)
     _emit_sidecar_issues(post, sidecar)
     records.dump(post, record_file)

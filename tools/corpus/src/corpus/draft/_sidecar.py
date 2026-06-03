@@ -1,24 +1,21 @@
-"""yt-dlp `.info.json` → record fields + content segments (deterministic).
+"""yt-dlp `.info.json` → origin-block enrichment fields (deterministic).
 
 A yt-dlp capture writes a companion `.info.json` (title, caption/description, uploader,
 view/like/comment/repost counts, track, and — when `getcomments` is on — the top
-comments). `corpus.capture._move_video_sidecar` relocates it to
-`artifacts/<shard>/<id>.info.json`. The audio/video drafters read it here so the rich
-post metadata enters the record instead of being orphaned on disk.
+comments). Ingest stages it at `capture/<hash>.info.json`; the audio/video drafters read
+it here so the rich post metadata enters the record instead of being orphaned on disk.
 
-Mechanical and host-agnostic: any yt-dlp capture has this sidecar. The mapping is:
+**The principle (sjrahn):** the *primary artifact* is the downloaded media. Its intrinsic
+facts (codec / dimensions / streams from ffprobe) belong to the artifact block, and its
+only body content is the transcript (from the media's own audio). Everything the info.json
+adds comes from a *non-primary source* (the source page), so it goes to a **metadata
+block** — never the body, the artifact block, or the frontmatter `description`.
+Mechanically: the info.json keys are lifted into the **origin block** (the "where it came
+from" block) as flat `ytdlp_<key>` fields, and `comments[]` becomes a `ytdlp_comments`
+list there. `webpage_url`/`original_url` fold into the origin `uri:` alias list.
 
-- `title`          → the refined artifact title (replaces the sanitized-filename fallback).
-- `description`    → the `description` field AND a caption `text` segment (so a no-audio
-                     record still has body content — the caption *is* a post's text).
-- social fields    → a `social:` field map (uploader/channel/dates/engagement/track).
-- `comments[]`     → one `text` segment per comment (author/like_count/timestamp on `extra`).
-- `webpage_url`    → origin-URI alias candidates (folded into the origin block on merge).
-
-Caption and comments are each wrapped in their own `<!--section-->` so the content zone
-stays homogeneous (all sections) when transcript sections are also present. Their
-`address` is on a `sidecar=` axis — these are companion-metadata content, not byte-slices
-of the media (spec §4.3.2 address axes).
+Mechanical and host-agnostic: any yt-dlp capture has this sidecar. The lifted key set is
+schema-driven (the mime schema's `sidecar.ytdlp_keys`); `_YTDLP_KEYS` is the fallback.
 """
 
 from __future__ import annotations
@@ -28,15 +25,15 @@ import logging
 from pathlib import Path
 from typing import Any, TypedDict
 
-from corpus.segments import Section, Segment
-
 log = logging.getLogger(__name__)
 
-# Fallback info.json keys lifted into the record's `social:` field map (present-only),
-# used when the mime schema declares no `extended_fields.social.sidecar_keys`. The schema
-# is the source of truth (see `_social_keys_for`); this keeps the drafter working for a
+# Fallback info.json keys lifted into the origin block as `ytdlp_<key>` fields
+# (present-only), used when the mime schema declares no `sidecar.ytdlp_keys`. The schema
+# is the source of truth (see `_ytdlp_keys_for`); this keeps the drafter working for a
 # corpus whose schema predates the declaration.
-_SOCIAL_KEYS = (
+_YTDLP_KEYS = (
+    "title",
+    "description",
     "uploader",
     "uploader_id",
     "uploader_url",
@@ -54,23 +51,14 @@ _SOCIAL_KEYS = (
 
 
 class SidecarResult(TypedDict):
-    title: str | None
-    description: str | None
-    fields: dict[str, Any]
-    caption_sections: list[Section]
-    comment_sections: list[Section]
+    # Flat `ytdlp_<key>` fields (+ `ytdlp_comments`) merged into the origin block.
+    origin_fields: dict[str, Any]
+    # webpage_url / original_url, folded into the origin block's uri: alias list.
     origin_aliases: list[str]
 
 
 def _empty() -> SidecarResult:
-    return {
-        "title": None,
-        "description": None,
-        "fields": {},
-        "caption_sections": [],
-        "comment_sections": [],
-        "origin_aliases": [],
-    }
+    return {"origin_fields": {}, "origin_aliases": []}
 
 
 def info_json_path(corpus_root: Path, record_id: str) -> Path:
@@ -83,12 +71,12 @@ def info_json_path(corpus_root: Path, record_id: str) -> Path:
 def parse_info_json_for_record(
     corpus_root: Path, record_id: str, record_metadata: dict[str, Any] | None = None
 ) -> SidecarResult:
-    """Read `capture/<id>.info.json` (if present) → fields + caption/comment sections.
+    """Read `capture/<id>.info.json` (if present) → `ytdlp_*` origin fields + aliases.
 
-    The `social:` field set is schema-driven: the keys copied from the info.json are
-    declared on the record's mime schema (`extended_fields.social.sidecar_keys`), resolved
-    from `record_metadata`. Tolerant: a missing/unparseable sidecar returns the empty
-    result (no crash) — most captures (HTML/image/pdf) have no sidecar at all."""
+    The lifted key set is schema-driven: declared on the record's mime schema
+    (`sidecar.ytdlp_keys`), resolved from `record_metadata`. Tolerant: a missing /
+    unparseable sidecar returns the empty result (no crash) — most captures
+    (HTML/image/pdf) have no sidecar at all."""
     path = info_json_path(corpus_root, record_id)
     if not path.is_file():
         return _empty()
@@ -99,50 +87,35 @@ def parse_info_json_for_record(
         return _empty()
     if not isinstance(info, dict):
         return _empty()
-    return _map_info(info, _social_keys_for(corpus_root, record_metadata))
+    return _map_info(info, _ytdlp_keys_for(corpus_root, record_metadata))
 
 
-def _social_keys_for(
+def _ytdlp_keys_for(
     corpus_root: Path, record_metadata: dict[str, Any] | None
 ) -> tuple[str, ...]:
-    """The info.json keys mapped into `social:`, declared on the record's mime schema
-    (`extended_fields.social.sidecar_keys`); falls back to `_SOCIAL_KEYS`."""
+    """The info.json keys lifted into `ytdlp_*` origin fields, declared on the record's
+    mime schema (`sidecar.ytdlp_keys`); falls back to `_YTDLP_KEYS`."""
     from corpus import schemas
 
     media_type = ((record_metadata or {}).get("_artifact") or {}).get("mime")
     if media_type:
         schema = schemas.load_mime_schema(corpus_root, str(media_type)) or {}
-        keys = ((schema.get("extended_fields") or {}).get("social") or {}).get("sidecar_keys")
+        keys = (schema.get("sidecar") or {}).get("ytdlp_keys")
         if keys:
             return tuple(str(k) for k in keys)
-    return _SOCIAL_KEYS
+    return _YTDLP_KEYS
 
 
-def _map_info(info: dict[str, Any], social_keys: tuple[str, ...]) -> SidecarResult:
+def _map_info(info: dict[str, Any], keys: tuple[str, ...]) -> SidecarResult:
     out = _empty()
 
-    title = info.get("title")
-    out["title"] = str(title) if title else None
-
-    description = info.get("description")
-    out["description"] = str(description) if description else None
-
-    social = {k: info[k] for k in social_keys if info.get(k) not in (None, "", [])}
-    if social:
-        out["fields"] = {"social": social}
-
-    if description:
-        out["caption_sections"] = [
-            Section(
-                address="sidecar=info.json",
-                entry="Caption",
-                segments=[
-                    Segment(atom="text", address="sidecar=description", body=str(description))
-                ],
-            )
-        ]
-
-    out["comment_sections"] = _comment_sections(info.get("comments"))
+    fields: dict[str, Any] = {
+        f"ytdlp_{k}": info[k] for k in keys if info.get(k) not in (None, "", [])
+    }
+    comments = _comments(info.get("comments"))
+    if comments:
+        fields["ytdlp_comments"] = comments
+    out["origin_fields"] = fields
 
     aliases = [
         str(info[k])
@@ -153,29 +126,24 @@ def _map_info(info: dict[str, Any], social_keys: tuple[str, ...]) -> SidecarResu
     return out
 
 
-def _comment_sections(comments: Any) -> list[Section]:
+def _comments(comments: Any) -> list[dict[str, Any]]:
+    """yt-dlp `comments[]` → a present-only list of `{text, author?, like_count?,
+    timestamp?}` for the `ytdlp_comments` origin field. Non-primary content kept as
+    metadata, never body (yt-dlp returns no list for TikTok — mainly YouTube etc.)."""
     if not isinstance(comments, list) or not comments:
         return []
-    segs: list[Segment] = []
-    for i, c in enumerate(comments):
+    out: list[dict[str, Any]] = []
+    for c in comments:
         if not isinstance(c, dict):
             continue
         text = c.get("text")
         if not text or not str(text).strip():
             continue
-        extra: dict[str, Any] = {}
+        entry: dict[str, Any] = {"text": str(text).strip()}
         for key in ("author", "like_count", "timestamp"):
             if c.get(key) not in (None, ""):
-                extra[key] = c[key]
-        segs.append(
-            Segment(
-                atom="text",
-                address=f"sidecar=comment/{i}",  # index keeps the address unique
-                body=str(text).strip(),
-                extra=extra,
-            )
-        )
-    if not segs:
-        return []
-    log.info("info.json: %d comment segment(s)", len(segs))
-    return [Section(address="sidecar=comments", entry="Comments", segments=segs)]
+                entry[key] = c[key]
+        out.append(entry)
+    if out:
+        log.info("info.json: %d comment(s) → ytdlp_comments", len(out))
+    return out
