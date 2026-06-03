@@ -51,6 +51,7 @@ def parse_transcript_sections(
     video_stream_id: str | None,
     multi_audio: bool,
     multi_video: bool,
+    media_duration: float | None = None,
 ) -> list[Section]:
     """One Section per speaker run — the DEFAULT sectioning, used when a video ships no
     chapter markers (chaptered videos go through `parse_chaptered_sections`). Each holds
@@ -61,6 +62,10 @@ def parse_transcript_sections(
     passes None and gets transcript-only sections. Interior boundary instants are shared
     between adjacent runs, so each `frame=<t>` address is placed at most once (§4.3.2.2).
 
+    `media_duration` (the probed clip length, seconds) bounds the final run's end so a
+    short continuous-speech clip that whisper returns as a single segment at start=0
+    spans `00:00-<duration>` rather than collapsing to a zero-length `00:00-00:00`.
+
     A speaker change is a section boundary at draft time; the normalizer later merges
     across speaker boundaries into topic-grain sections.
     """
@@ -68,7 +73,7 @@ def parse_transcript_sections(
     if not checkpoints:
         return []
     return _emit_sections(
-        _speaker_run_groups(checkpoints),
+        _speaker_run_groups(checkpoints, media_duration),
         drop_empty=True,
         audio_stream_id=audio_stream_id,
         video_stream_id=video_stream_id,
@@ -85,6 +90,7 @@ def parse_chaptered_sections(
     video_stream_id: str | None,
     multi_audio: bool,
     multi_video: bool,
+    media_duration: float | None = None,
 ) -> list[Section]:
     """One Section per video chapter — the uploader's outline (yt-dlp `chapters[]`), used
     in preference to speaker runs when a video ships chapter markers. The chapter title
@@ -98,7 +104,7 @@ def parse_chaptered_sections(
     """
     checkpoints = _parse_checkpoints(transcript)
     return _emit_sections(
-        _chapter_groups(checkpoints, chapters),
+        _chapter_groups(checkpoints, chapters, media_duration),
         drop_empty=False,
         audio_stream_id=audio_stream_id,
         video_stream_id=video_stream_id,
@@ -140,10 +146,23 @@ def _parse_checkpoints(transcript: str) -> list[tuple[float, str, str]]:
     return checkpoints
 
 
-def _speaker_run_groups(checkpoints: list[tuple[float, str, str]]) -> list[_Group]:
+def _final_end(last_cp: float, media_duration: float | None) -> float:
+    """End bound for the LAST section/checkpoint. Prefer the probed media duration (the
+    true clip length) when it runs past the final transcript checkpoint — a short
+    continuous-speech clip can come back from whisper as a single segment at start=0,
+    which would otherwise collapse to a zero-length `00:00-00:00` range. Falls back to
+    `last_cp + 0.001` when no duration is known or the checkpoint already runs past it."""
+    if media_duration is not None and media_duration > last_cp:
+        return media_duration
+    return last_cp + 0.001
+
+
+def _speaker_run_groups(
+    checkpoints: list[tuple[float, str, str]], media_duration: float | None = None
+) -> list[_Group]:
     """Group consecutive same-speaker checkpoints into runs (entry=None — speaker-run
     sectioning carries no TOC label). A run ends where the next run begins; the last ends
-    just past the final checkpoint."""
+    at the probed media duration (or just past the final checkpoint when unknown)."""
     groups: list[_Group] = []
     i, n = 0, len(checkpoints)
     while i < n:
@@ -152,7 +171,7 @@ def _speaker_run_groups(checkpoints: list[tuple[float, str, str]]) -> list[_Grou
         while j < n and checkpoints[j][1] == speaker:
             j += 1
         begin = checkpoints[i][0]
-        end = checkpoints[j][0] if j < n else checkpoints[-1][0] + 0.001
+        end = checkpoints[j][0] if j < n else _final_end(checkpoints[-1][0], media_duration)
         speaker_idx = speaker_label_to_index(speaker)
         members = [(cp[0], cp[2], speaker_idx) for cp in checkpoints[i:j]]
         groups.append((None, begin, end, members))
@@ -161,20 +180,27 @@ def _speaker_run_groups(checkpoints: list[tuple[float, str, str]]) -> list[_Grou
 
 
 def _chapter_groups(
-    checkpoints: list[tuple[float, str, str]], chapters: list[dict[str, Any]]
+    checkpoints: list[tuple[float, str, str]],
+    chapters: list[dict[str, Any]],
+    media_duration: float | None = None,
 ) -> list[_Group]:
     """One group per chapter (entry=the chapter title), tiling the timeline contiguously:
-    a chapter runs to the next chapter's start, and the last just past the final
-    checkpoint (kept in-range, like the speaker-run path, rather than at a declared
-    `end_time` that can round past the real duration). Each checkpoint joins the chapter
-    containing its start; any checkpoint before the first chapter folds into it."""
+    a chapter runs to the next chapter's start, and the last to the probed media duration
+    (or just past the final checkpoint when unknown — kept in-range, like the speaker-run
+    path, rather than at a declared `end_time` that can round past the real duration).
+    Each checkpoint joins the chapter containing its start; any checkpoint before the
+    first chapter folds into it."""
     ordered = sorted(chapters, key=lambda c: c.get("start") or 0.0)
     n = len(ordered)
     last_cp = checkpoints[-1][0] if checkpoints else 0.0
     groups: list[_Group] = []
     for i, ch in enumerate(ordered):
         begin = float(ch.get("start") or 0.0)
-        end = float(ordered[i + 1].get("start") or begin) if i + 1 < n else last_cp + 0.001
+        end = (
+            float(ordered[i + 1].get("start") or begin)
+            if i + 1 < n
+            else _final_end(last_cp, media_duration)
+        )
         if end <= begin:  # degenerate (e.g. a final chapter past the last speech)
             end = begin + 0.001
         lo = float("-inf") if i == 0 else begin

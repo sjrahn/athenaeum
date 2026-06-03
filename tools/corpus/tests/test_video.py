@@ -200,6 +200,44 @@ def test_parse_transcript_sections_frames_unique_lead_and_final_close():
     assert secs[-1].segments[-1].atom == "image"
 
 
+def test_parse_transcript_sections_single_segment_spans_media_duration():
+    # Regression (gotcha): a short continuous-speech clip can come back from whisper as a
+    # SINGLE segment at start=0. Without the probed media duration the lone speaker run's
+    # end fell back to last_cp + 0.001 → a degenerate `00:00-00:00` range. media_duration
+    # bounds it to the true clip length so it reads `00:00-<duration>`.
+    transcript = "[Speaker 1] (00:00:00)\nA continuous rant with no pauses.\n"
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+        media_duration=22.13,
+    )
+    assert len(secs) == 1
+    assert secs[0].address == "time_range=00:00-00:22"
+    transcripts = [s for s in secs[0].segments if s.overlay == "text/transcript"]
+    assert len(transcripts) == 1
+    assert transcripts[0].address == "time_range=00:00-00:22"
+    # The lone video section bookends: lead frame at 0, closing frame at the true end.
+    frames = [g.address for g in secs[0].segments if g.atom == "image"]
+    assert frames == ["frame=00:00", "frame=00:22"]
+
+
+def test_parse_transcript_sections_single_segment_without_duration_falls_back():
+    # No media_duration → preserve the legacy near-zero end (no regression for callers
+    # that don't pass a duration; the audio/video drafters now always do).
+    transcript = "[Speaker 1] (00:00:00)\nShort.\n"
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id=None,
+        multi_audio=False,
+        multi_video=False,
+    )
+    assert secs[0].address == "time_range=00:00-00:00"
+
+
 def test_parse_chaptered_sections_uses_chapter_outline():
     # A video that ships chapter markers is sectioned by them (the uploader's outline),
     # the chapter title riding as each section's `entry` TOC label (§4.3.2.2).

@@ -112,6 +112,7 @@ def draft(
                     "video_stream_id": probe["video_stream_id"],
                     "multi_audio": probe["audio_count"] > 1,
                     "multi_video": probe["video_count"] > 1,
+                    "media_duration": probe["root"].get("duration"),
                 }
                 if chapters:
                     sections = parse_chaptered_sections(transcript, chapters, **common)

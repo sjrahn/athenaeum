@@ -89,6 +89,7 @@ def draft(
                     video_stream_id=None,
                     multi_audio=probe["audio_count"] > 1,
                     multi_video=False,
+                    media_duration=probe["root"].get("duration"),
                 )
             else:
                 issues.append(
