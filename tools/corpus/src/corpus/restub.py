@@ -38,55 +38,44 @@ from . import paths, records, touches
 _RESTUB_MODULE = "re-stub"
 
 
-def restub(record_file: Path) -> str:
-    """Re-stub the record at `record_file`. Returns the record's id.
-
-    Reads the existing record via `records.load`, preserves the byte-tied and
-    provenance fields, writes a fresh stub-shaped record (frontmatter + minimal
-    body: artifact block + origin blocks), and clears the content zone.
-    """
-    post = records.load(record_file)
+def restub_post(post: frontmatter.Post, *, touch_chain: list[str]) -> frontmatter.Post:
+    """Build a fresh stub-shaped Post from `post` (in memory, no write), preserving the
+    byte-tied + provenance fields and clearing everything schema-derived. `touch_chain`
+    is the new `touch[]` to seed. `restub()` writes the result with the re-stub touch
+    appended; `corpus redraft` passes the chain collapsed to the original ingest entry
+    so a clean re-derive of an unchanged record is byte-identical (idempotent)."""
     metadata = dict(post.metadata)
 
     record_id = str(metadata.get("id") or "")
     if not record_id:
-        raise ValueError(f"record at {record_file} has no `id`")
+        raise ValueError("record has no `id`")
 
     artifact = metadata.get("_artifact") or {}
     mime = (artifact.get("mime") or "").strip()
     if not mime:
-        raise ValueError(
-            f"record at {record_file} has no `<!--artifact-->` block; cannot re-stub."
-        )
+        raise ValueError("record has no `<!--artifact-->` block; cannot re-stub.")
     title = (artifact.get("fields") or {}).get("title") or ""
 
     origin_blocks = list(metadata.get("_origins") or [])
     if not origin_blocks:
         raise ValueError(
-            f"record at {record_file} has no origin URIs to preserve. "
-            f"Author an origin manually before re-stub."
+            "record has no origin URIs to preserve. Author an origin manually before re-stub."
         )
 
     visibility = metadata.get("visibility")
     transport_value = metadata.get("transport")
 
-    existing_touch_chain = touches.touch_list(post)
-
-    # Build the fresh stub.
-    touch_id = touches.script_identifier(_RESTUB_MODULE)
+    seed = touch_chain[0] if touch_chain else touches.script_identifier(_RESTUB_MODULE)
     fm = records.stub_frontmatter(
         record_id=record_id,
         transport=transport_value,
-        touch_id=touch_id,
+        touch_id=seed,
         description="",
     )
     if visibility:
         fm["visibility"] = str(visibility)
-
-    # Touch chain: keep the first existing entry (the original ingest touch),
-    # plus the re-stub touch (spec §8.4).
-    if existing_touch_chain:
-        fm["touch"] = [existing_touch_chain[0], touch_id]
+    if touch_chain:
+        fm["touch"] = list(touch_chain)
 
     new_post = frontmatter.Post(content="", **fm)
     artifact_fields: dict[str, Any] = {}
@@ -106,9 +95,23 @@ def restub(record_file: Path) -> str:
             subtype=ob.get("subtype"),
             fields=extras or None,
         )
+    return new_post
 
+
+def restub(record_file: Path) -> str:
+    """Re-stub the record at `record_file` on disk. Returns the record's id.
+
+    Preserves the byte-tied + provenance fields, writes a fresh stub-shaped record
+    (frontmatter + artifact block + origin blocks), and clears the content zone. The
+    touch chain collapses to the original ingest entry plus a re-stub touch (spec §8.4).
+    """
+    post = records.load(record_file)
+    chain = touches.touch_list(post)
+    restub_touch = touches.script_identifier(_RESTUB_MODULE)
+    new_chain = [chain[0], restub_touch] if chain else [restub_touch]
+    new_post = restub_post(post, touch_chain=new_chain)
     records.dump(new_post, record_file)
-    return record_id
+    return str(new_post.metadata.get("id") or "")
 
 
 def restub_by_id(corpus_root: Path, record_id: str) -> str:

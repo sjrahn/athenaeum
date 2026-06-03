@@ -41,62 +41,51 @@ def configure(parser: argparse.ArgumentParser) -> None:
     add_corpus_root_arg(parser)
 
 
-def run(args: argparse.Namespace) -> int:
-    corpus_root = resolved_corpus_root(args)
-    record_id, record_file = paths.resolve_record(corpus_root, args.target)
-    post = records.load(record_file)
+class DraftError(RuntimeError):
+    """A record cannot be drafted (no mime schema / no drafter)."""
 
-    # `draft` is a stub→draft transition. Re-running it would append duplicate embed/issue
-    # blocks (the metadata zone isn't reset here), so refuse a non-stub record and point at
-    # the clean re-run path: `re-stub` (which collapses the body) then `draft`.
-    status = str(post.metadata.get("status") or "").lower()
-    if status and status != "stub":
-        sys.exit(
-            f"record status is {status!r}, not 'stub'; `corpus draft` only runs on a stub. "
-            f"Run `corpus re-stub {args.target}` first to re-draft."
-        )
 
+def derive_record(
+    post,
+    corpus_root,
+    *,
+    fingerprint_cli: bool | None = None,
+) -> None:
+    """Re-derive `post`'s draft content from its retained artifact, **in place**: resolve
+    the mime schema + drafter, build the content zone through the recordbuild ops, apply
+    the metadata-zone result, emit + grammar-validate, apply the per-host canonical
+    content-scoping override, append the draft touch, and flip status to `draft`. No
+    dedup and no write — the caller owns those. `post` must be a stub. The shared draft
+    core of `corpus draft` and `corpus redraft`. Raises `DraftError` (missing schema /
+    drafter) or `ArtifactMissing` (artifact not local)."""
+    record_id = str(post.metadata.get("id") or "")
     media_type = records.media_type_for(post)
     if not media_type:
-        sys.exit(
-            "record has no `<!--artifact <mime>-->` block (re-stub first?)."
-        )
+        raise DraftError("record has no `<!--artifact <mime>-->` block (re-stub first?).")
     mt_schema = schemas.load_mime_schema(corpus_root, media_type)
     if not mt_schema:
-        sys.exit(f"no mime schema for {media_type!r}.")
+        raise DraftError(f"no mime schema for {media_type!r}.")
     mime_schema_id = schemas.mime_schema_id_for(corpus_root, media_type)
     if not mime_schema_id:
-        sys.exit(f"could not resolve mime schema id for {media_type!r}.")
-
+        raise DraftError(f"could not resolve mime schema id for {media_type!r}.")
     drafter = draft_pkg.get_drafter(mime_schema_id)
     if drafter is None:
-        sys.exit(
-            f"no drafter registered for mime schema id {mime_schema_id!r}. "
-            f"P2 ships drafters for application/application_pdf and image/*. "
-            f"HTML drafter lands in P2.7; others in later phases."
-        )
+        raise DraftError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
 
-    extension = mime.extension_for(media_type)
-    store = get_store(corpus_root)
-    try:
-        binary_file = store.ensure_local(record_id, extension)
-    except ArtifactMissing as exc:
-        sys.exit(str(exc))
+    binary_file = get_store(corpus_root).ensure_local(record_id, mime.extension_for(media_type))
 
     # The mime schema owns the canonical-hash strategy; pass its algo to the drafter so a
     # corpus that overrides `canonical_strategy.algo` is honoured (drafters fall back to
     # their built-in default when this is None).
     canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
     # One construction path: the drafter populates a `Build` (content zone via the
-    # recordbuild ops — the same path `compile` replays from a manifest), and the
-    # caller applies the metadata-zone result + `finish` emits/validates.
+    # recordbuild ops — the same path `compile` replays from a manifest), and we apply
+    # the metadata-zone result + `finish` emits/validates.
     build = recordbuild.begin_from_post(post, corpus_root)
     # Whether (and with which algorithm) to compute perceptual fingerprints: CLI
     # override > composite classification > mime schema > off (spec §7.2). The drafter
     # resolves the per-atom algorithms from this knob via `fingerprint.algos_for_atom`.
-    fingerprint = schemas.resolve_fingerprint(
-        corpus_root, media_type, post, getattr(args, "fingerprint", None)
-    )
+    fingerprint = schemas.resolve_fingerprint(corpus_root, media_type, post, fingerprint_cli)
     result = drafter(
         binary_file,
         build=build,
@@ -118,8 +107,8 @@ def run(args: argparse.Namespace) -> int:
     # `canonical.content_selector` in its overlay, recompute the canonical hash over just
     # that content region, overriding the drafter's whole-document hash. This makes the
     # same article reached by different links (different title/breadcrumb framing) share a
-    # canonical → collapse via content-dedup below. Absent the overlay section, the
-    # drafter's whole-document canonical stands (no behaviour change for other corpora).
+    # canonical → collapse via content-dedup. Absent the overlay section, the drafter's
+    # whole-document canonical stands (no behaviour change for other corpora).
     if canonical_algo and post.metadata.get("canonical"):
         from corpus.capture import recipes
 
@@ -133,9 +122,31 @@ def run(args: argparse.Namespace) -> int:
             )
 
     # Append draft touch + flip status.
-    touch_module = "draft." + mime_schema_id  # e.g. draft.application/application_pdf
-    touches.record_touch(post, touches.script_identifier(touch_module))
+    touches.record_touch(post, touches.script_identifier("draft." + mime_schema_id))
     post.metadata["status"] = "draft"
+
+
+def run(args: argparse.Namespace) -> int:
+    corpus_root = resolved_corpus_root(args)
+    record_id, record_file = paths.resolve_record(corpus_root, args.target)
+    post = records.load(record_file)
+
+    # `draft` is a stub→draft transition. Re-running it would append duplicate embed/issue
+    # blocks (the metadata zone isn't reset here), so refuse a non-stub record and point at
+    # the clean re-run path: `re-stub` (which collapses the body) then `draft`.
+    status = str(post.metadata.get("status") or "").lower()
+    if status and status != "stub":
+        sys.exit(
+            f"record status is {status!r}, not 'stub'; `corpus draft` only runs on a stub. "
+            f"Run `corpus re-stub {args.target}` first to re-draft."
+        )
+
+    try:
+        derive_record(post, corpus_root, fingerprint_cli=getattr(args, "fingerprint", None))
+    except (DraftError, ArtifactMissing) as exc:
+        sys.exit(str(exc))
+
+    extension = mime.extension_for(records.media_type_for(post))
 
     # Cross-URL content dedup: if another record already holds this exact content (same
     # `canonical:` hash AND same embed set), fold THIS capture's URL(s) into that record

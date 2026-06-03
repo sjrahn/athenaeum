@@ -120,16 +120,23 @@ def load(path: Path) -> frontmatter.Post:
 
 
 def dump(post: frontmatter.Post, path: Path) -> None:
-    """Write `post` to `path` in canonical zone order.
+    """Write `post` to `path` in canonical zone order (see `dumps`)."""
+    paths.ensure_parent(path)
+    path.write_text(dumps(post), encoding="utf-8")
+
+
+def dumps(post: frontmatter.Post) -> str:
+    """Serialize `post` to the canonical record text — the exact bytes `dump` writes.
 
     Order:
         frontmatter (core fields only, in spec order)
         metadata zone:     <!--artifact-->, <!--origin-->*, <!--classify-->*, <!--embed-->*
         content zone:      post.content verbatim (section/segment)
         annotations zone:  <!--issue-->*
-    """
-    paths.ensure_parent(path)
 
+    Returned (not written) so callers like `corpus redraft` can compare a re-derived
+    record against disk and write only when it changed.
+    """
     artifact = post.metadata.get("_artifact")
     origins = post.metadata.get("_origins") or []
     classifies = post.metadata.get("_classifies") or []
@@ -171,12 +178,11 @@ def dump(post: frontmatter.Post, path: Path) -> None:
         body_parts.append(annotations_zone)
     body = "\n\n".join(body_parts)
 
-    out = (
+    return (
         f"---\n{fm_text}---\n\n{body}\n"
         if body
         else f"---\n{fm_text}---\n"
     )
-    path.write_text(out, encoding="utf-8")
 
 
 # ---------- block emit ---------- #

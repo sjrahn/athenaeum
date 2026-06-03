@@ -25,6 +25,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
+    "redraft":         ("Capture & ingest",       "Bulk re-derive records from their artifacts (deterministic recompile)"),
     # Crawl & discovery (P4)
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
