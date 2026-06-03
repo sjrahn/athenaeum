@@ -1,11 +1,12 @@
 """Per-origin capture recipes — read from the origin overlay's ``capture:`` section.
 
 Capture is a retrieval concern of an origin, so its config lives **on the origin
-overlay** (``schema/origin/<host>.yaml``) rather than a separate namespace — one
+overlay** (``schema/origin/web/<host>.yaml`` — origin overlays are namespaced by URI
+scheme family, http(s) under ``web/``) rather than a separate namespace — one
 host-keyed file describes both what a source is and how to capture it. The
 ``capture:`` block selects and parameterises the capturer for matching origins::
 
-    # schema/origin/instagram.com.yaml
+    # schema/origin/web/instagram.com.yaml
     applies_to:
       host_pattern: instagram.com        # or host_patterns: [a, b]; "*" = catch-all
       include_subdomains: true

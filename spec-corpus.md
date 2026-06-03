@@ -653,6 +653,8 @@ The universal `origin` overlay declares the two fields every origin block carrie
 - `uri` — string or list-of-strings; the URI(s) by which the origin was reached (a `file://` or filesystem path for a local capture).
 - `snapshot` — ISO-8601 timestamp of observation.
 
+**Directory layout — namespaced by URI scheme family.** Origin overlays live under `schema/origin/<scheme-family>/<id>.yaml`, grouped by the URI scheme they are retrieved over so each family can carry its own match semantics. The `web` family (http/https) is keyed by host — `origin/web/<host>.yaml`, matched by `applies_to.host_pattern` — while `otherwise/` is the catch-all for un-namespaced schemes and other families (`urn/`, `file/`, `s3/`) get their own sub-namespace and match predicate as a corpus needs them. The universal `origin/origin.yaml` sits at the namespace root and layers into every overlay. The overlay **id is the bare `<id>`** (e.g. `youtube.com`) regardless of sub-namespace, so the `<!--origin youtube.com-->` opener and the `origin/youtube.com` classification are independent of where the file lives. `corpus init` seeds `origin/origin.yaml` + `origin/web/example.com.yaml`; the flat `origin/<id>.yaml` layout is still read for back-compat.
+
 **Operational overlay sections.** Capture and transcription are retrieval concerns of an origin, so their per-host configuration lives on the origin overlay — one host-keyed file describes both *what* a source is and *how* to capture and process it. These sections are corpus-local (the package ships none) and read mechanically by the tooling; declaring them is how the tooling stays generic with **no hardcoded host knowledge**:
 
 - `capture:` — how to retrieve this origin (read at capture time).
@@ -973,6 +975,8 @@ schema/<namespace>/<axis>/<axis>_<id>.yaml       specific declaration
 The **underscore-flattened** subtype convention (`text_html.yaml` inside `text/` rather than `html.yaml`) keeps filenames self-describing.
 
 Inside `composite/`, namespaces with no axis decomposition use the simpler `schema/composite/<namespace>/<id>.yaml` form, with the namespace universal at `schema/composite/<namespace>/<namespace>.yaml`.
+
+Inside `origin/`, overlays nest by **URI scheme family** (§7.2): `schema/origin/web/<host>.yaml` for http(s) sources (host-matched), `schema/origin/otherwise/<id>.yaml` as the catch-all, and other scheme families (`urn/`, `file/`, `s3/`) as a corpus needs them, with the namespace universal at `schema/origin/origin.yaml`. The overlay id is the bare `<id>` regardless of sub-namespace; the flat `schema/origin/<id>.yaml` form is read for back-compat.
 
 ### 12.4 Resolver surface
 

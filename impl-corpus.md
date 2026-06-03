@@ -133,7 +133,7 @@ A web capture renders the page in a headless browser, drives it to surface all d
 - **`remove: ['#header', 'footer', '.ad']`** — delete matching elements from the live DOM before the snapshot. This is **where page chrome is removed.** The HTML drafter (§3.1) is deliberately mechanical and never guesses what is chrome, so stripping nav/header/footer/ads/cookie-notices is a per-host decision made here, where the site's real structure is known. Removing chrome at capture also keeps its images from being inlined and embedded.
 - `eval: "<javascript>"` — escape hatch for site-specific DOM surgery (e.g. fetch-and-inject an AJAX-on-click tab, or promote a `data-*` high-res image URL into `src` so it gets inlined). An async-function string is awaited before the snapshot.
 
-Capture config (`capturer`, `transport`, `interactions`, `viewport`) lives on a per-host origin overlay (`schema/origin/<host>.yaml`) under a `capture:` section; global defaults can sit on the universal `origin.yaml`. See `scaffold.py`'s example overlay for the full annotated shape.
+Capture config (`capturer`, `transport`, `interactions`, `viewport`) lives on a per-host origin overlay (`schema/origin/web/<host>.yaml` — origin overlays are namespaced by URI scheme family, http(s) under `web/`) under a `capture:` section; global defaults can sit on the universal `origin.yaml`. See `scaffold.py`'s example overlay for the full annotated shape.
 
 ### 2.9 Capture routing & the video (yt-dlp) pathway
 

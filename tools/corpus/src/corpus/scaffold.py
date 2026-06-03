@@ -35,7 +35,8 @@ _UNIVERSAL_ORIGIN_YAML = """\
 # Universal origin-block fields — applied to every <!--origin--> block, regardless of
 # whether the opener names a specific origin schema. Bare `<!--origin-->` uses just
 # these fields; qualified forms (`<!--origin <id>-->`) layer additional fields from
-# per-id yamls in this directory (`schema/origin/<id>.yaml`).
+# per-id yamls under a URI-scheme-family sub-namespace — web (http/https) sources
+# live at `schema/origin/web/<host>.yaml`.
 #
 # Origin is a per-corpus concern (sources of retrieval are corpus-specific), so this
 # file is corpus-local — the `ath-corpus` package does NOT bundle a universal origin.
@@ -83,9 +84,10 @@ per-corpus concerns so they live here.
 {name}/
 ├── records/              # TRACKED — record markdown files (sharded by id[:2])
 ├── schema/
-│   ├── origin/
+│   ├── origin/          # Origin overlays, namespaced by URI scheme family
 │   │   ├── origin.yaml   # Universal origin fields (uri/snapshot) — corpus owns this
-│   │   └── <host>.yaml   # Per-host overlays: origin fields + optional `capture:` config
+│   │   └── web/          # http(s) sources, keyed by host (urn/file/s3 get their own subns)
+│   │       └── <host>.yaml   # Per-host: origin fields + optional `capture:` config
 │   └── composite/
 │       └── {namespace}/  # THIS corpus's classification namespace(s)
 ├── capturers/            # TRACKED — optional corpus-local capturer code (example.py)
@@ -108,8 +110,9 @@ See `ath-corpus`'s README for the full surface.
 """
 
 _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
-# Example per-host origin overlay. Copy to schema/origin/<host>.yaml, uncomment, and
-# edit. Matched against an origin's host (apex<->www aware); corpus-local first. One
+# Example per-host origin overlay. Copy to schema/origin/web/<host>.yaml, uncomment, and
+# edit. (Origin overlays are namespaced by URI scheme family; http(s) sources live under
+# web/.) Matched against an origin's host (apex<->www aware); corpus-local first. One
 # host-keyed file carries BOTH the origin-block field overlays (extended_fields, for
 # record validation) AND, optionally, a `capture:` section (read only at capture time)
 # describing how to fetch this source.
@@ -267,10 +270,13 @@ def scaffold(target: Path, *, namespace: str, force: bool = False) -> Path:
         )
 
     # Pluggable-capture seam (both tracked, both optional): per-origin capture config
-    # lives under a `capture:` section on a per-host origin overlay (schema/origin/
-    # <host>.yaml), and corpus-local capturer code under capturers/. Seeded with
-    # commented examples that are inert until edited.
-    example_overlay = origin_dir / "example.com.yaml"
+    # lives under a `capture:` section on a per-host origin overlay. Origin overlays are
+    # namespaced by URI scheme family — web (http/https) sources live under
+    # `schema/origin/web/<host>.yaml` (matched by host); corpus-local capturer code lives
+    # under capturers/. Seeded with commented examples that are inert until edited.
+    web_dir = origin_dir / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+    example_overlay = web_dir / "example.com.yaml"
     if not example_overlay.exists() or force:
         example_overlay.write_text(_EXAMPLE_ORIGIN_OVERLAY_YAML, encoding="utf-8")
 

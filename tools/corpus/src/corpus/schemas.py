@@ -6,10 +6,13 @@ The four reserved top-level namespaces:
   packaged.** Layered universal → type → subtype.
 - `atom/<atom>/<atom>_<id>.yaml` — atomic overlays on segments. **Format-universal,
   packaged.** Layered universal-per-atom → overlay.
-- `origin/<id>.yaml` — origin overlays (flat layout per spec §7.2). **Per-corpus
-  concern; not packaged.** Both the universal `origin/origin.yaml` (uri/snapshot
-  declarations) and per-host overlays live corpus-local. `corpus init` seeds the
-  universal at scaffold time.
+- `origin/<scheme>/<id>.yaml` — origin overlays, namespaced by URI scheme family
+  (spec §7.2): web (http/https) sources at `origin/web/<host>.yaml`, with `otherwise/`
+  the catch-all and future families like `urn/`, `file/`, `s3/`. **Per-corpus concern;
+  not packaged.** Both the universal `origin/origin.yaml` (uri/snapshot declarations)
+  and the per-id overlays live corpus-local; `corpus init` seeds the universal +
+  `web/example.com.yaml` at scaffold time. The flat `origin/<id>.yaml` layout is read
+  tolerantly for back-compat. The overlay id is the bare `<id>` regardless of sub-namespace.
 - `composite/<namespace>/<namespace>.yaml` (+ `<sub_id>.yaml`) — user-defined
   classification namespaces. **Per-corpus concern; not packaged.**
   `composite/issue/<id>.yaml` carries issue overlays — the universal

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from corpus import paths, scaffold, schemas
 
 
@@ -14,6 +12,10 @@ def test_scaffold_creates_minimal_seam(tmp_path):
     assert (target / "records").is_dir()
     # Per-corpus concerns: origin universal + composite namespace.
     assert (target / "schema" / "origin" / "origin.yaml").is_file()
+    # Origin overlays are namespaced by URI scheme family: the example web-host
+    # overlay seeds under origin/web/, NOT flat at origin/.
+    assert (target / "schema" / "origin" / "web" / "example.com.yaml").is_file()
+    assert not (target / "schema" / "origin" / "example.com.yaml").exists()
     assert (target / "schema" / "composite" / "document" / "document.yaml").is_file()
     assert (target / ".gitignore").is_file()
     assert (target / "README.md").is_file()
