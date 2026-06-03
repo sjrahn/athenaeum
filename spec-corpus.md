@@ -77,7 +77,7 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 9. **Offline-first.** Only `capture` requires network access. Ingest, draft, normalize, and URI resolution all operate on local data.
 
-10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial summary. Everything else — title, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block.
+10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block (a title candidate is provenance-bearing, so it rides as a namespaced field — `html_title`, `ytdlp_title` — not a generic one).
 
 11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
 
@@ -138,7 +138,7 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
-| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (an artifact block's `title`, an origin block's `ytdlp_title`) or writes its own. |
+| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (a format-namespaced artifact field — `html_title`, `pdf_title`, `docx_title`, `workbook_title`; or an origin block's `ytdlp_title`) or writes its own. There is no generic artifact `title`. |
 | `description` | string | yes | 1–3 sentence summary. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. The primary mechanism for discovery. |
 | `status` | enum | yes | `stub`, `draft`, or `normalized`. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
@@ -189,11 +189,10 @@ The metadata zone carries the artifact's identity, its origins, its applied clas
 
 ##### 4.3.1.1 The artifact block
 
-Exactly one per record. The opener-line argument is the canonical MIME type and is **authoritative** — there is no frontmatter `media_type` field. The block body holds `title:` plus the fields declared by the matching `mime` schema chain.
+Exactly one per record. The opener-line argument is the canonical MIME type and is **authoritative** — there is no frontmatter `media_type` field. The block body holds the fields declared by the matching `mime` schema chain. There is **no generic `title:`** field; a title is provenance-bearing, so when the format exposes one it rides as a **namespaced title candidate** (`html_title`, `pdf_title`, `docx_title`, `workbook_title`) — by convention any artifact field whose key ends in `_title`. The normalizer picks among those candidates (and the origin block's `ytdlp_title`) to author the frontmatter `title` (§4.2.1).
 
 ```
 <!--artifact <mime-type>
-title: <title>
 <extended-field-1>: <value>
 <extended-field-2>: <value>
 -->

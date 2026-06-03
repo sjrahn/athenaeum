@@ -112,9 +112,9 @@ normalization:
 
     Markdown table syntax cannot express merged cells, nested multi-level headers, very wide tables, or cells with internal newlines / markdown-significant characters. Use an HTML `<table>` inside the segment body for those cases. xlrd does NOT surface merge information by default; if you suspect merges in the source, the segment-scope `format-loss / minor` issue should note that merge-fidelity wasn't verified. The segment's overlay (`text/data-table` or `text/data-table-dynamic`) is unchanged by the switch.
 
-    ## Promoting workbook title
+    ## Authoring the title
 
-    `workbook_title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. The record's drafter-stamped `title` is then the URL-derived filename. Replace it with the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
+    `workbook_title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries NO namespaced title candidate at all; the frontmatter `title` stays empty through draft. Author it from scratch — the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
 
     ## Forward reference
 

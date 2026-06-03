@@ -90,7 +90,6 @@ def draft(
     return {
         "fields": fields,
         "embeds": [],
-        "title": None,
         "issues": issues,
     }
 

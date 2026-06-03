@@ -29,7 +29,6 @@ v0.2/v0.3 migration paths (CarbonAi-specific debt) are not carried.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import frontmatter
 
@@ -54,7 +53,6 @@ def restub_post(post: frontmatter.Post, *, touch_chain: list[str]) -> frontmatte
     mime = (artifact.get("mime") or "").strip()
     if not mime:
         raise ValueError("record has no `<!--artifact-->` block; cannot re-stub.")
-    title = (artifact.get("fields") or {}).get("title") or ""
 
     origin_blocks = list(metadata.get("_origins") or [])
     if not origin_blocks:
@@ -78,10 +76,9 @@ def restub_post(post: frontmatter.Post, *, touch_chain: list[str]) -> frontmatte
         fm["touch"] = list(touch_chain)
 
     new_post = frontmatter.Post(content="", **fm)
-    artifact_fields: dict[str, Any] = {}
-    if title:
-        artifact_fields["title"] = str(title)
-    records.set_artifact_block(new_post, mime=mime, fields=artifact_fields)
+    # The artifact block's body fields are all schema-derived → reset; the next draft
+    # re-derives them from the bytes (including any namespaced `*_title` candidate).
+    records.set_artifact_block(new_post, mime=mime, fields={})
     for ob in origin_blocks:
         fields = ob.get("fields") or {}
         uri = fields.get("uri", "")

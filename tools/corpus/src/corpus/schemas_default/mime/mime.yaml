@@ -9,11 +9,10 @@ description: |
   Universal fields every artifact carries on its <!--artifact-->  block, regardless
   of media-type. Per-type yamls in this directory extend with format-specific fields.
 
-extended_fields:
-  title:
-    type: string
-    required: true
-    description: |
-      Short descriptive label for the artifact. The drafter refines from extracted
-      metadata where possible (PDF /Info Title, HTML <title>, og:title, xlsx workbook
-      title, etc.); the normalizer may refine further during normalize.
+  There is NO universal `title` field. A title is provenance-bearing, so it rides as a
+  format-namespaced candidate declared by the per-type schema (`html_title`, `pdf_title`,
+  `docx_title`, `workbook_title`); non-primary-source titles (yt-dlp) land on the origin
+  block as `ytdlp_title`. The normalizer picks among those `*_title` candidates to author
+  the normalizer-owned frontmatter `title` (spec §4.2.1).
+
+extended_fields: {}

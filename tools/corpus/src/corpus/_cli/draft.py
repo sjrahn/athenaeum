@@ -197,11 +197,10 @@ def _apply_drafter_result(
     artifact_fields = dict(artifact.get("fields") or {})
     for key, value in (result.get("fields") or {}).items():
         artifact_fields[key] = value
-    # A drafter-extracted title is a primary-artifact title candidate → it rides on the
-    # artifact block (the normalizer chooses among candidates to author frontmatter
-    # `title`). yt-dlp media titles arrive instead as the origin's `ytdlp_title`.
-    if title := result.get("title"):
-        artifact_fields["title"] = title
+    # A drafter-extracted title rides on the artifact block as a format-namespaced field
+    # (html_title / pdf_title / docx_title / workbook_title) inside `fields` above — there
+    # is no generic `title`. The normalizer picks among those `*_title` candidates (and the
+    # origin's `ytdlp_title`) to author the frontmatter `title`.
     records.set_artifact_block(post, mime=artifact["mime"], fields=artifact_fields)
 
     # Frontmatter description: set only when still empty (don't clobber a human edit).

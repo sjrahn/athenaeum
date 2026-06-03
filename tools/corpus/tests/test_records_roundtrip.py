@@ -24,7 +24,7 @@ def _make_golden(tmp_path):
     records.set_artifact_block(
         post,
         mime="application/pdf",
-        fields={"title": "Golden", "pdf_page_count": 2},
+        fields={"pdf_title": "Golden", "pdf_page_count": 2},
     )
     records.append_origin_block(
         post,

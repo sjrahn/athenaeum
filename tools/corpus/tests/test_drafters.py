@@ -44,7 +44,7 @@ def _ingest(corpus_root: Path, fixture: str, mime: str, ext: str) -> str:
             "touch": "corpus.ingest@0.1.0",
         }
     )
-    records.set_artifact_block(post, mime=mime, fields={"title": src.stem})
+    records.set_artifact_block(post, mime=mime, fields={})
     records.append_origin_block(
         post, uri=f"file://{src.resolve()}", snapshot="2026-05-31T00:00:00Z"
     )
@@ -274,7 +274,8 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     assert "canonical_url" not in fields
     assert "final_url" not in fields
     assert "fetched_at" not in fields
-    assert result.get("title") == "Sample Article — Demo Publisher"
+    # No generic `title` — the candidate is the namespaced `html_title` asserted above.
+    assert "title" not in fields
     # Canonical (<link rel=canonical>) + final URL (corpus-capture-url meta) come back as
     # origin aliases for the origin block, not artifact fields.
     aliases = result.get("origin_uri_aliases") or []

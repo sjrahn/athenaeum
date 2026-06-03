@@ -29,9 +29,10 @@ construction path is shared by draft / redraft / decompose / compile / normalize
 drafter returns a `DrafterResult` carrying only the **metadata-zone** facts the caller
 merges onto the record:
 
-    fields       — artifact-block extended fields (per the mime schema)
+    fields       — artifact-block extended fields (per the mime schema), including the
+                   format's namespaced title candidate when it has one (html_title,
+                   pdf_title, docx_title, workbook_title) — there is no generic `title`
     embeds       — metadata-zone embeds (list of dicts: {media_type, address, transport, fields})
-    title        — refined artifact title or None
     description  — frontmatter description; set only when the record's is still empty
                    (e.g. a yt-dlp caption). The normalizer may later refine it.
     issues       — spec §4.3.3.1 issue dicts: {id, severity, resolution, detector, address?, ...}
@@ -57,7 +58,6 @@ class DrafterResult(TypedDict, total=False):
 
     fields: dict[str, Any]
     embeds: list[dict[str, Any]]
-    title: str | None
     description: str | None  # frontmatter description; applied only when currently empty
     issues: list[dict[str, Any]]
     canonical: str | None

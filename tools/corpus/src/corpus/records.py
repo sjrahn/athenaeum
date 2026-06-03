@@ -542,16 +542,20 @@ def media_type_for(post: frontmatter.Post) -> str:
 def title_for(post: frontmatter.Post) -> str:
     """Return the record's display title.
 
-    The normalizer-authored frontmatter `title` is canonical. Before normalization it
-    is empty, so fall back to a **block-level title candidate** — the artifact block's
-    `title` (a primary-artifact title: PDF metadata, og:title, …), then an origin
-    block's `ytdlp_title` (source-provided). The normalizer ultimately chooses among
-    these candidates (or writes its own) to fill the frontmatter `title` (spec §4.2.1)."""
+    The normalizer-authored frontmatter `title` is canonical. Before normalization it is
+    empty, so fall back to a **block-level title candidate** — a format-namespaced artifact
+    field whose key ends in `_title` (`html_title`, `pdf_title`, `docx_title`,
+    `workbook_title`; a record carries at most one), then an origin block's `ytdlp_title`
+    (source-provided). There is no generic artifact `title`. The normalizer ultimately
+    chooses among these candidates (or writes its own) to fill the frontmatter `title`
+    (spec §4.2.1)."""
     if title := str(post.metadata.get("title") or "").strip():
         return title
     artifact = artifact_block(post)
-    if artifact and (title := (artifact.get("fields") or {}).get("title")):
-        return str(title)
+    if artifact:
+        for key, value in (artifact.get("fields") or {}).items():
+            if key.endswith("_title") and value:
+                return str(value)
     for origin in iter_origin_blocks(post):
         if title := (origin.get("fields") or {}).get("ytdlp_title"):
             return str(title)
@@ -935,7 +939,8 @@ def stub_frontmatter(
     `record_id` is the bare blake3 hex (becomes `id`). `transport` is alternative
     byte hashes (`<algo>:<hex>` or list); the primary blake3 lives on `id` and is NOT
     duplicated here. `touch_id` bootstraps the touch chain. `title` and `description`
-    default to empty (both filled at normalize from the block-level candidates).
+    default to empty (both filled at normalize — `title` from the namespaced block-level
+    candidates: an artifact `*_title`, an origin `ytdlp_title`).
 
     The caller is responsible for emitting the artifact + first origin blocks via
     `set_artifact_block()` and `append_origin_block()`.

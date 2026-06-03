@@ -37,9 +37,11 @@ def test_load_mime_schema_resolves_pdf_from_packaged_defaults(tmp_path):
     assert schema.get("artifact_kind") == "self_contained"
     # Reconciliation #7: media_type_id was stripped from bundled mime schemas.
     assert "media_type_id" not in schema
-    # Universal mime.yaml's `title` field merged in under the subtype:
+    # The universal mime.yaml declares no extended fields (there is no generic `title`;
+    # the title candidate is the subtype's namespaced `pdf_title`).
     extended = schema.get("extended_fields") or {}
-    assert "title" in extended, "universal mime.yaml `title` field must layer in"
+    assert "title" not in extended
+    assert "pdf_title" in extended, "subtype's namespaced title candidate layers in"
 
 
 def test_mime_schema_id_for_returns_axis_subtype_form(tmp_path):
@@ -112,8 +114,9 @@ def test_fallback_a_all_packaged(tmp_path):
     schema = schemas.load_mime_schema(root, "application/pdf")
     assert schema is not None
     extended = schema.get("extended_fields") or {}
-    assert "title" in extended  # from universal
+    assert "title" not in extended  # universal declares no generic title
     assert "page_count" in extended  # from subtype
+    assert "pdf_title" in extended  # subtype's namespaced title candidate
     assert schema.get("artifact_kind") == "self_contained"
 
 
@@ -142,9 +145,10 @@ def test_fallback_b_corpus_overrides_subtype_only(tmp_path):
     assert schema is not None
     # The local subtype's artifact_kind wins:
     assert schema.get("artifact_kind") == "decomposable"
-    # The universal's `title` field is still present (deep-merged from package):
     extended = schema.get("extended_fields") or {}
-    assert "title" in extended, "universal title must still merge in"
+    # The packaged universal declares no extended fields, so nothing layers in from it
+    # (no generic `title`):
+    assert "title" not in extended
     # The local field is present:
     assert "local_only_field" in extended
     # The packaged subtype's page_count is GONE — whole-file wins at the subtype rung:
@@ -170,12 +174,11 @@ def test_fallback_c_corpus_overrides_universal_only(tmp_path):
     schema = schemas.load_mime_schema(root, "application/pdf")
     assert schema is not None
     extended = schema.get("extended_fields") or {}
-    # The local universal's field is present (universal merges in)
+    # The local universal's field is present (the universal rung merges in, taken whole):
     assert "corpus_tag" in extended
-    # The packaged universal's `title` is GONE (whole-file wins at the universal rung)
-    assert "title" not in extended, (
-        "local universal replaces packaged universal entirely (whole-file at each rung)"
-    )
+    # No generic `title` from any rung — the packaged universal declares none, and the
+    # local one replaces it whole:
+    assert "title" not in extended
     # The packaged subtype's page_count is still present (subtype came from package):
     assert "page_count" in extended
 
@@ -197,8 +200,8 @@ def test_fallback_d_corpus_overrides_mid_rung_axis(tmp_path):
     schema = schemas.load_mime_schema(root, "application/pdf")
     assert schema is not None
     extended = schema.get("extended_fields") or {}
-    # Universal still in (from package):
-    assert "title" in extended
+    # Universal declares no extended fields (no generic title):
+    assert "title" not in extended
     # Axis adds its field:
     assert "axis_tag" in extended
     # Subtype still in (from package):

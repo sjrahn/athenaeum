@@ -118,7 +118,6 @@ def draft(
     return {
         "fields": fields,
         "embeds": [],
-        "title": fields.get("workbook_title"),
         "issues": issues,
     }
 

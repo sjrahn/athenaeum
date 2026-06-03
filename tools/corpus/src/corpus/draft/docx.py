@@ -91,7 +91,6 @@ def draft(
     return {
         "fields": fields,
         "embeds": [],
-        "title": fields.get("docx_title") or None,
         "issues": [],
     }
 

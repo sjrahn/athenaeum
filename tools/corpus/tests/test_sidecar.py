@@ -184,8 +184,8 @@ def test_title_for_priority_frontmatter_then_artifact_then_ytdlp():
     records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
     # 3) only an origin ytdlp_title → display falls all the way back to it.
     assert records.title_for(post) == "From yt-dlp"
-    # 2) an artifact-block title (primary-artifact candidate) outranks ytdlp_title.
-    records.set_artifact_block(post, mime="video/mp4", fields={"title": "Artifact Title"})
+    # 2) a namespaced artifact `*_title` candidate outranks ytdlp_title.
+    records.set_artifact_block(post, mime="text/html", fields={"html_title": "Artifact Title"})
     assert records.title_for(post) == "Artifact Title"
     # 1) the normalizer-authored frontmatter title is canonical.
     post.metadata["title"] = "Normalized Title"
@@ -197,9 +197,10 @@ def test_stub_frontmatter_carries_empty_title_and_description():
     assert fm["title"] == "" and fm["description"] == ""
 
 
-def test_apply_drafter_result_keeps_artifact_title_candidate_and_leaves_frontmatter_empty():
-    # A drafter-extracted title rides on the artifact block as a candidate; the
-    # frontmatter `title` is NOT auto-populated (normalizer-owned); origin gets ytdlp_*.
+def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatter_empty():
+    # A media drafter's title rides on the ORIGIN block as `ytdlp_title` (non-primary-source);
+    # the artifact block carries no generic `title`, and the frontmatter `title` is NOT
+    # auto-populated (normalizer-owned).
     from corpus._cli.draft import _apply_drafter_result
 
     fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
@@ -208,15 +209,14 @@ def test_apply_drafter_result_keeps_artifact_title_candidate_and_leaves_frontmat
     records.append_origin_block(post, uri="https://x/v/1", snapshot="2026-06-02T00:00:00Z")
     result = {
         "fields": {},
-        "title": "Artifact Candidate",
         "origin_fields": {"ytdlp_title": "YT"},
         "origin_uri_aliases": [],
     }
     _apply_drafter_result(post, result, "video/video_mp4")
-    assert (records.artifact_block(post).get("fields") or {})["title"] == "Artifact Candidate"
+    assert "title" not in (records.artifact_block(post).get("fields") or {})  # no generic title
     assert post.metadata.get("title") == ""  # frontmatter title untouched (normalizer-owned)
     assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"
-    assert records.title_for(post) == "Artifact Candidate"  # frontmatter empty → candidate
+    assert records.title_for(post) == "YT"  # frontmatter empty → origin ytdlp_title candidate
 
 
 # ---------- enrichment-sidecar lifecycle ---------- #

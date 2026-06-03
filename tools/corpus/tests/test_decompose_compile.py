@@ -31,7 +31,9 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
             "touch": ["corpus.ingest@0.1.0", "corpus.draft.mime/application/pdf@0.1.0"],
         }
     )
-    records.set_artifact_block(post, mime="application/pdf", fields={"title": "G", "page_count": 2})
+    records.set_artifact_block(
+        post, mime="application/pdf", fields={"pdf_title": "G", "page_count": 2}
+    )
     records.append_origin_block(
         post,
         uri="https://example.com/g.pdf",
@@ -126,13 +128,16 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     assert re_loaded.metadata["id"] == original_id
     assert re_loaded.metadata["transport"] == "sha256:" + "b" * 64
     assert records.media_type_for(re_loaded) == "application/pdf"
-    assert records.title_for(re_loaded) == "G"
     origins = list(records.iter_origin_blocks(re_loaded))
     assert len(origins) == 1
     assert origins[0]["fields"]["uri"] == "https://example.com/g.pdf"
     # Resets:
     assert re_loaded.metadata["status"] == "stub"
     assert re_loaded.metadata["description"] == ""
+    # Artifact body fields (incl. the namespaced `pdf_title` candidate) reset — re-derived
+    # at the next draft; so there's no title candidate and `title_for` is empty.
+    assert (records.artifact_block(re_loaded).get("fields") or {}) == {}
+    assert records.title_for(re_loaded) == ""
     assert list(records.iter_classify_blocks(re_loaded)) == []
     assert list(records.iter_embed_blocks(re_loaded)) == []
     assert list(records.iter_issue_blocks(re_loaded)) == []

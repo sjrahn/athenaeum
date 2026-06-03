@@ -48,11 +48,9 @@ def draft(
 
     fields: dict[str, Any] = {"page_count": len(reader.pages)}
     info = reader.metadata
-    title: str | None = None
     if info is not None:
         if v := _str(info.title):
             fields["pdf_title"] = v
-            title = v
         if v := _str(info.author):
             fields["pdf_author"] = v
         if v := _str(info.producer):
@@ -86,7 +84,6 @@ def draft(
     return {
         "fields": fields,
         "embeds": [],
-        "title": title,
         "issues": [],
         "canonical": canonical,
     }

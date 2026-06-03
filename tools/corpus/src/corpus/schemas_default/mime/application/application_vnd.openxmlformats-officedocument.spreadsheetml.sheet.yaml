@@ -174,7 +174,7 @@ normalization:
 
     ## Promoting workbook title
 
-    `workbook_title` (from `docProps/core.xml`) is frequently unset — the record's drafter-stamped `title` is then the URL-derived filename. Replace it with the workbook's actual purpose, derived from the cover sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
+    `workbook_title` (from `docProps/core.xml`) is the namespaced title candidate when set, but it is frequently unset — in which case the record carries no title candidate and the frontmatter `title` stays empty through draft. Author it from the workbook's actual purpose, derived from the cover sheet content, sheet names, or the methodology context (promote `workbook_title` when it is set and meaningful). Faithfulness applies — do not invent a title the workbook itself does not support.
 
     ## Faithfulness reminder
 

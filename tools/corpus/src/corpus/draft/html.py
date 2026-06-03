@@ -47,10 +47,10 @@ Pipeline:
 12. Emit the embed manifest. Nothing content-bearing is stripped, so
     every inline image survives and is embedded.
 
-Return: a `DrafterResult` — `fields` (record-level metadata), `embeds`
-(dedup'd image-asset descriptor dicts), one `<!--segment text-->` whose
-body is the cleaned HTML, `title`, drafter `issues`, and the
-`blake3-canonical-html` `canonical` hash.
+Return: a `DrafterResult` — `fields` (record-level metadata, including the
+namespaced `html_title` candidate), `embeds` (dedup'd image-asset descriptor
+dicts), one `<!--segment text-->` whose body is the cleaned HTML, drafter
+`issues`, and the `blake3-canonical-html` `canonical` hash.
 
 The normalizer reads that segment's body, parses it, decides section
 structure, emits markdown segments with `address: el=N` (or `el=N-M`).
@@ -261,10 +261,8 @@ def draft(
     soup = BeautifulSoup(raw, "html.parser")
 
     fields: dict[str, Any] = {}
-    title: str | None = None
     if v := _title(soup):
         fields["html_title"] = v
-        title = v
     if v := _meta_description(soup):
         fields["html_description"] = v
     if v := _html_lang(soup):
@@ -284,7 +282,7 @@ def draft(
         origin_uri_aliases.append(v)
 
     issues: list[dict[str, Any]] = []
-    if source := _detect_block_page(soup, title):
+    if source := _detect_block_page(soup, fields.get("html_title")):
         issues.append(
             {
                 "id": "bot-block",
@@ -305,7 +303,7 @@ def draft(
         )
     if issue := _detect_empty_body(soup):
         issues.append(issue)
-    if issue := _detect_generic_title(title):
+    if issue := _detect_generic_title(fields.get("html_title")):
         issues.append(issue)
     if issue := _detect_noscript_heavy(soup):
         issues.append(issue)
@@ -350,7 +348,6 @@ def draft(
     return {
         "fields": fields,
         "embeds": embeds,
-        "title": title,
         "issues": issues,
         "canonical": canonical,
         "origin_uri_aliases": origin_uri_aliases,

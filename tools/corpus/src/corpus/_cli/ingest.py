@@ -120,12 +120,12 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         description="",
     )
     post = frontmatter.Post(content="", **fm)
-    # The artifact block carries a `title` only when the capture provides a real one —
-    # a sanitized filename stem is not a meaningful title. The frontmatter `title` stays
-    # empty until the normalizer authors it from the block candidates (an artifact
-    # `title`, an origin `ytdlp_title`); see `records.title_for`.
-    artifact_fields = {"title": str(sidecar["title"])} if sidecar.get("title") else {}
-    records.set_artifact_block(post, mime=media_type, fields=artifact_fields)
+    # The artifact block carries no generic `title`: a capture-sidecar title (e.g. a yt-dlp
+    # title) is non-primary-source metadata whose home is the origin block's `ytdlp_title`,
+    # merged at draft. The frontmatter `title` stays empty until the normalizer authors it
+    # from the namespaced candidates (an artifact `*_title`, an origin `ytdlp_title`); see
+    # `records.title_for`.
+    records.set_artifact_block(post, mime=media_type, fields={})
     records.append_origin_block(post, uri=origin_uri, snapshot=origin_at)
     _emit_sidecar_issues(post, sidecar)
     records.dump(post, record_file)
