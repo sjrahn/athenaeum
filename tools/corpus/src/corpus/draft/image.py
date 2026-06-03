@@ -15,6 +15,7 @@ from PIL import ExifTags, Image
 
 from corpus import content_hash, recordbuild, records
 from corpus.draft import DrafterResult, register
+from corpus.fingerprint import algos_for_atom, image_fingerprints
 from corpus.segments import Segment
 
 # Register the same drafter for every bundled image MIME schema. A custom
@@ -43,7 +44,7 @@ def draft(
     record_id: str | None = None,
     record_metadata: dict[str, Any] | None = None,
     canonical_algo: str | None = None,
-    fingerprint: bool | str | list[str] = False,  # wired in Part B (phash/dhash/ahash/whash)
+    fingerprint: bool | str | list[str] = False,  # phash/dhash/ahash/whash (needs [fingerprint])
 ) -> DrafterResult:
     fields: dict[str, Any] = {
         "image_size_bytes": image_path.stat().st_size,
@@ -73,7 +74,12 @@ def draft(
             if gps:
                 fields["exif_gps"] = gps
 
-    recordbuild.add_blocks(build, [Segment(atom="image", address="bbox=0,0,1,1", body="")])
+    # Perceptual fingerprint on the single image-atom segment (opt-in via the schema
+    # `fingerprint` knob; the image is its own self-artifact, so no embed is needed).
+    perceptual = image_fingerprints(image_path, algos_for_atom("image", fingerprint))
+    recordbuild.add_blocks(
+        build, [Segment(atom="image", address="bbox=0,0,1,1", perceptual=perceptual, body="")]
+    )
     # Canonical hash per the mime schema's `canonical_strategy.algo`; the strategy id
     # encodes its hash family (e.g. `blake3-canonical-image` → `blake3:`).
     algo = canonical_algo or "blake3-canonical-image"

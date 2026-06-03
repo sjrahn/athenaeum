@@ -186,6 +186,26 @@ def test_image_drafter_emits_metadata_and_positioning_marker(tmp_path, run_draft
     assert result.get("canonical", "").startswith("blake3:")
 
 
+def test_image_drafter_fingerprint_opt_in(tmp_path, run_drafter):
+    """The image drafter sets the image-atom segment's `perceptual` only when the
+    `fingerprint` knob is on, with the schema-selected algorithm (default phash)."""
+    pytest.importorskip("imagehash")
+    root = _make_corpus(tmp_path)
+    rid = _ingest(root, "sample.png", "image/png", "png")
+    binary = LocalArtifactStore(root).local_path(rid, "png")
+    drafter = draft.get_drafter("image/image_png")
+    kw = {"corpus_root": root, "record_id": rid, "record_metadata": {}}
+
+    _, off = run_drafter(drafter, binary, **kw)
+    assert off[0].perceptual is None
+
+    _, on = run_drafter(drafter, binary, fingerprint=True, **kw)
+    assert on[0].perceptual.startswith("phash:")  # image atom's default algorithm
+
+    _, dh = run_drafter(drafter, binary, fingerprint="dhash", **kw)
+    assert dh[0].perceptual.startswith("dhash:")
+
+
 def test_draft_cli_pipeline_against_image(tmp_path):
     """End-to-end through `corpus draft` against an ingested PNG."""
     root = _make_corpus(tmp_path)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from . import audio, image, text
 
@@ -25,6 +26,7 @@ __all__ = [
     "algos_for_atom",
     "audio",
     "image",
+    "image_fingerprints",
     "text",
     "text_fingerprints",
 ]
@@ -83,6 +85,13 @@ def text_fingerprints(body: str, algos: list[str]) -> str | list[str] | None:
     """Compute the requested text fingerprints for `body`: a scalar for one algorithm,
     a list for several, None when none are requested or all degrade to None."""
     return _collect(lambda algo: text.fingerprint_text(body, algo=algo), algos)
+
+
+def image_fingerprints(path: Path, algos: list[str]) -> str | list[str] | None:
+    """Compute the requested image fingerprints for the image at `path`: a scalar for
+    one algorithm, a list for several, None when none are requested or `imagehash` is
+    absent (degrade-by-default — a base install emits no image fingerprint)."""
+    return _collect(lambda algo: image.fingerprint_file(path, algo=algo), algos)
 
 
 def _collect(compute: Callable[[str], str | None], algos: list[str]) -> str | list[str] | None:

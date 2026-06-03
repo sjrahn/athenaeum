@@ -98,6 +98,32 @@ def test_image_fingerprint_computes_or_degrades():
     assert ifp.fingerprint_image(im) == fp
 
 
+def test_image_fingerprint_algorithm_selection_and_unknown():
+    pytest.importorskip("imagehash")
+    from PIL import Image
+
+    im = Image.new("RGB", (64, 64), (10, 200, 90))
+    for algo in ("phash", "dhash", "ahash", "whash"):
+        fp = ifp.fingerprint_image(im, algo=algo)
+        assert fp is not None and fp.startswith(f"{algo}:")
+        assert _PERCEPTUAL_RE.match(fp)
+    with pytest.raises(ValueError, match="unknown image fingerprint"):
+        ifp.fingerprint_image(im, algo="nope")
+
+
+def test_image_fingerprints_package_scalar_list_none(tmp_path):
+    pytest.importorskip("imagehash")
+    from PIL import Image
+
+    p = tmp_path / "i.png"
+    Image.new("RGB", (32, 32), (5, 5, 200)).save(p)
+    one = fp_pkg.image_fingerprints(p, ["dhash"])
+    assert isinstance(one, str) and one.startswith("dhash:")
+    multi = fp_pkg.image_fingerprints(p, ["phash", "dhash"])
+    assert isinstance(multi, list) and len(multi) == 2
+    assert fp_pkg.image_fingerprints(p, []) is None
+
+
 # ---------- audio (degrades without acoustid/fpcalc) ---------- #
 
 
