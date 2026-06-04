@@ -250,8 +250,9 @@ def merge_pages(
     structural `detect_region` diff. Later pages' content children are appended into page 1's
     region in order, **deduped by element `id`, else by a normalized-subtree hash** (so a
     repeated quoted-OP / threaded post isn't double-counted). A later page that adds zero new
-    children stops the walk (the generic terminator). `items` = page-1 region's direct element
-    children after the merge. Raises `RegionUnresolved` when no region resolves.
+    children stops the walk (the generic terminator). `items` is the merged content-item count
+    (see `_count_items` — id-bearing children, e.g. forum posts, when any are present; else all
+    direct element children). Raises `RegionUnresolved` when no region resolves.
     """
     if not pages_html:
         return "", 0
@@ -292,7 +293,7 @@ def merge_pages(
         if added == 0:
             break
 
-    return str(soup1), len(_element_children(region1))
+    return str(soup1), _count_items(region1)
 
 
 def expected_count(html: str, *, cfg: PaginationConfig) -> int | None:
@@ -315,6 +316,18 @@ def _first_selector(sel: str | list[str] | None) -> str | None:
 
 def _element_children(tag: Tag) -> list[Tag]:
     return [c for c in tag.find_all(recursive=False) if isinstance(c, Tag)]
+
+
+def _count_items(region: Tag) -> int:
+    """Count the content items in a merged region for the `posts` provenance + completeness
+    check. Forum/CMS posts carry stable ids (`article id="js-post-N"`), while framework nodes
+    that ride inside the content region (page-nav, "post reply" bars) typically don't — so
+    count **id-bearing** direct children when any are present, else fall back to all direct
+    element children (id-less repeating items). This keeps `posts` an honest item count rather
+    than inflating it with framework `div`s (the g8board "56 items" vs 54 posts mismatch)."""
+    children = _element_children(region)
+    id_bearing = [c for c in children if c.get("id")]
+    return len(id_bearing) if id_bearing else len(children)
 
 
 def _dedup_key(tag: Tag) -> tuple[str, str]:

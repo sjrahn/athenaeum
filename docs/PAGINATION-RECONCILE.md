@@ -107,6 +107,20 @@ merged item count against it and **emit a capture-stage detector** (warn) on mis
 that yields fewer items than the source advertises is the exact failure both prototypes hit; surface it
 rather than shipping a lossy record. If `max_pages` is hit, log how many pages were dropped.
 
+> **COUNT SEMANTICS — found during the g8board corpus-side validation; (a) now RESOLVED in the tooling.**
+> Three denominators didn't line up: the page advertises **"53 replies"**, the lossless merge holds
+> **54 posts** (replies + OP), and the merge logged **"56 items"** (54 post articles + 2 non-post
+> framework `div`s that ride in the `content_selector` region). **(a) Done:** `merge_pages` now counts
+> **id-bearing** region children (`_count_items` — forum/CMS posts carry stable ids; framework nodes
+> don't), falling back to all children only when none have ids. So `posts` is now an honest item count
+> (54, not 56) — both the `pagination:` provenance and the completeness check use it. **(b) Residual
+> (by design):** the detector compares with strict `<` (`merged < advertised`), which already tolerates
+> the **+1-for-OP** off-by-one without false-firing (54 ≥ 53 passes; a ≥2-post loss fires). The only
+> remaining nuance is that a loss of *exactly one* post right at the reply-count boundary can slip
+> through — acceptable, since the merge is independently lossless by unique-id count. `expect_count` is
+> therefore now **safe to enable** per host (point `selector` at the "N replies" element); the g8board
+> overlay can turn it on. Athenaeum landed (a) + a regression test in the same arc as this doc.
+
 ## Interaction with `corpus crawl`
 
 A crawl that owns a paginated host must **not** also enqueue the `/page-N` URLs as separate seeds — page

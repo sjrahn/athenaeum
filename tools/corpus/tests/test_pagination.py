@@ -159,6 +159,23 @@ def test_merge_zero_new_children_stops():
     assert posts == 2  # stopped at the all-duplicate page 2, never reached page 3
 
 
+def test_merge_count_excludes_idless_framework():
+    # An id-less framework node (page-nav) rides inside the content region on every page: it
+    # dedups to one copy and is NOT counted as an item — `posts` reports the 4 id'd posts.
+    def page(ids, *, nh=None):
+        nl = f'<link rel="next" href="{nh}">' if nh else ""
+        fw = '<div class="page-nav">paging</div>'
+        arts = "".join(f'<article id="post-{i}">P{i}</article>' for i in ids)
+        return f"<html><head>{nl}</head><body><div class='posts'>{fw}{arts}</div></body></html>"
+
+    pages = [page([1, 2], nh="?page=2"), page([3, 4])]
+    merged, posts = pagination.merge_pages(pages, content_selector=".posts")
+    assert posts == 4  # framework div excluded from the item count
+    soup = BeautifulSoup(merged, "html.parser")
+    assert len(soup.select(".posts > .page-nav")) == 1  # framework deduped to a single copy
+    assert [a["id"] for a in soup.select(".posts > article")] == [f"post-{i}" for i in range(1, 5)]
+
+
 def test_merge_region_unresolved_raises():
     p = _page([1], next_href="?page=2")
     with pytest.raises(pagination.RegionUnresolved):
