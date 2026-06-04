@@ -121,6 +121,45 @@ rather than shipping a lossy record. If `max_pages` is hit, log how many pages w
 > therefore now **safe to enable** per host (point `selector` at the "N replies" element); the g8board
 > overlay can turn it on. Athenaeum landed (a) + a regression test in the same arc as this doc.
 
+> **COUNT SEMANTICS, PART 2 — a THREADED forum view can SILENTLY DROP THE ORIGINAL POST. Found
+> 2026-06-04 stress-testing a 34-page g8board thread (`g8-gt-diy-camshaft-swap.287089`). This corrects an
+> earlier draft of this note that wrongly called the threaded page 1 "load-bearing & lossless" — it was
+> the opposite: LOSSY.** The "california" theme has a per-account *threaded vs linear* display preference.
+> When the logged-in capture account is in **threaded** mode, page 1 renders as a nested reply tree
+> (`article.california-nested-message`) and **the discussion-starter (post #1) is rendered OUTSIDE the
+> reply list — it carries no `data-content="post-"` and never enters the merged post set.** The thread's
+> OP is silently lost. The reply-count oracle does **not** catch it: the header counts *replies* (668),
+> the merge held 668 (replies only, OP missing), and `668 ≥ 668` passes the `merged < advertised` check —
+> a green light over a missing original post. (The lost OP only surfaced as an orphan `MessageCard`
+> hover-preview, id `js-post-<OP>`, with no `data-content` — a tell worth detecting.)
+>
+> **The fix is to capture in LINEAR/flat view, not to tolerate the threaded one.** With the account in
+> linear mode the same thread renders every post — OP included — as flat sibling `article[data-content^=
+> "post-"]`; the merge then holds **669** (OP + 668 replies), and `_count_items` (id-bearing direct
+> children) is **correct as-is** once the overlay strips non-post chrome (the ad mounts `#In-Thread_*` /
+> `.california-thread-ad` and the `<input id="js-inserted-post-ids">`). No `item_selector` needed in the
+> all-flat case — the earlier "add item_selector" recommendation is **downgraded to optional**, useful
+> only as a fallback for a host whose page 1 is *unavoidably* threaded.
+>
+> **Two things bit hard and are worth tooling attention:**
+> 1. **The view mode is a STICKY ACCOUNT preference, not a per-URL knob.** `nested_view=0` in the URL did
+>    not reliably linearize page 1 — the account's last-set mode won, and only flipped to linear after
+>    repeated `nested_view=0` loads (then stuck, so even `nested_view=1` rendered flat). A `url_rewrite`
+>    pin is therefore **not sufficient**; the capture must ensure the session/account is in linear mode
+>    (set the account preference, or detect-and-reflatten). Recommend: when a paginated capture's page 1
+>    shows nested article subtrees (or the thread's discussion-starter is absent from the merged set),
+>    **warn and/or reload to force linear** before merging.
+> 2. **VALIDATION METHODOLOGY caution.** A flat-pin reconciliation was "proven lossless" by diffing the
+>    merge against a ground-truth union of *threaded pp.1–N ∪ flat pp.2–M* — but that union **also
+>    excludes flat page 1 / the OP**, so it circularly confirmed a lossy capture as complete. **Ground
+>    truth for a paginated thread must include a genuine flat page 1** (or independently assert the OP /
+>    post #1 is present). Assert: merged set ⊇ {discussion-starter} and merged count == replies + 1.
+>
+> **Test case:** capture this 34-page thread with the account in **linear** mode → assert **669** posts,
+> the discussion-starter (`data-content="post-<OP>"`, "#1") present, **0** `california-nested-message`,
+> and `_count_items == data-content count == 669`. The 3-page `…key-stuck.286547` thread is the easy
+> companion (54 posts, OP present — it was captured while the account happened to be linear).
+
 ## Interaction with `corpus crawl`
 
 A crawl that owns a paginated host must **not** also enqueue the `/page-N` URLs as separate seeds — page
