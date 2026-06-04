@@ -66,6 +66,7 @@ def lookup(input_kind: str, param_name: str) -> Handler | None:
 
 # Importing the per-kind submodules registers their handlers.
 from . import audio as _audio  # noqa: E402, F401
+from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401

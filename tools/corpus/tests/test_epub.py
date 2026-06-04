@@ -270,3 +270,63 @@ def test_drafter_emits_image_embeds(tmp_path, run_drafter):
 def test_audio_mp4_drafter_registered():
     # The M4B routing wires audio/mp4 to the existing audio drafter.
     assert get_drafter("audio/audio_mp4") is not None
+
+
+# ---------- resolver: spine=N&el=K → image bytes ---------- #
+
+
+def _stage_epub_record(corpus_root: Path, epub_path: Path) -> str:
+    """Stage an EPUB as a corpus record + artifact for resolver tests. Returns the id."""
+    import frontmatter
+
+    from corpus import hashing, paths, records
+    from corpus.store import LocalArtifactStore
+
+    hashes = hashing.hash_file(epub_path)
+    rid = hashes["blake3"]
+    LocalArtifactStore(corpus_root).put(rid, "epub", epub_path)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": rid, "description": "", "status": "stub", "touch": "corpus.ingest@0.1.0"}
+    )
+    records.set_artifact_block(post, mime="application/epub+zip", fields={})
+    records.append_origin_block(
+        post, uri=f"file://{epub_path.resolve()}", snapshot="2026-06-04T00:00:00Z"
+    )
+    records.dump(post, paths.record_path(corpus_root, rid))
+    return rid
+
+
+def test_resolver_spine_el_materializes_image_member(tmp_path):
+    # ch1 (spine 2) holds the <img> at addressable el=3 → the round-trip of the embed the
+    # drafter recorded (spine=2&el=3 / transport blake3(cover.png)) back to its bytes.
+    from corpus import resolver, schemas
+
+    schemas._sources.cache_clear()
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    rid = _stage_epub_record(root, _write_epub(tmp_path / "b.epub"))
+    out = resolver.resolve(f"corpus://{rid}?spine=2&el=3", root)
+    assert out.is_file()
+    assert out.suffix == ".png"
+    with Image.open(out) as im:
+        assert im.size == (2, 3)  # the real cover.png dimensions
+    # Cache hit on a second call.
+    assert resolver.resolve(f"corpus://{rid}?spine=2&el=3", root) == out
+
+
+def test_resolver_spine_el_errors(tmp_path):
+    import pytest
+
+    from corpus import resolver, schemas
+
+    schemas._sources.cache_clear()
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    rid = _stage_epub_record(root, _write_epub(tmp_path / "b.epub"))
+    # spine out of range (only 3 spine docs).
+    with pytest.raises(ValueError, match="spine=9 out of range"):
+        resolver.resolve(f"corpus://{rid}?spine=9&el=1", root)
+    # el points at a non-img element (spine 2 el=1 is the <h1>).
+    with pytest.raises(ValueError, match="expected <img>"):
+        resolver.resolve(f"corpus://{rid}?spine=2&el=1", root)

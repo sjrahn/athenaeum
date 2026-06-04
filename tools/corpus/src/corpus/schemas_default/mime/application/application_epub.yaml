@@ -15,10 +15,14 @@ description: |
 applies_to:
   content_types:
   - application/epub+zip
-# Resolver's initial working kind for the functional-URI pipeline (read schema-side). No
-# `spine=`/`el=` resolver transform is wired in v1 — the record is complete without one
-# (the drafter inlines each spine document's cleaned body + the embed manifest), exactly as
-# a PDF record is complete before any page is rasterized.
+# Resolver's initial working kind for the functional-URI pipeline (read schema-side). The
+# `spine=<N>&el=<K>` → image transform IS wired (`transforms/epub.py`): `spine=` selects the
+# OPF content document and binds a resolver over the book's zip image members, then `el=`
+# resolves the addressed `<img>` to its member bytes — the materialization side of every
+# embed the drafter records. El-indexing is shared with the drafter, so a recorded address
+# round-trips. (`spine=<N>` alone is an intermediate kind with no materialization target —
+# the record already inlines each spine document's cleaned body, exactly as a PDF record is
+# complete before any page is rasterized.)
 working_kind: epub
 mode: body-draft
 artifact_kind: self_contained

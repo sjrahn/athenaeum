@@ -170,9 +170,10 @@ def resolve(
         with Image.open(artifact_binary) as im:
             im.load()
             working = im.copy()
-    elif initial_kind in ("video", "audio"):
-        # The working value is the artifact path itself — ffmpeg and the transcriber
-        # stream from disk rather than loading the whole media into memory.
+    elif initial_kind in ("video", "audio", "epub"):
+        # The working value is the artifact path itself: ffmpeg and the transcriber stream
+        # from disk rather than loading the whole media into memory; the epub `spine`
+        # transform opens the zip to select a content document and its image members.
         working = artifact_binary
     else:
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")

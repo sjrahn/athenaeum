@@ -164,10 +164,7 @@ def clean_xhtml_body(
     position the same bytes appear). Unresolvable images (no resolver / missing member) are
     dropped from the body, like the HTML drafter drops a chrome-stripped image."""
     soup = _soup(raw)
-    for tag in soup.find_all(_STRIP_TAGS):
-        tag.decompose()
-    for comment in list(soup.find_all(string=lambda s: isinstance(s, Comment))):
-        comment.extract()
+    _strip_non_addressable(soup)
 
     # Pre-pass over the pre-strip tree: assign el-indices and resolve image embeds.
     el_by_id: dict[int, int] = {}
@@ -230,6 +227,41 @@ def make_image_resolver(
         return resources.get(member)
 
     return resolve
+
+
+def addressable_image_bytes(
+    raw: bytes, el: int, resolve_img: Callable[[str], bytes | None]
+) -> bytes:
+    """The zip-member bytes of the `<img>` at addressable position `el` (1-indexed,
+    document order) in a spine document's raw XHTML — the materialization side of a
+    `spine=<N>&el=<K>` embed address (the inverse of what `clean_xhtml_body` recorded).
+
+    El-indexing matches the drafter EXACTLY: the same non-addressable strip is applied
+    before counting `_ADDRESSABLE_TAGS`, so the `K` the drafter wrote into the embed
+    address (and the `<img data-el="K">` placeholder) selects the same element here.
+    Raises `ValueError` on a bad index, a non-`<img>` element, or an unresolvable src."""
+    soup = _soup(raw)
+    _strip_non_addressable(soup)
+    elements = [t for t in soup.find_all(_ADDRESSABLE_TAGS) if isinstance(t, Tag)]
+    if el < 1 or el > len(elements):
+        raise ValueError(
+            f"el={el} out of range (spine document has {len(elements)} addressable elements)"
+        )
+    tag = elements[el - 1]
+    if tag.name != "img":
+        raise ValueError(
+            f"el={el} resolved to <{tag.name}>, expected <img>; "
+            f"only image embeds are materializable via el="
+        )
+    src = str(tag.get("src") or "").strip()
+    if not src:
+        raise ValueError(f"el={el} <img> has no src to resolve")
+    data = resolve_img(src)
+    if not data:
+        raise ValueError(
+            f"el={el} <img src={src!r}> did not resolve to a zip member"
+        )
+    return data
 
 
 def document_title(raw: bytes) -> str:
@@ -424,6 +456,17 @@ def _read_member_soup(zf: zipfile.ZipFile, opf_dir: str, href: str) -> Beautiful
 
 
 # ---------- XHTML cleaning helpers ---------- #
+
+
+def _strip_non_addressable(soup: BeautifulSoup) -> None:
+    """Remove non-rendered infrastructure (`_STRIP_TAGS`) and comments, in place. Applied
+    before el-indexing by BOTH the drafter (`clean_xhtml_body`) and the resolver
+    (`addressable_image_bytes`) so their `_ADDRESSABLE_TAGS` counts agree — a `<noscript>`-
+    or `<svg>`-wrapped element must not shift the index on one side only."""
+    for tag in soup.find_all(_STRIP_TAGS):
+        tag.decompose()
+    for comment in list(soup.find_all(string=lambda s: isinstance(s, Comment))):
+        comment.extract()
 
 
 def _img_embed_meta(
