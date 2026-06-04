@@ -47,8 +47,8 @@ Pipeline:
 12. Emit the embed manifest. Nothing content-bearing is stripped, so
     every inline image survives and is embedded.
 
-Return: a `DrafterResult` — `fields` (record-level metadata, including the
-namespaced `html_title` candidate), `embeds` (dedup'd image-asset descriptor
+Return: a `DrafterResult` — `fields` (record-level metadata, including the bare
+`title` candidate), `embeds` (dedup'd image-asset descriptor
 dicts), one `<!--segment text-->` whose body is the cleaned HTML, drafter
 `issues`, and the `blake3-canonical-html` `canonical` hash.
 
@@ -262,11 +262,11 @@ def draft(
 
     fields: dict[str, Any] = {}
     if v := _title(soup):
-        fields["html_title"] = v
+        fields["title"] = v
     if v := _meta_description(soup):
-        fields["html_description"] = v
+        fields["description"] = v
     if v := _html_lang(soup):
-        fields["html_lang"] = v
+        fields["lang"] = v
     if v := _og_site_name(soup):
         fields["og_site_name"] = v
     # URLs that ALIAS the captured origin — the page's self-declared canonical
@@ -282,7 +282,7 @@ def draft(
         origin_uri_aliases.append(v)
 
     issues: list[dict[str, Any]] = []
-    if source := _detect_block_page(soup, fields.get("html_title")):
+    if source := _detect_block_page(soup, fields.get("title")):
         issues.append(
             {
                 "id": "bot-block",
@@ -303,7 +303,7 @@ def draft(
         )
     if issue := _detect_empty_body(soup):
         issues.append(issue)
-    if issue := _detect_generic_title(fields.get("html_title")):
+    if issue := _detect_generic_title(fields.get("title")):
         issues.append(issue)
     if issue := _detect_noscript_heavy(soup):
         issues.append(issue)

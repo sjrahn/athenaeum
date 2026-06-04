@@ -43,7 +43,7 @@ transport_algos:
 - sha256
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xls drafter is the structural-content authority for an xls record: deterministically, it walks the OLE2 workbook via xlrd, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `workbook_modified_by` if present, `named_ranges` if any user-defined names exist), and renders one section per visible worksheet (hidden sheets are skipped). Every populated sheet is rendered as a static cell-grid (a `text/data-table` segment) by default — the drafter cannot detect formula cells, so deciding which sheets are actually live calculators falls to the normalizer.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xls drafter is the structural-content authority for an xls record: deterministically, it walks the OLE2 workbook via xlrd, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `modified_by` if present, `named_ranges` if any user-defined names exist), and renders one section per visible worksheet (hidden sheets are skipped). Every populated sheet is rendered as a static cell-grid (a `text/data-table` segment) by default — the drafter cannot detect formula cells, so deciding which sheets are actually live calculators falls to the normalizer.
 
     Don't re-extract content from the artifact yourself; let the drafter do it. As with xlsx, prior normalize passes may have rewritten segment bodies, promoted markdown to HTML, or added segment-scope classifications. When you need ground-truth drafter signals — "what cells does the artifact contain?", "is the current body still faithful?" — pull a fresh draft ephemerally rather than trusting the current body:
 
@@ -114,7 +114,7 @@ normalization:
 
     ## Authoring the title
 
-    `workbook_title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries NO namespaced title candidate at all; the frontmatter `title` stays empty through draft. Author it from scratch — the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
+    `title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries NO title candidate at all; the frontmatter `title` stays empty through draft. Author it from scratch — the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
 
     ## Forward reference
 
@@ -135,7 +135,7 @@ extended_fields:
     required: true
     source: file_metadata
     description: Number of visible worksheets in the workbook.
-  workbook_modified_by:
+  modified_by:
     type: string
     semantic_type: person
     required: false

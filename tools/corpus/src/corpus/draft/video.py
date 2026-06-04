@@ -69,8 +69,8 @@ def draft(
     fingerprint: bool | str | list[str] = False,  # transcript is text; frames body-empty
 ) -> DrafterResult:
     fields: dict[str, Any] = {
-        "video_size_bytes": video_path.stat().st_size,
-        "video_format": _format_for_extension(video_path.suffix),
+        "size_bytes": video_path.stat().st_size,
+        "format": _format_for_extension(video_path.suffix),
     }
     probe = _probe_video(video_path)
     fields.update(probe["root"])
@@ -227,7 +227,7 @@ def _probe_video(video_path: Path) -> dict[str, Any]:
                 for k_src, k_dst in (
                     ("width", "width"),
                     ("height", "height"),
-                    ("codec", "video_codec"),
+                    ("codec", "codec"),
                     ("frame_rate", "frame_rate"),
                 ):
                     if k_src in meta:

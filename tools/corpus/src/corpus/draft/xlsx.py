@@ -159,7 +159,7 @@ def _draft_sheet_sections(
 
 
 def _wrap_sheet_section(sheet_title: str, child: Segment) -> Section:
-    return Section(address=_segment_address(sheet_title), entry=sheet_title, segments=[child])
+    return Section.spanning([child], entry=sheet_title)
 
 
 def _worksheet_segment(
@@ -416,11 +416,11 @@ def _read_core_props(zf: zipfile.ZipFile) -> dict[str, Any]:
         return {}
     out: dict[str, Any] = {}
     for qname, key in (
-        ("dc:creator", "workbook_creator"),
-        ("cp:lastModifiedBy", "workbook_modified_by"),
-        ("dcterms:created", "workbook_created_at"),
-        ("dcterms:modified", "workbook_modified_at"),
-        ("dc:title", "workbook_title"),
+        ("dc:creator", "creator"),
+        ("cp:lastModifiedBy", "modified_by"),
+        ("dcterms:created", "created_at"),
+        ("dcterms:modified", "modified_at"),
+        ("dc:title", "title"),
     ):
         if v := _text(root, qname):
             out[key] = v
@@ -437,9 +437,9 @@ def _read_app_props(zf: zipfile.ZipFile) -> dict[str, Any]:
     for el in root.iter():
         local = re.sub(r"^\{[^}]+\}", "", el.tag)
         if local == "Application" and el.text:
-            out["workbook_application"] = el.text.strip()
+            out["application"] = el.text.strip()
         elif local == "Company" and el.text:
-            out["workbook_company"] = el.text.strip()
+            out["company"] = el.text.strip()
     return out
 
 

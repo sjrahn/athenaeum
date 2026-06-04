@@ -435,6 +435,28 @@ def _rule_section_empty(post, blocks, root) -> Iterator[Finding]:
             )
 
 
+def _rule_section_address_span(post, blocks, root) -> Iterator[Finding]:
+    """A section's address is the envelope (min-max span) of its child segments' addresses,
+    in their discrete-index scheme (spec §4.3.2.1) — the same value `Section.spanning`
+    derives at draft time. Skips sections whose scheme has no span strategy: temporal
+    (`time_range=`) sections are structurally bounded intervals, not content envelopes."""
+    for blk in blocks:
+        if not isinstance(blk, _segments.Section) or not blk.segments:
+            continue
+        expected = _segments.section_address(blk.segments)
+        if expected is None or expected == blk.address:
+            continue
+        yield Finding(
+            rule_id="section-address-span",
+            severity="warning",
+            message=(
+                f"section address `{_addr_str(blk.address)}` is not the span of its "
+                f"segments (expected `{_addr_str(expected)}`)."
+            ),
+            address=_addr_str(blk.address),
+        )
+
+
 def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
     """No two segments may claim the same (opener-id, address) pair (spec §4.3.2.2)."""
     seen: dict[tuple[str, str], _segments.Segment] = {}
@@ -536,6 +558,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-perceptual-format", _rule_segment_perceptual_format),
     ("segment-entry-in-section", _rule_segment_entry_outside_top_level),
     ("section-empty", _rule_section_empty),
+    ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("issue-shape", _rule_issue_shape),
 )

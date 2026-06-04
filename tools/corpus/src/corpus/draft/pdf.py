@@ -50,15 +50,15 @@ def draft(
     info = reader.metadata
     if info is not None:
         if v := _str(info.title):
-            fields["pdf_title"] = v
+            fields["title"] = v
         if v := _str(info.author):
-            fields["pdf_author"] = v
+            fields["author"] = v
         if v := _str(info.producer):
-            fields["pdf_producer"] = v
+            fields["producer"] = v
         if v := _date(info.creation_date):
-            fields["pdf_creation_date"] = v
+            fields["creation_date"] = v
         if v := _date(info.modification_date):
-            fields["pdf_modification_date"] = v
+            fields["modification_date"] = v
 
     pages = [_extract_page_text(p) for p in reader.pages]
     page_segments = _build_page_segments(pages)
@@ -193,25 +193,13 @@ def _wrap_in_outline_sections(
             seg_by_page[p] for p in range(1, first_start) if p in seg_by_page
         ]
         if preamble_segs:
-            sections.append(
-                Section(
-                    address=f"pages=1-{first_start - 1}",
-                    entry="Preamble",
-                    segments=preamble_segs,
-                )
-            )
+            sections.append(Section.spanning(preamble_segs, entry="Preamble"))
 
     for title, start, end in bounds:
         children = [seg_by_page[p] for p in range(start, end + 1) if p in seg_by_page]
         if not children:
             continue
-        sections.append(
-            Section(
-                address=f"pages={start}-{end}" if end > start else f"pages={start}",
-                entry=title,
-                segments=children,
-            )
-        )
+        sections.append(Section.spanning(children, entry=title))
 
     return sections
 

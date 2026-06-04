@@ -69,7 +69,7 @@ def draft(
         fields["sheet_names"] = [sh.name for sh in visible_sheets]
         fields["sheet_count"] = len(visible_sheets)
         if v := (book.user_name or "").strip():
-            fields["workbook_modified_by"] = v
+            fields["modified_by"] = v
         if named := _read_defined_names(book):
             fields["named_ranges"] = named
 

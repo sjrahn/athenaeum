@@ -9,10 +9,11 @@ description: |
   Universal fields every artifact carries on its <!--artifact-->  block, regardless
   of media-type. Per-type yamls in this directory extend with format-specific fields.
 
-  There is NO universal `title` field. A title is provenance-bearing, so it rides as a
-  format-namespaced candidate declared by the per-type schema (`html_title`, `pdf_title`,
-  `docx_title`, `workbook_title`); non-primary-source titles (yt-dlp) land on the origin
-  block as `ytdlp_title`. The normalizer picks among those `*_title` candidates to author
-  the normalizer-owned frontmatter `title` (spec §4.2.1).
+  There is NO universal `title` field. When a format exposes one it rides as a bare
+  `title` field on the artifact block declared by the per-type schema — the block opener's
+  MIME already names the provenance, so the candidate isn't prefixed. Non-primary-source
+  titles (yt-dlp) land on the origin block as `ytdlp_title` (whose `ytdlp_` prefix survives
+  because the origin opener names the source record, not the extraction tool). The
+  normalizer picks among those candidates to author the frontmatter `title` (spec §4.2.1).
 
 extended_fields: {}

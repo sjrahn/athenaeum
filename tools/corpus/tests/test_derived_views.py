@@ -52,7 +52,7 @@ def _make_golden_record(corpus_root: Path) -> Path:
     records.set_artifact_block(
         post,
         mime="application/pdf",
-        fields={"title": "Golden", "page_count": 2, "pdf_creation_date": "2024-01-15T10:00:00Z"},
+        fields={"title": "Golden", "page_count": 2, "creation_date": "2024-01-15T10:00:00Z"},
     )
     records.append_origin_block(
         post,
@@ -117,10 +117,10 @@ def test_timeline_view_includes_origin_snapshot(tmp_path):
     t = derived_views.timeline(root, post)
     sources = {row[1] for row in t}
     assert "origin.snapshot" in sources
-    # The PDF schema's pdf_creation_date is tagged semantic_type: timestamp.
+    # The PDF schema's creation_date is tagged semantic_type: timestamp.
     # If it is, the value should appear too.
     assert any("2024-01-15T10:00:00Z" in str(row[2]) for row in t), (
-        "pdf_creation_date timestamp field should appear in the timeline view"
+        "creation_date timestamp field should appear in the timeline view"
     )
 
 

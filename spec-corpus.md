@@ -77,7 +77,7 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 9. **Offline-first.** Only `capture` requires network access. Ingest, draft, normalize, and URI resolution all operate on local data.
 
-10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block (a title candidate is provenance-bearing, so it rides as a namespaced field — `html_title`, `ytdlp_title` — not a generic one).
+10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block. A field is named **bare** when its block opener already identifies its provenance: an artifact block names the format (its MIME), a classify block names the composite (`<namespace>/<id>`), so their fields are `title`/`author`/`isbn`, never `pdf_title`/`book_isbn`. A provenance prefix survives only where the opener does *not* carry it — an origin block's `ytdlp_title` (the opener names the source record, not the extraction tool), or a metadata sub-standard the format embeds (`exif_*`, `og_*`). (Prefixing every field was a holdover from when these all shared the frontmatter's flat namespace; once each rides its own self-identifying block, the prefix only echoes the block.)
 
 11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
 
@@ -138,7 +138,7 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
-| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (a format-namespaced artifact field — `html_title`, `pdf_title`, `docx_title`, `workbook_title`; or an origin block's `ytdlp_title`) or writes its own. There is no generic artifact `title`. |
+| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (the artifact block's bare `title` field, or an origin block's `ytdlp_title`) or writes its own. |
 | `description` | string | yes | 1–3 sentence summary. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. The primary mechanism for discovery. |
 | `status` | enum | yes | `stub`, `draft`, or `normalized`. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
@@ -189,7 +189,7 @@ The metadata zone carries the artifact's identity, its origins, its applied clas
 
 ##### 4.3.1.1 The artifact block
 
-Exactly one per record. The opener-line argument is the canonical MIME type and is **authoritative** — there is no frontmatter `media_type` field. The block body holds the fields declared by the matching `mime` schema chain. There is **no generic `title:`** field; a title is provenance-bearing, so when the format exposes one it rides as a **namespaced title candidate** (`html_title`, `pdf_title`, `docx_title`, `workbook_title`) — by convention any artifact field whose key ends in `_title`. The normalizer picks among those candidates (and the origin block's `ytdlp_title`) to author the frontmatter `title` (§4.2.1).
+Exactly one per record. The opener-line argument is the canonical MIME type and is **authoritative** — there is no frontmatter `media_type` field. The block body holds the fields declared by the matching `mime` schema chain, named **bare** — the opener's MIME already identifies their provenance (§principle 10), so a PDF's title is `title`, not `pdf_title`. When the format exposes a title it rides as that bare `title` candidate; the normalizer picks among it and the origin block's `ytdlp_title` to author the frontmatter `title` (§4.2.1). (A field keeps a prefix only when it names a provenance the opener does *not* carry — a metadata sub-standard the format embeds, e.g. `exif_*` on an image, `og_*` on HTML.)
 
 ```
 <!--artifact <mime-type>
@@ -338,7 +338,7 @@ A section's child segments arrange themselves along the media's natural axis:
 
 | Field | Required? | Description |
 |---|---|---|
-| `address` | Required | Address inside the transport in the scheme defined by the media-type schema. The section's identity. |
+| `address` | Required | Address inside the transport in the scheme defined by the media-type schema. The section's identity. For a discrete-index scheme (`pages=`, `spines=`, `block=`, `sheet=`) it is the **envelope** — the min–max span of the section's child segment addresses — so the section never claims a range wider than the content it holds; a drafter derives it from the children rather than from a structural bound. Temporal sections (`time_range=`) are an exception: their bounds are structural intervals (chapters, speaker runs) that may legitimately differ from their checkpoints' content edges. |
 | `entry` | Optional | The TOC label — written by the drafter when the source has a natural title; by the normalizer otherwise. |
 | `description` | Optional | Scope-specific description of what this section IS — used when the section's address is a self-materializable asset (an artifact-self-slice with no embed, §4.3.1.4) and no child segment carries the description. Normalizer-written. |
 
@@ -701,7 +701,7 @@ A classification schema (mechanical or interpretive) declares:
 - `applies_to.cues` (optional) — heuristic patterns.
 - `script` (mechanical only) — reference to the extraction script. A mechanical classification extracts metadata only — it emits/fills classify blocks and never drafts the record body (the mime schema is the sole body-drafter; §4.3.2.2).
 - `normalization.guidance` (interpretive only) — class-specific tactics in prose.
-- `extended_fields` — fields the matching classify block carries.
+- `extended_fields` — fields the matching classify block carries. Named **bare**, never prefixed with the composite id: the classify opener's `<namespace>/<id>` already scopes them (§principle 10), so a `composite/book` carries `title`/`author`/`isbn`, not `book_title`/`book_author`/`book_isbn`.
 - `subclasses` (optional, interpretive) — finer-grained categories.
 
 #### Scope-aware extended fields

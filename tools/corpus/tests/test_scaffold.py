@@ -41,10 +41,9 @@ def test_vendor_nothing_corpus_can_resolve_pdf_via_packaged_schemas(tmp_path):
     pdf = schemas.load_mime_schema(target, "application/pdf")
     assert pdf is not None
     assert pdf.get("artifact_kind") == "self_contained"
-    # The subtype's namespaced title candidate resolves from the packaged schemas (there
-    # is no universal generic `title`):
+    # The subtype's bare `title` candidate resolves from the packaged schemas:
     extended = pdf.get("extended_fields") or {}
-    assert "pdf_title" in extended and "title" not in extended
+    assert "title" in extended
     # Atomic overlays bundled with the package are also visible:
     overlays = schemas.list_atomic_overlays(target, "text")
     assert "text/data-table" in overlays

@@ -52,6 +52,42 @@ def test_clean_record_lints_clean(tmp_path):
     assert _lint(post, root) == []
 
 
+def _seg(addr: str) -> segments.Segment:
+    return segments.Segment(atom="text", address=addr, body="x")
+
+
+def test_section_address_derives_envelope():
+    # Discrete-index schemes envelope to their children's span; single point collapses.
+    assert segments.section_address([_seg("page=4"), _seg("page=5"), _seg("page=6")]) == "pages=4-6"
+    assert segments.section_address([_seg("page=7")]) == "pages=7"
+    spine_segs = [_seg("spine=2"), _seg("spine=3")]
+    assert segments.section_address(spine_segs) == "spines=2-3"
+    assert segments.section_address([_seg("block=3-9")]) == "block=3-9"  # already-ranged child
+    assert segments.section_address([_seg("sheet=Sales")]) == "sheet=Sales"
+    # The factory derives the same address it builds with.
+    built = segments.Section.spanning([_seg("page=4"), _seg("page=5")], entry="Ch")
+    assert built.address == "pages=4-5"
+    # Temporal / heterogeneous / empty → None (not span-checkable).
+    assert segments.section_address([_seg("time_range=00:00:00-00:01:00")]) is None
+    assert segments.section_address([_seg("page=1"), _seg("frame=00:00:05")]) is None
+    assert segments.section_address([]) is None
+
+
+def test_section_address_span_lint_flags_mismatch(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    good = segments.Section.spanning([_seg("page=1"), _seg("page=2")], entry="A")
+    # Claims pages=1-9 but its segments only span 4-5 (built directly, bypassing spanning).
+    bad = segments.Section(
+        address="pages=1-9", entry="B", segments=[_seg("page=4"), _seg("page=5")]
+    )
+    post.content = segments.emit([good, bad])
+    spans = [f for f in _lint(post, root) if f.rule_id == "section-address-span"]
+    assert len(spans) == 1
+    assert spans[0].severity == "warning"
+    assert "pages=1-9" in spans[0].message and "pages=4-5" in spans[0].message
+
+
 def test_missing_id_caught(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()

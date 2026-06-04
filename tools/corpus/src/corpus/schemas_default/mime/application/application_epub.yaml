@@ -127,33 +127,33 @@ normalization:
     doesn't have, do not paraphrase, do not drop content. Re-segmentation is structural —
     boundaries move — but the words within remain what the EPUB actually contains.
 extended_fields:
-  epub_title:
+  title:
     type: string
     required: false
     source: file_metadata
     description: Dublin Core `dc:title` from the OPF metadata — the format's title candidate.
-  epub_creator:
+  creator:
     type: string
     required: false
     source: file_metadata
     description: Dublin Core `dc:creator` (author) from the OPF metadata.
-  epub_language:
+  language:
     type: string
     required: false
     source: file_metadata
     description: Dublin Core `dc:language` (ISO 639 code) from the OPF metadata.
-  epub_publisher:
+  publisher:
     type: string
     required: false
     source: file_metadata
     description: Dublin Core `dc:publisher` from the OPF metadata.
-  epub_date:
+  date:
     type: string
     semantic_type: timestamp
     required: false
     source: file_metadata
     description: Dublin Core `dc:date` (publication date) from the OPF metadata.
-  epub_identifier:
+  identifier:
     type: string
     required: false
     source: file_metadata

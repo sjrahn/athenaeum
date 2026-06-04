@@ -185,7 +185,7 @@ def test_title_for_priority_frontmatter_then_artifact_then_ytdlp():
     # 3) only an origin ytdlp_title → display falls all the way back to it.
     assert records.title_for(post) == "From yt-dlp"
     # 2) a namespaced artifact `*_title` candidate outranks ytdlp_title.
-    records.set_artifact_block(post, mime="text/html", fields={"html_title": "Artifact Title"})
+    records.set_artifact_block(post, mime="text/html", fields={"title": "Artifact Title"})
     assert records.title_for(post) == "Artifact Title"
     # 1) the normalizer-authored frontmatter title is canonical.
     post.metadata["title"] = "Normalized Title"
@@ -205,7 +205,7 @@ def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatte
 
     fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
     post = frontmatter.Post(content="", **fm)
-    records.set_artifact_block(post, mime="video/mp4", fields={"video_codec": "h264"})
+    records.set_artifact_block(post, mime="video/mp4", fields={"codec": "h264"})
     records.append_origin_block(post, uri="https://x/v/1", snapshot="2026-06-02T00:00:00Z")
     result = {
         "fields": {},

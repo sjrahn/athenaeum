@@ -224,10 +224,9 @@ def test_drafter_sections_by_toc(tmp_path, run_drafter):
     assert [s.address for s in blocks[0].segments] == ["spine=1"]
     assert blocks[1].segments[0].address == "spine=2"
     assert all(s.entry is None for b in blocks for s in b.segments)
-    assert result["fields"]["epub_title"] == "Synthetic Test Book"
+    assert result["fields"]["title"] == "Synthetic Test Book"
     assert result["fields"]["spine_item_count"] == 3
     assert result["fields"]["toc_entry_count"] == 2
-    assert "title" not in result["fields"]
     assert result["canonical"].startswith("blake3:")
     assert not result["issues"]
 

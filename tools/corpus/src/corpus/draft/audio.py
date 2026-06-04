@@ -55,8 +55,8 @@ def draft(
     fingerprint: bool | str | list[str] = False,  # transcript body is text; audio-atom fp not wired
 ) -> DrafterResult:
     fields: dict[str, Any] = {
-        "audio_size_bytes": audio_path.stat().st_size,
-        "audio_format": _format_for_extension(audio_path.suffix),
+        "size_bytes": audio_path.stat().st_size,
+        "format": _format_for_extension(audio_path.suffix),
     }
     probe = _probe_audio(audio_path)
     fields.update(probe["root"])
@@ -199,7 +199,7 @@ def _probe_audio(audio_path: Path) -> dict[str, Any]:
             audio_stream_id = sid
             # Lift the primary audio stream's metadata to the root fields.
             stream_to_root = (
-                ("codec", "audio_codec"),
+                ("codec", "codec"),
                 ("sampling_rate", "sampling_rate"),
                 ("channels", "channels"),
             )

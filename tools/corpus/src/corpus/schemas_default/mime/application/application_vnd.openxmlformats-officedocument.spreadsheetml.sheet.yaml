@@ -174,7 +174,7 @@ normalization:
 
     ## Promoting workbook title
 
-    `workbook_title` (from `docProps/core.xml`) is the namespaced title candidate when set, but it is frequently unset — in which case the record carries no title candidate and the frontmatter `title` stays empty through draft. Author it from the workbook's actual purpose, derived from the cover sheet content, sheet names, or the methodology context (promote `workbook_title` when it is set and meaningful). Faithfulness applies — do not invent a title the workbook itself does not support.
+    `title` (from `docProps/core.xml`) is the artifact's title candidate when set, but it is frequently unset — in which case the record carries no title candidate and the frontmatter `title` stays empty through draft. Author it from the workbook's actual purpose, derived from the cover sheet content, sheet names, or the methodology context (promote `title` when it is set and meaningful). Faithfulness applies — do not invent a title the workbook itself does not support.
 
     ## Faithfulness reminder
 
@@ -191,43 +191,43 @@ extended_fields:
     required: true
     source: file_metadata
     description: Number of worksheets in the workbook.
-  workbook_creator:
+  creator:
     type: string
     semantic_type: person
     required: false
     source: file_metadata
     description: |-
       `<dc:creator>` from `docProps/core.xml` — the user who created the workbook. Often a display name; format-agnostic per SPECv2 §7.4.
-  workbook_modified_by:
+  modified_by:
     type: string
     semantic_type: person
     required: false
     source: file_metadata
     description: '`<cp:lastModifiedBy>` from `docProps/core.xml`.'
-  workbook_created_at:
+  created_at:
     type: string
     semantic_type: timestamp
     required: false
     source: file_metadata
     description: '`<dcterms:created>` from `docProps/core.xml` (ISO-8601).'
-  workbook_modified_at:
+  modified_at:
     type: string
     semantic_type: timestamp
     required: false
     source: file_metadata
     description: '`<dcterms:modified>` from `docProps/core.xml` (ISO-8601).'
-  workbook_title:
+  title:
     type: string
     required: false
     source: file_metadata
     description: '`<dc:title>` from `docProps/core.xml`, if set by the author.'
-  workbook_application:
+  application:
     type: string
     required: false
     source: file_metadata
     description: |-
       `<Application>` from `docProps/app.xml` — e.g. `Microsoft Excel`, `LibreOffice/24.8.4.2`.
-  workbook_company:
+  company:
     type: string
     required: false
     source: file_metadata

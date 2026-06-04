@@ -172,9 +172,9 @@ def test_image_drafter_emits_metadata_and_positioning_marker(tmp_path, run_draft
     assert drafter is not None
     result, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
     fields = result.get("fields") or {}
-    assert fields["image_width"] == 200
-    assert fields["image_height"] == 150
-    assert fields["image_format"] == "PNG"
+    assert fields["width"] == 200
+    assert fields["height"] == 150
+    assert fields["format"] == "PNG"
     # Spec §4.3.2.2: image segment is a body-empty positioning marker at bbox=0,0,1,1.
     assert len(segs) == 1
     s = segs[0]
@@ -268,14 +268,12 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     # Artifact fields are document metadata only — the canonical/final URLs and the
     # capture timestamp belong on the ORIGIN block, not here (spec §7.2).
     fields = result.get("fields") or {}
-    assert fields["html_title"] == "Sample Article — Demo Publisher"
-    assert fields["html_lang"] == "en"
+    assert fields["title"] == "Sample Article — Demo Publisher"
+    assert fields["lang"] == "en"
     assert fields["og_site_name"] == "Demo Publisher"
     assert "canonical_url" not in fields
     assert "final_url" not in fields
     assert "fetched_at" not in fields
-    # No generic `title` — the candidate is the namespaced `html_title` asserted above.
-    assert "title" not in fields
     # Canonical (<link rel=canonical>) + final URL (corpus-capture-url meta) come back as
     # origin aliases for the origin block, not artifact fields.
     aliases = result.get("origin_uri_aliases") or []

@@ -61,17 +61,17 @@ extended_fields:
     required: false
     source: file_metadata
     description: Frame rate of the primary video stream (frames per second).
-  video_codec:
+  codec:
     type: string
     required: false
     source: file_metadata
     description: Codec name from ffprobe (e.g. 'h264', 'vp9', 'av1').
-  video_format:
+  format:
     type: string
     required: true
     source: file_metadata
     description: Container format (mp4, webm, mov, mkv) — derived from the file extension.
-  video_size_bytes:
+  size_bytes:
     type: number
     required: true
     source: file_metadata

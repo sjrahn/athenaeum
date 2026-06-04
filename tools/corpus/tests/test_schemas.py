@@ -37,11 +37,10 @@ def test_load_mime_schema_resolves_pdf_from_packaged_defaults(tmp_path):
     assert schema.get("artifact_kind") == "self_contained"
     # Reconciliation #7: media_type_id was stripped from bundled mime schemas.
     assert "media_type_id" not in schema
-    # The universal mime.yaml declares no extended fields (there is no generic `title`;
-    # the title candidate is the subtype's namespaced `pdf_title`).
+    # The subtype's bare `title` candidate layers into the merged schema — the artifact
+    # opener's MIME names the format, so the candidate isn't namespaced.
     extended = schema.get("extended_fields") or {}
-    assert "title" not in extended
-    assert "pdf_title" in extended, "subtype's namespaced title candidate layers in"
+    assert "title" in extended, "subtype's title candidate layers in"
 
 
 def test_mime_schema_id_for_returns_axis_subtype_form(tmp_path):
@@ -114,9 +113,8 @@ def test_fallback_a_all_packaged(tmp_path):
     schema = schemas.load_mime_schema(root, "application/pdf")
     assert schema is not None
     extended = schema.get("extended_fields") or {}
-    assert "title" not in extended  # universal declares no generic title
     assert "page_count" in extended  # from subtype
-    assert "pdf_title" in extended  # subtype's namespaced title candidate
+    assert "title" in extended  # subtype's bare title candidate
     assert schema.get("artifact_kind") == "self_contained"
 
 
@@ -146,8 +144,8 @@ def test_fallback_b_corpus_overrides_subtype_only(tmp_path):
     # The local subtype's artifact_kind wins:
     assert schema.get("artifact_kind") == "decomposable"
     extended = schema.get("extended_fields") or {}
-    # The packaged universal declares no extended fields, so nothing layers in from it
-    # (no generic `title`):
+    # The local subtype replaces the packaged one (which carried the bare `title`
+    # candidate), and the packaged universal declares no fields — so no `title` survives:
     assert "title" not in extended
     # The local field is present:
     assert "local_only_field" in extended
@@ -176,9 +174,9 @@ def test_fallback_c_corpus_overrides_universal_only(tmp_path):
     extended = schema.get("extended_fields") or {}
     # The local universal's field is present (the universal rung merges in, taken whole):
     assert "corpus_tag" in extended
-    # No generic `title` from any rung — the packaged universal declares none, and the
-    # local one replaces it whole:
-    assert "title" not in extended
+    # The packaged subtype still merges in, carrying its bare `title` candidate (only the
+    # universal rung was overridden):
+    assert "title" in extended
     # The packaged subtype's page_count is still present (subtype came from package):
     assert "page_count" in extended
 
@@ -200,8 +198,8 @@ def test_fallback_d_corpus_overrides_mid_rung_axis(tmp_path):
     schema = schemas.load_mime_schema(root, "application/pdf")
     assert schema is not None
     extended = schema.get("extended_fields") or {}
-    # Universal declares no extended fields (no generic title):
-    assert "title" not in extended
+    # The packaged subtype still merges in, carrying its bare `title` candidate:
+    assert "title" in extended
     # Axis adds its field:
     assert "axis_tag" in extended
     # Subtype still in (from package):

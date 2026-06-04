@@ -28,6 +28,7 @@ nest.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -139,8 +140,133 @@ class Section:
         out.update(self.extra)
         return out
 
+    @classmethod
+    def spanning(
+        cls,
+        segments: list[Segment],
+        *,
+        entry: str | None = None,
+        classification: str | None = None,
+        description: str | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> Section:
+        """Build a Section whose `address` is DERIVED as the envelope (min-max span)
+        of `segments`' own addresses, in their discrete-index scheme (`page=`→`pages=`,
+        `spine=`→`spines=`, `block=`, `sheet=`). The single place a section span is computed:
+        drafters build sections this way instead of hand-formatting the range, and the
+        `section-address-span` lint rule re-derives the same value to guard drift.
+
+        `segments` must be non-empty and share one registered scheme. Raises ValueError when
+        the span can't be derived (empty, heterogeneous, or an unrecognized/temporal scheme)
+        — temporal (`time_range=`) sections are structural intervals, not content envelopes,
+        and are built directly, not via this factory."""
+        address = section_address(segments)
+        if address is None:
+            raise ValueError(
+                "cannot derive a section address from these segments' addresses "
+                "(empty, heterogeneous, or unrecognized scheme); pass non-empty children "
+                "sharing one discrete-index scheme (page=/spine=/block=/sheet=)"
+            )
+        return cls(
+            address=address,
+            entry=entry,
+            classification=classification,
+            description=description,
+            segments=list(segments),
+            extra=dict(fields or {}),
+        )
+
 
 type Block = Section | Segment
+
+
+# ---------- section-address derivation (spec §4.3.2.1) ---------- #
+
+
+def _iter_addr_strings(address: str | list[str]) -> Iterator[str]:
+    if isinstance(address, list):
+        for a in address:
+            if isinstance(a, str):
+                yield a
+    elif isinstance(address, str):
+        yield address
+
+
+def _leading_param(addr: str) -> tuple[str, str]:
+    """Split an address into its leading `<param>=<value>`, dropping any `&`-joined
+    sub-selectors (`page=5&bbox=…` → `("page", "5")`)."""
+    head = addr.split("&", 1)[0]
+    param, _eq, value = head.partition("=")
+    return param.strip(), value.strip()
+
+
+class _IntSpan:
+    """Discrete integer scheme: child `<point>=N` (or an already-ranged `<sec>=A-B`) →
+    section `<section_param>=lo-hi`, collapsing to `<section_param>=N` when lo==hi.
+    `page`→`pages`, `spine`→`spines`, `block`→`block`."""
+
+    def __init__(self, section_param: str) -> None:
+        self.section_param = section_param
+
+    def __call__(self, values: list[str]) -> str | None:
+        lo: int | None = None
+        hi: int | None = None
+        for v in values:
+            parts = v.split("-")
+            try:
+                a, b = int(parts[0]), int(parts[-1])
+            except ValueError:
+                return None
+            lo = a if lo is None else min(lo, a)
+            hi = b if hi is None else max(hi, b)
+        if lo is None or hi is None:
+            return None
+        return f"{self.section_param}={lo}" if lo == hi else f"{self.section_param}={lo}-{hi}"
+
+
+class _NameSpan:
+    """Single-key scheme: every child shares one `<param>=<name>` (e.g. an xlsx sheet)."""
+
+    def __init__(self, section_param: str) -> None:
+        self.section_param = section_param
+
+    def __call__(self, values: list[str]) -> str | None:
+        if len(set(values)) != 1:
+            return None
+        return f"{self.section_param}={values[0]}"
+
+
+# Keyed by a CHILD segment's leading address param; the value formats the section's range
+# form. Discrete-index schemes only — temporal `time_range=` sections are structurally
+# bounded (chapter / speaker-run edges), not content envelopes, so they have no strategy and
+# `section_address` returns None for them (a caller/linter treats None as "not applicable").
+_SPAN_STRATEGIES: dict[str, Any] = {
+    "page": _IntSpan("pages"),
+    "spine": _IntSpan("spines"),
+    "block": _IntSpan("block"),
+    "sheet": _NameSpan("sheet"),
+}
+
+
+def section_address(children: list[Segment]) -> str | list[str] | None:
+    """Derive a section's address as the envelope of `children`'s addresses, in their own
+    discrete-index scheme. Returns None when it can't be derived — no children, a
+    heterogeneous mix of address families, or an unrecognized/temporal scheme.
+
+    The single source of truth for a section span: `Section.spanning` builds with it and the
+    `section-address-span` lint rule re-derives with it to catch drift."""
+    families: dict[str, list[str]] = {}
+    for seg in children:
+        for addr in _iter_addr_strings(seg.address):
+            param, value = _leading_param(addr)
+            families.setdefault(param, []).append(value)
+    if len(families) != 1:
+        return None
+    ((param, values),) = families.items()
+    strategy = _SPAN_STRATEGIES.get(param)
+    if strategy is None:
+        return None
+    return strategy(values)
 
 
 # ---------- emit ---------- #

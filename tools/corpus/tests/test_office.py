@@ -96,7 +96,7 @@ def test_docx_draft_and_lint(tmp_path):
     sections = [b for b in blocks if isinstance(b, seg_mod.Section)]
     assert [s.entry for s in sections] == ["Preamble", "Introduction", "Conclusion"]
     assert post.metadata["status"] == "draft"
-    assert post.metadata["_artifact"]["fields"].get("docx_title") == "My Document"
+    assert post.metadata["_artifact"]["fields"].get("title") == "My Document"
     # Fingerprinting is opt-in (default off) — data segments carry no perceptual here.
     intro = next(s for s in sections if s.entry == "Introduction")
     assert intro.segments[0].perceptual is None

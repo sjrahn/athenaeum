@@ -32,7 +32,7 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
         }
     )
     records.set_artifact_block(
-        post, mime="application/pdf", fields={"pdf_title": "G", "page_count": 2}
+        post, mime="application/pdf", fields={"title": "G", "page_count": 2}
     )
     records.append_origin_block(
         post,
@@ -134,7 +134,7 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     # Resets:
     assert re_loaded.metadata["status"] == "stub"
     assert re_loaded.metadata["description"] == ""
-    # Artifact body fields (incl. the namespaced `pdf_title` candidate) reset — re-derived
+    # Artifact body fields (incl. the namespaced `title` candidate) reset — re-derived
     # at the next draft; so there's no title candidate and `title_for` is empty.
     assert (records.artifact_block(re_loaded).get("fields") or {}) == {}
     assert records.title_for(re_loaded) == ""

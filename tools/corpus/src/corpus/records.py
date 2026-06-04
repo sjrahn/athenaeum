@@ -543,22 +543,20 @@ def title_for(post: frontmatter.Post) -> str:
     """Return the record's display title.
 
     The normalizer-authored frontmatter `title` is canonical. Before normalization it is
-    empty, so fall back to a **block-level title candidate** — a format-namespaced artifact
-    field whose key ends in `_title` (`html_title`, `pdf_title`, `docx_title`,
-    `workbook_title`; a record carries at most one), then an origin block's `ytdlp_title`
-    (source-provided). There is no generic artifact `title`. The normalizer ultimately
-    chooses among these candidates (or writes its own) to fill the frontmatter `title`
-    (spec §4.2.1)."""
+    empty, so fall back to a **block-level title candidate**: the artifact block's bare
+    `title` field (the opener's MIME already names the format, so the candidate isn't
+    namespaced — spec §4.3.1.1), then an origin block's `ytdlp_title` (whose `ytdlp_`
+    prefix survives because the origin opener names the source record, not the extraction
+    tool). The normalizer ultimately chooses among these candidates (or writes its own) to
+    fill the frontmatter `title` (spec §4.2.1)."""
     if title := str(post.metadata.get("title") or "").strip():
         return title
     artifact = artifact_block(post)
-    if artifact:
-        for key, value in (artifact.get("fields") or {}).items():
-            if key.endswith("_title") and value:
-                return str(value)
+    if artifact and (t := (artifact.get("fields") or {}).get("title")):
+        return str(t)
     for origin in iter_origin_blocks(post):
-        if title := (origin.get("fields") or {}).get("ytdlp_title"):
-            return str(title)
+        if t := (origin.get("fields") or {}).get("ytdlp_title"):
+            return str(t)
     return ""
 
 

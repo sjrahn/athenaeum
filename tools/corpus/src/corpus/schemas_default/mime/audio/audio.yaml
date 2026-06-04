@@ -44,7 +44,7 @@ extended_fields:
     required: true
     source: file_metadata
     description: Duration of the audio in seconds (float, ffprobe-reported).
-  audio_codec:
+  codec:
     type: string
     required: false
     source: file_metadata
@@ -59,12 +59,12 @@ extended_fields:
     required: false
     source: file_metadata
     description: Channel count of the primary audio stream (1 = mono, 2 = stereo).
-  audio_format:
+  format:
     type: string
     required: true
     source: file_metadata
     description: Container/format (mp3, wav, m4a, ogg, flac) — derived from the file extension.
-  audio_size_bytes:
+  size_bytes:
     type: number
     required: true
     source: file_metadata

@@ -19,27 +19,27 @@ canonical_strategy:
   - rasterize to a canonical resolution (longest side 1024px) and color mode (RGB)
   - blake3 the raw pixel bytes
 extended_fields:
-  image_width:
+  width:
     type: number
     required: true
     source: file_metadata
     description: Pixel width of the image.
-  image_height:
+  height:
     type: number
     required: true
     source: file_metadata
     description: Pixel height of the image.
-  image_format:
+  format:
     type: string
     required: true
     source: file_metadata
     description: Pillow's format label — PNG, JPEG, GIF, WEBP, AVIF, etc.
-  image_mode:
+  mode:
     type: string
     required: false
     source: file_metadata
     description: Pillow's mode label — RGB, RGBA, P (palettised), L (grayscale), CMYK, etc.
-  image_size_bytes:
+  size_bytes:
     type: number
     required: true
     source: file_metadata

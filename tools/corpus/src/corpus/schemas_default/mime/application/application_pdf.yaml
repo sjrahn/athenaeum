@@ -26,7 +26,7 @@ canonical_strategy:
   - blake3 the concatenation
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is the structural-content authority for a PDF record: deterministically, it walks pypdf to populate frontmatter (`page_count`, `pdf_title`, `pdf_author`, `pdf_creation_date`, `pdf_modification_date`, `pdf_producer`) and emits one bare `<!--segment text-->` per page with address `page=<N>`. The drafter extracts **text only** — it emits no image segments and no `<!--embed-->` blocks. Figures/diagrams/charts are added by the normalizer as **bare image segments** (see "Figures, diagrams, charts" below); a PDF record never carries image embeds.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is the structural-content authority for a PDF record: deterministically, it walks pypdf to populate frontmatter (`page_count`, `title`, `author`, `creation_date`, `modification_date`, `producer`) and emits one bare `<!--segment text-->` per page with address `page=<N>`. The drafter extracts **text only** — it emits no image segments and no `<!--embed-->` blocks. Figures/diagrams/charts are added by the normalizer as **bare image segments** (see "Figures, diagrams, charts" below); a PDF record never carries image embeds.
 
     Don't re-extract content from the artifact yourself with `pdftotext` and call it done; the drafter has already done that and you're at parity with it. **Use the resolver to render pages and look at them** — see below.
 
@@ -105,7 +105,7 @@ normalization:
     Record-level — read frontmatter and the `<!--artifact application/pdf-->` block:
 
     - `page_count` — total pages.
-    - `pdf_title`, `pdf_author`, `pdf_creation_date`, `pdf_producer` — from the PDF /Info dict; useful for description authoring but rarely reliable as cover-page title (publishers often leave /Info defaults like `Adobe Acrobat`, `Microsoft Word`, or the author's local username).
+    - `title`, `author`, `creation_date`, `producer` — from the PDF /Info dict; useful for description authoring but rarely reliable as cover-page title (publishers often leave /Info defaults like `Adobe Acrobat`, `Microsoft Word`, or the author's local username).
 
     ## Sections — outline-driven grouping (SPECv2 §4.3)
 
@@ -334,29 +334,29 @@ extended_fields:
     required: true
     source: file_metadata
     description: Total number of pages in the PDF.
-  pdf_title:
+  title:
     type: string
     required: false
     source: file_metadata
     description: Title from the PDF /Info dictionary, if present.
-  pdf_author:
+  author:
     type: string
     required: false
     source: file_metadata
     description: Author from the PDF /Info dictionary, if present.
-  pdf_creation_date:
+  creation_date:
     type: string
     semantic_type: timestamp
     required: false
     source: file_metadata
     description: Creation date from the PDF /Info dictionary (ISO-8601).
-  pdf_modification_date:
+  modification_date:
     type: string
     semantic_type: timestamp
     required: false
     source: file_metadata
     description: Last-modified date from the PDF /Info dictionary (ISO-8601).
-  pdf_producer:
+  producer:
     type: string
     required: false
     source: file_metadata

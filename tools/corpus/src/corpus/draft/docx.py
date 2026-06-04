@@ -188,7 +188,7 @@ def _build_segments(
         child = Segment(
             atom="text", address=addr, perceptual=text_fingerprints(body, text_algos), body=body
         )
-        sections.append(Section(address=addr, entry=acc.entry, segments=[child]))
+        sections.append(Section.spanning([child], entry=acc.entry))
     return sections
 
 
@@ -314,11 +314,11 @@ def _read_core_props(zf: zipfile.ZipFile) -> dict[str, Any]:
         return {}
     out: dict[str, Any] = {}
     for qname, key in (
-        ("dc:title", "docx_title"),
-        ("dc:creator", "docx_creator"),
-        ("cp:lastModifiedBy", "docx_modified_by"),
-        ("dcterms:created", "docx_created_at"),
-        ("dcterms:modified", "docx_modified_at"),
+        ("dc:title", "title"),
+        ("dc:creator", "creator"),
+        ("cp:lastModifiedBy", "modified_by"),
+        ("dcterms:created", "created_at"),
+        ("dcterms:modified", "modified_at"),
     ):
         if v := _text(root, qname):
             out[key] = v
@@ -338,9 +338,9 @@ def _read_app_props(zf: zipfile.ZipFile) -> dict[str, Any]:
         if not text:
             continue
         if local == "Application":
-            out["docx_application"] = text
+            out["application"] = text
         elif local == "Template":
-            out["docx_template"] = text
+            out["template"] = text
         elif local == "Pages" and text.isdigit():
             out["page_count"] = int(text)
         elif local == "Words" and text.isdigit():

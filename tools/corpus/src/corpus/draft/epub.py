@@ -12,9 +12,9 @@ content segments. The normalizer MAY later group them into sections along the bo
 nav/TOC structure (see the schema's normalization guidance).
 
 Publication metadata (Dublin Core title/creator/language/publisher/date/identifier)
-lands as namespaced `epub_*` artifact fields; `epub_title` is the format's title
-candidate (there is no generic artifact `title`). Per spec §1.5 the body is faithful —
-no interpretation. An EPUB with no readable spine yields zero segments + a
+lands as bare artifact fields — the opener's MIME (`application/epub+zip`) names the
+format, so fields aren't prefixed; `title` is the title candidate. Per spec §1.5 the
+body is faithful — no interpretation. An EPUB with no readable spine yields zero segments + a
 `partial-content` issue.
 """
 
@@ -48,19 +48,19 @@ def draft(
 
     fields: dict[str, Any] = {}
     md = pkg.metadata
-    # Namespaced title candidate + provenance fields (no generic artifact `title`).
+    # Bare title candidate + provenance fields (the opener's MIME names the format).
     if v := md.get("title"):
-        fields["epub_title"] = v
+        fields["title"] = v
     if v := md.get("creator"):
-        fields["epub_creator"] = v
+        fields["creator"] = v
     if v := md.get("language"):
-        fields["epub_language"] = v
+        fields["language"] = v
     if v := md.get("publisher"):
-        fields["epub_publisher"] = v
+        fields["publisher"] = v
     if v := md.get("date"):
-        fields["epub_date"] = v
+        fields["date"] = v
     if v := md.get("identifier"):
-        fields["epub_identifier"] = v
+        fields["identifier"] = v
     fields["spine_item_count"] = len(pkg.spine)
     fields["toc_entry_count"] = len(pkg.toc)
 
@@ -180,25 +180,10 @@ def _toc_sections(
 
     first = toc[0].spine_index
     if first > 1 and (front := _children(1, first - 1)):
-        sections.append(
-            Section(address=_spine_range(1, first - 1), entry="Front matter", segments=front)
-        )
+        sections.append(Section.spanning(front, entry="Front matter"))
     for k, entry in enumerate(toc):
         end = toc[k + 1].spine_index - 1 if k + 1 < len(toc) else spine_count
         children = _children(entry.spine_index, end)
         if children:
-            sections.append(
-                Section(
-                    address=_spine_range(entry.spine_index, end),
-                    entry=entry.title,
-                    segments=children,
-                )
-            )
+            sections.append(Section.spanning(children, entry=entry.title))
     return sections or None
-
-
-def _spine_range(start: int, end: int) -> str:
-    """Section address spanning spine documents `start..end` (1-based). Uses the plural
-    `spines=` param for the grouping range, distinct from a segment's `spine=<N>` point —
-    mirroring the PDF schema's `pages=` (section) vs `page=` (segment) convention."""
-    return f"spines={start}" if start >= end else f"spines={start}-{end}"

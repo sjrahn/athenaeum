@@ -47,15 +47,15 @@ def draft(
     fingerprint: bool | str | list[str] = False,  # phash/dhash/ahash/whash (needs [fingerprint])
 ) -> DrafterResult:
     fields: dict[str, Any] = {
-        "image_size_bytes": image_path.stat().st_size,
+        "size_bytes": image_path.stat().st_size,
         "description": "",  # normalizer-populated
     }
 
     with Image.open(image_path) as im:
-        fields["image_width"] = im.width
-        fields["image_height"] = im.height
-        fields["image_format"] = im.format or ""
-        fields["image_mode"] = im.mode
+        fields["width"] = im.width
+        fields["height"] = im.height
+        fields["format"] = im.format or ""
+        fields["mode"] = im.mode
 
         try:
             exif = im.getexif()
