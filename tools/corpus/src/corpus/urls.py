@@ -110,7 +110,12 @@ def identity_key(url: str, equivalent: Any = None, *, url_rewrite: Any = None) -
     Algorithm: resolve the config (absent → ``normalize(url)``); if ``on_rewritten``, apply
     the host's ``url_rewrite`` rules first so identity is computed from the fetched form;
     `normalize`; if ``query: drop`` strip the whole query; apply the ``url_equivalent`` rules
-    in order; tidy a dangling ``?``/``&`` a rule may have left.
+    in order; tidy a dangling ``?``/``&`` a rule may have left; finally fold a **sub-path
+    trailing slash** (``…/a/b/`` ≡ ``…/a/b``). The trailing-slash fold lives here, NOT in
+    `normalize`, on purpose: `normalize`'s output is the URL a crawl re-fetches, and stripping
+    a slash there could change what is fetched — but an identity *comparison* key may fold it.
+    A practical consequence: a naive first-page rule (``…/page-1 → \\1``) folds to the same key
+    as the recorded slashed origin (``…/slug.id/``), so rules need not chase the slash.
 
     **Identity-only**: this never influences which bytes are fetched (that is ``url_rewrite``
     / ``interactions``) — only what counts as the same resource.
@@ -123,13 +128,28 @@ def identity_key(url: str, equivalent: Any = None, *, url_rewrite: Any = None) -
     if cfg["query"] == "drop":
         base = _strip_query(base)
     base = apply_rewrite_rules(base, cfg["rules"])
-    return _tidy(base)
+    return _fold_trailing_slash(_tidy(base))
 
 
 def _strip_query(url: str) -> str:
     """Drop the entire query component (robust reparse, not a regex)."""
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
+
+
+def _fold_trailing_slash(url: str) -> str:
+    """Fold a sub-path trailing slash for IDENTITY only (``…/a/b/`` ≡ ``…/a/b``).
+
+    Applied in the identity-key path, never in `normalize` — `normalize` feeds the crawl's
+    fetch target, and a server may distinguish ``/a/b`` from ``/a/b/``, so the fetched form
+    must keep its slash; a comparison key may fold it. Leaves the fragment (an SPA route)
+    untouched, and never strips the bare-host root (`normalize` already empties ``/``)."""
+    parts = urlsplit(url)
+    path = parts.path
+    if len(path) > 1 and path.endswith("/"):
+        stripped = path.rstrip("/") or "/"
+        return urlunsplit((parts.scheme, parts.netloc, stripped, parts.query, parts.fragment))
+    return url
 
 
 def _tidy(url: str) -> str:

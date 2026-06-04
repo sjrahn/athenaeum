@@ -32,9 +32,12 @@ iff their identity keys are equal.
 ```yaml
 capture:
   url_equivalent:
-    # first page == bare thread URL  (strip a redundant /page-1 segment)
-    - pattern: '^(https?://(?:www\.)?g8board\.com/threads/[^/?#]+)/page-1(?=[/?#]|$)'
-      replacement: '\1'
+    # first page == bare thread URL. A NAIVE rule is enough: the identity layer folds the
+    # sub-path trailing slash (`…/slug.id/` ≡ `…/slug.id`), so this and the bare slashed origin
+    # `…/slug.id/` converge on one key — the rule need not chase the slash. (See the resolved
+    # trailing-slash note below; the `…/slug.id/page-1/` form is absorbed by the `/?` too.)
+    - pattern: '/page-1/?$'
+      replacement: ''
     # view / affiliate / tracking params don't change identity (strip them)
     - pattern: '[?&](nested_view|affiliate-data|utm_[^=&]*)=[^&]*'
       replacement: ''
@@ -52,12 +55,27 @@ capture:
 ```
 
 ### Canonicalization algorithm
-To get a URL's identity key: apply built-in normalizations (lowercase scheme+host, drop a trailing `/`,
-drop a fragment, sort surviving query params), then apply each `url_equivalent` rule in order
-(`re.sub(pattern, replacement, url)`), then a final tidy (collapse a dangling `?`/`&`). Compare keys for
+To get a URL's identity key: apply built-in normalizations (lowercase scheme+host, drop a fragment,
+sort surviving query params), then — for `query: drop` — strip the whole query, then apply each
+`url_equivalent` rule in order (`re.sub(pattern, replacement, url)`), then a final tidy (collapse a
+dangling `?`/`&`), then **fold a sub-path trailing slash** (`…/a/b/` ≡ `…/a/b`). Compare keys for
 equality. **`url_rewrite` is independent** — it still rewrites the *fetch* URL; identity is computed from
-the *original* inbound URL via `url_equivalent`. (If a host needs the rewrite to also fold identity, run
-`url_equivalent` on the post-rewrite URL — make this explicit, but default to the original.)
+the *original* inbound URL via `url_equivalent` (or, with `on_rewritten: true`, from the post-rewrite
+URL — opt-in, default the original).
+
+> **✓ Trailing-slash finding — RESOLVED (athenaeum, 2026-06-04).** The curator caught it live: `normalize`
+> **preserves** a sub-path trailing slash (`…/slug.id/` does NOT reduce to `…/slug.id`), and the recorded
+> origin is the slashed form, so a naive `…/page-1 → \1` rule produced the slash-less key and **missed the
+> real origin** (record `a72470d6`). **Decision: the fold lives in the identity-key step, not in
+> `normalize`.** `normalize`'s output is the URL a crawl **re-fetches** (`crawl._expand` stores
+> `normalize(link)` as the fetch target), and a server may distinguish `/a/b` from `/a/b/`, so the fetched
+> form must keep its slash. But an identity *comparison* key is free to fold it — so `urls.identity_key`
+> now folds a sub-path trailing slash as its final step (`_fold_trailing_slash`). Consequences: a **naive
+> `\1` rule just works**; `bare ≡ bare/ ≡ /page-1` converge for any host that declares `url_equivalent`;
+> the curator's explicit `\1/` overlay rule is unaffected (it folds to the same key). The fold applies
+> only inside the opt-in identity layer (a host without `url_equivalent` keeps trailing slashes
+> significant, matching the fetch form). The earlier "drop a trailing `/`" claim about `normalize` was
+> inaccurate and stays removed.
 
 ## Where it applies (all the identity sites, not just capture)
 1. **Capture short-circuit** — `corpus capture <url>` already-captured check: canonicalize `<url>`,

@@ -100,6 +100,20 @@ def test_identity_key_on_rewritten_uses_fetched_form():
     assert urls.identity_key("https://h.test/v/123", {}, url_rewrite=rw) == "https://h.test/v/123"
 
 
+def test_identity_key_folds_subpath_trailing_slash():
+    # The identity layer folds `…/x/` ≡ `…/x`, so a NAIVE first-page rule (`/page-1 -> ''`)
+    # converges with the recorded slashed origin — no need to chase the slash in the rule.
+    rule = [{"pattern": r"/page-1(?=[/?#]|$)", "replacement": ""}]
+    bare = "https://g8.test/threads/slug.1"
+    slashed = "https://g8.test/threads/slug.1/"
+    page1 = "https://g8.test/threads/slug.1/page-1"
+    assert len({urls.identity_key(u, rule) for u in (bare, slashed, page1)}) == 1
+    # The fetchable form (normalize, used by the crawl) KEEPS the slash — only identity folds it.
+    assert urls.normalize(slashed) == slashed
+    # Opt-out (no config) leaves the trailing slash significant (== normalize / the fetch form).
+    assert urls.identity_key(slashed) == urls.normalize(slashed) != urls.identity_key(bare)
+
+
 def test_identity_key_bad_regex_is_skipped_not_raised():
     eq = [{"pattern": "([", "replacement": ""}]  # invalid regex
     assert urls.identity_key("https://h.test/p", eq) == urls.normalize("https://h.test/p")
