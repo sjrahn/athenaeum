@@ -360,8 +360,152 @@ def capture_and_ingest(
             log.info("already captured: %s -> %s", canonical, existing)
             return paths.record_path(corpus_root, existing)
 
+    # Paginated work (thread / multi-page article / gallery): walk the pages and ingest ONE
+    # merged artifact. Only for the browser capturer (HTML) and only when the overlay opts in
+    # via `capture.pagination`. Every other host / capturer takes the single-page path below.
+    from . import pagination
+    from .recipes import capture_recipe_for_url
+
+    recipe = capture_recipe_for_url(corpus_root, canonical)
+    pag = pagination.normalize_config((recipe or {}).get("pagination")) if recipe else None
+    if pag is not None and not opts.video and (recipe.get("capturer") or "browser") == "browser":
+        return _reconcile_pagination(
+            canonical, corpus_root=corpus_root, opts=opts, recipe=recipe, cfg=pag
+        )
+
     result = capture(canonical, corpus_root=corpus_root, opts=opts)
     return _ingest_capture(result, original_url=canonical, corpus_root=corpus_root)
+
+
+def _reconcile_pagination(
+    canonical: str,
+    *,
+    corpus_root: Path,
+    opts: CaptureOptions,
+    recipe: dict[str, Any],
+    cfg: Any,
+) -> Path | None:
+    """Walk a paginated work's pages, merge them into one HTML, ingest exactly ONE artifact.
+
+    Per `docs/PAGINATION-RECONCILE.md`: each page is captured via the staging-only `capture()`
+    path, read into memory, and its staging file unlinked — per-page bytes are **never**
+    content-addressed (the INVARIANT). Only the merged document is ingested. The clean seed
+    (`canonical`) is the recorded origin URI; every constituent page URL — both the bare site
+    form and the pinned `url_rewrite` nav form — is folded in as an origin alias, so a later
+    crawl that discovers `/page-N` short-circuits to this record instead of re-capturing it.
+    """
+    from . import pagination
+    from .recipes import canonical_content_selector_for_url
+
+    capture_dir = corpus_root / "capture"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+
+    htmls: list[str] = []
+    page_forms: list[tuple[str, str]] = []  # (bare site form, pinned nav form) per page
+    seen_urls = {canonical}
+    cap_hit = False
+
+    url = canonical
+    while True:
+        result = capture(url, corpus_root=corpus_root, opts=opts)
+        html = result.capture_path.read_text(encoding="utf-8")
+        with contextlib.suppress(OSError):
+            result.capture_path.unlink()  # INVARIANT: per-page bytes are never content-addressed
+        htmls.append(html)
+        page_forms.append((url, _apply_url_rewrite(url, recipe)))
+
+        nxt = pagination.extract_next_url(html, base_url=url, cfg=cfg)
+        if len(htmls) >= cfg.max_pages:
+            cap_hit = nxt is not None
+            if cap_hit:
+                log.warning("pagination: max_pages=%d hit with more pages remaining", cfg.max_pages)
+            break
+        if not nxt or nxt in seen_urls:
+            break
+        seen_urls.add(nxt)
+        url = nxt
+
+    merged_path = capture_dir / f"{_sanitize_filename(canonical)}.html"
+
+    def _ingest(text: str) -> Path | None:
+        merged_path.write_text(text, encoding="utf-8")
+        return _ingest_capture(
+            CaptureResult(capture_path=merged_path, used_video=False, issues=[]),
+            original_url=canonical,
+            corpus_root=corpus_root,
+        )
+
+    # Single page (no next link): behave exactly like a non-paginated capture — write the
+    # original snapshot bytes verbatim (no BeautifulSoup round-trip), so the record id is
+    # byte-identical and no pagination provenance is attached.
+    if len(htmls) == 1:
+        return _ingest(htmls[0])
+
+    try:
+        merged_html, posts = pagination.merge_pages(
+            htmls,
+            content_selector=cfg.content_selector,
+            canonical_selector=canonical_content_selector_for_url(corpus_root, canonical),
+        )
+    except pagination.RegionUnresolved as exc:
+        # Don't silently ship a lossy merge: ingest page 1 only and flag it loudly.
+        log.warning("pagination: %s — ingesting page 1 only", exc)
+        record_path = _ingest(htmls[0])
+        if record_path is not None:
+            post = records.load(record_path)
+            records.append_issue_block(
+                post,
+                id="pagination-incomplete",
+                subtype="region-unresolved",
+                severity="warning",
+                detector=touches.script_identifier("capture"),
+                fields={"pages_captured": len(htmls)},
+            )
+            records.dump(post, record_path)
+        return record_path
+
+    record_path = _ingest(merged_html)
+    if record_path is None:
+        return None
+
+    expected = pagination.expected_count(htmls[0], cfg=cfg)
+    incomplete = (expected is not None and posts < expected) or cap_hit
+
+    post = records.load(record_path)
+    for bare, pinned in page_forms:
+        records.add_origin_uri_alias(post, bare)
+        records.add_origin_uri_alias(post, pinned)
+    records.merge_origin_fields(
+        post,
+        {
+            "pagination": {
+                "pages": len(htmls),
+                "form": _apply_url_rewrite(canonical, recipe),
+                "posts": posts,
+            }
+        },
+    )
+    if incomplete:
+        records.append_issue_block(
+            post,
+            id="pagination-incomplete",
+            severity="warning",
+            detector=touches.script_identifier("capture"),
+            fields={
+                "pages": len(htmls),
+                "posts": posts,
+                "expected": expected,
+                "max_pages_hit": cap_hit,
+            },
+        )
+    records.dump(post, record_path)
+    log.info(
+        "pagination: merged %d page(s) -> %d item(s)%s",
+        len(htmls),
+        posts,
+        " [INCOMPLETE]" if incomplete else "",
+    )
+    return record_path
 
 
 # ---------- video (yt-dlp) ---------- #

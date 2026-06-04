@@ -147,6 +147,19 @@ The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp
 
 **Per-host transcription (draft time).** The audio/video drafters resolve the record's origin host and read the overlay's `transcription:` section (`draft/_hostcfg.py`): absent → the global `[corpus.transcription]` adapter; `enabled: false` → skip (an `info` issue, not a `warning`); `adapter`/`base_url` → a per-host backend that overrides the global even when the corpus default is `noop`.
 
+### 2.10 Pagination reconciliation (capture time)
+
+A paginated work — a thread / multi-page article / gallery a site splits across `?page=N` / `/page-N` URLs — is **one logical artifact**. The overlay's `capture.pagination` knob (browser capturer only; `capture/pagination.py` + `_reconcile_pagination` in `capture/__init__.py`) walks the pages and ingests a single merged record instead of capturing page 1 only or fragmenting the work into N content-addressed records.
+
+Because both `corpus capture` and `corpus crawl` route through `capture_and_ingest`, the branch lives there: after the dedup short-circuit, if the resolved recipe declares `pagination` (and the capturer is `browser`), `_reconcile_pagination` runs. The flow:
+
+1. **Walk + stage.** Each page is fetched through the **staging-only `capture()`** path (so its `url_rewrite` / `interactions` / `remove:` chrome-strip / fidelity all apply per page), its HTML **read into memory, and its staging file unlinked immediately** — `_sanitize_filename` drops the query string, so `?page=N` pages would otherwise collide on one staging name, and per-page bytes must never be content-addressed. The next page is found by `<link/a rel=next>` (the `<link>` survives the chrome strip — it lives in `<head>`) or a `next.selector` override; the walk stops at no-next, a repeat URL, or `max_pages` (flagged).
+2. **Merge.** Page 1 is the framework. The content region is the declared `content_selector`, else the host's `canonical.content_selector`, else a **structural diff** of page 1 vs page 2 (`detect_region`: descend while exactly one matched-identity child differs; the container whose children then diverge is the region). Each later page's content children are appended into page 1's region, **deduped by element id or a normalized-subtree hash** (so a repeated quoted-OP / threaded post isn't double-counted); a page adding zero new children stops the walk.
+3. **Ingest once.** The merged HTML is written to one staging file and ingested — the sole content-addressed artifact + record. A **single page** (no next link) skips the BeautifulSoup round-trip and ingests the original snapshot bytes verbatim, so its id is byte-identical to a non-paginated capture (and no pagination provenance is attached).
+4. **Provenance.** The clean seed is the recorded origin URI; every constituent page URL — both the **bare site form** (what a crawl discovers) and the **pinned `url_rewrite` form** — is folded in via `records.add_origin_uri_alias`, and a `pagination: {pages, form, posts}` field via `records.merge_origin_fields`. When the merged item count falls short of an advertised `expect_count.selector` value, or `max_pages` was hit, a `pagination-incomplete` `warning` issue (capture-stage detector `corpus.capture`) is emitted rather than silently shipping a lossy record.
+
+**Crawl interaction.** Recording every constituent URL as an alias makes the `capture_and_ingest` dedup short-circuit fire when a crawl later discovers `/page-N` — so it resolves to the merged record instead of re-capturing. `crawl._expand` additionally drops any link already in the expanding record's own origin URIs, keeping those pages out of the frontier (genuine content links — post permalinks, cross-thread — are kept). The corpus-local pin overlay + live re-capture for a specific host is the curator's follow-up.
+
 ---
 
 ## 3. Normalization

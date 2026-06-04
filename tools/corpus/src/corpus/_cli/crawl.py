@@ -274,6 +274,13 @@ def _expand(
         log.warning("no origin URI on record %s; skipping expansion", record_id[:12])
         return
 
+    # A paginated record absorbs its constituent pages and records every page URL (bare +
+    # pinned forms) as an origin alias. Excluding the record's own URIs keeps a crawl from
+    # re-enqueuing those `rel=next`/`page-N` links — page 1's reconciled capture already
+    # holds them. (The `capture_and_ingest` alias short-circuit is the correctness backstop;
+    # this just avoids the wasted frontier slot + re-visit.)
+    own_uris = set(records.iter_origin_uris(post))
+
     found = _extract_links(artifact, base_url)
     pushed = 0
     in_frontier = {u for u, _ in state.frontier}
@@ -285,6 +292,8 @@ def _expand(
         except ValueError:
             continue
         if not normalized.startswith(("http://", "https://")):
+            continue
+        if normalized in own_uris:
             continue
         if not urls.same_domain(
             normalized, state.seed_host, include_subdomains=state.include_subdomains

@@ -160,6 +160,19 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #           .forEach((i) => i.setAttribute('src',
 #             i.getAttribute('data-large_image') || i.getAttribute('data-zoom-image')));
 #   viewport: 1280x900
+#   # --- paginated works (thread / multi-page article / gallery) ---  Walk the ?page=N /
+#   # /page-N pages, MERGE them, and ingest ONE content-addressed record (not page-1-only,
+#   # not N fragments). Bare `true` auto-detects everything: follow <link/a rel=next> and
+#   # structurally diff page 1 vs page 2 to find the content region. A map gives control:
+#   pagination: true
+#   # pagination:
+#   #   content_selector: '.js-replyNewMessageContainer'  # the per-page content region
+#   #   next: {rel: true, selector: 'a.pageNav-jump--next'}  # rel=next default; CSS override
+#   #   max_pages: 100                                     # safety cap (flags if hit)
+#   #   expect_count: {selector: '.pairs dd'}             # advertised count -> completeness check
+#   # Pairs naturally with url_rewrite to pin one render form across every page (e.g. a flat
+#   # view). Constituent page URLs are recorded as origin aliases; only the merged artifact
+#   # is content-addressed.
 #
 # # --- video hosts (yt-dlp) ---  `capturer: video` is the ONLY thing that routes a host
 # # to yt-dlp; there is no built-in video-host list. yt-dlp options pass straight through.

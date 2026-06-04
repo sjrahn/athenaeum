@@ -25,6 +25,10 @@ host-keyed file describes both what a source is and how to capture it. The
       interactions:                       # see corpus.capture.interactions
         - scroll: full
         - click: {selector: "button[aria-label*=Next i]", repeat: 12}
+      pagination: true                    # walk a paginated work's pages, merge them, ingest
+                                          #   ONE record (bare true = auto-detect; a map
+                                          #   {content_selector, next, max_pages, expect_count}
+                                          #   gives control). See corpus.capture.pagination.
       viewport: 1280x900
       user_agent: "..."
 
