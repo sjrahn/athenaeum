@@ -1,0 +1,168 @@
+description: |
+  EPUB — the open e-book format (IDPF/W3C). A zip whose `META-INF/container.xml` points
+  at an OPF package document declaring the publication `<metadata>` (Dublin Core), a
+  `<manifest>` of members, and a `<spine>` giving reading order. Covers the canonical MIME
+  `application/epub+zip` (EPUB 2 and 3). The artifact is `self_contained` — one record per
+  book, NOT decomposed into member records (an EPUB is one work, not a container of
+  independent works). The deterministic drafter (`corpus.epub` reader + `draft/epub.py`)
+  emits one `text` segment per spine (reading-order) content document, addressed
+  `spine=<N>`, and groups them into `<!--section-->` blocks along the book's navigation
+  document (EPUB 3 nav / EPUB 2 NCX table of contents) — the EPUB analogue of how the PDF
+  drafter wraps pages by the outline. The book's images are separately-stored zip members,
+  so each `<img>` becomes an `<!--embed-->` (addressed `spine=<N>&el=<K>`, transport = the
+  blake3 of the member bytes) — the same model as an HTML page's inline images, not a PDF's
+  bare image segments.
+applies_to:
+  content_types:
+  - application/epub+zip
+# Resolver's initial working kind for the functional-URI pipeline (read schema-side). No
+# `spine=`/`el=` resolver transform is wired in v1 — the record is complete without one
+# (the drafter inlines each spine document's cleaned body + the embed manifest), exactly as
+# a PDF record is complete before any page is rasterized.
+working_kind: epub
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: spine
+  type: integer
+  description: |-
+    1-indexed position of a content document in the OPF `<spine>` (reading order). A
+    segment is addressed `spine=<N>`; the normalizer may refine to sub-document grain
+    (e.g. `spine=<N>&el=<M>`) during re-segmentation.
+- param: el
+  type: integer
+  description: |-
+    1-indexed position of an addressable element WITHIN a spine document (document order,
+    same axis as the HTML drafter). Image embeds are addressed `spine=<N>&el=<K>` and the
+    kept `<img data-el="K">` placeholders in the body carry that index.
+- param: spines
+  type: range
+  description: |-
+    `<start>-<end>` (or a single `<n>`) — the spine-document range a `<!--section-->`
+    spans, the grouping form of `spine`. Distinct param from a segment's `spine=<N>`
+    point, mirroring the PDF schema's `pages=` (section) vs `page=` (segment) convention.
+transport_algos:
+- sha256
+canonical_strategy:
+  algo: blake3-canonical-epub
+  canonicalization:
+  - concatenate the visible text of every spine document in reading order
+  - drop CSS / scripts / zip packaging and timestamps (only prose survives)
+  - blake3 the concatenation
+normalization:
+  guidance: |
+    This guidance applies to every normalize pass. The EPUB drafter is the structural-
+    content authority: it reads the OPF package (`corpus.epub`) and emits one bare
+    `<!--segment text-->` per spine (reading-order) content document, addressed `spine=<N>`,
+    with a mechanically-cleaned structural-HTML body (headings, prose, lists, tables; non-
+    rendered infrastructure stripped), grouped into `<!--section-->` blocks along the book's
+    navigation document. Each `<img>` is kept as a src-stripped `<img data-el="K">`
+    placeholder and emitted as an `<!--embed-->`.
+
+    The body is already faithful cleaned HTML. Don't re-extract from the artifact with an
+    external EPUB tool and call it done — you'd be at parity with the drafter. Your work is
+    structural: render the cleaned HTML to markdown, refine the sections, split embedded
+    artifacts (tables, code, equations) into their own atom-prefixed segments, and turn each
+    `<img data-el="K">` into a proper `<!--segment image-->` (below).
+
+    ## Images — embeds the drafter extracted; promote to image segments
+
+    The drafter has already extracted every `<img>` as an `<!--embed-->` (addressed
+    `spine=<N>&el=<K>`, transport = the blake3 of the zip-member bytes) — EPUB images are
+    separately-stored assets, exactly like an HTML page's inline images (NOT a PDF's bare
+    image segments, which crop a rendered page). Don't fabricate or recompute embeds; they
+    exist. In the body each image is a `<img data-el="K">` placeholder at its reading
+    position. During normalization, replace the placeholder with a bare `<!--segment image-->`
+    addressed `spine=<N>&el=<K>` (matching the embed by address membership) and write its
+    `description:` from what the image shows; the embed supplies the bytes/dimensions. An
+    image carrying losslessly-transcribable content (a diagram's labels, a code screenshot)
+    also gets a sibling `text/<overlay>` segment.
+
+    ## Sections — drafter-built from the nav/NCX TOC (spec §4.3)
+
+    The drafter reads the EPUB 3 nav document (`<item properties="nav">` → the `toc` nav's
+    outer `<ol>`) or the EPUB 2 NCX (`<navMap>`), takes its **top-level** entries, and emits
+    one `<!--section-->` per entry:
+
+    - `address: spines=<start>-<end>` — the section spans the spine documents from this TOC
+      entry's target up to the document before the next entry (collapses to `spines=<N>` for
+      a single document). `entry:` is the TOC label (the part/chapter title), written by the
+      drafter — a fresh draft already carries a useful TOC.
+    - Spine documents before the first TOC target (cover, title page, copyright, dedication
+      that the nav often omits) are wrapped in a synthetic `entry: Front matter` section —
+      the EPUB analogue of the PDF's `Preamble`.
+    - Only **top-level** nav entries become sections (like the PDF's `get_toc(max_depth=1)`).
+      Deeper nav nesting is intra-document sub-structure (a chapter's own sub-headings,
+      pointing to `#fragment`s within one document) — recover it as prose `##`/`###`
+      headings inside the segment, not as sections.
+
+    A book with **no usable nav/NCX** drafts sectionless (a flat top-level `spine=<N>`
+    segment list, each carrying its document `<title>` as `entry:`); introduce sections
+    during normalization from the prose structure, exactly as for an outline-less PDF.
+
+    A section here typically contains ONE spine-document segment (each chapter is its own
+    document). Re-segment that chapter's prose to structural-unit grain (below); don't
+    flatten or merge the drafter's section boundaries — they are the book's own TOC.
+
+    ## Re-segment to structural units
+
+    A spine document is the EPUB's transport grain, not its structural grain — a chapter may
+    span several documents, or one document may hold several headings. Re-segment along
+    structural-unit grain exactly as for any document (see `corpus overlay document`): one
+    prose-flow segment per heading section, embedded artifacts split out as atom-prefixed
+    segments, multi-document spans expressed via the address-list form.
+
+    ## Front matter is not content to pad
+
+    Cover / title / copyright pages carry little prose; keep them as short faithful segments
+    (or fold them into a "Front matter" section). Don't editorialize or expand them.
+
+    ## Faithfulness
+
+    The body is a faithful rendering of the source text. Do not invent structure the book
+    doesn't have, do not paraphrase, do not drop content. Re-segmentation is structural —
+    boundaries move — but the words within remain what the EPUB actually contains.
+extended_fields:
+  epub_title:
+    type: string
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:title` from the OPF metadata — the format's title candidate.
+  epub_creator:
+    type: string
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:creator` (author) from the OPF metadata.
+  epub_language:
+    type: string
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:language` (ISO 639 code) from the OPF metadata.
+  epub_publisher:
+    type: string
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:publisher` from the OPF metadata.
+  epub_date:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:date` (publication date) from the OPF metadata.
+  epub_identifier:
+    type: string
+    required: false
+    source: file_metadata
+    description: Dublin Core `dc:identifier` (ISBN/UUID/other) from the OPF metadata.
+  spine_item_count:
+    type: number
+    required: true
+    source: file_metadata
+    description: Number of content documents in the OPF spine (reading order).
+  toc_entry_count:
+    type: number
+    required: true
+    source: file_metadata
+    description: |
+      Number of top-level navigation entries (EPUB 3 nav / EPUB 2 NCX) the drafter grouped
+      the spine into sections by. 0 → the book had no usable TOC and drafted sectionless.

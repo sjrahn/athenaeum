@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 _AUDIO_SCHEMA_IDS = (
     "audio/audio_mpeg",
     "audio/audio_x-wav",
+    "audio/audio_mp4",
 )
 
 

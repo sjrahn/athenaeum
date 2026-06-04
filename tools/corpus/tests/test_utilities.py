@@ -64,10 +64,40 @@ def test_mime_riff_disambiguation(tmp_path):
     assert mime.detect(avi) == "video/x-msvideo"
 
 
+def test_mime_isobmff_audio_refinement(tmp_path):
+    # An ISOBMFF `ftyp` box: 4-byte size + `ftyp` + 4-byte major brand. Most `.m4b`
+    # audiobooks carry a generic `isom`/`mp42` brand that magic-sniffs as video/mp4 even
+    # though they hold only audio — the extension refines them to audio/mp4 so they route
+    # to the audio (transcription) pipeline, not the video one.
+    isom = b"\x00\x00\x00\x20ftypisom" + b"\x00" * 4
+    m4b = tmp_path / "audiobook.m4b"
+    m4b.write_bytes(isom)
+    assert mime.detect(m4b) == "audio/mp4"
+    m4a = tmp_path / "song.m4a"
+    m4a.write_bytes(isom)
+    assert mime.detect(m4a) == "audio/mp4"
+    # Same generic brand with a video extension stays video/mp4 — the refinement only
+    # fires for known audio extensions.
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(isom)
+    assert mime.detect(mp4) == "video/mp4"
+
+
+def test_mime_isobmff_audio_brand(tmp_path):
+    # A correctly-branded audio-in-MP4 file routes to audio/mp4 by magic alone, regardless
+    # of extension.
+    m4a_brand = b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 4
+    f = tmp_path / "noext"
+    f.write_bytes(m4a_brand)
+    assert mime.detect(f) == "audio/mp4"
+
+
 def test_mime_extension_for():
     assert mime.extension_for("application/pdf") == "pdf"
     assert mime.extension_for("image/jpeg") == "jpg"
     assert mime.extension_for("application/x-ndjson") == "jsonl"
+    assert mime.extension_for("audio/mp4") == "m4a"
+    assert mime.extension_for("application/epub+zip") == "epub"
 
 
 def test_urls_normalize_sorts_query_strips_fragment():

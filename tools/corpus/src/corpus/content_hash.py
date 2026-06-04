@@ -110,10 +110,23 @@ def _canonicalize_image(path: Path, *, content_selector: str | list[str] | None 
     return _blake3.blake3(pixel_bytes).hexdigest()
 
 
+def _canonicalize_epub(path: Path, *, content_selector: str | list[str] | None = None) -> str:
+    """blake3-canonical-epub — concatenate the visible text of every spine document in
+    reading order, blake3 the result. Drops zip packaging, file timestamps, and CSS/
+    scripts by construction (only the prose survives), so two EPUBs of the same book
+    that differ only in repackaging hash identically. `content_selector` is an HTML-only
+    concept and ignored here."""
+    from corpus import epub
+
+    text = epub.spine_text(path)
+    return _blake3.blake3(text.encode("utf-8", errors="replace")).hexdigest()
+
+
 _STRATEGIES: dict[str, Callable[..., str]] = {
     "blake3-canonical-pdf": _canonicalize_pdf,
     "blake3-canonical-html": _canonicalize_html,
     "blake3-canonical-image": _canonicalize_image,
+    "blake3-canonical-epub": _canonicalize_epub,
 }
 
 

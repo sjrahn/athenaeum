@@ -94,6 +94,7 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
 # them here is safe without the `[office]` extra; docx uses only the stdlib.
 from . import audio as _audio  # noqa: E402, F401
 from . import docx as _docx  # noqa: E402, F401
+from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401

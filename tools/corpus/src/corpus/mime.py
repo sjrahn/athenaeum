@@ -32,6 +32,12 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     # they are disambiguated by the four-byte form-type at offset 8 — see `_refine_riff`.
     # AVIF: ISOBMFF container with the `ftyp` box brand `avif` at offset 4.
     (4, b"ftypavif", "image/avif"),
+    # Audio ISOBMFF brands (M4A/M4B audiobooks). Checked before the generic video brands
+    # so a correctly-branded audio-in-MP4 file routes to the audio pipeline. Generic
+    # `isom`/`mp42`-branded audiobooks (most `.m4b` files lie about their brand) are caught
+    # by the extension refinement in `detect` — see `_refine_isobmff`.
+    (4, b"ftypM4A ", "audio/mp4"),
+    (4, b"ftypM4B ", "audio/mp4"),
     # Video ISOBMFF brands.
     (4, b"ftypisom", "video/mp4"),
     (4, b"ftypmp42", "video/mp4"),
@@ -65,10 +71,28 @@ def detect(path: Path) -> str:
         if head[offset : offset + len(prefix)] == prefix:
             if mime == "application/zip":
                 return _refine_zip(path)
+            if mime in ("video/mp4", "video/quicktime"):
+                return _refine_isobmff(path, mime)
             return mime
 
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or "unknown"
+
+
+# Audio-in-MP4 extensions. Most `.m4b` audiobooks (and `.m4a` audio) carry a generic
+# `isom`/`mp42` ISOBMFF brand that magic-sniffs as `video/mp4`, even when the file holds
+# only an AAC audio stream (+ an optional cover-art `mjpeg`). The extension is the reliable
+# signal that the container is audio, so it routes to the audio pipeline (transcription),
+# not the video one (which would try to keyframe-section a cover image).
+_ISOBMFF_AUDIO_EXTENSIONS = {".m4a", ".m4b"}
+
+
+def _refine_isobmff(path: Path, video_mime: str) -> str:
+    """Refine a generic-brand ISOBMFF `video/mp4` to `audio/mp4` when the filename
+    extension marks it as audio (`.m4a`/`.m4b`). Otherwise keep the video MIME."""
+    if path.suffix.lower() in _ISOBMFF_AUDIO_EXTENSIONS:
+        return "audio/mp4"
+    return video_mime
 
 
 # RIFF form-types at offset 8 (the four bytes following `RIFF<4-byte size>`). WebP, WAV,
@@ -137,6 +161,7 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "image/webp": "webp",
         "image/avif": "avif",
         "audio/mpeg": "mp3",
+        "audio/mp4": "m4a",
         "audio/x-wav": "wav",
         "video/mp4": "mp4",
         "video/webm": "webm",

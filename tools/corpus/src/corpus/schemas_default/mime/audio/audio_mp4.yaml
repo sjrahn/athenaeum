@@ -1,0 +1,9 @@
+# Audio in an MP4/ISOBMFF container — `.m4a` audio and `.m4b` audiobooks (AAC/ALAC).
+# An `.m4b` magic-sniffs as `video/mp4` (generic ISOBMFF brand); `mime.detect` refines it
+# to `audio/mp4` by extension so it routes here, not to the video pipeline. The common
+# `audio.yaml` (deep-merged underneath) supplies the drafter contract, address scheme,
+# transcription guidance, and extended fields. An audiobook's embedded chapter markers and
+# cover-art `mjpeg` stream are not consumed in v1 — the body is the transcript.
+applies_to:
+  content_types:
+  - audio/mp4
