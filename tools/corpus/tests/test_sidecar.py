@@ -197,7 +197,7 @@ def test_stub_frontmatter_carries_empty_title_and_description():
     assert fm["title"] == "" and fm["description"] == ""
 
 
-def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatter_empty():
+def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatter_empty(tmp_path):
     # A media drafter's title rides on the ORIGIN block as `ytdlp_title` (non-primary-source);
     # the artifact block carries no generic `title`, and the frontmatter `title` is NOT
     # auto-populated (normalizer-owned).
@@ -212,7 +212,7 @@ def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatte
         "origin_fields": {"ytdlp_title": "YT"},
         "origin_uri_aliases": [],
     }
-    _apply_drafter_result(post, result, "video/video_mp4")
+    _apply_drafter_result(post, result, "video/video_mp4", tmp_path)
     assert "title" not in (records.artifact_block(post).get("fields") or {})  # no generic title
     assert post.metadata.get("title") == ""  # frontmatter title untouched (normalizer-owned)
     assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"

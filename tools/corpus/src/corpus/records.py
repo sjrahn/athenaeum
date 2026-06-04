@@ -636,21 +636,37 @@ def load_all(corpus_root: Path) -> Iterator[tuple[Path, frontmatter.Post]]:
 
 
 def build_uri_index(corpus_root: Path) -> dict[str, str]:
-    """Map every record's canonical origin URI → that record's id.
+    """Map every record's origin URI → that record's id, keyed by **identity key**.
 
-    One pass over `records/` via `load_all`. When two records claim the same canonical URI
-    the later one (sorted by path) wins — a corpus-health concern surfaced elsewhere, not
-    here. This is the lightweight index `corpus links` / `corpus crawl` need; P5's `health`
-    module builds a richer `RecordRef`-based variant for diagnostics.
+    One pass over `records/` via `load_all`. Each URI's key is `urls.identity_key` — the
+    conservative `normalize` plus the URI host's opt-in `url_equivalent` rules (spec §7.2),
+    so equivalent spellings (e.g. `…/page-1` ≡ `…/` , `?nested_view=1` noise) collapse to one
+    key and an inbound variant matches the record. The host's `capture` recipe is resolved
+    once per host (memoized) — the overlay lookup is not repeated per URI. Absent any
+    `url_equivalent`, the key is exactly `normalize(uri)` (today's behavior). When two records
+    claim the same key the later one (sorted by path) wins — a corpus-health concern surfaced
+    elsewhere. The lightweight index `corpus links` / `corpus crawl` need.
     """
     from . import urls as _urls
+    from .capture import recipes as _recipes
+
+    recipe_by_host: dict[str, dict] = {}
+
+    def _key(uri: str) -> str:
+        host = _urls.host_of(uri)
+        if host not in recipe_by_host:
+            recipe_by_host[host] = _recipes.capture_recipe_for_url(corpus_root, uri) or {}
+        recipe = recipe_by_host[host]
+        return _urls.identity_key(
+            uri, recipe.get("url_equivalent"), url_rewrite=recipe.get("url_rewrite")
+        )
 
     index: dict[str, str] = {}
     for md, post in load_all(corpus_root):
         record_id = str(post.metadata.get("id") or md.stem)
         for uri in iter_origin_uris(post):
             try:
-                key = _urls.normalize(uri)
+                key = _key(uri)
             except Exception:
                 continue
             if key:
@@ -663,14 +679,17 @@ def find_by_uri(
 ) -> str | None:
     """Return the id of the record whose origin URIs include `url`, else None.
 
-    `url` is canonicalized (`urls.normalize`) before lookup so trailing-slash / query-order
-    / case differences don't cause a miss. Pass a prebuilt `index` (`build_uri_index`) when
-    making many lookups — e.g. a crawl frontier — to avoid rebuilding it per call.
+    `url` is reduced to its **identity key** (`urls.identity_key` via the host's
+    `url_equivalent` rules — spec §7.2) before lookup, so trailing-slash / query-order / case
+    differences and host-declared equivalences (`/page-1` ≡ bare, query noise) don't cause a
+    miss. The key matches `build_uri_index`'s keying. Pass a prebuilt `index`
+    (`build_uri_index`) when making many lookups — e.g. a crawl frontier — to avoid rebuilding
+    it per call.
     """
-    from . import urls as _urls
+    from .capture import recipes as _recipes
 
     try:
-        target = _urls.normalize(url)
+        target = _recipes.identity_key_for_url(corpus_root, url)
     except Exception:
         target = url
     if index is None:
@@ -756,7 +775,24 @@ def append_origin_block(
     origins.append({"id": schema_id, "subtype": subtype, "fields": block_fields})
 
 
-def add_origin_uri_alias(post: frontmatter.Post, alias: str) -> bool:
+def _alias_already_present(alias: str, existing: list[str], corpus_root: Path | None) -> bool:
+    """True when `alias` is already among `existing` origin URIs. Exact-string when
+    `corpus_root` is None; by identity key (host `url_equivalent`) otherwise — degrading to
+    exact-string if identity resolution raises."""
+    if corpus_root is None:
+        return alias in existing
+    from .capture import recipes as _recipes
+
+    try:
+        alias_key = _recipes.identity_key_for_url(corpus_root, alias)
+        return any(_recipes.identity_key_for_url(corpus_root, u) == alias_key for u in existing)
+    except Exception:
+        return alias in existing
+
+
+def add_origin_uri_alias(
+    post: frontmatter.Post, alias: str, *, corpus_root: Path | None = None
+) -> bool:
     """Fold `alias` into the most-recent origin block's `uri:` list, unless it already
     appears on some origin block. Returns True when added.
 
@@ -765,6 +801,12 @@ def add_origin_uri_alias(post: frontmatter.Post, alias: str) -> bool:
     §7.2 — canonical / shortlink / final URLs are one logical origin), rather than
     stranding them on the artifact block. The most-recent origin block is the one the
     current capture seeded, so its uri list is where the current page's aliases belong.
+
+    With `corpus_root`, the already-present check is by **identity key** (`urls.identity_key`
+    via the host's `url_equivalent` rules — spec §7.2): an `alias` that denotes the same
+    resource as an existing uri (a query-noise / `/page-1` variant) is **not** appended,
+    keeping the origin block minimal. Without `corpus_root`, the check is exact-string
+    (back-compat).
     """
     alias = (alias or "").strip()
     if not alias:
@@ -772,11 +814,12 @@ def add_origin_uri_alias(post: frontmatter.Post, alias: str) -> bool:
     origins = post.metadata.get("_origins") or []
     if not origins:
         return False
+    existing: list[str] = []
     for origin in origins:
         uri = (origin.get("fields") or {}).get("uri")
-        existing = uri if isinstance(uri, list) else [uri]
-        if any(str(u).strip() == alias for u in existing if u):
-            return False
+        existing.extend(str(u).strip() for u in (uri if isinstance(uri, list) else [uri]) if u)
+    if _alias_already_present(alias, existing, corpus_root):
+        return False
     target = origins[-1].setdefault("fields", {})
     uri = target.get("uri")
     if isinstance(uri, list):

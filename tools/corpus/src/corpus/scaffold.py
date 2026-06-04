@@ -173,6 +173,16 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   # Pairs naturally with url_rewrite to pin one render form across every page (e.g. a flat
 #   # view). Constituent page URLs are recorded as origin aliases; only the merged artifact
 #   # is content-addressed.
+#   # --- url_equivalent (IDENTITY only, never changes the fetch) ---  Declare which URL
+#   # spellings are the SAME resource so an inbound variant matches the record and the origin
+#   # list stays minimal. `query: drop` (default keep) treats all query params as noise;
+#   # `rules` are {pattern, replacement} regex subs (like url_rewrite) on the identity key;
+#   # `on_rewritten: true` computes identity from the url_rewrite output. Opt-in: absent this,
+#   # identity is plain normalize (string match). A bare list form = rules only.
+#   # url_equivalent:
+#   #   query: drop                      # nested_view / affiliate / utm params == noise
+#   #   rules:
+#   #     - {pattern: '/page-1(?=[/?#]|$)', replacement: ''}   # /page-1 == bare thread
 #
 # # --- video hosts (yt-dlp) ---  `capturer: video` is the ONLY thing that routes a host
 # # to yt-dlp; there is no built-in video-host list. yt-dlp options pass straight through.

@@ -22,6 +22,14 @@ host-keyed file describes both what a source is and how to capture it. The
           replacement: '#/article/\1'     #   the recorded origin; the rewritten form lands
                                           #   as final_url. For hosts whose link form cold-
                                           #   loads a stub but an alt form loads full content.
+      url_equivalent:                     # IDENTITY-only normalization (never changes the
+        query: drop                       #   fetch). Two URLs are the same resource iff their
+        rules:                            #   identity keys match. `query: drop|keep` (keep =
+          - pattern: '/page-1(?=[/?#]|$)' #   default) + ordered {pattern, replacement} rules;
+            replacement: ''               #   on_rewritten: true folds identity on the rewrite
+                                          #   output. Bare list form = rules only. See
+                                          #   corpus.urls.identity_key. (g8board: /page-1==bare,
+                                          #   nested_view/affiliate params == noise.)
       interactions:                       # see corpus.capture.interactions
         - scroll: full
         - click: {selector: "button[aria-label*=Next i]", repeat: 12}
@@ -99,6 +107,33 @@ def capture_recipe_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None
     """Return the `capture:` config of the most-specific origin overlay matching `url`'s
     host, or None when no matching overlay declares one. See `_overlay_section_for_url`."""
     return _overlay_section_for_url(corpus_root, url, "capture")
+
+
+def url_equivalent_for_url(corpus_root: Path, url: str) -> Any:
+    """Return the per-host `capture.url_equivalent` config (a list of rules or a
+    `{query, rules, on_rewritten}` map) for `url`'s host, or None.
+
+    Identity-equivalence rules let a host declare which URL spellings denote the same
+    resource (spec §7.2). Consumed by `urls.identity_key` at the capture short-circuit,
+    crawl frontier dedup, and pagination uri-recording sites. Opt-in: absent the section,
+    identity stays the conservative `urls.normalize` string match. See `identity_key_for_url`."""
+    cap = _overlay_section_for_url(corpus_root, url, "capture")
+    if not isinstance(cap, dict):
+        return None
+    eq = cap.get("url_equivalent")
+    return eq if isinstance(eq, (dict, list)) else None
+
+
+def identity_key_for_url(corpus_root: Path, url: str) -> str:
+    """Compute `url`'s identity key, honoring the host's `url_equivalent` (+ `url_rewrite`
+    for the `on_rewritten` hook). The single-URL entry point for the capture short-circuit /
+    `find_by_uri` resolve site; equals `urls.normalize(url)` when the host declares no
+    equivalence rules. Bulk sites (`build_uri_index`, crawl `_expand`) memoize the recipe
+    by host and call `urls.identity_key` directly rather than re-resolving per URL."""
+    recipe = capture_recipe_for_url(corpus_root, url) or {}
+    return urlcanon.identity_key(
+        url, recipe.get("url_equivalent"), url_rewrite=recipe.get("url_rewrite")
+    )
 
 
 def transcription_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:

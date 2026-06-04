@@ -1,14 +1,23 @@
 """URL canonicalization for corpus dedup.
 
-The corpus uses exact-string match for origin URI comparison, so the crawler and
-ingestor must canonicalize URLs before checking. The transformations here are
-deliberately conservative — only those whose semantic equivalence is universal
-across HTTP servers. Path-case and trailing slashes on non-bare paths are *not*
-normalized because some servers distinguish them.
+The corpus compares origin URIs by a canonical key, so the crawler and ingestor must
+canonicalize URLs before checking. `normalize` does the conservative, universally-safe
+transformations — only those whose semantic equivalence holds across HTTP servers.
+Path-case and trailing slashes on non-bare paths are *not* normalized because some
+servers distinguish them.
+
+`identity_key` layers an **opt-in, per-host** equivalence step on top of `normalize`
+(overlay-declared `url_equivalent` rules — spec §7.2): two URLs denote the same resource
+iff their identity keys are equal. Absent any host rules it is exactly `normalize`, so the
+layer is inert by default. Identity is computed for comparison only — it never changes which
+bytes are fetched (that is `url_rewrite` / `interactions`).
 """
 
 from __future__ import annotations
 
+import logging
+import re
+from typing import Any
 from urllib.parse import (
     parse_qsl,
     quote,
@@ -17,6 +26,8 @@ from urllib.parse import (
     urlsplit,
     urlunsplit,
 )
+
+log = logging.getLogger("corpus.urls")
 
 _DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
 
@@ -41,6 +52,91 @@ def normalize(url: str) -> str:
     query = _normalize_query(parts.query)
     fragment = _normalize_fragment(parts.fragment)
     return urlunsplit((scheme, netloc, path, query, fragment))
+
+
+def apply_rewrite_rules(url: str, rules: Any) -> str:
+    """Apply ordered ``{pattern, replacement}`` regex rules to `url` via ``re.sub``.
+
+    Returns `url` unchanged when no rule matches. A rule with no `pattern` is skipped; a bad
+    pattern is logged and skipped (best-effort, never raises). Shared by capture's
+    ``url_rewrite`` (rewrites the *fetched* URL) and ``url_equivalent`` (rewrites the
+    *identity key*) — one rule shape, two uses. `rules` is the raw overlay value; a non-list
+    is treated as no rules.
+    """
+    out = url
+    for rule in rules if isinstance(rules, list) else []:
+        if not isinstance(rule, dict) or not (pattern := rule.get("pattern")):
+            continue
+        try:
+            out = re.sub(str(pattern), str(rule.get("replacement") or ""), out)
+        except re.error as exc:
+            log.warning("rewrite rule: bad pattern %r: %s", pattern, exc)
+    return out
+
+
+def normalize_equivalence(raw: Any) -> dict[str, Any] | None:
+    """Coerce an overlay ``url_equivalent`` value to a canonical config, or None when absent.
+
+    Two declared forms (spec §7.2):
+    - a **list** of ``{pattern, replacement}`` rules → ``{query: keep, rules, on_rewritten: False}``
+    - a **map** ``{query: keep|drop, rules: [...], on_rewritten: bool}`` → the same shape.
+
+    Anything falsy or of the wrong type → None (no equivalence; identity stays `normalize`).
+    """
+    if isinstance(raw, list):
+        return {"query": "keep", "rules": raw, "on_rewritten": False}
+    if isinstance(raw, dict):
+        query = str(raw.get("query") or "keep").lower()
+        if query not in ("keep", "drop"):
+            log.warning("url_equivalent: unknown query=%r (using 'keep')", raw.get("query"))
+            query = "keep"
+        rules = raw.get("rules")
+        return {
+            "query": query,
+            "rules": rules if isinstance(rules, list) else [],
+            "on_rewritten": bool(raw.get("on_rewritten")),
+        }
+    return None
+
+
+def identity_key(url: str, equivalent: Any = None, *, url_rewrite: Any = None) -> str:
+    """Compute `url`'s identity key for resource-equality comparison (spec §7.2).
+
+    Two URLs denote the same resource iff their identity keys are equal. The key is the
+    conservative `normalize`, optionally folded over the host's declared ``url_equivalent``
+    rules. With no `equivalent` config this is exactly ``normalize(url)`` — today's string
+    identity — so the layer is strictly **opt-in** per host.
+
+    Algorithm: resolve the config (absent → ``normalize(url)``); if ``on_rewritten``, apply
+    the host's ``url_rewrite`` rules first so identity is computed from the fetched form;
+    `normalize`; if ``query: drop`` strip the whole query; apply the ``url_equivalent`` rules
+    in order; tidy a dangling ``?``/``&`` a rule may have left.
+
+    **Identity-only**: this never influences which bytes are fetched (that is ``url_rewrite``
+    / ``interactions``) — only what counts as the same resource.
+    """
+    cfg = normalize_equivalence(equivalent)
+    if cfg is None:
+        return normalize(url)
+    src = apply_rewrite_rules(url, url_rewrite) if cfg["on_rewritten"] else url
+    base = normalize(src)
+    if cfg["query"] == "drop":
+        base = _strip_query(base)
+    base = apply_rewrite_rules(base, cfg["rules"])
+    return _tidy(base)
+
+
+def _strip_query(url: str) -> str:
+    """Drop the entire query component (robust reparse, not a regex)."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
+
+
+def _tidy(url: str) -> str:
+    """Collapse a dangling query delimiter a `url_equivalent` rule may have left behind."""
+    url = re.sub(r"\?&+", "?", url)  # "?&" -> "?"
+    url = re.sub(r"&&+", "&", url)  # "&&" -> "&"
+    return re.sub(r"[?&]+$", "", url)  # trailing "?" / "&"
 
 
 def host_of(url: str) -> str:

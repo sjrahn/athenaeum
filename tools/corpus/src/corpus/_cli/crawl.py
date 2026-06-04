@@ -36,6 +36,7 @@ from bs4 import BeautifulSoup
 from corpus import artifacts, mime, paths, records, urls
 from corpus import capture as capture_lib
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus.capture import recipes
 
 log = logging.getLogger("corpus.crawl")
 
@@ -274,17 +275,27 @@ def _expand(
         log.warning("no origin URI on record %s; skipping expansion", record_id[:12])
         return
 
-    # A paginated record absorbs its constituent pages and records every page URL (bare +
-    # pinned forms) as an origin alias. Excluding the record's own URIs keeps a crawl from
-    # re-enqueuing those `rel=next`/`page-N` links — page 1's reconciled capture already
-    # holds them. (The `capture_and_ingest` alias short-circuit is the correctness backstop;
-    # this just avoids the wasted frontier slot + re-visit.)
-    own_uris = set(records.iter_origin_uris(post))
+    # Dedup the frontier by **identity key** (urls.identity_key via the host's opt-in
+    # `url_equivalent` rules — spec §7.2), not the raw normalized string, so a paginated
+    # record's `/page-N` + query-noise variants and any equivalent spelling of a visited /
+    # frontier URL collapse to one key. The frontier still STORES the fetchable normalized URL
+    # (it is fed back to capture); identity is the dedup key only — never the fetch target.
+    # A record's own URIs are excluded so a crawl won't re-enqueue the pages page 1 already
+    # absorbed. Absent any `url_equivalent`, the key is exactly `normalize` (today's behavior).
+    recipe_by_host: dict[str, dict] = {}
 
+    def _ident(u: str) -> str:
+        host = urls.host_of(u)
+        if host not in recipe_by_host:
+            recipe_by_host[host] = recipes.capture_recipe_for_url(corpus_root, u) or {}
+        r = recipe_by_host[host]
+        return urls.identity_key(u, r.get("url_equivalent"), url_rewrite=r.get("url_rewrite"))
+
+    own_keys = {_ident(u) for u in records.iter_origin_uris(post)}
     found = _extract_links(artifact, base_url)
     pushed = 0
-    in_frontier = {u for u, _ in state.frontier}
-    visited = set(state.visited)
+    frontier_keys = {_ident(u) for u, _ in state.frontier}
+    visited_keys = {_ident(u) for u in state.visited}
     for raw_link in found:
         try:
             absolute = urljoin(base_url, raw_link)
@@ -293,18 +304,19 @@ def _expand(
             continue
         if not normalized.startswith(("http://", "https://")):
             continue
-        if normalized in own_uris:
+        key = _ident(normalized)
+        if key in own_keys:
             continue
         if not urls.same_domain(
             normalized, state.seed_host, include_subdomains=state.include_subdomains
         ):
             continue
-        if normalized in visited or normalized in in_frontier:
+        if key in visited_keys or key in frontier_keys:
             continue
         if len(state.visited) + len(state.frontier) >= state.count_cap:
             break
         state.frontier.append((normalized, current_depth + 1))
-        in_frontier.add(normalized)
+        frontier_keys.add(key)
         pushed += 1
     log.info("expanded %s: %d link(s) added to frontier", record_id[:12], pushed)
 

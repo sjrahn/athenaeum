@@ -233,7 +233,10 @@ def test_reconcile_merges_and_records_provenance(tmp_path, monkeypatch):
         "applies_to: {host_pattern: forum.test}\n"
         "capture:\n"
         "  url_rewrite:\n"
-        "    - {pattern: '$', replacement: '#flat'}\n"  # pin every page to a distinct nav form
+        # A path-changing pin: bare and pinned forms differ under `normalize`, so BOTH are
+        # recorded. (A fragment-only pin like `#flat` would collapse to the bare form under
+        # identity — see test_url_equivalent; that is the minimal-origin-block behavior.)
+        "    - {pattern: '/thread/1', replacement: '/thread/1/flat'}\n"
         "  pagination: true\n",
     )
     _fake_capture(
@@ -250,13 +253,20 @@ def test_reconcile_merges_and_records_provenance(tmp_path, monkeypatch):
     post = records.load(rec)
 
     origin = list(records.iter_origin_blocks(post))[-1]["fields"]
-    assert origin["pagination"] == {"pages": 3, "form": SEED + "#flat", "posts": 6}
+    assert origin["pagination"] == {
+        "pages": 3,
+        "form": "https://forum.test/thread/1/flat",
+        "posts": 6,
+    }
 
     uris = set(records.iter_origin_uris(post))
     assert SEED in uris  # clean seed = primary origin
-    # bare constituent forms (what a crawl finds) AND pinned nav forms (url_rewrite) both recorded
+    # bare constituent forms (what a crawl finds) AND distinct pinned nav forms both recorded
     assert {"https://forum.test/thread/1?page=2", "https://forum.test/thread/1?page=3"} <= uris
-    assert {SEED + "#flat", "https://forum.test/thread/1?page=2#flat"} <= uris
+    assert {
+        "https://forum.test/thread/1/flat",
+        "https://forum.test/thread/1/flat?page=2",
+    } <= uris
 
     assert not [i for i in records.iter_issue_blocks(post) if i["id"] == "pagination-incomplete"]
 

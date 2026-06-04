@@ -96,7 +96,7 @@ def derive_record(
         fingerprint=fingerprint,
     )
 
-    _apply_drafter_result(post, result, mime_schema_id)
+    _apply_drafter_result(post, result, mime_schema_id, corpus_root)
 
     # Emit the content zone the drafter built on the Build — body-draft schemas only
     # (spec §7.1). `finish` re-parses to surface grammar errors before any write.
@@ -160,7 +160,8 @@ def run(args: argparse.Namespace) -> int:
         original_id, original_path = dup
         original = records.load(original_path)
         added = sum(
-            records.add_origin_uri_alias(original, uri) for uri in records.iter_origin_uris(post)
+            records.add_origin_uri_alias(original, uri, corpus_root=corpus_root)
+            for uri in records.iter_origin_uris(post)
         )
         records.dump(original, original_path)
         _discard_duplicate(corpus_root, record_id, record_file, extension)
@@ -186,6 +187,7 @@ def _apply_drafter_result(
     post,
     result: dict[str, Any],
     mime_schema_id: str,
+    corpus_root,
 ) -> None:
     """Merge a drafter's metadata-zone result onto `post` (the content zone is built
     on the Build via `recordbuild.add_blocks` + `finish`)."""
@@ -229,7 +231,7 @@ def _apply_drafter_result(
     # Origin-alias URLs the drafter discovered (canonical / post-redirect final) — fold
     # into the origin block's uri: list, not the artifact block (spec §7.2).
     for alias in result.get("origin_uri_aliases") or []:
-        records.add_origin_uri_alias(post, str(alias))
+        records.add_origin_uri_alias(post, str(alias), corpus_root=corpus_root)
 
     # The content zone is built by the drafter on the Build (via `recordbuild.add_blocks`)
     # and emitted by `recordbuild.finish` in `run()` — not here.

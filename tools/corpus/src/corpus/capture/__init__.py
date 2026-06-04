@@ -400,9 +400,17 @@ def _reconcile_pagination(
     capture_dir = corpus_root / "capture"
     capture_dir.mkdir(parents=True, exist_ok=True)
 
+    # Identity-equivalence config (spec §7.2) — dedup the walk by identity key, not raw URL,
+    # so a host's view/affiliate query variants of the same page don't get re-walked.
+    eq = recipe.get("url_equivalent")
+    rw = recipe.get("url_rewrite")
+
+    def _ident(u: str) -> str:
+        return urlcanon.identity_key(u, eq, url_rewrite=rw)
+
     htmls: list[str] = []
     page_forms: list[tuple[str, str]] = []  # (bare site form, pinned nav form) per page
-    seen_urls = {canonical}
+    seen_keys = {_ident(canonical)}
     cap_hit = False
 
     url = canonical
@@ -420,9 +428,10 @@ def _reconcile_pagination(
             if cap_hit:
                 log.warning("pagination: max_pages=%d hit with more pages remaining", cfg.max_pages)
             break
-        if not nxt or nxt in seen_urls:
+        # `nxt` stays the fetchable form (we capture it); identity is only the dedup key.
+        if not nxt or _ident(nxt) in seen_keys:
             break
-        seen_urls.add(nxt)
+        seen_keys.add(_ident(nxt))
         url = nxt
 
     merged_path = capture_dir / f"{_sanitize_filename(canonical)}.html"
@@ -473,8 +482,8 @@ def _reconcile_pagination(
 
     post = records.load(record_path)
     for bare, pinned in page_forms:
-        records.add_origin_uri_alias(post, bare)
-        records.add_origin_uri_alias(post, pinned)
+        records.add_origin_uri_alias(post, bare, corpus_root=corpus_root)
+        records.add_origin_uri_alias(post, pinned, corpus_root=corpus_root)
     records.merge_origin_fields(
         post,
         {
@@ -1586,14 +1595,7 @@ def _apply_url_rewrite(url: str, recipe: dict[str, Any]) -> str:
     (a cold-load stub) but the equivalent `#/article/<v>/.../nonstandard/<id>` cold-loads
     the full article. Only the navigation target is rewritten; the original URL remains the
     recorded origin URI and the rewritten form is captured as `final_url` (an origin alias)."""
-    out = url
-    for rule in recipe.get("url_rewrite") or []:
-        if not isinstance(rule, dict) or not (pattern := rule.get("pattern")):
-            continue
-        try:
-            out = re.sub(str(pattern), str(rule.get("replacement") or ""), out)
-        except re.error as exc:
-            log.warning("url_rewrite: bad pattern %r: %s", pattern, exc)
+    out = urlcanon.apply_rewrite_rules(url, recipe.get("url_rewrite"))
     if out != url:
         log.info("url_rewrite: %s -> %s", url, out)
     return out
