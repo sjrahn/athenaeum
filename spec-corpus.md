@@ -101,7 +101,7 @@ A corpus's schemas are organized into five spec-reserved **namespaces**. Three a
 | `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes. |
 | `atom` | Declares the **atomic classification** on a **segment block**. | Per-atom-and-subtype overlays: what kind of content a segment carries, and (for text-atom overlays) whether it licenses a shaped lossless body. |
 | `composite` | The umbrella for every user-defined **classification** namespace. | Per-namespace classifications declared via the **classify block** (`composite/<namespace>/<id>`). |
-| `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (cited sources), `note` (editorial), … |
+| `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (cited sources), … |
 
 A record references a schema by the qualified id encoded on a block opener — for example, `<!--classify <namespace>/<id>-->`. The schema loader resolves the id by walking a chain of declarations from most-specific to least-specific:
 
@@ -424,7 +424,9 @@ The mime schema is the **only** body-drafter — it alone owns the content zone.
 
 #### 4.3.3 The annotations zone
 
-The annotations zone carries observations *about* the record — problems with it, sources it cites, derived flags, editorial notes. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, `note`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
+The annotations zone carries observations *about* the record — problems with it, sources it cites, derived relations. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
+
+**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a cited source resolved toward its record (`reference`), an overlay-declared chrome extraction (`aside`), a corpus-graph relation (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`issue`, `aside`, `relation`) auto-populate *only* on real signal and *only* where schema-gated — in particular an `aside` block exists **solely** where an origin or composite overlay declares the extraction, and there are none absent that declaration. **Interpretive** additions (`reference`) require a referent actually present in the content. Absent real signal the annotations zone is **empty** — the normal state for most records.
 
 ##### 4.3.3.1 The context block
 
@@ -690,7 +692,7 @@ A segment carries exactly one atomic class id, on the opener line.
 
 ### 7.4 The composite namespace
 
-`composite` is the umbrella for **classification** namespaces — every user-defined namespace is a sub-namespace under `composite`, surfacing through the generic classify block at record scope, or a composite on the section opener at section scope. (Annotation overlays — `issue`, `reference`, `note`, … — live under the separate `context/` umbrella and surface through the context block, §3 / §4.3.3, not here.)
+`composite` is the umbrella for **classification** namespaces — every user-defined namespace is a sub-namespace under `composite`, surfacing through the generic classify block at record scope, or a composite on the section opener at section scope. (Annotation overlays — `issue`, `reference`, … — live under the separate `context/` umbrella and surface through the context block, §3 / §4.3.3, not here.)
 
 A classification schema (mechanical or interpretive) declares:
 
@@ -879,7 +881,7 @@ on <!--context issue/<id>[/<subtype>]-->:
   issues += { id: "<id>[/<subtype>]", severity, resolution, detector, address?, ...fields }
 ```
 
-Returns structured records — each issue carries its id/subtype + universal fields + optional `address:` + any id-specific fields. Context blocks in other namespaces (`reference`, `note`, …) are not in this view.
+Returns structured records — each issue carries its id/subtype + universal fields + optional `address:` + any id-specific fields. Context blocks in other namespaces (`reference`, …) are not in this view.
 
 ### 9.3 The `uris` view
 
@@ -1074,7 +1076,7 @@ Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single addr
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
 | **Section block** | `<!--section [<namespace>/<id>]-->` — structural grouping; the TOC unit. May carry one composite on the opener. Contains zero or more segments. |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
-| **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, `note`, …); record- or segment-scope (via `address:`). |
+| **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, …); record- or segment-scope (via `address:`). |
 | **Namespace** | One of `mime`, `origin`, `atom`, `composite`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
 | **Mechanical classification** | `kind: mechanical` schema + associated script. Runs at draft time. |
 | **Interpretive classification** | `kind: interpretive` schema with LLM-guidance prose. Runs at normalize time. |

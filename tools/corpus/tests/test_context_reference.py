@@ -167,7 +167,9 @@ def test_unknown_context_namespace_warns(tmp_path):
     records.append_context_block(post, namespace="bogus", id="bogus", fields={})
     findings = _lint(post, root)
     assert any(f.rule_id == "context-namespace-unknown" for f in findings)
-    # issue / reference / note resolve via the packaged defaults → no warning for them.
+    # The shipped namespaces (issue, reference) resolve via the packaged defaults → no warning.
     post2 = _post()
-    records.append_context_block(post2, namespace="note", id="note", fields={"body": "hi"})
+    records.append_context_block(
+        post2, namespace="reference", id="reference", fields={"attribution_text": "x"}
+    )
     assert not any(f.rule_id == "context-namespace-unknown" for f in _lint(post2, root))
