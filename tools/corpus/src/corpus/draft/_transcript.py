@@ -2,7 +2,9 @@
 
 Both drafters consume a `[Speaker N] (HH:MM:SS)` diarized transcript (produced by the
 configured `TranscriptionAdapter`) and turn it into `Section`s, each holding one
-`text/transcript` `Segment` per checkpoint addressed by time-range. The default sectioning
+`text/transcript` `Segment` per checkpoint addressed by time-range (checkpoints whose
+start+end round to one already-used whole-second address are merged so no two segments
+share a `(opener-id, address)` identity). The default sectioning
 is one `Section` per speaker run (`parse_transcript_sections`); a video that ships chapter
 markers is instead sectioned by its chapters (`parse_chaptered_sections`), the chapter
 title riding as each section's `entry` TOC label (§4.3.2.2). The video drafter additionally
@@ -230,6 +232,11 @@ def _emit_sections(
     structural unit)."""
     emitted = [g for g in groups if g[3]] if drop_empty else groups
     seen_frames: set[str] = set()
+    # Record-global ledger of every `text/transcript` address emitted so far, mapped to its
+    # Segment, so a zero-width collision is folded even across a section boundary (a
+    # speaker-run flip at the same rounded instant lands the two segments in adjacent
+    # sections — within-section dedup alone wouldn't catch that).
+    seen_transcripts: dict[str, Segment] = {}
     sections: list[Section] = []
     for idx, (entry, begin, end, members) in enumerate(emitted):
         section_address = (
@@ -252,21 +259,47 @@ def _emit_sections(
             extra: dict[str, Any] = {}
             if cp_speaker is not None:
                 extra["speaker"] = cp_speaker
-            segs.append(
-                Segment(
-                    atom="text",
-                    overlay="text/transcript",
-                    address=addr,
-                    body=cp_text,
-                    extra=extra,
-                )
+            # Merge-on-collision (§4.3.2.2 — `(opener-id, address)` is segment identity).
+            # Whisper occasionally returns consecutive segments whose start and end both
+            # round to the SAME whole second (zero-width, `S-S`); two of those round to an
+            # identical `time_range=` address and would claim one identity, failing lint.
+            # Fold the colliding checkpoint into the segment that already owns the address —
+            # concatenate the verbatim text (the body stays a lossless rendering of the
+            # shared time-range; earliest start / latest end are already encoded by the
+            # shared `S-S` value). 3+ in a row fold one-by-one into the running segment.
+            # When the two carry different speakers (a diarization flip at one instant) the
+            # merged span genuinely covers more than one speaker, so its `speaker` is
+            # dropped — mirroring a multi-speaker chapter section, which carries no single
+            # speaker either.
+            prior = seen_transcripts.get(addr)
+            if prior is not None:
+                prior.body = f"{prior.body} {cp_text}".strip() if cp_text else prior.body
+                if prior.extra.get("speaker") != extra.get("speaker"):
+                    prior.extra.pop("speaker", None)
+                continue
+            seg = Segment(
+                atom="text",
+                overlay="text/transcript",
+                address=addr,
+                body=cp_text,
+                extra=extra,
             )
+            seen_transcripts[addr] = seg
+            segs.append(seg)
         # Only the final section closes with a trailing frame; every interior section's
         # end coincides with the next section's leading frame, so emitting it would
         # duplicate that address.
         if video_stream_id and idx == len(emitted) - 1 and end > begin:
             _append_frame(segs, seen_frames, end, video_stream_id, multi_video)
 
+        # `drop_empty` (speaker-run path) skips groups with no checkpoints up front; a
+        # cross-section zero-width collision can ALSO empty a section after the fact (its
+        # lone checkpoint folded into the prior section, and its lead frame was the shared
+        # boundary instant already placed). Drop such a now-empty section so it leaves no
+        # phantom TOC node with a duplicate section address. Chaptered sections
+        # (`drop_empty=False`) are kept — a chapter is a structural unit either way.
+        if drop_empty and not segs:
+            continue
         sections.append(Section(address=section_address, entry=entry, segments=segs))
     return sections
 

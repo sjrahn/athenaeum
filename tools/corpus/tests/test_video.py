@@ -238,6 +238,113 @@ def test_parse_transcript_sections_single_segment_without_duration_falls_back():
     assert secs[0].address == "time_range=00:00-00:00"
 
 
+def _transcript_addresses(secs):
+    return [s.address for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+
+
+def _duplicate_findings(secs):
+    # Run the real `segment-address-duplicate` lint rule over the emitted blocks. The rule
+    # only reads `blocks`, so pass empty post/root — it's the record-global (opener-id,
+    # address) uniqueness check the drafter must satisfy (§4.3.2.2).
+    from corpus.lint import _rule_segment_address_duplicate
+
+    return list(_rule_segment_address_duplicate(None, list(secs), None))
+
+
+def test_parse_transcript_sections_zero_width_collision_merges():
+    # Regression (real case): whisper occasionally returns consecutive same-speaker segments
+    # whose start AND end both round to the SAME whole second (zero-width, `S-S`). A 2.6h
+    # livestream had exactly one such pair ("Oh, sorry." then "Yeah."), both landing at
+    # `time_range=02:14:56-02:14:56` — identical (opener-id, address), failing
+    # `segment-address-duplicate`. The drafter must fold the second into the first
+    # (concatenated text, one segment), mirroring the hand-fix. Here both checkpoints sit
+    # at the same second and the lone speaker run (no media_duration) ends at the same
+    # second, so both render `02:30-02:30`.
+    transcript = "[Speaker 1] (00:02:30)\nOh, sorry.\n\n[Speaker 1] (00:02:30)\nYeah.\n"
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    assert len(ts) == 1  # the colliding pair merged into one segment
+    assert ts[0].address == "time_range=02:30-02:30"
+    assert ts[0].body == "Oh, sorry. Yeah."  # verbatim text concatenated with a space
+    assert ts[0].extra.get("speaker") == 1  # same-speaker merge keeps attribution
+    # No two segments share a (opener-id, address); lint is clean.
+    addrs = _transcript_addresses(secs)
+    assert len(addrs) == len(set(addrs))
+    assert _duplicate_findings(secs) == []
+
+
+def test_parse_transcript_sections_three_in_a_row_collision_merges():
+    # Three consecutive same-second same-speaker zero-width checkpoints fold one-by-one into
+    # a single running segment (the rare 3+ collision).
+    transcript = (
+        "[Speaker 1] (00:02:30)\nOh, sorry.\n\n"
+        "[Speaker 1] (00:02:30)\nYeah.\n\n"
+        "[Speaker 1] (00:02:30)\nRight.\n"
+    )
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    assert len(ts) == 1
+    assert ts[0].body == "Oh, sorry. Yeah. Right."
+    addrs = _transcript_addresses(secs)
+    assert len(addrs) == len(set(addrs))
+    assert _duplicate_findings(secs) == []
+
+
+def test_parse_transcript_sections_cross_speaker_collision_dedups_globally():
+    # Pathological: a diarization flip at one zero-width instant lands two segments at the
+    # same `S-S` address in ADJACENT sections (speaker change is a section boundary). The
+    # record-global ledger still folds the second into the first; because the merged span
+    # genuinely spans two speakers, its `speaker` is dropped (like a multi-speaker chapter
+    # section), and the now-empty trailing section is dropped — no phantom TOC node, no
+    # duplicate section address.
+    transcript = "[Speaker 1] (00:02:30)\nOh, sorry.\n\n[Speaker 2] (00:02:30)\nYeah.\n"
+    secs = transcript_mod.parse_transcript_sections(
+        transcript,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    assert len(ts) == 1
+    assert ts[0].body == "Oh, sorry. Yeah."
+    assert "speaker" not in ts[0].extra  # spans two speakers → no single attribution
+    assert len(secs) == 1  # the emptied second section is dropped
+    addrs = _transcript_addresses(secs)
+    assert len(addrs) == len(set(addrs))
+    assert _duplicate_findings(secs) == []
+
+
+def test_parse_chaptered_sections_zero_width_collision_merges():
+    # The chaptered path runs through the same `_emit_sections` choke point: two same-second
+    # checkpoints inside one chapter must merge too.
+    transcript = "[Speaker 1] (00:00:05)\nOne.\n\n[Speaker 1] (00:00:05)\nTwo.\n"
+    chapters = [{"start": 0.0, "end": 5.0, "title": "Only"}]
+    secs = transcript_mod.parse_chaptered_sections(
+        transcript,
+        chapters,
+        audio_stream_id="a0",
+        video_stream_id="v0",
+        multi_audio=False,
+        multi_video=False,
+    )
+    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    assert [s.body for s in ts] == ["One. Two."]
+    assert _duplicate_findings(secs) == []
+
+
 def test_parse_chaptered_sections_uses_chapter_outline():
     # A video that ships chapter markers is sectioned by them (the uploader's outline),
     # the chapter title riding as each section's `entry` TOC label (§4.3.2.2).
