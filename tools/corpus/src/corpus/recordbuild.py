@@ -103,7 +103,7 @@ def begin(meta: dict, corpus_root: Path | None) -> Build:
     post.metadata["_origins"] = list(meta.get("origins") or [])
     post.metadata["_classifies"] = list(meta.get("classifies") or [])
     post.metadata["_embeds"] = []  # populated by add_embed (reconciliation #1)
-    post.metadata["_issues"] = []
+    post.metadata["_contexts"] = []
     return Build(post=post, blocks=[], corpus_root=corpus_root)
 
 
@@ -116,7 +116,7 @@ def begin_from_post(post: frontmatter.Post, corpus_root: Path | None) -> Build:
     already on the post are preserved; the embed / issue lists default in place (a
     fresh stub carries none; a re-stubbed record has them cleared)."""
     post.metadata.setdefault("_embeds", [])
-    post.metadata.setdefault("_issues", [])
+    post.metadata.setdefault("_contexts", [])
     return Build(post=post, blocks=[], corpus_root=corpus_root)
 
 
@@ -229,6 +229,23 @@ def add_issue(
         address=address,
         fields=f,
     )
+
+
+def add_context(
+    b: Build,
+    *,
+    namespace: str,
+    id: str,
+    subtype: str | None = None,
+    address: str | None = None,
+    fields: dict | None = None,
+) -> None:
+    """Append a non-issue context block (reference / note / aside / …). `issue`-namespace
+    blocks go through `add_issue` (which carries the severity/resolution shape)."""
+    f = dict(fields or {})
+    if address:
+        f = {"address": address, **f}
+    records.append_context_block(b.post, namespace=namespace, id=id, subtype=subtype, fields=f)
 
 
 def add_blocks(b: Build, blocks: list) -> None:
@@ -489,30 +506,37 @@ def write_workdir(
             seg_i += 1
             lines.append(_seg_line(blk, f"seg{seg_i}"))
 
-    # ----- Issues (annotations zone) ----- #
-    issues = post.metadata.get("_issues") or []
-    if issues:
+    # ----- Context blocks (annotations zone) ----- #
+    contexts = post.metadata.get("_contexts") or []
+    if contexts:
         lines.append("")
-        for n, iss in enumerate(issues, 1):
-            iid = iss.get("id", "")
-            sub = iss.get("subtype")
-            opener = f"{iid}/{sub}" if sub else iid
-            f_ = dict(iss.get("fields") or {})
-            sev = f_.pop("severity", "")
-            res = f_.pop("resolution", "")
-            det = f_.pop("detector", "")
+        for n, ctx in enumerate(contexts, 1):
+            ns = ctx.get("namespace") or ""
+            cid = ctx.get("id", "")
+            sub = ctx.get("subtype")
+            f_ = dict(ctx.get("fields") or {})
             addr = f_.pop("address", None)
-            parts = [
-                f"issue {opener}",
-                f"sev={_fmt_scalar(sev)}",
-                f"res={_fmt_scalar(res)}",
-                f"detector={_fmt_scalar(det)}",
-            ]
+            if ns == "issue":
+                # Keep the dedicated `issue <id> sev= res= detector=` manifest line.
+                opener = f"{cid}/{sub}" if sub else cid
+                sev = f_.pop("severity", "")
+                res = f_.pop("resolution", "")
+                det = f_.pop("detector", "")
+                parts = [
+                    f"issue {opener}",
+                    f"sev={_fmt_scalar(sev)}",
+                    f"res={_fmt_scalar(res)}",
+                    f"detector={_fmt_scalar(det)}",
+                ]
+            else:
+                # Generic `context <ns>/<id>[/<sub>] k=v…` line for reference/note/aside/…
+                opener = f"{ns}/{cid}/{sub}" if sub else f"{ns}/{cid}"
+                parts = [f"context {opener}"]
             if addr:
                 parts.append(f"addr={_fmt_addr(addr)}")
             for k, v in f_.items():
                 if k == "description":
-                    parts.append("desc=" + _desc_ref(f"iss{n}", addr or "record", str(v)))
+                    parts.append("desc=" + _desc_ref(f"ctx{n}", addr or "record", str(v)))
                 else:
                     parts.append(f"{k}={_fmt_scalar(v)}")
             lines.append(" ".join(parts))
@@ -617,6 +641,25 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                     detector=kv["detector"],
                     address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
                     description=None,
+                    fields=extras,
+                )
+            elif verb == "context":
+                ns, _slash, rest = toks[1].partition("/")
+                cid, _slash2, sub = rest.partition("/")
+                kv = _kv(toks[2:])
+                extras = {}
+                for k, v in kv.items():
+                    if k == "addr":
+                        continue
+                    extras[k] = _filetext(work, v) if k == "desc" else _typed(v)
+                if "desc" in extras:
+                    extras["description"] = extras.pop("desc")
+                add_context(
+                    b,
+                    namespace=ns,
+                    id=cid,
+                    subtype=(sub or None),
+                    address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
                     fields=extras,
                 )
             else:

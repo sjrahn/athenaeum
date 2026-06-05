@@ -14,15 +14,16 @@ The four reserved top-level namespaces:
   `web/example.com.yaml` at scaffold time. The flat `origin/<id>.yaml` layout is read
   tolerantly for back-compat. The overlay id is the bare `<id>` regardless of sub-namespace.
 - `composite/<namespace>/<namespace>.yaml` (+ `<sub_id>.yaml`) — user-defined
-  classification namespaces. **Per-corpus concern; not packaged.**
-  `composite/issue/<id>.yaml` carries issue overlays — the universal
-  `composite/issue/issue.yaml` ships in the package; per-id issue overlays may
-  live in either source.
+  classification namespaces (the `classify` block). **Per-corpus concern; not packaged.**
+- `context/<namespace>/<namespace>.yaml` (+ `<id>.yaml`) — annotation-zone overlays (the
+  `context` block, spec §4.3.3): `issue`, `reference`, `note`, … `context/issue/<id>.yaml`
+  carries issue overlays — the universal `context/issue/issue.yaml` ships in the package;
+  per-id overlays may live in either source.
 
 Why the split: `mime` and `atom` describe *format and fidelity* (a PDF is a PDF;
 a transcript is a transcript) — universal. `origin` describes *sources of
-retrieval* and `composite` describes *classification axes* — both are corpus-
-specific decisions.
+retrieval*, `composite` describes *classification axes*, and `context` describes
+*observations about a record* — all corpus-specific decisions.
 
 Resolution model (the keystone):
 
@@ -54,7 +55,7 @@ from . import urls as urlcanon
 
 # Namespaces reserved by the spec — the four top-level directories under `schema/`
 # (spec §3).
-_RESERVED_NAMESPACES = {"mime", "origin", "atom", "composite"}
+_RESERVED_NAMESPACES = {"mime", "origin", "atom", "composite", "context"}
 
 VALID_ATOMS = ("text", "image", "audio", "video")
 
@@ -179,7 +180,7 @@ def cache_clear() -> None:
     mime_schema_id_for.cache_clear()
     load_classification_schema.cache_clear()
     load_origin_overlay_by_id.cache_clear()
-    load_issue_schema.cache_clear()
+    load_context_schema.cache_clear()
 
 
 # ---------- composition primitives ---------- #
@@ -697,25 +698,29 @@ def origin_ids_for_uris(corpus_root: Path, uris: list[str]) -> list[str]:
     return [id_ for id_, _ in origin_overlays_for_uris(corpus_root, uris)]
 
 
-# ---------- issue schemas ---------- #
+# ---------- context (annotation-zone) schemas ---------- #
+#
+# The `context` block (spec §4.3.3) draws its overlays from a reserved top-level `context/`
+# umbrella — separate from `composite/` (which is classifications only). `issue` is one
+# namespace here (`context/issue/`); `reference`, `note`, `aside`, `relation` join it.
 
 
 @lru_cache(maxsize=256)
-def load_issue_schema(corpus_root: Path, id_: str) -> dict[str, Any] | None:
-    """Return the layered issue overlay for `id_`.
+def load_context_schema(corpus_root: Path, class_id: str) -> dict[str, Any] | None:
+    """Return the layered context overlay for `class_id` = `<namespace>/<id...>` (e.g.
+    `issue/paywall`, `issue/partial-content/paywall`, `reference`).
 
-    Chain: universal `composite/issue/issue.yaml` → per-id
-    `composite/issue/<id>.yaml`. The universal ships in the package; per-id overlays
-    may live in either source. Returns None only if neither the universal nor the
-    per-id rung resolves.
-
-    Reconciliation #4 vs the reference: the reference's `load_issue_schema` did NOT
-    merge the universal under the per-id schema, so `severity`/`resolution`/`detector`
-    field declarations weren't visible to consumers. Our layered loader fixes that.
-    """
+    Chain: universal `context/<ns>/<ns>.yaml` → per-id `context/<ns>/<id>.yaml`. The
+    universal ships in the package (for `issue`); per-id overlays may live in either source.
+    Returns None only if neither rung resolves."""
+    parts = [p for p in class_id.split("/") if p]
+    if not parts:
+        return None
+    namespace = parts[0]
+    rest = "/".join(parts[1:]) or namespace
     sources = _sources(corpus_root)
-    universal_rel = "composite/issue/issue.yaml"
-    per_id_rel = f"composite/issue/{id_}.yaml"
+    universal_rel = f"context/{namespace}/{namespace}.yaml"
+    per_id_rel = f"context/{namespace}/{rest}.yaml"
     have_universal = any(s.exists(universal_rel) for s in sources)
     have_per_id = any(s.exists(per_id_rel) for s in sources)
     if not have_universal and not have_per_id:
@@ -723,27 +728,38 @@ def load_issue_schema(corpus_root: Path, id_: str) -> dict[str, Any] | None:
     rungs: list[str] = []
     if have_universal:
         rungs.append(universal_rel)
-    if have_per_id:
+    if have_per_id and per_id_rel != universal_rel:
         rungs.append(per_id_rel)
     return _read_yaml_layered(sources, *rungs)
 
 
-def list_issue_ids(corpus_root: Path) -> list[str]:
-    """Return all issue ids visible from either source. The `issue.yaml` universal
-    is excluded; subtype-style overlays nested under `composite/issue/<id>/<sub>.yaml`
-    are returned as `<id>/<sub>` slash ids.
-    """
+def list_context_ids(corpus_root: Path, namespace: str) -> list[str]:
+    """Return all ids declared under the `context/<namespace>/` umbrella, sorted. The
+    namespace's own universal `<namespace>.yaml` is excluded; nested subtype overlays
+    `context/<ns>/<id>/<sub>.yaml` come back as `<id>/<sub>` slash ids."""
     sources = _sources(corpus_root)
+    base = f"context/{namespace}"
     seen: dict[str, None] = {}
-    for relpath in _discover_yaml(sources, "composite/issue"):
-        if relpath == "composite/issue/issue.yaml":
+    for relpath in _discover_yaml(sources, base):
+        if relpath == f"{base}/{namespace}.yaml":
             continue
-        # composite/issue/<id>.yaml or composite/issue/<id>/<sub>.yaml
-        stem = relpath.removeprefix("composite/issue/").removesuffix(".yaml")
+        stem = relpath.removeprefix(f"{base}/").removesuffix(".yaml")
         if "/" in stem:
-            # Skip the per-id common file (if any).
             head, _, tail = stem.partition("/")
             if tail == head:
                 continue
         seen.setdefault(stem, None)
     return sorted(seen)
+
+
+# Back-compat shims — `issue` is now the `issue` namespace of the context umbrella.
+
+
+def load_issue_schema(corpus_root: Path, id_: str) -> dict[str, Any] | None:
+    """Layered `issue` overlay — `context/issue/issue.yaml` → `context/issue/<id>.yaml`."""
+    return load_context_schema(corpus_root, f"issue/{id_}")
+
+
+def list_issue_ids(corpus_root: Path) -> list[str]:
+    """All issue ids under `context/issue/` (the `issue.yaml` universal excluded)."""
+    return list_context_ids(corpus_root, "issue")

@@ -256,6 +256,14 @@ Before declaring the record normalized, the normalizer confirms:
 
 Failures here are bugs in the pipeline; they should fail loudly.
 
+### 3.6 The context block (annotations zone)
+
+The annotations zone is a single block family — **`context`** (spec §4.3.3) — drawing overlays from a reserved top-level `context/` umbrella, one namespace per kind of observation. `issue` is one namespace (problems, with the severity/resolution/detector shape); `reference` (cited sources, the §4.4.5 ladder), `note` (editorial) join it. The block stores as `{namespace, id, subtype, fields}` — the same shape as a classify block — in `post.metadata["_contexts"]`; emitted `<!--context <ns>/<id>-->`. Context never feeds the canonical hash or the faithful body segment.
+
+- **Issue migration.** The bundled issue overlays moved `schemas_default/composite/issue/** → context/issue/**`; `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml` (the generalized `load_issue_schema`, now a thin shim). `records.iter_issue_blocks` / `append_issue_block` are back-compat shims over `_contexts` filtered to `namespace == "issue"`, so the drafters/detectors, `health.unresolved_issues`, the §9.2 issues view, and lint's issue rules are unchanged. The reader is **parse-tolerant**: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write (`redraft` regenerates drafter issues for free).
+- **Reference.** Normally normalizer-/human-asserted (it's the durable home for a cross-reference §3.2 couldn't resolve mechanically): a casual mention gets a `reference` context anchored by `address:` + a verbatim `quote:` and researched up `attribution_text → source_url → source_uri`. Lint `reference-unresolved` flags a `source_uri` that doesn't resolve to a captured record; `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay.
+- **Decompose/compile.** The manifest keeps the dedicated `issue <id> sev= res= detector=` line for the issue namespace and adds a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`).
+
 ---
 
 ## 4. Custom-classification feedback loop

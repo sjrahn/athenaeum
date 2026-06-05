@@ -93,14 +93,15 @@ The `id` field is bare hex with no algorithm prefix because the algorithm is inv
 
 ## 3. Schema namespaces
 
-A corpus's schemas are organized into four spec-reserved **namespaces**. Three are primitive **axes** — each bound to a single block-keyword role in the record body — and the fourth is the umbrella for everything else:
+A corpus's schemas are organized into five spec-reserved **namespaces**. Three are primitive **axes** — each bound to a single block-keyword role in the record body — and two are umbrellas: `composite` for classifications, `context` for annotations:
 
 | Namespace | Role | What it declares |
 |---|---|---|
 | `mime` | Declares the **artifact block**. | Per-media-type fields, address scheme, body-draft behavior, container disposition. |
 | `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes. |
 | `atom` | Declares the **atomic classification** on a **segment block**. | Per-atom-and-subtype overlays: what kind of content a segment carries, and (for text-atom overlays) whether it licenses a shaped lossless body. |
-| `composite` | The umbrella for every user-defined classification namespace, plus issue overlays. | Per-namespace classifications declared via the **classify block**; issue overlays declared via the **issue block**. |
+| `composite` | The umbrella for every user-defined **classification** namespace. | Per-namespace classifications declared via the **classify block** (`composite/<namespace>/<id>`). |
+| `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (cited sources), `note` (editorial), … |
 
 A record references a schema by the qualified id encoded on a block opener — for example, `<!--classify <namespace>/<id>-->`. The schema loader resolves the id by walking a chain of declarations from most-specific to least-specific:
 
@@ -178,7 +179,7 @@ or
 <!--segment <atom>-->                     # 0..N (sectionless top-level segments)
 
 ─── annotations zone ─────────────────────
-<!--issue <id>[/<subtype>]-->             # 0..N (record- or segment-scoped via address:)
+<!--context <namespace>/<id>[/<subtype>]--># 0..N (record- or segment-scoped via address:)
 ```
 
 Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant (only the order among classify blocks matters — §4.3.1.3); the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
@@ -423,50 +424,41 @@ The mime schema is the **only** body-drafter — it alone owns the content zone.
 
 #### 4.3.3 The annotations zone
 
-The annotations zone carries observations *about* the record's content — issues, problems, derived flags. One block family.
+The annotations zone carries observations *about* the record — problems with it, sources it cites, derived flags, editorial notes. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, `note`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
 
-##### 4.3.3.1 The issue block
+##### 4.3.3.1 The context block
 
-Zero or more per record. Each issue is a typed observation about the record or about a specific segment within it. The opener `<id>` matches the corresponding `composite/issue/<id>` overlay; an optional `<subtype>` extends it.
+Zero or more per record. Each is a typed observation, optionally pinned to a segment. The opener `<namespace>/<id>` matches the corresponding `context/<namespace>/<id>` overlay (mirroring how a classify block matches `composite/<namespace>/<id>`); an optional `<subtype>` extends it.
 
 ```
-<!--issue <id>
-severity: <severity>
-resolution: <resolution>
-detector: <touch-identifier>
--->
-
-<!--issue <id>/<subtype>
-severity: <severity>
-resolution: <resolution>
-detector: <touch-identifier>
-address: <segment-address>               # presence makes the issue segment-scoped
-<id-specific-field>: <value>
+<!--context <namespace>/<id>
+address: <segment-address>               # presence pins it to a segment; absence = record scope
+quote: <verbatim span>                   # optional: the exact phrase within the segment
+occurrence: <n>                          # optional: which match, when the quote repeats
+provenance: auto                         # optional reserved field (see below)
+<namespace-field>: <value>
 -->
 ```
 
-Issues with an `address:` field are **segment-scoped**. Issues without `address:` are **record-scoped**.
+A context block with an `address:` field is **segment-scoped**; without it, **record-scoped**. The optional **`quote:`** (a verbatim span copied from the addressed segment's body) sharpens the anchor to the exact phrase; **`occurrence:`** disambiguates when that span repeats. Because the body is an immutable rendering of the immutable artifact, a verbatim `quote:` survives re-drafts where a character offset would not.
 
-Issue blocks **do not** contribute to the derived classifications view — they surface in a separate derived issues view (§9.2). Conceptually, classifications are facts about the content; issues are problems with it. The two are semantically distinct.
+One field name is **reserved**: `provenance` (same semantics as on the classify block, §4.4.6). `provenance: auto` marks an engine-stamped block (a drafter detection, a derived-graph sweep) that is regenerated on re-run; its absence (or `provenance: asserted`) marks a human- or normalizer-asserted block that the engine never touches. No namespace may declare `provenance` as an overlay field.
 
-###### Universal issue fields
+Context blocks **do not** contribute to the derived classifications view (§9.1) — they surface in the derived `context` view, of which the `issues` view (§9.2) is the `issue`-namespace projection. Conceptually, a *classification* says what the content IS; a *context* records something observed about it.
 
-The universal issue overlay declares fields every issue carries:
+##### 4.3.3.2 The `issue` namespace
+
+An `issue` context block (`<!--context issue/<id>-->`) is a typed problem with the record or a segment. Its universal overlay (`context/issue/issue.yaml`) declares:
 
 - `severity` — typically `blocking | warning | info` (the schema declares the closed set).
 - `resolution` — typically `open | fixed | wontfix | superseded`.
 - `detector` — touch identifier of the pass that emitted the issue.
-- `address` (optional) — segment address when the issue is segment-scoped.
 
-Per-id overlays extend with id-specific fields. The `severity`/`resolution` value sets are corpus-local (schema-declared); cross-corpus tooling should treat unknown values gracefully rather than assuming a fixed vocabulary.
+Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `severity`/`resolution` value sets are corpus-local (schema-declared); cross-corpus tooling should treat unknown values gracefully rather than assuming a fixed vocabulary. Issues come from three sources — the **drafter** (deterministic detections: bot blocks, corrupt encoding, missing inputs), the **normalizer** (content-meaning problems), and **external** health-signal sweeps — each recorded in `detector` and, where engine-owned, `provenance: auto`.
 
-###### Provenance
+##### 4.3.3.3 The `reference` namespace
 
-Issues come from three sources:
-
-- **Drafter** — the deterministic pass emits issues for problems it detects (bot blocks, corrupt encoding, missing inputs).
-- **Normalizer** — the interpretive pass emits issues for content-meaning problems (incomplete sections, encoding artifacts).
-- **External** — health-signal sweeps may emit issues for cross-record consistency problems.
+A `reference` context block (`<!--context reference-->`) records a source the body cites — a book, an article, a bare external link — pinned to the mention via `address:` (+ `quote:`) and resolved up the **three-tier citation ladder** (§4.4.5): `attribution_text` (free text) → `source_url` (a resolvable URL) → `source_uri` (a functional `corpus://<id>` URI pointing at the separately-captured record). It is the addressable, segment-scoped realization of the citation model §4.4.3 deferred: a casual mention is captured first as free text and progressively researched toward a lossless intra-corpus link, without the host record ever changing shape.
 
 ### 4.4 Classifications: scope and fidelity
 
@@ -519,7 +511,7 @@ A composite schema's extended fields decompose into three field groups by scope 
 
 #### 4.4.5 Three-tier lineage ladder
 
-Section-scope citations progress from lossy toward lossless through the citation field group:
+A cited source progresses from lossy toward lossless through the citation field group:
 
 | Tier | Citation field | Meaning |
 |---|---|---|
@@ -527,7 +519,7 @@ Section-scope citations progress from lossy toward lossless through the citation
 | **2** | `source_url` | Resolvable URL. |
 | **3** | `source_uri` | Functional URI pointing to a separately-captured full record. |
 
-Host records never change shape — enrichment happens at the linked target.
+Host records never change shape — enrichment happens at the linked target. This ladder is carried by the **`reference` context block** (§4.3.3.3), which pins the citation to the exact mention via `address:`/`quote:` and applies at any scope; the section-opener citation fields (below) are the section-scope special case.
 
 #### 4.4.6 Mechanical vs interpretive kind
 
@@ -698,11 +690,7 @@ A segment carries exactly one atomic class id, on the opener line.
 
 ### 7.4 The composite namespace
 
-`composite` is the umbrella for everything that is not one of the three primitive axes. Two kinds of content live under it:
-
-**Classification namespaces** — every user-defined namespace is a sub-namespace under `composite`. Each surfaces through the generic classify block at record scope, or a composite on the section opener at section scope.
-
-**Issue overlays** — `composite/issue/` declares the issue block's schema family. The universal `composite/issue` overlay declares the fields every issue carries (`severity`, `resolution`, `detector`, optional `address`); per-id overlays extend with id-specific fields. Issue overlays populate the derived issues view; they do not contribute to classifications.
+`composite` is the umbrella for **classification** namespaces — every user-defined namespace is a sub-namespace under `composite`, surfacing through the generic classify block at record scope, or a composite on the section opener at section scope. (Annotation overlays — `issue`, `reference`, `note`, … — live under the separate `context/` umbrella and surface through the context block, §3 / §4.3.3, not here.)
 
 A classification schema (mechanical or interpretive) declares:
 
@@ -883,15 +871,15 @@ A record carrying an artifact block, one qualified origin block, and one classif
 
 ### 9.2 The `issues` view
 
-Computed by walking the annotations zone:
+The `issue`-namespace projection of the annotations zone (the full annotation set is the `context` view, §4.3.3):
 
 ```
 issues := []
-on <!--issue <id>[/<subtype>]-->:
+on <!--context issue/<id>[/<subtype>]-->:
   issues += { id: "<id>[/<subtype>]", severity, resolution, detector, address?, ...fields }
 ```
 
-Returns structured records — each issue carries its id/subtype + universal fields + optional `address:` + any id-specific fields.
+Returns structured records — each issue carries its id/subtype + universal fields + optional `address:` + any id-specific fields. Context blocks in other namespaces (`reference`, `note`, …) are not in this view.
 
 ### 9.3 The `uris` view
 
@@ -1086,8 +1074,8 @@ Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single addr
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
 | **Section block** | `<!--section [<namespace>/<id>]-->` — structural grouping; the TOC unit. May carry one composite on the opener. Contains zero or more segments. |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
-| **Issue block** | `<!--issue <id>[/<subtype>]-->` — record-scope or segment-scope (via `address:`). |
-| **Namespace** | One of `mime`, `origin`, `atom`, `composite`. Each is a schema axis with its own block-keyword role. |
+| **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, `note`, …); record- or segment-scope (via `address:`). |
+| **Namespace** | One of `mime`, `origin`, `atom`, `composite`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
 | **Mechanical classification** | `kind: mechanical` schema + associated script. Runs at draft time. |
 | **Interpretive classification** | `kind: interpretive` schema with LLM-guidance prose. Runs at normalize time. |
 | **Self-contained / decomposable** | Container disposition declared by the mime schema (`artifact_kind`, required). `self_contained` produces one record (lifting nested-stream metadata when present; also the disposition for ordinary single-content files); `decomposable` explodes a raw archive into one record per member. |

@@ -1,12 +1,12 @@
-# Universal issue-block fields — applied to every <!--issue--> block regardless of
-# issue type. Per-type extensions live at schema/issue/<id>.yaml; subtype-specific at
-# schema/issue/<id>/<subtype>.yaml.
+# Universal issue-block fields — applied to every `issue`-namespace context block
+# (<!--context issue/<id>-->) regardless of issue type. Per-type extensions live at
+# context/issue/<id>.yaml; subtype-specific at context/issue/<id>/<subtype>.yaml.
 #
-# See SPEC.md §4.3.3.1 (issue block) and §7.2.3 (issue namespace).
+# See spec-corpus.md §4.3.3 (context block) and §4.3.3.1 (the issue namespace).
 
 description: |
-  Universal fields every issue carries on its <!--issue-->  block, regardless of
-  issue type. Per-type yamls in this directory extend with id-specific fields.
+  Universal fields every issue carries on its <!--context issue/<id>--> block, regardless
+  of issue type. Per-type yamls in this directory extend with id-specific fields.
 
 applies_at: [record, segment]
 
@@ -20,7 +20,7 @@ extended_fields:
       - `blocking` — the issue prevents downstream use of this content.
       - `warning` — the issue affects fidelity or interpretation but does not block use.
       - `info` — informational observation, no remediation expected.
-      A corpus may extend this `enum:` in its local `composite/issue/issue.yaml`; lint
+      A corpus may extend this `enum:` in its local `context/issue/issue.yaml`; lint
       validates against the schema-declared set, not a hardcoded vocabulary.
   resolution:
     type: string

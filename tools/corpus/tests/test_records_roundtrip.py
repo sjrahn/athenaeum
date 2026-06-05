@@ -64,8 +64,8 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     embed_pos = raw.index("<!--embed")
     segment_pos = raw.index("<!--segment")
     assert embed_pos < segment_pos, "embed must precede content zone (reconciliation #1)"
-    # And issue is in the annotation zone, after content.
-    issue_pos = raw.index("<!--issue")
+    # And the issue (now an `issue`-namespace context block) is in the annotation zone.
+    issue_pos = raw.index("<!--context issue/")
     assert segment_pos < issue_pos
 
     loaded = records.load(p)

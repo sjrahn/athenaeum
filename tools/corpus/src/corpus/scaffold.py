@@ -71,9 +71,10 @@ _README_TEMPLATE = """\
 # {name}
 
 A corpus repository — content-addressed records under `records/`, origin overlays
-under `schema/origin/`, classification schemas under `schema/composite/<namespace>/`.
-Universal `mime` / `atom` / `composite/issue` schemas resolve from the
-[`ath-corpus`][] package's bundled defaults; `origin` and `composite` are
+under `schema/origin/`, classification schemas under `schema/composite/<namespace>/`,
+annotation overlays under `schema/context/<namespace>/`.
+Universal `mime` / `atom` / `context/issue` schemas resolve from the
+[`ath-corpus`][] package's bundled defaults; `origin`, `composite`, and `context` are
 per-corpus concerns so they live here.
 
 [`ath-corpus`]: ../athenaeum/tools/corpus

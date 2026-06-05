@@ -148,7 +148,7 @@ def test_xlsx_draft_and_lint(tmp_path):
     assert lint_rc == 0
 
     post = records.load(paths.record_path(root, rid))
-    issues = post.metadata["_issues"]
+    issues = list(records.iter_issue_blocks(post))
     by_addr = {i["fields"].get("address"): i for i in issues}
     # Calc (formula) → warning; Empty → info. Both address-scoped, format-loss.
     assert all(i["id"] == "format-loss" for i in issues)
@@ -179,5 +179,5 @@ def test_xls_draft_and_lint(tmp_path):
     sections = [b for b in blocks if isinstance(b, seg_mod.Section)]
     assert {s.entry for s in sections} == {"Data", "Empty"}
     # The Empty sheet contributes an info format-loss issue.
-    issues = post.metadata["_issues"]
+    issues = list(records.iter_issue_blocks(post))
     assert any(i["fields"].get("address") == "sheet=Empty" for i in issues)

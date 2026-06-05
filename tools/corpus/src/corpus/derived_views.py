@@ -3,10 +3,11 @@
 Cross-cutting aggregates over a record's body blocks (and the touch chain), computed
 on demand. None are persisted.
 
-The five views:
+The views:
 
 - `classifications` (§9.1) — walks artifact + origin + classify blocks.
-- `issues` (§9.2) — walks issue blocks (returns structured records).
+- `context` (§4.3.3) — walks context blocks across all annotation namespaces.
+- `issues` (§9.2) — the `issue`-namespace projection of `context`.
 - `uris` (§9.3) — origin URIs + semantic_type:uri-tagged schema fields.
 - `timeline` (§9.4) — origin snapshots + semantic_type:timestamp-tagged fields.
 - `identifiers` (§9.5) — semantic_type:identifier-tagged fields + the record's id.
@@ -128,8 +129,29 @@ def classifications(post: frontmatter.Post) -> list[str]:
     return records.derived_classifications(post)
 
 
+def context(post: frontmatter.Post) -> list[dict[str, Any]]:
+    """§4.3.3 — derive the `context[]` view from `<!--context-->` blocks.
+
+    Returns structured records `{namespace, id, subtype?, ...fields}` across every
+    annotation namespace (issue, reference, note, …). `issues()` is the `issue`-namespace
+    projection of this view.
+    """
+    out: list[dict[str, Any]] = []
+    for ctx in records.iter_context_blocks(post):
+        entry: dict[str, Any] = {
+            "namespace": ctx.get("namespace"),
+            "id": ctx.get("id"),
+        }
+        if ctx.get("subtype"):
+            entry["subtype"] = ctx["subtype"]
+        for k, v in (ctx.get("fields") or {}).items():
+            entry[k] = v
+        out.append(entry)
+    return out
+
+
 def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
-    """§9.2 — derive `issues[]` from `<!--issue-->` blocks.
+    """§9.2 — derive `issues[]`: the `issue`-namespace projection of the context view.
 
     Returns a list of structured records `{id, subtype?, ...fields}` (fields include
     severity, resolution, detector, optional address + id-specific extras).

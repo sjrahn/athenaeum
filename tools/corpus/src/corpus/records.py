@@ -12,15 +12,16 @@ Exposes:
 
 - `load(path)` — parse a record into a `frontmatter.Post` with a unified `post.metadata`
   view that merges all block fields into the top-level dict under namespaced keys
-  (`_artifact`, `_origins`, `_classifies`, `_embeds`, `_issues`). The remaining
+  (`_artifact`, `_origins`, `_classifies`, `_embeds`, `_contexts`). The remaining
   `post.content` carries the content zone only.
 - `dump(post, path)` — write `post` back to disk in canonical layout: frontmatter →
   metadata-zone blocks (artifact, origins, classifies, embeds) → content body →
-  annotation-zone blocks (issues).
+  annotation-zone blocks (context; `issue` is one namespace of it).
 - Accessors: `media_type_for`, `title_for`, `artifact_block`, `iter_origin_blocks`,
-  `iter_classify_blocks`, `iter_embed_blocks`, `iter_issue_blocks`, `primary_origin_uri`.
+  `iter_classify_blocks`, `iter_embed_blocks`, `iter_context_blocks`, `iter_issue_blocks`,
+  `primary_origin_uri`.
 - Mutators: `set_artifact_block`, `append_origin_block`, `append_classify_block`,
-  `append_embed_block`, `append_issue_block`.
+  `append_embed_block`, `append_context_block`, `append_issue_block`.
 - Hash helpers: `format_hash(algo, hex_value)`.
 - Stub creation: `stub_frontmatter(...)` returns the minimal frontmatter dict; the
   caller emits the artifact + origin blocks via the mutators.
@@ -69,7 +70,13 @@ _CLASSIFY_OPENER = "<!--classify"
 _EMBED_OPENER = "<!--embed"
 _SECTION_OPENER = "<!--section"
 _SEGMENT_OPENER = "<!--segment"
+_CONTEXT_OPENER = "<!--context"
+# Legacy annotations-zone opener. `issue` is now the `issue` namespace of the unified
+# `context` block (`<!--context issue/<id>-->`, spec §4.3.3). The reader still accepts the
+# old `<!--issue <id>-->` form (parse-tolerantly) and upgrades it on the next write; only
+# `<!--context-->` is ever emitted.
 _ISSUE_OPENER = "<!--issue"
+_ANNOTATION_OPENERS = (_CONTEXT_OPENER, _ISSUE_OPENER)
 _BLOCK_CLOSER = "-->"
 
 # Metadata-zone block openers (the openers that live before the content zone).
@@ -98,8 +105,8 @@ def load(path: Path) -> frontmatter.Post:
       `_classifies`, `_embeds`).
     - Content zone (section/segment blocks). Left in `post.content` verbatim for
       `segments.iter_blocks` to consume.
-    - Annotations zone (issue blocks). Merged into `post.metadata["_issues"]` as a
-      list of dicts.
+    - Annotations zone (context blocks). Merged into `post.metadata["_contexts"]` as a
+      list of dicts (the legacy `<!--issue-->` form reads as the `issue` namespace).
 
     After load, `post.content` carries the content zone only.
     """
@@ -107,13 +114,13 @@ def load(path: Path) -> frontmatter.Post:
     body = post.content or ""
     metadata_blocks, after_metadata = _extract_metadata_blocks(body)
     content_body, annotations_body = _split_annotations(after_metadata)
-    issue_blocks = _extract_issue_blocks(annotations_body)
+    context_blocks = _extract_context_blocks(annotations_body)
 
     post.metadata["_artifact"] = metadata_blocks.get("artifact")
     post.metadata["_origins"] = metadata_blocks.get("origins", [])
     post.metadata["_classifies"] = metadata_blocks.get("classifies", [])
     post.metadata["_embeds"] = metadata_blocks.get("embeds", [])
-    post.metadata["_issues"] = issue_blocks
+    post.metadata["_contexts"] = context_blocks
 
     post.content = content_body
     return post
@@ -132,7 +139,7 @@ def dumps(post: frontmatter.Post) -> str:
         frontmatter (core fields only, in spec order)
         metadata zone:     <!--artifact-->, <!--origin-->*, <!--classify-->*, <!--embed-->*
         content zone:      post.content verbatim (section/segment)
-        annotations zone:  <!--issue-->*
+        annotations zone:  <!--context-->*
 
     Returned (not written) so callers like `corpus redraft` can compare a re-derived
     record against disk and write only when it changed.
@@ -141,7 +148,7 @@ def dumps(post: frontmatter.Post) -> str:
     origins = post.metadata.get("_origins") or []
     classifies = post.metadata.get("_classifies") or []
     embeds = post.metadata.get("_embeds") or []
-    issues = post.metadata.get("_issues") or []
+    contexts = post.metadata.get("_contexts") or []
 
     # Build core frontmatter — only spec-defined fields, in spec order.
     core: dict[str, Any] = {}
@@ -165,8 +172,8 @@ def dumps(post: frontmatter.Post) -> str:
     # Content zone — verbatim from post.content (segments.py owns this).
     content = (post.content or "").strip("\n")
 
-    # Annotations zone — issues.
-    annotation_parts = [_emit_issue_block(issue) for issue in issues]
+    # Annotations zone — context blocks.
+    annotation_parts = [_emit_context_block(ctx) for ctx in contexts]
     annotations_zone = "\n\n".join(annotation_parts)
 
     body_parts: list[str] = []
@@ -266,18 +273,25 @@ def _emit_embed_block(embed: dict[str, Any]) -> str:
     return f"<!--embed {media_type}\n{body_yaml}\n-->"
 
 
-def _emit_issue_block(issue: dict[str, Any]) -> str:
-    """Emit `<!--issue <id>[/<subtype>]\n<yaml>\n-->`.
+def _emit_context_block(ctx: dict[str, Any]) -> str:
+    """Emit `<!--context <namespace>/<id>[/<subtype>]\n<yaml>\n-->`.
 
-    `issue` carries `{id, subtype, fields}`. Per spec §4.3.3.1 the universal required
-    fields are `severity`, `resolution`, `detector` (and optional `address` for
-    segment-scoped issues); they live on `fields`.
+    `ctx` carries `{namespace, id, subtype, fields}` — the same shape as a classify block,
+    in the annotations zone (spec §4.3.3). The `issue` namespace's blocks carry the §4.3.3.1
+    severity/resolution/detector fields; `reference` carries the citation-ladder fields; etc.
+    Collapse mirrors `_emit_classify_block`: a bare namespace is emitted when `id == namespace`
+    and there is no subtype.
     """
-    id_ = issue.get("id", "")
-    subtype = issue.get("subtype")
-    fields = issue.get("fields") or {}
-    qualified = f"{id_}/{subtype}" if subtype else id_
-    return _emit_block(f"<!--issue {qualified}", fields)
+    namespace = ctx.get("namespace", "")
+    id_ = ctx.get("id", "")
+    subtype = ctx.get("subtype")
+    fields = ctx.get("fields") or {}
+    qualified = (
+        namespace if (not id_ or (id_ == namespace and not subtype)) else f"{namespace}/{id_}"
+    )
+    if subtype:
+        qualified = f"{qualified}/{subtype}"
+    return _emit_block(f"<!--context {qualified}", fields)
 
 
 def _dump_yaml_block(block: dict[str, Any]) -> str:
@@ -441,8 +455,8 @@ def _structure_embed_fields(
 def _split_annotations(body: str) -> tuple[str, str]:
     """Split body into (content_zone, annotations_zone).
 
-    Walks blocks from the end. Trailing <!--issue--> blocks form the annotations zone;
-    everything before is the content zone.
+    Walks blocks from the end. Trailing annotation blocks (`<!--context-->`, or the legacy
+    `<!--issue-->`) form the annotations zone; everything before is the content zone.
     """
     lines = body.splitlines()
     n = len(lines)
@@ -454,7 +468,7 @@ def _split_annotations(body: str) -> tuple[str, str]:
             j = i - 2
             while j >= 0 and not lines[j].lstrip().startswith("<!--"):
                 j -= 1
-            if j >= 0 and lines[j].lstrip().startswith(_ISSUE_OPENER):
+            if j >= 0 and lines[j].lstrip().startswith(_ANNOTATION_OPENERS):
                 i = j
                 continue
         break
@@ -463,11 +477,13 @@ def _split_annotations(body: str) -> tuple[str, str]:
     return content_body, annotations_body
 
 
-def _extract_issue_blocks(annotations_body: str) -> list[dict[str, Any]]:
-    """Parse <!--issue--> blocks from the annotations zone."""
+def _extract_context_blocks(annotations_body: str) -> list[dict[str, Any]]:
+    """Parse annotation blocks from the annotations zone into `{namespace, id, subtype,
+    fields}`. Accepts both the `<!--context <ns>/<id>-->` form and (parse-tolerantly) the
+    legacy `<!--issue <id>-->` form, which reads as the `issue` namespace."""
     if not annotations_body.strip():
         return []
-    issues: list[dict[str, Any]] = []
+    contexts: list[dict[str, Any]] = []
     lines = annotations_body.splitlines()
     i = 0
     while i < len(lines):
@@ -475,16 +491,23 @@ def _extract_issue_blocks(annotations_body: str) -> list[dict[str, Any]]:
         if stripped == "":
             i += 1
             continue
-        if not stripped.startswith(_ISSUE_OPENER):
+        if not stripped.startswith(_ANNOTATION_OPENERS):
             i += 1
             continue
         opener, block_body, next_i = _parse_block(lines, i)
         fields = block_body or {}
-        arg = opener.removeprefix(_ISSUE_OPENER).strip()
-        id_, subtype = _split_qualifier(arg)
-        issues.append({"id": id_, "subtype": subtype, "fields": fields})
+        if opener.lstrip().startswith(_CONTEXT_OPENER):
+            arg = opener.removeprefix(_CONTEXT_OPENER).strip()
+            namespace, id_, subtype = _split_namespaced(arg)
+        else:  # legacy <!--issue <id>[/<subtype>]-->
+            arg = opener.removeprefix(_ISSUE_OPENER).strip()
+            id_, subtype = _split_qualifier(arg)
+            namespace = "issue"
+        contexts.append(
+            {"namespace": namespace, "id": id_, "subtype": subtype, "fields": fields}
+        )
         i = next_i
-    return issues
+    return contexts
 
 
 def _is_metadata_opener(line: str) -> bool:
@@ -579,9 +602,23 @@ def iter_embed_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
     yield from (post.metadata.get("_embeds") or [])
 
 
+def iter_context_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
+    """Yield each `<!--context-->` block as `{namespace, id, subtype, fields}` (spec §4.3.3)."""
+    yield from (post.metadata.get("_contexts") or [])
+
+
 def iter_issue_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
-    """Yield each `<!--issue-->` block as `{id, subtype, fields}`."""
-    yield from (post.metadata.get("_issues") or [])
+    """Yield each `issue`-namespace context block as `{id, subtype, fields}`.
+
+    Back-compat projection of `iter_context_blocks` (issue is now the `issue` namespace of
+    the unified context block, spec §4.3.3) — the shape health / lint / `show` expect."""
+    for ctx in iter_context_blocks(post):
+        if (ctx.get("namespace") or "") == "issue":
+            yield {
+                "id": ctx.get("id"),
+                "subtype": ctx.get("subtype"),
+                "fields": ctx.get("fields") or {},
+            }
 
 
 def primary_origin_uri(post: frontmatter.Post) -> str:
@@ -898,6 +935,23 @@ def append_embed_block(
     )
 
 
+def append_context_block(
+    post: frontmatter.Post,
+    *,
+    namespace: str,
+    id: str,
+    subtype: str | None = None,
+    fields: dict[str, Any] | None = None,
+) -> None:
+    """Append a `<!--context <namespace>/<id>-->` block to the annotations zone (spec
+    §4.3.3). `fields` carries the namespace's overlay fields (caller controls order);
+    `provenance: auto` marks an engine-stamped block, its absence a hand-asserted one."""
+    contexts = post.metadata.setdefault("_contexts", [])
+    contexts.append(
+        {"namespace": namespace, "id": id, "subtype": subtype, "fields": fields or {}}
+    )
+
+
 def append_issue_block(
     post: frontmatter.Post,
     *,
@@ -909,11 +963,11 @@ def append_issue_block(
     address: str | None = None,
     fields: dict[str, Any] | None = None,
 ) -> None:
-    """Append a new `<!--issue-->` block to the record (spec §4.3.3.1 shape).
+    """Append an `issue`-namespace context block (spec §4.3.3.1 shape).
 
-    Universal fields (severity, resolution, detector, optional address) plus any
-    id-specific `fields`. If `address` is provided, the issue is segment-scoped;
-    otherwise record-scoped.
+    Convenience over `append_context_block(namespace="issue", …)`: assembles the universal
+    issue fields (severity, resolution, detector, optional address) plus any id-specific
+    `fields`. If `address` is provided the issue is segment-scoped, otherwise record-scoped.
     """
     block_fields: dict[str, Any] = {
         "severity": severity,
@@ -924,8 +978,7 @@ def append_issue_block(
         block_fields["address"] = address
     if fields:
         block_fields.update(fields)
-    issues = post.metadata.setdefault("_issues", [])
-    issues.append({"id": id, "subtype": subtype, "fields": block_fields})
+    append_context_block(post, namespace="issue", id=id, subtype=subtype, fields=block_fields)
 
 
 # ---------- derived classifications view (spec §9.1) ---------- #

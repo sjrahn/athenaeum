@@ -70,15 +70,27 @@ def run(args: argparse.Namespace) -> int:
     section_count = sum(1 for b in blocks if isinstance(b, segments.Section))
     print(f"\ncontent: {section_count} section(s), {seg_count} segment(s)")
 
-    issues = list(records.iter_issue_blocks(post))
-    if issues:
-        print(f"\nissues ({len(issues)}):")
-        for iss in issues:
-            fields = iss.get("fields") or {}
-            print(
-                f"  [{iss.get('id')}]  severity={fields.get('severity')}  "
-                f"resolution={fields.get('resolution')}"
-            )
+    contexts = list(records.iter_context_blocks(post))
+    if contexts:
+        print(f"\ncontext ({len(contexts)}):")
+        for ctx in contexts:
+            ns = ctx.get("namespace") or ""
+            cid = ctx.get("id") or ""
+            label = cid if cid == ns else f"{ns}/{cid}"
+            if ctx.get("subtype"):
+                label += f"/{ctx['subtype']}"
+            fields = ctx.get("fields") or {}
+            if ns == "issue":
+                detail = f"severity={fields.get('severity')}  resolution={fields.get('resolution')}"
+            elif ns == "reference":
+                rung = fields.get("source_uri") or fields.get("source_url") or fields.get("attribution_text")
+                detail = f"→ {rung}" if rung else ""
+            else:
+                detail = ""
+            addr = fields.get("address")
+            if addr:
+                detail = (detail + "  " if detail else "") + f"@{addr}"
+            print(f"  [{label}]  {detail}".rstrip())
 
     derived = records.derived_classifications(post)
     if derived:

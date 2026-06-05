@@ -143,7 +143,7 @@ def test_e2e_video_noop_transcription(tmp_path, capsys):
     assert dispatch(["lint", vid, "--corpus-root", str(root)]) == 0
 
     post = records.load(paths.record_path(root, vid))
-    issues = post.metadata["_issues"]
+    issues = list(records.iter_issue_blocks(post))
     assert any(i["id"] == "transcription-unavailable" for i in issues)
     tu = next(i for i in issues if i["id"] == "transcription-unavailable")
     assert tu["fields"]["severity"] == "warning"

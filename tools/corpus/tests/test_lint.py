@@ -227,9 +227,9 @@ def test_perceptual_list_with_bad_entry_is_an_error(tmp_path):
 
 def test_issue_vocab_is_schema_extensible(tmp_path):
     """§4.3.3.1 — issue severity/resolution vocab is schema-declared, not hardcoded; a
-    corpus may extend it in its local `composite/issue/issue.yaml`."""
+    corpus may extend it in its local `context/issue/issue.yaml`."""
     root = _make_corpus(tmp_path)
-    issue_dir = root / "schema" / "composite" / "issue"
+    issue_dir = root / "schema" / "context" / "issue"
     issue_dir.mkdir(parents=True)
     (issue_dir / "issue.yaml").write_text(
         "extended_fields:\n"

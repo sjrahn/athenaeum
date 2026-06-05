@@ -80,7 +80,7 @@ _VALID_ATOMS = {"text", "image", "audio", "video"}
 _VALID_STATUSES = {"stub", "draft", "normalized"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}
 # Universal FALLBACK vocab for issue severity/resolution. The authoritative set is the
-# `enum:` declared on the layered `composite/issue` schema (a corpus may extend it); these
+# `enum:` declared on the layered `context/issue` schema (a corpus may extend it); these
 # constants apply only when the schema declares no enum. See `_issue_vocab`.
 _VALID_SEVERITIES = {"blocking", "warning", "info"}
 _VALID_RESOLUTIONS = {"open", "fixed", "wontfix", "superseded"}
@@ -485,7 +485,7 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
 
 def _issue_vocab(root, id_: str) -> tuple[set[str], set[str]]:
     """Allowed (severity, resolution) value sets for an issue id, read from the layered
-    `composite/issue` schema's `enum:` declarations (spec §4.3.3.1: the vocab is
+    `context/issue` schema's `enum:` declarations (spec §4.3.3.1: the vocab is
     schema-declared and corpus-local). Falls back to the universal constants when the
     schema declares no enum."""
     schema = _schemas.load_issue_schema(root, id_) or {}
@@ -533,6 +533,53 @@ def _rule_issue_shape(post, blocks, root) -> Iterator[Finding]:
                 message=(
                     f"issue #{idx + 1} `detector: {det!r}` is not a valid touch "
                     f"identifier (spec §4.3.3.1)."
+                ),
+            )
+
+
+def _rule_context_shape(post, blocks, root) -> Iterator[Finding]:
+    """Every `<!--context <ns>/<id>-->` block's namespace must resolve to a live
+    `context/<ns>` overlay (spec §4.3.3), and its `address`/`quote` anchor must be a string."""
+    for idx, ctx in enumerate(_records.iter_context_blocks(post)):
+        ns = str(ctx.get("namespace") or "")
+        fields = ctx.get("fields") or {}
+        if not ns or _schemas.load_context_schema(root, ns) is None:
+            yield Finding(
+                rule_id="context-namespace-unknown",
+                severity="warning",
+                message=(
+                    f"context #{idx + 1} namespace `{ns}` has no `context/{ns}` overlay; "
+                    f"declare it under schema/context/{ns}/."
+                ),
+            )
+        for key in ("address", "quote"):
+            if key in fields and not isinstance(fields[key], str):
+                yield Finding(
+                    rule_id="context-anchor-format",
+                    severity="warning",
+                    message=f"context #{idx + 1} `{key}` must be a string.",
+                )
+
+
+def _rule_reference_resolvable(post, blocks, root) -> Iterator[Finding]:
+    """A `reference` context whose ladder has reached `source_uri` (a `corpus://<id>` link,
+    §4.4.5) must point at an existing record — a dangling target is stale research."""
+    from corpus import paths
+
+    for idx, ctx in enumerate(_records.iter_context_blocks(post)):
+        if (ctx.get("namespace") or "") != "reference":
+            continue
+        source_uri = str((ctx.get("fields") or {}).get("source_uri") or "").strip()
+        if not source_uri:
+            continue
+        m = re.match(r"corpus://([0-9a-fA-F]{6,64})", source_uri)
+        if not m or not paths.record_path(root, m.group(1)).is_file():
+            yield Finding(
+                rule_id="reference-unresolved",
+                severity="warning",
+                message=(
+                    f"reference #{idx + 1} `source_uri: {source_uri}` does not resolve to a "
+                    f"captured record."
                 ),
             )
 
@@ -598,6 +645,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("issue-shape", _rule_issue_shape),
+    ("context-shape", _rule_context_shape),
+    ("reference-resolvable", _rule_reference_resolvable),
     ("classification-stale", _rule_classification_stale),
 )
 
