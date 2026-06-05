@@ -135,3 +135,76 @@ def test_reclassify_classification_filter(tmp_path, capsys):
     # Filter to records already carrying the youtube mime — both qualify by mime, only MR matches.
     dispatch(["reclassify", "--mime", "video/mp4", "--corpus-root", str(root)])
     assert "1 changed" in capsys.readouterr().out
+
+
+# ---------- corpus classify <ns>/<id> (manual / asserted mode) ---------- #
+
+import pytest  # noqa: E402
+
+_MANUAL = (
+    "kind: interpretive\ndescription: manual.\napplies_at: [record]\n"
+    "applies_to:\n  content_types: [video/mp4]\n"
+    "extended_fields:\n  episode_date: {type: string, required: true}\n  views: {type: integer}\n"
+)
+
+
+def _manual_corpus(tmp_path: Path):
+    root = _corpus(tmp_path)
+    (root / "schema" / "composite" / "source" / "manual.yaml").write_text(_MANUAL, encoding="utf-8")
+    _video(root, MR_ID, CHANNEL)
+    return root
+
+
+def test_classify_manual_applies_validated_fields(tmp_path):
+    root = _manual_corpus(tmp_path)
+    rc = dispatch(
+        ["classify", MR_ID, "source/manual", "--field", "episode_date=2026-06-05",
+         "--field", "views=42", "--corpus-root", str(root)]
+    )
+    assert rc == 0
+    block = next(
+        c for c in records.iter_classify_blocks(records.load(paths.record_path(root, MR_ID)))
+        if c["id"] == "manual"
+    )
+    assert block["fields"] == {"episode_date": "2026-06-05", "views": 42}  # views coerced to int
+    assert "provenance" not in block["fields"]  # asserted, not auto
+
+
+def test_classify_manual_unknown_field_rejected(tmp_path):
+    root = _manual_corpus(tmp_path)
+    with pytest.raises(SystemExit):
+        dispatch(["classify", MR_ID, "source/manual", "--field", "bogus=1",
+                  "--corpus-root", str(root)])
+
+
+def test_classify_manual_bad_type_rejected(tmp_path):
+    root = _manual_corpus(tmp_path)
+    with pytest.raises(SystemExit):
+        dispatch(["classify", MR_ID, "source/manual", "--field", "views=NaN",
+                  "--corpus-root", str(root)])
+
+
+def test_classify_manual_mime_mismatch_rejected(tmp_path):
+    root = _corpus(tmp_path)
+    (root / "schema" / "composite" / "source" / "manual.yaml").write_text(_MANUAL, encoding="utf-8")
+    # An html record does not satisfy the overlay's content_types: [video/mp4].
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=OTHER_ID, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html")
+    records.append_origin_block(post, uri="https://e.com/a", snapshot="2026-06-05T00:00:00Z")
+    post.metadata["status"] = "draft"
+    records.dump(post, paths.record_path(root, OTHER_ID))
+    with pytest.raises(SystemExit):
+        dispatch(["classify", OTHER_ID, "source/manual", "--corpus-root", str(root)])
+
+
+def test_classify_manual_refresh_existing(tmp_path):
+    root = _manual_corpus(tmp_path)
+    base = ["classify", MR_ID, "source/manual", "--corpus-root", str(root)]
+    dispatch([*base, "--field", "episode_date=2026-06-05"])
+    dispatch([*base, "--field", "views=7"])  # refresh — merges into the same block
+    loaded = records.load(paths.record_path(root, MR_ID))
+    blocks = [c for c in records.iter_classify_blocks(loaded) if c["id"] == "manual"]
+    assert len(blocks) == 1
+    assert blocks[0]["fields"] == {"episode_date": "2026-06-05", "views": 7}

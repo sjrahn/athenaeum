@@ -34,6 +34,9 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
     # Inspect (P1)
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
+    "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + candidate classifications (normalizer's first call)"),
+    "guidance":        ("Inspect",                "Print the normalization guidance for a record's mime + applied overlays"),
+    "overlay":         ("Inspect",                "Show a classification overlay's field-spec + tactics (for a candidate)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream the content-zone body to stdout"),
     "lint":            ("Inspect",                "Conformance check (the verification gate)"),

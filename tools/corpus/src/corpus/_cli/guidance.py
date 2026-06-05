@@ -1,0 +1,100 @@
+"""Print the normalization guidance that applies to a record — deterministically.
+
+`corpus guidance <hash>` resolves a record, reads its `<!--artifact-->` MIME and its applied
+`<!--classify-->` / qualified `<!--origin-->` overlays, and prints, for each, the schema file
+path plus that schema's `normalization.guidance` prose. So the normalizer never has to guess a
+schema filename or walk `schema/` by hand — schema yaml stays a library implementation detail.
+
+For *candidate* (not-yet-applied) overlays use `corpus diagnose`'s candidate section; for one
+overlay's field-spec + guidance in isolation use `corpus overlay <id>`. Markdown to stdout.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+from corpus import paths, records, schemas
+from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+
+
+def configure(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("hash", help="record id or unambiguous prefix.")
+    parser.add_argument(
+        "--mime-only",
+        action="store_true",
+        help="print only the mime-schema guidance (skip applied classify/origin overlays).",
+    )
+    add_corpus_root_arg(parser)
+
+
+def run(args: argparse.Namespace) -> int:
+    corpus_root = resolved_corpus_root(args)
+    record_id, path = paths.resolve_record(corpus_root, args.hash)
+    post = records.load(path)
+    mime = records.media_type_for(post)
+
+    print(f"# guidance for {record_id[:12]}…  (mime: {mime or '?'})")
+    print()
+
+    stem = schemas.mime_schema_id_for(corpus_root, mime) if mime else None
+    if stem is None:
+        print(f"## mime schema\n\n_No mime schema declares `{mime}`._\n")
+    else:
+        schema = schemas.load_mime_schema(corpus_root, mime) or {}
+        _print_guidance_block("mime schema", f"schema/mime/{stem}.yaml", schema)
+
+    if args.mime_only:
+        return 0
+
+    classifies = list(records.iter_classify_blocks(post))
+    if classifies:
+        print("## applied classification overlays\n")
+        for blk in classifies:
+            ns = str(blk.get("namespace") or "")
+            cid = blk.get("id")
+            if not ns:
+                continue
+            ns_schema = schemas.load_classification_schema(corpus_root, ns) or {}
+            _print_guidance_block(
+                f"classify {ns}", f"schema/composite/{ns}/{ns}.yaml", ns_schema, level=3
+            )
+            if cid and cid != ns:
+                sub_schema = schemas.load_classification_subclass(corpus_root, ns, str(cid)) or {}
+                _print_guidance_block(
+                    f"classify {ns}/{cid}", f"schema/composite/{ns}/{cid}.yaml", sub_schema, level=3
+                )
+
+    origins = [b for b in records.iter_origin_blocks(post) if b.get("id")]
+    if origins:
+        print("## applied origin overlays\n")
+        for blk in origins:
+            oid = str(blk.get("id"))
+            ov = schemas.load_origin_overlay_by_id(corpus_root, oid) or {}
+            _print_guidance_block(f"origin {oid}", _origin_overlay_relpath(corpus_root, oid), ov, level=3)
+
+    return 0
+
+
+def _guidance_text(schema: dict[str, Any]) -> str:
+    norm = schema.get("normalization") if isinstance(schema, dict) else None
+    return str(norm.get("guidance") or "").strip() if isinstance(norm, dict) else ""
+
+
+def _print_guidance_block(label: str, relpath: str, schema: dict[str, Any], *, level: int = 2) -> None:
+    print(f"{'#' * level} {label}\n")
+    print(f"_source: `{relpath}`_\n")
+    text = _guidance_text(schema)
+    print(text if text else "_(no `normalization.guidance` declared)_")
+    print()
+
+
+def _origin_overlay_relpath(corpus_root: Path, oid: str) -> str:
+    """Athenaeum's flat `origin/<id>.yaml`, falling back to the back-compat `web/`/`otherwise/`."""
+    base = corpus_root / "schema" / "origin"
+    for sub in ("", "web", "otherwise"):
+        cand = (base / sub / f"{oid}.yaml") if sub else (base / f"{oid}.yaml")
+        if cand.is_file():
+            return str(cand.relative_to(corpus_root))
+    return f"schema/origin/{oid}.yaml"
