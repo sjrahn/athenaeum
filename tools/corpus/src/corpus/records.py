@@ -673,7 +673,11 @@ def build_uri_index(corpus_root: Path) -> dict[str, str]:
 
 
 def find_by_uri(
-    url: str, *, corpus_root: Path, index: dict[str, str] | None = None
+    url: str,
+    *,
+    corpus_root: Path,
+    index: dict[str, str] | None = None,
+    _prekeyed: bool = False,
 ) -> str | None:
     """Return the id of the record whose origin URIs include `url`, else None.
 
@@ -683,13 +687,21 @@ def find_by_uri(
     miss. The key matches `build_uri_index`'s keying. Pass a prebuilt `index`
     (`build_uri_index`) when making many lookups — e.g. a crawl frontier — to avoid rebuilding
     it per call.
+
+    `_prekeyed=True` means `url` IS already an identity key (e.g. the redirect-resolved key
+    from `recipes.resolve_identity_for_url`, where following a short link to its final URL
+    happened before keying); the per-host re-keying is then skipped so the redirect resolution
+    is not undone.
     """
     from .capture import recipes as _recipes
 
-    try:
-        target = _recipes.identity_key_for_url(corpus_root, url)
-    except Exception:
+    if _prekeyed:
         target = url
+    else:
+        try:
+            target = _recipes.identity_key_for_url(corpus_root, url)
+        except Exception:
+            target = url
     if index is None:
         index = build_uri_index(corpus_root)
     return index.get(target)

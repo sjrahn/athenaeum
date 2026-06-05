@@ -136,6 +136,33 @@ def identity_key_for_url(corpus_root: Path, url: str) -> str:
     )
 
 
+def resolve_identity_for_url(
+    corpus_root: Path, url: str, *, follow_redirects: bool = True
+) -> tuple[str, str]:
+    """Resolve `url` to `(final_url, identity_key)` for redirect-aware dedup.
+
+    Layers an HTTP-redirect follow over `identity_key_for_url`: an opaque short link
+    (`https://vt.tiktok.com/XXXX/`) does not match the canonical it 301s to by string
+    canonicalization alone, so — when `follow_redirects` and the URL looks like a short link
+    (`redirects.is_probably_short_link`) — the redirect chain is resolved to the final URL
+    first, then the identity key is computed from THAT (so the host's `url_equivalent` strips
+    the volatile query params the canonical resolves with, e.g. TikTok's `?_r`/`?_t`).
+
+    The identity key is always taken from the host overlay of the *final* URL, so a short
+    link whose apex differs from its destination (e.g. `youtu.be` → `youtube.com`) picks up
+    the destination host's equivalence rules. Best-effort: a failed/declined probe leaves
+    `final_url == url`, so the key degrades to the inbound URL's key (no worse than before).
+
+    Returns `(final_url, identity_key)`. The single-URL entry point for `corpus check` and
+    the capture short-circuit's second-chance lookup."""
+    from .. import redirects
+
+    final_url = url
+    if follow_redirects and redirects.is_probably_short_link(url):
+        final_url = redirects.resolve_final_url(url)
+    return final_url, identity_key_for_url(corpus_root, final_url)
+
+
 def transcription_for_url(corpus_root: Path, url: str) -> dict[str, Any] | None:
     """Return the per-host `transcription:` section for `url`'s host, or None.
 

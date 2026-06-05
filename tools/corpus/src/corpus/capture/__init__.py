@@ -347,9 +347,23 @@ def capture_and_ingest(
     """Capture `url`, then ingest the bytes → a record stub. Returns the record
     path (or None if ingest failed).
 
-    Short-circuit: unless `opts.force`, a URL already present in some record's
-    origin URIs returns that record's path without launching a browser — so
-    re-running a crawl doesn't re-fetch pages captured on an earlier pass.
+    Short-circuit (two-stage, unless `opts.force`):
+
+      1. Cheap string identity — a URL already present in some record's origin URIs
+         (by identity key: `normalize` + the host's `url_equivalent`) returns that
+         record without launching a browser, so re-running a crawl doesn't re-fetch.
+      2. Redirect-aware identity — when (1) misses AND `url` looks like an opaque
+         short link (`redirects.is_probably_short_link`), follow its HTTP redirects to
+         the final URL (a body-less HEAD/GET — the artifact is NOT downloaded) and
+         re-check identity. This catches a *fresh* short link that points at an
+         already-captured canonical (two `vt.tiktok.com/XXXX` links → one video)
+         BEFORE the expensive (esp. video) download — not only after the byte-level
+         re-encounter on ingest. Gated by the short-link heuristic so a normal
+         canonical URL never pays the network round-trip.
+
+    Either short-circuit folds the requested URL into the matched record's origin URI
+    list as an alias (the spec §7.2 "shortlinks/redirects collapse to one origin"
+    behavior), so the new spelling is recorded without re-downloading.
     """
     opts = opts or CaptureOptions()
     canonical = _canonicalize(url)
@@ -359,6 +373,8 @@ def capture_and_ingest(
         if existing:
             log.info("already captured: %s -> %s", canonical, existing)
             return paths.record_path(corpus_root, existing)
+        if hit := _redirect_dedup(canonical, corpus_root=corpus_root):
+            return hit
 
     # Paginated work (thread / multi-page article / gallery): walk the pages and ingest ONE
     # merged artifact. Only for the browser capturer (HTML) and only when the overlay opts in
@@ -375,6 +391,40 @@ def capture_and_ingest(
 
     result = capture(canonical, corpus_root=corpus_root, opts=opts)
     return _ingest_capture(result, original_url=canonical, corpus_root=corpus_root)
+
+
+def _redirect_dedup(canonical: str, *, corpus_root: Path) -> Path | None:
+    """Second-stage capture dedup: follow `canonical`'s redirects (only when it looks like
+    an opaque short link) and re-check `find_by_uri` against the resolved final URL — so a
+    fresh short link pointing at an already-captured canonical is detected BEFORE the
+    download. Returns the matched record path (with the short link folded in as an origin
+    alias), or None to proceed with a normal capture.
+
+    Best-effort + parse-tolerant: any failure resolving / recording leaves None so capture
+    continues — the byte-level re-encounter on ingest remains the backstop."""
+    from .recipes import resolve_identity_for_url
+
+    try:
+        final_url, key = resolve_identity_for_url(corpus_root, canonical)
+    except Exception as exc:  # never let a probe break capture
+        log.debug("redirect dedup probe failed for %s: %s", canonical, exc)
+        return None
+    if final_url == canonical:
+        return None  # not a short link, or unresolved — nothing new to match on
+    existing = records.find_by_uri(key, corpus_root=corpus_root, _prekeyed=True)
+    if not existing:
+        return None
+    log.info("already captured (via redirect): %s -> %s -> %s", canonical, final_url, existing)
+    record_path = paths.record_path(corpus_root, existing)
+    # Fold the short link in as an origin alias so the new spelling is recorded without a
+    # re-download (spec §7.2). Identity-key dedup keeps it minimal if already present.
+    try:
+        post = records.load(record_path)
+        if records.add_origin_uri_alias(post, canonical, corpus_root=corpus_root):
+            records.dump(post, record_path)
+    except Exception as exc:
+        log.debug("could not record short-link alias on %s: %s", existing, exc)
+    return record_path
 
 
 def _reconcile_pagination(

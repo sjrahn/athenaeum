@@ -21,6 +21,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/composite/<ns>/)"),
     # Capture & ingest (P2; capture added P4)
     "capture":         ("Capture & ingest",       "Capture a URL into capture/, then ingest to a record stub"),
+    "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
