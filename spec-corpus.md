@@ -245,7 +245,9 @@ Zero or more per record. Each block carries the fields a classification overlay 
 
 The opener argument is the namespace-qualified classification id, optionally subclassed (`<namespace>/<id>/<subtype>`). Contributes one entry `<namespace>/<id>[/<subtype>]` to the derived classifications view.
 
-Block order within the metadata zone follows execution order: mechanical classify blocks first (in drafter-declared order), then interpretive (in normalizer-discovered order). The parser preserves order; tools rely on it so that later passes can read earlier passes' fields.
+One field name is **reserved**: `provenance`. `provenance: auto` marks a block stamped by the deterministic `classify_when` engine (§7.4) — the engine owns it, stripping and regenerating it on every re-draft / reclassify. Its absence (or `provenance: asserted`) marks a hand- or normalizer-asserted block, which the engine never touches (§4.4.6). No composite may declare `provenance` as an `extended_field`.
+
+Block order within the metadata zone follows execution order: mechanical classify blocks first (in drafter-declared order, `provenance: auto` among them), then interpretive (in normalizer-discovered order). The parser preserves order; tools rely on it so that later passes can read earlier passes' fields.
 
 ##### 4.3.1.4 The embed block
 
@@ -538,6 +540,16 @@ Each **composite** classification schema declares `kind: mechanical` or `kind: i
 
 Block ordering reflects execution order: mechanical first (drafter-declared order), then interpretive (normalizer-discovered order).
 
+**Provenance ladder.** Orthogonal to `kind` (which says *where the payload runs*), a record-scope classification has one of three **provenances** (who put it there, and what re-running does to it):
+
+| Provenance | How it appears | On re-draft / reclassify |
+|---|---|---|
+| **structural-derived** | `mime/*`, `origin/*` — walked from the artifact / origin blocks (§9.1), never a classify block | recomputed |
+| **auto** | a classify block with `provenance: auto` — a `classify_when` match (§7.4) | stripped + regenerated from the current rules |
+| **asserted** | a classify block with no `provenance` — human / normalizer | never touched |
+
+`classify_when` thus **decouples where membership is decided from where the payload is consumed**: an `interpretive` composite can have its membership stamped `auto` at draft, while its `normalization.guidance` is still applied at normalize. A `provenance: auto` block whose overlay was deleted or no longer matches is *stale* — `corpus reclassify` re-converges it; lint warns (`classification-stale`).
+
 #### 4.4.7 Re-run lifetime
 
 Classify blocks persist across re-runs **unless their declaring schema is itself re-run**. A re-draft of the mime schema refreshes the artifact block and, for a body-draft mime schema, re-runs the body draft (re-segmenting the content zone and re-emitting embeds). A re-draft of a specific mechanical classification refreshes only that classify block. A re-normalize refreshes only the interpretive classify blocks (and may re-segment the content zone). To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
@@ -699,10 +711,28 @@ A classification schema (mechanical or interpretive) declares:
 - `applies_at` — list of scopes (subset of `[record, section]`). Default `[record]`.
 - `applies_to.content_types` (mechanical only) — MIMEs the classification can apply to.
 - `applies_to.cues` (optional) — heuristic patterns.
+- `classify_when` (optional) — a **deterministic** membership predicate (below). When present, the drafter auto-assigns the class to every record it matches and stamps the classify block `provenance: auto` (§4.3.1.3). Orthogonal to `kind` — a `classify_when` may sit on an `interpretive` overlay (membership decided at draft; the `normalization.guidance` payload still consumed at normalize).
 - `script` (mechanical only) — reference to the extraction script. A mechanical classification extracts metadata only — it emits/fills classify blocks and never drafts the record body (the mime schema is the sole body-drafter; §4.3.2.2).
 - `normalization.guidance` (interpretive only) — class-specific tactics in prose.
 - `extended_fields` — fields the matching classify block carries. Named **bare**, never prefixed with the composite id: the classify opener's `<namespace>/<id>` already scopes them (§principle 10), so a `composite/book` carries `title`/`author`/`isbn`, not `book_title`/`book_author`/`book_isbn`.
 - `subclasses` (optional, interpretive) — finer-grained categories.
+
+#### Deterministic membership — `classify_when`
+
+When a record's membership in a class is decidable from **stable, deterministic facts**, the class declares a `classify_when` predicate and the drafter assigns it at draft time — so every record of a known kind reaches the normalizer with that class (and its `normalization.guidance`) already attached, rather than re-deriving membership each pass. It is **mechanical** (no LLM, no network, no clock) and **pure opt-in**: a corpus with no `classify_when` overlays behaves exactly as one without this feature.
+
+`classify_when` is evaluated over a flat, normalized **fact base**:
+
+| Fact | Source |
+|---|---|
+| `mime` | the artifact block's MIME |
+| `origin.uri` / `origin.host` / `origin.path` / `origin.fragment` / `origin.query.<k>` | parts of an origin block's uri(s) — **any-origin** (matches if ≥1 origin uri satisfies) |
+| `origin.id` | id of a matched origin overlay (§7.2) |
+| `media.<field>` | normalized alias over the origin block's `ytdlp_<field>` fields (e.g. `media.channel_id`) — insulates rules from yt-dlp key drift |
+
+Each leaf is `{<fact>: {<op>: <value>}}`, exact-by-default: `equals` (scalar equality), `in` (set membership), `glob` (shell-glob, for path/fragment/uri), `matches` (anchored regex — a documented sharp tool), `exists: <bool>`. Combinators `all_of` / `any_of` / `none_of` each take a list; a bare mapping of several `{fact: {op}}` at one level is `all_of` sugar. A **list-valued** fact (any-origin facts, `media.tags`) tests *any element* for `equals`/`in` and *non-empty* for `exists`.
+
+Three guarantees bound false positives: (1) exact-match operators are the default; (2) **a missing fact is *false*** for every operator except `exists: false` — an HTML record has no `media.channel_id`, so a video rule can never fire on it (no null-matches-anything path exists); (3) the interpretive `applies_to.cues.body_contains` is **not** part of this fact base and MUST NOT be promoted to a deterministic trigger — body keywords are the canonical false-positive source and stay normalizer-only.
 
 #### Scope-aware extended fields
 
@@ -839,7 +869,7 @@ on <!--classify <namespace>/<id>[/<subtype>]-->:
 dedupe preserving body order
 ```
 
-Embed blocks and issue blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications.
+Embed blocks and issue blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications. The walk does not distinguish provenance (§4.4.6): a `provenance: auto` classify block contributes its `<namespace>/<id>` entry exactly like an asserted one, so auto classes surface to `find --classification` and the normalizer for free.
 
 A record carrying an artifact block, one qualified origin block, and one classify block yields:
 

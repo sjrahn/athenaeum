@@ -537,6 +537,43 @@ def _rule_issue_shape(post, blocks, root) -> Iterator[Finding]:
             )
 
 
+def _rule_classification_stale(post, blocks, root) -> Iterator[Finding]:
+    """A `provenance: auto` classify block must correspond to a live composite overlay whose
+    `classify_when` still matches the record (spec §7.4). When the overlay was deleted, dropped
+    its rule, or the rule no longer fires, the stamp is stale — `corpus reclassify` regenerates.
+    Hand-/normalizer-asserted blocks (no `provenance`) are exempt."""
+    from corpus import classify_rules
+
+    overlays = dict(_schemas.iter_all_classifications(root))
+    facts = None
+    for blk in _records.iter_classify_blocks(post):
+        if (blk.get("fields") or {}).get("provenance") != "auto":
+            continue
+        class_id = classify_rules.class_id_of(blk)
+        predicate = (overlays.get(class_id) or {}).get("classify_when")
+        if not predicate:
+            yield Finding(
+                rule_id="classification-stale",
+                severity="warning",
+                message=(
+                    f"auto classification `{class_id}` has no live `classify_when` overlay; "
+                    f"run `corpus reclassify`."
+                ),
+            )
+            continue
+        if facts is None:
+            facts = classify_rules.build_facts(root, post)
+        if not classify_rules.evaluate(predicate, facts):
+            yield Finding(
+                rule_id="classification-stale",
+                severity="warning",
+                message=(
+                    f"auto classification `{class_id}` no longer matches its rule; "
+                    f"run `corpus reclassify`."
+                ),
+            )
+
+
 # ---------- rule registry + entry point ---------- #
 
 
@@ -561,6 +598,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("issue-shape", _rule_issue_shape),
+    ("classification-stale", _rule_classification_stale),
 )
 
 

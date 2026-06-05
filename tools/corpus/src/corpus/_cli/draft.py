@@ -121,6 +121,16 @@ def derive_record(
                 content_hash.compute(canonical_algo, binary_file, content_selector=selector),
             )
 
+    # Deterministic auto-classification: stamp a `provenance: auto` classify block for every
+    # composite overlay whose `classify_when` predicate matches this record's facts (spec
+    # §7.4). Runs here — origin `ytdlp_*` fields are on the record (`_apply_drafter_result`)
+    # and the body is built. Pure opt-in: a corpus with no `classify_when` overlays adds
+    # nothing. Idempotent, so `redraft` (which routes through `derive_record` on a fresh stub)
+    # self-heals auto blocks for free.
+    from corpus import classify_rules
+
+    classify_rules.apply_auto_classifications(corpus_root, post)
+
     # Append draft touch + flip status.
     touches.record_touch(post, touches.script_identifier("draft." + mime_schema_id))
     post.metadata["status"] = "draft"
@@ -180,6 +190,11 @@ def run(args: argparse.Namespace) -> int:
     derived = records.derived_classifications(post)
     if derived:
         print(f"  derived classifications: {derived}")
+    from corpus import classify_rules
+
+    auto = classify_rules.auto_class_ids(post)
+    if auto:
+        print(f"  auto classifications: {auto}")
     return 0
 
 

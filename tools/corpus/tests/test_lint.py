@@ -322,3 +322,69 @@ def test_segment_same_address_different_opener_id_is_ok(tmp_path):
     post.content = segments.emit([seg_a, seg_b])
     findings = _lint(post, root)
     assert not any(f.rule_id == "segment-address-duplicate" for f in findings)
+
+
+# ---------- classification-stale (auto-classification provenance) ---------- #
+
+_CHANNEL = "UC-3jIAlnQmbbVMV6gR7K8aQ"
+_MR_OVERLAY = (
+    "kind: interpretive\ndescription: MR.\napplies_at: [record]\n"
+    "classify_when:\n  all_of:\n    - mime: {equals: video/mp4}\n"
+    f"    - media.channel_id: {{equals: {_CHANNEL}}}\n"
+)
+
+
+def _corpus_with_rule(tmp_path: Path, *, overlay: str | None = _MR_OVERLAY) -> Path:
+    root = _make_corpus(tmp_path)
+    src = root / "schema" / "composite" / "source"
+    src.mkdir(parents=True)
+    (src / "source.yaml").write_text("kind: interpretive\ndescription: s.\napplies_at: [record]\n")
+    if overlay is not None:
+        (src / "majority-report.yaml").write_text(overlay)
+    return root
+
+
+def _mr_video(channel: str = _CHANNEL) -> frontmatter.Post:
+    post = _clean_post()
+    records.set_artifact_block(post, mime="video/mp4")
+    post.metadata["_origins"] = []
+    records.append_origin_block(
+        post, uri="https://www.youtube.com/watch?v=x", snapshot="2026-06-05T00:00:00Z"
+    )
+    records.merge_origin_fields(post, {"ytdlp_channel_id": channel})
+    return post
+
+
+def _add_classify(post, fields):
+    records.append_classify_block(post, namespace="source", id="majority-report", fields=fields)
+
+
+def test_classification_stale_clean_when_rule_matches(tmp_path):
+    root = _corpus_with_rule(tmp_path)
+    post = _mr_video()
+    _add_classify(post, {"provenance": "auto"})
+    assert not any(f.rule_id == "classification-stale" for f in _lint(post, root))
+
+
+def test_classification_stale_warns_when_overlay_missing(tmp_path):
+    root = _corpus_with_rule(tmp_path, overlay=None)  # no majority-report.yaml
+    post = _mr_video()
+    _add_classify(post, {"provenance": "auto"})
+    stale = [f for f in _lint(post, root) if f.rule_id == "classification-stale"]
+    assert len(stale) == 1 and stale[0].severity == "warning"
+
+
+def test_classification_stale_warns_when_rule_no_longer_matches(tmp_path):
+    root = _corpus_with_rule(tmp_path)
+    post = _mr_video(channel="UC-different")  # overlay exists but record no longer matches
+    _add_classify(post, {"provenance": "auto"})
+    stale = [f for f in _lint(post, root) if f.rule_id == "classification-stale"]
+    assert len(stale) == 1 and stale[0].severity == "warning"
+
+
+def test_classification_stale_exempts_asserted_blocks(tmp_path):
+    root = _corpus_with_rule(tmp_path, overlay=None)
+    post = _mr_video()
+    # No `provenance` field → hand-asserted → never flagged, even with no overlay.
+    _add_classify(post, {})
+    assert not any(f.rule_id == "classification-stale" for f in _lint(post, root))

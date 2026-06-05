@@ -27,6 +27,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
     "redraft":         ("Capture & ingest",       "Bulk re-derive records from their artifacts (deterministic recompile)"),
+    "classify":        ("Capture & ingest",       "Stamp a record's deterministic auto-classifications (classify_when)"),
+    "reclassify":      ("Capture & ingest",       "Bulk re-propagate auto-classifications after an overlay change"),
     # Crawl & discovery (P4)
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),

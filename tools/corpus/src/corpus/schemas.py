@@ -510,6 +510,24 @@ def mechanical_classifications_for(
     return out
 
 
+def iter_all_classifications(
+    corpus_root: Path,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return `[(class_id, merged_schema)]` for **every** composite overlay — each namespace
+    base AND every subclass (the base deep-merged under the subclass) — regardless of `kind`.
+
+    The base+subclass walk `mechanical_classifications_for` does, minus the MIME gate, so a
+    caller that keys on any field (e.g. `classify_when`, spec §7.4) sees the subclass overlays
+    the kind-filtered loaders skip — `interpretive_classifications_for` walks namespace **bases
+    only**, which would miss `source/majority-report`-style subclasses."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    for ns_id, ns_schema in _load_all_classification_schemas(corpus_root):
+        out.append((ns_id, ns_schema))
+        for sub_id, sub_schema in iter_classification_subclasses(corpus_root, ns_id):
+            out.append((f"{ns_id}/{sub_id}", _deep_merge(ns_schema, sub_schema)))
+    return out
+
+
 def resolve_fingerprint(
     corpus_root: Path,
     media_type: str,
