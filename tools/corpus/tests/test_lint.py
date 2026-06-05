@@ -440,6 +440,34 @@ def test_classify_field_validators(tmp_path):
     assert not {f for f in _fired(post2, root) if f.startswith("classify-field")}
 
 
+def test_classify_field_required_gated_by_status(tmp_path):
+    """A missing required field is a draft warning (apply-then-backfill) but a normalized error,
+    mirroring entry-missing — so applying an overlay never trips the draft lint gate."""
+    root = _make_corpus(tmp_path)
+    _comp_overlay(
+        root,
+        "mr",
+        "kind: interpretive\ndescription: mr\napplies_at: [record]\nextended_fields:\n"
+        "  episode_date: {type: string, required: true}\n",
+    )
+
+    def _required(post):
+        return [
+            f for f in lint.lint(post, [], root) if f.rule_id == "classify-field-required-missing"
+        ]
+
+    draft = _clean_post()  # status: draft
+    records.append_classify_block(draft, namespace="source", id="mr", fields={})
+    fired = _required(draft)
+    assert len(fired) == 1 and fired[0].severity == "warning"
+
+    norm = _clean_post()
+    norm.metadata["status"] = "normalized"
+    records.append_classify_block(norm, namespace="source", id="mr", fields={})
+    fired = _required(norm)
+    assert len(fired) == 1 and fired[0].severity == "error"
+
+
 def test_segment_lossless_contract(tmp_path):
     root = _make_corpus(tmp_path)
     # text/data-table-dynamic is bundled non-lossless (enables_lossless: false).

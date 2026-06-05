@@ -716,7 +716,12 @@ def _value_matches_type(value: Any, expected_type: str) -> bool:
 
 def _rule_classify_fields(post, blocks, root) -> Iterator[Finding]:
     """Validate every applied classify block's fields against the overlay's
-    `extended_fields` (union of namespace + subclass). Emits required-missing / type / unknown."""
+    `extended_fields` (union of namespace + subclass). Emits required-missing / type / unknown.
+
+    `required` is a completeness contract, gated like §4.3.2.2 entries: a missing required field
+    is an *error* on a normalized record but only a *warning* at draft, so a normalizer can apply
+    an overlay and backfill its fields incrementally without tripping the draft lint gate."""
+    status = post.metadata.get("status", "")
     for cb in _records.iter_classify_blocks(post):
         ns = cb.get("namespace") or ""
         cid = cb.get("id") or ""
@@ -744,7 +749,7 @@ def _rule_classify_fields(post, blocks, root) -> Iterator[Finding]:
             ):
                 yield Finding(
                     rule_id="classify-field-required-missing",
-                    severity="error",
+                    severity="error" if status == "normalized" else "warning",
                     message=f"`{overlay_id}` requires field `{fname}` but it is missing or empty.",
                     subtype=overlay_id,
                     fields={"field": fname, "overlay": overlay_id},
@@ -782,7 +787,11 @@ def _rule_classify_fields(post, blocks, root) -> Iterator[Finding]:
 def _rule_section_composite_fields(post, blocks, root) -> Iterator[Finding]:
     """Validate a section-scope composite (`<!--section <ns>/<id>-->`): the overlay must
     declare `applies_at: section`, and the section's fields (its `description` + header extras)
-    must satisfy the overlay's `extended_fields`. `description` is universal, never unknown."""
+    must satisfy the overlay's `extended_fields`. `description` is universal, never unknown.
+
+    Required-field completeness is gated like the classify path: error at normalized, warning at
+    draft (a section composite may be applied before its fields are backfilled)."""
+    status = post.metadata.get("status", "")
     for top_i, blk in enumerate(blocks, 1):
         if not isinstance(blk, _segments.Section) or not blk.classification:
             continue
@@ -830,7 +839,7 @@ def _rule_section_composite_fields(post, blocks, root) -> Iterator[Finding]:
             ):
                 yield Finding(
                     rule_id="section-field-required-missing",
-                    severity="error",
+                    severity="error" if status == "normalized" else "warning",
                     message=f"section {top_i} (`{overlay_id}`) requires field `{fname}` but it is missing or empty.",
                     address=_addr_str(blk.address),
                     subtype=overlay_id,
