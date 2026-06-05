@@ -388,3 +388,122 @@ def test_classification_stale_exempts_asserted_blocks(tmp_path):
     # No `provenance` field → hand-asserted → never flagged, even with no overlay.
     _add_classify(post, {})
     assert not any(f.rule_id == "classification-stale" for f in _lint(post, root))
+
+
+# ---------- normalizer-support parity rules ---------- #
+
+
+def _fired(post, root, blocks=None):
+    return {f.rule_id for f in lint.lint(post, blocks if blocks is not None else [], root)}
+
+
+def _comp_overlay(root: Path, sub: str, body: str) -> None:
+    d = root / "schema" / "composite" / "source"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "source.yaml").write_text("kind: interpretive\ndescription: s\napplies_at: [record]\n")
+    (d / f"{sub}.yaml").write_text(body)
+    from corpus import schemas
+
+    schemas.cache_clear()
+
+
+def test_description_too_long(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["description"] = "word " * 801
+    assert "description-too-long" in _fired(post, root)
+
+
+def test_classify_field_validators(tmp_path):
+    root = _make_corpus(tmp_path)
+    _comp_overlay(
+        root,
+        "mr",
+        "kind: interpretive\ndescription: mr\napplies_at: [record]\nextended_fields:\n"
+        "  episode_date: {type: string, required: true}\n  views: {type: integer}\n",
+    )
+    post = _clean_post()
+    records.append_classify_block(
+        post, namespace="source", id="mr", fields={"views": "NaN", "bogus": 1}
+    )
+    fired = _fired(post, root)
+    assert {
+        "classify-field-required-missing",
+        "classify-field-type",
+        "classify-field-unknown",
+    } <= fired
+    # A well-formed block lints clean for these rules.
+    post2 = _clean_post()
+    records.append_classify_block(
+        post2, namespace="source", id="mr", fields={"episode_date": "2026-06-05", "views": 5}
+    )
+    assert not {f for f in _fired(post2, root) if f.startswith("classify-field")}
+
+
+def test_segment_lossless_contract(tmp_path):
+    root = _make_corpus(tmp_path)
+    # text/data-table-dynamic is bundled non-lossless (enables_lossless: false).
+    with_body = segments.Segment(
+        atom="text", address="el=2", overlay="text/data-table-dynamic", body="x"
+    )
+    marker_no_desc = segments.Segment(
+        atom="text", address="el=3", overlay="text/data-table-dynamic"
+    )
+    post = _clean_post()
+    fired = {f.rule_id for f in lint.lint(post, [with_body, marker_no_desc], root)}
+    assert "segment-body-requires-lossless" in fired  # body on a non-lossless overlay
+    assert "segment-description-required" in fired  # body-empty marker, no description
+
+
+def test_entry_missing(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(atom="text", address="el=1", body="hi")  # no entry
+    assert "entry-missing" in {f.rule_id for f in lint.lint(post, [seg], root)}
+
+
+def test_body_sanity_rules(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.content = "hi <script>x</script>\n```\n<!--TODO-->\nsee ![[broken"
+    fired = _fired(post, root)
+    assert {
+        "body-html-residue",
+        "body-codefence-unbalanced",
+        "body-unknown-comment",
+        "body-wikilink-malformed",
+    } <= fired
+    # empty body on a normalized record
+    norm = _clean_post()
+    norm.metadata["status"] = "normalized"
+    norm.content = ""
+    assert "body-empty-normalized" in _fired(norm, root)
+
+
+def test_embed_description_empty_on_normalized(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["status"] = "normalized"
+    records.append_embed_block(
+        post, media_type="image/png", address="el=4", transport="blake3:" + "0" * 64
+    )
+    assert "embed-description-empty-on-normalized" in _fired(post, root)
+
+
+def test_issue_on_draft(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()  # status draft
+    records.append_issue_block(
+        post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
+    )
+    assert "issue-on-draft" in _fired(post, root)
+    # a mechanical drafter issue (detector corpus.*) is legitimate on a draft
+    post2 = _clean_post()
+    records.append_issue_block(
+        post2,
+        id="paywall",
+        severity="warning",
+        resolution="open",
+        detector="corpus.draft.html@0.1.0",
+    )
+    assert "issue-on-draft" not in _fired(post2, root)

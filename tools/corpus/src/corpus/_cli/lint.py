@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import sys
 
 from corpus import lint as _lint
@@ -20,21 +22,37 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "record in the corpus."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one JSON object per finding (NDJSON) — the normalizer maps these to issues.",
+    )
     add_corpus_root_arg(parser)
 
 
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     if args.target is None:
-        return _lint_all(root)
+        return _lint_all(root, json_out=args.json)
     record_id, record_file = paths.resolve_record(root, args.target)
-    return _lint_one(root, record_id, record_file)
+    return _lint_one(root, record_id, record_file, json_out=args.json)
 
 
-def _lint_one(root, record_id, record_file) -> int:
+def _emit_json(record_id: str, findings) -> None:
+    """One NDJSON object per finding — `asdict(Finding)` plus `record_id`."""
+    for f in findings:
+        payload = dataclasses.asdict(f)
+        payload["record_id"] = record_id
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _lint_one(root, record_id, record_file, *, json_out: bool = False) -> int:
     post = records.load(record_file)
     blocks = segments.iter_blocks(post.content or "")
     findings = _lint.lint(post, blocks, root)
+    if json_out:
+        _emit_json(record_id, findings)
+        return 1 if any(f.severity == "error" for f in findings) else 0
     if not findings:
         print(f"{record_id}: clean")
         return 0
@@ -47,7 +65,7 @@ def _lint_one(root, record_id, record_file) -> int:
     return 1 if err else 0
 
 
-def _lint_all(root) -> int:
+def _lint_all(root, *, json_out: bool = False) -> int:
     records_dir = root / "records"
     if not records_dir.is_dir():
         print("no records/ dir")
@@ -64,11 +82,16 @@ def _lint_all(root) -> int:
             print(f"{md.stem}: ERROR loading: {e}", file=sys.stderr)
             any_err = 1
             continue
+        if json_out:
+            _emit_json(md.stem, findings)
+            if any(f.severity == "error" for f in findings):
+                any_err = 1
+            continue
         for f in findings:
             if f.severity == "error":
                 any_err = 1
             loc = f" [{f.address}]" if f.address else ""
             print(f"{md.stem}: {f.severity.upper()} {f.rule_id}{loc}: {f.message}")
-    if not any_record:
+    if not any_record and not json_out:
         print("no records to lint")
     return any_err

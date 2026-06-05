@@ -73,6 +73,7 @@ def candidates(post: frontmatter.Post, corpus_root: Path) -> list[Candidate]:
     """
     body_text = _record_body_text(post)
     record_mime = records.media_type_for(post)
+    title = records.title_for(post) or ""
 
     found: list[Candidate] = []
     for namespace_id, schema in schemas.interpretive_classifications_for(corpus_root):
@@ -85,7 +86,14 @@ def candidates(post: frontmatter.Post, corpus_root: Path) -> list[Candidate]:
         subclasses = schemas.iter_classification_subclasses(corpus_root, namespace_id)
         emitted_any_subclass = False
         for sub_id, sub_schema in subclasses:
-            sub_applies = (sub_schema.get("applies_to") or {}) if isinstance(sub_schema, dict) else {}
+            sub_applies = (
+                (sub_schema.get("applies_to") or {}) if isinstance(sub_schema, dict) else {}
+            )
+            # `cues.excludes` (the subclass's own OR the namespace's, inherited) suppresses
+            # the candidate entirely — lets a sibling genre that shares vocabulary disqualify
+            # the wrong overlay (spec §7.4 cues). Checked before scoring the axes.
+            if _excluded(sub_applies, body_text, title) or _excluded(ns_applies, body_text, title):
+                continue
             sub_cue_decl, sub_cue_hits = _eval_cues(sub_applies, body_text)
             sub_mime_decl, sub_mime_match = _eval_mime(sub_applies, record_mime)
 
@@ -117,6 +125,8 @@ def candidates(post: frontmatter.Post, corpus_root: Path) -> list[Candidate]:
             emitted_any_subclass = True
 
         if not emitted_any_subclass:
+            if _excluded(ns_applies, body_text, title):
+                continue
             basis = _basis_for(ns_cue_decl, ns_cue_hits, ns_mime_decl, ns_mime_match)
             if basis is None:
                 continue
@@ -172,6 +182,35 @@ def _eval_mime(applies_to: dict[str, Any], record_mime: str) -> tuple[int, str |
         if pat_l.endswith("/*") and rm.startswith(pat_l[:-1]):
             return len(patterns), pat
     return len(patterns), None
+
+
+def _excluded(applies_to: dict[str, Any], body_text: str, title: str) -> bool:
+    """True if the overlay's `cues.excludes` fire — suppress the candidate.
+
+    A `title_pattern` regex match on the record title, or any `body_contains` substring
+    hit, disqualifies the overlay (mirrors the drafter's cue-exclude handling). Lets sibling
+    genres that share vocabulary (e.g. a verification report that also contains "VALIDATION
+    REPORT") suppress the wrong candidate. A malformed exclude pattern is treated as a
+    non-match rather than breaking candidate generation for every record.
+    """
+    cues = applies_to.get("cues") or {}
+    if not isinstance(cues, dict):
+        return False
+    excl = cues.get("excludes") or {}
+    if not isinstance(excl, dict):
+        return False
+    pat = excl.get("title_pattern")
+    if pat and title:
+        try:
+            if re.search(str(pat), title):
+                return True
+        except re.error:
+            pass
+    body_l = body_text.lower()
+    for needle in excl.get("body_contains") or []:
+        if isinstance(needle, str) and needle.lower() in body_l:
+            return True
+    return False
 
 
 def _basis_for(
