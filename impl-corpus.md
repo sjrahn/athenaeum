@@ -2,7 +2,7 @@
 
 **Status:** living document. Updates as implementation matures.
 
-**Companion to:** [`spec-corpus.md`](spec-corpus.md), the authoritative corpus-layer data contract — and [`spec-athenaeum.md`](spec-athenaeum.md) for how the corpus sits beneath the codex / compendium layers. This guide describes the *implementation* of the corpus / artifact-layer pipeline. The spec says what each artifact carries; this guide says how the pipeline produces it. Choices here may change as tooling evolves; the spec must not. (Note: this guide is still v10.15-shaped and predates `spec-corpus.md`'s model; a rewrite to the current corpus model is pending.)
+**Companion to:** [`spec-corpus.md`](spec-corpus.md), the authoritative corpus-layer data contract — and [`spec-athenaeum.md`](spec-athenaeum.md) for how the corpus sits beneath the codex / compendium layers. This guide describes the *implementation* of the corpus / artifact-layer pipeline. The spec says what each artifact carries; this guide says how the pipeline produces it. Choices here may change as tooling evolves; the spec must not. This guide tracks the current `spec-corpus.md` (ATH-CORPUS v1.0) model.
 
 The codex-layer counterpart is [`impl-codex.md`](impl-codex.md).
 
@@ -15,7 +15,7 @@ This guide covers the corpus side of the system: capture, reconciliation, normal
 What lives in this guide vs in the spec:
 
 - **Spec (authoritative).** The data contract — every field, every hash declaration, every required behavior of records. Tooling consumers rely on these guarantees.
-- **This guide.** How the pipeline produces those records: which scripts run in what order, where files land on disk, sharding conventions, MIME-detection strategy, perceptual-hash family selection, in-memory vs on-disk record build.
+- **This guide.** How the pipeline produces those records: which scripts run in what order, where files land on disk, sharding conventions, MIME-detection strategy, fingerprint-opt-in resolution, in-memory vs on-disk record build.
 
 If the two ever conflict, the spec wins; this guide gets corrected.
 
@@ -29,67 +29,59 @@ A capture takes a target (URL, filesystem path, manual upload) and produces an a
 
 The fetcher is responsible for retrieving the bytes. Depending on the target:
 
-- **HTTP/HTTPS URL** — fetch with redirect-following enabled. Capture the final URL after redirect chain; both the original requested URL and the final URL are valid identifiers and both are recorded.
-- **Filesystem path** — copy from disk. The source path becomes a `file://` URI on the artifact record.
+- **HTTP/HTTPS URL** — fetch with redirect-following enabled. The original requested URL and the final-after-redirect URL are both valid identifiers; both land on the record's first **origin block** (`uri:` list, §2.6).
+- **Filesystem path** — copy from disk. The source path becomes a `file://` (or filesystem-path) `uri:` on the origin block.
 - **Manual upload** — accept the bytes and any provided origin URI from the operator.
 
-Embedded resources (images in HTML, attachments in email, etc.) are captured **as their own separate artifacts**. A captured page yields one artifact for the page and one artifact per embedded resource. Cross-references between them are resolved during normalization (§3.2).
+Inline media a transport *references* (images in an HTML page, etc.) are not separate records: the body drafter emits an **embed block** per asset (deduped by `transport` byte-hash) plus an `image`/`audio`/`video` positioning segment in the content zone (§3.1, spec §4.3.1.4) — never an intra-corpus wikilink (those are reserved for cross-*artifact* references, spec §4.3.2.2). A transport the schema declares `decomposable` (a raw archive) is the exception: the ingestor explodes it into one captured artifact per member. Hyperlinks to *other* resources are reconciled to intra-corpus references during cross-reference resolution (§3.2).
 
 ### 2.2 MIME detection
 
-MIME detection runs **before** hashing because perceptual-hash family selection depends on MIME (see §2.3). Strategy:
+MIME detection selects the **mime schema** that drives the rest of the pipeline (container disposition, `transport_algos`, address scheme, drafter). Strategy:
 
-1. **Extension hint** — fast path. If the source has a recognizable extension and the magic bytes are consistent with it, accept and proceed.
-2. **Magic-byte sniffing** — fallback. Use a library like `infer` (Rust) or `mime-type` to inspect the first kilobyte.
-3. **`unknown` sentinel** — when both fail. Record the gap; the artifact is still valid, it just won't get format-specific normalization or perceptual hashing.
+1. **Magic-byte sniffing** — the primary path (`mime.detect`). Inspect the leading bytes; refine ambiguous container magic by form-type and extension (a RIFF prefix → webp/wav/avi by its offset-8 form-type; an ISOBMFF `.m4b` → `audio/mp4` not `video/mp4`).
+2. **Extension hint** — disambiguates where magic is generic, and names the type for extensionless or schema-id-from-filename cases.
+3. **`unknown` sentinel** — when both fail. Record the gap; the artifact is still valid, it just won't get format-specific drafting.
 
-The `content_type` field on the artifact record is set from this step.
+The detected MIME becomes the **artifact block's opener argument** — `<!--artifact <mime-type>-->` — which is **authoritative**. There is no frontmatter `content_type` / `media_type` field (spec §4.3.1.1).
 
 ### 2.3 Hashing
 
-Hashes are computed per the artifact's MIME's base schema (§3.3.1 of the spec). At minimum:
+Three hash families live at three different layers (spec §7.6 encoding; §2 / §4.2.1 fields):
 
-- **blake3** — always. This is the artifact's `id`.
-- **Format-specific perceptual hashes** as the base schema declares. Examples (illustrative; the canonical list lives in the schema files):
-  - `image/*` → `phash` and/or `dhash`
-  - `audio/*` → `chromaprint`
-  - `video/*` → `phash` of keyframes and/or `chromaprint` of audio track
-  - `text/html`, `text/markdown`, `text/plain` → `simhash`
-- **Auxiliary hashes** the schema lists (commonly `sha256` for interoperability; rarely `md5`).
+- **blake3 of the bytes** — always, at ingest. This is the artifact's `id` (bare hex, no prefix) — the identity and filename stem.
+- **`transport_algos`** — additional *byte-level* algorithms the mime schema declares (e.g. `sha256` for interoperability), computed at ingest into the `transport:` field as `<algo>:<hex>`. The primary blake3 is on `id` and is not duplicated here.
+- **`canonical`** — a *content*-canonical hash set at **draft** time by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`), so two records holding the same content reached by different URLs can collapse (spec §7.1). Draft-time, not ingest-time.
+- **`perceptual`** — atom fingerprints (image pHash, text simhash, …) are **opt-in and schema-gated**, computed at **draft** only when the `fingerprint` knob resolves on (§3.1); default off. Per-segment on multi-atom records, record-scope on single-atom ones (spec §7.7).
 
-If a base schema is missing or incomplete for a MIME, fall back to blake3-only. The artifact is still valid; future schema updates can backfill the missing hashes via re-normalization.
+There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash. A MIME with no canonical strategy and no fingerprint knob is blake3-`id`-only, and that record is normal.
 
 ### 2.4 In-memory record build
 
-Build the artifact record's frontmatter in memory:
+Ingest emits the **stub record** (spec §4.1). The frontmatter carries only the bytes-identity header — `id` (blake3), `transport:` (any `transport_algos`), `status: stub`, `touch: [<pkg>.ingest@<v>]`, and the two editorial fields `title: ''` / `description: ''` (empty until the normalizer authors them, spec §4.2.1). Everything else lives in **body blocks**:
 
-- `id` — the blake3 hash from §2.3 (the artifact's identity and filename stem).
-- `content_type` — from §2.2.
-- Capture provenance — see §2.6.
-- `hashes` — populate per the base schema's declarations (other declared hashes; blake3 is the `id`).
-- Base-schema extended fields — extract format-intrinsic metadata (file headers, embedded metadata: ID3 tags, EXIF, PDF info dict, HTML `<meta>` etc.).
-- Custom classification schema fields — see §4.
-- `status: stub` initially; flips to `draft` or `normalized` as later stages run.
+- The **artifact block** `<!--artifact <mime-type>-->` (§2.2), its body holding the format-intrinsic extended fields the mime schema declares, named **bare** (`title`/`author`/`page_count`, not `pdf_title`; spec §4.3.1.1 / principle 10). Sources: PDF info dict, EXIF, ID3, HTML `<meta>`, OPF Dublin Core, ffprobe streams.
+- The first **origin block** from capture context — `uri:` + `snapshot:` (§2.6).
 
-The body starts empty and is filled by normalization (§3).
+No `content_type`, no `hashes`, no `classifications`, no `tags`, no `uris`/`capture_dates` frontmatter — none of those exist in the v1.0 model. The content zone is empty; draft (§3) fills it. Classifications aren't stamped here either — `classify_when` membership is applied at **draft** (§3.1).
 
 ### 2.5 Dedup
 
 Look up the artifact by `id` (blake3 hash) against the existing corpus:
 
-- **Match.** The bytes are already in the corpus. Append capture provenance to the existing record (a new entry in `capture_dates[]`, and any new URI added to `uris[]`). Do not create a new record.
+- **Match.** The bytes are already in the corpus. Fold the new capture into the existing record's **origin blocks** (§2.6): append the inbound URL to a matching origin's `uri:` list when it aliases one (via known shortlink/redirect + `url_equivalent` rules), or emit a new origin block when it is a genuinely separate source. Do not create a new record.
 - **No match.** This is a new artifact. Write the record under `records/` and the binary under the `artifacts/` cache (§2.7).
 
-Dedup is the natural side effect of content addressing — bytes that match an existing hash hit the same record, no special "is this a duplicate?" check is needed.
+Dedup is the natural side effect of content addressing — bytes that match an existing hash hit the same record. Two pre-download stages catch a duplicate *before* the bytes are even fetched: the cheap string-identity `find_by_uri` short-circuit, and the redirect-aware short-link resolution (`corpus check`, §2.12).
 
 ### 2.6 Capture provenance
 
-Append per-capture provenance to the artifact record:
+Capture provenance lives in **origin blocks** in the record body's metadata zone — not in frontmatter (spec §4.3.1.2). Each origin block carries:
 
-- Append the encounter timestamp to `capture_dates[]`.
-- Add any new URI(s) (request URL, final-after-redirect URL, asset CDN URL, mirror URL, DOI, `file://` path) to `uris[]`. URIs are deduplicated as a set; order doesn't matter.
+- `uri:` — a string or list. One origin block per distinct *source*; its `uri:` list collects the spellings that resolve to it (request URL, final-after-redirect URL, shortlink, mirror, `file://` path), deduped by identity key (§2.11).
+- `snapshot:` — the ISO-8601 timestamp the origin was observed.
 
-That's it. The artifact record carries `uris[]` (every URI known to resolve to its bytes, none canonical) and `capture_dates[]` (every timestamp the bytes were encountered). The pipeline does **not** record per-event metadata (which URI was actually used at which moment, what `method` was used, what redirect chain occurred). If recovering a particular (uri, date) capture package becomes important later, that's a job for an out-of-band capture log, not for the artifact record.
+Re-capture is append-only (spec §5.2): a re-encounter folds an aliasing URL into an existing origin's `uri:` list or adds a new origin block, per §2.5. The pipeline does **not** record per-event metadata (which URI was used at which moment, the redirect chain, the HTTP method); recovering a particular (uri, time) capture package is a job for an out-of-band capture log, not the record. A yt-dlp capture additionally lifts its `.info.json` into flat `ytdlp_<key>` fields on the origin block (§2.9).
 
 ### 2.7 Storage layout
 
@@ -105,11 +97,15 @@ corpus-{name}/
 ├── artifacts/                          ← UNTRACKED raw-bytes cache
 │   └── {first-2-of-blake3}/
 │       └── {full-blake3}.{ext}
-├── schema/
-│   ├── base/
-│   └── classification/
-├── capture/
-└── .gitignore                          ← lists `artifacts/`
+├── schema/                             ← tracked: mime / origin / atom / composite / context
+│   ├── mime/
+│   ├── origin/                         ← web/<host>.yaml, otherwise/<id>.yaml
+│   ├── atom/
+│   ├── composite/                      ← <namespace>/<id>.yaml classifications
+│   └── context/                        ← issue / reference / … annotation overlays
+├── capture/                            ← UNTRACKED: in-progress staging
+├── cache/                              ← UNTRACKED: resolver-output cache
+└── .gitignore                          ← lists artifacts/, capture/, cache/
 ```
 
 - **`records/` is tracked.** Markdown artifact records are the source of truth and live in version control.
@@ -182,19 +178,19 @@ A record's origin URI list should hold **one URI per distinct resource**, and an
 
 ## 3. Normalization
 
-Normalization brings an artifact from `status: stub` to `status: normalized`. The spec defines what the normalized record carries (§5.3 of the spec); this guide describes how the pipeline gets there.
+Normalization brings an artifact from `status: stub` to `status: normalized`. The spec defines what the normalized record carries (§4 and §8 of the spec); this guide describes how the pipeline gets there. ("Normalization" here spans the deterministic **draft** pass and the LLM-guided **normalize** pass — §3.1 is draft, §3.4 is normalize.)
 
 ### 3.1 Conversion (deterministic)
 
 Conversion produces the artifact's body as well-formed markdown. It is MIME-driven and shells out to deterministic tooling. Per-MIME mappings:
 
 - **`text/html`, `application/xhtml+xml`** → the **mechanical** HTML drafter (`draft/html.py`): it removes only non-rendered infrastructure (scripts/styles/comments), assigns `el=N` addressing to every element of the raw artifact, emits dedup'd image embeds, and emits one cleaned-`<body>` text segment. It does **not** strip page chrome — a universal tool can't reliably tell chrome from content (e.g. ASP.NET WebForms wraps the whole page in one `<form>`), and a wrong guess drops content silently. Chrome removal (nav/ads/cookie notices) is therefore a **capture-time, per-host** decision: list the selectors to delete in the origin overlay's `capture.interactions[].remove` (§2.8). Structural recovery (headings/tables/lists/equations) is the normalizer's job.
-- **`application/pdf`** → text + table extraction. OCR via `tesseract` if the PDF is image-only. Page boundaries surface as headings or anchor markers usable from functional URIs.
+- **`application/pdf`** → text + table extraction (`draft/pdf.py`), one `text` segment per page (`page=<N>`), wrapped into `<!--section-->` blocks by the outline (`get_toc(max_depth=1)`, `pages=<start>-<end>`). An image-only (scanned) PDF yields no text and records a `scanned` issue context block — OCR is deferred (spec §11). Page renders materialize on demand via the `page=<N>` functional URI.
 - **`application/epub+zip`** → the EPUB drafter (`draft/epub.py` + the pure `corpus.epub` OPF reader). `self_contained` (one record per book, not decomposed — an EPUB is one work). Emits one bare `text` segment per spine (reading-order) content document, addressed `spine=<N>`, with a mechanically-cleaned structural-HTML body (same philosophy as the HTML drafter — non-rendered infrastructure stripped, structure kept), and **groups them into `<!--section-->` blocks by the book's navigation document** (EPUB 3 nav `<item properties="nav">` → EPUB 2 NCX `<navMap>`): top-level TOC entries become sections (`address: spines=<start>-<end>`, `entry:` = the part/chapter title), spine docs before the first TOC target become a synthetic `Front matter` section — the exact analogue of how the PDF drafter wraps pages by `get_toc(max_depth=1)` (`pages=`/`page=` ↔ `spines=`/`spine=`). A book with no usable nav/NCX drafts sectionless (flat top-level segments carrying their document title as `entry:`), like an outline-less PDF. Each `<img>` references a separately-stored zip member, so it becomes an **`<!--embed-->`** (addressed `spine=<N>&el=<K>`, `transport` = blake3 of the member bytes, deduped by hash across the book; the body keeps a src-stripped `<img data-el="K">` placeholder) — the HTML drafter's embed model, not the PDF's bare-image-segment model. That embed address **materializes** through `transforms/epub.py`: `spine=<N>` selects the OPF content document and binds a resolver over the book's zip image members, then `el=<K>` resolves the addressed `<img>` to its member bytes (decoded to a PIL image) — `corpus://<id>?spine=<N>&el=<K>` → the image. The body strips `<img src>` because it's redundant: the src lives on in the immutable artifact, and el-indexing is shared with the drafter (`corpus.epub.addressable_image_bytes`, same `_strip_non_addressable` + `_ADDRESSABLE_TAGS` axis), so a recorded address round-trips to byte-identical content (the resolved bytes' blake3 == the embed's recorded `transport`). Mirrors the HTML `el=` transform, but resolves a zip member relative to the spine document rather than an inline `data:` URI. Publication metadata (Dublin Core) lands as bare artifact fields — the opener's MIME names the format (`title`/`creator`/`language`/…; `title` is the title candidate; `spine_item_count`/`toc_entry_count` record the shape). Canonical: `blake3-canonical-epub` (concatenated spine text — packaging-invariant; images don't perturb it).
 - **`audio/*`** → speech-to-text transcription. Reference: Whisper. Output includes timestamps. Speaker turn markers where determinable. `audio/mp4` covers `.m4a` / `.m4b` audiobooks (an `.m4b` magic-sniffs as `video/mp4` on its generic ISOBMFF brand; `mime.detect` refines it to `audio/mp4` by extension so it routes to transcription, not the video keyframe path — embedded chapter markers and cover-art `mjpeg` are not consumed in v1).
 - **`video/*`** → audio transcription + per-keyframe descriptions when the schema asks for them.
-- **`image/*`** → visual description from a VLM + OCR text via `tesseract` if applicable.
-- **`text/markdown`, `text/plain`** → passthrough with minimal cleanup. `conversion_method: passthrough`.
+- **`image/*`** → a single body-empty `image` segment addressed `bbox=0,0,1,1` (`draft/image.py`); the image is its own self-artifact (no embed — the bytes are the record's, materialized via the `bbox=` functional URI, spec §4.3.1.4). Any visual description is normalizer-written on the segment `description:`; an optional `perceptual:` when the fingerprint knob resolves on. No VLM/OCR in the deterministic drafter.
+- **`text/markdown`, `text/plain`** → passthrough with minimal cleanup (one `text` segment, body = the source text).
 - **`unknown`** → best-effort fallback; emit a `metadata` body summarizing what little can be determined.
 
 **One construction path (the constituent model).** Every drafter builds the record's content zone through the **`recordbuild.Build` ops** — `add_blocks` → `open_section`/`add_segment` (which enforce body⟺lossless per segment) — and `recordbuild.finish` emits + grammar-validates it. These are the *same* ops `compile` replays from a decomposed `manifest.corpus`, so draft / redraft / decompose / compile / normalize all construct records identically and a drafted record decomposes then recompiles byte-for-byte. This is the substrate the LLM normalizer works on: it edits the decomposed **constituent files** (per-segment body / description sidecars + the ops manifest) and recompiles deterministically — never rewriting a monolithic markdown blob — which makes whole classes of structural corruption *unrepresentable*. (`begin_from_post` seeds the Build for the draft/redraft path; `begin` seeds it from a `meta.yaml` for compile.)
@@ -203,7 +199,7 @@ Conversion produces the artifact's body as well-formed markdown. It is MIME-driv
 
 **Bulk recompile (`corpus redraft`).** A drafted record is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an **in-place `.md` rewrite**, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. `corpus redraft [target] [--mime/--host/--status] [--dry-run] [--fingerprint]` applies the per-record draft core (`_cli.draft.derive_record`) across the corpus via a **clean re-stub** — `restub.restub_post` with the touch chain collapsed to the original ingest entry (no re-stub touch) — so an *unchanged* record re-derives byte-for-byte and is not rewritten (**idempotent**; `--dry-run` reports the set, writing nothing). It refuses `normalized` records unless `--force`, since re-deriving discards normalization. This is **distinct from `corpus compile`**, which reassembles a record from a decomposed *manifest* (the normalization edit substrate) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to the canonical text without writing, so redraft can compare against disk.)
 
-Conversion writes pipeline-state metadata (`conversion_method`, `conversion_tool`, `conversion_date`) into a tracking sidecar or a frontmatter section the implementation reserves for re-run targeting. These fields are an implementation concern, not a record-contract requirement.
+Pipeline-state provenance is the **`touch[]` chain** (spec §4.2.2): each pass appends a `<pkg>.<module>@<version>` (or `<model-id>`) identifier, so the latest touch's tooling version encodes the spec era of the record's current shape and re-run targeting reads it. There is no separate `conversion_method` / `conversion_tool` frontmatter.
 
 **Deterministic auto-classification (`classify_when`).** A composite overlay that declares a `classify_when` predicate (spec §7.4) gets stamped onto every matching record **at draft time** as a `<!--classify <ns>/<id>-->` block with `provenance: auto`. The engine is `classify_rules.py`: `build_facts(corpus_root, post)` extracts the flat fact base (`mime`; `origin.host`/`path`/`fragment`/`query.<k>`/`id` — any-origin, list-valued via `urls.host_of` + `urlsplit`/`parse_qsl`; `media.<field>` by **inverting the `ytdlp_` prefix off the origin block's fields**, so the alias set tracks `draft/_sidecar.py::_YTDLP_KEYS` automatically — `tags` is inert until lifted); `evaluate(predicate, facts)` runs the `all_of`/`any_of`/`none_of` + `equals`/`in`/`glob`/`matches`/`exists` grammar (pure, total, **missing-fact-⇒-false** via empty-value-list semantics); `matching_classes` scans `schemas.iter_all_classifications` (namespace base **and** every subclass, deep-merged — the kind-agnostic walk the worked subclass examples need, since `interpretive_classifications_for` walks bases only). `apply_auto_classifications(corpus_root, post)` is the idempotent strip-all-`provenance:auto` + regen-from-rules fixpoint — auto blocks placed **before** any surviving non-auto block (draft-time precedes interpretive per §4.3.1.3), asserted blocks untouched. The hook is in `_cli.draft.derive_record` after `_apply_drafter_result` (origin `ytdlp_*` present) and before the status flip, so **both** `corpus draft` and `corpus redraft` (a stub routes through `derive_record`) self-heal auto blocks. It is the **mechanical, membership-at-draft** path — complementary to, and never merged with, `classify_match.candidates()` (the interpretive body-cue matcher the normalizer consumes). Pure opt-in: no `classify_when` anywhere ⇒ no behavior change.
 
@@ -211,11 +207,11 @@ Conversion writes pipeline-state metadata (`conversion_method`, `conversion_tool
 
 ### 3.2 Cross-reference resolution (deterministic)
 
-After the body exists, scan it for hyperlinks and embedded-resource references. For each:
+After the body exists, scan segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already an embed + segment (§3.1). For each hyperlink:
 
-1. Map the URL → blake3 by querying the corpus's URI index (any artifact whose `uris[]` contains this URL).
-2. If matched, rewrite as a raw intra-corpus wikilink (`[[blake3|original link text]]`) or embed (`![[blake3]]`). No URI scheme prefix — these are layer-local references.
-3. If unmatched, leave as a standard markdown URL or image embed. The link points outside the corpus and may be resolved by a future re-normalization pass when the target is captured.
+1. Map the URL → `id` by querying the corpus's URI index (`records.build_uri_index` — every record's origin `uri:` list keyed by identity, §2.11).
+2. If matched, rewrite as a raw intra-corpus wikilink `[[<id>|original link text]]`. No URI scheme prefix — these are layer-local cross-*artifact* references (spec §4.3.2.2 / §5.1).
+3. If unmatched, leave the plain markdown URL. The target is outside the corpus and may resolve on a later cross-reference re-resolution pass (§5.3) once it is captured.
 
 This is purely mechanical. The normalizer does not invent links the original content didn't contain.
 
@@ -223,36 +219,35 @@ This is purely mechanical. The normalizer does not invent links the original con
 
 ### 3.3 Schema application
 
-For every artifact, apply the base schema first (extracts format-intrinsic fields, sets normalization guidance). Then walk the corpus's custom classification schemas, evaluating each one's match condition against the artifact:
+Draft applies schemas in the spec's declared order (§8.1):
 
-- `content_type` match — exact MIME or prefix.
-- `uri` regex / domain match — does any URI in `uris[]` match?
-- Prior-classification match — does the artifact already carry a `classifications:[]` entry the schema requires (the `has_classifications` condition)?
-- Extended-field-value match — does the artifact have a field with a particular value?
+1. **The mime schema** runs first — the sole body-drafter. It segments the content zone, emits embed blocks, fills the artifact block's bare extended fields, and (when it declares a `canonical_strategy`) sets `canonical`.
+2. **Atom overlays** classify each segment on its opener (`<!--segment <atom>/<id>-->`); a `text/<id>` overlay with `enables_lossless: true` shapes a lossless body (table, transcript, OCR text).
+3. **Mechanical composite classifications** run in declared order — each emits/fills its own `<!--classify <namespace>/<id>-->` block (metadata only; never the body). Membership is decided by the `classify_when` predicate where one is declared, and the block is stamped `provenance: auto` (§3.1).
 
-Schemas that match contribute their declared extended fields and append an entry to the artifact's `classifications:[]` audit trail (with required justification). Multiple schemas may match; their fields merge with last-write-wins on collision. Custom classification schemas do **not** write to a frontmatter `tags` field — artifacts don't carry one (spec §3.5.1).
+A classification is **not** a frontmatter array and carries **no** justification field: the `classifications` list is a *derived view* computed by walking the metadata-zone blocks (spec §9.1 / principle 11). Records carry no `tags` field. Extended fields are **bare** — the block opener scopes them (spec §4.3.1.1 / §7.4).
 
 ### 3.4 Contextualization (LLM-driven)
 
-Refine the body and frontmatter:
+The normalizer (LLM-guided) refines the record:
 
-- Apply matching custom classification schemas, recording each application in the artifact's `classifications:` array as `{schema, justification}`. The schema's contributed extended fields merge into top-level frontmatter per §3.3.2 composition rules. Justification is required for every application — mechanical for deterministic matches, substantive prose for LLM judgments.
-- Improve formatting fidelity (broken tables, malformed lists).
-- Resolve encoding ambiguity where determinable from context.
-- Add or improve image alt text from visible content.
-- Surface issues to `issues[]` (missing media, broken links, partial content, encoding corruption, format loss).
-- Generate or refine `description`.
-- Set `status: normalized`.
+- Apply matching **interpretive** composite classifications — each as its own `<!--classify <namespace>/<id>-->` block (no `provenance`, so the auto engine never touches it), with the overlay's `normalization.guidance` consumed here. No frontmatter array, no justification field (membership IS the block; spec §9.1).
+- Improve formatting fidelity (broken tables, malformed lists); resolve encoding ambiguity where determinable.
+- Write asset descriptions on embeds and on self-slice / non-lossless segments via `description:` (lossy interpretation — never in a faithful segment body); fill embed `alt` only when the source provides it.
+- Surface problems as **`<!--context issue/<id>-->`** blocks (missing media, broken links, partial content, encoding corruption, format loss) — the annotations zone, not a frontmatter array (§3.6).
+- Author the frontmatter **`title`** and **`description`** (the two editorial fields, empty until now).
+- Re-segment the content zone where judged appropriate (structural only), and set `status: normalized`.
 
-For artifact records, contextualization MUST preserve normalization integrity — the body remains a faithful rendering of the original content. No information that wasn't in the original.
+Contextualization MUST preserve faithfulness — the body stays a lossless rendering of the original (spec principle 3). No information that wasn't in the source; descriptive content lives on `description:` / `alt`, not in a segment body.
 
 ### 3.5 Self-verification
 
 Before declaring the record normalized, the normalizer confirms:
 
-- The `content_type` matches the actual MIME of the stored binary.
-- The `id` field (blake3 hash) matches the binary's hash.
+- The **artifact-block opener** MIME matches the actual MIME of the stored binary (there is no `content_type` field — the opener is authoritative, §2.2).
+- The `id` (blake3 hash) matches the binary's hash.
 - The on-disk record path matches the shard convention.
+- `corpus lint` is clean at `normalized` severity (the executable encoding of the spec's required-field and grammar rules).
 
 Failures here are bugs in the pipeline; they should fail loudly.
 
@@ -266,95 +261,86 @@ The annotations zone is a single block family — **`context`** (spec §4.3.3) �
 - **Reference.** Normally normalizer-/human-asserted (it's the durable home for a cross-reference §3.2 couldn't resolve mechanically): a casual mention gets a `reference` context anchored by `address:` + a verbatim `quote:` and researched up `attribution_text → source_url → source_uri`. Lint `reference-unresolved` flags a `source_uri` that doesn't resolve to a captured record; `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay.
 - **Decompose/compile.** The manifest keeps the dedicated `issue <id> sev= res= detector=` line for the issue namespace and adds a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`).
 
+### 3.7 Normalizer-support commands
+
+The LLM normalizer never reads `schema/*.yaml` directly (the reference contract forbids it). It works through three read-only commands (`_cli/{diagnose,guidance,overlay}.py`, surfacing the spec §9 derived views):
+
+- **`corpus diagnose <hash> [--json]`** — the normalizer's first call: a one-page brief combining the derived views (classifications / issues / uris) with a quick-lint and the record's `<!--context-->` blocks.
+- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / composite overlay for the record.
+- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a candidate classification, so the normalizer fills a classify block without reading YAML.
+
+Membership it can assert manually via `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it). These commands were brought to parity with the LuklaCloud corpus normalizer toolchain.
+
 ---
 
-## 4. Custom-classification feedback loop
+## 4. Composite classifications (the curator feedback loop)
 
-Custom classification schemas (§3.3.2 + §3.3.3 of the spec) are corpus-local and corpus-author-driven. They emerge from observed patterns in how the corpus is used, not from upfront design. The spec articulates the loop conceptually (and assigns it to the Curator agent); this section describes the operational implementation.
+Composite classification schemas are corpus-local and corpus-author-driven (the Curator agent's domain; spec §7.4). They emerge from observed patterns in how the corpus is used, not from upfront design — and the package ships none.
 
 ### 4.1 Pattern detection
 
-The curator (human or agent) periodically scans the corpus for patterns that suggest a custom classification schema should exist:
+The curator periodically scans for patterns that warrant a classification:
 
-- **Classification clusters.** A set of artifacts share an existing classification (the same schema applied to all of them) and would benefit from richer extended fields layered on top, gated via `has_classifications`.
-- **URI-domain frequency.** Many artifacts have one of their `uris[]` matching a common domain, suggesting a platform-specific schema (custom field set for that platform).
-- **Recurring extended-field values.** Many artifacts have the same value in a schema-extracted field, suggesting a sub-classification.
-- **Codex-driven demand.** The codex/compendium layers (`impl-codex.md`) reveal patterns when authoring keeps reaching for the same kind of metadata that isn't currently extracted.
+- **Origin / fact frequency.** Many records share an origin host or a deterministic fact (a `ytdlp_channel_id`, a URL shape) — a candidate for a `classify_when`-keyed class.
+- **Recurring extended-field values.** Many records share a value in a schema-extracted field — a candidate sub-classification.
+- **Codex-driven demand.** The codex / compendium layers (`impl-codex.md`) reach for metadata that isn't yet extracted.
 
 ### 4.2 Schema authoring
 
-When a pattern is worth formalizing, the curator drafts a custom classification schema:
+A composite overlay lives at `schema/composite/<namespace>/<id>.yaml` (the namespace universal at `<namespace>/<namespace>.yaml`) and declares (spec §7.4):
 
 ```yaml
-schema_type: classification
-match:
-  content_type: "..."
-  uri_pattern: "..."                  # optional
-  has_classifications: ["..."]        # optional
-  field_match:                        # optional
-    field_name: value
-extended_fields:
-  ...
+kind: mechanical          # or interpretive
+applies_at: [record]      # subset of [record, section]; default [record]
+applies_to:
+  content_types: [...]    # mechanical only
+classify_when:            # optional deterministic membership predicate
+  all_of:
+    - media.channel_id: {equals: "UC-..."}
+extended_fields:          # bare — the classify opener scopes them
+  episode_date: {type: string, semantic_type: timestamp}
+normalization:
+  guidance: |             # interpretive payload (consumed at normalize)
+    ...
 ```
 
-The schema is committed to the corpus's `schema/classification/` directory.
+`classify_when` (spec §7.4) is the deterministic-membership lever: when present, the drafter stamps the class on every matching record at draft with `provenance: auto`. It is orthogonal to `kind` — an `interpretive` overlay may carry a `classify_when`, so membership is decided at draft while its guidance is still applied at normalize.
 
-### 4.3 Re-normalization sweep
+### 4.3 Re-propagation
 
-To apply the new schema retroactively, the curator triggers a re-normalization sweep over the artifacts the schema's match condition matches. Re-normalization:
+Authoring or editing an overlay does not touch existing records until a sweep re-evaluates membership:
 
-- Re-runs schema application (§3.3) against affected artifacts.
-- Appends an entry to each affected artifact's `classifications:[]` array (with justification) and adds the schema's declared extended fields, without disturbing other frontmatter.
-- Does **not** rewrite the body unless the body's content depends on schema-extracted fields (rare).
+- **`corpus reclassify [target] [--mime/--host/--classification/--status] [--dry-run]`** re-runs the `classify_when` engine over **stored** records (body-safe; preserves asserted blocks), converging every `provenance: auto` block to the current rules — default all statuses incl. `normalized` (§3.1).
+- **`corpus redraft`** re-derives records from their retained artifacts when the change is to a mime schema, drafter, or fingerprint knob (refuses `normalized` unless `--force`).
 
-Sweep scoping options:
-
-- By `uri` pattern — fastest, when the schema's match is URI-based.
-- By `content_type` — useful when the schema applies to a whole MIME family.
-- By prior classification — when the schema layers on top of an earlier classification (`has_classifications` match).
+Lint's `classification-stale` (warning) flags an `auto` block whose overlay was deleted or no longer matches; the fix is `corpus reclassify`. `git diff records/` is the review surface for any sweep.
 
 ### 4.4 Schema evolution
 
-As patterns refine, schemas iterate. A schema that initially matched too broadly can be narrowed; one that extracted weak fields can be augmented. Each iteration triggers another targeted re-normalization sweep on affected artifacts.
+As patterns refine, overlays iterate — narrow a too-broad `classify_when`, augment weak `extended_fields`, split a class into subclasses. Each iteration is followed by a targeted `corpus reclassify` (or `redraft`) over the affected scope.
 
 ---
 
-## 5. Re-normalization mechanics
+## 5. Re-runs and re-normalization
 
-Re-normalization is the general capability to re-process existing artifacts when something has improved: new schemas (§4), upgraded normalization model, better OCR/transcription tools, or newly captured artifacts that resolve previously unresolved cross-references.
+Every pipeline stage is independently and idempotently **re-runnable** (spec §8.3); a re-run appends a `touch[]` entry. Re-processing is how the corpus absorbs improvement: new schemas, a better extractor / transcriber, an upgraded normalization model, or newly-captured artifacts that resolve old cross-references.
 
-### 5.1 When to re-normalize
+### 5.1 The re-run verbs
 
-- A new custom classification schema lands and its match condition selects existing artifacts.
-- A base schema is improved (new extended-field declarations, better normalization guidance).
-- A normalization model is upgraded.
-- A conversion tool is upgraded (better extractor, better OCR, better transcription).
-- An artifact has known issues that re-processing might resolve.
-- Newly captured artifacts may resolve previously unresolved cross-references in older artifacts' bodies.
+- **Re-ingest** — re-encountered bytes matching an existing `id`; folds the capture into origin blocks (§2.5), never a new record.
+- **`corpus redraft`** — re-derive a record from its **retained artifact** + current schemas / tooling (§3.1). `id = blake3(artifact)` is unchanged, so it is an in-place `.md` rewrite; **idempotent** (an unchanged record re-derives byte-for-byte and is not rewritten), `--dry-run` reports the set. Refuses `normalized` unless `--force`. Filters `--mime` / `--host` / `--status`.
+- **`corpus reclassify`** — re-evaluate `classify_when` membership over stored records (§4.3); body-safe, all statuses.
+- **Re-normalize** — re-run the interpretive (LLM) pass; refreshes interpretive classify and issue context blocks, may re-segment.
+- **`corpus compile`** — reassemble a record from a decomposed **manifest** (the normalization edit substrate, §3.1) — a different input than `redraft`'s artifact.
+- **`re-stub`** — the deliberate reset to `status: stub` (spec §8.4): discards everything schema-derived (body, classify / embed / context blocks, `canonical` / `perceptual`), keeps everything byte-tied (`id`, `transport`, origin `uri:` history, `visibility`) and collapses `touch[]`.
 
 ### 5.2 Scoping a sweep
 
-The curator scopes the sweep using the most-precise selector possible:
+The deterministic re-derivation makes scoping a `git diff records/` concern rather than a frontmatter-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface — no field-level diff / merge logic. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (a drafter or mime-schema change), `--classification` (a reworked composite), `--status` (e.g. only `draft`).
 
-- By conversion-tooling generation (the implementation's pipeline-state tracking), when re-running improved conversion.
-- By normalization-model generation, when re-running improved contextualization.
-- By `uri` pattern, when applying a URI-targeted custom classification schema.
-- By prior classification (the artifact already carries a particular classification), when applying a layered schema.
-- By `content_type`, when applying a MIME-keyed change.
+### 5.3 Cross-reference re-resolution
 
-### 5.3 Partial re-application
-
-Re-normalization should disturb only the fields that need updating. The implementation should:
-
-- Diff the current frontmatter against the would-be new frontmatter.
-- Apply only the differences.
-- Avoid churn on fields the change doesn't affect (descriptions hand-edited by curators, manually adjusted classification justifications, etc.).
-
-This keeps re-normalization sweeps surgical and reviewable in git diffs.
-
-### 5.4 Cross-reference re-resolution
-
-A lightweight sweep that re-runs only §3.2 (cross-reference resolution) against artifact bodies. Useful when many new artifacts have been captured that may resolve URLs left as plain markdown in older bodies. Doesn't touch any other field.
+A lightweight sweep re-runs only §3.2 against existing bodies — useful after a batch of captures that may resolve URLs left as plain markdown in older records. `corpus links` / `corpus crawl` surface what is now resolvable vs. still-frontier.
 
 ---
 
@@ -364,6 +350,15 @@ These are flagged for follow-up; not all are blockers.
 
 - **Sharding crossover** (applies to both corpus and codex). When does single-level hex-prefix sharding stop being adequate? At what record count do we move to two-level (`a7/f3/...`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change. `impl-codex.md §8` defers to this entry as the canonical write-up.
 - **Binary cache GC.** Is the binary cache append-only forever, or does it have a GC pass for orphaned binaries (records deleted, hash unreferenced)? Deferred until corpus deletion semantics are needed.
-- **URI index storage.** The URI → blake3 lookup needs an index. Build it on server start (rebuild from records) or maintain a side-file (`corpus/index/uri.db`)? Currently rebuilt-on-start; persistent index is a perf optimization for later.
-- **Schema validation.** Should schema files themselves be validated (their match conditions parseable, their declared fields well-formed)? A `validate-schemas` tooling command would be useful.
+- **URI index persistence.** The URI → `id` lookup (`records.build_uri_index`) is **rebuilt-on-start** from the records — the settled default (an in-memory query engine, not a data store). A persistent side-file is a deferred perf optimization, not an open design question.
+- **Schema validation.** Should schema files themselves be validated (a `classify_when` predicate's ops parseable, `extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field)? `corpus lint` validates *records*, not schemas; a `validate-schemas` command is still missing.
 - **Multi-corpus capture.** When the same content needs to land in multiple corpora (e.g., something captured personally and also of public interest), does the capture flow handle that, or is it a copy step on top? Currently a copy step; a "capture into multiple corpora" mode is a possible future feature.
+
+## 7. The read API (`corpus.api`)
+
+`corpus.api` (behind the `[api]` optional extra → `fastapi`, `uvicorn[standard]`, `python-multipart`) is a thin **read** HTTP surface over this pipeline's library functions — it serializes what `records` / `derived_views` / `segments` / `schemas` / `resolver` / `store` already produce, adding **no** parsing/derivation/resolution logic. It is the server for the Angular Corpus Console (`web/`). FastAPI/uvicorn import only inside `corpus.api.app`/`__main__` (never the base library — gotcha #24/#70).
+
+- **Multi-corpus routing** (`corpus.api.config`). The tooling is single-root per invocation; fronting several corpora from one server is an API concern. `corpus-api serve --corpus <id>=<path> …` (or env `ATH_API_CORPORA`, or cwd discovery) maps ids → roots; each root's own `corpus.toml` is still read via `config.load_config` for the store/transcription backends.
+- **Serialization** (`corpus.api.serialize`, pure). Maps the unified `Post` blocks to the Console JSON: `transport` (the 1:1 artifact), `embeds[]` (`media_type`/`address`/`transport`/`fields`), `origins[]`, `classifyBlocks[]`, `artifactFields`, `content[]` (sections+segments from `segments.iter_blocks`), `annotations[]` (`derived_views.context`), `touch[]`, derived `classifications[]`. Title via `records.title_for`; mime via `records.media_type_for`.
+- **Index** (`corpus.api.index`, per-corpus, in-memory, process-cached). Builds the facet tree (mime/origin-host/status/visibility/`composite:<ns>`, count-desc — the server-side `cxBuildFacets`), the typed `extended_fields` registry (`extended_fields.<f>.type` → the Console vocabulary `string|number|uri|date|bool|list|hash`, with value collection — the server-side `cxOverlayValues`), and filter/sort/paginate. Origins are faceted by **host** (a superset that also keys the overlay lookup, since overlay ids are hosts), because `derived_classifications` only emits `origin/<id>` for overlay-matched origins.
+- **Endpoints** (`/v1`): `corpora`; `{corpus}/records` (params `q,sort,offset,limit` + repeated `facet=<key>=<value>` / `field=<overlayKey>::<f>=<value>`); `{corpus}/facets`; `{corpus}/schema`; `{corpus}/records/{id}`; `{corpus}/artifacts/{id}` (`store.ensure_local` → `FileResponse`, GET+HEAD, range-served); `{corpus}/resolve?uri=corpus://…` (`resolver.resolve` → `FileResponse`; the functional-URI value must be fully percent-encoded — gotcha #68); `health`. **Write** routes (`POST check`/`submit`/`records/{id}/regions`) are stubbed `501` pending the submit + crop phases (the crop save lands as a decompose/compile or block-append + `corpus draft` round-trip).

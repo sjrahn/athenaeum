@@ -22,3 +22,14 @@ tools/corpus/**/__pycache__/
 tools/corpus/**/*.egg-info/
 tools/corpus/.pytest_cache/
 tools/corpus/.ruff_cache/
+
+# web (Angular) — node deps + build output (web/ source IS tracked)
+web/node_modules/
+web/dist/
+web/.angular/
+
+# vendored agent skills (re-installable: npx skills add https://github.com/angular/skills)
+.agents/
+.claude/skills/angular-developer
+.claude/skills/angular-new-app
+skills-lock.json

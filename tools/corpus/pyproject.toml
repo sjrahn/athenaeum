@@ -41,9 +41,14 @@ azure          = ["azure-storage-blob>=12.20", "azure-identity>=1.17"]
 s3             = ["boto3>=1.34"]
 crypto         = ["cryptography>=48.0.0"]
 claude-session = []
+# Read-only HTTP API over the corpus library (serves the Angular Corpus Console).
+# FastAPI/uvicorn are imported only inside `corpus.api`, never by the base library, so
+# the base install (and `import corpus.draft`) stays clean without this extra (gotcha #24).
+api            = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "python-multipart>=0.0.12"]
 
 [project.scripts]
 corpus = "corpus._cli:main"
+corpus-api = "corpus.api.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -90,6 +95,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "src/corpus/_cli/*.py" = ["E501", "SIM"]
 "src/corpus/_cli/__init__.py" = ["E501"]
+"src/corpus/api/*.py" = ["E501", "B008"]  # long route literals; FastAPI Query() in defaults is idiomatic
 "src/corpus/lint.py" = ["E501", "RUF001", "RUF002"]  # spec-typography (§, en-dash) in messages
 "src/corpus/recordbuild.py" = ["E501"]
 # Static regex/signature catalog — long compiled patterns + intentional mojibake

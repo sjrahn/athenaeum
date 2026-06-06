@@ -19,49 +19,54 @@ athenaeum/
 │   ├── NEW-CORPUS.md        # Corpus planning notes
 │   ├── APPLE-CLIENT-PLAN.md # Phased plan for the multiplatform Apple client
 │   └── APPLE-UX-NOTES.md    # Apple-client UX notes
-├── Cargo.toml               # Workspace root
-├── crates/
-│   ├── ath-core/            # Domain models, corpus loading, SQLite db, filtering, DAG, parsing, API types
-│   ├── ath-gui/             # egui viewer (native + WASM), thin HTTP client
-│   └── ath-server/          # axum HTTP server, in-memory SQLite, query endpoints
+├── web/                     # Corpus Console — Angular v22 SPA (the CURRENT viewer). Standalone
+│   │                        #   components on @angular/cdk + @angular/aria; signals + httpResource;
+│   │                        #   design tokens in src/styles/tokens.css. Responsive (760px breakpoint).
+│   └── src/app/{core,shell,browser,viewer,chips}/
+├── tools/corpus/            # Python corpus tooling (ath-corpus) — the data layer + the new API
+│   └── src/corpus/api/      # FastAPI read API behind the `[api]` extra (corpus.api) — the CURRENT server
+├── Cargo.toml               # Workspace root (RETIRED — see below)
+├── crates/                  # RETIRED Rust stack (egui/axum). Superseded by web/ + corpus.api; slated
+│   ├── ath-core/            #   for deletion once parity is confirmed. Don't extend; pre-v1.0 model.
+│   ├── ath-gui/             #   (old egui viewer)
+│   └── ath-server/          #   (old axum server — source/document/credibility/norm_conf model)
 └── .claude/skills/athenaeum/ # Skill state, logbook, gotchas
 ```
+
+**The viewer/server stack is now `web/` (Angular) + `tools/corpus`'s `corpus.api` (FastAPI over the corpus library).** The Rust `crates/` are retired — they serve the old corpus model (source/document kind, credibility, norm_conf) the v1.0 corpus layer dropped. Don't build on them.
 
 ## Common commands
 
 ```bash
-# Run the server (loads corpora into SQLite, serves API on :8080)
-cargo run -p ath-server
+# Run the API (FastAPI over the corpus library) — serves /v1 on :8099.
+# Map corpus ids to roots (one server can front several corpora). Needs the [api] extra.
+cd tools/corpus && uv run --extra api corpus-api serve \
+  --corpus corpus=../../corpus --corpus corpus-test=../../corpus-test \
+  --host 0.0.0.0 --port 8099
 
-# Run the desktop viewer (connects to server)
-cargo run -p ath-gui
+# Run the Angular viewer (dev server). The API base auto-follows window.location.hostname:8099.
+# Node >= 22.22.3 required for Angular v22 (a local Node 24 lives at ~/.local/opt/node — see gotchas).
+cd web && PATH=$HOME/.local/opt/node/bin:$PATH npx ng serve --host 0.0.0.0 --port 4200 --allowed-hosts true
 
-# Override server URL
-ATHENAEUM_SERVER=http://localhost:8080 cargo run -p ath-gui
+# Build / lint the web app
+cd web && PATH=$HOME/.local/opt/node/bin:$PATH npx ng build   # (ng lint)
 
-# Check all crates compile
-cargo check
-
-# Check WASM target compiles
-cargo check --target wasm32-unknown-unknown -p ath-gui
-
-# Build WASM (requires trunk)
-cd crates/ath-gui && trunk build
+# Corpus CLI (unchanged) + the API's base-install guard (gotcha #24 — must stay green)
+cd tools/corpus && uv run python -c "import corpus.draft"
 ```
 
-## Notable GUI libraries
+## Notable web/app stack (the Corpus Console)
 
-- **egui_taffy 0.12** — CSS flexbox layout engine. Used for submit panel two-column layout. Avoid wrapping individual widgets in `.ui()`/`.ui_infinite()` — use only for structural flex containers. See gotchas #11.
-- **egui_commonmark 0.23** — Markdown renderer for record body content.
-- **catppuccin theme** — Inlined in `crates/ath-gui/src/theme.rs` (catppuccin-egui crate doesn't support egui 0.34 yet). Switchable from status bar.
-- **Fira Code** — Embedded font (`crates/ath-gui/fonts/FiraCode-Regular.ttf`). Default font, switchable from status bar. Font size adjustable 8–24pt. See `crates/ath-gui/src/fonts.rs`.
-- **egui_extras** — Image loaders (`install_image_loaders()` required at startup). JPEG requires explicit `image` crate feature.
+- **Angular v22** — standalone components, signals, **`httpResource`** for reactive fetch, `ChangeDetectionStrategy.OnPush`, native control flow (`@if`/`@for`/`@switch`). Follow the official `angular-developer` skill (`npx skills add https://github.com/angular/skills`).
+- **`@angular/cdk` + `@angular/aria`** — component base (no Bootstrap/Material/Tailwind). `cdk/layout` BreakpointObserver drives the 760px mobile breakpoint (`core/viewport.ts`). The `@angular/aria` *headless directive* adoption (menu/listbox/tabs) is a deferred a11y pass — current components carry hand-rolled ARIA semantics.
+- **Design tokens** — `web/src/styles/tokens.css`, ported verbatim from the Claude Design system (JetBrains Mono + IBM Plex Sans; warm-paper light / ink dark; square corners; hairlines; no shadows except true floats; no animation). The single source of visual truth — don't restyle.
+- **Real artifact rendering** — PDFs via the API's `resolve?page=N` rasterization (no pdf.js), native `<video>`/`<audio>` (range-streamed), `<img>`, sandboxed `<iframe>` for HTML snapshots, fetched text for md/json/eml.
 
 ## Key design principles
 
 - **The specs are `spec-athenaeum.md` (architecture + codex/compendium contracts) and `spec-corpus.md` (the corpus layer).** Code must conform to them. When code needs something a spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md` and `impl-codex.md`, not in the specs.
-- **Two corpora, always separate.** `../corpus-private` and `../corpus-public` are hardcoded in ath-server. They are distinct collections with a corpus switcher, never merged.
-- **Client-server architecture.** Both desktop and web targets are HTTP clients. The GUI never reads the filesystem directly.
-- **SQLite is in-memory.** Rebuilt from corpus files on every server start. It's a query engine, not a data store.
+- **Corpora are separate, switchable.** The API maps corpus *ids → roots* (`corpus.api.config`); a server can front several (e.g. `../corpus` prod + `../corpus-test`). The web app's corpus tabs + endpoint switcher key off `GET /v1/corpora`. Legacy `../corpus-public`/`../corpus-private` are pre-v1.0 schema and not served.
+- **The API wraps the library — no reimplementation.** `corpus.api` serializes what `records`/`derived_views`/`schemas`/`resolver`/`store` already produce. It builds a small per-corpus in-memory index for facets/filter (rebuilt on load), not a separate data store.
+- **The frontend talks only to the API.** The Angular app never reads the filesystem; artifact bytes come from `GET /v1/{corpus}/artifacts/{id}` and functional URIs from `GET /v1/{corpus}/resolve?uri=…` (fully percent-encode the `uri` value — gotcha).
 - **Parse tolerantly.** Log and skip unparseable records rather than failing the whole corpus.
-- **Source and document records are conceptually different.** They have distinct frontmatter fields, distinct detail views, and distinct filter sets.
+- **The corpus layer is flat artifact↔record (v1.0).** No source/document kind, no credibility, no norm_conf, no standalone tags — those were the old (retired) Rust model. Records are artifacts + their markdown proxy; embeds are embedded transports (directly addressed) vs derived self-slices (materialized on demand).

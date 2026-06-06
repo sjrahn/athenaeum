@@ -1,0 +1,45 @@
+/* Global base — imports the design tokens, then the few inline rules the
+   Corpus Console prototype carried in its <style> block. */
+@import './styles/tokens.css';
+
+html, body { height: 100%; margin: 0; }
+body {
+  background: #f5f3ee;
+  font-family: var(--mono);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+input, select, button { font-family: var(--mono); }
+button { white-space: nowrap; }
+.cx-tabs > * { white-space: nowrap; }
+.cx-meta > span { white-space: nowrap; }
+select { -webkit-appearance: none; appearance: none; padding-right: 6px; cursor: pointer; }
+@keyframes cxpulse { 0%,100% { opacity: 0.45; } 50% { opacity: 1; } }
+::selection { background: var(--accent-soft); }
+
+/* square accent focus ring (keyboard-forward, matches the technical voice) */
+:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* ---- mobile / touch affordances (breakpoint: 760px) ---- */
+/* track the real visible viewport (mobile url bars) */
+@supports (height: 100dvh) {
+  .cx-app-root { height: 100dvh !important; }
+}
+@media (max-width: 760px) {
+  input, select, textarea { font-size: 16px !important; } /* prevent zoom-on-focus */
+  .cx-hovercard { display: none !important; }             /* no floating preview on touch */
+  .cx-tap { min-height: 40px !important; }                /* roomier rail rows for fingers */
+  .cx-row { min-height: 50px !important; font-size: 13px !important;
+    padding-top: 7px !important; padding-bottom: 7px !important; }
+  .cx-gallery { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; padding: 10px !important; }
+  .cx-cards { padding: 10px !important; }
+  .cx-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .cx-tabs > * { padding-top: 11px !important; padding-bottom: 11px !important; }
+}
+/* thin scrollbars so dense rails don't eat space */
+.cx-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
+.cx-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 0; }
+.cx-scroll::-webkit-scrollbar-track { background: transparent; }
+@keyframes cxsheetin { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes cxdrawerin { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes cxfadein { from { opacity: 0; } to { opacity: 1; } }
