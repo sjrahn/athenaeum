@@ -18,7 +18,7 @@ from corpus import mime as mime_mod
 from corpus import paths, records, resolver
 from corpus.api import serialize
 from corpus.api.config import ApiConfig, CorpusEntry, load_config
-from corpus.api.index import get_index
+from corpus.api.index import get_index, parse_cond, parse_range
 from corpus.store import ArtifactMissing, get_store
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -79,6 +79,45 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
     def schema(corpus: str) -> dict:
         idx = get_index(corpus_or_404(corpus))
         return idx.schema_registry()
+
+    @app.get("/v1/{corpus}/fields")
+    def fields(corpus: str) -> list[dict]:
+        """The whole-corpus typed field registry (core + overlay extended fields) with
+        global per-type stats — the workbench's field controls + ⌘K palette read this."""
+        idx = get_index(corpus_or_404(corpus))
+        return idx.fields()
+
+    @app.get("/v1/{corpus}/workbench")
+    def workbench(
+        corpus: str,
+        q: str = "",
+        view: str = "all",
+        sort: str = "recent",
+        offset: int = 0,
+        limit: int = 200,
+        facet: list[str] = Query(default=[]),
+        cond: list[str] = Query(default=[]),
+        range: str = "",
+    ) -> dict:
+        """One combined query driving every workbench pane (records · drill-down facet
+        stack · timeline bins · available fields · overview) over the narrowed set."""
+        idx = get_index(corpus_or_404(corpus))
+        facets_sel: dict[str, set[str]] = {}
+        for spec in facet:
+            key, sep, value = spec.partition("=")
+            if sep:
+                facets_sel.setdefault(key, set()).add(value)
+        conds = [c for c in (parse_cond(spec) for spec in cond) if c is not None]
+        return idx.workbench(
+            q=q,
+            saved_view=view,
+            facets=facets_sel,
+            conds=conds,
+            rng=parse_range(range),
+            sort=sort,
+            offset=offset,
+            limit=limit,
+        )
 
     @app.get("/v1/{corpus}/records")
     def list_records(

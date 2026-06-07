@@ -210,7 +210,7 @@ def _captured(post: Any) -> str | None:
     return None
 
 
-def _artifact_size(
+def artifact_size(
     corpus_root: Path, record_id: str, mime: str, store: ArtifactStore | None
 ) -> int | None:
     if not store or not record_id or not mime:
@@ -236,7 +236,7 @@ def record_detail(
     mime = records.media_type_for(post)
     artifact = records.artifact_block(post) or {}
     artifact_fields = dict(artifact.get("fields") or {})
-    size = _artifact_size(corpus_root, record_id, mime, store)
+    size = artifact_size(corpus_root, record_id, mime, store)
     ext = mime_mod.extension_for(mime) if mime else "bin"
 
     hashes = {
