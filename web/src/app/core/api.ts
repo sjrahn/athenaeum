@@ -12,6 +12,19 @@ export interface RecordsRequest {
   fields: string[]; // "overlayKey::field=value"
 }
 
+export interface WorkbenchRequest {
+  base: string;
+  corpus: string;
+  q: string;
+  view: string;
+  sort: string;
+  offset: number;
+  limit: number;
+  facets: string[]; // "facetKey=value"
+  conds: string[]; // "fid~type~op~value"
+  range: string; // "loMs,hiMs" | ""
+}
+
 /**
  * Pure URL builders for the `corpus.api` server. The store feeds these into
  * `httpResource(() => url)` so fetches re-run reactively when the URL changes.
@@ -46,6 +59,26 @@ export class CorpusApiService {
     for (const f of req.facets) p.append('facet', f);
     for (const f of req.fields) p.append('field', f);
     return `${req.base}/${req.corpus}/records?${p}`;
+  }
+
+  /** Combined workbench query — records + drill-down facet stack + timeline + available
+   *  fields + overview, all over the narrowed set. */
+  workbenchUrl(req: WorkbenchRequest): string {
+    const p = new URLSearchParams();
+    if (req.q) p.set('q', req.q);
+    p.set('view', req.view);
+    p.set('sort', req.sort);
+    p.set('offset', String(req.offset));
+    p.set('limit', String(req.limit));
+    for (const f of req.facets) p.append('facet', f);
+    for (const c of req.conds) p.append('cond', c);
+    if (req.range) p.set('range', req.range);
+    return `${req.base}/${req.corpus}/workbench?${p}`;
+  }
+
+  /** Whole-corpus typed field registry (global stats) for the field controls + palette. */
+  fieldsUrl(base: string, corpus: string): string {
+    return `${base}/${corpus}/fields`;
   }
 
   recordUrl(base: string, corpus: string, id: string): string {

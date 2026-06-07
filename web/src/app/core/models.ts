@@ -159,3 +159,80 @@ export interface Region {
   t0?: number;
   t1?: number;
 }
+
+// ---- workbench wire types (see tools/corpus/src/corpus/api/index.py workbench()) ----
+
+export type CondOp = 'between' | 'contains' | 'in' | 'is';
+
+/** A typed "narrow on a field" condition. `value` is `[lo,hi]` (between, number or epoch
+ *  ms for dates) | substring (contains) | string[] (in) | boolean (is). */
+export interface Cond {
+  fid: string;
+  type: string; // number | date | string | list | bool | uri | hash
+  op: CondOp;
+  value: unknown;
+}
+
+/** Whole-corpus per-type statistics for a field control (the design's `field.stats`). */
+export interface FieldStats {
+  type: string;
+  min?: number;
+  max?: number;
+  distinct?: number;
+  bins?: number[];
+  binMax?: number;
+  values?: { v: string; n: number }[];
+}
+
+/** A typed field in the registry (`GET /fields`): core baseline + every overlay field. */
+export interface FieldStat {
+  id: string;
+  key: string | null; // overlay key (mime/… origin/… composite/…/…) or null for core
+  group: string; // core | mime | origin | composite
+  groupLabel: string;
+  field: string;
+  label: string;
+  type: string;
+  coverage: number;
+  stats: FieldStats;
+}
+
+/** A ledger row (records[] of the workbench response): summary + size + segment count. */
+export interface WorkbenchRow extends RecordSummary {
+  size: number | null; // artifact bytes
+  segments: number;
+}
+
+export interface TimelineBin {
+  n: number;
+  normalized: number;
+  draft: number;
+  stub: number;
+}
+export interface TimelineData {
+  span: [number, number]; // full captured span [minMs, maxMs]
+  binCount: number;
+  bins: TimelineBin[];
+  inRange: {
+    count: number;
+    normalized: number;
+    drafts: number;
+    stubs: number;
+    origins: number;
+    spanDays: number;
+  };
+}
+
+export interface OverviewData {
+  headline: { records: number; pctNormalized: number; sizeMB: number; spanDays: number };
+  dists: Record<string, [string, number][]>; // byMime | byStatus | byAtom | byOrigin | byGenre
+}
+
+export interface WorkbenchResponse {
+  total: number;
+  records: WorkbenchRow[];
+  facetStack: Facet[]; // status · mime · embedmime · origin · composite:* · visibility
+  timeline: TimelineData;
+  availableFields: string[]; // field ids gated to the narrowed set
+  overview: OverviewData;
+}

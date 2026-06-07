@@ -1,7 +1,14 @@
 // Pure display helpers ported from the prototype's corpus-data.jsx
 // (cxMime / cxParseAddr / cxFmtVal / cxOverlayKey / CX_ATOM / type colors).
 
-import { Address, RecordSummary, RecordDetail, Region } from './models';
+import {
+  Address,
+  RecordSummary,
+  RecordDetail,
+  Region,
+  SectionNode,
+  SegmentNode,
+} from './models';
 
 export interface MimeInfo {
   label: string;
@@ -59,6 +66,43 @@ export const TYPE_COLOR: Record<string, string> = {
 
 export function titleFor(r: RecordSummary | RecordDetail): string {
   return r.title || `(untitled — ${r.status})`;
+}
+
+/** A content segment flattened with its owning section + a stable index. */
+export interface FlatSeg {
+  seg: SegmentNode;
+  section: SectionNode | null;
+  idx: number;
+}
+
+/** Stable per-segment key (atom + first address) — the synced-highlight identity. */
+export function segKey(seg: SegmentNode): string {
+  return seg.atom + ':' + firstAddr(seg.address);
+}
+
+/** Flatten the content zone into ordered segments, each tagged with its section. */
+export function flatSegments(r: RecordDetail | null): FlatSeg[] {
+  const out: FlatSeg[] = [];
+  if (!r) return out;
+  let idx = 0;
+  for (const node of r.content) {
+    if (node.type === 'section') {
+      for (const seg of node.children) out.push({ seg, section: node, idx: idx++ });
+    } else {
+      out.push({ seg: node, section: null, idx: idx++ });
+    }
+  }
+  return out;
+}
+
+/** Bare host of a URI (www. stripped); schemeless URIs name themselves by scheme. */
+export function hostOf(uri: string): string {
+  try {
+    const u = new URL(uri);
+    return (u.hostname || u.protocol.replace(':', '')).replace(/^www\./, '');
+  } catch {
+    return (uri || '').split('/')[0] || '—';
+  }
 }
 
 /** Resolve the overlay schema key backing an applied facet, or null. */
@@ -124,4 +168,39 @@ export function fmtTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** Human artifact size from raw bytes (null -> em-dash). */
+export function fmtBytes(bytes: number | null): string {
+  if (bytes == null) return '—';
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  if (bytes >= 1000) return `${Math.round(bytes / 1000)} KB`;
+  return `${bytes} B`;
+}
+
+/** Epoch ms -> YYYY-MM-DD (UTC), for the timeline + date controls. */
+export function fmtDateMs(ms: number): string {
+  const d = new Date(ms);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+}
+
+/** YYYYMMDD / YYYY-MM-DD[...] -> epoch ms (UTC midnight), or null. */
+export function dateToMs(value: string | null): number | null {
+  if (!value) return null;
+  const s = String(value);
+  let y: number, mo: number, da: number;
+  if (/^\d{8}$/.test(s)) {
+    y = +s.slice(0, 4);
+    mo = +s.slice(4, 6);
+    da = +s.slice(6, 8);
+  } else {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (!m) return null;
+    y = +m[1];
+    mo = +m[2];
+    da = +m[3];
+  }
+  const t = Date.UTC(y, mo - 1, da);
+  return Number.isNaN(t) ? null : t;
 }

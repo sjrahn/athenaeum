@@ -95,6 +95,8 @@
   --sh-window: 0 24px 60px rgba(0,0,0,0.28), 0 2px 6px rgba(0,0,0,0.18);
   --sh-float: 0 30px 80px rgba(0,0,0,0.32);
   --sh-sheet: 0 -12px 32px rgba(0,0,0,0.20);
+  /* faint warm lift for a workbench pane detached (separated) from the central surface */
+  --sh-detach: 0 2px 6px rgba(60,45,15,0.06), 0 14px 32px rgba(60,45,15,0.10);
 }
 
 /* ============ THEME MAPS ============ */
