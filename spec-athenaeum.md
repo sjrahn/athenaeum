@@ -69,7 +69,7 @@ The system has three layers, each with a distinct purpose:
 | **Capture** | An encounter event recorded against an artifact. Re-encountering identical bytes records another capture on the existing artifact (the corpus tracks the provenance; see `spec-corpus.md`); the bytes themselves never move and never produce a new record. |
 | **Normalization** | Producing the artifact's text body — extraction (HTML→markdown, PDF→text), transcription (audio/video→text), description (image→text), or metadata summary (opaque binary). Faithful to the original. |
 | **Functional URI** | A composable URI scheme used in codex and compendium bodies. `corpus://{hash}` references an artifact (whole, by anchor `#section`, or by transformation `?page=4&crop=…`); `codex://{name}/{uuid}` references a codex record from a compendium footnote. Resolved at compile/render time. |
-| **Schema** | A corpus-layer reference document describing how to normalize or classify content. The corpus model organizes schemas into four namespaces (`mime` / `origin` / `atom` / `composite`), with MIME-base as the required floor and composite as the optional, corpus-author-driven layer; see `spec-corpus.md`. |
+| **Schema** | A corpus-layer reference document describing how to normalize or classify content. The corpus model organizes schemas into five namespaces (`mime` / `origin` / `atom` / `composite` / `context`), with MIME-base as the required floor, composite as the optional corpus-author-driven classification layer, and context for annotations; see `spec-corpus.md`. |
 
 ---
 
@@ -254,7 +254,7 @@ Compendium records carry the same minimal core fields as codex records (excludin
 
 #### 3.1.4 Issues
 
-Quality and completeness problems on artifacts (missing media, broken links, partial capture, content modified since publication, encoding corruption, format loss) are a corpus-layer concern — recorded as `issue` blocks and surfaced through the corpus's derived `issues` view, specified by **`spec-corpus.md`**. They are not record frontmatter in this spec.
+Quality and completeness problems on artifacts (missing media, broken links, partial capture, content modified since publication, encoding corruption, format loss) are a corpus-layer concern — recorded as `context` blocks in the `issue` namespace and surfaced through the corpus's derived `issues` view, specified by **`spec-corpus.md`**. They are not record frontmatter in this spec.
 
 #### 3.1.5 Extended Fields
 
@@ -325,7 +325,7 @@ Codex records are not embedded — when one codex record needs to draw on anothe
 
 ### 3.3 Schema Library
 
-Schemas — how an artifact's media type drives normalization, what fields are extracted, and how classification works — are a corpus-layer concern, specified by **`spec-corpus.md`**. The corpus model organizes them into four namespaces (`mime` / `origin` / `atom` / `composite`): MIME-base classification is the required data-contract floor, and custom (composite) classification is the optional, corpus-author-driven layer on top.
+Schemas — how an artifact's media type drives normalization, what fields are extracted, and how classification works — are a corpus-layer concern, specified by **`spec-corpus.md`**. The corpus model organizes them into five namespaces (`mime` / `origin` / `atom` / `composite` / `context`): MIME-base classification is the required data-contract floor, custom (composite) classification is the optional corpus-author-driven layer on top, and `context` carries annotations (issues, references).
 
 Custom classification is a *living curatorial artifact*: patterns that emerge while authoring codex records — a recurring source type, a credibility signal worth capturing — become new corpus classification schemas, applied retroactively by re-normalization so that subsequent authoring is richer. That feedback loop, where the codex layer surfaces signals that drive corpus classification, is the Curator's job (§5.5); the schema mechanics live in `spec-corpus.md`.
 

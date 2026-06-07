@@ -5,7 +5,7 @@ version: 1.0
 status: draft
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
-date_modified: 2026-05-30
+date_modified: 2026-06-05
 ---
 
 # Corpus Specification
@@ -127,8 +127,8 @@ A record is always at one of three statuses:
 | Status | Meaning | Stage that produced it |
 |---|---|---|
 | `stub` | Identity established; bytes persisted in the corpus's binary store; artifact block emitted; first origin block populated from capture context; content zone empty. | ingest |
-| `draft` | Media-type schema and any mechanical classifications applied; record body's content zone segmented per the media-type schema; mechanical classify and embed blocks emitted; drafter-detected issue blocks emitted. | draft |
-| `normalized` | Interpretive classifications applied; description authored; content zone re-segmented where the LLM judged appropriate; interpretive classify and issue blocks surfaced. | normalize |
+| `draft` | Media-type schema and any mechanical classifications applied; record body's content zone segmented per the media-type schema; mechanical classify and embed blocks emitted; drafter-detected issue context blocks emitted. | draft |
+| `normalized` | Interpretive classifications applied; description authored; content zone re-segmented where the LLM judged appropriate; interpretive classify and issue context blocks surfaced. | normalize |
 
 ### 4.2 Frontmatter
 
@@ -395,7 +395,7 @@ A segment carries a segment body only when that body is a faithful, lossless ren
 
 The atomic classification, if any, lives on the opener line as `<!--segment <atom>/<id>-->`. A segment carries exactly one atomic class id; when multiple representations apply to the same source region, each becomes its own segment with its own opener (and identity is the `(opener-id, address)` pair).
 
-Segment-scope issues live as standalone issue blocks in the annotations zone with an `address:` field pointing back to the segment — never inline on segment headers.
+Segment-scope issues live as standalone issue context blocks in the annotations zone with an `address:` field pointing back to the segment — never inline on segment headers.
 
 ###### The four content atoms
 
@@ -501,7 +501,7 @@ Classifications attach at three structural scopes — record, section, segment �
 
 A section carries **at most one** composite, on its opener — the section's identity (what this passage IS on its own terms).
 
-A richer model has been considered for **citations**, where a borrowed section would carry both an *identity* composite (what the passage is) and a *role* composite (what it does in the host record), so a host can integrate quoted, embedded, or forwarded material without losing the material's own identity. That dual-composite form is **not yet reconciled** with the one-composite-on-the-opener grammar and is not specified here; treat section composites as single-identity for now. Citation lineage in the interim is carried by the citation field group (§4.4.4) and the three-tier ladder (§4.4.5).
+A richer model has been considered for **citations**, where a borrowed section would carry both an *identity* composite (what the passage is) and a *role* composite (what it does in the host record), so a host can integrate quoted, embedded, or forwarded material without losing the material's own identity. That dual-composite form is **not yet reconciled** with the one-composite-on-the-opener grammar and is not specified here; treat section composites as single-identity for now. Citation lineage in the interim is carried by the citation field group (§4.4.4) and the three-tier ladder (§4.4.5) — whose segment-scoped realization now ships as the `reference` context block (§4.3.3.3). What remains deferred is only the section-scope identity+role dual composite.
 
 #### 4.4.4 Scope-driven fidelity
 
@@ -622,7 +622,7 @@ Resolver results may be cached. Cache lifetime, eviction policy, and storage loc
 
 ## 7. Schema declarations
 
-§3 introduced the four namespaces and the schema-loader resolution chain. This section specifies what each namespace's schemas declare.
+§3 introduced the five namespaces and the schema-loader resolution chain. This section specifies what the four schema-declaration namespaces (`mime`, `origin`, `atom`, `composite`) declare; the `context` umbrella's overlays are specified alongside the context block in §4.3.3.
 
 ### 7.1 The mime namespace
 
@@ -785,8 +785,8 @@ The `<algo>:<hex>` value records which algorithm produced it, so a record self-d
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
 | `ingest` | blake3 of bytes → `id`; additional algorithms per the mime schema's `transport_algos` → `transport:`; MIME detect → artifact-block opener; evaluate the mime schema's `artifact_kind`; emit stub with first origin block from capture context; persist binary in the corpus's binary store. | `<pkg>.ingest@<v>` |
-| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then each mechanical classification in declared order (each emits/fills its classify block — metadata only); drafter-detected issue blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>`, then `<pkg>.classify.<namespace>-<id>@<v>` per mechanical classification |
-| `normalize` | Interpretive classifications run via LLM; may fill classify-block fields, re-segment the content zone, surface issue blocks; description authored. | `<model-id>` |
+| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then each mechanical classification in declared order (each emits/fills its classify block — metadata only); drafter-detected issue context blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>`, then `<pkg>.classify.<namespace>-<id>@<v>` per mechanical classification |
+| `normalize` | Interpretive classifications run via LLM; may fill classify-block fields, re-segment the content zone, surface issue context blocks; description authored. | `<model-id>` |
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
 
@@ -823,8 +823,8 @@ Each re-run appends a new `touch[]` entry.
 
 | What survives | What is reset |
 |---|---|
-| `id`, `transport` — byte-intrinsic. | `description` → empty; `canonical`, `perceptual` (record-scope). |
-| The artifact block's opener (the MIME) and the first origin blocks with their `uri:` history. | The artifact block's body fields, all classify blocks, all embed blocks, all sections/segments, all issue blocks. |
+| `id`, `transport` — byte-intrinsic. | `title` and `description` → empty; `canonical`, `perceptual` (record-scope). |
+| The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's body fields, all classify blocks, all embed blocks, all sections/segments, all context blocks. |
 | `visibility`. | `status` → `stub`; record body's content zone → empty. |
 | `touch[]` collapses to its first entry (the original ingest touch) plus the re-stub touch. | |
 | The persisted bytes. | |
@@ -859,7 +859,7 @@ on <!--classify <namespace>/<id>[/<subtype>]-->:
 dedupe preserving body order
 ```
 
-Embed blocks and issue blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications. The walk does not distinguish provenance (§4.4.6): a `provenance: auto` classify block contributes its `<namespace>/<id>` entry exactly like an asserted one, so auto classes surface to `find --classification` and the normalizer for free.
+Embed blocks and context blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications. The walk does not distinguish provenance (§4.4.6): a `provenance: auto` classify block contributes its `<namespace>/<id>` entry exactly like an asserted one, so auto classes surface to `find --classification` and the normalizer for free.
 
 A record carrying an artifact block, one qualified origin block, and one classify block yields:
 
@@ -937,7 +937,7 @@ Export is idempotent and untracked. The output layout (filenames, directory stru
 
 Genuinely deferred items for this spec version:
 
-- **OCR for scanned PDFs** — the deterministic draft step records the scanned flag and an issue block; OCR is future work.
+- **OCR for scanned PDFs** — the deterministic draft step records the scanned flag and an issue context block; OCR is future work.
 - **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified. (Building it requires reconciling the `<algo>:<hex>` embed `transport` encoding with the bare-hex record `id` — strip the prefix and confirm `algo == blake3` before matching.)
 - **Range-aware navigation** for content the resolver doesn't materialize.
 - **`page=<N>-<M>` ranges** and other open transforms beyond §6.2.
@@ -1080,6 +1080,8 @@ Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single addr
 | **Namespace** | One of `mime`, `origin`, `atom`, `composite`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
 | **Mechanical classification** | `kind: mechanical` schema + associated script. Runs at draft time. |
 | **Interpretive classification** | `kind: interpretive` schema with LLM-guidance prose. Runs at normalize time. |
+| **`classify_when`** | A deterministic membership predicate on a composite schema (§7.4). When it matches a record's fact base, the drafter auto-assigns the class at draft time and stamps the classify block `provenance: auto`. Orthogonal to `kind`. |
+| **Provenance** | On a classify or context block (§4.4.6): `provenance: auto` = engine-stamped (a `classify_when` match or a detector), stripped and regenerated on every re-draft / reclassify; absent or `asserted` = human/normalizer, never auto-touched. |
 | **Self-contained / decomposable** | Container disposition declared by the mime schema (`artifact_kind`, required). `self_contained` produces one record (lifting nested-stream metadata when present; also the disposition for ordinary single-content files); `decomposable` explodes a raw archive into one record per member. |
 | **Mode** | A mime schema's drafting behavior: `extract-only` or `body-draft`. Mechanical classifications are metadata-only and never body-draft. |
 | **Capture, Ingest, Draft, Normalize** | Pipeline stages. |
