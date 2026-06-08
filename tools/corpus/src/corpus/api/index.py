@@ -217,6 +217,8 @@ class CorpusIndex:
     # full captured-date span [minMs, maxMs] (padded ±1 day), stable for the timeline axis
     full_span: tuple[int, int] = (0, _DAYMS)
     _fields_cache: list[dict[str, Any]] | None = None
+    _by_id_cache: dict[str, IndexedRecord] | None = None
+    _uri_index_cache: dict[str, str] | None = None
 
     # ---- build ----
 
@@ -678,7 +680,111 @@ class CorpusIndex:
 
     @staticmethod
     def _row(it: IndexedRecord) -> dict[str, Any]:
-        return {**it.summary, "size": it.size, "segments": it.segment_count}
+        name = serialize.transport_name(it.summary.get("id") or "", it.summary.get("mime") or "")
+        return {
+            **it.summary,
+            "size": it.size,
+            "segments": it.segment_count,
+            "transport_name": name,
+        }
+
+    # ---- graph (record connections) ----
+
+    def _by_id(self) -> dict[str, IndexedRecord]:
+        if self._by_id_cache is None:
+            self._by_id_cache = {
+                str(it.summary.get("id")): it for it in self.items if it.summary.get("id")
+            }
+        return self._by_id_cache
+
+    def _uri_index(self) -> dict[str, str]:
+        """The corpus-wide URI → record-id index (origin URIs), built once and cached on
+        the index instance — so the graph route stays cheap. Refreshed implicitly: a write
+        rebuilds the whole CorpusIndex (a fresh instance), dropping this cache with it."""
+        if self._uri_index_cache is None:
+            self._uri_index_cache = records.build_uri_index(self.entry.root)
+        return self._uri_index_cache
+
+    def graph(self, post: Any) -> dict[str, Any]:
+        """The record's connection graph: resolved (origins · embeds · classification-shared
+        records · captured cross-refs) + uncaptured outbound links. `post` is the loaded
+        record (the route loads it for the existence check, same as record_detail)."""
+        from corpus import graph as graph_mod
+
+        rid = str(post.metadata.get("id") or "")
+        resolved: list[dict[str, Any]] = []
+
+        for i, origin in enumerate(records.iter_origin_blocks(post)):
+            fields = origin.get("fields") or {}
+            uri = fields.get("uri")
+            first = (uri[0] if isinstance(uri, list) and uri else uri) or ""
+            host = serialize.host_of(str(first)) if first else (origin.get("id") or "origin")
+            resolved.append(
+                {
+                    "id": f"origin:{i}",
+                    "kind": "origin",
+                    "label": host,
+                    "sub": f"origin · {origin.get('id') or ''}".rstrip(" ·"),
+                    "recId": None,
+                    "url": str(first) or None,
+                }
+            )
+
+        for i, embed in enumerate(records.iter_embed_blocks(post)):
+            mt = embed.get("media_type") or ""
+            efields = embed.get("fields") or {}
+            sub = str(efields.get("alt") or embed.get("address") or "")[:40]
+            resolved.append(
+                {
+                    "id": f"embed:{i}",
+                    "kind": "embed",
+                    "label": f"{mime_short(mt)} embed",
+                    "sub": sub or "embed",
+                    "recId": None,
+                    "url": None,
+                }
+            )
+
+        me = self._by_id().get(rid)
+        if me and me.composites:
+            mine = set(me.composites)
+            shared = [
+                it
+                for it in self.items
+                if str(it.summary.get("id")) != rid and mine.intersection(it.composites)
+            ]
+            shared.sort(key=lambda it: it.captured, reverse=True)
+            for it in shared[:8]:
+                sid = str(it.summary.get("id"))
+                resolved.append(
+                    {
+                        "id": f"rec:{sid}",
+                        "kind": "record",
+                        "label": it.summary.get("title") or self._row(it)["transport_name"],
+                        "sub": "shares classification",
+                        "recId": sid,
+                        "url": None,
+                    }
+                )
+
+        uncaptured: list[dict[str, Any]] = []
+        for n, link in enumerate(graph_mod.build_links(self.entry.root, post, uri_index=self._uri_index())):
+            node = {
+                "id": f"link:{n}",
+                "kind": "link",
+                "label": link["url"],
+                "host": link["host"],
+                "url": link["url"],
+                "recId": link["recId"],
+            }
+            if link["recId"]:
+                node["sub"] = f"captured · {link['host']}"
+                resolved.append(node)
+            else:
+                node["sub"] = f"uncaptured · {link['host']}"
+                uncaptured.append(node)
+
+        return {"resolved": resolved, "uncaptured": uncaptured}
 
     def _facet_stack(
         self, scope: list[IndexedRecord], sel: dict[str, set[str]]

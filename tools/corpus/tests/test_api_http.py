@@ -123,6 +123,10 @@ def test_workbench_shape(client):
     assert body["total"] == 2
     for key in ("records", "facetStack", "timeline", "availableFields", "overview"):
         assert key in body
+    # every row carries the canonical artifact filename (B1) for the untitled placeholder
+    assert all("transport_name" in rec for rec in body["records"])
+    img = next(rec for rec in body["records"] if rec["id"] == _IMG_ID)
+    assert img["transport_name"] == "aaaaaaaaaaaa.png"
 
 
 def test_records_and_detail(client):
@@ -149,6 +153,18 @@ def test_artifact_bytes_get_and_head(client):
 def test_not_found(client):
     assert client.get("/v1/nope/records").status_code == 404
     assert client.get(f"/v1/test/records/{'e' * 64}").status_code == 404
+
+
+def test_graph_route(client):
+    r = client.get(f"/v1/test/records/{_IMG_ID}/graph")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {"resolved", "uncaptured"}
+    # the image record's origin shows as a resolved node; its body carries no outbound URLs
+    origins = [n for n in body["resolved"] if n["kind"] == "origin"]
+    assert origins and origins[0]["label"] == "example.com"
+    assert body["uncaptured"] == []
+    assert client.get(f"/v1/test/records/{'e' * 64}/graph").status_code == 404
 
 
 # ---------- write route: /regions ---------- #

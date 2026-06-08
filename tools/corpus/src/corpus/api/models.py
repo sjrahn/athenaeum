@@ -37,3 +37,22 @@ class SaveRegionsResponse(BaseModel):
     addresses: list[str]
     status: str | None
     touch: list[str]
+
+
+class GraphNode(BaseModel):
+    """One connection node. `kind` is origin | embed | record | link; `recId` is set when the
+    node opens a corpus record (a classification peer or a captured cross-reference); `url` /
+    `host` are present for origin + link nodes."""
+
+    id: str
+    kind: Literal["origin", "embed", "record", "link"]
+    label: str
+    sub: str
+    recId: str | None = None
+    url: str | None = None
+    host: str | None = None
+
+
+class GraphResponse(BaseModel):
+    resolved: list[GraphNode] = Field(default_factory=list)
+    uncaptured: list[GraphNode] = Field(default_factory=list)

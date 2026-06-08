@@ -20,7 +20,11 @@ from corpus import regions as corpus_regions
 from corpus.api import serialize
 from corpus.api.config import ApiConfig, CorpusEntry, load_config
 from corpus.api.index import get_index, parse_cond, parse_range
-from corpus.api.models import SaveRegionsRequest, SaveRegionsResponse
+from corpus.api.models import (
+    GraphResponse,
+    SaveRegionsRequest,
+    SaveRegionsResponse,
+)
 from corpus.store import ArtifactMissing, get_store
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -163,6 +167,18 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
         post = records.load(path)
         store = get_store(entry.root)
         return serialize.record_detail(entry.root, post, entry.id, store=store)
+
+    @app.get("/v1/{corpus}/records/{record_id}/graph", response_model=GraphResponse)
+    def record_graph(corpus: str, record_id: str) -> GraphResponse:
+        """The record's connections (graph mode): resolved origins/embeds/classification
+        peers/captured cross-refs + uncaptured outbound links extracted from its body."""
+        entry = corpus_or_404(corpus)
+        require_hex(record_id)
+        path = paths.record_path(entry.root, record_id)
+        if not path.is_file():
+            raise HTTPException(404, f"record {record_id} not found")
+        post = records.load(path)
+        return GraphResponse(**get_index(entry).graph(post))
 
     # ---- artifact bytes + functional-URI resolution ----
 

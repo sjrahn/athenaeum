@@ -210,6 +210,14 @@ def _captured(post: Any) -> str | None:
     return None
 
 
+def transport_name(record_id: str, mime: str) -> str:
+    """The canonical short artifact filename (``<id[:12]>.<ext>``). Single source of
+    truth for both the detail's ``transport.name`` and the ledger row's untitled
+    placeholder, so the two can't drift."""
+    ext = mime_mod.extension_for(mime) if mime else "bin"
+    return f"{record_id[:12]}.{ext}" if record_id else f"artifact.{ext}"
+
+
 def artifact_size(
     corpus_root: Path, record_id: str, mime: str, store: ArtifactStore | None
 ) -> int | None:
@@ -238,6 +246,7 @@ def record_detail(
     artifact_fields = dict(artifact.get("fields") or {})
     size = artifact_size(corpus_root, record_id, mime, store)
     ext = mime_mod.extension_for(mime) if mime else "bin"
+    name = transport_name(record_id, mime)
 
     hashes = {
         k: post.metadata.get(k)
@@ -254,7 +263,7 @@ def record_detail(
         "mime": mime,
         "corpus": corpus_id,
         "transport": {
-            "name": f"{record_id[:12]}.{ext}" if record_id else f"artifact.{ext}",
+            "name": name,
             "mime": mime,
             "size": size,
             "ext": ext,
