@@ -1,7 +1,11 @@
-// Top · Timeline — brush a captured-date RANGE across the corpus, drop a DAY cursor,
-// zoom presets (fit/3M/1M/2W/1W). Collapses to a strip; expands to stacked status lanes
-// with a summary stat row. Charts the server-computed bins over the in-scope set (minus
-// its own range, so the histogram shows the full distribution you brush within).
+// Top · Timeline — three coupled concerns kept distinct (the design's chat-5 model):
+//   • WINDOW (tlRange, the FILTER): drag on an empty track to brush a fresh window; drag the
+//     band/handles to move/resize it. Narrows the ledger.
+//   • ZOOM (tlView, the VISIBLE axis only — NOT a filter): the fit/3M/1M/2W/1W presets rescale
+//     what's shown; a preset narrower than the active window is disabled; ‹ › pan when zoomed.
+//   • DAY (tlDay, highlight only): a plain click drops a day cursor (inside the window if one is
+//     active); it highlights matching ledger rows and never filters.
+// Charts the server-computed bins (the in-scope set minus its own range) clipped to the view.
 
 import {
   ChangeDetectionStrategy,
@@ -23,6 +27,10 @@ interface Tick {
   t: number;
   label: string;
 }
+interface VBin {
+  b: { n: number; normalized: number; draft: number; stub: number };
+  center: number;
+}
 
 @Component({
   selector: 'wb-timeline',
@@ -40,16 +48,23 @@ interface Tick {
         }
         <span class="sp"></span>
         @if (range()) {
-          <span class="chip acc">range <b>{{ fmt(lo()) }} – {{ fmt(hi()) }}</b>
+          <span class="chip acc">window <b>{{ fmt(lo()) }} – {{ fmt(hi()) }}</b>
             <span class="x" (click)="store.setTlRange(null)">×</span></span>
         }
         @if (day()) {
           <span class="chip warn">day <b>{{ fmt(day()!) }}</b>
             <span class="x" (click)="store.setTlDay(null)">×</span></span>
         }
+        @if (view()) {
+          <div class="seg pan">
+            <button (click)="pan(-1)" title="pan earlier">‹</button>
+            <button (click)="pan(1)" title="pan later">›</button>
+          </div>
+        }
         <div class="seg">
           @for (p of presets; track p[0]) {
-            <button [class.on]="presetActive(p[1])" (click)="applyPreset(p[1])">{{ p[0] }}</button>
+            <button [class.on]="presetActive(p[1])" [disabled]="presetDisabled(p[1])"
+              (click)="applyPreset(p[1])">{{ p[0] }}</button>
           }
         </div>
       </div>
@@ -71,37 +86,43 @@ interface Tick {
           <div #track class="track" [style.height.px]="mode() === 'lanes' ? 84 : 56"
             (mousedown)="onTrackDown($event)">
             <div class="bars">
-              @for (b of bins(); track $index) {
+              @for (v of visibleBins(); track $index) {
                 @if (mode() === 'lanes') {
-                  <div class="lane" [style.opacity]="inSel($index) ? 1 : 0.4">
-                    <span [style.height.px]="seg(b.stub)" style="background: var(--dim)"></span>
-                    <span [style.height.px]="seg(b.draft)" style="background: var(--warn)"></span>
-                    <span [style.height.px]="seg(b.normalized)"
-                      [style.background]="inSel($index) ? 'var(--accent)' : 'var(--border-strong)'"></span>
+                  <div class="lane" [style.opacity]="inSel(v.center) ? 1 : 0.4">
+                    <span [style.height.px]="seg(v.b.stub)" style="background: var(--dim)"></span>
+                    <span [style.height.px]="seg(v.b.draft)" style="background: var(--warn)"></span>
+                    <span [style.height.px]="seg(v.b.normalized)"
+                      [style.background]="inSel(v.center) ? 'var(--accent)' : 'var(--border-strong)'"></span>
                   </div>
                 } @else {
-                  <div class="bar" [style.height.px]="barH(b.n)"
-                    [style.background]="inSel($index) ? 'var(--accent)' : 'var(--border-strong)'"
-                    [style.opacity]="inSel($index) ? 0.85 : 0.4"></div>
+                  <div class="bar" [style.height.px]="barH(v.b.n)"
+                    [style.background]="inSel(v.center) ? 'var(--accent)' : 'var(--border-strong)'"
+                    [style.opacity]="inSel(v.center) ? 0.85 : 0.4"></div>
                 }
               }
             </div>
-            <div class="band" [style.left.%]="pct(lo())" [style.width.%]="pct(hi()) - pct(lo())"
-              (mousedown)="dragBand($event)"></div>
-            <div class="handle" [style.left.%]="pct(lo())" (mousedown)="dragHandle('lo', $event)">
-              <span class="bar2"></span><span class="knob"></span>
-            </div>
-            <div class="handle" [style.left.%]="pct(hi())" (mousedown)="dragHandle('hi', $event)">
-              <span class="bar2"></span><span class="knob"></span>
-            </div>
-            @if (day() != null && day()! >= min() && day()! <= max()) {
+            @if (range() && bandW() > 0) {
+              <div class="band" [style.left.%]="bandLeft()" [style.width.%]="bandW()"
+                (mousedown)="dragBand($event)"></div>
+            }
+            @if (inView(lo())) {
+              <div class="handle" [style.left.%]="pct(lo())" (mousedown)="dragHandle('lo', $event)">
+                <span class="bar2"></span><span class="knob"></span>
+              </div>
+            }
+            @if (inView(hi())) {
+              <div class="handle" [style.left.%]="pct(hi())" (mousedown)="dragHandle('hi', $event)">
+                <span class="bar2"></span><span class="knob"></span>
+              </div>
+            }
+            @if (day() != null && inView(day()!)) {
               <div class="day" [style.left.%]="pct(day()!)" (mousedown)="dragHandle('day', $event)">
                 <span class="bar3"></span><span class="tri"></span>
               </div>
             }
           </div>
           @if (!day()) {
-            <button class="addday" (click)="store.setTlDay(dayFloor((lo() + hi()) / 2))">+ day cursor</button>
+            <button class="addday" (click)="store.setTlDay(dayFloor(dayAnchor()))">+ day cursor</button>
           }
           @if (mode() === 'lanes') {
             <div class="stats">
@@ -134,12 +155,14 @@ interface Tick {
     .seg button { height: 20px; padding: 0 8px; border: none; border-radius: 0; background: transparent;
       color: var(--muted); font-size: 10px; cursor: pointer; font-family: var(--mono); }
     .seg button.on { background: var(--accent-soft); color: var(--accent); }
+    .seg button:disabled { color: var(--border-strong); cursor: not-allowed; }
+    .seg.pan button { padding: 0 6px; }
     .track-wrap { flex: 1; min-height: 0; overflow: auto; padding: 8px 14px 4px; position: relative; }
     .lanes-key { display: flex; gap: 14px; padding-bottom: 4px; }
     .kk { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; color: var(--muted); }
     .sw { width: 8px; height: 8px; }
     .ticks { position: relative; height: 12px; margin-bottom: 3px; }
-    .tick { position: absolute; font-size: 8px; color: var(--dim); }
+    .tick { position: absolute; font-size: 8px; color: var(--dim); transform: translateX(-50%); white-space: nowrap; }
     .track { position: relative; user-select: none; touch-action: none; border-bottom: 1px solid var(--border); }
     .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 1px; }
     .bar { flex: 1; min-height: 2px; }
@@ -175,23 +198,49 @@ export class WbTimeline {
   ];
 
   readonly mode = this.store.tlMode;
-  readonly range = this.store.tlRange;
+  readonly range = this.store.tlRange; // the FILTER window
+  readonly view = this.store.tlView; // the visible ZOOM domain (null = full span)
   readonly day = this.store.tlDay;
   readonly tl = computed(() => this.store.wbTimeline());
   readonly span2 = computed<[number, number]>(() => this.tl()?.span ?? [0, DAYMS]);
   readonly min = computed(() => this.span2()[0]);
   readonly max = computed(() => this.span2()[1]);
+  // window bounds (default to the full span when no window is brushed)
   readonly lo = computed(() => this.range()?.[0] ?? this.min());
   readonly hi = computed(() => this.range()?.[1] ?? this.max());
+  // visible bounds (default to the full span when not zoomed)
+  readonly vlo = computed(() => this.view()?.[0] ?? this.min());
+  readonly vhi = computed(() => this.view()?.[1] ?? this.max());
+
   readonly bins = computed(() => this.tl()?.bins ?? []);
-  readonly binMax = computed(() => Math.max(1, ...this.bins().map((b) => b.n)));
+  readonly binCount = computed(() => this.tl()?.binCount || this.bins().length || 1);
+  readonly step = computed(() => (this.max() - this.min()) / Math.max(1, this.binCount()));
+  /** Bins whose time-center falls inside the visible domain, each tagged with its center. */
+  readonly visibleBins = computed<VBin[]>(() => {
+    const bins = this.bins();
+    const step = this.step();
+    const min = this.min();
+    const vlo = this.vlo();
+    const vhi = this.vhi();
+    const out: VBin[] = [];
+    for (let i = 0; i < bins.length; i++) {
+      const center = min + (i + 0.5) * step;
+      if (center >= vlo - step / 2 && center <= vhi + step / 2) out.push({ b: bins[i], center });
+    }
+    return out;
+  });
+  readonly binMaxVis = computed(() => Math.max(1, ...this.visibleBins().map((v) => v.b.n)));
   readonly spanDays = computed(() => Math.round((this.hi() - this.lo()) / DAYMS));
-  readonly ticks = computed<Tick[]>(() => this.monthTicks(this.min(), this.max()));
+  readonly viewSpanDays = computed(() => Math.round((this.vhi() - this.vlo()) / DAYMS));
+  readonly ticks = computed<Tick[]>(() => this.adaptiveTicks(this.vlo(), this.vhi()));
+  readonly bandLeft = computed(() => Math.max(0, this.pct(this.lo())));
+  readonly bandW = computed(() => Math.min(100, this.pct(this.hi())) - this.bandLeft());
+  readonly dayAnchor = computed(() => (this.range() ? (this.lo() + this.hi()) / 2 : (this.vlo() + this.vhi()) / 2));
   readonly stats = computed<[string, string | number, string][]>(() => {
     const r = this.tl()?.inRange;
     if (!r) return [];
     return [
-      ['in range', r.count, 'var(--accent)'],
+      ['in window', r.count, 'var(--accent)'],
       ['normalized', r.normalized, 'var(--ok)'],
       ['drafts', r.drafts, 'var(--warn)'],
       ['stubs', r.stubs, 'var(--dim)'],
@@ -203,53 +252,103 @@ export class WbTimeline {
   fmt(ms: number): string {
     return fmtDateMs(ms).slice(5).replace('-', '/');
   }
+  /** Position a timestamp as a percent of the VISIBLE domain. */
   pct(v: number): number {
-    const s = this.max() - this.min() || 1;
-    return ((v - this.min()) / s) * 100;
+    const s = this.vhi() - this.vlo() || 1;
+    return ((v - this.vlo()) / s) * 100;
+  }
+  inView(v: number): boolean {
+    return v >= this.vlo() && v <= this.vhi();
   }
   barH(n: number): number {
-    return Math.max(2, (n / this.binMax()) * 52);
+    return Math.max(2, (n / this.binMaxVis()) * 52);
   }
   seg(v: number): number {
-    return Math.round((v / this.binMax()) * 80);
+    return Math.round((v / this.binMaxVis()) * 80);
   }
-  inSel(i: number): boolean {
-    const n = this.bins().length || 1;
-    const bc = (i / n) * 100;
-    const bce = ((i + 1) / n) * 100;
-    return bce > this.pct(this.lo()) && bc < this.pct(this.hi());
+  inSel(center: number): boolean {
+    return center >= this.lo() && center <= this.hi();
   }
   cycle(): void {
     const next = this.mode() === 'strip' ? 'brush' : this.mode() === 'brush' ? 'lanes' : 'strip';
     this.store.setTlMode(next);
   }
+
+  // ---- zoom presets + pan (visible axis only) ----
   presetActive(days: number | null): boolean {
-    if (days == null) return !this.range();
-    if (!this.range()) return false;
-    return Math.round((this.hi() - this.lo()) / DAYMS) === days;
+    if (days == null) return !this.view();
+    return !!this.view() && this.viewSpanDays() === days;
+  }
+  presetDisabled(days: number | null): boolean {
+    // can't zoom narrower than the active window
+    return days != null && !!this.range() && days < this.spanDays();
   }
   applyPreset(days: number | null): void {
+    if (this.presetDisabled(days)) return;
     if (days == null) {
-      this.store.setTlRange(null);
+      this.store.setTlView(null);
       return;
     }
-    const end = this.day() ?? this.max();
-    const start = Math.max(this.min(), end - days * DAYMS);
-    this.store.setTlRange([start, end]);
+    const min = this.min();
+    const max = this.max();
+    let width = days * DAYMS;
+    const windowW = this.range() ? this.hi() - this.lo() : 0;
+    if (width < windowW) width = windowW;
+    width = Math.min(width, max - min);
+    let center: number;
+    if (this.range()) center = (this.lo() + this.hi()) / 2;
+    else if (this.day() != null) center = this.day()!;
+    else center = max - width / 2;
+    let lo = center - width / 2;
+    let hi = center + width / 2;
+    if (lo < min) { lo = min; hi = min + width; }
+    if (hi > max) { hi = max; lo = max - width; }
+    this.store.setTlView([lo, hi]);
+  }
+  pan(dir: -1 | 1): void {
+    const v = this.view();
+    if (!v) return;
+    const min = this.min();
+    const max = this.max();
+    const w = v[1] - v[0];
+    let lo = v[0] + w * 0.5 * dir;
+    let hi = v[1] + w * 0.5 * dir;
+    if (lo < min) { lo = min; hi = min + w; }
+    if (hi > max) { hi = max; lo = max - w; }
+    this.store.setTlView([lo, hi]);
   }
 
+  // ---- pointer: drag → window, click → day ----
   private valAt(clientX: number): number {
     const el = this.track()?.nativeElement;
-    if (!el) return this.min();
+    if (!el) return this.vlo();
     const rc = el.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (clientX - rc.left) / rc.width));
-    return this.min() + t * (this.max() - this.min());
+    return this.vlo() + t * (this.vhi() - this.vlo());
   }
   onTrackDown(e: MouseEvent): void {
     if ((e.target as HTMLElement).closest('.handle, .band, .day')) return;
-    const v = dayFloor(this.valAt(e.clientX));
-    const which = Math.abs(v - this.lo()) <= Math.abs(v - this.hi()) ? 'lo' : 'hi';
-    this.dragHandle(which, e);
+    e.preventDefault();
+    const anchor = dayFloor(this.valAt(e.clientX));
+    let moved = false;
+    const move = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - e.clientX) > 3) moved = true;
+      if (!moved) return;
+      const cur = dayFloor(this.valAt(ev.clientX));
+      const a = Math.min(anchor, cur);
+      const b = Math.max(anchor, cur);
+      this.store.setTlRange([a, Math.max(b, a + DAYMS)]);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      if (moved) return;
+      // a plain click drops the day cursor — only inside the window when one is active
+      const rng = this.range();
+      if (!rng || (anchor >= rng[0] && anchor <= rng[1])) this.store.setTlDay(anchor);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   }
   dragHandle(which: 'lo' | 'hi' | 'day', e: MouseEvent): void {
     e.preventDefault();
@@ -284,23 +383,44 @@ export class WbTimeline {
     window.addEventListener('mousemove', apply);
     window.addEventListener('mouseup', up);
   }
-  private monthTicks(min: number, max: number): Tick[] {
+
+  // ---- adaptive ticks (month / week / day by visible span; no d3) ----
+  private adaptiveTicks(lo: number, hi: number): Tick[] {
+    const span = hi - lo || DAYMS;
     const out: Tick[] = [];
-    const d = new Date(min);
-    let y = d.getUTCFullYear();
-    let m = d.getUTCMonth();
-    for (let i = 0; i < 24; i++) {
-      const t = Date.UTC(y, m, 1);
-      if (t > max) break;
-      if (t >= min - 31 * DAYMS) {
-        const label = new Date(Math.max(t, min))
-          .toLocaleString('en', { month: 'short', timeZone: 'UTC' })
-          .toUpperCase();
-        out.push({ t: Math.max(t, min), label });
+    if (span > 120 * DAYMS) {
+      const d = new Date(lo);
+      let y = d.getUTCFullYear();
+      let m = d.getUTCMonth();
+      let t = Date.UTC(y, m, 1);
+      if (t < lo) { m++; if (m > 11) { m = 0; y++; } t = Date.UTC(y, m, 1); }
+      while (t <= hi && out.length < 24) {
+        out.push({ t, label: this.monthLabel(t) });
+        m++; if (m > 11) { m = 0; y++; } t = Date.UTC(y, m, 1);
       }
-      m++;
-      if (m > 11) { m = 0; y++; }
+    } else if (span > 45 * DAYMS) {
+      let t = this.mondayOnOrAfter(lo);
+      while (t <= hi && out.length < 20) { out.push({ t, label: this.dayLabel(t) }); t += 7 * DAYMS; }
+    } else {
+      const days = Math.max(1, Math.round(span / DAYMS));
+      const stepD = Math.max(1, Math.ceil(days / 14));
+      let t = Math.ceil(lo / DAYMS) * DAYMS;
+      while (t <= hi && out.length < 16) { out.push({ t, label: this.dayLabel(t) }); t += stepD * DAYMS; }
     }
     return out;
+  }
+  private monthLabel(t: number): string {
+    return new Date(t).toLocaleString('en', { month: 'short', timeZone: 'UTC' }).toUpperCase();
+  }
+  private dayLabel(t: number): string {
+    return new Date(t)
+      .toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+      .toUpperCase();
+  }
+  private mondayOnOrAfter(ms: number): number {
+    const f = dayFloor(ms);
+    const dow = new Date(f).getUTCDay(); // 0=Sun
+    const add = (8 - (dow || 7)) % 7;
+    return f + add * DAYMS;
   }
 }

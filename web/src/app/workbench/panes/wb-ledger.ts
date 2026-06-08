@@ -12,9 +12,10 @@ import {
 } from '@angular/core';
 import { CorpusStore } from '../../core/store';
 import { WorkbenchRow } from '../../core/models';
-import { fmtBytes, mimeInfo, titleFor } from '../../core/util';
+import { fmtBytes, titleFor } from '../../core/util';
 import { CxMimeChip } from '../../chips/chips';
 import { CxThumb } from '../../browser/thumb';
+import { WbDockState } from '../dock/wb-dock-state';
 
 interface Col {
   key: string;
@@ -61,7 +62,7 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
         </div>
       </div>
 
-      <div class="body cx-scroll">
+      <div class="body cx-scroll" (mouseleave)="hover.set(null)">
         @switch (store.ledgerView()) {
           @case ('ledger') {
             <table [style.width.px]="totalW()">
@@ -83,7 +84,8 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
               <tbody>
                 @for (r of rows(); track r.id) {
                   <tr [class.on]="store.selectedId() === r.id" [class.day]="isDay(r)"
-                    (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)">
+                    (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)"
+                    (mousemove)="onHover(r, $event)">
                     <td class="title-cell">
                       <span class="dot" [style.background]="statusColor(r.status)"></span>
                       <cx-mime-chip [m]="r.mime" />
@@ -109,7 +111,8 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
             <div class="gallery">
               @for (r of rows(); track r.id) {
                 <div class="tile" [class.on]="store.selectedId() === r.id"
-                  (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)">
+                  (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)"
+                  (mousemove)="onHover(r, $event)">
                   <div class="thumb">
                     <span class="badge"><span class="dot" [style.background]="statusColor(r.status)"></span><cx-mime-chip [m]="r.mime" /></span>
                     <cx-thumb [mime]="r.mime" />
@@ -123,7 +126,8 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
             <div class="cards">
               @for (r of rows(); track r.id) {
                 <div class="card" [class.on]="store.selectedId() === r.id"
-                  (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)">
+                  (click)="store.selectRecord(r.id)" (dblclick)="store.openRecord(r.id)"
+                  (mousemove)="onHover(r, $event)">
                   <div class="card-h">
                     <span class="dot" [style.background]="statusColor(r.status)"></span>
                     <cx-mime-chip [m]="r.mime" /><span class="title">{{ title(r) }}</span>
@@ -136,14 +140,26 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
         }
       </div>
 
-      <div class="foot">
-        <span><b>{{ rows().length }}</b> of {{ store.wbTotal() }} records</span>
-        <span class="sp"></span>
-        @for (s of statusLegend; track s[0]) {
-          <span class="leg"><span class="dot" [style.background]="s[1]"></span>{{ s[0] }} {{ countStatus(s[0]) }}</span>
-        }
-        <span>· Σ {{ totalMb() }} MB</span>
-      </div>
+      <!-- hover preview — only when the detail pane is collapsed (it shows this otherwise) -->
+      @if (hover(); as h) {
+        <div class="hovercard" [style.left.px]="h.x" [style.top.px]="h.y">
+          <div class="hc-top">
+            <cx-mime-chip [m]="h.r.mime" /><span class="sp"></span>
+            <span class="hc-id">{{ h.r.id.slice(0, 12) }}…</span>
+          </div>
+          @if (h.r.title) { <div class="hc-title">{{ h.r.title }}</div> }
+          @else { <div class="hc-title ph">{{ placeholder(h.r) }} · {{ h.r.status }}</div> }
+          @if (h.r.description) { <div class="hc-desc">{{ h.r.description }}</div> }
+          <div class="hc-meta">
+            <span class="dot" [style.background]="statusColor(h.r.status)"></span>{{ h.r.status }}
+            @if (h.r.segments) { <span>· {{ h.r.segments }} seg</span> }
+            <span>· {{ fmtBytes(h.r.size) }}</span>
+          </div>
+          <div class="hc-kv"><span class="k">origin</span><span class="v">{{ h.r.origin_host || '—' }}</span></div>
+          <div class="hc-kv"><span class="k">captured</span><span class="v">{{ (h.r.captured || '—').slice(0, 10) }}{{ h.r.embed_count ? ' · ' + h.r.embed_count + ' embeds' : '' }}</span></div>
+          <div class="hc-kv"><span class="k">classes</span><span class="v">{{ h.r.classifications.length }}</span></div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -186,10 +202,6 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
       font-size: 8.5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
     .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
     .empty { padding: 18px; font-size: 11.5px; color: var(--dim); }
-    .foot { flex-shrink: 0; height: 26px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
-      border-top: 1px solid var(--border); background: var(--surface-2); font-size: 9.5px; color: var(--muted); }
-    .foot b { color: var(--accent); }
-    .leg { display: inline-flex; align-items: center; gap: 4px; }
     .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 12px; }
     .tile { border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
     .tile.on { border-color: var(--accent); }
@@ -206,6 +218,19 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
       text-overflow: ellipsis; }
     .desc { font-family: var(--sans); font-size: 11.5px; color: var(--muted); line-height: 1.5;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .hovercard { position: fixed; z-index: 80; width: 260px; pointer-events: none;
+      background: var(--surface); border: 1px solid var(--border-strong);
+      box-shadow: var(--sh-popover, 0 8px 24px rgba(60,45,15,0.16)); padding: 10px 11px;
+      font-family: var(--mono); }
+    .hc-top { display: flex; align-items: center; margin-bottom: 7px; }
+    .hc-top .sp { flex: 1; } .hc-id { font-size: 8px; color: var(--dim); }
+    .hc-title { font-family: var(--sans); font-size: 14px; font-weight: 700; line-height: 1.25; }
+    .hc-title.ph { font-family: var(--mono); font-style: italic; font-size: 11px; color: var(--dim); font-weight: 400; }
+    .hc-desc { font-family: var(--sans); font-size: 10.5px; color: var(--muted); line-height: 1.5;
+      margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .hc-meta { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 9.5px; color: var(--muted); }
+    .hc-kv { display: flex; gap: 8px; margin-top: 4px; font-size: 9.5px; }
+    .hc-kv .k { width: 56px; color: var(--dim); } .hc-kv .v { color: var(--text); }
   `],
 })
 export class WbLedger {
@@ -213,17 +238,26 @@ export class WbLedger {
   readonly cols = COLS;
   readonly colgroups = COLGROUPS;
   readonly views: [string, string][] = [['ledger', '≣'], ['gallery', '⊞'], ['cards', '☰']];
-  readonly statusLegend: [string, string][] = [
-    ['normalized', 'var(--ok)'],
-    ['draft', 'var(--warn)'],
-    ['stub', 'var(--dim)'],
-  ];
   readonly fmtBytes = fmtBytes;
   readonly title = titleFor;
 
+  readonly dock = inject(WbDockState, { optional: true });
   readonly rows = this.store.wbRows;
   readonly widths = signal<Record<string, number>>(this.loadWidths());
   readonly totalW = computed(() => COLS.reduce((s, c) => s + this.widths()[c.key], 0));
+  readonly hover = signal<{ r: WorkbenchRow; x: number; y: number } | null>(null);
+
+  /** Show the cursor-following preview only when the detail pane is collapsed (otherwise the
+   *  detail pane already shows the selected record). Follows the cursor; clamped to viewport. */
+  onHover(r: WorkbenchRow, e: MouseEvent): void {
+    if (this.dock?.right() !== 'collapsed') {
+      if (this.hover()) this.hover.set(null);
+      return;
+    }
+    const x = Math.min(e.clientX + 16, window.innerWidth - 272);
+    const y = Math.min(e.clientY + 14, window.innerHeight - 190);
+    this.hover.set({ r, x, y });
+  }
 
   constructor() {
     effect(() => {
@@ -263,7 +297,7 @@ export class WbLedger {
   }
 
   placeholder(r: WorkbenchRow): string {
-    return `${r.id.slice(0, 12)}.${mimeInfo(r.mime).short}`;
+    return r.transport_name || `${r.id.slice(0, 12)}`;
   }
   composites(r: WorkbenchRow): string[] {
     return r.classifications.map((c) => (c.includes('/') ? c.split('/').pop()! : c)).slice(0, 2);
@@ -282,12 +316,5 @@ export class WbLedger {
         : s === 'stub'
           ? 'var(--dim)'
           : 'var(--border-strong)';
-  }
-  countStatus(s: string): number {
-    return this.rows().filter((r) => r.status === s).length;
-  }
-  totalMb(): string {
-    const mb = this.rows().reduce((s, r) => s + (r.size ?? 0) / 1_000_000, 0);
-    return mb >= 1000 ? Math.round(mb).toLocaleString() : mb.toFixed(1);
   }
 }

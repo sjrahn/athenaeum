@@ -13,11 +13,14 @@ import {
   TemplateRef,
   computed,
   contentChildren,
+  effect,
+  inject,
   input,
   linkedSignal,
   output,
 } from '@angular/core';
 import { SLOT, Slot, SlotsAsRecordPipe } from '../../core/slot';
+import { WbDockState } from './wb-dock-state';
 
 export type PaneMode = 'docked' | 'collapsed' | 'detached' | 'off';
 export type PaneSide = 'left' | 'right' | 'bottom';
@@ -138,7 +141,8 @@ export class WbPane {
       </div>
       @if (leftMode() !== 'collapsed') {
         <div class="divider v" [style.top.px]="topHeight()" [style.bottom.px]="midBottom()"
-          [style.left.px]="leftDockW() - 3" (mousedown)="dragW('left', $event)"><span class="grip v"></span></div>
+          [style.left.px]="leftDockW() - 3" (mousedown)="dragW('left', $event)"
+          (dblclick)="toggle('left')" title="drag to resize · double-click to collapse"><span class="grip v"></span></div>
       }
 
       <!-- RIGHT -->
@@ -152,7 +156,8 @@ export class WbPane {
       </div>
       @if (rightMode() !== 'collapsed') {
         <div class="divider v" [style.top.px]="topHeight()" [style.bottom.px]="midBottom()"
-          [style.right.px]="rightDockW() - 4" (mousedown)="dragW('right', $event)"><span class="grip v"></span></div>
+          [style.right.px]="rightDockW() - 4" (mousedown)="dragW('right', $event)"
+          (dblclick)="toggle('right')" title="drag to resize · double-click to collapse"><span class="grip v"></span></div>
       }
 
       <!-- CENTER -->
@@ -171,7 +176,8 @@ export class WbPane {
             (setMode)="bottomMode.set($event)" />
         </div>
         @if (bottomMode() !== 'collapsed') {
-          <div class="divider h" [style.bottom.px]="bottomDockH() - 3" (mousedown)="dragH($event)">
+          <div class="divider h" [style.bottom.px]="bottomDockH() - 3" (mousedown)="dragH($event)"
+            (dblclick)="toggle('bottom')" title="drag to resize · double-click to collapse">
             <span class="grip h"></span>
           </div>
         }
@@ -225,6 +231,26 @@ export class WbDock {
     this.bottomMode() === 'off' ? 0 : this.bottomMode() === 'collapsed' ? 30 : this.bottomH(),
   );
   readonly midBottom = computed(() => this.bottomDockH());
+
+  // Mirror the pane modes into the shared dock state so projected center content (the
+  // ledger) can read whether a flanking pane is collapsed — e.g. the hover-card gate.
+  private dockState = inject(WbDockState, { optional: true });
+  constructor() {
+    effect(() => {
+      const s = this.dockState;
+      if (!s) return;
+      s.left.set(this.leftMode());
+      s.right.set(this.rightMode());
+      s.bottom.set(this.bottomMode());
+    });
+  }
+
+  /** Double-click a divider: collapse the adjacent pane, or expand it if already collapsed. */
+  toggle(side: 'left' | 'right' | 'bottom'): void {
+    const sig =
+      side === 'left' ? this.leftMode : side === 'right' ? this.rightMode : this.bottomMode;
+    sig.set(sig() === 'collapsed' ? 'docked' : 'collapsed');
+  }
 
   dragW(side: 'left' | 'right', e: MouseEvent): void {
     e.preventDefault();

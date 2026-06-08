@@ -197,10 +197,12 @@ export interface FieldStat {
   stats: FieldStats;
 }
 
-/** A ledger row (records[] of the workbench response): summary + size + segment count. */
+/** A ledger row (records[] of the workbench response): summary + size + segment count +
+ *  the canonical artifact filename (`<id[:12]>.<ext>`) for the untitled placeholder. */
 export interface WorkbenchRow extends RecordSummary {
   size: number | null; // artifact bytes
   segments: number;
+  transport_name: string;
 }
 
 export interface TimelineBin {
@@ -226,6 +228,25 @@ export interface TimelineData {
 export interface OverviewData {
   headline: { records: number; pctNormalized: number; sizeMB: number; spanDays: number };
   dists: Record<string, [string, number][]>; // byMime | byStatus | byAtom | byOrigin | byGenre
+}
+
+// ---- graph mode (record connections) ---- //
+
+/** One connection node. `kind` = origin | embed | record | link; `recId` opens a corpus
+ *  record (a classification peer or a captured cross-reference); `url`/`host` for link nodes. */
+export interface GraphNode {
+  id: string;
+  kind: 'origin' | 'embed' | 'record' | 'link';
+  label: string;
+  sub: string;
+  recId?: string | null;
+  url?: string | null;
+  host?: string | null;
+}
+
+export interface GraphResponse {
+  resolved: GraphNode[];
+  uncaptured: GraphNode[];
 }
 
 export interface WorkbenchResponse {

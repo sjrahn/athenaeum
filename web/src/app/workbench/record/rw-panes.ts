@@ -3,7 +3,15 @@
 // inspector surfaces typed extended fields + hashes + touch lineage; related shows
 // artifact-layer neighbors (shared classification/origin) within the current result set.
 
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import { CorpusStore } from '../../core/store';
 import { RecordDetail, SegmentNode } from '../../core/models';
 import {
@@ -64,12 +72,20 @@ function group(flat: FlatSeg[]): OutlineGroup[] {
 
       <div class="sh bd"><span class="t-label">outline · {{ flat().length }}</span></div>
       @for (g of groups(); track $index) {
-        @if (g.entry) { <div class="oentry">{{ g.entry }}</div> }
-        @for (f of g.items; track f.idx) {
-          <div class="orow" [class.on]="key(f.seg) === activeKey()" (click)="pick.emit({ key: key(f.seg), seg: f.seg })">
-            <span class="dot" [style.background]="color(f.seg.atom)"></span>
-            <span class="ol">{{ label(f.seg) }}</span>
+        @if (g.entry) {
+          <div class="oentry" (click)="toggle(g.entry!)">
+            <span class="ocaret">{{ isOpen(g.entry) ? '▾' : '▸' }}</span>
+            <span class="oe-l" [class.on]="g.entry === activeEntry()">{{ g.entry }}</span>
+            <span class="oe-n">{{ g.items.length }}</span>
           </div>
+        }
+        @if (isOpen(g.entry)) {
+          @for (f of g.items; track f.idx) {
+            <div class="orow" [class.on]="key(f.seg) === activeKey()" (click)="pick.emit({ key: key(f.seg), seg: f.seg })">
+              <span class="dot" [style.background]="color(f.seg.atom)"></span>
+              <span class="ol">{{ label(f.seg) }}</span>
+            </div>
+          }
         }
       }
       @if (flat().length === 0) { <div class="empty">— no segments</div> }
@@ -86,7 +102,13 @@ function group(flat: FlatSeg[]): OutlineGroup[] {
     .ad { font-size: 9px; color: var(--dim); }
     .prim { font-size: 7.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
       color: var(--accent); border: 1px solid var(--accent); padding: 0 4px; height: 13px; display: inline-flex; align-items: center; }
-    .oentry { padding: 6px 12px 3px; font-size: 9.5px; color: var(--muted); font-weight: 600; }
+    .oentry { display: flex; align-items: center; gap: 6px; padding: 6px 12px 4px; cursor: pointer;
+      font-size: 9.5px; color: var(--muted); font-weight: 600; }
+    .oentry:hover { background: var(--surface-2); }
+    .ocaret { color: var(--dim); font-size: 8px; width: 8px; }
+    .oe-l { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oe-l.on { color: var(--accent); }
+    .oe-n { font-size: 8px; color: var(--dim); }
     .orow { display: flex; align-items: center; gap: 8px; padding: 4px 12px 4px 18px; cursor: pointer;
       border-left: 2px solid transparent; }
     .orow:hover { background: var(--surface-2); }
@@ -107,6 +129,26 @@ export class RwContents {
   readonly color = atomColor;
   readonly flat = computed(() => flatSegments(this.r()));
   readonly groups = computed(() => group(this.flat()));
+  // Sections start collapsed (the design's "click to reveal segments"); `expanded` holds the
+  // ones the user opened. The section owning the active segment is always shown so cross-pane
+  // sync (outline ↔ reader) can still reveal it.
+  readonly expanded = signal<Set<string>>(new Set());
+  readonly activeEntry = computed(() => {
+    const k = this.activeKey();
+    if (!k) return null;
+    return this.flat().find((f) => segKey(f.seg) === k)?.section?.entry ?? null;
+  });
+  isOpen(entry: string | null): boolean {
+    return entry == null || this.expanded().has(entry) || entry === this.activeEntry();
+  }
+  toggle(entry: string): void {
+    this.expanded.update((s) => {
+      const next = new Set(s);
+      if (next.has(entry)) next.delete(entry);
+      else next.add(entry);
+      return next;
+    });
+  }
   short(m: string): string {
     return mimeInfo(m).short;
   }

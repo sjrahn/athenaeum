@@ -85,6 +85,11 @@ export class CorpusApiService {
     return `${base}/${corpus}/records/${id}`;
   }
 
+  /** The record's connection graph (resolved + uncaptured outbound links) for graph mode. */
+  graphUrl(base: string, corpus: string, id: string): string {
+    return `${base}/${corpus}/records/${id}/graph`;
+  }
+
   artifactUrl(base: string, corpus: string, id: string): string {
     return `${base}/${corpus}/artifacts/${id}`;
   }

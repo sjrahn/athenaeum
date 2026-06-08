@@ -7,6 +7,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { CorpusStore } from '../core/store';
 import { Viewport } from '../core/viewport';
 import { PaneConfig, WbDock } from './dock/wb-dock';
+import { WbDockState } from './dock/wb-dock-state';
 import { Slot } from '../core/slot';
 import { CxAperture } from '../chips/chips';
 import { WbTimeline, TL_HEIGHT } from './panes/wb-timeline';
@@ -20,6 +21,7 @@ import { WbPalette } from './panes/wb-palette';
   selector: 'cx-corpus-workbench',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [WbDockState],
   imports: [
     WbDock,
     Slot,
@@ -68,7 +70,9 @@ import { WbPalette } from './panes/wb-palette';
           <ng-template slot="bottom-rail">
             <span class="rail-metrics">
               <span class="m"><b class="acc">{{ store.wbTotal() }}</b> of {{ corpusTotal() }} <i>records</i></span>
-              <span class="m"><b class="ok">{{ pctNorm() }}%</b> <i>normalized</i></span>
+              @for (s of statusLeg(); track s.s) {
+                <span class="m"><span class="rdot" [style.background]="s.c"></span><b>{{ s.n }}</b> <i>{{ s.s }}</i></span>
+              }
               <span class="m"><b>{{ sizeMb() }} MB</b> <i>Σ size</i></span>
               <span class="m"><b>{{ store.filterCount() }}</b> <i>filters</i></span>
             </span>
@@ -108,6 +112,7 @@ import { WbPalette } from './panes/wb-palette';
     .rail-metrics .m { display: inline-flex; align-items: baseline; gap: 6px; }
     .rail-metrics b { font-size: 12px; font-weight: 600; } .rail-metrics b.acc { color: var(--accent); }
     .rail-metrics b.ok { color: var(--ok); }
+    .rail-metrics .rdot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
     .rail-metrics i { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.10em; color: var(--dim);
       font-style: normal; }
   `],
@@ -127,6 +132,17 @@ export class CxCorpusWorkbench {
 
   readonly topHeight = computed(() => TL_HEIGHT[this.store.tlMode()]);
   readonly corpusTotal = computed(() => this.store.corpus()?.record_count ?? this.store.wbTotal());
-  readonly pctNorm = computed(() => this.store.wbOverview()?.headline.pctNormalized ?? 0);
   readonly sizeMb = computed(() => (this.store.wbOverview()?.headline.sizeMB ?? 0).toLocaleString());
+  readonly statusLeg = computed(() => {
+    const col: Record<string, string> = {
+      normalized: 'var(--ok)',
+      draft: 'var(--warn)',
+      stub: 'var(--dim)',
+    };
+    return (this.store.wbOverview()?.dists['byStatus'] ?? []).map(([s, n]) => ({
+      s,
+      n,
+      c: col[s] ?? 'var(--dim)',
+    }));
+  });
 }

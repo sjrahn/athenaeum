@@ -16,6 +16,7 @@ import {
 import { CorpusStore } from '../../core/store';
 import { flatSegments, mimeInfo, fmtBytes, segKey, titleFor } from '../../core/util';
 import { PaneConfig, WbDock } from '../dock/wb-dock';
+import { WbDockState } from '../dock/wb-dock-state';
 import { Slot } from '../../core/slot';
 import { PickEvent } from '../../viewer/body';
 import { CxMimeChip } from '../../chips/chips';
@@ -36,6 +37,7 @@ const MODES: [string, string, string][] = [
   selector: 'cx-record-workbench',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [WbDockState],
   imports: [
     WbDock, Slot, CxMimeChip,
     RwContents, RwReader, RwInspector, RwRelated, RwCompare, RwCropper, RwGraph,

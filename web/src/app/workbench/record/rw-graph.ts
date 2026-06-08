@@ -1,22 +1,14 @@
-// Graph mode · the record's connections across the corpus. Resolved edges reach its
-// origins, embeds, and classification-sharing records (navigable). Uncaptured edges are
-// outbound links not yet in the corpus — capture flips one to a resolved, navigable node.
-// NOTE: outbound-link extraction has no backend yet, so the uncaptured nodes + the capture
-// action are simulated (deterministic from the record id), faithful to the design.
+// Graph mode · the record's connections across the corpus, served by `GET …/records/{id}/graph`.
+// Resolved edges reach its origins, embeds, classification-sharing records, and captured
+// cross-references (navigable). Uncaptured edges are outbound links found in the body that
+// aren't in the corpus yet — capture routes them to the submit phase (capture → ingest →
+// draft → normalize), which is where ingest actually happens.
 
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import { CorpusStore } from '../../core/store';
-import { RecordDetail } from '../../core/models';
-import { hostOf, mimeInfo, titleFor } from '../../core/util';
+import { GraphNode, RecordDetail } from '../../core/models';
+import { titleFor } from '../../core/util';
 
-interface GNode {
-  id: string;
-  kind: 'origin' | 'embed' | 'record' | 'link';
-  resolved: boolean;
-  label: string;
-  sub: string;
-  recId?: string;
-}
 const KIND_COLOR: Record<string, string> = {
   origin: '#a35a00',
   embed: '#3a6a7a',
@@ -54,6 +46,9 @@ const KIND_COLOR: Record<string, string> = {
             @if (!n.resolved) { <span class="unc">uncaptured</span> }
           </div>
         }
+        @if (!loading() && !placed().length) {
+          <div class="canvas-empty">no connections — no origins, embeds, peers, or outbound links.</div>
+        }
         <div class="legend">
           @for (k of kinds; track k[0]) {
             <span class="lk"><span class="ld" [class.sq]="k[0] === 'record'" [style.background]="k[1]" [style.borderColor]="k[1]"></span>{{ k[0] }}</span>
@@ -74,17 +69,20 @@ const KIND_COLOR: Record<string, string> = {
               @if (n.recId) { <span class="open" (click)="open($event, n.recId!)">open ›</span> }
             </div>
           }
+          @if (!loading() && !resolved().length) { <div class="none">— none</div> }
           <div class="grp bd">uncaptured links · {{ unresolved().length }}</div>
-          @if (unresolved().length === 0) { <div class="none">— all references resolved</div> }
+          @if (!loading() && unresolved().length === 0) { <div class="none">— all references resolved</div> }
           @for (n of unresolved(); track n.id) {
             <div class="row" [class.on]="selId() === n.id" (click)="selId.set(n.id)">
               <span class="d open-dot"></span>
               <div class="ri"><div class="rl muted">{{ n.label }}</div><div class="rs">{{ n.sub }}</div></div>
-              <button class="cap" (click)="capture($event, n)">⇱ capture</button>
+              <button class="cap" (click)="capture($event)">⇱ capture</button>
             </div>
           }
+          @if (loading()) { <div class="none">loading connections…</div> }
         </div>
-        <div class="note">capturing an outbound link queues it for ingest; once normalized it resolves to a corpus record you can open here.</div>
+        <div class="note">capture routes an outbound link to the submit phase — capture → ingest →
+          draft → normalize lands there; once normalized it resolves to a record you can open here.</div>
       </div>
     </div>
   `,
@@ -108,6 +106,8 @@ const KIND_COLOR: Record<string, string> = {
     .nl { font-size: 8.5px; text-align: center; max-width: 116px; overflow: hidden; text-overflow: ellipsis;
       white-space: nowrap; background: var(--surface); padding: 0 3px; }
     .unc { font-size: 7.5px; color: var(--warn); text-transform: uppercase; letter-spacing: 0.06em; }
+    .canvas-empty { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); max-width: 240px;
+      text-align: center; font-size: 9.5px; color: var(--dim); }
     .legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 12px; font-size: 8.5px; color: var(--dim); }
     .lk { display: inline-flex; align-items: center; gap: 4px; }
     .ld { width: 8px; height: 8px; border-radius: 50%; border: 1px solid; } .ld.sq { border-radius: 0; }
@@ -140,41 +140,20 @@ export class RwGraph {
   readonly title = titleFor;
   readonly kinds = Object.entries(KIND_COLOR);
   readonly selId = signal<string | null>(null);
-  readonly captured = signal<Record<string, string>>({});
 
-  private base = computed<GNode[]>(() => {
-    const r = this.r();
-    const nodes: GNode[] = [];
-    r.origins.forEach((o, i) =>
-      nodes.push({ id: 'origin:' + i, kind: 'origin', resolved: true, label: hostOf(o.uri[0] ?? ''), sub: 'origin · ' + (o.id || '') }),
-    );
-    r.embeds.forEach((e, i) =>
-      nodes.push({ id: 'embed:' + i, kind: 'embed', resolved: true, label: mimeInfo(e.mime).short + ' embed',
-        sub: (e.alt || (Array.isArray(e.address) ? e.address[0] : e.address) || '').slice(0, 28) }),
-    );
-    const cls = new Set(r.classifications);
-    this.store
-      .wbRows()
-      .filter((x) => x.id !== r.id && x.classifications.some((c) => cls.has(c)))
-      .slice(0, 4)
-      .forEach((n) => nodes.push({ id: 'rec:' + n.id, kind: 'record', resolved: true, recId: n.id, label: titleFor(n), sub: 'shares classification' }));
-    this.outbound(r).forEach((l) => nodes.push(l));
-    return nodes;
-  });
-  readonly nodes = computed<GNode[]>(() => {
-    const cap = this.captured();
-    return this.base().map((n) =>
-      n.kind === 'link' && cap[n.id] ? { ...n, resolved: true, recId: cap[n.id], sub: 'captured · normalized' } : n,
-    );
-  });
-  readonly resolved = computed(() => this.nodes().filter((n) => n.resolved));
-  readonly unresolved = computed(() => this.nodes().filter((n) => !n.resolved));
+  readonly loading = this.store.recordGraphLoading;
+  readonly resolved = computed<GraphNode[]>(() => this.store.recordGraph()?.resolved ?? []);
+  readonly unresolved = computed<GraphNode[]>(() => this.store.recordGraph()?.uncaptured ?? []);
+  readonly nodes = computed(() => [
+    ...this.resolved().map((n) => ({ ...n, resolved: true })),
+    ...this.unresolved().map((n) => ({ ...n, resolved: false })),
+  ]);
   readonly placed = computed(() => {
     const ns = this.nodes();
-    const R = 33;
+    const radius = 33;
     return ns.map((n, i) => {
       const a = -Math.PI / 2 + (i / Math.max(1, ns.length)) * 2 * Math.PI;
-      return { ...n, x: 50 + R * Math.cos(a), y: 50 + R * Math.sin(a) };
+      return { ...n, x: 50 + radius * Math.cos(a), y: 50 + radius * Math.sin(a) };
     });
   });
 
@@ -185,26 +164,8 @@ export class RwGraph {
     e.stopPropagation();
     this.store.openRecord(id);
   }
-  capture(e: Event, n: GNode): void {
+  capture(e: Event): void {
     e.stopPropagation();
-    const pool = this.store.wbRows().filter((x) => x.id !== this.r().id);
-    if (!pool.length) return;
-    const pick = pool[(this.r().id.charCodeAt(2) + n.id.length) % pool.length];
-    this.captured.update((c) => ({ ...c, [n.id]: pick.id }));
-  }
-  private outbound(r: RecordDetail): GNode[] {
-    const seed = (r.id.charCodeAt(0) + r.id.charCodeAt(3) + r.id.charCodeAt(5)) % 7;
-    const pool = [
-      { label: 'doi.org/10.1145/' + r.id.slice(0, 4), host: 'doi.org' },
-      { label: 'en.wikipedia.org/wiki/Archive', host: 'wikipedia.org' },
-      { label: 'github.com/athenaeum/corpus', host: 'github.com' },
-      { label: 'arxiv.org/abs/26' + r.id.slice(2, 4), host: 'arxiv.org' },
-      { label: 'youtube.com/watch?v=' + r.id.slice(4, 8), host: 'youtube.com' },
-      { label: 'news.ycombinator.com/item', host: 'ycombinator.com' },
-    ];
-    const n = 2 + (seed % 3);
-    return pool.slice(seed % 2, (seed % 2) + n).map((p, i) => ({
-      id: 'link:' + i, kind: 'link' as const, resolved: false, label: p.label, sub: 'uncaptured · ' + p.host,
-    }));
+    this.store.openSubmit(); // capture/ingest is the submit phase — route there honestly
   }
 }

@@ -13,6 +13,7 @@ import {
   Endpoint,
   Facet,
   FieldStat,
+  GraphResponse,
   QueryResult,
   RecordDetail,
   SchemaRegistry,
@@ -70,7 +71,8 @@ export class CorpusStore {
 
   // ---- workbench filter state (the design's shared CorpusWorkbench state) ----
   readonly conds = signal<Record<string, Cond>>({}); // fid -> typed condition
-  readonly tlRange = signal<[number, number] | null>(null); // captured-date brush (ms)
+  readonly tlRange = signal<[number, number] | null>(null); // captured-date brush (FILTER)
+  readonly tlView = signal<[number, number] | null>(null); // visible zoom domain (NOT a filter)
   readonly tlDay = signal<number | null>(null); // day cursor (highlight only, no filter)
   readonly tlMode = signal<TlMode>('brush');
   readonly ledgerView = signal<LedgerView>('ledger');
@@ -142,6 +144,16 @@ export class CorpusStore {
       : undefined;
   });
   readonly record = computed(() => this.recordRes.value() ?? null);
+
+  // Graph mode — the open record's connections (resolved + uncaptured outbound links).
+  readonly recordGraphRes = httpResource<GraphResponse>(() => {
+    const id = this.recordId();
+    return this.mode() === 'record' && id && this.corpusId()
+      ? this.api.graphUrl(this.base(), this.corpusId(), id)
+      : undefined;
+  });
+  readonly recordGraph = computed(() => this.recordGraphRes.value() ?? null);
+  readonly recordGraphLoading = computed(() => this.recordGraphRes.isLoading());
 
   // ---- workbench resources ----
   // The whole-corpus typed field registry (global stats) — the field controls + palette
@@ -293,6 +305,8 @@ export class CorpusStore {
     this.fieldSel.set({});
     this.conds.set({});
     this.tlRange.set(null);
+    this.tlView.set(null);
+    this.tlDay.set(null);
     this.query.set('');
   }
   private resetFilters(): void {
@@ -300,6 +314,7 @@ export class CorpusStore {
     this.fieldSel.set({});
     this.conds.set({});
     this.tlRange.set(null);
+    this.tlView.set(null);
     this.tlDay.set(null);
     this.savedView.set('all');
     this.query.set('');
@@ -334,6 +349,12 @@ export class CorpusStore {
   }
   setTlRange(r: [number, number] | null): void {
     this.tlRange.set(r);
+    // the day cursor lives inside the window; drop it when the window no longer contains it
+    const d = this.tlDay();
+    if (r && d != null && (d < r[0] || d > r[1])) this.tlDay.set(null);
+  }
+  setTlView(v: [number, number] | null): void {
+    this.tlView.set(v);
   }
   setTlDay(d: number | null): void {
     this.tlDay.set(d);

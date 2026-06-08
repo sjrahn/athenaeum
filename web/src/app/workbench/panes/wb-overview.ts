@@ -14,6 +14,12 @@ const CARDS: { title: string; key: string; color: string }[] = [
   { title: 'by genre', key: 'byGenre', color: '#7a4a8a' },
 ];
 
+const STATUS_COLOR: Record<string, string> = {
+  normalized: 'var(--ok)',
+  draft: 'var(--warn)',
+  stub: 'var(--dim)',
+};
+
 @Component({
   selector: 'wb-overview',
   standalone: true,
@@ -46,6 +52,11 @@ const CARDS: { title: string; key: string; color: string }[] = [
         <span><span class="led">●</span> api · /v1/{{ store.corpusId() || 'records' }}/records</span>
         <span>·</span><span><b>{{ store.wbTotal() }}</b> of {{ corpusTotal() }} records</span>
         <span>·</span><span>{{ store.filterCount() }} filters</span>
+        <span>·</span>
+        @for (s of statusLeg(); track s.s) {
+          <span class="leg"><span class="dot" [style.background]="s.c"></span>{{ s.s }} {{ s.n }}</span>
+        }
+        <span>· Σ {{ sizeMb() }} MB</span>
         @if (store.selectedId()) { <span>·</span><span>selected {{ store.selectedId()!.slice(0, 10) }}…</span> }
         <span class="sp"></span>
         <span class="hint">panes: drag dividers · ‹ collapse · ⤢ separate</span>
@@ -76,6 +87,8 @@ const CARDS: { title: string; key: string; color: string }[] = [
       display: flex; align-items: center; gap: 12px; padding: 0 12px; font-size: 9.5px; color: var(--muted); }
     .strip b { color: var(--accent); }
     .led { color: var(--ok); }
+    .leg { display: inline-flex; align-items: center; gap: 4px; }
+    .leg .dot { width: 7px; height: 7px; border-radius: 50%; }
     .sp { flex: 1; }
     .hint { color: var(--dim); }
   `],
@@ -84,6 +97,12 @@ export class WbOverview {
   readonly store = inject(CorpusStore);
   readonly cards = CARDS;
   readonly corpusTotal = computed(() => this.store.corpus()?.record_count ?? this.store.wbTotal());
+  readonly statusLeg = computed(() =>
+    this.dist('byStatus').map(([s, n]) => ({ s, n, c: STATUS_COLOR[s] ?? 'var(--dim)' })),
+  );
+  readonly sizeMb = computed(() =>
+    (this.store.wbOverview()?.headline.sizeMB ?? 0).toLocaleString(),
+  );
   readonly headline = computed<[string, string | number, string][]>(() => {
     const h = this.store.wbOverview()?.headline;
     if (!h) return [];
