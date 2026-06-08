@@ -13,7 +13,7 @@ import {
   signal,
 } from '@angular/core';
 import { CorpusStore } from '../../core/store';
-import { RecordDetail, SegmentNode } from '../../core/models';
+import { ConceptRef, RecordDetail, SegmentNode } from '../../core/models';
 import {
   FlatSeg,
   atomColor,
@@ -296,6 +296,27 @@ export class RwReader {
         <div class="sec"><div class="t-label">classifications</div>
           <div class="cls">@for (c of composites(); track c) { <span class="pill">{{ c }}</span> }</div></div>
       }
+      @if (concepts().length) {
+        <div class="sec"><div class="t-label">concepts · {{ concepts().length }}</div>
+          <div class="cncpts">
+            @for (c of concepts(); track $index) {
+              <div class="cncpt">
+                <div class="ch">
+                  @if (c.address) {
+                    <span class="cl jump" [class.local]="c.source === 'local'"
+                      (click)="jump(c)" [title]="'jump to mention · ' + (c.quote || c.address)">{{ c.label || c.concept }}</span>
+                  } @else {
+                    <span class="cl" [class.local]="c.source === 'local'" title="about this record">{{ c.label || c.concept }}</span>
+                  }
+                  <span class="sp"></span>
+                  @if (c.url) { <a class="cx" [href]="c.url" target="_blank" rel="noopener" title="open article">↗</a> }
+                </div>
+                @if (c.summary) { <div class="csum">{{ c.summary }}</div> }
+              </div>
+            }
+          </div>
+        </div>
+      }
       @if (hashes().length) {
         <div class="sec"><div class="t-label">hashes</div>
           @for (h of hashes(); track h[0]) { <div class="kv"><span class="k">{{ h[0] }}</span><span class="v brk">{{ h[1] }}</span></div> }</div>
@@ -329,6 +350,15 @@ export class RwReader {
     .cls { display: flex; flex-wrap: wrap; gap: 5px; }
     .pill { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; font-size: 9px;
       background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+    .cncpts { display: flex; flex-direction: column; gap: 7px; }
+    .cncpt { border: 1px solid var(--border); background: var(--surface-2); padding: 6px 7px; }
+    .cncpt .ch { display: flex; align-items: center; gap: 6px; }
+    .cncpt .cl { font-size: 10px; font-weight: 600; color: var(--text); }
+    .cncpt .cl.jump { cursor: pointer; border-bottom: 1px dotted var(--border); }
+    .cncpt .cl.local { color: var(--accent); }
+    .cncpt .cx { color: var(--accent); text-decoration: none; font-size: 11px; }
+    .csum { font-family: var(--sans); font-size: 10px; color: var(--muted); line-height: 1.5; margin-top: 4px;
+      max-height: 48px; overflow: hidden; }
     .tl { display: flex; align-items: center; gap: 7px; padding: 2px 0; font-size: 9.5px; color: var(--muted); }
     .tn { color: var(--dim); width: 10px; text-align: center; } .tt { word-break: break-all; }
   `],
@@ -336,10 +366,12 @@ export class RwReader {
 export class RwInspector {
   private store = inject(CorpusStore);
   r = input.required<RecordDetail>();
+  pick = output<PickEvent>();
   readonly fmtBytes = fmtBytes;
   readonly fmtTokens = fmtTokens;
   readonly host = hostOf;
   readonly composites = computed(() => this.r().classifications.filter((c) => c.includes('/')));
+  readonly concepts = computed<ConceptRef[]>(() => this.r().concepts ?? []);
   readonly hashes = computed(() => Object.entries(this.r().hashes));
   readonly ext = computed(() => {
     const r = this.r();
@@ -373,6 +405,12 @@ export class RwInspector {
   });
   statusColor(s: string): string {
     return s === 'normalized' ? 'var(--ok)' : s === 'draft' ? 'var(--warn)' : 'var(--dim)';
+  }
+  /** Jump the reader to the segment a concept mention is pinned to (matched by address). */
+  jump(c: ConceptRef): void {
+    if (!c.address) return;
+    const hit = flatSegments(this.r()).find((f) => firstAddr(f.seg.address) === c.address);
+    if (hit) this.pick.emit({ key: segKey(hit.seg), seg: hit.seg });
   }
 }
 

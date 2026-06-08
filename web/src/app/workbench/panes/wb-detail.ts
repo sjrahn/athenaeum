@@ -6,6 +6,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { CorpusStore } from '../../core/store';
 import { fmtBytes, fmtTokens, fmtVal, hostOf, titleFor } from '../../core/util';
 import { CxMimeChip, CxTypeBadge } from '../../chips/chips';
+import type { ConceptRef } from '../../core/models';
 
 interface ExtField {
   label: string;
@@ -91,6 +92,26 @@ interface ExtField {
           </div>
         }
 
+        @if (concepts().length > 0) {
+          <div class="sec">
+            <div class="t-label">concepts · {{ concepts().length }}</div>
+            <div class="cncpts">
+              @for (c of concepts(); track $index) {
+                <div class="cncpt">
+                  <div class="cncpt-hd">
+                    <span class="cl" [class.local]="c.source === 'local'"
+                      (click)="filterConcept(c)" title="filter records invoking this concept">{{ c.label || c.concept }}</span>
+                    @if (c.address) { <span class="mnt" [title]="c.quote || c.address">{{ c.quote || c.address }}</span> }
+                    <span class="sp"></span>
+                    @if (c.url) { <a class="cx" [href]="c.url" target="_blank" rel="noopener" title="open article">↗</a> }
+                  </div>
+                  @if (c.summary) { <div class="cncpt-sum">{{ c.summary }}</div> }
+                </div>
+              }
+            </div>
+          </div>
+        }
+
         @if (preview()) {
           <div class="sec">
             <div class="t-label">normalized · preview</div>
@@ -142,6 +163,17 @@ interface ExtField {
     .cls { display: flex; flex-wrap: wrap; gap: 5px; }
     .pill { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; cursor: pointer;
       font-size: 9px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+    .cncpts { display: flex; flex-direction: column; gap: 7px; }
+    .cncpt { border: 1px solid var(--border); background: var(--surface-2); padding: 6px 7px; }
+    .cncpt-hd { display: flex; align-items: center; gap: 6px; }
+    .cncpt-hd .cl { font-size: 10px; font-weight: 600; color: var(--text); cursor: pointer;
+      border-bottom: 1px dotted var(--border); }
+    .cncpt-hd .cl.local { color: var(--accent); }
+    .cncpt-hd .mnt { font-size: 9px; color: var(--dim); font-style: italic; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+    .cncpt-hd .cx { color: var(--accent); text-decoration: none; font-size: 11px; }
+    .cncpt-sum { font-family: var(--sans); font-size: 10px; color: var(--muted); line-height: 1.5;
+      margin-top: 4px; max-height: 48px; overflow: hidden; }
     .prev { font-family: var(--sans); font-size: 11px; color: var(--muted); line-height: 1.6;
       max-height: 92px; overflow: hidden; }
     .actions { position: sticky; bottom: 0; display: flex; gap: 7px; padding: 10px;
@@ -163,6 +195,7 @@ export class WbDetail {
   readonly composites = computed(() =>
     (this.r()?.classifications ?? []).filter((c) => c.includes('/')),
   );
+  readonly concepts = computed<ConceptRef[]>(() => this.r()?.concepts ?? []);
   readonly preview = computed(() => {
     const seg = this.flatSegs().find((s) => s.atom === 'text' && s.body);
     if (!seg) return '';
@@ -222,5 +255,8 @@ export class WbDetail {
   filterLike(c: string): void {
     const [ns, id] = c.split('/');
     if (ns && id) this.store.toggleFacet(`composite:${ns}`, id);
+  }
+  filterConcept(c: ConceptRef): void {
+    if (c.concept) this.store.toggleFacet('concept', c.concept);
   }
 }

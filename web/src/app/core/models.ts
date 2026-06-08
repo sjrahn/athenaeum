@@ -124,6 +124,37 @@ export interface ContextBlock {
   [field: string]: unknown;
 }
 
+/** A concept annotation (§4.3.3.4) as served in the record detail's `concepts` view.
+ * `address` present = a span-level mention; absent = record-level aboutness. `summary`/`source`
+ * are live KB enrichment (present only when a Wikipedia ZIM is configured). */
+export interface ConceptRef {
+  concept: string; // canonical id: wikidata:Q… | enwiki:<Title> | local:<slug>
+  label?: string;
+  url?: string;
+  address?: string;
+  quote?: string;
+  occurrence?: number;
+  summary?: string;
+  source?: 'wikipedia' | 'local';
+}
+
+/** A `/v1/wiki/search` hit. */
+export interface WikiHit {
+  id: string;
+  title: string;
+  url: string;
+  path: string;
+}
+
+/** A `/v1/wiki/article` payload. */
+export interface WikiArticle {
+  id: string;
+  title: string;
+  url: string;
+  qid: string | null;
+  summary: string;
+}
+
 export interface RecordDetail {
   id: string;
   title: string;
@@ -141,6 +172,7 @@ export interface RecordDetail {
   embeds: EmbedBlock[];
   content: ContentNode[];
   annotations: ContextBlock[];
+  concepts: ConceptRef[];
   classifications: string[];
   tokens: { body: number; blocks: number; full: number };
   captured: string | null;

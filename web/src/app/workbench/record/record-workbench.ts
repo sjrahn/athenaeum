@@ -95,7 +95,7 @@ const MODES: [string, string, string][] = [
                 <ng-template slot="left"><rw-contents [r]="rec" [activeKey]="activeKey()" (pick)="onPick($event)" /></ng-template>
                 <ng-template slot="center"><rw-reader [r]="rec" [view]="readerView()" [activeKey]="activeKey()"
                   (pick)="onPick($event)" (setView)="readerView.set($event)" /></ng-template>
-                <ng-template slot="right"><rw-inspector [r]="rec" /></ng-template>
+                <ng-template slot="right"><rw-inspector [r]="rec" (pick)="onPick($event)" /></ng-template>
                 <ng-template slot="bottom"><rw-related [r]="rec" /></ng-template>
               </wb-dock>
             }
