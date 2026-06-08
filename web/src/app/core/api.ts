@@ -92,4 +92,52 @@ export class CorpusApiService {
   resolveUrl(base: string, corpus: string, uri: string): string {
     return `${base}/${corpus}/resolve?uri=${encodeURIComponent(uri)}`;
   }
+
+  regionsUrl(base: string, corpus: string, id: string): string {
+    return `${base}/${corpus}/records/${id}/regions`;
+  }
+
+  /** POST drawn crop regions to the write endpoint. A non-2xx surfaces the API's
+   *  `detail` message as an Error (422 detail is a list — stringify it). */
+  async saveRegions(
+    base: string,
+    corpus: string,
+    id: string,
+    regions: RegionPayload[],
+  ): Promise<SaveRegionsResult> {
+    const res = await fetch(this.regionsUrl(base, corpus, id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regions }),
+    });
+    if (!res.ok) {
+      let msg = `region save failed (${res.status})`;
+      try {
+        const j = await res.json();
+        if (j?.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new Error(msg);
+    }
+    return res.json() as Promise<SaveRegionsResult>;
+  }
+}
+
+/** One region in the crop-save payload — mirrors the API's `RegionIn`. */
+export interface RegionPayload {
+  page?: number | null;
+  box: [number, number, number, number];
+  atom: string;
+  overlay?: string;
+  entry?: string;
+}
+
+export interface SaveRegionsResult {
+  record_id: string;
+  segment_count: number;
+  bbox_segment_count: number;
+  addresses: string[];
+  status: string | null;
+  touch: string[];
 }

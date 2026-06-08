@@ -1,8 +1,9 @@
 // Crop mode · bbox region editor (net-new). Draw / move / resize boxes over the artifact
 // page (PDF page via resolve?page=N, or the image). Each box maps to a segment address
 // (bbox=x,y,w,h on page=N) with an atom + overlay. Seeded from the record's existing bbox
-// segments. Save posts to /records/{id}/regions — 501 today, so it's optimistic + a toast
-// (flip to a real write when the endpoint lands).
+// segments. Save POSTs to /records/{id}/regions (the real write endpoint) via
+// store.saveRegions, which reloads the record so the editor re-seeds from the canonical
+// addresses the server wrote.
 
 import {
   ChangeDetectionStrategy,
@@ -16,6 +17,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { CorpusStore } from '../../core/store';
+import { RegionPayload } from '../../core/api';
 import { RecordDetail } from '../../core/models';
 import { atomColor, flatSegments, parseAddr, titleFor } from '../../core/util';
 import { CxMimeChip } from '../../chips/chips';
@@ -28,12 +30,12 @@ interface Region {
   overlay: string;
   entry: string;
 }
-const ATOMS = ['text', 'image', 'audio', 'video'];
+// The cropper draws bboxes over visual artifacts (PDF pages / images), so it offers the
+// two atoms a drawn region can carry; audio/video are temporal (time=/frame=), not bbox.
+const ATOMS = ['text', 'image'];
 const OVERLAYS: Record<string, string[]> = {
-  text: ['', 'data-table', 'transcript', 'ocr', 'caption'],
+  text: ['', 'data-table', 'transcript', 'ocr', 'captions'],
   image: [''],
-  audio: [''],
-  video: [''],
 };
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 
@@ -54,8 +56,8 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
           }
         </div>
         @if (dirty()) { <span class="unsaved">● unsaved</span> }
-        <button class="btn" (click)="revert()">revert</button>
-        <button class="btn primary" (click)="save()">save regions</button>
+        <button class="btn" (click)="revert()" [disabled]="saving()">revert</button>
+        <button class="btn primary" (click)="save()" [disabled]="saving()">{{ saving() ? 'saving…' : 'save regions' }}</button>
       </div>
 
       <div class="work">
@@ -119,7 +121,7 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
         </div>
       </div>
 
-      @if (toast()) { <div class="toast">✓ {{ toast() }}</div> }
+      @if (toast()) { <div class="toast" [class.err]="toastErr()">{{ toastErr() ? '✕' : '✓' }} {{ toast() }}</div> }
     </div>
   `,
   styles: [`
@@ -172,6 +174,8 @@ const clamp = (n: number) => Math.max(0, Math.min(1, n));
     .empty { padding: 14px; font-size: 10px; color: var(--dim); }
     .toast { position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%); background: var(--text);
       color: var(--bg); font-size: 11px; padding: 7px 14px; box-shadow: var(--sh-float); z-index: 50; }
+    .toast.err { background: var(--err); color: #fff; }
+    .btn:disabled { opacity: 0.55; cursor: default; }
   `],
 })
 export class RwCropper {
@@ -191,6 +195,8 @@ export class RwCropper {
   readonly sel = signal<string | null>(null);
   readonly dirty = signal(false);
   readonly toast = signal<string | null>(null);
+  readonly toastErr = signal(false);
+  readonly saving = signal(false);
   readonly regions = signal<Region[]>([]);
 
   readonly paged = computed(() => !this.r().isImage && !!this.r().pages);
@@ -279,11 +285,28 @@ export class RwCropper {
     this.dirty.set(false);
     this.sel.set(seed[0]?.id ?? null);
   }
-  save(): void {
-    // /records/{id}/regions is 501 today — optimistic save + toast until the write lands
-    this.dirty.set(false);
-    this.toast.set(`saved ${this.regions().length} regions → ${this.r().id.slice(0, 8)}….md (pending write endpoint)`);
-    setTimeout(() => this.toast.set(null), 2400);
+  async save(): Promise<void> {
+    if (this.saving()) return;
+    this.saving.set(true);
+    const payload: RegionPayload[] = this.regions().map((rg) => ({
+      page: this.paged() ? rg.page : null,
+      box: rg.box,
+      atom: rg.atom,
+      overlay: rg.overlay || '',
+      entry: rg.entry || '',
+    }));
+    try {
+      const res = await this.store.saveRegions(this.r().id, payload);
+      this.dirty.set(false);
+      this.toastErr.set(false);
+      this.toast.set(`saved ${res.bbox_segment_count} regions → ${this.r().id.slice(0, 8)}….md`);
+    } catch (e) {
+      this.toastErr.set(true);
+      this.toast.set(`save failed: ${(e as Error).message}`);
+    } finally {
+      this.saving.set(false);
+      setTimeout(() => this.toast.set(null), 3200);
+    }
   }
 
   private norm(cx: number, cy: number): [number, number] {

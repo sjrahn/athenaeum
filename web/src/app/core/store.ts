@@ -1,6 +1,12 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { httpResource } from '@angular/common/http';
-import { CorpusApiService, RecordsRequest, WorkbenchRequest } from './api';
+import {
+  CorpusApiService,
+  RecordsRequest,
+  RegionPayload,
+  SaveRegionsResult,
+  WorkbenchRequest,
+} from './api';
 import {
   Cond,
   Corpus,
@@ -231,6 +237,15 @@ export class CorpusStore {
   }
   resolveUrl(uri: string): string {
     return this.api.resolveUrl(this.base(), this.corpusId(), uri);
+  }
+
+  /** Persist drawn crop regions to the write endpoint, then reload the record detail so
+   *  the cropper re-seeds from the canonical addresses the server wrote. */
+  async saveRegions(id: string, regions: RegionPayload[]): Promise<SaveRegionsResult> {
+    const res = await this.api.saveRegions(this.base(), this.corpusId(), id, regions);
+    this.recordRes.reload();
+    this.selectedRes.reload();
+    return res;
   }
 
   // ---- actions ----
