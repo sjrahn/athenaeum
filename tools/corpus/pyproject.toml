@@ -45,6 +45,11 @@ claude-session = []
 # tiktoken is lazy-imported (never at module load), so the base install + import guard stay
 # clean without this extra; without it token counts fall back to a chars/4 heuristic.
 tokens         = ["tiktoken>=0.8"]
+# Local Wikipedia/Wikidata knowledge base for the `concept` annotation namespace (corpus.wiki).
+# libzim reads a Kiwix ZIM (full-text search + article read) entirely offline. It is
+# lazy-imported (never at module load), so the base install + import guard stay clean without
+# this extra; the CLI/API degrade gracefully (clear error / 503) when it or the ZIM is absent.
+wiki           = ["libzim>=3"]
 # Read-only HTTP API over the corpus library (serves the Angular Corpus Console).
 # FastAPI/uvicorn are imported only inside `corpus.api`, never by the base library, so
 # the base install (and `import corpus.draft`) stays clean without this extra (gotcha #24).

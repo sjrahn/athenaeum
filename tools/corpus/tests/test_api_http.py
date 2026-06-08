@@ -88,6 +88,19 @@ def _build_corpus(root: Path) -> None:
             )
         ]
     )
+    # A concept annotation (§4.3.3.4) — exercises the detail `concepts` view + the `concept` facet.
+    records.append_context_block(
+        pdf,
+        namespace="concept",
+        id="concept",
+        fields={
+            "address": "page=1",
+            "quote": "service",
+            "concept": "wikidata:Q42",
+            "label": "Service Manual",
+            "url": "https://en.wikipedia.org/wiki/Service_Manual",
+        },
+    )
     records.dump(pdf, root / "records" / "cc" / f"{_PDF_ID}.md")
 
 
@@ -173,6 +186,95 @@ def test_records_and_detail(client):
     # the detail carries the token breakdown for the inspector/detail pane
     assert set(body["tokens"]) == {"body", "blocks", "full"}
     assert body["tokens"]["body"] <= body["tokens"]["blocks"] <= body["tokens"]["full"]
+
+
+def test_record_detail_includes_concepts(client):
+    """The detail carries the `concepts` view; with no KB there's no live summary enrichment."""
+    body = client.get(f"/v1/test/records/{_PDF_ID}").json()
+    assert "concepts" in body
+    cs = body["concepts"]
+    assert len(cs) == 1
+    assert cs[0]["concept"] == "wikidata:Q42"
+    assert cs[0]["label"] == "Service Manual"
+    assert cs[0]["address"] == "page=1"
+    assert "summary" not in cs[0]
+
+
+def test_concept_facet_and_filter(client):
+    """A `concept` facet group surfaces (labelled by display name) and `facet=concept=…` filters."""
+    body = client.get("/v1/test/workbench").json()
+    groups = {g["key"]: g for g in body["facetStack"]}
+    assert "concept" in groups
+    vals = {v["v"]: v["label"] for v in groups["concept"]["values"]}
+    assert vals == {"wikidata:Q42": "Service Manual"}
+
+    narrowed = client.get("/v1/test/workbench", params={"facet": "concept=wikidata:Q42"}).json()
+    assert narrowed["total"] == 1
+    assert narrowed["records"][0]["id"] == _PDF_ID
+
+
+def test_wiki_endpoints_503_without_kb(client):
+    assert client.get("/v1/wiki/search", params={"q": "entropy"}).status_code == 503
+    assert client.get("/v1/wiki/article", params={"id": "Entropy"}).status_code == 503
+
+
+def _build_zim(path: Path) -> None:
+    from libzim.writer import Creator, Hint, Item, StringProvider
+
+    class _H(Item):
+        def __init__(self, p, t, c):
+            super().__init__()
+            self._p, self._t, self._c = p, t, c
+
+        def get_path(self):
+            return self._p
+
+        def get_title(self):
+            return self._t
+
+        def get_mimetype(self):
+            return "text/html"
+
+        def get_contentprovider(self):
+            return StringProvider(self._c)
+
+        def get_hints(self):
+            return {Hint.FRONT_ARTICLE: True}
+
+    body = (
+        "<html><head><title>Service Manual</title>"
+        '<link rel="canonical" href="https://www.wikidata.org/wiki/Q42"></head>'
+        "<body><p>A service manual is a maintenance document for a product, "
+        "long enough to be a real summary.</p></body></html>"
+    )
+    with Creator(str(path)).config_indexing(True, "eng") as creator:
+        creator.add_item(_H("Service Manual", "Service Manual", body))
+        creator.set_mainpath("Service Manual")
+
+
+def test_wiki_kb_enriches_detail_and_endpoints(tmp_path):
+    """With a ZIM configured: detail concepts gain a live gloss, and /v1/wiki/* serve."""
+    pytest.importorskip("libzim")
+    root = tmp_path / "corpus"
+    _build_corpus(root)
+    zim = tmp_path / "w.zim"
+    _build_zim(zim)
+    cfg = ApiConfig([api_config._entry("test", root, 0)], wiki_zim=str(zim))
+    c = TestClient(create_app(cfg))
+
+    # detail enrichment: the concept (label "Service Manual") gets a live summary + source.
+    cs = c.get(f"/v1/test/records/{_PDF_ID}").json()["concepts"]
+    assert cs[0]["summary"].startswith("A service manual is a maintenance document")
+    assert cs[0]["source"] == "wikipedia"
+
+    # /v1/wiki/search
+    hits = c.get("/v1/wiki/search", params={"q": "maintenance"}).json()
+    assert any(h["title"] == "Service Manual" for h in hits)
+
+    # /v1/wiki/article
+    art = c.get("/v1/wiki/article", params={"id": "Service Manual"}).json()
+    assert art["qid"] == "wikidata:Q42"
+    assert art["summary"].startswith("A service manual")
 
 
 def test_schema_fields_facets(client):

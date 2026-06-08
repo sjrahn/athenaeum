@@ -232,12 +232,44 @@ def artifact_size(
     return None
 
 
+def _concepts_detail(post: Any, resolver: Any | None) -> list[dict[str, Any]]:
+    """The `concepts` derived view (§9.7), each entry enriched with a **live** gloss from the
+    KB/registry when a resolver is configured. The summary is fetched, never stored on the record
+    — concept blocks stay lean (§4.3.3.4).
+
+    A `local:` concept resolves by its id; everything else resolves by the block's `label` (the
+    article title), since the ZIM KB is keyed by title, not by a bare `wikidata:Q…` id.
+    """
+    out: list[dict[str, Any]] = []
+    for entry in derived_views.concepts(post):
+        item = dict(entry)
+        if resolver is not None:
+            cid = str(item.get("concept") or "").strip()
+            ref = cid if cid.startswith("local:") else (str(item.get("label") or "").strip() or cid)
+            if ref:
+                try:
+                    resolved = resolver.get(ref)
+                except Exception:
+                    resolved = None
+                if resolved is not None:
+                    if resolved.summary:
+                        item["summary"] = resolved.summary
+                    if resolved.label and not item.get("label"):
+                        item["label"] = resolved.label
+                    if resolved.url and not item.get("url"):
+                        item["url"] = resolved.url
+                    item["source"] = resolved.source
+        out.append(item)
+    return out
+
+
 def record_detail(
     corpus_root: Path,
     post: Any,
     corpus_id: str,
     *,
     store: ArtifactStore | None = None,
+    concept_resolver: Any | None = None,
 ) -> dict[str, Any]:
     """Full record JSON for the dual-pane viewer."""
     record_id = str(post.metadata.get("id") or "")
@@ -276,6 +308,7 @@ def record_detail(
         "embeds": [_embed_node(e) for e in records.iter_embed_blocks(post)],
         "content": content_nodes(post),
         "annotations": derived_views.context(post),
+        "concepts": _concepts_detail(post, concept_resolver),
         "classifications": derived_views.classifications(post),
         "tokens": tokens.token_counts(post, corpus_root=corpus_root),
         "captured": _captured(post),

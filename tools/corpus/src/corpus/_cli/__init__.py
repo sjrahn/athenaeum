@@ -32,6 +32,9 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Crawl & discovery (P4)
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
+    # Concepts (P5)
+    "wiki":            ("Concepts",               "Search / read the local Wikipedia knowledge base (concept KB)"),
+    "concept":         ("Concepts",               "Link a concept (Wikipedia/local) to a record — writes a concept context block"),
     # Inspect (P1)
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
     "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + candidate classifications (normalizer's first call)"),
@@ -59,6 +62,7 @@ _GROUP_ORDER: tuple[str, ...] = (
     "Scaffolding",
     "Capture & ingest",
     "Crawl & discovery",
+    "Concepts",
     "Inspect",
     "Edit",
     "Storage",

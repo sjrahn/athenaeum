@@ -39,6 +39,9 @@ class CorpusEntry:
 @dataclass
 class ApiConfig:
     corpora: list[CorpusEntry]
+    # Shared local Wikipedia ZIM for the concept KB (corpus.wiki). One ZIM fronts every
+    # corpus; absent → the wiki endpoints return 503 and concept chips carry no live gloss.
+    wiki_zim: str | None = None
 
     def by_id(self, corpus_id: str) -> CorpusEntry | None:
         return next((c for c in self.corpora if c.id == corpus_id), None)
@@ -96,16 +99,21 @@ def _parse_specs(specs: list[str]) -> list[CorpusEntry]:
 
 
 def load_config(specs: list[str] | None = None) -> ApiConfig:
-    """Resolve the served corpora from CLI specs, then env, then cwd discovery."""
+    """Resolve the served corpora from CLI specs, then env, then cwd discovery.
+
+    The shared concept-KB ZIM defaults from `ATH_WIKI_ZIM` (a `--wiki-zim` flag may override
+    it on the served config)."""
+    wiki_zim = os.environ.get("ATH_WIKI_ZIM") or None
+
     if specs:
-        return ApiConfig(_parse_specs(specs))
+        return ApiConfig(_parse_specs(specs), wiki_zim=wiki_zim)
 
     env = os.environ.get("ATH_API_CORPORA", "").strip()
     if env:
         raw = [s for s in env.replace(",", " ").split() if s]
-        return ApiConfig(_parse_specs(raw))
+        return ApiConfig(_parse_specs(raw), wiki_zim=wiki_zim)
 
     from corpus.paths import find_corpus_root
 
     root = find_corpus_root()
-    return ApiConfig([_entry(root.name, root, 0)])
+    return ApiConfig([_entry(root.name, root, 0)], wiki_zim=wiki_zim)

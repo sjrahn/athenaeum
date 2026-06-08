@@ -621,6 +621,19 @@ def iter_issue_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
             }
 
 
+def iter_concept_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
+    """Yield each `concept`-namespace context block as `{subtype, fields}`.
+
+    The `concept` namespace projection of `iter_context_blocks` (spec §4.3.3.4); the shape the
+    `concepts` derived view (§9.7) and the API concept index/facet consume."""
+    for ctx in iter_context_blocks(post):
+        if (ctx.get("namespace") or "") == "concept":
+            yield {
+                "subtype": ctx.get("subtype"),
+                "fields": ctx.get("fields") or {},
+            }
+
+
 def primary_origin_uri(post: frontmatter.Post) -> str:
     """Return the first URI from the first origin block, or `""`."""
     for origin in iter_origin_blocks(post):

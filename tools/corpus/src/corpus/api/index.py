@@ -184,6 +184,16 @@ def parse_range(raw: str) -> tuple[int, int] | None:
         return None
 
 
+def _facet_value_label(key: str, value: str, concept_labels: dict[str, str]) -> str:
+    """Human label for a facet value: short MIME for `mime`, the concept's display name for
+    `concept` (the value is an opaque id), the raw value otherwise."""
+    if key == "mime":
+        return mime_short(value)
+    if key == "concept":
+        return concept_labels.get(value, value)
+    return value
+
+
 @dataclass
 class IndexedRecord:
     summary: dict[str, Any]
@@ -192,6 +202,7 @@ class IndexedRecord:
     status: str
     visibility: str | None
     composites: list[tuple[str, str]]  # (namespace, id)
+    concepts: list[tuple[str, str]]  # (concept id, label) — the `concept` facet join key
     block_fields: dict[str, dict[str, Any]]  # overlayKey -> {field: raw value}
     haystack: str
     title_key: str
@@ -271,6 +282,17 @@ class CorpusIndex:
             cfields.pop("provenance", None)
             block_fields.setdefault(f"composite/{ns}/{cid}", {}).update(cfields)
 
+        # concept annotations (§4.3.3.4) → the `concept` facet join key (deduped per record)
+        concept_list: list[tuple[str, str]] = []
+        seen_concepts: set[str] = set()
+        for block in records.iter_concept_blocks(post):
+            cfields = block.get("fields") or {}
+            cid = str(cfields.get("concept") or "").strip()
+            if not cid or cid in seen_concepts:
+                continue
+            seen_concepts.add(cid)
+            concept_list.append((cid, str(cfields.get("label") or cid)))
+
         haystack = " ".join(
             [
                 summary["title"] or "",
@@ -308,6 +330,7 @@ class CorpusIndex:
                 status=summary["status"] or "",
                 visibility=summary["visibility"],
                 composites=composites,
+                concepts=concept_list,
                 block_fields=block_fields,
                 haystack=haystack,
                 title_key=(summary["title"] or "").lower(),
@@ -369,6 +392,8 @@ class CorpusIndex:
         if key.startswith("composite:"):
             ns = key[len("composite:") :]
             return [cid for (cns, cid) in it.composites if cns == ns]
+        if key == "concept":
+            return [cid for (cid, _label) in it.concepts]
         return []
 
     def _matches_facets(self, it: IndexedRecord, facets: dict[str, set[str]]) -> bool:
@@ -407,6 +432,7 @@ class CorpusIndex:
             c[value] = c.get(value, 0) + 1
 
         composite_ns: set[str] = set()
+        concept_labels: dict[str, str] = {}
         for it in scope:
             if it.mime:
                 bump("mime", "mime", it.mime)
@@ -420,10 +446,13 @@ class CorpusIndex:
                 key = f"composite:{ns}"
                 bump(key, ns, cid)
                 composite_ns.add(ns)
+            for cid, clabel in it.concepts:
+                bump("concept", "concept", cid)
+                concept_labels.setdefault(cid, clabel)
 
         order = ["mime", "origin", "status"]
         order += [f"composite:{ns}" for ns in sorted(composite_ns)]
-        order += ["visibility"]
+        order += ["concept", "visibility"]
 
         out: list[dict[str, Any]] = []
         for key in order:
@@ -431,7 +460,7 @@ class CorpusIndex:
             if not c:
                 continue
             values = [
-                {"v": v, "n": n, "label": mime_short(v) if key == "mime" else v}
+                {"v": v, "n": n, "label": _facet_value_label(key, v, concept_labels)}
                 for v, n in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))
             ]
             out.append({"key": key, "label": labels[key], "values": values})
@@ -827,6 +856,7 @@ class CorpusIndex:
         counters: dict[str, dict[str, int]] = {}
         labels: dict[str, str] = {}
         composite_ns: set[str] = set()
+        concept_labels: dict[str, str] = {}
 
         def bump(key: str, label: str, value: str) -> None:
             labels[key] = label
@@ -845,6 +875,9 @@ class CorpusIndex:
             for ns, cid in it.composites:
                 bump(f"composite:{ns}", ns, cid)
                 composite_ns.add(ns)
+            for cid, clabel in it.concepts:
+                bump("concept", "concept", cid)
+                concept_labels.setdefault(cid, clabel)
             if it.visibility and it.visibility != "visible":
                 bump("visibility", "visibility", it.visibility)
 
@@ -854,7 +887,7 @@ class CorpusIndex:
 
         order = ["status", "mime", "embedmime", "origin"]
         order += [f"composite:{ns}" for ns in sorted(composite_ns)]
-        order += ["visibility"]
+        order += ["concept", "visibility"]
 
         out: list[dict[str, Any]] = []
         for key in order:
@@ -864,7 +897,7 @@ class CorpusIndex:
             if not counts:
                 continue
             values = [
-                {"v": v, "n": n, "label": mime_short(v) if key == "mime" else v}
+                {"v": v, "n": n, "label": _facet_value_label(key, v, concept_labels)}
                 for v, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
             ]
             label = labels.get(key) or key.split(":")[-1]

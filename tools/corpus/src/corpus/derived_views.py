@@ -11,6 +11,7 @@ The views:
 - `uris` (§9.3) — origin URIs + semantic_type:uri-tagged schema fields.
 - `timeline` (§9.4) — origin snapshots + semantic_type:timestamp-tagged fields.
 - `identifiers` (§9.5) — semantic_type:identifier-tagged fields + the record's id.
+- `concepts` (§9.7) — the `concept`-namespace projection of `context`.
 """
 
 from __future__ import annotations
@@ -162,6 +163,25 @@ def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
         if issue.get("subtype"):
             entry["subtype"] = issue["subtype"]
         for k, v in (issue.get("fields") or {}).items():
+            entry[k] = v
+        out.append(entry)
+    return out
+
+
+def concepts(post: frontmatter.Post) -> list[dict[str, Any]]:
+    """§9.7 — derive `concepts[]`: the `concept`-namespace projection of the context view.
+
+    Each entry is the concept block's fields — the identity ladder (`label`, `url`, `concept`)
+    plus the optional anchor (`address`, `quote`, `occurrence`). Concepts reference an external
+    local knowledge base (Wikipedia/Wikidata) by id/URL, not a corpus record (spec §4.3.3.4):
+    a segment-scoped entry (with `address`) is a mention; a record-scoped entry is aboutness.
+    """
+    out: list[dict[str, Any]] = []
+    for concept in records.iter_concept_blocks(post):
+        entry: dict[str, Any] = {}
+        if concept.get("subtype"):
+            entry["subtype"] = concept["subtype"]
+        for k, v in (concept.get("fields") or {}).items():
             entry[k] = v
         out.append(entry)
     return out

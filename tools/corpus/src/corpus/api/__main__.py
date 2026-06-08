@@ -37,6 +37,13 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8080)
     serve.add_argument("--reload", action="store_true", help="uvicorn autoreload (dev)")
+    serve.add_argument(
+        "--wiki-zim",
+        dest="wiki_zim",
+        default=None,
+        metavar="PATH",
+        help="local Wikipedia ZIM for the concept KB (overrides ATH_WIKI_ZIM)",
+    )
 
     args = parser.parse_args(argv)
     if args.command != "serve":
@@ -49,8 +56,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    if args.wiki_zim:
+        cfg.wiki_zim = args.wiki_zim
+
     for entry in cfg.corpora:
         print(f"serving {entry.id!r} from {entry.root}", file=sys.stderr)
+    if cfg.wiki_zim:
+        print(f"concept KB: {cfg.wiki_zim}", file=sys.stderr)
 
     import uvicorn
 

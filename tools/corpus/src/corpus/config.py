@@ -26,6 +26,9 @@ File schema (all keys optional):
     [corpus.capture]
     default_transport = "headless"   # browser transport when overlay + --transport unset
 
+    [corpus.wiki]
+    zim = "/path/to/wikipedia_en_all.zim"   # local Wikipedia ZIM for the concept KB (corpus.wiki)
+
 Env vars override the file (later wins):
 
     CORPUS_STORE          → store.backend
@@ -38,9 +41,12 @@ Env vars override the file (later wins):
     CORPUS_TRANSCRIBE     → transcription.adapter
     WHISPER_BASE_URL      → transcription.base_url (back-compat)
     CORPUS_CAPTURE_TRANSPORT → capture.default_transport
+    ATH_WIKI_ZIM          → wiki.zim
 
-`load_config(corpus_root)` returns a frozen `CorpusConfig` with two sub-dicts
-(`store`, `transcription`) carrying the merged settings.
+`load_config(corpus_root)` returns a frozen `CorpusConfig` with sub-dicts
+(`store`, `transcription`, `capture`, `wiki`) carrying the merged settings. The ZIM is
+shared across corpora, so `ATH_WIKI_ZIM` (or a server flag) is the usual source;
+`[corpus.wiki].zim` is an optional per-corpus override.
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ class CorpusConfig:
     store: dict[str, Any] = field(default_factory=dict)
     transcription: dict[str, Any] = field(default_factory=dict)
     capture: dict[str, Any] = field(default_factory=dict)
+    wiki: dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(corpus_root: Path) -> CorpusConfig:
@@ -84,12 +91,14 @@ def load_config(corpus_root: Path) -> CorpusConfig:
     file_store = dict(file_data.get("store") or {})
     file_transcription = dict(file_data.get("transcription") or {})
     file_capture = dict(file_data.get("capture") or {})
+    file_wiki = dict(file_data.get("wiki") or {})
 
     store = _resolve_store_section(file_store)
     transcription = _resolve_transcription_section(file_transcription)
     capture = _resolve_capture_section(file_capture)
+    wiki = _resolve_wiki_section(file_wiki)
 
-    return CorpusConfig(store=store, transcription=transcription, capture=capture)
+    return CorpusConfig(store=store, transcription=transcription, capture=capture, wiki=wiki)
 
 
 def _resolve_store_section(file_store: dict[str, Any]) -> dict[str, Any]:
@@ -158,4 +167,16 @@ def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
                 f"unknown default_transport {transport!r}; use headless | headed | cdp."
             )
         out["default_transport"] = transport
+    return out
+
+
+def _resolve_wiki_section(file_w: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the `[corpus.wiki]` section — the local Wikipedia ZIM for the concept KB.
+
+    `zim` is a filesystem path to a Kiwix ZIM. The ZIM is shared across corpora, so the
+    `ATH_WIKI_ZIM` env var (or a server flag) is the usual source; the file key is a
+    per-corpus override. Absent → key omitted (the KB is simply unavailable)."""
+    out: dict[str, Any] = dict(file_w)
+    if env := os.environ.get("ATH_WIKI_ZIM"):
+        out["zim"] = env
     return out

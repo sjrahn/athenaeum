@@ -7,6 +7,7 @@ base install stays importable without the `[api]` extra (gotcha #24).
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -52,6 +53,23 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
             raise HTTPException(400, "record id must be a 64-char blake3 hex")
         return record_id
 
+    def concept_kb():
+        """The shared Wikipedia KB (or None when no ZIM is configured)."""
+        zim = cfg.wiki_zim or os.environ.get("ATH_WIKI_ZIM")
+        if not zim:
+            return None
+        from corpus import wiki
+
+        try:
+            return wiki.open_kb(zim=zim)
+        except wiki.WikiUnavailable:
+            return None
+
+    def concept_resolver(entry: CorpusEntry):
+        from corpus import concepts
+
+        return concepts.ConceptResolver(corpus_root=entry.root, kb=concept_kb())
+
     # ---- health + corpora ----
 
     @app.get("/v1/health", response_class=PlainTextResponse)
@@ -73,6 +91,42 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
                 }
             )
         return out
+
+    # ---- concept KB (Wikipedia; corpus-independent — registered before {corpus} routes) ----
+
+    @app.get("/v1/wiki/search")
+    def wiki_search(q: str = Query(...), limit: int = 10) -> list[dict]:
+        kb = concept_kb()
+        if kb is None:
+            raise HTTPException(503, "no Wikipedia KB configured (set --wiki-zim / ATH_WIKI_ZIM)")
+        from corpus import wiki
+
+        try:
+            hits = kb.search(q, limit=limit)
+        except wiki.WikiUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return [{"id": h.id, "title": h.title, "url": h.url, "path": h.path} for h in hits]
+
+    @app.get("/v1/wiki/article")
+    def wiki_article(id: str = Query(...)) -> dict:
+        kb = concept_kb()
+        if kb is None:
+            raise HTTPException(503, "no Wikipedia KB configured (set --wiki-zim / ATH_WIKI_ZIM)")
+        from corpus import wiki
+
+        try:
+            art = kb.get(id)
+        except wiki.WikiUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        if art is None:
+            raise HTTPException(404, f"no article for {id!r}")
+        return {
+            "id": art.id,
+            "title": art.title,
+            "url": art.url,
+            "qid": art.qid,
+            "summary": art.summary,
+        }
 
     # ---- records / facets / schema ----
 
@@ -166,7 +220,9 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
             raise HTTPException(404, f"record {record_id} not found")
         post = records.load(path)
         store = get_store(entry.root)
-        return serialize.record_detail(entry.root, post, entry.id, store=store)
+        return serialize.record_detail(
+            entry.root, post, entry.id, store=store, concept_resolver=concept_resolver(entry)
+        )
 
     @app.get("/v1/{corpus}/records/{record_id}/graph", response_model=GraphResponse)
     def record_graph(corpus: str, record_id: str) -> GraphResponse:
