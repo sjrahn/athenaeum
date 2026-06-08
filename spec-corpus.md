@@ -905,7 +905,17 @@ Returns an ordered list of `(timestamp, source)` tuples sorted ascending, where 
 
 Aggregates every body-block field tagged `semantic_type: identifier`, plus the record's own `id`.
 
-### 9.6 How views are computed
+### 9.6 The `token_counts` view
+
+Three **cumulative** estimates of a record's size as model context, for budgeting and discovery:
+
+- `body` — tokens in the content zone's text-atom segment bodies only.
+- `blocks` — tokens in the whole record markdown (frontmatter + every metadata/annotation block + the content zone). Always ≥ `body`.
+- `full` — `blocks` plus an image-token estimate summed over image embed blocks and an image artifact, each `≈ min(width·height, cap) / pixels-per-token` from the declared dimensions (`0` when dimensions are absent).
+
+The text tokenizer and the image constants are an implementation choice (impl-corpus.md), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
+
+### 9.7 How views are computed
 
 A derived-view walker:
 
