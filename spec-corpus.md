@@ -462,6 +462,12 @@ Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `seve
 
 A `reference` context block (`<!--context reference-->`) records a source the body cites — a book, an article, a bare external link — pinned to the mention via `address:` (+ `quote:`) and resolved up the **three-tier citation ladder** (§4.4.5): `attribution_text` (free text) → `source_url` (a resolvable URL) → `source_uri` (a functional `corpus://<id>` URI pointing at the separately-captured record). It is the addressable, segment-scoped realization of the citation model §4.4.3 deferred: a casual mention is captured first as free text and progressively researched toward a lossless intra-corpus link, without the host record ever changing shape.
 
+##### 4.3.3.4 The `concept` namespace
+
+A `concept` context block (`<!--context concept-->`) records a concept the body invokes — an entity, idea, work, or place — resolved against an **external local knowledge base** (Wikipedia/Wikidata), *not* a corpus record. This is the deliberate counterpart to `reference`'s tier-3 `source_uri`: a reference resolves toward a captured artifact (`corpus://<id>`), whereas a concept resolves toward an external authority the corpus does **not** capture (§11) — there is no value in re-capturing Wikipedia when it is run locally and read in place.
+
+Like `reference`, it rides a lossy→lossless identity ladder: `label:` (free-text display name) → `url:` (the resolvable article URL) → `concept:` (the stable canonical id). The `concept:` id is the **join key** — `wikidata:Q<n>` (preferred, version-stable), `enwiki:<Article_Title>` (a local-dump article when no QID is resolved), or `local:<slug>` (a corpus-local custom concept) — by which records that invoke the same concept are related without either knowing about the other. As elsewhere, **scope** carries meaning: a block with `address:` (+ optional `quote:`) is a **mention** pinned to a span; an `address:`-less block records the record's **aboutness** as a whole. Concepts surface through the derived `concepts` view (§9.7).
+
 ### 4.4 Classifications: scope and fidelity
 
 Classifications identify what a record (and its sections and segments) IS. The framework rests on two ideas: what *kind* of classification is being made (four axes) and what structural *scope* it applies at (three scopes — record, section, segment).
@@ -915,7 +921,11 @@ Three **cumulative** estimates of a record's size as model context, for budgetin
 
 The text tokenizer and the image constants are an implementation choice (impl-corpus.md), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
 
-### 9.7 How views are computed
+### 9.7 The `concepts` view
+
+The `concept`-namespace projection of the context view (§4.3.3.4) — the dual of the `issues` view (§9.2). Each entry is a concept the record invokes, with its identity ladder (`label`, `url`, `concept`) and optional anchor (`address`, `quote`, `occurrence`); a segment-scoped entry is a *mention*, a record-scoped entry is *aboutness*. The `concept` id (`wikidata:Q…` / `enwiki:…` / `local:…`) is the join key by which independently-annotated records that invoke the same concept are related (§4.3.3.4). Like every §9 view it is computed on demand and never persisted.
+
+### 9.8 How views are computed
 
 A derived-view walker:
 
@@ -954,6 +964,7 @@ Genuinely deferred items for this spec version:
 - **Whole-corpus build tooling** — single-record export is in scope; bulk operations are not.
 - **Export to non-markdown formats.**
 - **Additional semantic types** beyond the closed seven.
+- **Capturing the concept knowledge base.** Wikipedia/Wikidata is referenced by `concept` blocks (§4.3.3.4) as an external authority run locally; the corpus does not capture its articles as records, and the local KB (acquisition, search, read) is an implementation concern (impl-corpus.md), not a corpus-layer contract.
 
 ---
 

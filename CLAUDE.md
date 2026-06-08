@@ -40,8 +40,11 @@ athenaeum/
 ```bash
 # Run the API (FastAPI over the corpus library) — serves /v1 on :8099.
 # Map corpus ids to roots (one server can front several corpora). Needs the [api] extra.
-cd tools/corpus && uv run --extra api corpus-api serve \
+# Add `--extra wiki --wiki-zim <path-to-wikipedia.zim>` to power the concept KB (/v1/wiki/*,
+# live concept glosses); without it concepts still show label/link and the wiki endpoints 503.
+cd tools/corpus && uv run --extra api --extra wiki corpus-api serve \
   --corpus corpus=../../corpus --corpus corpus-test=../../corpus-test \
+  --wiki-zim /path/to/wikipedia_en_all.zim \
   --host 0.0.0.0 --port 8099
 
 # Run the Angular viewer (dev server). The API base auto-follows window.location.hostname:8099.
@@ -70,3 +73,4 @@ cd tools/corpus && uv run python -c "import corpus.draft"
 - **The frontend talks only to the API.** The Angular app never reads the filesystem; artifact bytes come from `GET /v1/{corpus}/artifacts/{id}` and functional URIs from `GET /v1/{corpus}/resolve?uri=…` (fully percent-encode the `uri` value — gotcha).
 - **Parse tolerantly.** Log and skip unparseable records rather than failing the whole corpus.
 - **The corpus layer is flat artifact↔record (v1.0).** No source/document kind, no credibility, no norm_conf, no standalone tags — those were the old (retired) Rust model. Records are artifacts + their markdown proxy; embeds are embedded transports (directly addressed) vs derived self-slices (materialized on demand).
+- **Concepts link artifacts to Wikipedia, not to each other directly.** A `concept` context block (spec §4.3.3.4) annotates a mention (`address:`+`quote:`) or aboutness (no address) with a `wikidata:Q…`/`enwiki:…`/`local:…` join key. Records invoking the same concept relate *without either knowing about the other*. Wikipedia is an **external local KB** (Kiwix ZIM via `corpus.wiki`), never captured as records; glosses are fetched live, never stored. Authored manually via `corpus concept link` (the auto-annotation pass + corpus-wide concept graph are deferred).
