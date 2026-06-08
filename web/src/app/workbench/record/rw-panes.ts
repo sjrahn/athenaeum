@@ -18,6 +18,7 @@ import {
   FlatSeg,
   atomColor,
   fmtBytes,
+  fmtTokens,
   fmtVal,
   firstAddr,
   flatSegments,
@@ -284,6 +285,13 @@ export class RwReader {
         <div class="kv"><span class="k">transport</span><span class="v">{{ r().transport.name }} · {{ fmtBytes(r().transport.size) }}</span></div>
         <div class="kv"><span class="k">captured</span><span class="v">{{ r().captured || '—' }}</span></div>
       </div>
+      @if (r().tokens) {
+        <div class="sec"><div class="t-label">tokens · o200k est.</div>
+          <div class="kv"><span class="k">body</span><span class="v">{{ fmtTokens(r().tokens.body) }}</span></div>
+          <div class="kv"><span class="k">+ blocks</span><span class="v">{{ fmtTokens(r().tokens.blocks) }}</span></div>
+          <div class="kv"><span class="k">+ images</span><span class="v">{{ fmtTokens(r().tokens.full) }}</span></div>
+        </div>
+      }
       @if (composites().length) {
         <div class="sec"><div class="t-label">classifications</div>
           <div class="cls">@for (c of composites(); track c) { <span class="pill">{{ c }}</span> }</div></div>
@@ -329,6 +337,7 @@ export class RwInspector {
   private store = inject(CorpusStore);
   r = input.required<RecordDetail>();
   readonly fmtBytes = fmtBytes;
+  readonly fmtTokens = fmtTokens;
   readonly host = hostOf;
   readonly composites = computed(() => this.r().classifications.filter((c) => c.includes('/')));
   readonly hashes = computed(() => Object.entries(this.r().hashes));

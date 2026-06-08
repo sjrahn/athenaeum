@@ -178,6 +178,14 @@ export function fmtBytes(bytes: number | null): string {
   return `${bytes} B`;
 }
 
+/** Compact token count (null -> em-dash): 820 · 12.4k · 1.2M. */
+export function fmtTokens(n: number | null | undefined): string {
+  if (n == null) return '—';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return `${n}`;
+}
+
 /** Epoch ms -> YYYY-MM-DD (UTC), for the timeline + date controls. */
 export function fmtDateMs(ms: number): string {
   const d = new Date(ms);

@@ -4,7 +4,7 @@
 
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { CorpusStore } from '../../core/store';
-import { fmtBytes, fmtVal, hostOf, titleFor } from '../../core/util';
+import { fmtBytes, fmtTokens, fmtVal, hostOf, titleFor } from '../../core/util';
 import { CxMimeChip, CxTypeBadge } from '../../chips/chips';
 
 interface ExtField {
@@ -70,6 +70,15 @@ interface ExtField {
           <div class="kv"><span class="k">transport</span><span class="v mono">{{ r()!.transport.name }} · {{ fmtBytes(r()!.transport.size) }}</span></div>
           <div class="kv"><span class="k">captured</span><span class="v mono">{{ r()!.captured || '—' }}</span></div>
         </div>
+
+        @if (r()!.tokens) {
+          <div class="sec">
+            <div class="t-label">tokens <span class="dim">· o200k est.</span></div>
+            <div class="kv"><span class="k">body</span><span class="v mono">{{ fmtTokens(r()!.tokens.body) }}</span></div>
+            <div class="kv"><span class="k">+ blocks</span><span class="v mono">{{ fmtTokens(r()!.tokens.blocks) }}</span></div>
+            <div class="kv"><span class="k">+ images</span><span class="v mono">{{ fmtTokens(r()!.tokens.full) }}</span></div>
+          </div>
+        }
 
         @if (composites().length > 0) {
           <div class="sec">
@@ -146,6 +155,7 @@ export class WbDetail {
   readonly store = inject(CorpusStore);
   readonly r = this.store.selected;
   readonly fmtBytes = fmtBytes;
+  readonly fmtTokens = fmtTokens;
   readonly title = titleFor;
   readonly host = hostOf;
 

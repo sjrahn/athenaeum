@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from corpus import derived_views, records, segments
+from corpus import derived_views, records, segments, tokens
 from corpus import mime as mime_mod
 from corpus.store import ArtifactStore
 
@@ -277,6 +277,7 @@ def record_detail(
         "content": content_nodes(post),
         "annotations": derived_views.context(post),
         "classifications": derived_views.classifications(post),
+        "tokens": tokens.token_counts(post, corpus_root=corpus_root),
         "captured": _captured(post),
         "normalized": None,
         # render hints for the artifact pane (present when the drafter recorded them)

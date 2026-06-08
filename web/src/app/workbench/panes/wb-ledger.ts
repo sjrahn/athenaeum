@@ -12,7 +12,7 @@ import {
 } from '@angular/core';
 import { CorpusStore } from '../../core/store';
 import { WorkbenchRow } from '../../core/models';
-import { fmtBytes, titleFor } from '../../core/util';
+import { fmtBytes, fmtTokens, titleFor } from '../../core/util';
 import { CxMimeChip } from '../../chips/chips';
 import { CxThumb } from '../../browser/thumb';
 import { WbDockState } from '../dock/wb-dock-state';
@@ -29,6 +29,7 @@ const COLGROUPS: { label: string; cols: Col[] }[] = [
     cols: [
       { key: 'status', label: 'status', w: 104 },
       { key: 'segs', label: 'segments', w: 92 },
+      { key: 'tokens', label: 'tokens', w: 84 },
     ],
   },
   {
@@ -94,6 +95,7 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
                     </td>
                     <td class="muted">{{ r.status }}</td>
                     <td class="muted">@if (r.segments) { <b>{{ r.segments }}</b> seg } @else { — }</td>
+                    <td class="muted" [title]="tokTitle(r)">{{ fmtTokens(r.tokens_full) }}</td>
                     <td class="muted">{{ r.origin_host || '—' }}</td>
                     <td class="muted">{{ (r.captured || '—').slice(0, 10) }}</td>
                     <td class="muted">{{ fmtBytes(r.size) }}</td>
@@ -155,6 +157,7 @@ const COLS: Col[] = COLGROUPS.flatMap((g) => g.cols);
             @if (h.r.segments) { <span>· {{ h.r.segments }} seg</span> }
             <span>· {{ fmtBytes(h.r.size) }}</span>
           </div>
+          <div class="hc-kv"><span class="k">tokens</span><span class="v">{{ fmtTokens(h.r.tokens_full) }} · {{ fmtTokens(h.r.tokens_body) }} body</span></div>
           <div class="hc-kv"><span class="k">origin</span><span class="v">{{ h.r.origin_host || '—' }}</span></div>
           <div class="hc-kv"><span class="k">captured</span><span class="v">{{ (h.r.captured || '—').slice(0, 10) }}{{ h.r.embed_count ? ' · ' + h.r.embed_count + ' embeds' : '' }}</span></div>
           <div class="hc-kv"><span class="k">classes</span><span class="v">{{ h.r.classifications.length }}</span></div>
@@ -239,7 +242,12 @@ export class WbLedger {
   readonly colgroups = COLGROUPS;
   readonly views: [string, string][] = [['ledger', '≣'], ['gallery', '⊞'], ['cards', '☰']];
   readonly fmtBytes = fmtBytes;
+  readonly fmtTokens = fmtTokens;
   readonly title = titleFor;
+
+  tokTitle(r: WorkbenchRow): string {
+    return `tokens — body ${r.tokens_body} · +blocks ${r.tokens_blocks} · +images ${r.tokens_full}`;
+  }
 
   readonly dock = inject(WbDockState, { optional: true });
   readonly rows = this.store.wbRows;

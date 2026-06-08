@@ -129,12 +129,50 @@ def test_workbench_shape(client):
     assert img["transport_name"] == "aaaaaaaaaaaa.png"
 
 
+def test_workbench_tokens(client):
+    """Every row carries the three cumulative token tiers (the derived-view field)."""
+    body = client.get("/v1/test/workbench").json()
+    for rec in body["records"]:
+        for k in ("tokens_body", "tokens_blocks", "tokens_full"):
+            assert isinstance(rec[k], int), rec
+        assert rec["tokens_body"] <= rec["tokens_blocks"] <= rec["tokens_full"]
+    # the PDF record has real body text, so its body count is non-zero
+    pdf = next(rec for rec in body["records"] if rec["id"] == _PDF_ID)
+    assert pdf["tokens_body"] > 0
+
+
+def test_fields_includes_tokens(client):
+    """The token tiers are exposed as filterable numeric core fields with histogram stats."""
+    fields = {f["id"]: f for f in client.get("/v1/test/fields").json()}
+    for fid in ("core::tokens_body", "core::tokens_blocks", "core::tokens_full"):
+        assert fid in fields, fields.keys()
+        assert fields[fid]["type"] == "number"
+        assert fields[fid]["group"] == "core"
+    assert "bins" in fields["core::tokens_full"]["stats"]
+
+
+def test_tokens_between_filter_narrows(client):
+    """A numeric `between` condition on a token field narrows the set (the range brush)."""
+    full = client.get("/v1/test/workbench").json()
+    assert full["total"] == 2
+    # body==0 matches only the image record (its single segment is a body-empty image marker)
+    narrowed = client.get(
+        "/v1/test/workbench", params={"cond": "core::tokens_body~number~between~0,0"}
+    ).json()
+    assert narrowed["total"] == 1
+    assert narrowed["records"][0]["id"] == _IMG_ID
+
+
 def test_records_and_detail(client):
     r = client.get("/v1/test/records")
     assert r.status_code == 200
     r = client.get(f"/v1/test/records/{_IMG_ID}")
     assert r.status_code == 200
-    assert r.json()["title"] == "Wiring Diagram"
+    body = r.json()
+    assert body["title"] == "Wiring Diagram"
+    # the detail carries the token breakdown for the inspector/detail pane
+    assert set(body["tokens"]) == {"body", "blocks", "full"}
+    assert body["tokens"]["body"] <= body["tokens"]["blocks"] <= body["tokens"]["full"]
 
 
 def test_schema_fields_facets(client):

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from corpus import records, schemas, segments
+from corpus import records, schemas, segments, tokens
 from corpus.api import serialize
 from corpus.api.config import CorpusEntry
 from corpus.store import ArtifactStore, get_store
@@ -204,6 +204,10 @@ class IndexedRecord:
     embed_mimes: list[str]  # distinct short labels (jpg, png, …)
     atom_counts: dict[str, int]  # atom -> segment count
     captured_ms: int | None  # captured snapshot as epoch ms
+    # token-count derived view (corpus.tokens): cumulative tiers body <= blocks <= full
+    tokens_body: int
+    tokens_blocks: int
+    tokens_full: int
 
 
 @dataclass
@@ -294,6 +298,7 @@ class CorpusIndex:
 
         size = serialize.artifact_size(self.entry.root, summary["id"] or "", mime, store)
         captured_ms = _date_to_ms(summary["captured"]) if summary["captured"] else None
+        tc = tokens.token_counts(post, corpus_root=self.entry.root)
 
         self.items.append(
             IndexedRecord(
@@ -314,6 +319,9 @@ class CorpusIndex:
                 embed_mimes=embed_mimes,
                 atom_counts=atom_counts,
                 captured_ms=captured_ms,
+                tokens_body=tc["body"],
+                tokens_blocks=tc["blocks"],
+                tokens_full=tc["full"],
             )
         )
 
@@ -498,6 +506,12 @@ class CorpusIndex:
                 return it.summary["description"] or None
             if name == "size_mb":
                 return (it.size / 1_000_000) if it.size else None
+            if name == "tokens_body":
+                return it.tokens_body
+            if name == "tokens_blocks":
+                return it.tokens_blocks
+            if name == "tokens_full":
+                return it.tokens_full
             if name == "captured":
                 return it.captured or None
             return None
@@ -558,6 +572,21 @@ class CorpusIndex:
                 "size · MB",
                 "number",
                 lambda it: (it.size / 1_000_000) if it.size else None,
+            ),
+            ("core::tokens_body", "tokens_body", "tokens · body", "number", lambda it: it.tokens_body),
+            (
+                "core::tokens_blocks",
+                "tokens_blocks",
+                "tokens · +blocks",
+                "number",
+                lambda it: it.tokens_blocks,
+            ),
+            (
+                "core::tokens_full",
+                "tokens_full",
+                "tokens · +images",
+                "number",
+                lambda it: it.tokens_full,
             ),
         ]
 
@@ -686,6 +715,9 @@ class CorpusIndex:
             "size": it.size,
             "segments": it.segment_count,
             "transport_name": name,
+            "tokens_body": it.tokens_body,
+            "tokens_blocks": it.tokens_blocks,
+            "tokens_full": it.tokens_full,
         }
 
     # ---- graph (record connections) ----

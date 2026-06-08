@@ -142,6 +142,7 @@ export interface RecordDetail {
   content: ContentNode[];
   annotations: ContextBlock[];
   classifications: string[];
+  tokens: { body: number; blocks: number; full: number };
   captured: string | null;
   normalized: string | null;
   pages: number | null;
@@ -203,6 +204,10 @@ export interface WorkbenchRow extends RecordSummary {
   size: number | null; // artifact bytes
   segments: number;
   transport_name: string;
+  // token-count derived view (cumulative tiers): body <= blocks <= full(+images)
+  tokens_body: number;
+  tokens_blocks: number;
+  tokens_full: number;
 }
 
 export interface TimelineBin {
