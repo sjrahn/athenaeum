@@ -1,6 +1,15 @@
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import { EmbedBlock, RecordDetail, SectionNode, SegmentNode } from '../core/models';
-import { atomColor, firstAddr } from '../core/util';
+import { atomColor, firstAddr, mimeInfo } from '../core/util';
+import { CorpusStore } from '../core/store';
 import { CxAddress, CxAtomChip } from '../chips/chips';
 import { CxMd } from './md';
 
@@ -39,6 +48,15 @@ function embedFor(r: RecordDetail, seg: SegmentNode): EmbedBlock | null {
       </div>
       @if (isText() && seg().body) {
         <cx-md [text]="seg().body" />
+      } @else if (imgUrl()) {
+        <figure class="fig">
+          <img [src]="imgUrl()" [alt]="alt()" loading="lazy"
+            (click)="$event.stopPropagation(); view.emit(imgUrl()!)" />
+          <figcaption>
+            @if (embed()) { <span class="emb">↳ embed</span> } @else { <span class="slice">self-slice</span> }
+            <span class="cap">{{ markerDesc() }}</span>
+          </figcaption>
+        </figure>
       } @else {
         <div class="marker">
           <span class="swatch" [style.background]="color()"></span>
@@ -57,6 +75,12 @@ function embedFor(r: RecordDetail, seg: SegmentNode): EmbedBlock | null {
   styles: [`
     .block { position: relative; padding: 7px 16px 8px; cursor: pointer; border-left: 2px solid transparent;
       transition: background 0.12s; }
+    .fig { margin: 0; border: 1px solid var(--border); background: var(--surface-2); }
+    .fig img { display: block; max-width: 100%; max-height: 360px; height: auto; margin: 0 auto;
+      cursor: zoom-in; background: #fff; }
+    .fig figcaption { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--border);
+      font-family: var(--mono); font-size: 9px; color: var(--dim); }
+    .fig .cap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .block.active { border-left-color: var(--accent); background: var(--accent-soft); }
     .block:hover:not(.active) { background: var(--surface-2); }
     .head { display: flex; align-items: center; gap: 6px; min-height: 16px; }
@@ -74,15 +98,26 @@ function embedFor(r: RecordDetail, seg: SegmentNode): EmbedBlock | null {
   `],
 })
 export class CxSegmentBlock {
+  private store = inject(CorpusStore);
   seg = input.required<SegmentNode>();
   embed = input<EmbedBlock | null>(null);
+  recordId = input<string>('');
   active = input(false);
   pick = output<void>();
+  view = output<string>();
   hover = signal(false);
 
   isText = computed(() => this.seg().atom === 'text');
   addr = computed(() => firstAddr(this.seg().address));
   color = computed(() => atomColor(this.seg().atom));
+  alt = computed(() => this.embed()?.alt || this.seg().description || 'image');
+  // image atoms (embed-backed or artifact self-slice) resolve to real bytes via the addressed URI.
+  imgUrl = computed(() => {
+    if (this.seg().atom !== 'image') return null;
+    const a = this.addr();
+    const id = this.recordId();
+    return id && a ? this.store.resolveUrl(`corpus://${id}?${a}`) : null;
+  });
   markerDesc = computed(() => {
     const e = this.embed();
     if (e) return e.description || e.alt || 'embedded transport · ' + (e.transport ?? '');
@@ -109,18 +144,41 @@ export class CxSegmentBlock {
             <cx-address [address]="addr(section(node).address)" />
           </div>
           @for (seg of section(node).children; track $index) {
-            <cx-segment-block [seg]="seg" [embed]="embedOf(seg)" [active]="isActive(seg)"
-              (pick)="pickSeg(seg)" />
+            <cx-segment-block [seg]="seg" [embed]="embedOf(seg)" [recordId]="r().id"
+              [active]="isActive(seg)" (pick)="pickSeg(seg)" (view)="lightbox.set($event)" />
           }
         } @else {
-          <cx-segment-block [seg]="segment(node)" [embed]="embedOf(segment(node))"
-            [active]="isActive(segment(node))" (pick)="pickSeg(segment(node))" />
+          <cx-segment-block [seg]="segment(node)" [embed]="embedOf(segment(node))" [recordId]="r().id"
+            [active]="isActive(segment(node))" (pick)="pickSeg(segment(node))" (view)="lightbox.set($event)" />
         }
       }
       @if (r().content.length === 0) {
         <div class="empty">content zone empty — {{ r().status === 'stub' ? 'awaiting draft pass.' : 'this record has no segmented body.' }}</div>
       }
+
+      <!-- embedded assets the body doesn't position inline (orphan embeds): a viewable gallery -->
+      @if (orphanImages().length) {
+        <div class="sec"><span class="sg">⧉</span>
+          <span class="sentry">embedded assets</span>
+          <div class="hair" style="flex:1"></div>
+          <span class="sct">{{ orphanImages().length }}</span></div>
+        <div class="gal">
+          @for (e of orphanImages(); track $index) {
+            <figure class="gt" (click)="lightbox.set(embedUrl(e))">
+              <img [src]="embedUrl(e)" [alt]="e.alt || 'embed'" loading="lazy" />
+              <figcaption>{{ e.alt || short(e.mime) }}{{ e.width && e.height ? ' · ' + e.width + '×' + e.height : '' }}</figcaption>
+            </figure>
+          }
+        </div>
+      }
     </div>
+
+    @if (lightbox(); as src) {
+      <div class="lb" (click)="lightbox.set(null)">
+        <img [src]="src" alt="embedded asset" (click)="$event.stopPropagation()" />
+        <button class="lbx" (click)="lightbox.set(null)" title="close ⎋">✕</button>
+      </div>
+    }
   `,
   styles: [`
     .body { padding: 4px 0 40px; }
@@ -130,17 +188,51 @@ export class CxSegmentBlock {
     .sg { font-family: var(--mono); font-size: 9px; color: var(--dim); }
     .sentry { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--muted); }
     .sns { font-family: var(--mono); font-size: 8px; color: var(--dim); }
+    .sct { font-family: var(--mono); font-size: 8px; color: var(--dim); }
     .empty { padding: 20px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+    .gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 8px 16px 0; }
+    .gt { margin: 0; border: 1px solid var(--border); background: var(--surface-2); cursor: zoom-in; }
+    .gt img { display: block; width: 100%; height: 120px; object-fit: contain; background: #fff; }
+    .gt figcaption { padding: 4px 6px; border-top: 1px solid var(--border); font-family: var(--mono);
+      font-size: 8.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.78); display: flex;
+      align-items: center; justify-content: center; padding: 32px; }
+    .lb img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+    .lbx { position: fixed; top: 16px; right: 18px; width: 30px; height: 30px; border: 1px solid var(--border-strong);
+      background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 13px; cursor: pointer; }
   `],
 })
 export class CxRenderedBody {
+  private store = inject(CorpusStore);
   r = input.required<RecordDetail>();
   activeKey = input<string | null>(null);
   pick = output<PickEvent>();
+  readonly lightbox = signal<string | null>(null);
 
   section = (n: SectionNode | SegmentNode) => n as SectionNode;
   segment = (n: SectionNode | SegmentNode) => n as SegmentNode;
   addr = firstAddr;
+  short = (m: string) => mimeInfo(m).short;
+  // Image embeds that no in-flow image segment positions (orphan embeds) — surfaced as a
+  // viewable gallery so they aren't invisible. The resolver materializes each via its address.
+  readonly orphanImages = computed(() => {
+    const r = this.r();
+    const positioned = new Set<string>();
+    const walk = (nodes: (SectionNode | SegmentNode)[]): void => {
+      for (const n of nodes) {
+        if (n.type === 'section') walk(n.children);
+        else if (n.atom !== 'text') positioned.add(firstAddr(n.address));
+      }
+    };
+    walk(r.content);
+    const list = (a: string | string[]): string[] => (Array.isArray(a) ? a : [a]);
+    return r.embeds.filter(
+      (e) => e.mime.startsWith('image/') && !list(e.address).some((a) => positioned.has(a)),
+    );
+  });
+  embedUrl(e: EmbedBlock): string {
+    return this.store.resolveUrl(`corpus://${this.r().id}?${firstAddr(e.address)}`);
+  }
   embedOf(seg: SegmentNode): EmbedBlock | null {
     return embedFor(this.r(), seg);
   }

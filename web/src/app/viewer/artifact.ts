@@ -66,6 +66,7 @@ export class CxHighlight {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex: 1; min-height: 0; }
     .paged { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
     .toolbar { flex-shrink: 0; height: 30px; border-bottom: 1px solid var(--border); background: var(--surface);
       display: flex; align-items: center; gap: 8px; padding: 0 12px; font-family: var(--mono); font-size: 10px; }
@@ -127,6 +128,7 @@ export class CxPagedArtifact {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex: 1; min-height: 0; }
     .img { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #151310; }
     .toolbar { flex-shrink: 0; height: 30px; border-bottom: 1px solid var(--border); background: var(--surface);
       display: flex; align-items: center; gap: 8px; padding: 0 12px; font-family: var(--mono); font-size: 10px; }
@@ -168,6 +170,7 @@ export class CxImageArtifact {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex: 1; min-height: 0; }
     .vid { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #0a0a0a; }
     .stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 12px; }
     video { max-width: 100%; max-height: 100%; background: #000; }
@@ -217,6 +220,7 @@ export class CxVideoArtifact {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex: 1; min-height: 0; }
     .aud { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
     .toolbar { flex-shrink: 0; height: 30px; border-bottom: 1px solid var(--border); background: var(--surface);
       display: flex; align-items: center; gap: 8px; padding: 0 12px; font-family: var(--mono); font-size: 10px; }
@@ -260,6 +264,7 @@ export class CxAudioArtifact {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex: 1; min-height: 0; }
     .html { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
     .toolbar { flex-shrink: 0; height: 24px; border-bottom: 1px solid var(--border); background: var(--surface);
       display: flex; align-items: center; padding: 0 12px; font-family: var(--mono); font-size: 9px; }
@@ -290,6 +295,7 @@ export class CxHtmlArtifact {
     </div>
   `,
   styles: [`
+    :host { display: flex; flex-direction: column; flex: 1; min-height: 0; }
     .txt { flex: 1; overflow: auto; background: var(--surface-2); min-height: 0; padding: 20px; }
     .card { max-width: 640px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); padding: 14px 18px; }
     .hd { margin-bottom: 10px; }
@@ -335,6 +341,7 @@ export class CxTextArtifact {
       @default { <cx-paged-artifact [r]="r()" [activeRegion]="activeRegion()" /> }
     }
   `,
+  styles: [`:host { display: flex; flex-direction: column; flex: 1; min-height: 0; }`],
 })
 export class CxArtifactView {
   r = input.required<RecordDetail>();
