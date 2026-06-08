@@ -98,6 +98,39 @@ def test_decompose_compile_roundtrip_preserves_every_block(tmp_path):
     assert rebuilt_text == original_text, "decompose→compile must round-trip byte-identically"
 
 
+def test_decompose_compile_preserves_frontmatter_title(tmp_path):
+    """Regression (curator gotcha #27): a record with a non-empty frontmatter `title`
+    must keep it through decompose -> compile. Before the `_CORE` fix the title was
+    silently dropped because `write_workdir` serialized only `_CORE` (which omitted
+    `title`); `corpus show` masked it via the `title_for` artifact fallback."""
+    root = _make_corpus(tmp_path)
+    rec = _make_golden_record_file(root)
+    # Promote the golden to a normalized record carrying a real frontmatter title.
+    post = records.load(rec)
+    post.metadata["status"] = "normalized"
+    post.metadata["title"] = "Power Brake Assist — Parts and Labor"
+    records.dump(post, rec)
+    original_text = rec.read_text("utf-8")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    post = records.load(rec)
+    blocks = segments.iter_blocks(post.content or "")
+    recordbuild.write_workdir(
+        post, blocks, workdir, source=str(rec), orig_sha256="sha256:x"
+    )
+    # The title must survive into the decomposed meta.yaml.
+    assert "Power Brake Assist" in (workdir / "meta.yaml").read_text("utf-8")
+
+    rebuilt = recordbuild.read_workdir(workdir, root)
+    assert rebuilt.metadata.get("title") == "Power Brake Assist — Parts and Labor"
+    records.dump(rebuilt, rec)
+    assert rec.read_text("utf-8") == original_text, (
+        "decompose->compile must round-trip the frontmatter title byte-identically"
+    )
+    assert records.title_for(records.load(rec)) == "Power Brake Assist — Parts and Labor"
+
+
 def test_compile_routes_embed_to_metadata_zone(tmp_path):
     """Reconciliation #1: `embed` ops produce metadata-zone embeds; the content
     body holds only sections/segments."""

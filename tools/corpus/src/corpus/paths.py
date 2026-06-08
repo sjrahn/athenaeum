@@ -12,6 +12,7 @@ the package's bundled universals.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -49,6 +50,17 @@ def artifact_path(corpus_root: Path, record_id: str, extension: str) -> Path:
 
 def ensure_parent(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def atomic_write_text(path: Path, text: str) -> Path:
+    """Write `text` to `path` atomically: stage a sibling temp file then `os.replace`
+    (atomic on POSIX within one filesystem). A crash mid-write leaves the original
+    record intact rather than a truncated `.md`. Used by the write API (region save)."""
+    ensure_parent(path)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
     return path
 
 

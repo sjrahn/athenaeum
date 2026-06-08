@@ -16,9 +16,11 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from corpus import mime as mime_mod
 from corpus import paths, records, resolver
+from corpus import regions as corpus_regions
 from corpus.api import serialize
 from corpus.api.config import ApiConfig, CorpusEntry, load_config
 from corpus.api.index import get_index, parse_cond, parse_range
+from corpus.api.models import SaveRegionsRequest, SaveRegionsResponse
 from corpus.store import ArtifactMissing, get_store
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -196,7 +198,25 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
             raise HTTPException(400, f"bad functional URI: {exc}") from exc
         return FileResponse(resolved)
 
-    # ---- next-phase write surfaces (stubbed; see plan Part B4) ----
+    # ---- write surface: crop-region save (the crop editor's persist) ----
+
+    @app.post("/v1/{corpus}/records/{record_id}/regions", response_model=SaveRegionsResponse)
+    def save_regions(corpus: str, record_id: str, body: SaveRegionsRequest) -> SaveRegionsResponse:
+        entry = corpus_or_404(corpus)
+        require_hex(record_id)
+        path = paths.record_path(entry.root, record_id)
+        if not path.is_file():
+            raise HTTPException(404, f"record {record_id} not found")
+        try:
+            result = corpus_regions.save_regions(
+                entry.root, record_id, [r.model_dump() for r in body.regions]
+            )
+        except corpus_regions.RegionSaveError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        get_index(entry, fresh=True)  # the per-corpus index is now stale; rebuild it
+        return SaveRegionsResponse(**result)
+
+    # ---- next-phase write surfaces (stubbed; see plan) ----
 
     @app.post("/v1/{corpus}/check")
     def check(corpus: str, request: Request) -> dict:
@@ -207,10 +227,5 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
     def submit(corpus: str, request: Request) -> dict:
         corpus_or_404(corpus)
         raise HTTPException(501, "submit (capture/ingest pipeline) lands in the submit phase")
-
-    @app.post("/v1/{corpus}/records/{record_id}/regions")
-    def save_regions(corpus: str, record_id: str, request: Request) -> dict:
-        corpus_or_404(corpus)
-        raise HTTPException(501, "region save lands in the crop-editor phase")
 
     return app

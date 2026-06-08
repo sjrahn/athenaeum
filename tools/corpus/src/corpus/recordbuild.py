@@ -54,6 +54,7 @@ META_NAME = "meta.yaml"
 
 _CORE = (
     "id",
+    "title",
     "description",
     "status",
     "transport",
