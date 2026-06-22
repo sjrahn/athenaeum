@@ -89,6 +89,32 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
     return REGISTRY.get(schema_id)
 
 
+# Strategy registry — drafters keyed by a *draft strategy* name a mime schema declares
+# (`draft.strategy: <name>`) rather than by schema id. This decouples drafter choice from
+# the detected type, so one general drafter (e.g. `zip-manifest`) can serve many
+# self_contained types whose representation is tuned by schema config — the drafting
+# analogue of overlay-driven capture. Specialized formats (pdf/xlsx/epub) keep id-keyed
+# drafters; a schema opts into a strategy only when a general drafter fits.
+STRATEGY_REGISTRY: dict[str, DrafterFn] = {}
+
+
+def register_strategy(strategy: str) -> Callable[[DrafterFn], DrafterFn]:
+    """Decorator to register a general drafter keyed on a draft-strategy name."""
+
+    def decorator(fn: DrafterFn) -> DrafterFn:
+        if strategy in STRATEGY_REGISTRY:
+            raise ValueError(f"drafter already registered for strategy {strategy!r}")
+        STRATEGY_REGISTRY[strategy] = fn
+        return fn
+
+    return decorator
+
+
+def get_strategy_drafter(strategy: str) -> DrafterFn | None:
+    """Look up the drafter for a draft-strategy name declared by a mime schema."""
+    return STRATEGY_REGISTRY.get(strategy)
+
+
 # Importing the per-MIME submodules registers their drafters. The office drafters
 # lazy-import their heavy deps (openpyxl / xlrd) inside their functions, so importing
 # them here is safe without the `[office]` extra; docx uses only the stdlib.
@@ -101,3 +127,4 @@ from . import pdf as _pdf  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
 from . import xls as _xls  # noqa: E402, F401
 from . import xlsx as _xlsx  # noqa: E402, F401
+from . import zip_manifest as _zip_manifest  # noqa: E402, F401

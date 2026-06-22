@@ -68,9 +68,22 @@ def derive_record(
     mime_schema_id = schemas.mime_schema_id_for(corpus_root, media_type)
     if not mime_schema_id:
         raise DraftError(f"could not resolve mime schema id for {media_type!r}.")
-    drafter = draft_pkg.get_drafter(mime_schema_id)
-    if drafter is None:
-        raise DraftError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
+    # Drafter selection: a mime schema MAY name a general draft `strategy` (overlay-driven
+    # drafting — e.g. `zip-manifest` for self_contained archives), which decouples drafter
+    # choice from the schema id so one general drafter serves many types tuned by config.
+    # Absent a strategy, dispatch by schema id as before.
+    strategy = str((mt_schema.get("draft") or {}).get("strategy") or "").strip()
+    if strategy:
+        drafter = draft_pkg.get_strategy_drafter(strategy)
+        if drafter is None:
+            raise DraftError(
+                f"mime schema {mime_schema_id!r} declares draft strategy {strategy!r}, "
+                f"but no drafter is registered for it."
+            )
+    else:
+        drafter = draft_pkg.get_drafter(mime_schema_id)
+        if drafter is None:
+            raise DraftError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
 
     binary_file = get_store(corpus_root).ensure_local(record_id, mime.extension_for(media_type))
 
@@ -86,8 +99,7 @@ def derive_record(
     # override > composite classification > mime schema > off (spec §7.2). The drafter
     # resolves the per-atom algorithms from this knob via `fingerprint.algos_for_atom`.
     fingerprint = schemas.resolve_fingerprint(corpus_root, media_type, post, fingerprint_cli)
-    result = drafter(
-        binary_file,
+    drafter_kwargs: dict[str, Any] = dict(
         build=build,
         corpus_root=corpus_root,
         record_id=record_id,
@@ -95,6 +107,13 @@ def derive_record(
         canonical_algo=canonical_algo,
         fingerprint=fingerprint,
     )
+    # A strategy drafter is general (not type-specific), so it receives the resolved mime
+    # schema to read its own `draft.*` config — instead of re-detecting + re-loading it
+    # (which would re-sniff the artifact and risk diverging from this dispatch). Id-keyed
+    # drafters don't take it, so it's passed only on the strategy path.
+    if strategy:
+        drafter_kwargs["mime_schema"] = mt_schema
+    result = drafter(binary_file, **drafter_kwargs)
 
     _apply_drafter_result(post, result, mime_schema_id, corpus_root)
 
