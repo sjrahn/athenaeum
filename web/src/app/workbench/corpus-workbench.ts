@@ -5,6 +5,7 @@
 
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { CorpusStore } from '../core/store';
+import { Endpoint } from '../core/models';
 import { Viewport } from '../core/viewport';
 import { PaneConfig, WbDock } from './dock/wb-dock';
 import { WbDockState } from './dock/wb-dock-state';
@@ -56,6 +57,14 @@ import { WbPalette } from './panes/wb-palette';
             <button [class.on]="store.corpusId() === c.id" (click)="store.setCorpus(c.id)">{{ c.name }}</button>
           }
         </div>
+        @if (store.endpoints().length > 1) {
+          <div class="endpoints" title="API endpoint">
+            @for (e of store.endpoints(); track e.id) {
+              <button [class.on]="store.endpoint().id === e.id" (click)="store.setEndpoint(e.id)">{{ epLabel(e) }}</button>
+            }
+          </div>
+        }
+        <button class="ep-add" (click)="promptEndpoint()" [title]="'API: ' + store.base()">⇄ api</button>
         @if (store.filterCount() > 0) { <button class="reset" (click)="store.clearAll()">reset</button> }
       </div>
 
@@ -105,6 +114,13 @@ import { WbPalette } from './panes/wb-palette';
     .corpora button { height: 28px; padding: 0 10px; border: none; border-radius: 0; background: transparent;
       color: var(--muted); font-size: 11px; cursor: pointer; font-family: var(--mono); }
     .corpora button.on { background: var(--accent-soft); color: var(--accent); }
+    .endpoints { display: flex; border: 1px solid var(--border); }
+    .endpoints button { height: 28px; padding: 0 8px; border: none; border-radius: 0; background: transparent;
+      color: var(--muted); font-size: 10.5px; cursor: pointer; font-family: var(--mono); max-width: 160px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .endpoints button.on { background: var(--accent-soft); color: var(--accent); }
+    .ep-add { height: 28px; padding: 0 8px; border: 1px solid var(--border); background: var(--surface);
+      color: var(--muted); font-size: 10.5px; cursor: pointer; font-family: var(--mono); }
     .reset { height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--muted);
       font-size: 11px; cursor: pointer; font-family: var(--mono); }
     .dock-wrap { flex: 1; min-height: 0; position: relative; }
@@ -145,4 +161,21 @@ export class CxCorpusWorkbench {
       c: col[s] ?? 'var(--dim)',
     }));
   });
+
+  // Short, host-only label for an endpoint chip (falls back to the raw label).
+  epLabel(e: Endpoint): string {
+    try {
+      return new URL(e.base).host;
+    } catch {
+      return e.label;
+    }
+  }
+
+  // Point the viewer at a different API at runtime — the agnostic escape hatch so a
+  // third party can reuse this build against their own corpus.api without rebuilding.
+  promptEndpoint(): void {
+    if (typeof window === 'undefined') return;
+    const base = window.prompt('API base URL (…/v1):', this.store.base());
+    if (base && base.trim()) this.store.addEndpoint(base.trim());
+  }
 }

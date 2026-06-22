@@ -28,12 +28,24 @@ export type AppMode = 'workbench' | 'browse' | 'record' | 'crop';
 export type TlMode = 'strip' | 'brush' | 'lanes';
 export type WorkMode = 'inspect' | 'compare' | 'crop' | 'graph';
 
-/** Default API base follows the host the app was loaded from, so the same build
- *  works locally (localhost:8099) and over the Tailnet (example-host…ts.net:8099) without
- *  a rebuild. Override via the endpoint switcher. */
+/** Resolve the API base. Precedence so the shared build is deploy-agnostic:
+ *   1. `<meta name="ath-api-base" content="…/v1">` in index.html (deploy-time config).
+ *   2. `window.ATH_API_BASE` global (runtime injection).
+ *   3. the host the app was loaded from, port 8099 (the dev / Tailnet default) — so
+ *      the same build works locally and over the Tailnet without a rebuild.
+ *  Also overridable at runtime via the in-app endpoint switcher. A third party can
+ *  point the viewer at their own API by setting (1) or (2) — no rebuild needed. */
 function defaultBase(): string {
-  if (typeof window !== 'undefined' && window.location?.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8099/v1`;
+  if (typeof document !== 'undefined') {
+    const meta = document.querySelector('meta[name="ath-api-base"]')?.getAttribute('content')?.trim();
+    if (meta) return meta;
+  }
+  if (typeof window !== 'undefined') {
+    const g = (window as unknown as { ATH_API_BASE?: string }).ATH_API_BASE;
+    if (g && g.trim()) return g.trim();
+    if (window.location?.hostname) {
+      return `${window.location.protocol}//${window.location.hostname}:8099/v1`;
+    }
   }
   return 'http://127.0.0.1:8099/v1';
 }
