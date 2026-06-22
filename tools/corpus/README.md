@@ -24,16 +24,16 @@ underway. See [the plan](../../../.claude/plans/what-i-d-like-to-crispy-turtle.m
 Three forms — pick one per your situation:
 
 ```toml
-# Editable path (example-org monorepo-adjacent checkout, recommended for dev)
+# Editable path (sibling checkout of the athenaeum-org `shared` repo, recommended for dev)
 [project]
 dependencies = ["ath-corpus"]
 [tool.uv.sources]
-ath-corpus = { path = "../athenaeum/tools/corpus", editable = true }
+ath-corpus = { path = "../shared/tools/corpus", editable = true }
 
 # Git subdirectory (CI / pinned to a revision)
 [project]
 dependencies = [
-    "ath-corpus @ git+https://code.example.org/example-org/athenaeum.git@<rev>#subdirectory=tools/corpus",
+    "ath-corpus @ git+https://code.example.org/athenaeum/shared.git@<rev>#subdirectory=tools/corpus",
 ]
 
 # Built wheel (release; built via `uv build` and published to Forgejo's package registry)

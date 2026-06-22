@@ -9,11 +9,13 @@ If you are Claude Code and this is the start of a session working on Athenaeum, 
 ## Repository layout
 
 ```
-athenaeum/
-├── spec-athenaeum.md        # Architecture spec (v11) — three layers, codex + compendium contracts; corpus layer defers to spec-corpus.md
+shared/                      # THIS repo — shared tooling for the Athenaeum system (athenaeum Forgejo org)
+├── spec-athenaeum.md        # Architecture spec (v12) — TWO layers: corpus (foundation) + codex (a domain
+│                            #   repo that embeds an expert agent). Defines the corpus↔codex contract;
+│                            #   the corpus layer defers to spec-corpus.md.
 ├── spec-corpus.md           # Corpus spec (ATH-CORPUS v1.0) — artifact record format, body blocks, schemas, functional URIs
 ├── impl-corpus.md           # Implementation guide for the corpus / artifact-layer pipeline
-├── impl-codex.md            # Implementation guide for the codex layer + compendium build
+├── impl-codex.md            # Reference convention (NON-NORMATIVE) for the codex/expert-agent layer + its deliverables
 ├── docs/
 │   ├── CONTENT-TYPES.md     # Content type enumeration and metadata attributes
 │   ├── NEW-CORPUS.md        # Corpus planning notes
@@ -22,18 +24,20 @@ athenaeum/
 ├── web/                     # Corpus Console — Angular v22 SPA (the CURRENT viewer). Standalone
 │   │                        #   components on @angular/cdk + @angular/aria; signals + httpResource;
 │   │                        #   design tokens in src/styles/tokens.css. Responsive (760px breakpoint).
-│   └── src/app/{core,shell,browser,viewer,chips}/
-├── tools/corpus/            # Python corpus tooling (ath-corpus) — the data layer + the new API
+│   └── src/app/{core,shell,browser,viewer,chips,workbench}/
+├── tools/corpus/            # Python corpus tooling (ath-corpus) — the data layer + the API
 │   └── src/corpus/api/      # FastAPI read API behind the `[api]` extra (corpus.api) — the CURRENT server
-├── Cargo.toml               # Workspace root (RETIRED — see below)
-├── crates/                  # RETIRED Rust stack (egui/axum). Superseded by web/ + corpus.api; slated
-│   ├── ath-core/            #   for deletion once parity is confirmed. Don't extend; pre-v1.0 model.
-│   ├── ath-gui/             #   (old egui viewer)
-│   └── ath-server/          #   (old axum server — source/document/credibility/norm_conf model)
+├── clients/apple/           # Multiplatform Apple client (Swift). NOTE: predates the web+API stack and
+│                            #   targets the now-deleted Rust server (:8080) — orphaned, needs rework.
 └── .claude/skills/athenaeum/ # Skill state, logbook, gotchas
 ```
 
-**The viewer/server stack is now `web/` (Angular) + `tools/corpus`'s `corpus.api` (FastAPI over the corpus library).** The Rust `crates/` are retired — they serve the old corpus model (source/document kind, credibility, norm_conf) the v1.0 corpus layer dropped. Don't build on them.
+**The system has two layers; this repo is the shared, reusable tooling for the *corpus* layer.**
+
+- **Corpus** — the content-addressed artifact archive (spec-corpus.md). The shared tooling owns it end to end: the `corpus` library, the `corpus.api` server, and the `web/` viewer. The actual corpora are sibling repos under the `athenaeum` org: **`corpus`** (all public captures) and **`corpus-private`** (personal documents).
+- **Codices** — the layer above: domain-scoped knowledge repos, each embedding an **expert agent** that pulls from the corpus to curate its domain and produce its own deliverables. Each codex is its own repo, autonomous, agent-owned; the shared tooling is **agnostic** to it. `impl-codex.md` documents one reference convention, not a mandate.
+
+**The Rust `crates/` stack (ath-core/ath-gui/ath-server) has been deleted** — it served the pre-v1.0 corpus model (source/document kind, credibility, norm_conf) and was superseded by `web/` + `corpus.api`. The Swift Apple client under `clients/apple/` still targets that old server and is orphaned until reworked.
 
 ## Common commands
 
@@ -43,11 +47,14 @@ athenaeum/
 # Add `--extra wiki --wiki-zim <path-to-wikipedia.zim>` to power the concept KB (/v1/wiki/*,
 # live concept glosses); without it concepts still show label/link and the wiki endpoints 503.
 cd tools/corpus && uv run --extra api --extra wiki corpus-api serve \
-  --corpus corpus=../../corpus --corpus corpus-test=../../corpus-test \
+  --corpus corpus=../../corpus --corpus corpus-private=../../corpus-private \
   --wiki-zim /path/to/wikipedia_en_all.zim \
   --host 0.0.0.0 --port 8099
+# (corpus ids → roots are arbitrary; --corpus corpus-test=../../corpus-test adds a dev fixture.
+#  The tooling fixes no ids: --corpus id=path / ATH_API_CORPORA / cwd discovery all work.)
 
-# Run the Angular viewer (dev server). The API base auto-follows window.location.hostname:8099.
+# Run the Angular viewer (dev server). API base defaults to window.location.hostname:8099, overridable
+# via an index.html <meta name="ath-api-base"> tag, a window.ATH_API_BASE global, or the in-app endpoint switcher.
 # Node >= 22.22.3 required for Angular v22 (a local Node 24 lives at ~/.local/opt/node — see gotchas).
 cd web && PATH=$HOME/.local/opt/node/bin:$PATH npx ng serve --host 0.0.0.0 --port 4200 --allowed-hosts true
 
@@ -67,8 +74,9 @@ cd tools/corpus && uv run python -c "import corpus.draft"
 
 ## Key design principles
 
-- **The specs are `spec-athenaeum.md` (architecture + codex/compendium contracts) and `spec-corpus.md` (the corpus layer).** Code must conform to them. When code needs something a spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md` and `impl-codex.md`, not in the specs.
-- **Corpora are separate, switchable.** The API maps corpus *ids → roots* (`corpus.api.config`); a server can front several (e.g. `../corpus` prod + `../corpus-test`). The web app's corpus tabs + endpoint switcher key off `GET /v1/corpora`. Legacy `../corpus-public`/`../corpus-private` are pre-v1.0 schema and not served.
+- **The specs are `spec-athenaeum.md` (architecture — two layers: corpus + codex/expert-agent; the corpus↔codex contract) and `spec-corpus.md` (the corpus layer).** Code must conform to them. When code needs something a spec doesn't cover, update the spec first. Pipeline mechanics (capture, sharding, MIME-detect ordering, etc.) live in `impl-corpus.md`; the non-normative codex/agent reference convention lives in `impl-codex.md`.
+- **Agnostic to corpus and agent topology.** The shared tooling fixes no corpus ids and no codex/agent structure. A third party points it at their own corpora (`--corpus id=path` / `ATH_API_CORPORA` / cwd discovery) and brings their own expert agents (codices). Don't hardcode corpus ids or assume a particular codex shape — the codex layer is external, agent-owned.
+- **Corpora are separate, switchable.** The API maps corpus *ids → roots* (`corpus.api.config`); a server can front several. The real corpora are **`corpus`** (all public captures) + **`corpus-private`** (personal); `corpus-test` is a small dev fixture. The web app's corpus tabs + endpoint switcher key off `GET /v1/corpora`.
 - **The API wraps the library — no reimplementation.** `corpus.api` serializes what `records`/`derived_views`/`schemas`/`resolver`/`store` already produce. It builds a small per-corpus in-memory index for facets/filter (rebuilt on load), not a separate data store.
 - **The frontend talks only to the API.** The Angular app never reads the filesystem; artifact bytes come from `GET /v1/{corpus}/artifacts/{id}` and functional URIs from `GET /v1/{corpus}/resolve?uri=…` (fully percent-encode the `uri` value — gotcha).
 - **Parse tolerantly.** Log and skip unparseable records rather than failing the whole corpus.

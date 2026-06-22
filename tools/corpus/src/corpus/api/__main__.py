@@ -1,7 +1,8 @@
 """`corpus-api serve` — launch the read-only Corpus Console API with uvicorn.
 
-    corpus-api serve --corpus public=/path/to/corpus --corpus scratch=/path/to/corpus-test
+    corpus-api serve --corpus corpus=/path/to/corpus --corpus corpus-private=/path/to/corpus-private
     corpus-api serve            # falls back to ATH_API_CORPORA, then cwd discovery
+    # corpus ids are arbitrary; the tooling fixes none.
 
 uvicorn is imported inside `main()` so the package stays importable without the server
 running (and the base library never pulls it in — gotcha #24).
