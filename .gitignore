@@ -1,8 +1,3 @@
-/target
-
-# Trunk (WASM) build output
-crates/ath-gui/dist/
-
 # Xcode / Apple clients (see APPLE-CLIENT-PLAN.md)
 clients/**/xcuserdata/
 clients/**/DerivedData/
