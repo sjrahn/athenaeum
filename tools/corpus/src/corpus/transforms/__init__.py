@@ -12,6 +12,8 @@ Kinds:
 - `"video"` — `pathlib.Path` (P5)
 - `"audio"` — `pathlib.Path` (P5)
 - `"text"`  — `str` (P5)
+- `"zip"`   — `pathlib.Path` (the artifact `.zip`)
+- `"bytes"` — `bytes` (a raw member, cached verbatim)
 """
 
 from __future__ import annotations
@@ -71,3 +73,4 @@ from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
+from . import zip as _zip  # noqa: E402, F401

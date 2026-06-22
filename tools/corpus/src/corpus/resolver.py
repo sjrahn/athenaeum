@@ -75,12 +75,14 @@ KIND_TO_EXTENSION: dict[str, str] = {
     "image": "png",
     "text": "txt",
     "audio": "mp3",
+    "bytes": "bin",
 }
 
 KIND_TO_MIME: dict[str, str] = {
     "image": "image/png",
     "text": "text/plain",
     "audio": "audio/mpeg",
+    "bytes": "application/octet-stream",
 }
 
 
@@ -170,10 +172,11 @@ def resolve(
         with Image.open(artifact_binary) as im:
             im.load()
             working = im.copy()
-    elif initial_kind in ("video", "audio", "epub"):
+    elif initial_kind in ("video", "audio", "epub", "zip"):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
-        # transform opens the zip to select a content document and its image members.
+        # transform opens the zip to select a content document and its image members; the
+        # zip `path=` transform opens the archive to extract a member.
         working = artifact_binary
     else:
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")
@@ -237,6 +240,9 @@ def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
     elif kind == "audio":
         # `working` is a Path to ffmpeg's temp output; move it into the cache.
         shutil.move(str(working), cache_p)
+    elif kind == "bytes":
+        # `working` is the raw member bytes; cache verbatim.
+        cache_p.write_bytes(working)
     else:
         raise NotImplementedError(f"no cache writer for kind {kind!r}")
 
