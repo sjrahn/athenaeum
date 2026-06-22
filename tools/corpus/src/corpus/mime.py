@@ -12,6 +12,7 @@ docx, etc. Files that don't match any refinement signature stay tagged `applicat
 from __future__ import annotations
 
 import mimetypes
+import re
 import zipfile
 from pathlib import Path
 
@@ -57,8 +58,14 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
 _SNIFF_BYTES = 16
 
 
-def detect(path: Path) -> str:
-    """Return the IANA MIME type, or `unknown`."""
+def detect(path: Path, corpus_root: Path | None = None) -> str:
+    """Return the IANA MIME type, or `unknown`.
+
+    `corpus_root`, when given, lets a zip-shaped artifact be refined against the corpus's
+    schema-declared zip signatures (`applies_to.zip_members` / `zip_member_patterns`) — so
+    a corpus recognizes its own zip-shaped types (a diagnostics export, a backup bundle)
+    without editing this package. Absent it, only the built-in universal signatures apply.
+    """
     with path.open("rb") as fh:
         head = fh.read(_SNIFF_BYTES)
 
@@ -70,7 +77,7 @@ def detect(path: Path) -> str:
     for offset, prefix, mime in _SIGNATURES:
         if head[offset : offset + len(prefix)] == prefix:
             if mime == "application/zip":
-                return _refine_zip(path)
+                return _refine_zip(path, corpus_root)
             if mime in ("video/mp4", "video/quicktime"):
                 return _refine_isobmff(path, mime)
             return mime
@@ -134,18 +141,47 @@ _ZIP_SIGNATURES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _refine_zip(path: Path) -> str:
+def _refine_zip(path: Path, corpus_root: Path | None = None) -> str:
     """A `PK\\x03\\x04` file may be a structured container (xlsx, docx, etc.).
-    Open the zip's central directory and check for telltale member paths."""
+    Open the zip's central directory and check for telltale member paths.
+
+    Universal formats (OOXML / epub / jar — fixed internal layouts) match the built-in
+    exact-path `_ZIP_SIGNATURES` first. When a `corpus_root` is supplied, zips whose
+    telltale members sit under a variable wrapper directory are refined against the
+    corpus's schema-declared signatures (`applies_to.zip_members` /
+    `zip_member_patterns`) — keeping vendor/site-specific recognition in the overlay."""
     try:
         with zipfile.ZipFile(path) as zf:
             members = set(zf.namelist())
     except zipfile.BadZipFile:
         return "application/zip"
+    # Exact-path signatures first (OOXML / epub / jar — universal, package-known layouts).
     for sig_path, mime in _ZIP_SIGNATURES:
         if sig_path in members:
             return mime
+    # Corpus-declared shape signatures (overlay-driven; first match wins, deterministic).
+    if corpus_root is not None:
+        from corpus import schemas
+
+        for content_type, exact, patterns in schemas.zip_signatures(corpus_root):
+            if _zip_shape_matches(members, exact, patterns):
+                return content_type
     return "application/zip"
+
+
+def _zip_shape_matches(
+    members: set[str], exact: tuple[str, ...], patterns: tuple[str, ...]
+) -> bool:
+    """A schema-declared zip signature matches when ANY declared exact member is present
+    AND every declared pattern matches at least one member. (A signature declaring only
+    patterns is pure-AND over the patterns; only exacts is pure-ANY over the exacts.)"""
+    if exact and not any(m in members for m in exact):
+        return False
+    for pat in patterns:
+        rx = re.compile(pat)
+        if not any(rx.search(m) for m in members):
+            return False
+    return bool(exact or patterns)
 
 
 def extension_for(mime: str, *, fallback: str = "bin") -> str:
@@ -180,6 +216,15 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
     }
     if mime in canonical:
         return canonical[mime]
+
+    # IANA structured-suffix convention (`application/vnd.<x>+zip`, `…+xml`, `…+json`):
+    # the suffix names the underlying serialization, so a corpus-specific zip-shaped type
+    # gets a sensible extension without a per-type entry here (keeps this table agnostic).
+    if "+" in mime:
+        suffix = mime.rsplit("+", 1)[1].split(";", 1)[0].strip()
+        suffix_ext = {"zip": "zip", "xml": "xml", "json": "json", "gzip": "gz"}.get(suffix)
+        if suffix_ext:
+            return suffix_ext
 
     guessed = mimetypes.guess_extension(mime) or ""
     return guessed.lstrip(".") or fallback

@@ -314,6 +314,32 @@ def mime_schema_id_for(corpus_root: Path, mime: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=64)
+def zip_signatures(corpus_root: Path) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    """Corpus-declared zip-shape signatures, for `mime._refine_zip`.
+
+    A mime schema for a zip-shaped type whose telltale members sit under a variable
+    wrapper dir (so an exact built-in signature can't match) declares its shape in
+    `applies_to`: `zip_members` (exact member paths — ANY present matches) and/or
+    `zip_member_patterns` (regexes — ALL must each match some member). This keeps
+    vendor/site-specific zip recognition in the corpus overlay rather than hardcoded in
+    the shared package (the detection analogue of the overlay-driven `draft` strategy).
+
+    Returns `(content_type, exact_members, patterns)` tuples, sorted by content type for
+    deterministic first-match order. Universal formats (OOXML / epub / jar) stay in the
+    package's exact-path table and are checked first by the caller."""
+    sources = _sources(corpus_root)
+    out: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    for relpath in _iter_mime_subtype_paths(corpus_root):
+        applies = (_read_yaml_first(sources, relpath) or {}).get("applies_to") or {}
+        exact = tuple(str(x) for x in (applies.get("zip_members") or []))
+        patterns = tuple(str(x) for x in (applies.get("zip_member_patterns") or []))
+        content_types = applies.get("content_types") or []
+        if (exact or patterns) and content_types:
+            out.append((str(content_types[0]), exact, patterns))
+    return tuple(sorted(out, key=lambda t: t[0]))
+
+
 # ---------- atomic-overlay schemas ---------- #
 
 

@@ -53,7 +53,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     from corpus import hashing, mime, paths, records, schemas, touches
     from corpus.store import get_store
 
-    media_type = mime.detect(src)
+    media_type = mime.detect(src, corpus_root)
     mt_schema = schemas.load_mime_schema(corpus_root, media_type)
     if mt_schema is None:
         sys.exit(
