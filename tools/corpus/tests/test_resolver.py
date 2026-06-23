@@ -5,10 +5,11 @@ Uses tiny deterministic fixtures under tests/data/.
 
 from __future__ import annotations
 
-import frontmatter
 from pathlib import Path
 
-from corpus import hashing, paths, records, resolver, schemas, segments
+import frontmatter
+
+from corpus import hashing, paths, records, resolver, schemas
 from corpus.store import LocalArtifactStore
 
 _FIXTURES = Path(__file__).parent / "data"
@@ -159,9 +160,112 @@ def test_missing_artifact_raises(tmp_path):
         post, uri="file:///nope.png", snapshot="2026-05-31T00:00:00Z"
     )
     records.dump(post, paths.record_path(root, rid))
-    from corpus.store import ArtifactMissing
-
     import pytest
+
+    from corpus.store import ArtifactMissing
 
     with pytest.raises(ArtifactMissing):
         resolver.resolve(f"corpus://{rid}?grayscale", root)
+
+
+# ---- mark= (annotate region on the full image, spec §6.2) ------------------ #
+
+
+def test_mark_draws_box_on_full_image(tmp_path):
+    """`mark=` returns the WHOLE image (sample.png is 200x150) with the region
+    outlined — not the crop — and forced to RGB so the stroke shows."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?mark=0.1,0.1,0.4,0.4", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)  # full image, not cropped
+        assert im.mode == "RGB"
+    # The marked image actually differs from the source pixels.
+    src = resolver.resolve(f"corpus://{rid}", root)
+    with Image.open(src) as a, Image.open(out) as b:
+        assert a.convert("RGB").tobytes() != b.convert("RGB").tobytes()
+
+
+def test_mark_multiple_regions(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?mark=0.05,0.05,0.2,0.2;0.5,0.5,0.3,0.3", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)
+
+
+def test_mark_rejects_out_of_bounds(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    import pytest
+
+    with pytest.raises(ValueError):
+        resolver.resolve(f"corpus://{rid}?mark=0.5,0.5,0.8,0.8", root)
+
+
+def test_mark_composes_after_pdf_page(tmp_path):
+    """`page=` then `mark=`: outline a box on a rendered PDF page (1700x2200 @200dpi)."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "onepager.pdf", mime="application/pdf", ext="pdf")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?page=1&mark=0.1,0.1,0.5,0.3", root)
+    with Image.open(out) as im:
+        assert im.size == (1700, 2200)
+        assert im.mode == "RGB"
+
+
+# ---- fit= (aspect-preserving downscale, spec §6.2) ------------------------- #
+
+
+def test_fit_box_downscales_preserving_aspect(tmp_path):
+    """sample.png 200x150, fit=100x100 → scale 0.5 → 100x75 (aspect kept)."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?fit=100x100", root)
+    with Image.open(out) as im:
+        assert im.size == (100, 75)
+
+
+def test_fit_never_upscales(tmp_path):
+    """A box larger than the image leaves it untouched (reduce-only)."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?fit=10000x10000", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)
+
+
+def test_fit_llm_preset_caps_edge_and_pixels(tmp_path):
+    """A big PDF page (3400x4400 @400dpi) fit to the llm preset lands within the
+    model budget: long edge <= 1568 and total pixels <= the preset cap."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "onepager.pdf", mime="application/pdf", ext="pdf")
+    from PIL import Image
+
+    from corpus.transforms.image import LLM_MAX_EDGE, LLM_MAX_PIXELS
+
+    out = resolver.resolve(f"corpus://{rid}?page=1&dpi=400&fit=llm", root)
+    with Image.open(out) as im:
+        assert max(im.size) <= LLM_MAX_EDGE
+        # Rounding can nudge a hair over the exact cap; allow a small tolerance.
+        assert im.size[0] * im.size[1] <= LLM_MAX_PIXELS * 1.02
+
+
+def test_fit_llm_passes_small_image_through(tmp_path):
+    """An image already within budget is unchanged by fit=llm."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?fit=llm", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)

@@ -266,13 +266,23 @@ The annotations zone is a single block family — **`context`** (spec §4.3.3) �
 
 ### 3.7 Normalizer-support commands
 
-The LLM normalizer never reads `schema/*.yaml` directly (the reference contract forbids it). It works through three read-only commands (`_cli/{diagnose,guidance,overlay}.py`, surfacing the spec §9 derived views):
+The LLM normalizer never reads `schema/*.yaml` directly (the reference contract forbids it). It works through read-only commands (`_cli/{diagnose,guidance,overlay,preview}.py`, surfacing the spec §9 derived views and the §6 resolver):
 
 - **`corpus diagnose <hash> [--json]`** — the normalizer's first call: a one-page brief combining the derived views (classifications / issues / uris) with a quick-lint and the record's `<!--context-->` blocks.
 - **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / composite overlay for the record.
 - **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a candidate classification, so the normalizer fills a classify block without reading YAML.
+- **`corpus preview <target> [--page N] [--mark x,y,w,h]… [--full] [-o out.png]`** — the cropping loop's *eyes*. Renders the artifact (an image, or a PDF page via `--page`) with each proposed bbox **outlined on the full image** (the `mark=` transform, §3.7.1) so a vision-model normalizer can see *where* a region sits in context, judge the fit, and adjust the coordinates before committing them as a segment `address`. Read-only — it never writes the record; the agent commits regions separately (`POST /records/{id}/regions`, or by editing the body). Fits the render to the `llm` budget by default (see below); prints the cache path, or copies to `-o`.
 
 Membership it can assert manually via `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it). These commands were brought to parity with the LuklaCloud corpus normalizer toolchain.
+
+#### 3.7.1 `mark=` and `fit=` — the cropping agent's spatial feedback loop
+
+Two image transforms (`transforms/image.py`, spec §6.2) close the loop between an agent proposing a crop and seeing whether it's right:
+
+- **`mark=x,y,w,h[;x,y,w,h…]`** (image → image) — draws the region(s) **onto the full image** rather than cropping to them. It's the inspection dual of `crop=`/`bbox=`: `crop` returns the region's pixels, `mark` returns the whole frame with the box outlined (a cycling high-visibility stroke, auto-labeled `1..N`, width ∝ image size). Composes after `page=`, so `corpus://<id>?page=4&mark=0.1,0.1,0.6,0.3` outlines a box on a rendered PDF page. This is the server-side, agent-facing parallel of the web cropper (`rw-cropper.ts`, which draws `<div>` overlays for a human curator) — an LLM can't run a browser, so it Reads a PNG with the box burned in.
+- **`fit=<W>x<H>` | `fit=<preset>`** (image → image) — downscale to fit within a box, **aspect-preserving and reduce-only** (an image already within bounds passes through untouched). Distinct from `resize=WxH`, which forces exact dimensions (distorts, may enlarge). The **`llm` preset** bounds the image to a vision model's input budget so a resolve destined for model context isn't silently re-scaled (or rejected) downstream: long edge ≤ `LLM_MAX_EDGE` (1568px) **and** total pixels ≤ `LLM_MAX_PIXELS` (1,150,000), the smaller scale winning. These constants live in `transforms/image.py`, **not** the spec — spec §6.2 describes `fit=` generically and notes presets are implementation-defined, because model limits drift. PDF `dpi=` is the other half of the dial: rasterize at the DPI you want, then `fit=llm` caps the result regardless.
+
+The split that keeps `fit` honest: the transforms stay **pure** (no implicit fitting), and only the agent-facing surface defaults the budget on. `corpus preview` fits to `llm` unless `--full` — because a preview *is* going into a model's context — while a raw `corpus resolve` / the API `resolve?uri=` apply `fit=` only when the URI says so (a codex embedding a crop in a human-facing deliverable wants native resolution). A typical loop iteration: `corpus preview <id> --page 4 --mark 0.1,0.1,0.6,0.3 -o /tmp/look.png`, Read it, adjust the numbers, repeat; once the box is right, write the segment at `page=4&bbox=0.1,0.1,0.6,0.3`.
 
 ### 3.8 The normalization queue (request/claim mechanics)
 
