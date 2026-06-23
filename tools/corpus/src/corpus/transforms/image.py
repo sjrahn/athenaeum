@@ -6,7 +6,7 @@ All operate on `PIL.Image.Image` instances.
 
 from __future__ import annotations
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from . import RenderContext, register
 
@@ -124,6 +124,63 @@ def grayscale(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.
     return img.convert("L")
 
 
+# Quarter-turns map to lossless transposes (PIL's ROTATE_* are counter-clockwise;
+# `rotate=` is clockwise, so a clockwise N° turn uses the (360-N) transpose).
+_ROTATE_CW = {90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}
+
+
+@register("image", "rotate", "image")
+def rotate(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`rotate=90|180|270` — rotate clockwise by a quarter turn (lossless transpose;
+    90/270 swap width and height). For righting a sideways or upside-down scan/photo;
+    arbitrary-angle deskew is out of scope."""
+    if value is None:
+        raise ValueError("rotate= requires a value: 90, 180, or 270 (degrees clockwise)")
+    try:
+        deg = int(value)
+    except ValueError as exc:
+        raise ValueError(f"rotate= must be an integer, got {value!r}") from exc
+    if deg not in _ROTATE_CW:
+        raise ValueError(f"rotate= must be 90, 180, or 270 (degrees clockwise), got {deg}")
+    return img.transpose(_ROTATE_CW[deg])
+
+
+@register("image", "auto_orient", "image")
+def auto_orient(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`auto_orient` — apply the EXIF orientation tag so a sideways/flipped phone photo
+    or scan displays upright. Flag-style (no value). A no-op when the image carries no
+    orientation tag, so it is always safe to prepend."""
+    if value is not None:
+        raise ValueError(f"auto_orient is flag-style and takes no value, got {value!r}")
+    return ImageOps.exif_transpose(img)
+
+
+@register("image", "autocontrast", "image")
+def autocontrast(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`autocontrast` — stretch the per-channel histogram to full range (1% cutoff to
+    ignore outliers). Flag-style. Pulls faint/low-contrast scans toward readable."""
+    if value is not None:
+        raise ValueError(f"autocontrast is flag-style and takes no value, got {value!r}")
+    base = img if img.mode in ("RGB", "L") else img.convert("RGB")
+    return ImageOps.autocontrast(base, cutoff=1)
+
+
+@register("image", "contrast", "image")
+def contrast(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`contrast=<factor>` — scale contrast by a float (1.0 = unchanged, >1 stronger,
+    <1 flatter). For a faint scan try 1.5-2.5. Use `autocontrast` when you'd rather not
+    pick a number."""
+    if value is None:
+        raise ValueError("contrast= requires a float factor (1.0 = unchanged)")
+    try:
+        factor = float(value)
+    except ValueError as exc:
+        raise ValueError(f"contrast= must be a float, got {value!r}") from exc
+    if factor < 0:
+        raise ValueError(f"contrast= must be >= 0, got {factor}")
+    return ImageEnhance.Contrast(img).enhance(factor)
+
+
 # ---------- helpers ---------- #
 
 
@@ -139,9 +196,21 @@ def _parse_box(value: str) -> tuple[float, float, float, float]:
         raise ValueError(f"region values must be floats, got {value!r}") from exc
     for label, val in (("x", x), ("y", y), ("w", w), ("h", h)):
         if val < 0.0 or val > 1.0:
-            raise ValueError(f"region {label}={val} out of [0.0, 1.0]")
+            raise ValueError(
+                f"region {label}={val} out of [0.0, 1.0] in {value!r} — bbox is "
+                "x,y,WIDTH,HEIGHT (fractions of the image), not corners x0,y0,x1,y1"
+            )
     if x + w > 1.0 + 1e-9 or y + h > 1.0 + 1e-9:
-        raise ValueError(f"region extends beyond image bounds: {value!r}")
+        over = []
+        if x + w > 1.0 + 1e-9:
+            over.append(f"x+w={x + w:.4g}>1")
+        if y + h > 1.0 + 1e-9:
+            over.append(f"y+h={y + h:.4g}>1")
+        raise ValueError(
+            f"region {value!r} extends past the image ({', '.join(over)}). bbox is "
+            "x,y,WIDTH,HEIGHT (a position plus a size), NOT corners x0,y0,x1,y1 — the "
+            "3rd/4th values are width/height, so x+w and y+h must each be <= 1.0"
+        )
     return x, y, w, h
 
 

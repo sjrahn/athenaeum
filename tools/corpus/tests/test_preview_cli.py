@@ -99,3 +99,38 @@ def test_preview_multiple_marks(tmp_path):
     )
     assert rc == 0
     assert out.is_file()
+
+
+def test_preview_rotate_flag_swaps_dims(tmp_path):
+    root, rid = _stage(tmp_path, "sample.png", mime="image/png", ext="png")  # 200x150
+    out = tmp_path / "rot.png"
+    rc = dispatch(["preview", rid, "--rotate", "90", "-o", str(out), "--corpus-root", str(root)])
+    assert rc == 0
+    with Image.open(out) as im:
+        assert im.size == (150, 200)
+
+
+def test_preview_from_segments_draws_committed_boxes(tmp_path):
+    from corpus import regions
+
+    root, rid = _stage(tmp_path, "sample.png", mime="image/png", ext="png")
+    regions.save_regions(
+        root,
+        rid,
+        [
+            {"box": [0.1, 0.1, 0.3, 0.2], "atom": "image"},
+            {"box": [0.5, 0.5, 0.3, 0.2], "atom": "image"},
+        ],
+    )
+    out = tmp_path / "verify.png"
+    rc = dispatch(["preview", rid, "--from-segments", "-o", str(out), "--corpus-root", str(root)])
+    assert rc == 0
+    with Image.open(out) as im:
+        assert im.mode == "RGB"
+        assert im.size == (200, 150)  # committed boxes drawn on the full image
+
+
+def test_preview_from_segments_none_exits_1(tmp_path):
+    root, rid = _stage(tmp_path, "sample.png", mime="image/png", ext="png")
+    rc = dispatch(["preview", rid, "--from-segments", "--corpus-root", str(root)])
+    assert rc == 1  # no committed bbox segments to draw

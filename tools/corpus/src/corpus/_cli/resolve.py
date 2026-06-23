@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from corpus import resolver
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus._cli._common import add_corpus_root_arg, attach_transform_grammar, resolved_corpus_root
 from corpus.store import ArtifactMissing
 
 
@@ -25,6 +24,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="Print the cache sidecar JSON instead of just the path.",
     )
     add_corpus_root_arg(parser)
+    attach_transform_grammar(parser)
 
 
 def run(args: argparse.Namespace) -> int:

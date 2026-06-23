@@ -44,6 +44,8 @@ normalization:
 
     The command writes a PNG to the cache and prints the absolute path on stdout. Read that file — you see the region. The resolver caches automatically; repeated calls with the same URI return instantly.
 
+    `bbox=x,y,w,h` is a **position (x,y) plus a size (width,height)** in [0,1] fractions of the page — NOT corners `x0,y0,x1,y1`, so `x+w` and `y+h` must each be <= 1.0. To *place* a region without guessing, draw it on the full page first: `corpus preview <id> --page <N> --mark x,y,w,h` (repeat `--mark` for several). After you've written the bbox segments, verify them: `corpus preview <id> --page <N> --from-segments` redraws the record's committed boxes on the page so you can confirm each frames the span you meant.
+
     ### Crop into the region, don't bump DPI
 
     The harness that delivers the resolved image to you aggressively downsamples large images to fit a token budget. A full-page render at the default 200 dpi is natively 1700×2200, but typically arrives as a 463×599 JPEG — a ~14× pixel reduction. Bumping `dpi=300` is unreliable: sometimes the harness passes the larger PNG through unchanged, but it can also downsample back to 463×599 anyway. **The reliable lever is cropping into the region of interest.**

@@ -269,3 +269,109 @@ def test_fit_llm_passes_small_image_through(tmp_path):
     out = resolver.resolve(f"corpus://{rid}?fit=llm", root)
     with Image.open(out) as im:
         assert im.size == (200, 150)
+
+
+# ---- the bbox bounds error teaches x,y,w,h (the dominant normalizer trap) ---- #
+
+
+def test_bbox_bounds_error_names_the_format(tmp_path):
+    """A corner-coordinate mistake (x0,y0,x1,y1) must produce an error that names the
+    real format and the overflowing axis — not just 'out of bounds'."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    import pytest
+
+    with pytest.raises(ValueError) as exc:
+        resolver.resolve(f"corpus://{rid}?bbox=0.15,0.2,0.95,0.45", root)
+    msg = str(exc.value)
+    assert "x+w" in msg and "WIDTH,HEIGHT" in msg and "corners" in msg
+
+
+# ---- rotate= / auto_orient / contrast (spec §6.2) -------------------------- #
+
+
+def _stage_image_file(corpus_root, src, *, mime, ext):
+    """Stage an arbitrary on-disk image as a record + artifact; return its id."""
+    hashes = hashing.hash_file(src)
+    rid = hashes["blake3"]
+    LocalArtifactStore(corpus_root).put(rid, ext, src)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": rid, "description": "", "status": "stub", "touch": "corpus.ingest@0.1.0"}
+    )
+    records.set_artifact_block(post, mime=mime, fields={"title": src.name})
+    records.append_origin_block(post, uri=f"file://{src}", snapshot="2026-05-31T00:00:00Z")
+    records.dump(post, paths.record_path(corpus_root, rid))
+    return rid
+
+
+def test_rotate_90_swaps_dimensions(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")  # 200x150
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?rotate=90", root)
+    with Image.open(out) as im:
+        assert im.size == (150, 200)
+
+
+def test_rotate_180_keeps_dimensions(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?rotate=180", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)
+
+
+def test_rotate_rejects_non_quarter_turn(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    import pytest
+
+    with pytest.raises(ValueError):
+        resolver.resolve(f"corpus://{rid}?rotate=45", root)
+
+
+def test_auto_orient_applies_exif_orientation(tmp_path):
+    """A landscape JPEG tagged EXIF orientation=6 (display rotated) comes back upright
+    (dimensions swapped) under auto_orient."""
+    root = _make_corpus(tmp_path)
+    from PIL import Image
+
+    src = tmp_path / "rot.jpg"
+    img = Image.new("RGB", (240, 120), "white")
+    exif = img.getexif()
+    exif[274] = 6  # Orientation tag → rotate on display
+    img.save(src, exif=exif)
+    rid = _stage_image_file(root, src, mime="image/jpeg", ext="jpg")
+
+    out = resolver.resolve(f"corpus://{rid}?auto_orient", root)
+    with Image.open(out) as im:
+        assert im.size == (120, 240)  # swapped — orientation applied
+
+
+def test_auto_orient_is_noop_without_exif(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?auto_orient", root)
+    with Image.open(out) as im:
+        assert im.size == (200, 150)
+
+
+def test_autocontrast_and_contrast_render(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
+    from PIL import Image
+
+    for uri in (f"corpus://{rid}?autocontrast", f"corpus://{rid}?contrast=2.0"):
+        out = resolver.resolve(uri, root)
+        with Image.open(out) as im:
+            assert im.size == (200, 150)
+    import pytest
+
+    with pytest.raises(ValueError):
+        resolver.resolve(f"corpus://{rid}?contrast=abc", root)

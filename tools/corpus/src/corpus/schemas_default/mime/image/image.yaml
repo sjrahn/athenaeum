@@ -74,3 +74,64 @@ extended_fields:
     source: file_metadata
     description: |-
       EXIF GPS coordinates as 'lat,lon' decimal-degrees, when present (e.g. '37.7749,-122.4194'). Negative values for southern/western hemispheres.
+normalization:
+  guidance: |
+    This guidance applies to every normalize pass. The drafter emits one body-empty
+    `<!--segment image-->` at `bbox=0,0,1,1` (the whole image is its own self-artifact —
+    no embed). Everything interpretive is yours: the whole-image `description` on the
+    artifact block, and — for an image that is primarily a *document* (a scan, a photo of
+    a form, a screenshot of text) — a set of region segments transcribing what it shows.
+
+    ## See the source — resolve regions to images and READ them
+    The bytes are the canonical source and you are a multimodal model: look at them.
+
+        corpus resolve 'corpus://<hash>?bbox=0,0,1,1'   # whole image -> PNG path; Read it
+
+    But for region work prefer `corpus preview` (below) — it draws your proposed box on
+    the image so you place it by eye instead of guessing coordinates.
+
+    ## bbox is x,y,WIDTH,HEIGHT — not corners
+    The single most common mistake. `bbox=x,y,w,h` is a **position (x,y) plus a size
+    (width,height)**, all fractions of the image in [0,1], origin top-left — it is NOT
+    `x0,y0,x1,y1` corners. So `x+w` and `y+h` must each be <= 1.0. A value like
+    `bbox=0.15,0.2,0.95,0.45` (read as corners) means width 0.95 at x 0.15 → 1.10 and is
+    rejected. Run `corpus resolve --help` for the authoritative transform grammar.
+
+    ## Place a region, then verify it — corpus preview
+    Don't crop blind and re-crop. To position a box, draw it on the full image:
+
+        corpus preview <id> --mark 0.1,0.12,0.45,0.4         # one box, labeled, on the page
+        corpus preview <id> --mark 0.1,0.1,0.4,0.2 --mark 0.5,0.5,0.3,0.2   # several at once
+
+    `preview` fits the render to a model budget by default and writes a PNG to read. Once
+    you've written the bbox segments, **verify them**: `corpus preview <id> --from-segments`
+    redraws the record's committed boxes on the image so you can confirm each frames the
+    span you meant. (For the bytes of one region, `corpus resolve 'corpus://<hash>?bbox=…'`.)
+
+    ## Legibility — crop tighter; an image has no DPI escape hatch
+    The harness that delivers a resolved image to you downsamples large images, so a
+    full-frame view of a high-res photo arrives small. The reliable lever is **cropping
+    into the region** — a small region crop arrives near full fidelity. Unlike a PDF
+    (vector source, re-renderable at higher `dpi=`), an image's resolution is **fixed**:
+    cropping cannot add detail, and if the source capture is low-res, fine print has a
+    hard floor. Two knobs help within that floor:
+    - `resize=WxH` to **enlarge** a tight crop (more pixels for the model to read; it is
+      interpolated, not new detail, but often tips small text into legibility).
+    - `autocontrast` (or `contrast=<factor>`, ~1.5-2.5) to pull a **faint** scan toward
+      readable. Compose them: `?bbox=0.05,0.8,0.5,0.1&autocontrast&resize=1000x200`.
+
+    ## Orientation — right a sideways capture before reading
+    Phone photos and scans are often rotated or upside down. Fix orientation up front:
+    - `auto_orient` applies the EXIF orientation tag (a no-op when absent) — try it first.
+    - `rotate=90|180|270` rotates clockwise when there is no usable EXIF tag.
+    Author bbox coordinates in the frame you are viewing. (`corpus preview --rotate 90`
+    / `--auto-orient` apply these to the preview.)
+
+    ## Segment model for a document image
+    One self-artifact. Transcribe text regions as `<!--segment text/ocr-->` at `bbox=…`
+    (verbatim — see the `text/ocr` overlay), tables as `<!--segment text/data-table-->`,
+    each addressing its region; a chart/figure stays a body-empty `image` (sub-)segment
+    with its narrative on the segment `description:`. Never reach into `artifacts/` or
+    `cache/` directly or re-implement cropping in your own code — the resolver/preview
+    give you crop, rotate, contrast, and enlarge; reading the filesystem bypasses the
+    content-addressing the whole system rests on.

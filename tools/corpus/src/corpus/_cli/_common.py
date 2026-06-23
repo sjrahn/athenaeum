@@ -35,3 +35,33 @@ def add_corpus_root_arg(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Path to corpus root (default: walk up from cwd to find records/+schema/).",
     )
+
+
+# The functional-URI transform grammar (spec §6.2), shown in `corpus resolve`/`preview`
+# --help. Authoritative one-liners so an agent never has to guess a param's shape — in
+# particular that bbox/crop are x,y,WIDTH,HEIGHT (position + size), not corners.
+TRANSFORM_GRAMMAR = """\
+Transform params — append to a corpus://<hash> URI as `?k=v&k2=v2`; they compose
+left-to-right, each operating on the previous step's output:
+
+  page=N             render PDF page N (1-indexed) -> image
+  bbox=x,y,w,h       crop a region. x,y,w,h are FRACTIONS in [0,1]: a position (x,y)
+  crop=x,y,w,h       plus a SIZE (WIDTH,HEIGHT) — NOT corners. x+w and y+h must be <=1.
+  mark=x,y,w,h[;...] draw the region(s) on the FULL image (see where a crop lands;
+                     ';'-separated for several, labeled 1..N). Does not crop.
+  rotate=90|180|270  rotate clockwise (90/270 swap width and height)
+  auto_orient        apply the EXIF orientation tag (right a sideways/flipped photo)
+  autocontrast       stretch contrast to full range (faint scans)
+  contrast=F         scale contrast by factor F (1.0 = unchanged; try 1.5-2.5)
+  grayscale          convert to single-channel grayscale
+  fit=WxH | fit=llm  downscale to fit a box, aspect-preserving, never enlarges
+                     (the `llm` preset caps to a vision-model input budget)
+  resize=WxH         resize to exact pixel dimensions (may distort or enlarge)
+  dpi=N              rasterization DPI for page= (default 200; position-independent)
+"""
+
+
+def attach_transform_grammar(parser: argparse.ArgumentParser) -> None:
+    """Show the transform-grammar reference in this subcommand's --help."""
+    parser.epilog = TRANSFORM_GRAMMAR
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter

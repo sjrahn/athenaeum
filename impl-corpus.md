@@ -275,7 +275,9 @@ The LLM normalizer never reads `schema/*.yaml` directly (the reference contract 
 
 Membership it can assert manually via `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it). These commands were brought to parity with the LuklaCloud corpus normalizer toolchain.
 
-#### 3.7.1 `mark=` and `fit=` — the cropping agent's spatial feedback loop
+#### 3.7.1 The cropping agent's image toolkit — `mark`/`fit`/`rotate`/`auto_orient`/`autocontrast`, and `corpus preview`
+
+This whole group was shaped by reviewing real normalizer runs on image-of-document records (scanned/photographed forms). The dominant friction those runs hit was **not** crop mechanics but `bbox=` **semantics**: agents read `bbox=x,y,w,h` as corner coordinates (`x1,y1,x2,y2`), so the "width/height" values were far corners, overflowed `x+w>1`, and the resolve failed — repeatedly, in one case never recovered (the agent abandoned `corpus resolve` for hand-rolled PIL on raw cache files). The cheapest fixes target that directly: the `crop=`/`bbox=` bounds error now names the format and the overflowing axis (`x+w=1.1>1 … bbox is x,y,WIDTH,HEIGHT, NOT corners`), `corpus resolve`/`corpus preview --help` print the full transform grammar (`_common.TRANSFORM_GRAMMAR`), and the previously-empty `mime/image/image.yaml` now carries `normalization.guidance` teaching the bbox convention, crop-first legibility, orientation, and the verify loop.
 
 Two image transforms (`transforms/image.py`, spec §6.2) close the loop between an agent proposing a crop and seeing whether it's right:
 
@@ -283,6 +285,15 @@ Two image transforms (`transforms/image.py`, spec §6.2) close the loop between 
 - **`fit=<W>x<H>` | `fit=<preset>`** (image → image) — downscale to fit within a box, **aspect-preserving and reduce-only** (an image already within bounds passes through untouched). Distinct from `resize=WxH`, which forces exact dimensions (distorts, may enlarge). The **`llm` preset** bounds the image to a vision model's input budget so a resolve destined for model context isn't silently re-scaled (or rejected) downstream: long edge ≤ `LLM_MAX_EDGE` (1568px) **and** total pixels ≤ `LLM_MAX_PIXELS` (1,150,000), the smaller scale winning. These constants live in `transforms/image.py`, **not** the spec — spec §6.2 describes `fit=` generically and notes presets are implementation-defined, because model limits drift. PDF `dpi=` is the other half of the dial: rasterize at the DPI you want, then `fit=llm` caps the result regardless.
 
 The split that keeps `fit` honest: the transforms stay **pure** (no implicit fitting), and only the agent-facing surface defaults the budget on. `corpus preview` fits to `llm` unless `--full` — because a preview *is* going into a model's context — while a raw `corpus resolve` / the API `resolve?uri=` apply `fit=` only when the URI says so (a codex embedding a crop in a human-facing deliverable wants native resolution). A typical loop iteration: `corpus preview <id> --page 4 --mark 0.1,0.1,0.6,0.3 -o /tmp/look.png`, Read it, adjust the numbers, repeat; once the box is right, write the segment at `page=4&bbox=0.1,0.1,0.6,0.3`.
+
+Four more image transforms round out the toolkit, all `image → image`, all composable in the chain:
+
+- **`rotate=90|180|270`** — clockwise quarter-turn (lossless transpose; 90/270 swap W/H), and **`auto_orient`** (flag) — applies the EXIF orientation tag (no-op when absent). Together they right a sideways/upside-down phone-photo or scan *before* the agent reads it; the run we reviewed had an agent hand-rotate in PIL and pick the wrong direction twice. `corpus preview --rotate`/`--auto-orient` expose them.
+- **`autocontrast`** (flag, 1% cutoff) and **`contrast=<factor>`** — pull a faint scan toward readable (the run reached for `ImageEnhance` against raw cache files for exactly this). `corpus preview --autocontrast` exposes the flag.
+
+A caveat the image guidance makes explicit: unlike a PDF (vector source, re-renderable at higher `dpi=`), an **image's resolution is fixed** — cropping can't add detail, so for fine print on a low-res capture the levers are crop-tight + `resize=` (enlarge — interpolated, not new detail) + `autocontrast`; there is no DPI escape hatch.
+
+**`corpus preview --from-segments <id>`** is the verify half of the loop: instead of ad-hoc `--mark` coords it reads the record's *already-committed* bbox segment addresses (via `segments.iter_blocks`, grouped by `page=`) and draws them — so the normalizer can confirm each written address frames the span it meant. Neither reviewed run ever verified a committed bbox (there was no cheap way to); this is that way.
 
 ### 3.8 The normalization queue (request/claim mechanics)
 

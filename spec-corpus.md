@@ -609,6 +609,10 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `mark=<x>,<y>,<w>,<h>[;…]` | image | image | Outline the region(s) on the **whole** image (does not crop) — the inspection dual of `crop`, showing where a region sits in context. Relative floats in `[0.0, 1.0]`; `;`-separated for multiple regions. |
 | `resize=<W>x<H>` | image | image | Resize to absolute pixel dimensions (forces both, may distort or enlarge). |
 | `fit=<W>x<H>` \| `fit=<preset>` | image | image | Downscale to fit within a bounding box, aspect-preserving; reduce-only (never enlarges). A `<preset>` names an implementation-defined budget. |
+| `rotate=<90\|180\|270>` | image | image | Rotate clockwise by a quarter turn (lossless; 90/270 swap width and height). |
+| `auto_orient` | image | image | Apply the image's EXIF orientation tag so a sideways/flipped capture displays upright. No-op when absent. |
+| `autocontrast` | image | image | Stretch the per-channel histogram to full range (legibility for faint scans). |
+| `contrast=<factor>` | image | image | Scale contrast by a float factor (`1.0` unchanged). |
 | `grayscale` | image | image | Convert to single-channel grayscale. |
 | `dpi=<N>` | (render config) | (config) | Rasterization DPI for `page=<N>`. Position-independent. Default 200. |
 

@@ -1,14 +1,17 @@
-"""Render an artifact for an agent's eyes — outline region(s) on the full image and
-fit the result to a vision-model's input budget.
+"""Render an artifact for an agent's eyes — outline region(s) on the full image, right
+its orientation, boost faint contrast, and fit the result to a vision-model's budget.
 
-The inspection surface for the cropping / normalization loop: an agent proposes a
-bbox, previews where it lands *in context* on the full page, adjusts, then commits
-the segment address. Builds a `corpus://<id>?[page=N&][dpi=D&]mark=...&fit=llm` URI
-and resolves it (spec §6.2 `mark=` / `fit=`). Read-only — never writes the record.
+The inspection surface for the cropping / normalization loop: an agent proposes a bbox,
+previews where it lands *in context* on the full page, adjusts, then commits the segment
+address. Builds a `corpus://<id>?[page=N&][dpi=D&][auto_orient&][rotate=R&][autocontrast&]
+mark=...&fit=llm` URI and resolves it (spec §6.2). Read-only — never writes the record.
 
-Fits to the `llm` preset by default precisely because this render IS going into a
-model's context; pass --full to render at native resolution (e.g. for a human, or a
-codex embedding the crop in a deliverable).
+`--from-segments` flips it around: instead of ad-hoc coordinates, it draws the record's
+*already-committed* bbox segments on the image, so the normalizer can VERIFY that every
+written address frames the span it meant (the check nothing else surfaces).
+
+Fits to the `llm` preset by default because this render IS going into a model's context;
+pass --full to render at native resolution.
 """
 
 from __future__ import annotations
@@ -19,8 +22,8 @@ import sys
 from pathlib import Path
 
 from corpus import functional_uri as furi
-from corpus import paths, resolver
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus import paths, records, segments
+from corpus._cli._common import add_corpus_root_arg, attach_transform_grammar, resolved_corpus_root
 from corpus.store import ArtifactMissing
 
 
@@ -37,8 +40,31 @@ def configure(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         metavar="X,Y,W,H",
-        help="Outline a bbox region (fractions in [0,1], origin top-left) on the full "
-        "image. Repeatable — each box is auto-labeled 1..N.",
+        help="Outline a bbox region (fractions in [0,1]; x,y,WIDTH,HEIGHT, not corners) on "
+        "the full image. Repeatable — each box is auto-labeled 1..N.",
+    )
+    parser.add_argument(
+        "--from-segments",
+        action="store_true",
+        help="Draw the record's already-committed bbox segments instead of --mark coords "
+        "(the verify-what-I-wrote view). Pick a page with --page for a paged artifact.",
+    )
+    parser.add_argument(
+        "--rotate",
+        type=int,
+        default=None,
+        metavar="90|180|270",
+        help="Rotate clockwise (right a sideways scan).",
+    )
+    parser.add_argument(
+        "--auto-orient",
+        action="store_true",
+        help="Apply the EXIF orientation tag (right a sideways/flipped phone photo).",
+    )
+    parser.add_argument(
+        "--autocontrast",
+        action="store_true",
+        help="Stretch contrast to full range (pull a faint scan toward readable).",
     )
     parser.add_argument(
         "--fit",
@@ -55,7 +81,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--dpi",
         type=int,
         default=None,
-        help="Rasterization DPI for --page (default 200).",
+        help="Rasterization DPI for --page (default 200). Higher = sharper fine print.",
     )
     parser.add_argument(
         "-o",
@@ -70,26 +96,44 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="Bypass the resolver cache and re-render.",
     )
     add_corpus_root_arg(parser)
+    attach_transform_grammar(parser)
 
 
 def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
     rid = _record_id(corpus_root, args.target)
 
+    page = args.page
+    marks = list(args.mark)
+    if args.from_segments:
+        seg_marks, seg_page = _segment_marks(corpus_root, rid, page)
+        if not seg_marks:
+            where = f" on page {page}" if page is not None else ""
+            print(f"no committed bbox segments{where} in {rid[:12]}", file=sys.stderr)
+            return 1
+        marks = seg_marks + marks
+        if page is None:
+            page = seg_page
+
     params: list[str] = []
-    if args.page is not None:
-        params.append(f"page={args.page}")
+    if page is not None:
+        params.append(f"page={page}")
     if args.dpi is not None:
         params.append(f"dpi={args.dpi}")
-    if args.mark:
-        regions = ";".join(m.strip() for m in args.mark)
-        params.append(f"mark={regions}")
+    if args.auto_orient:
+        params.append("auto_orient")
+    if args.rotate is not None:
+        params.append(f"rotate={args.rotate}")
+    if args.autocontrast:
+        params.append("autocontrast")
+    if marks:
+        params.append("mark=" + ";".join(m.strip() for m in marks))
     if not args.full:
         params.append(f"fit={args.fit}")
 
     uri = f"corpus://{rid}" + ("?" + "&".join(params) if params else "")
     try:
-        out = resolver.resolve(uri, corpus_root, regenerate=args.regenerate)
+        out = resolve_uri(args, uri, corpus_root)
     except ArtifactMissing as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -106,8 +150,58 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def resolve_uri(args: argparse.Namespace, uri: str, corpus_root: Path) -> Path:
+    from corpus import resolver
+
+    return resolver.resolve(uri, corpus_root, regenerate=args.regenerate)
+
+
 def _record_id(corpus_root: Path, target: str) -> str:
     if target.startswith("corpus://"):
         return furi.parse(target).hash
     rid, _ = paths.resolve_record(corpus_root, target)
     return rid
+
+
+def _segment_marks(
+    corpus_root: Path, rid: str, page: int | None
+) -> tuple[list[str], int | None]:
+    """Collect committed bbox addresses as `x,y,w,h` mark strings. For a paged record,
+    restrict to `page` (or the first page that has boxes); returns (marks, page)."""
+    post = records.load(paths.record_path(corpus_root, rid))
+    by_page: dict[int | None, list[str]] = {}
+    for blk in segments.iter_blocks(post.content or ""):
+        segs = blk.segments if isinstance(blk, segments.Section) else [blk]
+        for seg in segs:
+            addrs = seg.address if isinstance(seg.address, list) else [seg.address]
+            for addr in addrs:
+                if not isinstance(addr, str):
+                    continue
+                p, box = _parse_addr(addr)
+                if box is not None:
+                    by_page.setdefault(p, []).append(box)
+    if not by_page:
+        return [], page
+    if page is not None:
+        return by_page.get(page, []), page
+    # No page requested: a single-image record keys on None; a paged record picks the
+    # lowest page that carries boxes.
+    if None in by_page:
+        return by_page[None], None
+    first = min(p for p in by_page if p is not None)
+    return by_page[first], first
+
+
+def _parse_addr(addr: str) -> tuple[int | None, str | None]:
+    page: int | None = None
+    box: str | None = None
+    for part in addr.split("&"):
+        key, _, value = part.partition("=")
+        if key == "page":
+            try:
+                page = int(value)
+            except ValueError:
+                pass
+        elif key == "bbox":
+            box = value
+    return page, box
