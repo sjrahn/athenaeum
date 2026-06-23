@@ -1065,7 +1065,19 @@ def _wikilink_addresses(post) -> set[str]:
 
 
 def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
-    """A metadata-zone embed whose address is referenced by no segment and no body wikilink."""
+    """A metadata-zone embed whose address is referenced by no segment and no body wikilink.
+
+    Skipped for a **manifest** record — one with no content-zone segments at all (e.g. a
+    self_contained archive recorded as embeds, where each member is an embedded transport).
+    There is no content flow to position the embeds within, so they ARE the content, not
+    flow-assets, and "unreferenced" is not a defect."""
+    has_segment = any(
+        isinstance(b, _segments.Segment)
+        or (isinstance(b, _segments.Section) and b.segments)
+        for b in blocks
+    )
+    if not has_segment:
+        return
     referenced: set[str] = _wikilink_addresses(post)
     for blk in blocks:
         if isinstance(blk, _segments.Section):
@@ -1166,12 +1178,19 @@ _KNOWN_COMMENT_KEYWORDS = frozenset(
 
 
 def _rule_body_empty_normalized(post, blocks, root) -> Iterator[Finding]:
-    if post.metadata.get("status") == "normalized" and not (post.content or "").strip():
-        yield Finding(
-            rule_id="body-empty-normalized",
-            severity="warning",
-            message="content zone is empty on a normalized record.",
-        )
+    if post.metadata.get("status") != "normalized" or (post.content or "").strip():
+        return
+    # A manifest record (a self_contained container recorded as embeds — e.g. a kept-whole
+    # zip) legitimately has an empty content zone: the members are verbatim, resolvable
+    # transports carried as embeds, so the metadata zone IS the content. Only flag a record
+    # that is empty of content AND embeds (a genuinely empty normalize).
+    if list(_records.iter_embed_blocks(post)):
+        return
+    yield Finding(
+        rule_id="body-empty-normalized",
+        severity="warning",
+        message="content zone is empty on a normalized record.",
+    )
 
 
 def _rule_body_html_residue(post, blocks, root) -> Iterator[Finding]:
