@@ -846,6 +846,28 @@ Re-stub is invoked deliberately — never automatic. Its uses:
 
 Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It is also the natural translation point for migrating records from prior schema generations: a re-stub accepts older frontmatter on input and always writes v1.0-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
 
+### 8.5 The normalization queue
+
+`normalize` (§8.1) is the one stage the corpus tooling does not itself run — it is interpretive, performed by an external **loop session** (a scheduled agent). The tooling provides only the **request/claim contract** that lets any actor ask for a (re-)normalization pass and await its result; it never invokes a normalizer.
+
+**The queue never writes records.** Record `status`, `touch[]`, and body are authored solely by `ingest`, `draft`, and the normalizer (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns `status`; the queue owns only its own entries.
+
+**Requests are status-independent and repeatable.** A record may be enqueued at any status — `draft` for a first pass, or `normalized` for a *refinement* when a new overlay matches it or its guidance improves (re-normalize, §8.3). `normalized` is not terminal; each completed pass appends a `<model-id>` touch. Enqueue never inspects `status`.
+
+A queue entry moves `idle → requested → claimed → idle`, recording the last pass's outcome:
+
+| Verb | Effect | Writes record? |
+|---|---|---|
+| `enqueue <id>` | request a (re-)normalization pass; idempotent — a request arriving while one is pending joins it. | no |
+| `drain` | atomically **claim** the next pending entry and emit its `id`; an empty queue is a non-error empty result — the loop's stop signal. Reclaims a claim whose lease has lapsed (a dead session). | no |
+| `finalize <id>` | close the claimed pass **complete** — gated on the record being `status: normalized` and linting clean; refuses (non-zero) on a blocking finding, so a dirty pass is never reported done. | reads only |
+| `release <id> [--failed]` | return a claim — bare re-queues it; `--failed` records a failed outcome. | no |
+| `await <id>` | block until the requested pass reaches a terminal outcome; success/failure by exit status. | reads only |
+
+**Done** means the normalizer set `status: normalized` *and* the record lints clean — `finalize` enforces both halves.
+
+**Drivable by an external loop.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so a scheduled agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration, ending when `drain` reports the queue empty. The normalizer reads the record's applicable overlays' `normalization.guidance` (§7.4); because domain knowledge rides in overlays, one generic loop serves every domain — a codex contributes by authoring overlays and enqueuing, not by supplying a normalizer.
+
 ---
 
 ## 9. Derived views
@@ -986,6 +1008,7 @@ corpus-<name>/
 ├── artifacts/               UNTRACKED: raw binary cache
 ├── capture/                 UNTRACKED: in-progress capture staging
 ├── cache/                   UNTRACKED: resolver-output cache
+├── queue/                   UNTRACKED: normalization request/claim state (§8.5)
 └── schema/                  tracked: all schemas
     ├── mime/
     ├── origin/
@@ -995,7 +1018,7 @@ corpus-<name>/
         └── <user-namespace>/
 ```
 
-`records/` and `schema/` are tracked in version control. `artifacts/`, `capture/`, and `cache/` are regenerable and conventionally listed in `.gitignore`.
+`records/` and `schema/` are tracked in version control. `artifacts/`, `capture/`, `cache/`, and `queue/` are regenerable and conventionally listed in `.gitignore`.
 
 ### 12.2 Sharding
 

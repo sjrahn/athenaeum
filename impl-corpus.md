@@ -274,6 +274,33 @@ The LLM normalizer never reads `schema/*.yaml` directly (the reference contract 
 
 Membership it can assert manually via `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it). These commands were brought to parity with the LuklaCloud corpus normalizer toolchain.
 
+### 3.8 The normalization queue (request/claim mechanics)
+
+`normalize` is the one stage the tooling does not run itself — it is interpretive, performed by an external **loop session** (e.g. a Claude Code `/loop`). The corpus provides only the request/claim contract (spec §8.5); it never spawns or names a normalizer. The verbs live in `_cli/{enqueue,drain,finalize,release,await,queue}.py` over the `corpus.queue` library.
+
+**State layout (`corpus.queue`).** External, untracked, under `<root>/queue/` (gitignored alongside `artifacts/` `capture/` `cache/`), one marker per record:
+
+- `<id>.req` — a pending request (`requested_at`, `requested_by`).
+- `<id>.claim` — claimed/in-flight (`claimed_at`, `claimed_by`).
+- `<id>.result` — the last terminal outcome (`completed` | `failed`, with `reason`).
+
+A record's queue state is a pure function of which marker exists: `requested` / `claimed` / `idle`. The markers are JSON written atomically (temp sibling + `os.replace`). **The queue never touches `records/`** — every verb is read-only on the record (`finalize` reads it to lint; `await` reads `status` as a fallback).
+
+**Atomic claim.** `drain` claims by `os.rename(<id>.req → <id>.claim)` — atomic on POSIX, so when two loop sessions race for the same request exactly one wins (the loser's `rename` raises and it moves to the next candidate). Requests are claimed FIFO by `requested_at`. An empty queue returns nothing on stdout and **exit 1** — the `/loop` stop signal. A stale `<id>.claim` (a dead session) is reclaimable once `claimed_at` is older than `--lease` (default 30 min); reclaim renames it back to `.req`. A duplicate pass from an over-eager reclaim is wasteful, not unsafe (re-normalization is idempotent), so reclaim is best-effort.
+
+**The loop session** (the agent, not the tooling) drives it:
+
+```bash
+while id=$(corpus drain --by "$SESSION"); do
+    corpus guidance "$id"     # the merged overlay normalization.guidance (§3.7)
+    # ...the agent normalizes $id in-session: title, description, embed/segment
+    #    descriptions, re-segmentation; sets status: normalized; recompiles...
+    corpus finalize "$id" || corpus release "$id" --failed "<reason>"
+done
+```
+
+`finalize` is the **done gate**: it refuses (exit 1, claim left intact) unless the record is `status: normalized` *and* lints with no `error`-severity findings — so a dirty pass is never reported complete. A requester (a codex agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code (0 = completed / `normalized`; non-zero = failed or timeout), so it works for a **re-normalization** of an already-`normalized` record (status alone can't tell the new pass apart — the queue entry can). Because the per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every codex; a codex contributes by authoring overlays and enqueuing, never by supplying a normalizer.
+
 ---
 
 ## 4. Composite classifications (the curator feedback loop)

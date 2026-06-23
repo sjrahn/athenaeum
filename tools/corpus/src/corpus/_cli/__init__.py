@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import keyword
 import sys
 from collections.abc import Sequence
 
@@ -29,6 +30,13 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "redraft":         ("Capture & ingest",       "Bulk re-derive records from their artifacts (deterministic recompile)"),
     "classify":        ("Capture & ingest",       "Stamp a record's deterministic auto-classifications (classify_when)"),
     "reclassify":      ("Capture & ingest",       "Bulk re-propagate auto-classifications after an overlay change"),
+    # Normalization queue (P6) — request/claim contract for the interpretive normalize stage (spec §8.5)
+    "enqueue":         ("Normalize",              "Request a (re-)normalization pass for a record"),
+    "drain":           ("Normalize",              "Claim the next queued record (prints its id; empty queue → exit 1)"),
+    "finalize":        ("Normalize",              "Close a claimed pass (gated on status: normalized + lint-clean)"),
+    "release":         ("Normalize",              "Return a claimed record to the queue (or --failed)"),
+    "await":           ("Normalize",              "Block until a record's requested normalization pass settles"),
+    "queue":           ("Normalize",              "List the normalization queue (requested + claimed)"),
     # Crawl & discovery (P4)
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
@@ -61,6 +69,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
 _GROUP_ORDER: tuple[str, ...] = (
     "Scaffolding",
     "Capture & ingest",
+    "Normalize",
     "Crawl & discovery",
     "Concepts",
     "Inspect",
@@ -116,8 +125,13 @@ def dispatch(argv: Sequence[str]) -> int:
 
 
 def _module_name(cmd: str) -> str:
-    """Map a subcommand name to its module name (dashes → underscores)."""
-    return cmd.replace("-", "_").replace(".", "_")
+    """Map a subcommand name to its module name (dashes → underscores). A name that
+    collides with a Python keyword (e.g. `await`) gets a trailing underscore so the
+    module file is importable (`await_.py`)."""
+    name = cmd.replace("-", "_").replace(".", "_")
+    if keyword.iskeyword(name):
+        name += "_"
+    return name
 
 
 def _print_top_help() -> None:

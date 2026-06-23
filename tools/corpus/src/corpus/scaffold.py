@@ -24,6 +24,7 @@ _GITIGNORE = """\
 /artifacts/
 /capture/
 /cache/
+/queue/
 /export/
 
 # Editor / OS scratch
@@ -95,6 +96,7 @@ per-corpus concerns so they live here.
 ├── artifacts/            # UNTRACKED — binary store
 ├── capture/              # UNTRACKED — capture staging
 ├── cache/                # UNTRACKED — resolver output cache
+├── queue/                # UNTRACKED — normalization request/claim state
 └── export/               # UNTRACKED — portable export bundles
 ```
 
@@ -239,7 +241,7 @@ def scaffold(target: Path, *, namespace: str, force: bool = False) -> Path:
 
     Does NOT write universal mime/origin/atom/composite-issue schemas — those resolve
     from the package via the schema-fallback loader. Does NOT create the untracked
-    artifacts/capture/cache/export dirs (they materialize when first used).
+    artifacts/capture/cache/queue/export dirs (they materialize when first used).
 
     `namespace` is the corpus's primary composite namespace id (e.g. `document`,
     `recipe`). At least one composite namespace is required because the
