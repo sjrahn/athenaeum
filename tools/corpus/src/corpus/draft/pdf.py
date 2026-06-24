@@ -1,14 +1,26 @@
 """PDF draft extraction (deterministic).
 
-Extracts /Info metadata and per-page text from a PDF artifact. Produces either a list
-of `Section`s (one per top-level outline entry, addressed `pages=<start>-<end>` with
-the outline title as `entry:`) when the PDF carries a usable outline (TOC bookmarks),
-or a flat list of top-level `text` Segments addressed `page=<N>` when it doesn't.
+A PDF is drafted one of two ways, chosen by inspecting its bytes:
+
+- **Born-digital** (the text layer is the real content). Extracts /Info metadata and
+  per-page text. Produces either a list of `Section`s (one per top-level outline entry,
+  addressed `pages=<start>-<end>` with the outline title as `entry:`) when the PDF
+  carries a usable outline (TOC bookmarks), or a flat list of top-level `text` Segments
+  addressed `page=<N>` when it doesn't.
+
+- **Scanned image-of-document** (every page is a full-page raster — see
+  `_is_scanned_pdf`). The page text, if any, is a machine-OCR layer baked in *before*
+  capture: interpretation, not faithful source, and often low quality. We deliberately
+  treat the PDF as if it had no text layer at all — sectionless, one body-empty `image`
+  Segment per page addressed `page=<N>` (the positioning markers the image-of-document
+  normalize pass re-reads into `text/ocr` segments at `page=<N>&bbox=...`). This keeps
+  the corpus's own OCR (engine/confidence, region addressing) as the source of OCR text,
+  rather than laundering a pre-baked OCR layer as born-digital `text`.
 
 pypdf handles text extraction; pypdfium2 reads the outline (already a resolver dep).
 
-Per spec §1.5/§4.3 the body is faithful — no interpretation, no editorial. A PDF with
-no extractable text layer (scanned, DRM'd, image-only) yields zero segments; the
+Per spec §1.5/§4.3 the body is faithful — no interpretation, no editorial. A born-digital
+PDF with no extractable text layer (DRM'd, vector-only) yields zero segments; the
 normalizer adds a `partial-content` issue if needed.
 """
 
@@ -21,6 +33,7 @@ from typing import Any
 
 import pypdfium2 as pdfium
 from pypdf import PdfReader
+from pypdf.generic import ContentStream
 
 from corpus import content_hash, recordbuild, records
 from corpus.draft import DrafterResult, register
@@ -31,6 +44,13 @@ log = logging.getLogger(__name__)
 # A page is treated as "blank" if its extracted text contains less than this many
 # non-whitespace characters. Blank pages don't get their own text segments.
 _BLANK_PAGE_THRESHOLD = 5
+
+# A PDF is treated as a scanned image-of-document when *every* page is dominated by a
+# raster image covering at least this fraction of the page area (a scanner sizes the
+# page box to the scan, so real scans land at ~1.0; born-digital pages with no full-page
+# image land at 0.0). Conservative threshold — when unsure we fall back to the text path,
+# which never wrongly suppresses a genuine text layer.
+_SCANNED_COVERAGE = 0.9
 
 
 @register("application/application_pdf")
@@ -60,19 +80,27 @@ def draft(
         if v := _date(info.modification_date):
             fields["modification_date"] = v
 
-    pages = [_extract_page_text(p) for p in reader.pages]
-    page_segments = _build_page_segments(pages)
-
     blocks: list[Section | Segment]
-    outline = _read_outline_top_level(pdf_path)
-    if outline:
-        blocks = _wrap_in_outline_sections(
-            page_segments=page_segments,
-            outline=outline,
-            page_count=len(pages),
-        )
+    if _is_scanned_pdf(reader):
+        # Image-of-document: suppress the (machine-OCR) text layer and emit one
+        # body-empty image-atom positioning marker per page, sectionless. The OCR
+        # normalize pass reads each page region into `text/ocr` (see the schema guidance).
+        blocks = [
+            Segment(atom="image", address=f"page={i}", body="")
+            for i in range(1, len(reader.pages) + 1)
+        ]
     else:
-        blocks = list(page_segments)
+        pages = [_extract_page_text(p) for p in reader.pages]
+        page_segments = _build_page_segments(pages)
+        outline = _read_outline_top_level(pdf_path)
+        if outline:
+            blocks = _wrap_in_outline_sections(
+                page_segments=page_segments,
+                outline=outline,
+                page_count=len(pages),
+            )
+        else:
+            blocks = list(page_segments)
 
     # Canonical hash per the mime schema's `canonical_strategy.algo` (the strategy id
     # encodes its hash family, e.g. `blake3-canonical-pdf` → `blake3:`); falls back to the
@@ -87,6 +115,94 @@ def draft(
         "issues": [],
         "canonical": canonical,
     }
+
+
+# ---------- scanned-PDF detection ---------- #
+
+
+def _is_scanned_pdf(reader: PdfReader) -> bool:
+    """True when every page is dominated by a full-page raster image.
+
+    This is the structural signature of a scanned document (with or without an
+    auto-added OCR text layer), independent of which scanner/tool produced it — so we
+    key on the bytes, never on a vendor `/Producer` string. A born-digital page (vector
+    text, no full-page image) scores 0 coverage and fails the check; a single page that
+    we can't measure (parse error, no content) also fails it, so the whole PDF falls
+    back to the born-digital text path — the safe default that never suppresses real text.
+    """
+    pages = reader.pages
+    if not pages:
+        return False
+    return all(_max_image_coverage(page, reader) >= _SCANNED_COVERAGE for page in pages)
+
+
+def _mat_mul(m1: tuple[float, ...], m2: tuple[float, ...]) -> tuple[float, ...]:
+    """Compose two PDF 2-D affine matrices [a b c d e f] (m1 applied first)."""
+    a1, b1, c1, d1, e1, f1 = m1
+    a2, b2, c2, d2, e2, f2 = m2
+    return (
+        a1 * a2 + b1 * c2,
+        a1 * b2 + b1 * d2,
+        c1 * a2 + d1 * c2,
+        c1 * b2 + d1 * d2,
+        e1 * a2 + f1 * c2 + e2,
+        e1 * b2 + f1 * d2 + f2,
+    )
+
+
+def _max_image_coverage(page: Any, reader: PdfReader) -> float:
+    """Largest fraction of the page area covered by a single image-draw (`Do`) op.
+
+    Walks the content stream tracking the CTM (q/Q stack + `cm` concatenation); for each
+    `Do` painting an image XObject, the painted area is |det(CTM)| (the area of the
+    transformed image unit square). Returns 0.0 on any parse failure or when the page has
+    no image XObjects. Direct image draws only — a scanner that wraps the page image in a
+    Form XObject would read as 0 here (→ born-digital fallback), which is acceptable: it
+    errs toward keeping text, never toward dropping it.
+    """
+    try:
+        res = page.get("/Resources")
+        xobjects = res.get("/XObject") if res else None
+    except Exception:
+        return 0.0
+    image_names: set[Any] = set()
+    if xobjects:
+        for key in xobjects:
+            try:
+                if xobjects[key].get_object().get("/Subtype") == "/Image":
+                    image_names.add(key)
+            except Exception:
+                continue
+    if not image_names:
+        return 0.0
+
+    try:
+        mediabox = page.mediabox
+        page_area = abs(float(mediabox.width) * float(mediabox.height))
+    except Exception:
+        return 0.0
+    if page_area <= 0:
+        return 0.0
+
+    ctm: tuple[float, ...] = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    stack: list[tuple[float, ...]] = []
+    max_cov = 0.0
+    try:
+        cs = ContentStream(page.get_contents(), reader)
+        for operands, op in cs.operations:
+            if op == b"q":
+                stack.append(ctm)
+            elif op == b"Q":
+                ctm = stack.pop() if stack else (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+            elif op == b"cm" and len(operands) == 6:
+                ctm = _mat_mul(tuple(float(x) for x in operands), ctm)
+            elif op == b"Do" and operands and operands[0] in image_names:
+                a, b, c, d, _e, _f = ctm
+                det = abs(a * d - b * c)  # area of the transformed unit square
+                max_cov = max(max_cov, det / page_area)
+    except Exception:
+        return 0.0
+    return max_cov
 
 
 # ---------- helpers ---------- #

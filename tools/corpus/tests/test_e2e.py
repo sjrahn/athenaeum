@@ -66,13 +66,16 @@ def test_e2e_pdf_lifecycle(tmp_path, capsys):
     capsys.readouterr()
 
     # The drafter ran: status advanced and PDF metadata was extracted. (onepager.pdf
-    # is image-only — no text layer — so a zero-segment body is the correct outcome;
-    # `body` still runs cleanly.)
-    from corpus import paths, records
+    # is a full-page-image PDF — the scanned image-of-document shape — so the drafter
+    # emits one body-empty image marker per page, sectionless; `body` + lint stay clean.)
+    from corpus import paths, records, segments
 
     post = records.load(paths.record_path(root, pdf))
     assert post.metadata["status"] == "draft"
     assert "page_count" in post.metadata["_artifact"]["fields"]
+    blocks = list(segments.iter_blocks(post.content or ""))
+    assert [getattr(b, "atom", None) for b in blocks] == ["image", "image"]
+    assert [b.address for b in blocks] == ["page=1", "page=2"]
     assert dispatch(["body", pdf, "--corpus-root", str(root)]) == 0
     capsys.readouterr()
 

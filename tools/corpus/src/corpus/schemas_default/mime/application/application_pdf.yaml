@@ -26,9 +26,23 @@ canonical_strategy:
   - blake3 the concatenation
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is the structural-content authority for a PDF record: deterministically, it walks pypdf to populate frontmatter (`page_count`, `title`, `author`, `creation_date`, `modification_date`, `producer`) and emits one bare `<!--segment text-->` per page with address `page=<N>`. The drafter extracts **text only** — it emits no image segments and no `<!--embed-->` blocks. Figures/diagrams/charts are added by the normalizer as **bare image segments** (see "Figures, diagrams, charts" below); a PDF record never carries image embeds.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is the structural-content authority for a PDF record: deterministically, it walks pypdf to populate frontmatter (`page_count`, `title`, `author`, `creation_date`, `modification_date`, `producer`) and then chooses one of **two body shapes** by inspecting the bytes:
+
+    - **Born-digital** (a real text layer) → one bare `<!--segment text-->` per page with address `page=<N>`. The drafter extracts **text only** — no image segments, no `<!--embed-->` blocks. Figures/diagrams/charts are added by the normalizer as **bare image segments** (see "Figures, diagrams, charts" below); a PDF record never carries image embeds.
+    - **Scanned image-of-document** (every page is a full-page raster) → one **body-empty `<!--segment image-->` per page** with address `page=<N>`, **sectionless**. The page's text layer — usually a machine-OCR layer baked in before capture — is deliberately suppressed so the corpus owns its own OCR. See "Scanned PDFs" immediately below; the rest of this guidance addresses the born-digital shape.
 
     Don't re-extract content from the artifact yourself with `pdftotext` and call it done; the drafter has already done that and you're at parity with it. **Use the resolver to render pages and look at them** — see below.
+
+    ## Scanned PDFs (image-of-document)
+
+    When the drafter hands you a body of **body-empty `<!--segment image-->` markers, one per page at `page=<N>`, with no sections**, the PDF is a scan — every page is a full-page raster. There is no faithful text layer to refine: any text the file carried was a machine-OCR layer added *before* capture, which the drafter suppressed so the corpus produces (and provenances) its own OCR. Normalize each page **exactly as a standalone image-of-document** — the tactics are identical to the image mime guidance (`corpus overlay visual-type`, and the image schema's own guidance):
+
+    - **See each page:** `corpus resolve 'corpus://<hash>?page=<N>'` to render it, or place regions by eye with `corpus preview <id> --page <N> --mark x,y,w,h`. Crop into a region (`page=<N>&bbox=...`) for fine print; `autocontrast` / `contrast=<f>` / `rotate=` / `resize=` compose just as they do for images (a scanned page is a raster — no `dpi=` detail to recover beyond the scan's own resolution).
+    - **Transcribe text regions** as `<!--segment text/ocr-->` at `page=<N>&bbox=<x,y,w,h>` — one per logical text block, verbatim, recording `ocr_engine` (e.g. `vlm`) and `confidence` (see the `text/ocr` overlay). OCR segments **always carry a `&bbox=...` sub-region** — never the bare `page=<N>` address, which belongs to the page's image marker.
+    - **Tables** → `<!--segment text/data-table-->` at `page=<N>&bbox=...`; **figures/photos/diagrams** → a body-empty `image` (sub-)segment at `page=<N>&bbox=...` carrying its `description:`.
+    - **Page marker:** the drafter's whole-page `page=<N>` image marker is the positioning anchor — leave it in place and add the `page=<N>&bbox=...` sub-region segments around it (the "Figures, diagrams, charts" address-uniqueness + `page=` self-slice rules below apply unchanged; a `page=` image segment needs no embed).
+
+    OCR of a scan is a normalizer (agent) pass, not an automatic draft step — the same status as image-of-text transcription generally. The rest of this section (outline sections, pypdf-text refinement, chrome) is about the **born-digital** shape and does not apply to a scanned record.
 
     ## See the source — resolve pages to images and READ them
 
@@ -102,7 +116,8 @@ normalization:
 
     - The per-page `text` segments carry the extracted text from pypdf. Treat the body as a starting point; verify against the resolved page render.
     - The drafter emits no image segments — figures are added by the normalizer as bare image segments (see "Figures, diagrams, charts"): resolve `page=N&bbox=...`, Read it, tighten the bbox to cover the figure, and write the `description:` (body stays empty).
-    - body-empty text segments — the drafter could not extract text for that page (typically a scanned-image page or DRM'd page). When most or all of a PDF's pages come out this way, OCR is out of scope for v1: leave the bodies empty, refine `description` only, and add a record-scope `partial-content` issue naming the missing text layer (the drafter does not signal this; the normalizer judges from the segment shapes).
+    - body-empty **image** segments at `page=<N>` (the whole body, no sections) — the drafter detected a **scanned** PDF and suppressed its baked-in OCR layer. OCR each page per "Scanned PDFs" above; this is in scope (`text/ocr` over `page=<N>&bbox=...`), not deferred.
+    - body-empty **text** segments — a born-digital page the drafter couldn't extract text for (DRM'd, vector-only). Leave the body empty, refine `description` only, and add a record-scope `partial-content` issue naming the missing text layer (the drafter does not signal this; the normalizer judges from the segment shapes).
 
     Record-level — read frontmatter and the `<!--artifact application/pdf-->` block:
 

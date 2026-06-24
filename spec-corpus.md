@@ -990,7 +990,7 @@ Export is idempotent and untracked. The output layout (filenames, directory stru
 
 Genuinely deferred items for this spec version:
 
-- **OCR for scanned PDFs** — the deterministic draft step records the scanned flag and an issue context block; OCR is future work.
+- **Automatic OCR.** A scanned PDF (every page a full-page raster) drafts to per-page body-empty `image` segments — the image-of-document shape (§7.1), the same as a standalone image-of-text — and transcription into `text/ocr` segments (§4.3.2) is a normalizer pass. Detection and representation are in scope and implemented; an *automatic* (non-agent) OCR step is deferred.
 - **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified. (Building it requires reconciling the `<algo>:<hex>` embed `transport` encoding with the bare-hex record `id` — strip the prefix and confirm `algo == blake3` before matching.)
 - **Range-aware navigation** for content the resolver doesn't materialize.
 - **`page=<N>-<M>` ranges** and other open transforms beyond §6.2.
