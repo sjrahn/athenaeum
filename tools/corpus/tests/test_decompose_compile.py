@@ -131,6 +131,60 @@ def test_decompose_compile_preserves_frontmatter_title(tmp_path):
     assert records.title_for(records.load(rec)) == "Power Brake Assist — Parts and Labor"
 
 
+def test_status_is_authored_on_the_manifest_record_line(tmp_path):
+    """Status lives on the manifest `record status=` line (the advertised, editable place),
+    NOT in meta.yaml — so editing it there is no longer a silent no-op that costs a compile
+    pass to discover."""
+    root = _make_corpus(tmp_path)
+    rec = _make_golden_record_file(root)  # status: draft
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    post = records.load(rec)
+    blocks = segments.iter_blocks(post.content or "")
+    recordbuild.write_workdir(post, blocks, workdir, source=str(rec), orig_sha256="sha256:x")
+
+    manifest_path = workdir / "manifest.corpus"
+    meta_text = (workdir / "meta.yaml").read_text("utf-8")
+    assert "status=draft" in manifest_path.read_text("utf-8")  # on the record line
+    assert "status:" not in meta_text  # and NOT duplicated in meta.yaml
+
+    # Editing the manifest line is now what changes status on compile.
+    manifest_path.write_text(
+        manifest_path.read_text("utf-8").replace("status=draft", "status=normalized"),
+        encoding="utf-8",
+    )
+    rebuilt = recordbuild.read_workdir(workdir, root)
+    assert rebuilt.metadata.get("status") == "normalized"
+
+
+def test_multiline_description_round_trips_as_block_literal(tmp_path):
+    """A multi-line description emits as a YAML block literal in meta.yaml (clearly multi-line,
+    quote-free, hand-edit-safe) — never a single-quoted scalar whose first line reads as a
+    truncated stump — and still round-trips the exact string."""
+    root = _make_corpus(tmp_path)
+    rec = _make_golden_record_file(root)
+    nasty = 'Line one: a value\n- "quoted": then #hash, ends with a backslash \\ and @at *star'
+    post = records.load(rec)
+    post.metadata["description"] = nasty
+    records.dump(post, rec)
+    original_text = rec.read_text("utf-8")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    post = records.load(rec)
+    blocks = segments.iter_blocks(post.content or "")
+    recordbuild.write_workdir(post, blocks, workdir, source=str(rec), orig_sha256="sha256:x")
+
+    meta_text = (workdir / "meta.yaml").read_text("utf-8")
+    assert "description: |" in meta_text  # block literal, not `description: '…`
+    assert "description: '" not in meta_text
+
+    rebuilt = recordbuild.read_workdir(workdir, root)
+    assert rebuilt.metadata.get("description") == nasty  # exact value preserved
+    records.dump(rebuilt, rec)
+    assert rec.read_text("utf-8") == original_text  # full round-trip byte-identical
+
+
 def test_compile_routes_embed_to_metadata_zone(tmp_path):
     """Reconciliation #1: `embed` ops produce metadata-zone embeds; the content
     body holds only sections/segments."""

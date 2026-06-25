@@ -1,7 +1,8 @@
 """Normalizer-support commands — `diagnose` / `guidance` / `overlay` + `lint --json`.
 
 Smoke each command over a tmp corpus: the markdown carries its expected sections / field table /
-candidate footer, and `lint --json` emits one NDJSON object per finding.
+candidate footer; `corpus overlay <host>` resolves an origin overlay (not just composite); and
+`lint --json` emits a single JSON array of findings.
 """
 
 from __future__ import annotations
@@ -95,10 +96,42 @@ def test_overlay_field_table(tmp_path, capsys):
     assert "episode_date" in out and "Segment by news topic" in out
 
 
+def test_overlay_resolves_origin_overlay(tmp_path, capsys):
+    """`corpus overlay <host>` falls back to an origin overlay (not just composite) so the
+    normalizer can read a host's origin guidance at normalize time."""
+    root = _corpus(tmp_path)
+    od = root / "schema" / "origin"
+    od.mkdir(parents=True)
+    (od / "youtube.com.yaml").write_text(
+        "applies_to:\n  host_pattern: youtube.com\n  include_subdomains: true\n"
+        "capture:\n  capturer: video\n"
+        "normalization:\n  guidance: |\n    Treat the transcript as the primary text.\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+    rc = dispatch(["overlay", "youtube.com", "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "# overlay youtube.com  (origin)" in out
+    assert "Treat the transcript as the primary text" in out  # origin normalization.guidance
+    assert "youtube.com" in out and "`capture`" in out  # host match + declared section
+
+
+def test_overlay_unknown_is_error(tmp_path):
+    root = _corpus(tmp_path)
+    try:
+        dispatch(["overlay", "nope.example", "--corpus-root", str(root)])
+    except SystemExit as e:
+        assert e.code  # neither composite nor origin → non-zero exit
+    else:
+        raise AssertionError("expected SystemExit for an unknown overlay")
+
+
 def test_lint_json(tmp_path, capsys):
     root = _corpus(tmp_path)
     _record(root)  # a draft segment with no entry → entry-missing warning
     dispatch(["lint", RID, "--json", "--corpus-root", str(root)])
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert lines and all({"rule_id", "severity", "message", "record_id"} <= set(o) for o in lines)
-    assert any(o["rule_id"] == "entry-missing" for o in lines)
+    findings = json.loads(capsys.readouterr().out)  # a single JSON array, not NDJSON
+    assert isinstance(findings, list) and findings
+    assert all({"rule_id", "severity", "message", "record_id"} <= set(o) for o in findings)
+    assert any(o["rule_id"] == "entry-missing" for o in findings)

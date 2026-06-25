@@ -23,7 +23,7 @@ Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
 Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 
     record  id=<hex> status=<s>
-    embed   <mime> addr=<a|[a,b]> transport=<algo:hex> [desc=@desc/..] [k=v ...]
+    embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]
     section addr=<a> [entry="..."] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [perceptual=..] [k=v ...]
     issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]
@@ -70,10 +70,13 @@ _MANIFEST_HEADER = [
     "# manifest.corpus — one op per line; `#` comments; shlex-tokenised.",
     "# Grammar:",
     "#   record  id=<hex> status=<stub|draft|normalized>",
-    "#   embed   <mime> addr=<a|[a,b]> transport=<algo:hex> [desc=@desc/..] [k=v ...]",
+    "#   embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]",
     "#   section addr=<a> [entry=\"...\"] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [k=v ...]",
     "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]",
+    "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
+    "#   (a single address such as bbox=x,y,w,h already contains commas).",
+    "# status is set on the `record` line above (authoritative) — it is NOT in meta.yaml.",
     "# Spec §4.3: embed lives in the METADATA zone (reconciliation #1 vs the v0.x reference).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
     "#   text/data-table, text/transcript, …). image/audio/video and non-lossless text",
@@ -363,6 +366,24 @@ def _fmt_scalar(value) -> str:
     return shlex.quote(str(value))
 
 
+class _MetaDumper(yaml.SafeDumper):
+    """SafeDumper that renders a multi-line string as a YAML block literal (`|`) instead
+    of a single-quoted scalar. A single-quoted multi-line value (a normalized
+    `description`, say) wraps onto continuation lines whose first physical line reads
+    like a truncated stump — easy to misread or mis-edit in the decomposed meta.yaml. A
+    block literal is unambiguous and quote-free, so it hand-edits and round-trips
+    cleanly. PyYAML falls back to a quoted style for a value a literal block can't hold
+    (e.g. trailing whitespace), so this never produces invalid YAML."""
+
+
+def _repr_str_block(dumper: yaml.Dumper, data: str):
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_MetaDumper.add_representer(str, _repr_str_block)
+
+
 def _typed(raw: str):
     if re.fullmatch(r"-?\d+", raw):
         return int(raw)
@@ -419,13 +440,18 @@ def write_workdir(
     (out / "desc").mkdir(parents=True, exist_ok=True)
 
     meta = {
-        "frontmatter": {k: post.metadata[k] for k in _CORE if k in post.metadata},
+        # `status` is authored on the manifest `record` line (the editable, advertised
+        # place); duplicating it here would be a confusing second source of truth and an
+        # edit there would be silently ignored. So it lives in the manifest, not meta.yaml.
+        "frontmatter": {
+            k: post.metadata[k] for k in _CORE if k in post.metadata and k != "status"
+        },
         "artifact": post.metadata.get("_artifact"),
         "origins": post.metadata.get("_origins") or [],
         "classifies": post.metadata.get("_classifies") or [],
     }
     (out / META_NAME).write_text(
-        yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=10**9),
+        yaml.dump(meta, Dumper=_MetaDumper, sort_keys=False, allow_unicode=True, width=10**9),
         encoding="utf-8",
     )
 
@@ -581,6 +607,8 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 kv = _kv(toks[1:])
                 if meta_id and kv.get("id") and kv["id"] != meta_id:
                     raise ValueError("record id disagrees with meta.yaml")
+                if kv.get("status"):  # authoritative — the manifest line owns status
+                    b.post.metadata["status"] = kv["status"]
                 seen_record = True
                 continue
             if not seen_record:
