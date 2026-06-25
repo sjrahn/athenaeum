@@ -68,10 +68,12 @@ build-backend = "hatchling.build"
 packages = ["src/corpus"]
 
 # Ship the bundled universal schemas (YAML) + the vendor dir (README, and the
-# SingleFile bundle when an operator has dropped it in) inside the wheel.
+# SingleFile bundle when an operator has dropped it in) + the workflow runbooks
+# (markdown, surfaced by `corpus workflow`) inside the wheel.
 [tool.hatch.build.targets.wheel.force-include]
 "src/corpus/schemas_default" = "corpus/schemas_default"
 "src/corpus/vendor" = "corpus/vendor"
+"src/corpus/workflows" = "corpus/workflows"
 
 [tool.uv]
 package = true

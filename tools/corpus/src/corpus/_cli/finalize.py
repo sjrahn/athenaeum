@@ -14,7 +14,7 @@ import sys
 from corpus import lint as _lint
 from corpus import paths, records, segments
 from corpus import queue as _queue
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus._cli._common import add_corpus_root_arg, attach_workflow_note, resolved_corpus_root
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -25,6 +25,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="Identifier of the finalizing loop session, recorded on the result.",
     )
     add_corpus_root_arg(parser)
+    attach_workflow_note(parser, "normalize-loop")
 
 
 def run(args: argparse.Namespace) -> int:

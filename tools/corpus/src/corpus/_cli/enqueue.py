@@ -6,7 +6,7 @@ import argparse
 
 from corpus import paths
 from corpus import queue as _queue
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus._cli._common import add_corpus_root_arg, attach_workflow_note, resolved_corpus_root
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -17,6 +17,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="Identifier of the requester (e.g. a codex agent), recorded on the request.",
     )
     add_corpus_root_arg(parser)
+    attach_workflow_note(parser, "normalize-loop")
 
 
 def run(args: argparse.Namespace) -> int:

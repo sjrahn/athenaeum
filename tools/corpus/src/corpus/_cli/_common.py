@@ -65,3 +65,15 @@ def attach_transform_grammar(parser: argparse.ArgumentParser) -> None:
     """Show the transform-grammar reference in this subcommand's --help."""
     parser.epilog = TRANSFORM_GRAMMAR
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
+
+
+def attach_workflow_note(parser: argparse.ArgumentParser, workflow: str) -> None:
+    """Note in this subcommand's --help that it is one verb in a larger tooling
+    workflow, pointing at the central runbook. The runbook (`corpus workflow
+    <workflow>`) is maintained in the package, so the operating modes and lifecycle
+    guidance update with the tooling — not per corpus."""
+    parser.epilog = (
+        f"Part of the '{workflow}' workflow. Run `corpus workflow {workflow}` for the "
+        f"operating modes and result lifecycle (one runbook, maintained in the tooling)."
+    )
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter

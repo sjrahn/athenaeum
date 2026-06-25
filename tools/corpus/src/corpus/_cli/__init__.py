@@ -47,6 +47,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
     "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + candidate classifications (normalizer's first call)"),
     "guidance":        ("Inspect",                "Print the normalization guidance for a record's mime + applied overlays"),
+    "workflow":        ("Inspect",                "Operating-mode runbooks for the tooling (loop modes, queue lifecycle)"),
     "overlay":         ("Inspect",                "Show a classification overlay's field-spec + tactics (for a candidate)"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),

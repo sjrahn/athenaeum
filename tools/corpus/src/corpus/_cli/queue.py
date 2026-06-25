@@ -6,7 +6,7 @@ import argparse
 import json
 
 from corpus import queue as _queue
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus._cli._common import add_corpus_root_arg, attach_workflow_note, resolved_corpus_root
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -29,6 +29,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="Emit JSON — the entries array, or with --prune the {results, temp} removed.",
     )
     add_corpus_root_arg(parser)
+    attach_workflow_note(parser, "normalize-loop")
 
 
 def run(args: argparse.Namespace) -> int:
