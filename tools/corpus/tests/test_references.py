@@ -268,14 +268,17 @@ def test_emit_overlay_references_block_shape(tmp_path):
     assert by_url[SPEC]["role"] == "spec-sheet"
 
 
-def test_emit_resolves_tier3_when_target_captured(tmp_path):
+def test_emit_never_writes_tier3_even_when_target_captured(tmp_path):
+    # Draft purity (spec §4.3.3.3): emission must not read corpus state. Even with the
+    # manual already a record, the drafted reference stays tier-2 — no source_uri baked in.
     root = _corpus(tmp_path, overlay=OVERLAY)
     _html_record(root, ID_MANUAL, MANUAL, "<html></html>")  # manual already a record
     post = _html_record(root, ID_PDP, BASE, PDP_HTML)
     references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
     by_url = {r["fields"]["source_url"]: r["fields"] for r in records.iter_reference_blocks(post)}
-    assert by_url[MANUAL]["source_uri"] == f"corpus://{ID_MANUAL}"
-    assert "source_uri" not in by_url[SPEC]  # spec still uncaptured → tier 2
+    assert "source_uri" not in by_url[MANUAL]  # captured, but draft stays pure → no tier 3
+    assert "source_uri" not in by_url[SPEC]
+    assert by_url[MANUAL]["source_url"] == MANUAL  # tier 2 still present
 
 
 def test_emit_no_rules_is_noop(tmp_path):
@@ -295,7 +298,7 @@ def test_draft_emits_references(tmp_path):
     draft_cli.derive_record(post, root)
     records.dump(post, paths.record_path(root, ID_PDP))
     reloaded = records.load(paths.record_path(root, ID_PDP))
-    refs = derived_views.references(reloaded)
+    refs = derived_views.references(root, reloaded)
     assert {r["source_url"] for r in refs} == {MANUAL, SPEC}
     assert all(r["provenance"] == "auto" for r in refs)
 
@@ -336,12 +339,30 @@ def test_references_derived_view_projection(tmp_path):
     root = _corpus(tmp_path, overlay=OVERLAY)
     post = _html_record(root, ID_PDP, BASE, PDP_HTML)
     references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
-    view = derived_views.references(post)
+    view = derived_views.references(root, post)
     assert {v["source_url"] for v in view} == {MANUAL, SPEC}
     assert {v.get("role") for v in view} == {"manual", "spec-sheet"}
+    # targets uncaptured → the read-time edge resolves to pending, no resolved_uri
+    assert all(v["captured"] is False and "resolved_uri" not in v for v in view)
     # not surfaced in the issues/concepts projections
     assert derived_views.issues(post) == []
     assert derived_views.concepts(post) == []
+
+
+def test_references_view_resolves_edge_at_read_time(tmp_path):
+    # The intra-corpus edge is DERIVED from source_url at read time, never stored at draft.
+    # Capturing the target later flips `captured` without re-drafting the citing record.
+    root = _corpus(tmp_path, overlay=OVERLAY)
+    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
+    references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
+    before = {v["source_url"]: v for v in derived_views.references(root, post)}
+    assert before[MANUAL]["captured"] is False and "resolved_uri" not in before[MANUAL]
+    # capture the manual as its own record; the citing record on disk is untouched
+    _html_record(root, ID_MANUAL, MANUAL, "<html></html>")
+    after = {v["source_url"]: v for v in derived_views.references(root, post)}
+    assert after[MANUAL]["captured"] is True
+    assert after[MANUAL]["resolved_uri"] == f"corpus://{ID_MANUAL}"
+    assert after[SPEC]["captured"] is False  # spec still uncaptured
 
 
 # ---------- corpus links --references ---------- #

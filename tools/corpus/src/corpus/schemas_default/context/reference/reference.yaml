@@ -9,10 +9,14 @@
 # product manual; spec §7.2). Never part of the faithful body or the canonical hash.
 
 description: |
-  A source the body references. Starts as free-text attribution and is researched and
-  resolved up the three-tier ladder (§4.4.5): attribution_text → source_url → source_uri
-  (a corpus:// URI to the separately-captured record). The `address` (+ optional `quote`)
-  pins it back to the exact mention.
+  A source the body references. Starts as free-text attribution and is researched up the
+  citation ladder (§4.4.5): attribution_text → source_url. Whether that URL is itself a
+  captured record is a READ-TIME edge — resolved from source_url against the URI index by
+  derived_views.references (§9.9) / `corpus links --references` — not a stored field; the
+  mechanical (provenance: auto) drafter never writes source_uri (it must stay a pure
+  function of the artifact, spec §4.3.3.3). The optional source_uri tier below is reserved
+  for an *asserted* reference (see its note). The `address` (+ optional `quote`) pins the
+  reference back to the exact mention.
 
 applies_at: [record, segment]
 
@@ -57,7 +61,13 @@ extended_fields:
     required: false
     description: |
       Tier 3 — a functional `corpus://<id>` URI pointing at the separately-captured record
-      for this source (lossless intra-corpus link). Lint flags a dangling target.
+      for this source (lossless intra-corpus link). Written ONLY by an *asserted*
+      (normalizer-/human-authored) reference, and only when the target has no resolvable
+      `source_url` to derive the edge from (a born-internal record, or an explicit hand
+      link). The mechanical drafter never writes it: a link-backed reference's intra-corpus
+      edge is resolved at read time from `source_url` (derived_views.references §9.9), so it
+      self-heals instead of dangling. Lint flags a dangling target (now only ever an
+      asserted one).
 
   # ---- role: only on mechanical (overlay-declared) references ----
   role:

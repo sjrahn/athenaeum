@@ -309,7 +309,7 @@ def record_detail(
         "content": content_nodes(post),
         "annotations": derived_views.context(post),
         "concepts": _concepts_detail(post, concept_resolver),
-        "references": derived_views.references(post),
+        "references": derived_views.references(corpus_root, post),
         "classifications": derived_views.classifications(post),
         "tokens": tokens.token_counts(post, corpus_root=corpus_root),
         "captured": _captured(post),

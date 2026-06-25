@@ -10,9 +10,10 @@ module is the single home for that declaration:
 - `match` — apply the rules to a captured HTML document, yielding the dependent links
   (resolved + normalized, deduped) the rest of the pipeline acts on.
 - `emit_overlay_references` — the draft-stage emission: turn the matches into
-  `provenance: auto` `reference` context blocks on the record (spec §4.3.3.3), resolving
-  each to tier 3 (`source_uri`) when its target is already a record, else tier 2
-  (`source_url`).
+  `provenance: auto` `reference` context blocks on the record (spec §4.3.3.3) at tier 2
+  (`source_url`). It reads no corpus state and never writes tier-3 `source_uri`: whether
+  a target is itself a record is a read-time edge (`derived_views.references`), so `draft`
+  stays a pure function of the artifact.
 
 The *fetch* of a dependent target (`capture: true` / `corpus capture --with-references`
 / `corpus crawl --references`) is a capture-side concern and lives there; this module
@@ -236,21 +237,21 @@ def matches_for_record(
     return [m for m in found if m.url not in own]
 
 
-def _reference_fields(
-    m: MatchedReference, *, source_uri: str | None
-) -> dict[str, Any]:
+def _reference_fields(m: MatchedReference) -> dict[str, Any]:
     """Assemble a mechanical `reference` context block's fields (spec §4.3.3.3): the
-    `provenance: auto` marker, the rule's `role`, and the citation ladder seeded at
-    tier 2 (`source_url` = the resolved href, tier-1 `attribution_text` = the link text),
-    advanced to tier 3 (`source_uri`) when the target is already a record."""
+    `provenance: auto` marker, the rule's `role`, and the citation ladder up to tier 2 —
+    tier-1 `attribution_text` (the link text) + tier-2 `source_url` (the resolved href).
+
+    The mechanical drafter stops here. It NEVER writes tier-3 `source_uri`: "which record,
+    if any, that URL is" is a read-time resolution of `source_url` (derived_views.references),
+    not draft output — so `draft` stays a pure function of the artifact (it reads no corpus
+    state) and the edge self-heals as the corpus changes instead of dangling under removal."""
     fields: dict[str, Any] = {"provenance": "auto"}
     if m.role:
         fields["role"] = m.role
     if m.text:
         fields["attribution_text"] = m.text
     fields["source_url"] = m.url
-    if source_uri:
-        fields["source_uri"] = source_uri
     return fields
 
 
@@ -258,8 +259,15 @@ def emit_overlay_references(post: Any, corpus_root: Path, html_path: Path) -> in
     """Emit one `provenance: auto` `reference` context block per declared dependent link
     onto `post` (spec §4.3.3.3). Draft-stage only and HTML-only — the caller guards on
     media type. Each reference is record-scoped (no segment anchor in v1; the link's
-    containing region is often un-segmented chrome), seeded at tier 2 and resolved to
-    tier 3 by URI when the target is already a record. Returns the number emitted.
+    containing region is often un-segmented chrome) and stops at tier 2 (`source_url`).
+    Returns the number emitted.
+
+    **Pure.** Draft reads no corpus state — no `find_by_uri`, no tier-3 `source_uri` baked
+    in. Whether a target URL is itself a record is a read-time derived edge over the durable
+    `source_url` (`derived_views.references` / `corpus links --references`), so the same
+    artifact always drafts to the same bytes regardless of what else the corpus holds (the
+    line `draft` must not cross — spec §4.3.3.3, §8.2). The own-URI exclusion is already
+    applied during matching (`matches_for_record`).
 
     Idempotent by construction: `corpus draft` runs only on a clean stub (and `redraft`
     re-stubs first, clearing context blocks), so this appends to a record that holds no
@@ -274,22 +282,14 @@ def emit_overlay_references(post: Any, corpus_root: Path, html_path: Path) -> in
     found = matches_for_record(corpus_root, post, html)
     if not found:
         return 0
-    record_id = str(post.metadata.get("id") or "")
-    index = records.build_uri_index(corpus_root)
-    emitted = 0
     for m in found:
-        existing = records.find_by_uri(m.url, corpus_root=corpus_root, index=index)
-        source_uri = (
-            f"corpus://{existing}" if existing and existing != record_id else None
-        )
         records.append_context_block(
             post,
             namespace="reference",
             id="reference",
-            fields=_reference_fields(m, source_uri=source_uri),
+            fields=_reference_fields(m),
         )
-        emitted += 1
-    return emitted
+    return len(found)
 
 
 # ---------- capture-side depth-1 auto-grab (spec §7.2 `capture: true`) ---------- #
