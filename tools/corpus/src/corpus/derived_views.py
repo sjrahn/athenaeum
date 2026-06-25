@@ -187,6 +187,27 @@ def concepts(post: frontmatter.Post) -> list[dict[str, Any]]:
     return out
 
 
+def references(post: frontmatter.Post) -> list[dict[str, Any]]:
+    """§9.9 — derive `references[]`: the `reference`-namespace projection of the context
+    view (§4.3.3.3) — the sibling of `issues` (§9.2) and `concepts` (§9.7).
+
+    Each entry is the reference block's fields — the citation ladder (`attribution_text`,
+    `source_url`, `source_uri`), the optional anchor (`address`, `quote`, `occurrence`),
+    `provenance`, and (on mechanical, overlay-declared references) `role`. The resolved
+    `source_uri` is the directional edge to the cited/depended-on record; the reverse is a
+    corpus-wide read, not indexed here (spec §9.9 / §11).
+    """
+    out: list[dict[str, Any]] = []
+    for reference in records.iter_reference_blocks(post):
+        entry: dict[str, Any] = {}
+        if reference.get("subtype"):
+            entry["subtype"] = reference["subtype"]
+        for k, v in (reference.get("fields") or {}).items():
+            entry[k] = v
+        out.append(entry)
+    return out
+
+
 def uris(corpus_root: Path, post: frontmatter.Post) -> list[str]:
     """§9.3 — every origin block's uri + every semantic_type:uri-tagged field,
     deduplicated by URL canonicalization."""

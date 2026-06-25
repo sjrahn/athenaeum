@@ -634,6 +634,22 @@ def iter_concept_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
             }
 
 
+def iter_reference_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
+    """Yield each `reference`-namespace context block as `{id, subtype, fields}`.
+
+    The `reference` namespace projection of `iter_context_blocks` (spec §4.3.3.3); the
+    shape the `references` derived view (§9.9) consumes. Covers both emission paths — a
+    mechanical (overlay-declared, `provenance: auto`, `role`) reference and a normalizer-
+    /human-asserted citation share the namespace and differ only by their fields."""
+    for ctx in iter_context_blocks(post):
+        if (ctx.get("namespace") or "") == "reference":
+            yield {
+                "id": ctx.get("id"),
+                "subtype": ctx.get("subtype"),
+                "fields": ctx.get("fields") or {},
+            }
+
+
 def primary_origin_uri(post: frontmatter.Post) -> str:
     """Return the first URI from the first origin block, or `""`."""
     for origin in iter_origin_blocks(post):

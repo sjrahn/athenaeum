@@ -186,6 +186,21 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   #   query: drop                      # nested_view / affiliate / utm params == noise
 #   #   rules:
 #   #     - {pattern: '/page-1(?=[/?#]|$)', replacement: ''}   # /page-1 == bare thread
+#   # --- dependent reference material (capture.references) ---  Declare which OUTBOUND
+#   # links are part of the capture itself -- a product page's manual / spec sheet -- so
+#   # the drafter emits a `reference` annotation for each (spec §4.3.3.3 / §7.2) and, opt-in,
+#   # fetches it alongside. Match keys per rule (selector / href_pattern / text_pattern / rel)
+#   # are ANDed; rules are ORed. `role` labels it; `capture: true` grabs the target at depth 1
+#   # as its OWN record (default false = annotate only); `cross_host: allow` (default) reaches
+#   # off-host manuals, `same` restricts to this host. A reference resolves to a corpus:// link
+#   # on the next draft once its target is captured. Preview: `corpus links --references <rec>`;
+#   # deferred fetch of pending ones: `corpus crawl --references`.
+#   # references:
+#   #   - match: {selector: '#product-details a[href$=".pdf"]'}
+#   #     role: manual
+#   #     capture: true                  # grab the manual alongside the page (depth 1)
+#   #   - match: {text_pattern: '(?i)spec sheet', href_pattern: '\\.pdf'}
+#   #     role: spec-sheet               # annotate only (capture defaults false)
 #
 # # --- video hosts (yt-dlp) ---  `capturer: video` is the ONLY thing that routes a host
 # # to yt-dlp; there is no built-in video-host list. yt-dlp options pass straight through.

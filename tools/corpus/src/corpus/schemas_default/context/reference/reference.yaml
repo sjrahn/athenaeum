@@ -2,9 +2,11 @@
 # article, a bare external link), captured as an annotation addressed back to where it is
 # mentioned and resolved up the lossy→lossless citation ladder (spec §4.3.3, §4.4.5).
 #
-# Emitted as `<!--context reference[/<id>]-->` in the annotations zone. Normally
-# normalizer-/human-asserted (no `provenance`); a drafter may seed `provenance: auto` from a
-# detected bare link. Never part of the faithful body or the canonical hash.
+# Emitted as `<!--context reference[/<id>]-->` in the annotations zone. Dual-source: either
+# normalizer-/human-asserted (no `provenance`), or mechanically emitted by the drafter with
+# `provenance: auto` — from a detected bare link, or from an origin overlay's
+# `capture.references` declaration (a host's dependent reference material, e.g. a PDP's
+# product manual; spec §7.2). Never part of the faithful body or the canonical hash.
 
 description: |
   A source the body references. Starts as free-text attribution and is researched and
@@ -56,3 +58,14 @@ extended_fields:
     description: |
       Tier 3 — a functional `corpus://<id>` URI pointing at the separately-captured record
       for this source (lossless intra-corpus link). Lint flags a dangling target.
+
+  # ---- role: only on mechanical (overlay-declared) references ----
+  role:
+    type: string
+    required: false
+    description: |
+      The kind of dependent material this link is, copied from the matching
+      `capture.references` rule (`manual`, `spec-sheet`, …; spec §7.2). Corpus-local —
+      the value set is whatever a corpus's overlays declare; cross-corpus tooling treats
+      unknown values gracefully. Present on mechanical (`provenance: auto`) references;
+      normally absent on normalizer-/human-asserted citations.

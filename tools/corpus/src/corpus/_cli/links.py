@@ -55,6 +55,9 @@ def run(args: argparse.Namespace) -> int:
         log.error("no records resolved")
         return 1
 
+    if args.references:
+        return _run_references(corpus_root, record_paths, posts, uri_index)
+
     seed_uri = _first_uri(posts[0])
     if not seed_uri:
         log.error("first record has no origin URI; cannot derive seed host")
@@ -123,6 +126,51 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_references(corpus_root: Path, record_paths, posts, uri_index) -> int:
+    """`--references`: emit only the host overlay's declared dependent-reference links
+    (`capture.references`, spec §7.2) — the typed subset the drafter turns into `reference`
+    context blocks — annotated with `role`, captured/pending state, and `auto` when the
+    rule opts the target into the capture-side depth-1 grab. Same-domain/scope flags don't
+    apply here: a rule's own `cross_host` already bounds each match."""
+    from corpus import references
+
+    saw_rules = False
+    seen: dict[str, dict] = {}  # normalized url -> {role, captured, auto}
+    for record_path, post in zip(record_paths, posts, strict=True):
+        record_id = str(post.metadata.get("id") or record_path.stem)
+        if records.media_type_for(post) != "text/html":
+            continue
+        base_uri = _first_uri(post)
+        if not base_uri or not references.rules_for_url(corpus_root, base_uri):
+            continue
+        saw_rules = True
+        try:
+            artifact = artifacts.ensure_local(
+                corpus_root, record_id, mime.extension_for("text/html")
+            )
+        except artifacts.ArtifactMissing as exc:
+            log.warning("%s: %s", record_id[:12], exc)
+            continue
+        html = artifact.read_text(encoding="utf-8", errors="replace")
+        for m in references.matches_for_record(corpus_root, post, html):
+            captured = bool(records.find_by_uri(m.url, corpus_root=corpus_root, index=uri_index))
+            seen.setdefault(m.url, {"role": m.role, "captured": captured, "auto": m.capture})
+
+    if not saw_rules:
+        log.info("no `capture.references` rules for the input host(s)")
+    for url in sorted(seen):
+        e = seen[url]
+        tags = []
+        if e["role"]:
+            tags.append(f"role={e['role']}")
+        tags.append("captured" if e["captured"] else "pending")
+        if e["auto"]:
+            tags.append("auto")
+        print(f"{url}  [{', '.join(tags)}]")
+    log.info("declared references: %d", len(seen))
+    return 0
+
+
 def _first_uri(post) -> str:
     """The record's primary origin URI (v1.0). Falls back to a legacy `uris[]`
     frontmatter key for records not yet on the block model."""
@@ -157,5 +205,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--all-domains", action="store_true", help="emit URLs from every domain (off-domain annotated [out-of-scope])")
     p.add_argument("--show-captured", action="store_true", help="also list URLs already captured (annotated [captured])")
     p.add_argument("--show-out-of-scope", action="store_true", help="also list out-of-scope URLs as a separate group")
+    p.add_argument("--references", action="store_true", help="only the host overlay's declared dependent-reference links (capture.references), annotated with role + captured/pending + auto")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging on stderr")
     add_corpus_root_arg(parser)

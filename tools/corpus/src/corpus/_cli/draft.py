@@ -140,6 +140,17 @@ def derive_record(
                 content_hash.compute(canonical_algo, binary_file, content_selector=selector),
             )
 
+    # Opt-in overlay-declared dependent references (spec §4.3.3.3 / §7.2): if the record's
+    # origin host declares `capture.references` rules, emit a `provenance: auto` `reference`
+    # context block for each declared dependent link in the page (a PDP's product manual,
+    # etc.), resolved to tier 3 (`source_uri`) when the target is already a record. HTML-only
+    # (the rules match a DOM); pure opt-in (no rules → nothing emitted). Like the auto
+    # classifications below, idempotent under `redraft` (re-stub clears context blocks first).
+    if media_type == "text/html":
+        from corpus import references
+
+        references.emit_overlay_references(post, corpus_root, binary_file)
+
     # Deterministic auto-classification: stamp a `provenance: auto` classify block for every
     # composite overlay whose `classify_when` predicate matches this record's facts (spec
     # §7.4). Runs here — origin `ytdlp_*` fields are on the record (`_apply_drafter_result`)

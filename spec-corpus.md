@@ -426,7 +426,7 @@ The mime schema is the **only** body-drafter — it alone owns the content zone.
 
 The annotations zone carries observations *about* the record — problems with it, sources it cites, derived relations. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
 
-**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a cited source resolved toward its record (`reference`), an overlay-declared chrome extraction (`aside`), a corpus-graph relation (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`issue`, `aside`, `relation`) auto-populate *only* on real signal and *only* where schema-gated — in particular an `aside` block exists **solely** where an origin or composite overlay declares the extraction, and there are none absent that declaration. **Interpretive** additions (`reference`) require a referent actually present in the content. Absent real signal the annotations zone is **empty** — the normal state for most records.
+**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a cited source resolved toward its record (`reference`), an overlay-declared chrome extraction (`aside`), a corpus-graph relation (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`issue`, `aside`, `relation`) auto-populate *only* on real signal and *only* where schema-gated — in particular an `aside` block exists **solely** where an origin or composite overlay declares the extraction, and there are none absent that declaration. The **`reference`** namespace is **dual-source**: an *interpretive* citation the normalizer finds in the content, **or** a *mechanical*, **overlay-declared** dependent reference emitted at capture (`provenance: auto`, §4.3.3.3 / §7.2) — both require a referent actually present in the content (a citation, or a declared link in the page). Absent real signal the annotations zone is **empty** — the normal state for most records.
 
 ##### 4.3.3.1 The context block
 
@@ -461,6 +461,8 @@ Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `seve
 ##### 4.3.3.3 The `reference` namespace
 
 A `reference` context block (`<!--context reference-->`) records a source the body cites — a book, an article, a bare external link — pinned to the mention via `address:` (+ `quote:`) and resolved up the **three-tier citation ladder** (§4.4.5): `attribution_text` (free text) → `source_url` (a resolvable URL) → `source_uri` (a functional `corpus://<id>` URI pointing at the separately-captured record). It is the addressable, segment-scoped realization of the citation model §4.4.3 deferred: a casual mention is captured first as free text and progressively researched toward a lossless intra-corpus link, without the host record ever changing shape.
+
+**Two emission paths.** A `reference` block is either *interpretive* — authored by the normalizer from a citation present in the body — or *mechanical* — emitted at draft from an origin overlay's `capture.references` declaration (§7.2), carrying `provenance: auto` and a corpus-local **`role`** field (`manual`, `spec-sheet`, …; schema-declared closed set, treated gracefully when unknown). A mechanical reference is pinned to its link's segment via `address:`/`quote:` (the link text) and starts at tier 2 (`source_url` = the resolved href); it advances to tier 3 (`source_uri: corpus://<id>`) when the target is captured — immediately when the overlay rule sets `capture: true`, or later by a `corpus crawl --references` pass or the normalizer. As an `auto` block it is regenerated on re-draft; an asserted (normalizer or human) reference at the same anchor is never overwritten.
 
 ##### 4.3.3.4 The `concept` namespace
 
@@ -689,6 +691,7 @@ The universal `origin` overlay declares the two fields every origin block carrie
   - `ytdlp:` — a mapping merged straight into yt-dlp's options (full passthrough; e.g. `format`, `getcomments`, `impersonate`). Library-owned keys (output path, logger, the resolved cookie file) are forced after the merge and cannot be overridden.
   - `cookies_from_host` — `true` (default) pulls the capture URL's own-origin cookies from a running CDP browser session into yt-dlp; `false` disables; a list adds extra origin scopes. Lets a logged-in session unlock a host's full content.
   - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded into the record's metadata) rather than forming separate records.
+  - `references:` — `[{match, role, capture, cross_host}]` — declares which of a captured page's outbound links are **dependent reference material** (a PDP's product manual, a spec sheet). Each rule's `match` (`selector` / `href_pattern` / `text_pattern` / `rel`; present keys ANDed, rules ORed) selects `<a>` elements in the drafted DOM. **Emission is a draft-stage concern** (the anchor needs the segmented body): each distinct declared link (resolved + normalized, excluding the record's own origin URIs) emits one `reference` context block (§4.3.3.3) on the primary record, with `provenance: auto` and the rule's `role` — at tier 3 (`source_uri: corpus://<id>`) when that target is already a record, else tier 2 (`source_url`). Because draft resolves the tier by URI on every pass, a tier-2 reference advances to tier 3 automatically once the target is captured — it is never back-written. **Fetching** the target is a separate **capture-side** action: `capture: true` (or `corpus capture --with-references`) fetches it **once, at depth 1**, as its own record (content-hash deduped) right after the primary; `capture: false` (default) is surface-only and the deferred `corpus crawl --references` pass fetches pending targets on demand. `cross_host: allow` (the default for references — manuals are off-host) permits reaching declaration matches on other hosts, but **only** matches — never a general cross-host crawl. Distinct from `also_capture`, whose bytes **enrich the primary record** rather than forming separate, referenced records. Absent the section the feature is inert (no hardcoded link knowledge).
 - `transcription:` — per-host audio transcription (read at draft time). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
 - `canonical:` — `content_selector` scoping the `canonical` hash to the article-content region (§7.1).
 - `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the keys lifted from the `.info.json` come from the artifact mime schema's `sidecar.ytdlp_keys` (§7.1). Because the sidecar is *non-primary-source* metadata, every lifted key lands on the **origin block** as a flat `ytdlp_<key>` field (e.g. `ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts) — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a `ytdlp_comments` list field; `webpage_url` / `original_url` fold into the origin `uri:` aliases. The sidecar is **draft-time-only enrichment** — staged in `capture/`, consumed at draft, then deleted; it is one-shot (a re-draft after deletion does not re-apply it; the extracted fields already persist on the record). The only content the media drafters write to the body is the **transcript**, derived from the primary artifact's own audio.
@@ -807,6 +810,8 @@ The `<algo>:<hex>` value records which algorithm produced it, so a record self-d
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
 
+An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (resolving each to tier 3 by URI when the target already exists), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest.
+
 ### 8.2 The deterministic / LLM boundary
 
 | Operation | Type | Why |
@@ -816,6 +821,7 @@ Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-de
 | Mime schema's body draft, artifact-block field extraction, and `canonical` hashing | deterministic | scriptable |
 | Mechanical classification field extraction | deterministic | scripted |
 | Origin-host matching | deterministic | mechanical |
+| Overlay-declared reference emission (draft) / depth-1 dependent capture (capture) | deterministic | overlay-declared |
 | Functional URI evaluation | deterministic | spec mandates |
 | Description authoring | LLM | requires understanding |
 | Body re-segmentation under interpretive guidance | LLM | requires judgment |
@@ -972,6 +978,10 @@ A derived-view walker:
 
 Views are computed at query time.
 
+### 9.9 The `references` view
+
+The `reference`-namespace projection of the context view (§4.3.3.3) — the sibling of the `issues` (§9.2) and `concepts` (§9.7) views. Each entry carries the ladder (`attribution_text`, `source_url`, `source_uri`), the anchor (`address`, `quote`, `occurrence`), `provenance`, and `role`. The resolved `source_uri` is the directional edge to the cited/depended-on record; the reverse ("records that reference *this* one") is a corpus-wide read derivable from these edges but, like cross-record content addressing (§11), the corpus-wide index is not specified here. Computed on demand, never persisted.
+
 ---
 
 ## 10. Export
@@ -1000,6 +1010,7 @@ Genuinely deferred items for this spec version:
 - **Export to non-markdown formats.**
 - **Additional semantic types** beyond the closed seven.
 - **Capturing the concept knowledge base.** Wikipedia/Wikidata is referenced by `concept` blocks (§4.3.3.4) as an external authority run locally; the corpus does not capture its articles as records, and the local KB (acquisition, search, read) is an implementation concern (impl-corpus.md), not a corpus-layer contract.
+- **Recursive dependent capture.** `capture.references` (§7.2) fetches declared references at **depth 1** only; following a grabbed reference's own references — and any general multi-hop crawl — remains `corpus crawl`'s job, not the capture-alongside path.
 
 ---
 

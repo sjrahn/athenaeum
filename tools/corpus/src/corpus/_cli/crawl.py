@@ -99,6 +99,14 @@ def run(args: argparse.Namespace) -> int:
     )
 
     corpus_root = resolved_corpus_root(args)
+
+    if args.references:
+        return _run_references_mode(args, corpus_root)
+
+    if not args.seed_url:
+        log.error("a seed URL is required (omit it only with --references)")
+        return 1
+
     capture_dir = corpus_root / "capture"
     capture_dir.mkdir(parents=True, exist_ok=True)
 
@@ -191,6 +199,79 @@ def run(args: argparse.Namespace) -> int:
         _save_sidecar(sidecar, state)
 
     _report_final(state, captured=captured, sidecar=sidecar)
+    return 0
+
+
+def _reference_targets(corpus_root: Path, seed: str | None):
+    """Resolve the records a `--references` sweep operates on: a single record when `seed`
+    is given (a URL matched via `find_by_uri`, else a record id / path), or every record in
+    the corpus when `seed` is None. Returns a list of `(path, post)`, or None on a bad seed."""
+    if not seed:
+        return list(records.load_all(corpus_root))
+    rid = records.find_by_uri(seed, corpus_root=corpus_root)
+    if rid is None:
+        try:
+            rid, path = paths.resolve_record(corpus_root, seed)
+        except Exception:
+            log.error("crawl --references: no record matches %r (URL, record id, or path)", seed)
+            return None
+        return [(path, records.load(path))]
+    path = paths.record_path(corpus_root, rid)
+    return [(path, records.load(path))]
+
+
+def _run_references_mode(args: argparse.Namespace, corpus_root: Path) -> int:
+    """`--references`: fetch overlay-declared dependent references (spec §7.2) at depth 1,
+    the deferred counterpart to the inline `corpus capture --with-references` grab. Walks
+    the target record(s), and for each HTML record whose host declares `capture.references`
+    rules, fetches every declared-but-not-yet-captured target (content-hash deduped). The
+    captured manuals become their own records; the citing record's tier-2 references advance
+    to tier 3 on its next draft (draft resolves the tier by URI)."""
+    from corpus import artifacts, mime, references
+
+    pairs = _reference_targets(corpus_root, args.seed_url)
+    if pairs is None:
+        return 1
+    opts = capture_lib.CaptureOptions(user_agent=args.user_agent, fidelity=args.fidelity)
+    totals = {"records": 0, "selected": 0, "captured": 0, "existing": 0, "failed": 0}
+    for path, post in pairs:
+        if records.media_type_for(post) != "text/html":
+            continue
+        base = records.primary_origin_uri(post)
+        if not base or not references.rules_for_url(corpus_root, base):
+            continue
+        rid = str(post.metadata.get("id") or path.stem)
+        try:
+            artifact = artifacts.ensure_local(corpus_root, rid, mime.extension_for("text/html"))
+        except artifacts.ArtifactMissing as exc:
+            log.warning("%s: %s", rid[:12], exc)
+            continue
+        html = artifact.read_text(encoding="utf-8", errors="replace")
+        if not args.dry_run and args.delay:
+            time.sleep(args.delay)
+        res = references.fetch_references(
+            corpus_root, post, html, force=True, opts=opts, dry_run=args.dry_run
+        )
+        if not res.selected:
+            continue
+        totals["records"] += 1
+        totals["selected"] += len(res.selected)
+        totals["captured"] += len(res.captured)
+        totals["existing"] += len(res.existing)
+        totals["failed"] += len(res.failed)
+        for url, reason in res.failed:
+            log.warning("reference capture failed: %s (%s)", url, reason)
+        if args.dry_run:
+            existing = set(res.existing)
+            for url in res.selected:
+                if url not in existing:
+                    print(url)
+    verb = "would fetch" if args.dry_run else "captured"
+    log.info(
+        "references: %d record(s) with rules; %d declared, %d %s, %d already present, %d failed",
+        totals["records"], totals["selected"], totals["captured"], verb,
+        totals["existing"], totals["failed"],
+    )
     return 0
 
 
@@ -415,7 +496,7 @@ def _report_final(state: CrawlState, *, captured: int, sidecar: Path) -> None:
 
 def configure(parser: argparse.ArgumentParser) -> None:
     p = parser
-    p.add_argument("seed_url", help="seed URL to start crawling from")
+    p.add_argument("seed_url", nargs="?", help="seed URL to start crawling from (omit with --references to sweep the whole corpus)")
     p.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help=f"max BFS depth from seed (default: {DEFAULT_DEPTH})")
     p.add_argument("--count", type=int, default=DEFAULT_COUNT, help=f"max URLs to capture this run (default: {DEFAULT_COUNT})")
     p.add_argument("--delay", type=float, default=DEFAULT_DELAY, help=f"inter-request sleep in seconds (default: {DEFAULT_DELAY})")
@@ -425,5 +506,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--yes", action="store_true", help="skip the confirmation gate")
     p.add_argument("--resume", action="store_true", help="resume from the sidecar JSON")
     p.add_argument("--dry-run", action="store_true", help="discovery only; never capture")
+    p.add_argument("--references", action="store_true", help="don't BFS-crawl; instead fetch overlay-declared dependent references (capture.references, spec §7.2) at depth 1 — for the seed's record, or every record when no seed is given. --dry-run lists pending targets.")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging on stderr")
     add_corpus_root_arg(parser)
