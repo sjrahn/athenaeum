@@ -59,6 +59,10 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
     # Storage (P3)
     "store":           ("Storage",                "Status / push / pull / fetch against the configured ArtifactStore"),
+    # Maintenance — derived-data hygiene + deliberate record removal
+    "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
+    "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
+    "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
     # Query (P1)
     "find":            ("Query",                  "List records matching status / mime / origin / classification"),
     "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
@@ -77,6 +81,7 @@ _GROUP_ORDER: tuple[str, ...] = (
     "Inspect",
     "Edit",
     "Storage",
+    "Maintenance",
     "Query",
 )
 

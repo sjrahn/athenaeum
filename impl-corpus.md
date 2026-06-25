@@ -412,17 +412,50 @@ A lightweight sweep re-runs only §3.2 against existing bodies — useful after 
 
 ---
 
-## 6. Open implementation questions
+## 6. Maintenance: derived-data GC + record removal
+
+Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a routine, age-gated sweep of regenerable data (`gc`) and a deliberate, ref-checked removal of a tracked record (`rm` / `forget-origin`). Nothing here is normative — the spec is silent on removal; this is CLI hygiene over the storage layout (§2.7). `gc` generalizes the pattern `corpus queue --prune` (an age-based GC of the queue's coordination markers, spec §8.5) to the other derived dirs.
+
+### 6.1 `corpus gc` — prune regenerable data
+
+`maintenance.sweep(root, *, older_than_days=7, include=None, dry_run=True)` prunes, by file mtime, four regenerable categories — **never** a tracked record, a live queue entry, or any artifact that still has a record:
+- **`cache`** — the resolver's functional-URI output (`cache/<shard>/<urihash>.<ext>` + `.json` sidecars, `functional_uri.cache_path`). Pure derived; re-warms on the next `resolve`.
+- **`staging`** — leftover files under `capture/`. Ingest unlinks a capture on success (`_cli/ingest.py`), so what lingers is sidecar / coordination debris (yt-dlp `<id>.info.json`, crawl `crawl-<digest>.json`, abandoned partials), pruned by age.
+- **`orphans`** — artifacts with **no** owning record: the inverse of health's `missing_artifacts` (records → no artifact). An artifact is content-addressed at `artifacts/<shard>/<id>.<ext>` and ingest is the only writer of `artifacts/` (embeds / derived slices land in `cache/`, never here), so an orphan is exactly an artifact file whose `records/<shard>/<id>.md` is gone — the debris a `--force` re-capture, a `re-stub`, or a hand-`rm` leaves.
+- **`export`** — regenerable bundles under `export/`.
+
+Previews by default (`dry_run=True` → counts + bytes per category); `--yes` deletes. `--older-than DAYS` sets the grace window (default 7, mirroring the queue's `DEFAULT_PRUNE_DAYS`; `0` prunes everything now) — generous beyond the brief window in ingest between writing an artifact and its record, so the orphan sweep never races a fresh capture. `--include cache,orphans` restricts the set; `--json` emits the structured result. Idempotent and now-empty-shard-tidying; safe on a cron tick. (This answers the former "binary cache GC" open question.)
+
+### 6.2 `corpus rm <id>` — remove a record
+
+`maintenance.remove_records(root, ids, *, keep_artifact=False, force=False, execute=False)` removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards:
+- **Dry-run by default.** `execute=False` (the CLI default — no `--yes`/`--force`) prints the plan (record + artifact paths/sizes, and any inbound referrers) and deletes nothing.
+- **Ref-checked.** `inbound_references` scans every record's `reference` blocks (spec §4.3.3.3) for one citing the target — a tier-3 `source_uri: corpus://<id>` (direct) or a tier-2 `source_url` that resolves to it (`find_by_uri`). A cited record is refused (reported in `blocked`, CLI exit 1) unless `--force`, which names the would-be-dangling referrers. (Post the dependent-references feature a PDP's manual link is exactly such a `reference` block, so this covers the supersession case.)
+- **Reproducibility-warned.** The artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes.
+
+It deliberately does **not** touch the resolver cache: cache is keyed by functional-URI hash, not the record's artifact hash, so there is no clean per-record slice to delete — `gc` reclaims any now-orphaned cache by age. `--json` emits the structured plan/result.
+
+### 6.3 `corpus forget-origin <id> <uri>` — drop one alias
+
+The many-to-one provenance case: identical bytes accrue multiple origin aliases (spec §7.2 — "re-encountering identical bytes appends provenance, never a duplicate"); when one alias is wrong, `maintenance.forget_origin` drops it without removing the record. Matched by identity key (the host's `url_equivalent` rules), so a query-noise spelling still matches. Refuses (`last_origin`) when it is the record's only origin — that is an `rm` — and is a no-op (`not_present`) when the uri isn't among the origins. An origin block whose every uri was forgotten is dropped; the edit appends a `corpus.forget-origin@` touch. It edits the tracked `.md` (git-recoverable), so it acts by default with `--dry-run` to preview — the asymmetry with `rm`'s dry-run-default is deliberate (a tracked-text edit vs. irreproducible byte loss).
+
+### 6.4 `capture --force --replace` — supersession ergonomic
+
+A thin convenience over `rm` so a re-capture leaves no debris. `--replace` (which requires `--force`) snapshots the records holding the URL **before** the capture (`maintenance.records_holding_url`), and after, if the new bytes produced a different record id, retires the prior record(s) for that URL (`remove_records(..., force=True, execute=True)`, reclaiming the old artifact bytes). When the bytes are identical the capture folds into the existing record (new id ∈ the prior set) and nothing is retired.
+
+---
+
+## 7. Open implementation questions
 
 These are flagged for follow-up; not all are blockers.
 
 - **Sharding crossover** (applies to both corpus and codex). When does single-level hex-prefix sharding stop being adequate? At what record count do we move to two-level (`a7/f3/...`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change. `impl-codex.md §8` defers to this entry as the canonical write-up.
-- **Binary cache GC.** Is the binary cache append-only forever, or does it have a GC pass for orphaned binaries (records deleted, hash unreferenced)? Deferred until corpus deletion semantics are needed.
+- **Binary cache GC.** *Resolved (§6).* `corpus gc` prunes orphaned artifacts (records deleted → hash unreferenced) and the resolver cache; `corpus rm` / `forget-origin` provide the record-deletion semantics this was deferred on.
 - **URI index persistence.** The URI → `id` lookup (`records.build_uri_index`) is **rebuilt-on-start** from the records — the settled default (an in-memory query engine, not a data store). A persistent side-file is a deferred perf optimization, not an open design question.
 - **Schema validation.** Should schema files themselves be validated (a `classify_when` predicate's ops parseable, `extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field)? `corpus lint` validates *records*, not schemas; a `validate-schemas` command is still missing.
 - **Multi-corpus capture.** When the same content needs to land in multiple corpora (e.g., something captured personally and also of public interest), does the capture flow handle that, or is it a copy step on top? Currently a copy step; a "capture into multiple corpora" mode is a possible future feature.
 
-## 7. The read API (`corpus.api`)
+## 8. The read API (`corpus.api`)
 
 `corpus.api` (behind the `[api]` optional extra → `fastapi`, `uvicorn[standard]`, `python-multipart`) is a thin **read** HTTP surface over this pipeline's library functions — it serializes what `records` / `derived_views` / `segments` / `schemas` / `resolver` / `store` already produce, adding **no** parsing/derivation/resolution logic. It is the server for the Angular Corpus Console (`web/`). FastAPI/uvicorn import only inside `corpus.api.app`/`__main__` (never the base library — gotcha #24/#70).
 

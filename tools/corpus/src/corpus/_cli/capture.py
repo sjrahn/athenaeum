@@ -32,6 +32,15 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="capture even if the URL already appears in a record's origin URIs",
     )
     p.add_argument(
+        "--replace",
+        action="store_true",
+        help=(
+            "after a --force re-capture, retire the prior record(s) for this URL when the "
+            "new bytes differ (supersession), so no superseded record is left behind. "
+            "Requires --force. Reclaims the old artifact bytes (see `corpus rm`)."
+        ),
+    )
+    p.add_argument(
         "--timeout",
         type=int,
         default=capture_lib.DEFAULT_TIMEOUT_S,
@@ -123,6 +132,8 @@ def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
     if args.with_references and args.no_references:
         sys.exit("--with-references and --no-references are mutually exclusive")
+    if args.replace and not args.force:
+        sys.exit("--replace requires --force (it retires the record a --force re-capture supersedes)")
     try:
         viewport = capture_lib.parse_viewport(args.viewport)
     except ValueError as e:
@@ -141,6 +152,10 @@ def run(args: argparse.Namespace) -> int:
         force=args.force,
     )
 
+    # Snapshot which records hold this URL BEFORE the capture, so --replace can tell a
+    # genuinely-new record (different bytes) from a fold into an existing one.
+    prior_ids = _prior_owners(corpus_root, args.url) if args.replace else []
+
     try:
         if args.no_ingest:
             result = capture_lib.capture(args.url, corpus_root=corpus_root, opts=opts)
@@ -154,8 +169,34 @@ def run(args: argparse.Namespace) -> int:
         sys.exit("capture: ingest failed")
 
     _maybe_grab_references(args, corpus_root, record_path, opts)
+    if args.replace:
+        _maybe_replace(corpus_root, record_path, prior_ids)
     print(record_path)
     return 0
+
+
+def _prior_owners(corpus_root, url: str) -> list[str]:
+    from corpus import maintenance
+
+    return maintenance.records_holding_url(corpus_root, url)
+
+
+def _maybe_replace(corpus_root, record_path, prior_ids: list[str]) -> None:
+    """Retire prior record(s) for this URL once a --force re-capture produced a different
+    record (new bytes → new id). If the bytes were identical, capture folded into the
+    existing record (new id ∈ prior_ids) and there is nothing to supersede."""
+    from pathlib import Path
+
+    from corpus import maintenance
+
+    new_id = Path(record_path).stem
+    to_retire = [rid for rid in prior_ids if rid != new_id]
+    if not to_retire:
+        return
+    log = logging.getLogger("corpus.capture")
+    result = maintenance.remove_records(corpus_root, to_retire, force=True, execute=True)
+    for rid in result.removed:
+        log.info("replace: retired superseded record %s", rid[:12])
 
 
 def _maybe_grab_references(args, corpus_root, record_path, opts) -> None:

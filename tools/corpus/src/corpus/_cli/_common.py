@@ -27,6 +27,16 @@ def resolved_corpus_root(args: argparse.Namespace) -> Path:
         sys.exit(str(e))
 
 
+def human_bytes(n: int) -> str:
+    """Render a byte count as a short human-readable size (e.g. `683.0 KB`, `2.2 GB`)."""
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def add_corpus_root_arg(parser: argparse.ArgumentParser) -> None:
     """Add the `--corpus-root <path>` option to a subcommand parser."""
     parser.add_argument(
