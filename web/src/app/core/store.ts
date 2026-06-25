@@ -275,6 +275,10 @@ export class CorpusStore {
   // ---- actions ----
   setEndpoint(id: string): void {
     this.endpointId.set(id);
+    // Clear the corpus id so the corpus-keyed resources stay idle until the new endpoint's
+    // corpora load and the constructor effect picks its first corpus — otherwise they
+    // briefly fetch the previous endpoint's corpus id against the new base (a 404 flash).
+    this.corpusId.set('');
     this.resetFilters();
     this.mode.set('workbench');
   }

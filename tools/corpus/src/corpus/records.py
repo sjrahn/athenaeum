@@ -41,7 +41,7 @@ Block grammar (spec §4.3):
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -699,17 +699,15 @@ def load_all(corpus_root: Path) -> Iterator[tuple[Path, frontmatter.Post]]:
             continue
 
 
-def build_uri_index(corpus_root: Path) -> dict[str, str]:
-    """Map every record's origin URI → that record's id, keyed by **identity key**.
+def identity_keyer(corpus_root: Path) -> Callable[[str], str]:
+    """Return a `uri → identity key` function that memoizes the per-host capture recipe.
 
-    One pass over `records/` via `load_all`. Each URI's key is `urls.identity_key` — the
-    conservative `normalize` plus the URI host's opt-in `url_equivalent` rules (spec §7.2),
-    so equivalent spellings (e.g. `…/page-1` ≡ `…/` , `?nested_view=1` noise) collapse to one
-    key and an inbound variant matches the record. The host's `capture` recipe is resolved
-    once per host (memoized) — the overlay lookup is not repeated per URI. Absent any
-    `url_equivalent`, the key is exactly `normalize(uri)` (today's behavior). When two records
-    claim the same key the later one (sorted by path) wins — a corpus-health concern surfaced
-    elsewhere. The lightweight index `corpus links` / `corpus crawl` need.
+    The recipe (the origin-overlay read) depends only on the URI's host, so resolving it
+    once per host — not once per URI — keeps a corpus-wide scan from re-parsing overlays on
+    every URI. The key itself is `urls.identity_key` with the host's `url_equivalent` /
+    `url_rewrite` rules (spec §7.2), exactly what `recipes.identity_key_for_url` computes per
+    URL. Shared by `build_uri_index` and the maintenance scans (`records_holding_url`,
+    `forget_origin`) — the bulk-site pattern `identity_key_for_url`'s docstring points at.
     """
     from . import urls as _urls
     from .capture import recipes as _recipes
@@ -725,6 +723,22 @@ def build_uri_index(corpus_root: Path) -> dict[str, str]:
             uri, recipe.get("url_equivalent"), url_rewrite=recipe.get("url_rewrite")
         )
 
+    return _key
+
+
+def build_uri_index(corpus_root: Path) -> dict[str, str]:
+    """Map every record's origin URI → that record's id, keyed by **identity key**.
+
+    One pass over `records/` via `load_all`. Each URI's key is `urls.identity_key` — the
+    conservative `normalize` plus the URI host's opt-in `url_equivalent` rules (spec §7.2),
+    so equivalent spellings (e.g. `…/page-1` ≡ `…/` , `?nested_view=1` noise) collapse to one
+    key and an inbound variant matches the record. The host's `capture` recipe is resolved
+    once per host (via `identity_keyer`) — the overlay lookup is not repeated per URI. Absent
+    any `url_equivalent`, the key is exactly `normalize(uri)` (today's behavior). When two
+    records claim the same key the later one (sorted by path) wins — a corpus-health concern
+    surfaced elsewhere. The lightweight index `corpus links` / `corpus crawl` need.
+    """
+    _key = identity_keyer(corpus_root)
     index: dict[str, str] = {}
     for md, post in load_all(corpus_root):
         record_id = str(post.metadata.get("id") or md.stem)

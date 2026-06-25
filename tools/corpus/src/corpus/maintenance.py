@@ -27,7 +27,7 @@ import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths, records, touches
+from . import functional_uri, paths, records, touches
 
 __all__ = [
     "DEFAULT_GC_DAYS",
@@ -160,7 +160,7 @@ def _sweep_orphans(
     artifacts_root = corpus_root / "artifacts"
     if not artifacts_root.is_dir():
         return
-    known = {p.stem for p in (corpus_root / "records").glob("*/*.md")}
+    known = {p.stem for p in records.iter_record_paths(corpus_root)}
     empties: set[Path] = set()
     for shard_dir in sorted(artifacts_root.iterdir()):
         if not shard_dir.is_dir() or len(shard_dir.name) != paths.SHARD_LEN:
@@ -243,13 +243,15 @@ class RemovalResult:
 
 
 def _corpus_uri_id(value: object) -> str | None:
-    """Extract the record id from a tier-3 `source_uri: corpus://<id>[?params]`."""
+    """Extract the record id from a tier-3 `source_uri: corpus://<id>[?params]` via the
+    shared functional-URI parser (validates the 64-hex hash; a malformed pointer → None)."""
     s = str(value or "").strip()
     if not s.startswith("corpus://"):
         return None
-    rest = s[len("corpus://") :]
-    rid = rest.split("?", 1)[0].split("/", 1)[0].strip().lower()
-    return rid or None
+    try:
+        return functional_uri.parse(s).hash
+    except ValueError:
+        return None
 
 
 def inbound_references(
@@ -368,21 +370,20 @@ def records_holding_url(corpus_root: Path, url: str) -> list[str]:
     """Ids of every record whose origin URIs include `url` (by identity key). Usually one,
     but supersession debris (a `--force` re-capture) can leave several. The set `capture
     --force --replace` retires."""
-    from .capture import recipes as _recipes
+    keyer = records.identity_keyer(corpus_root)
 
-    try:
-        target = _recipes.identity_key_for_url(corpus_root, url)
-    except Exception:
-        target = url
+    def _key(u: str) -> str:
+        try:
+            return keyer(u)
+        except Exception:
+            return u
+
+    target = _key(url)
     out: list[str] = []
     for md, post in records.load_all(corpus_root):
         rid = str(post.metadata.get("id") or md.stem)
         for uri in records.iter_origin_uris(post):
-            try:
-                key = _recipes.identity_key_for_url(corpus_root, uri)
-            except Exception:
-                key = uri
-            if key == target:
+            if _key(uri) == target:
                 out.append(rid)
                 break
     return out
@@ -412,11 +413,11 @@ def forget_origin(
     uri isn't among the record's origins. An origin block whose every uri was forgotten is
     dropped entirely.
     """
-    from .capture import recipes as _recipes
+    keyer = records.identity_keyer(corpus_root)
 
     def key(u: str) -> str:
         try:
-            return _recipes.identity_key_for_url(corpus_root, u)
+            return keyer(u)
         except Exception:
             return u
 

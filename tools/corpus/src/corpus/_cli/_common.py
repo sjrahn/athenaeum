@@ -30,8 +30,8 @@ def resolved_corpus_root(args: argparse.Namespace) -> Path:
 def human_bytes(n: int) -> str:
     """Render a byte count as a short human-readable size (e.g. `683.0 KB`, `2.2 GB`)."""
     size = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024 or unit == "TB":
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"

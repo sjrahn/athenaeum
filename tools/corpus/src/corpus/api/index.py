@@ -766,6 +766,12 @@ class CorpusIndex:
             self._uri_index_cache = records.build_uri_index(self.entry.root)
         return self._uri_index_cache
 
+    def uri_index(self) -> dict[str, str]:
+        """Public accessor for the cached corpus-wide URI → record-id index (see
+        `_uri_index`). Threaded into `record_detail` so the references view reuses the cache
+        rather than rebuilding the whole-corpus index on every record-detail request."""
+        return self._uri_index()
+
     def graph(self, post: Any) -> dict[str, Any]:
         """The record's connection graph: resolved (origins · embeds · classification-shared
         records · captured cross-refs) + uncaptured outbound links. `post` is the loaded

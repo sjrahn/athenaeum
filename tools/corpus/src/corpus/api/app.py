@@ -221,7 +221,12 @@ def create_app(config: ApiConfig | None = None) -> FastAPI:
         post = records.load(path)
         store = get_store(entry.root)
         return serialize.record_detail(
-            entry.root, post, entry.id, store=store, concept_resolver=concept_resolver(entry)
+            entry.root,
+            post,
+            entry.id,
+            store=store,
+            concept_resolver=concept_resolver(entry),
+            uri_index=get_index(entry).uri_index(),
         )
 
     @app.get("/v1/{corpus}/records/{record_id}/graph", response_model=GraphResponse)

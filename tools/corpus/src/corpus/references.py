@@ -61,13 +61,12 @@ class ReferenceRule:
 class MatchedReference:
     """A declared dependent link found in a document: the resolved + normalized `url`,
     the `text` of the anchor (tier-1 `attribution_text`), and the originating rule's
-    `role` / `capture` / `cross_host`."""
+    `role` / `capture`."""
 
     url: str
     text: str
     role: str | None
     capture: bool
-    cross_host: str
 
 
 def parse_rules(cfg: Any) -> list[ReferenceRule]:
@@ -209,7 +208,6 @@ def match(
                     text=text,
                     role=rule.role,
                     capture=rule.capture,
-                    cross_host=rule.cross_host,
                 )
             )
     return out
@@ -342,11 +340,13 @@ def fetch_references(
     from .capture import CaptureError, capture_and_ingest
 
     selected = select_for_capture(matches_for_record(corpus_root, post, html), force=force)
+    # Build the URI index once for the whole grab, not once per target's dedup check.
+    index = records.build_uri_index(corpus_root) if selected else None
     captured: list[tuple[str, str]] = []
     existing: list[str] = []
     failed: list[tuple[str, str]] = []
     for m in selected:
-        if records.find_by_uri(m.url, corpus_root=corpus_root):
+        if records.find_by_uri(m.url, corpus_root=corpus_root, index=index):
             existing.append(m.url)
             continue
         if dry_run:

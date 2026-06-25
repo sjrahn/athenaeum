@@ -270,6 +270,7 @@ def record_detail(
     *,
     store: ArtifactStore | None = None,
     concept_resolver: Any | None = None,
+    uri_index: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Full record JSON for the dual-pane viewer."""
     record_id = str(post.metadata.get("id") or "")
@@ -309,7 +310,7 @@ def record_detail(
         "content": content_nodes(post),
         "annotations": derived_views.context(post),
         "concepts": _concepts_detail(post, concept_resolver),
-        "references": derived_views.references(corpus_root, post),
+        "references": derived_views.references(corpus_root, post, index=uri_index),
         "classifications": derived_views.classifications(post),
         "tokens": tokens.token_counts(post, corpus_root=corpus_root),
         "captured": _captured(post),
