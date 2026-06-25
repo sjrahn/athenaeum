@@ -7,6 +7,8 @@ and the verbs are exit-code-meaningful so a `/loop` session can drive them.
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import frontmatter
@@ -130,6 +132,49 @@ def test_enqueue_then_drain_cli(tmp_path, capsys):
     assert capsys.readouterr().out.strip() == ""
 
 
+def test_drain_wait_claims_an_already_pending_request(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    _put(root, RID, status="draft")
+    queue.enqueue(root, RID)
+    # A claimable request is returned immediately — --wait never sleeps when there's work.
+    rc = dispatch(
+        ["drain", "--wait", "--timeout", "2", "--interval", "0.05", "--corpus-root", str(root)]
+    )
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == RID
+
+
+def test_drain_wait_times_out_on_empty_queue(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    # Empty queue + a bounded --timeout → exit 1 (an empty result), nothing on stdout.
+    rc = dispatch(
+        ["drain", "--wait", "--timeout", "0.2", "--interval", "0.05", "--corpus-root", str(root)]
+    )
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_drain_wait_picks_up_a_late_arrival(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    _put(root, RID, status="draft")
+
+    def _enqueue_soon() -> None:
+        time.sleep(0.15)
+        queue.enqueue(root, RID)
+
+    t = threading.Thread(target=_enqueue_soon)
+    t.start()
+    try:
+        # The long-poll wakes within an interval of the request appearing — no model in the loop.
+        rc = dispatch(
+            ["drain", "--wait", "--timeout", "3", "--interval", "0.03", "--corpus-root", str(root)]
+        )
+    finally:
+        t.join()
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == RID
+
+
 def test_finalize_requires_a_claim(tmp_path):
     root = _corpus(tmp_path)
     _put(root, RID, status="normalized", description="A summary.")
@@ -196,6 +241,61 @@ def test_await_times_out_while_pending(tmp_path):
         ["await", RID, "--timeout", "0.2", "--interval", "0.05", "--corpus-root", str(root)]
     )
     assert rc != 0
+
+
+def test_prune_removes_aged_results_keeps_fresh(tmp_path):
+    root = _corpus(tmp_path)
+    # A settled (completed) entry leaves a .result marker; backdate it past the grace window.
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    queue.complete(root, RID)
+    queue._write_json(
+        queue._result(root, RID),
+        {"id": RID, "outcome": "completed", "finished_at": "2000-01-01T00:00:00+00:00"},
+    )
+    # A second, freshly-settled result stays inside the grace window.
+    queue.enqueue(root, RID2)
+    queue.drain(root)
+    queue.complete(root, RID2)
+
+    removed = queue.prune(root)  # default grace (7 days)
+    assert removed["results"] == [RID]
+    assert queue.state(root, RID)["result"] is None  # aged result gone
+    assert queue.state(root, RID2)["result"] is not None  # fresh result kept
+    # Idempotent: a second prune removes nothing more.
+    assert queue.prune(root)["results"] == []
+
+
+def test_prune_never_touches_live_entries(tmp_path):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)  # requested (live)
+    queue.enqueue(root, RID2)
+    queue.drain(root)  # one claimed (live)
+    removed = queue.prune(root, older_than_days=0)  # prune everything prunable
+    assert removed == {"results": [], "temp": []}  # nothing settled → nothing removed
+    states = {e["state"] for e in queue.entries(root)}
+    assert states == {"requested", "claimed"}  # live entries untouched
+
+
+def test_prune_sweeps_orphan_temp_scratch(tmp_path):
+    root = _corpus(tmp_path)
+    qd = queue.queue_dir(root)
+    qd.mkdir(parents=True, exist_ok=True)
+    orphan = qd / f"{RID}.result.tmp.99999"  # crash-orphaned atomic-write scratch
+    orphan.write_text("{}\n", encoding="utf-8")
+    removed = queue.prune(root, older_than_days=0)
+    assert removed["temp"] == [orphan.name]
+    assert not orphan.exists()
+
+
+def test_queue_prune_cli(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    queue.complete(root, RID)
+    assert dispatch(["queue", "--prune", "--older-than", "0", "--corpus-root", str(root)]) == 0
+    assert "pruned 1 result" in capsys.readouterr().out
+    assert queue.state(root, RID)["result"] is None
 
 
 def test_queue_listing(tmp_path, capsys):

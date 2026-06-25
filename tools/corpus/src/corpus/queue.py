@@ -28,12 +28,14 @@ from pathlib import Path
 
 __all__ = [
     "DEFAULT_LEASE_SECONDS",
+    "DEFAULT_PRUNE_DAYS",
     "QueueError",
     "complete",
     "drain",
     "enqueue",
     "entries",
     "fail",
+    "prune",
     "queue_dir",
     "requeue",
     "state",
@@ -42,6 +44,12 @@ __all__ = [
 # A claim older than this (seconds) is reclaimable by `drain` — the owning loop
 # session is presumed dead. 30 min comfortably exceeds any single normalize pass.
 DEFAULT_LEASE_SECONDS = 1800
+
+# A settled `.result` older than this (days) is prunable. A `.result` is
+# coordination state for a requester's `await`, not history — the record's own
+# `status`/`touch[]` is durable — so once this grace window passes, any awaiter is
+# long done and the marker is spent. A week is generously beyond any await.
+DEFAULT_PRUNE_DAYS = 7
 
 
 class QueueError(RuntimeError):
@@ -87,6 +95,17 @@ def _read_json(path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return None
+
+
+def _parse_dt(value: object) -> datetime.datetime | None:
+    try:
+        return datetime.datetime.fromisoformat(value) if value else None  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _mtime(path: Path) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.UTC)
 
 
 # ---------- request / claim / settle ---------- #
@@ -233,3 +252,36 @@ def entries(root: Path) -> list[dict]:
     for p in sorted(qd.glob("*.req")):
         out.append({"state": "requested", "id": p.name[: -len(".req")], **(_read_json(p) or {})})
     return out
+
+
+# ---------- prune / gc ---------- #
+
+
+def prune(root: Path, older_than_days: float = DEFAULT_PRUNE_DAYS) -> dict[str, list[str]]:
+    """Remove settled `.result` markers (and orphaned `.tmp.*` write scratch) older
+    than `older_than_days`. A `.result` is coordination state for a requester's
+    `await`, not history (the record's `status`/`touch[]` is durable), so an aged one
+    is spent. Only `.result`/`.tmp.*` are touched — live `.req`/`.claim` entries are
+    never removed, so this never races an in-flight pass. Idempotent.
+
+    `older_than_days=0` prunes every settled result now. Returns
+    ``{"results": [ids], "temp": [names]}`` of what was removed.
+    """
+    qd = queue_dir(root)
+    removed: dict[str, list[str]] = {"results": [], "temp": []}
+    if not qd.is_dir():
+        return removed
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=older_than_days)
+
+    for result_path in qd.glob("*.result"):
+        when = _parse_dt((_read_json(result_path) or {}).get("finished_at")) or _mtime(result_path)
+        if when <= cutoff:
+            result_path.unlink(missing_ok=True)
+            removed["results"].append(result_path.name[: -len(".result")])
+
+    for tmp_path in qd.glob("*.tmp.*"):  # crash-orphaned atomic-write scratch
+        if _mtime(tmp_path) <= cutoff:
+            tmp_path.unlink(missing_ok=True)
+            removed["temp"].append(tmp_path.name)
+
+    return removed
