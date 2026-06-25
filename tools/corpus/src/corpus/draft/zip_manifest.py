@@ -33,12 +33,15 @@ classification overlay (`classify_when` on the MIME) + the normalizer, not this 
 
 from __future__ import annotations
 
+import codecs
 import mimetypes
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from corpus import hashing, records, touches, ziparchive
+import blake3
+
+from corpus import records, touches, ziparchive
 from corpus.draft import DrafterResult, register_strategy
 
 if TYPE_CHECKING:
@@ -52,6 +55,9 @@ _COMPRESSION_NAMES = {
     zipfile.ZIP_BZIP2: "bzip2",
     zipfile.ZIP_LZMA: "lzma",
 }
+
+# Stream members in 1 MiB chunks so a multi-GB member is never held in RAM all at once.
+_CHUNK = 1 << 20
 
 
 @register_strategy("zip-manifest")
@@ -95,14 +101,13 @@ def draft(
                 if info.flag_bits & 0x1:
                     encrypted = True
                 try:
-                    data = zf.read(info.filename)
+                    digest, is_text = _digest_and_text(zf, info)
                 except RuntimeError:
                     encrypted = True  # an encrypted member we can't read without a password
                     continue
-                digest = hashing.hash_bytes(data, also=())["blake3"]
                 embeds.append(
                     {
-                        "media_type": _media_type(rel, data),
+                        "media_type": _media_type(rel, is_text),
                         "address": f"path={rel}",
                         "transport": records.format_hash("blake3", digest),
                         "fields": {"bytes": info.file_size},
@@ -141,29 +146,45 @@ def draft(
     return result
 
 
-def _media_type(rel: str, data: bytes) -> str:
+def _media_type(rel: str, is_text: bool) -> str:
     """The member's MIME — and, since the embed carries it, the text-vs-binary distinction.
-    Text is decided by **content** (UTF-8, no NULs), not extension, so a `.cfg`/`.conf`/
-    extensionless config or log is `text/plain` rather than misclassified binary; a precise
-    extension guess (`application/json`, `image/png`) is kept; an opaque binary is
-    `application/octet-stream`."""
+    Text is decided by **content** (UTF-8, no NULs — see `_digest_and_text`), not extension,
+    so a `.cfg`/`.conf`/extensionless config or log is `text/plain` rather than misclassified
+    binary; a precise extension guess (`application/json`, `image/png`) is kept; an opaque
+    binary is `application/octet-stream`."""
     guessed = mimetypes.guess_type(rel)[0]
-    if _is_text(data):
+    if is_text:
         return guessed or "text/plain"
     return guessed or "application/octet-stream"
 
 
-def _is_text(data: bytes) -> bool:
-    """A pragmatic text sniff: no NUL byte and decodes as UTF-8. Members are read whole (we
-    hash them anyway), so this checks the full bytes — no truncation boundary issues. A
-    non-UTF-8 text encoding (rare on the Linux bundles this targets) reads as binary."""
-    if b"\x00" in data:
-        return False
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
+def _digest_and_text(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[str, bool]:
+    """Stream a member once — blake3 transport digest + a text/binary sniff — without
+    materializing it whole (a diagnostics bundle can hold multi-GB logs). Text is decided
+    over the full bytes (no NUL byte, valid UTF-8), same verdict as a whole-member read,
+    using an incremental decoder so a multibyte char split across a chunk boundary isn't
+    misread. Raises `RuntimeError` for an encrypted member (no password), like `zipfile.read`.
+    A non-UTF-8 text encoding (rare on the Linux bundles this targets) reads as binary."""
+    b3 = blake3.blake3()
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    is_text = True
+    with zf.open(info) as fp:
+        while chunk := fp.read(_CHUNK):
+            b3.update(chunk)
+            if is_text:
+                if b"\x00" in chunk:
+                    is_text = False
+                else:
+                    try:
+                        decoder.decode(chunk)
+                    except UnicodeDecodeError:
+                        is_text = False
+    if is_text:
+        try:
+            decoder.decode(b"", final=True)  # a truncated trailing multibyte → not text
+        except UnicodeDecodeError:
+            is_text = False
+    return b3.hexdigest(), is_text
 
 
 def _issue(description: str) -> dict[str, Any]:

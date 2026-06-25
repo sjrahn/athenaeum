@@ -40,6 +40,8 @@ silent deep-merge under a packaged universal would prevent).
 
 from __future__ import annotations
 
+import logging
+import re
 import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -52,6 +54,8 @@ from typing import Any
 import yaml
 
 from . import urls as urlcanon
+
+log = logging.getLogger(__name__)
 
 # Namespaces reserved by the spec — the four top-level directories under `schema/`
 # (spec §3).
@@ -336,8 +340,24 @@ def zip_signatures(corpus_root: Path) -> tuple[tuple[str, tuple[str, ...], tuple
         patterns = tuple(str(x) for x in (applies.get("zip_member_patterns") or []))
         content_types = applies.get("content_types") or []
         if (exact or patterns) and content_types:
-            out.append((str(content_types[0]), exact, patterns))
+            out.append((str(content_types[0]), exact, _valid_zip_patterns(patterns, relpath)))
     return tuple(sorted(out, key=lambda t: t[0]))
+
+
+def _valid_zip_patterns(patterns: tuple[str, ...], relpath: object) -> tuple[str, ...]:
+    """Drop any `zip_member_pattern` that isn't a compilable regex. Parse-tolerant: a bad
+    overlay pattern is logged and skipped here — once, at the cached schema-read boundary —
+    rather than raising `re.error` out of `mime.detect` on every ingest of a zip-shaped
+    artifact (which would break ingest of unrelated zips too)."""
+    valid: list[str] = []
+    for pat in patterns:
+        try:
+            re.compile(pat)
+        except re.error as exc:
+            log.warning("ignoring invalid zip_member_pattern %r in %s: %s", pat, relpath, exc)
+            continue
+        valid.append(pat)
+    return tuple(valid)
 
 
 # ---------- atomic-overlay schemas ---------- #

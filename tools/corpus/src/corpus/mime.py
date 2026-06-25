@@ -178,7 +178,7 @@ def _zip_shape_matches(
     if exact and not any(m in members for m in exact):
         return False
     for pat in patterns:
-        rx = re.compile(pat)
+        rx = re.compile(pat)  # patterns are pre-validated by schemas.zip_signatures
         if not any(rx.search(m) for m in members):
             return False
     return bool(exact or patterns)

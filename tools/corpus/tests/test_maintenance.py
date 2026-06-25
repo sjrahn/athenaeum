@@ -205,6 +205,16 @@ def test_gc_cli_json(tmp_path, capsys):
 # ---------- rm: plan + removal ---------- #
 
 
+def test_gc_cli_empty_include_sweeps_nothing(tmp_path):
+    # `corpus gc --include ""` must scope to NOTHING — not fall through to all categories.
+    # Regression: the CLI's falsy `if args.include` treated "" as "not provided" → swept all.
+    root = _corpus(tmp_path)
+    f = _mkfile(root / "cache" / "ab" / "x.png", age_days=30)
+    rc = dispatch(["gc", "--include", "", "--yes", "--corpus-root", str(root)])
+    assert rc == 0
+    assert f.exists()  # empty include sweeps nothing, so the cache file survives
+
+
 def test_plan_removal_reports_paths_and_size(tmp_path):
     root = _corpus(tmp_path)
     _record(root, ID_A, body=b"x" * 500)

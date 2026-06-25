@@ -24,4 +24,6 @@ def extract_member(path: Path, value: str | None, ctx: RenderContext) -> bytes:
     """`?path=<rel>` — the named member's raw bytes. `path` is the artifact `.zip`."""
     if value is None or not value.strip():
         raise ValueError("path= requires a member path")
-    return ziparchive.resolve_member(path, value.strip())
+    # Pass the value verbatim (no strip): a member name may legitimately carry leading or
+    # trailing whitespace, and the recorded `path=` address must round-trip exactly.
+    return ziparchive.resolve_member(path, value)

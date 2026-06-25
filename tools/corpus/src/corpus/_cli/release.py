@@ -42,11 +42,15 @@ def run(args: argparse.Namespace) -> int:
         print(f"{rid[:12]} is not claimed", file=sys.stderr)
         return 1
 
-    if args.failed is not None:
-        _queue.fail(root, rid, reason=args.failed or None, by=args.by)
-        suffix = f": {args.failed}" if args.failed else ""
-        print(f"released {rid[:12]} as FAILED{suffix}")
-    else:
-        _queue.requeue(root, rid)
-        print(f"released {rid[:12]} back to the queue")
+    try:
+        if args.failed is not None:
+            _queue.fail(root, rid, reason=args.failed or None, by=args.by)
+            suffix = f": {args.failed}" if args.failed else ""
+            print(f"released {rid[:12]} as FAILED{suffix}")
+        else:
+            _queue.requeue(root, rid)
+            print(f"released {rid[:12]} back to the queue")
+    except _queue.QueueError as exc:
+        print(f"{exc} — the claim was released or reclaimed; re-drain and retry", file=sys.stderr)
+        return 1
     return 0

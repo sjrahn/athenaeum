@@ -131,13 +131,58 @@ def test_path_transform_registered():
 
 
 def test_media_type_content_sniff():
-    from corpus.draft.zip_manifest import _is_text, _media_type
+    import io
 
-    assert _is_text(b"plain config\nkey=value\n")
-    assert not _is_text(b"\x00\x01\x02")  # NUL -> binary
-    assert _media_type("x.cfg", b"key=value") == "text/plain"  # content beats extension
-    assert _media_type("x.json", b'{"a":1}') == "application/json"  # precise guess kept
-    assert _media_type("x.dat", b"\x00\xff") == "application/octet-stream"  # opaque binary
+    from corpus import hashing
+    from corpus.draft.zip_manifest import _digest_and_text, _media_type
+
+    # _media_type maps the (extension, is_text) pair — content beats extension.
+    assert _media_type("x.cfg", True) == "text/plain"  # text content, generic ext
+    assert _media_type("x.json", True) == "application/json"  # precise guess kept
+    assert _media_type("x.dat", False) == "application/octet-stream"  # opaque binary
+
+    # _digest_and_text streams a member once: text/binary verdict + the blake3 transport
+    # digest, without materializing the member whole (so multi-GB members don't OOM).
+    text = b"plain config\nkey=value\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("text.txt", text)
+        zf.writestr("bin.dat", b"\x00\x01\x02")  # NUL -> binary
+    with zipfile.ZipFile(buf) as zf:
+        text_digest, text_is_text = _digest_and_text(zf, zf.getinfo("text.txt"))
+        _, bin_is_text = _digest_and_text(zf, zf.getinfo("bin.dat"))
+    assert text_is_text
+    assert not bin_is_text
+    # the streamed digest equals the canonical whole-bytes blake3
+    assert text_digest == hashing.hash_bytes(text, also=())["blake3"]
+
+
+def test_zip_signatures_skips_invalid_pattern(tmp_path):
+    # A malformed zip_member_pattern in a corpus schema must be skipped (logged), never raised
+    # out of mime.detect on every zip ingest. Regression: _zip_shape_matches' re.compile had no
+    # re.error guard, so one bad overlay pattern crashed ingest of every zip-shaped artifact.
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    mime_dir = root / "schema" / "mime" / "application"
+    mime_dir.mkdir(parents=True)
+    (mime_dir / "application_bad.yaml").write_text(
+        "applies_to:\n"
+        "  content_types: [application/x-bad+zip]\n"
+        "  zip_member_patterns: ['manual[(']\n",  # not a compilable regex
+        encoding="utf-8",
+    )
+    schemas._sources.cache_clear()
+    schemas.zip_signatures.cache_clear()
+
+    # the invalid pattern is dropped from the signature, not raised
+    sigs = {ct: pats for ct, _exact, pats in schemas.zip_signatures(root)}
+    assert sigs["application/x-bad+zip"] == ()
+
+    # and detect() over a zip-shaped artifact does not crash
+    zip_path = tmp_path / "x.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("dir/file.txt", b"hi")
+    assert mime.detect(zip_path, corpus_root=root) == "application/zip"
 
 
 def test_drafter_is_embeds_only(tmp_path):

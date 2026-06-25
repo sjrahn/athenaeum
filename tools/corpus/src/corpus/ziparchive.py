@@ -45,7 +45,6 @@ def resolve_member(zip_path: Path, rel: str) -> bytes:
     re-derives the common root and prepends it (the `root_strip` case). Raises
     `ValueError` when no member matches — so the resolver surfaces a clean 4xx rather
     than an opaque KeyError."""
-    rel = rel.strip()
     with zipfile.ZipFile(zip_path) as zf:
         names = set(member_names(zf))
         if rel in names:

@@ -49,7 +49,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
-    include = [c for c in args.include.split(",")] if args.include else None
+    include = args.include.split(",") if args.include is not None else None
     try:
         result = maintenance.sweep(
             root, older_than_days=args.older_than, include=include, dry_run=not args.yes

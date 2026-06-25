@@ -59,6 +59,10 @@ def run(args: argparse.Namespace) -> int:
         )
         return 1
 
-    _queue.complete(root, rid, by=args.by)
+    try:
+        _queue.complete(root, rid, by=args.by)
+    except _queue.QueueError as exc:
+        print(f"{exc} — the claim was released or reclaimed; re-drain and retry", file=sys.stderr)
+        return 1
     print(f"finalized {rid[:12]} (normalization pass complete)")
     return 0
