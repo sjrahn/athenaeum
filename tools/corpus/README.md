@@ -16,8 +16,7 @@ Each consuming corpus repo supplies only its **own** records and its **own**
 ## Status
 
 In active development. Phase 1 (core model + schema loader + derived views + lint + edit loop)
-underway. See [the plan](../../../.claude/plans/what-i-d-like-to-crispy-turtle.md) and the
-[athenaeum skill logbook](../../.claude/skills/athenaeum/references/logbook.md).
+underway. See the [athenaeum skill logbook](../../.claude/skills/athenaeum/references/logbook.md).
 
 ## Install
 

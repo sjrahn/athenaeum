@@ -2,7 +2,7 @@
 
 A knowledge normalization and synthesis system. Captures content from external sources into a content-addressed artifact corpus, supports authored synthesis (codices) on top of the corpus, and compiles cross-cutting reference works (compendiums) from one or more codices and corpora.
 
-- [`spec-athenaeum.md`](spec-athenaeum.md) — architecture specification (three layers; codex + compendium contracts; the corpus layer defers to spec-corpus.md).
+- [`spec-athenaeum.md`](spec-athenaeum.md) — architecture specification (two layers: corpus + codex; the corpus↔codex contract; the corpus layer defers to spec-corpus.md).
 - [`spec-corpus.md`](spec-corpus.md) — corpus-layer specification (artifact record format, body structure, schemas, functional URIs).
 - [`impl-corpus.md`](impl-corpus.md) — implementation guide for the corpus / artifact-layer pipeline.
 - [`impl-codex.md`](impl-codex.md) — implementation guide for the codex layer + compendium build.
@@ -10,4 +10,4 @@ A knowledge normalization and synthesis system. Captures content from external s
 ## License
 
 - **Specification and documentation** (`spec-athenaeum.md`, `spec-corpus.md`, `impl-*.md`, other `*.md` docs): [CC BY-SA 4.0](LICENSE-CC)
-- **Source code** (`crates/`): [MIT](LICENSE)
+- **Source code** (`tools/`, `web/`, `clients/`): [MIT](LICENSE)

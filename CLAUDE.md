@@ -17,10 +17,8 @@ shared/                      # THIS repo — shared tooling for the Athenaeum sy
 ├── impl-corpus.md           # Implementation guide for the corpus / artifact-layer pipeline
 ├── impl-codex.md            # Reference convention (NON-NORMATIVE) for the codex/expert-agent layer + its deliverables
 ├── docs/
-│   ├── CONTENT-TYPES.md     # Content type enumeration and metadata attributes
-│   ├── NEW-CORPUS.md        # Corpus planning notes
-│   ├── APPLE-CLIENT-PLAN.md # Phased plan for the multiplatform Apple client
-│   └── APPLE-UX-NOTES.md    # Apple-client UX notes
+│   ├── CONTENT-TYPES.md     # Source taxonomy + how content types map onto the v1.0 model
+│   └── NEW-CORPUS.md        # Corpus planning notes
 ├── web/                     # Corpus Console — Angular v22 SPA (the CURRENT viewer). Standalone
 │   │                        #   components on @angular/cdk + @angular/aria; signals + httpResource;
 │   │                        #   design tokens in src/styles/tokens.css. Responsive (760px breakpoint).
