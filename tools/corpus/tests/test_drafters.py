@@ -292,6 +292,49 @@ def test_html_drafter_registered_and_axis_aligned():
     assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
 
 
+def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
+    """A `<dl>` is a content-bearing block — the peer of `<ul>`/`<ol>` — so it gets its
+    own `el=N` address; its `<dt>`/`<dd>` items do not, exactly as `<li>` doesn't.
+    Regression: `<dl>` was absent from `_ADDRESSABLE_TAGS`, so the list was unaddressable
+    and its text was silently absorbed into a neighbouring segment's range."""
+    assert "dl" in draft_html._ADDRESSABLE_TAGS
+    assert "dt" not in draft_html._ADDRESSABLE_TAGS
+    assert "dd" not in draft_html._ADDRESSABLE_TAGS
+
+    root = _make_corpus(tmp_path)
+    html = (
+        "<html><head><title>Glossary</title></head><body>"
+        '<h1 id="t">Glossary</h1>'
+        "<p>Intro.</p>"
+        '<dl id="terms"><dt>Corpus</dt><dd>A content-addressed archive.</dd></dl>'
+        "<p>Outro.</p>"
+        "</body></html>"
+    )
+    rid = _ingest_html_str(root, html, uri="https://x.test/glossary", name="glossary")
+    drafter = draft.get_drafter("text/text_html")
+    assert drafter is not None
+    binary = LocalArtifactStore(root).local_path(rid, "html")
+    _, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
+
+    # Four addressable elements in document order: h1(1), p(2), dl(3), p(4). The dl
+    # consumes an index, so the trailing <p> is el=4 (it would be el=3 without the fix).
+    assert len(segs) == 1
+    seg = segs[0]
+    assert isinstance(seg, segments.Segment)
+    assert seg.address == "el=1-4"
+
+    body = BeautifulSoup(seg.body, "html.parser")
+    dl = body.find("dl")
+    assert dl is not None and dl.get("data-el") == "3"
+    # The dl's items carry no address of their own (peers of <li>).
+    assert body.find("dt").get("data-el") is None
+    assert body.find("dd").get("data-el") is None
+    # The trailing <p> was pushed to el=4 by the dl — proves the dl is in the axis.
+    assert body.find_all("p")[-1].get("data-el") == "4"
+    # Resolver side: the dl is the 3rd addressable element, in lockstep with the drafter.
+    assert body.find_all(transforms_html._ADDRESSABLE_TAGS)[2].name == "dl"
+
+
 def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "article.html", "text/html", "html")

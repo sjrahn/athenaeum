@@ -127,15 +127,17 @@ _GLOBAL_KEEP_ATTRS = {"id", "data-el"}
 
 # Tags that get an `el=N` index for spec §4.3 addressing. Single shared
 # index axis across structural containers (`section`, `article`), prose
-# blocks (`p`, `ul`, `ol`, `blockquote`), structured content (`table`,
-# `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`).
+# blocks (`p`, `ul`, `ol`, `dl`, `blockquote`), structured content (`table`,
+# `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`). `dl`
+# is the definition list — a content-bearing block, the peer of `ul`/`ol`;
+# its `dt`/`dd` items stay non-addressable, exactly as `li` does.
 # Layout-only wrappers (`div`, `span`) are NOT addressable — they're
 # chrome the drafter unwraps anyway.
 #
 # MUST equal `corpus.transforms.html._ADDRESSABLE_TAGS` (the resolver's
 # source of truth) — `test_drafters.py` asserts the two stay in lockstep.
 _ADDRESSABLE_TAGS = (
-    "section", "article", "p", "ul", "ol", "table",
+    "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "img",

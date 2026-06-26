@@ -26,9 +26,10 @@ _DATA_URI_RE = re.compile(
     r"^data:image/([a-z0-9+.\-]+);base64,(.+)$", re.DOTALL | re.IGNORECASE
 )
 
-# Addressable elements for `el=N` — must match the drafter's tag set.
+# Addressable elements for `el=N` — must match the drafter's tag set
+# (`corpus.draft.html._ADDRESSABLE_TAGS`); `test_drafters.py` asserts lockstep.
 _ADDRESSABLE_TAGS = (
-    "section", "article", "p", "ul", "ol", "table",
+    "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "img",
