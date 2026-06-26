@@ -290,6 +290,11 @@ def test_html_drafter_registered_and_axis_aligned():
     # The `el=N` index axis MUST match the resolver's addressable-tag set, or
     # `corpus://<hash>?el=N` resolves to the wrong element (or out of range).
     assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
+    # The EPUB drafter/resolver carry a third copy of the same axis (spine=<N>&el=<K>
+    # image addresses must be consistent across formats) — keep all three in lockstep.
+    from corpus import epub as epub_mod
+
+    assert epub_mod._ADDRESSABLE_TAGS == draft_html._ADDRESSABLE_TAGS
 
 
 def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):

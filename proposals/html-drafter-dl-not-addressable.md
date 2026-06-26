@@ -1,6 +1,6 @@
 # Proposal: the HTML drafter's `<dl>` is not addressable
 
-**Status:** **implemented.** `dl` added to `_ADDRESSABLE_TAGS` in `draft/html.py` + `transforms/html.py` (lockstep), with a round-trip regression test in `tests/test_drafters.py`. No normative spec change — the fix brings the impl *closer* to the spec's stated `el=N` ("any element") semantics. The §5 addressing-index-stability caveat applies: HTML records that contain a `<dl>` need a re-draft to pick up the new numbering.
+**Status:** **implemented.** `dl` added to all three copies of `_ADDRESSABLE_TAGS` — `draft/html.py`, `transforms/html.py`, and `epub.py` — now held in three-way lockstep by `tests/test_drafters.py`, alongside a `<dl>` round-trip regression test. No normative spec change — the fix brings the impl *closer* to the spec's stated `el=N` ("any element") semantics. The §5 addressing-index-stability caveat applies: HTML (and EPUB) records that contain a `<dl>` need a re-draft to pick up the new numbering.
 **Scope:** `corpus/draft/html.py`, `corpus/transforms/html.py`, `tests/test_drafters.py`. One tuple, mirrored in two files, plus a test.
 **Author:** HTML-drafter follow-up.
 **Naming note:** the repo's existing proposal lives at `docs/PROPOSAL-dependent-references.md`. This file follows the path that was requested (`proposals/…`); relocate to `docs/PROPOSAL-html-drafter-dl-not-addressable.md` if convention alignment is preferred.
@@ -112,17 +112,23 @@ derived proxies do.
 
 ## 6. The fix
 
-1. `corpus/draft/html.py:137` — add `"dl"` to `_ADDRESSABLE_TAGS`, in the prose-block group
-   beside `ul`/`ol`. Update the enumerating comment (`draft/html.py:128–131`) to name it.
-2. `corpus/transforms/html.py:30` — mirror the addition (lockstep, asserted at
-   `test_drafters.py:292` — the test passes only if both move together).
-3. `tests/test_drafters.py` — extend the drafter fixture / addressing test so a document
-   containing a `<dl><dt>…</dt><dd>…</dd></dl>` yields one `el=N` for the `<dl>` and the
-   resolver round-trips `corpus://<id>?el=N` back to that block.
+1. `corpus/draft/html.py` — add `"dl"` to `_ADDRESSABLE_TAGS`, in the prose-block group
+   beside `ul`/`ol`. Update the enumerating comment to name it.
+2. `corpus/transforms/html.py` — mirror the addition (the HTML resolver's copy).
+3. `corpus/epub.py` — the EPUB drafter/resolver carry a **third** copy of the same axis;
+   its comment promises "the same axis the HTML drafter uses, so an image's address
+   (`spine=<N>&el=<K>`) is consistent across formats." Mirror the addition there too, or
+   that promise silently breaks. EPUB's `el=` is image-only, so `<dl>` earns no *citation*
+   there — but keeping the axis byte-identical is the entire point of the shared-set design
+   (and it cost nothing: no EPUB fixture contains a `<dl>`).
+4. `tests/test_drafters.py` — a `<dl>` round-trip / addressing test, **plus** extend the
+   axis-lockstep assertion to cover all THREE copies (`draft.html` == `transforms.html`
+   == `epub`), so they can never silently drift again — this audit caught exactly that
+   drift (the original fix touched only the first two).
 
-No spec edit required. Optionally tighten `impl-corpus.md:197`'s "every element" wording to
-"every content element (`_ADDRESSABLE_TAGS`)" so the doc stops overstating the axis — but
-that is editorial and independent of this fix.
+The `el=N` "any element" wording in `impl-corpus.md` was also tightened to "every content
+element (`_ADDRESSABLE_TAGS`)" so the impl guide stops overstating the axis. No normative
+spec edit — the spec's permissive `el=N` framing is the aspiration the impl moves toward (§3).
 
 ## 7. Open questions
 

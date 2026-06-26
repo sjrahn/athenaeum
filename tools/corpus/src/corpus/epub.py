@@ -65,8 +65,9 @@ _EXCESS_NEWLINE_RE = re.compile(r"\n{3,}")
 
 # Addressable elements get a 1-indexed `el` position in document order — the same axis the
 # HTML drafter uses, so an image's address (`spine=<N>&el=<K>`) is consistent across formats.
+# Kept identical to `corpus.draft.html._ADDRESSABLE_TAGS`; `test_drafters.py` asserts lockstep.
 _ADDRESSABLE_TAGS = (
-    "section", "article", "p", "ul", "ol", "table",
+    "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "img",
