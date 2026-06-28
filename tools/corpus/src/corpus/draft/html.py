@@ -95,12 +95,6 @@ from corpus.transforms.html import largest_img_src
 # origin overlay's `capture.interactions[].remove`.
 _STRIP_TAGS = {"script", "style", "noscript", "template", "link"}
 
-# Block-level tags relevant to `_convert_field_pairs` heuristic.
-_BLOCK_TAGS_FOR_FIELD_PAIRS = {
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "p", "ul", "ol", "table", "pre", "blockquote", "figure",
-}
-
 # Attributes kept on surviving elements. Everything else (class, style,
 # data-*, aria-*, role, tabindex, on*, etc.) is stripped — the cleaned
 # HTML is meant to carry structure and content, not presentation.
@@ -843,8 +837,14 @@ def _convert_field_pairs(work: BeautifulSoup) -> None:
     Pattern criteria (all required):
     - parent has exactly 2 direct-child elements
     - both children are `<div>`
-    - neither child has descendant block-level tags (so it's a leaf
-      content container, not a structural wrapper)
+    - neither child contains an addressable content element
+      (`_ADDRESSABLE_TAGS` — headings, prose blocks, tables, `<img>`,
+      etc.): a genuine field value is inline text, so any addressable
+      descendant means this is a structural wrapper, not a leaf pair.
+      Critically this includes `<img>`: the rewrite rebuilds the match
+      from `get_text()` only, which would silently DROP images (they
+      contribute no text) and with them their gallery embeds —
+      `_materialize_embeds` then finds no surviving `<img>` to keep.
     - both children have non-empty stripped text
 
     Matches typical SCC accreditation directory entries (the
@@ -859,9 +859,9 @@ def _convert_field_pairs(work: BeautifulSoup) -> None:
         label_div, value_div = children
         if label_div.name != "div" or value_div.name != "div":
             continue
-        if label_div.find(_BLOCK_TAGS_FOR_FIELD_PAIRS) is not None:
+        if label_div.find(_ADDRESSABLE_TAGS) is not None:
             continue
-        if value_div.find(_BLOCK_TAGS_FOR_FIELD_PAIRS) is not None:
+        if value_div.find(_ADDRESSABLE_TAGS) is not None:
             continue
         label_text = label_div.get_text(separator=" ", strip=True)
         value_text = value_div.get_text(separator=" ", strip=True)

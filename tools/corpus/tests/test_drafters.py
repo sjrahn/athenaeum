@@ -640,6 +640,51 @@ def test_html_drafter_prefers_largest_srcset(tmp_path, run_drafter):
     assert img.size == (40, 32)
 
 
+def test_field_pairs_preserve_images_and_addressable_content(tmp_path, run_drafter):
+    """`_convert_field_pairs` rewrites `<div><div>Label</div><div>Value</div></div>`
+    to `<p><strong>Label:</strong> Value</p>` from `get_text()` only — which silently
+    DROPS any `<img>` (it contributes no text) and with it the gallery embed.
+    Regression (Costco PDP `d1d74f97`): the disqualifier now rejects a child holding
+    ANY addressable element (`_ADDRESSABLE_TAGS`), so image- or `<dl>`-bearing pairs
+    are left intact while genuine inline-text pairs still convert."""
+    import io
+
+    def png(w, h):
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h), (1, 2, 3)).save(buf, "PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    p = tmp_path / "pdp.html"
+    p.write_text(
+        "<html><body>"
+        "<div><div>Brand</div><div>Alani Nu</div></div>"  # genuine pair -> converts
+        "<div><div>Gallery</div><div>8 photos"  # img-bearing pair -> left intact
+        f'<div id="corpus-gallery-fullres"><img src="{png(12, 9)}" alt="front"></div>'
+        "</div></div>"
+        "<div><div>Terms</div><div><dl><dt>A</dt><dd>B</dd></dl></div></div>"  # dl pair -> intact
+        "</body></html>",
+        encoding="utf-8",
+    )
+    drafter = draft.get_drafter("text/text_html")
+    result, segs = run_drafter(drafter, p, record_id="0" * 64)
+
+    # The gallery image survived to an embed — it was silently eaten before the fix.
+    embeds = result.get("embeds") or []
+    assert len(embeds) == 1
+    assert embeds[0]["media_type"] == "image/png"
+    assert embeds[0]["fields"]["width"] == 12 and embeds[0]["fields"]["height"] == 9
+
+    body = BeautifulSoup(segs[0].body, "html.parser")
+    # The genuine inline-text pair still collapses to <p><strong>Label:</strong> value>.
+    strongs = [s.get_text() for s in body.find_all("strong")]
+    assert "Brand:" in strongs
+    # Image- and dl-bearing pairs are NOT collapsed: their addressable content survives.
+    img = body.find("img")
+    assert img is not None and img.get("data-el")
+    assert body.find("dl") is not None
+    assert "Gallery:" not in strongs and "Terms:" not in strongs
+
+
 def test_canonical_html_content_selector_scopes_and_falls_back(tmp_path):
     """canonical-html scoped to a content selector ignores per-page framing (title/h1);
     a selector matching nothing falls back to whole-document hashing."""
