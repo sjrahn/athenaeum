@@ -195,6 +195,9 @@ def run(args: argparse.Namespace) -> int:
     # reached by N different links" collapse to one record with N URLs. It depends on
     # capture-time chrome stripping: without it, per-page chrome perturbs the canonical
     # hash and the duplicates never match.
+    # NB: currently inert by construction — `canonical:` is no longer persisted (see the
+    # canonical note in `_apply_drafter_result`), so `content_key` is None and this returns
+    # None without scanning. Kept wired up so restoring canonical re-enables the fold.
     dup = records.find_content_duplicate(post, record_id=record_id, corpus_root=corpus_root)
     if dup is not None:
         original_id, original_path = dup
@@ -254,9 +257,20 @@ def _apply_drafter_result(
     if (desc := result.get("description")) and not str(post.metadata.get("description") or "").strip():
         post.metadata["description"] = str(desc)
 
-    # canonical (from mime schema's canonical_strategy).
-    if canonical := result.get("canonical"):
-        post.metadata["canonical"] = canonical
+    # canonical (from mime schema's canonical_strategy): intentionally NOT persisted.
+    # The canonical-content hash isn't useful yet, and the cross-URL content-dedup fold it
+    # powered actively corrupts data: `blake3-canonical-pdf` hashes only the per-page
+    # EXTRACTED TEXT, so every text-empty (scanned/image) PDF canonicalizes to the same
+    # hash (blake3 of "\n\n…") — unrelated scans then share a `content_key` and the fold
+    # in `derive_record`'s caller silently merges them into one record (a 2-page Anker
+    # manual was folded into an unrelated canadiantire grater instruction sheet, discarding
+    # its bytes). Until the strategy distinguishes scanned PDFs (e.g. byte/rendered-image
+    # hash) and canonical earns its keep, we drop it: the drafter still computes the value
+    # but we discard it here, so no record carries `canonical:`. This ALSO disables the
+    # fold for free — `records.content_key()` returns None without a `canonical:`, so
+    # `find_content_duplicate` short-circuits before scanning. Re-enable by restoring this
+    # two-line write once the strategy is fixed.
+    _ = result.get("canonical")  # discarded; see note above
 
     # Metadata-zone embeds (reconciliation #1).
     for emb in result.get("embeds") or []:

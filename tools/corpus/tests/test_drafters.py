@@ -95,9 +95,12 @@ def test_content_key_distinguishes_by_canonical_and_embeds():
     assert records.content_key(p1) != records.content_key(p3)
 
 
-def test_draft_merges_same_content_reached_by_two_urls(tmp_path):
-    """Cross-URL content dedup: two URLs that render the same page (identical canonical
-    text + no images) collapse to ONE record carrying both URLs — not two records."""
+def test_draft_does_not_merge_same_content_canonical_disabled(tmp_path):
+    """Cross-URL content dedup is DISABLED: `canonical:` is no longer persisted at draft
+    (see `_apply_drafter_result` — the canonical strategy isn't useful yet and its
+    `blake3-canonical-pdf` text-hash mis-merged text-empty scans), so `content_key` is None
+    and the fold never fires. Two URLs that render the same page now stay TWO records, each
+    keeping its own url; byte identity remains the only dedup."""
     root = _make_corpus(tmp_path)
     # Identical visible text; bytes differ only inside <script>, which canonical-html
     # drops — so different record ids but the same canonical content hash.
@@ -123,17 +126,17 @@ def test_draft_merges_same_content_reached_by_two_urls(tmp_path):
         target = rid_b
         corpus_root = str(root)
 
-    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]  first → the keeper
-    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  second → merges into A
+    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]
+    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  no longer merges into A
 
-    # Same canonical proves they were detected as one content.
+    # No canonical persisted → no fold: BOTH records survive, each with only its own url.
     a = records.load(paths.record_path(root, rid_a))
-    assert a.metadata["canonical"].startswith("blake3:")
-    # B's record + artifact are gone; A now carries BOTH urls.
-    assert not paths.record_path(root, rid_b).exists()
-    assert not (root / "artifacts" / paths.shard(rid_b) / f"{rid_b}.html").exists()
-    uris = list(records.iter_origin_uris(a))
-    assert "https://x.test/#/p0300" in uris and "https://x.test/#/p0301" in uris
+    b = records.load(paths.record_path(root, rid_b))
+    assert "canonical" not in a.metadata and "canonical" not in b.metadata
+    assert paths.record_path(root, rid_b).exists()
+    a_uris, b_uris = list(records.iter_origin_uris(a)), list(records.iter_origin_uris(b))
+    assert "https://x.test/#/p0300" in a_uris and "https://x.test/#/p0301" not in a_uris
+    assert "https://x.test/#/p0301" in b_uris and "https://x.test/#/p0300" not in b_uris
 
 
 def test_drafter_registry_has_pdf_and_images():
@@ -255,7 +258,7 @@ def test_draft_cli_pipeline_against_image(tmp_path):
 
     post = records.load(paths.record_path(root, rid))
     assert post.metadata["status"] == "draft"
-    assert post.metadata.get("canonical", "").startswith("blake3:")
+    assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]
     # Last touch is the draft pass for our mime schema.
@@ -557,7 +560,7 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
 
     post = records.load(paths.record_path(root, rid))
     assert post.metadata["status"] == "draft"
-    assert post.metadata.get("canonical", "").startswith("blake3:")
+    assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]
     assert any("draft.text/text_html" in t for t in chain_list)
@@ -666,9 +669,11 @@ def test_canonical_html_content_selector_scopes_and_falls_back(tmp_path):
     assert fa == content_hash.compute(algo, a)  # fallback == whole-document
 
 
-def test_draft_canonical_selector_merges_near_duplicate_articles(tmp_path):
-    """Opt-in per-host `canonical.content_selector`: two pages that share an article body
-    but differ in title/heading framing (the DTC B0012/B0013 shape) collapse to ONE record."""
+def test_draft_canonical_selector_inert_when_canonical_disabled(tmp_path):
+    """Opt-in per-host `canonical.content_selector` is INERT while `canonical:` is not
+    persisted: the draft-time recompute is guarded on a present `canonical:`, which no longer
+    exists, so two pages sharing an article body but differing in title/heading framing no
+    longer collapse — each keeps its own record. (Re-enabling canonical restores this.)"""
     from corpus import schemas
 
     root = _make_corpus(tmp_path)
@@ -705,9 +710,10 @@ def test_draft_canonical_selector_merges_near_duplicate_articles(tmp_path):
         corpus_root = str(root)
 
     assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]
-    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  merges into A via scoped canonical
+    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  no longer merges (canonical off)
 
-    assert not paths.record_path(root, rid_b).exists()
+    # canonical disabled → scoped recompute never runs → no merge: both records persist.
+    assert paths.record_path(root, rid_b).exists()
     a = records.load(paths.record_path(root, rid_a))
-    uris = list(records.iter_origin_uris(a))
-    assert "https://x.test/#/x" in uris and "https://x.test/#/y" in uris
+    b = records.load(paths.record_path(root, rid_b))
+    assert "canonical" not in a.metadata and "canonical" not in b.metadata

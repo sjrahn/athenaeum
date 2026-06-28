@@ -51,7 +51,7 @@ Three hash families live at three different layers (spec §7.6 encoding; §2 / �
 
 - **blake3 of the bytes** — always, at ingest. This is the artifact's `id` (bare hex, no prefix) — the identity and filename stem.
 - **`transport_algos`** — additional *byte-level* algorithms the mime schema declares (e.g. `sha256` for interoperability), computed at ingest into the `transport:` field as `<algo>:<hex>`. The primary blake3 is on `id` and is not duplicated here.
-- **`canonical`** — a *content*-canonical hash set at **draft** time by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`), so two records holding the same content reached by different URLs can collapse (spec §7.1). Draft-time, not ingest-time.
+- **`canonical`** — a *content*-canonical hash set at **draft** time by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`), so two records holding the same content reached by different URLs can collapse (spec §7.1). Draft-time, not ingest-time. **Currently disabled (2026-06-28):** the drafter computes it but `_apply_drafter_result` discards it (it is not written to any record), which also disables the content-dedup fold for free — `records.content_key()` returns `None` without a `canonical:`, so `find_content_duplicate` short-circuits. Disabled because `blake3-canonical-pdf` text-hashes every text-empty scan to the same value, silently merging unrelated PDFs. See the spec §7.1 status note.
 - **`perceptual`** — atom fingerprints (image pHash, text simhash, …) are **opt-in and schema-gated**, computed at **draft** only when the `fingerprint` knob resolves on (§3.1); default off. Per-segment on multi-atom records, record-scope on single-atom ones (spec §7.7).
 
 There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash. A MIME with no canonical strategy and no fingerprint knob is blake3-`id`-only, and that record is normal.
@@ -233,7 +233,7 @@ This is purely mechanical. The normalizer does not invent links the original con
 
 Draft applies schemas in the spec's declared order (§8.1):
 
-1. **The mime schema** runs first — the sole body-drafter. It segments the content zone, emits embed blocks, fills the artifact block's bare extended fields, and (when it declares a `canonical_strategy`) sets `canonical`.
+1. **The mime schema** runs first — the sole body-drafter. It segments the content zone, emits embed blocks, fills the artifact block's bare extended fields, and (when it declares a `canonical_strategy`) computes `canonical` (**currently discarded, not persisted — see §3.1 / spec §7.1**).
 2. **Atom overlays** classify each segment on its opener (`<!--segment <atom>/<id>-->`); a `text/<id>` overlay with `enables_lossless: true` shapes a lossless body (table, transcript, OCR text).
 3. **Mechanical composite classifications** run in declared order — each emits/fills its own `<!--classify <namespace>/<id>-->` block (metadata only; never the body). Membership is decided by the `classify_when` predicate where one is declared, and the block is stamped `provenance: auto` (§3.1).
 
