@@ -82,7 +82,13 @@ from corpus import content_hash, recordbuild, records, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.segments import Segment
-from corpus.transforms.html import largest_img_src
+from corpus.transforms.html import (
+    attachment_filename,
+    carrier_data_uri,
+    is_addressable,
+    largest_img_src,
+    parse_data_uri,
+)
 
 # Tags whose entire subtree is removed before serialization — non-rendered
 # infrastructure ONLY. These produce no rendered content in a saved snapshot,
@@ -119,17 +125,19 @@ _KEEP_ATTRS: dict[str, set[str]] = {
 # reads it as the address of each emitted segment.
 _GLOBAL_KEEP_ATTRS = {"id", "data-el"}
 
-# Tags that get an `el=N` index for spec §4.3 addressing. Single shared
-# index axis across structural containers (`section`, `article`), prose
-# blocks (`p`, `ul`, `ol`, `dl`, `blockquote`), structured content (`table`,
-# `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`). `dl`
-# is the definition list — a content-bearing block, the peer of `ul`/`ol`;
-# its `dt`/`dd` items stay non-addressable, exactly as `li` does.
-# Layout-only wrappers (`div`, `span`) are NOT addressable — they're
-# chrome the drafter unwraps anyway.
+# The structural / image axis for `el=N` addressing (spec §4.3): structural containers
+# (`section`, `article`), prose blocks (`p`, `ul`, `ol`, `dl`, `blockquote`), structured
+# content (`table`, `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`).
+# `dl` is the definition list — a content-bearing block, the peer of `ul`/`ol`; its
+# `dt`/`dd` items stay non-addressable, exactly as `li` does. Layout-only wrappers
+# (`div`, `span`) are NOT addressable — they're chrome the drafter unwraps anyway.
 #
-# MUST equal `corpus.transforms.html._ADDRESSABLE_TAGS` (the resolver's
-# source of truth) — `test_drafters.py` asserts the two stay in lockstep.
+# This tuple MUST equal `corpus.transforms.html._ADDRESSABLE_TAGS` (the structural axis the
+# EPUB `spine=N&el=K` resolver also shares) — `test_drafters.py` asserts that lockstep.
+# Actual `el=N` membership, however, goes through the shared `is_addressable` predicate
+# (imported above), which extends this structural axis with the inline-media carriers
+# (`<video>`/`<audio>`, `<a href="data:…">`); the drafter and the HTML resolver both call
+# it, so they name the same elements `el=N` by construction.
 _ADDRESSABLE_TAGS = (
     "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
@@ -386,26 +394,23 @@ def _clean_html(
     el_index_by_id: dict[int, int] = {}
     embed_by_hash: dict[str, dict[str, Any]] = {}
     if record_id:
-        for n, tag in enumerate(work.find_all(_ADDRESSABLE_TAGS), start=1):
+        for n, tag in enumerate(work.find_all(is_addressable), start=1):
             if not isinstance(tag, Tag):
                 continue
             el_index_by_id[id(tag)] = n
-            if tag.name == "img":
-                meta = _compute_img_embed_metadata(tag)
-                if meta is None:
-                    continue
-                byte_hash = meta["byte_hash"]
-                addr = f"el={n}"
-                if byte_hash in embed_by_hash:
-                    embed_by_hash[byte_hash]["addresses"].append(addr)
-                else:
-                    embed_by_hash[byte_hash] = {
-                        "media_type": meta["media_type"],
-                        "addresses": [addr],
-                        "width": meta["width"],
-                        "height": meta["height"],
-                        "alt": meta["alt"],
-                    }
+            meta = _compute_embed_metadata(tag)
+            if meta is None:
+                continue
+            byte_hash = meta["byte_hash"]
+            addr = f"el={n}"
+            if byte_hash in embed_by_hash:
+                embed_by_hash[byte_hash]["addresses"].append(addr)
+            else:
+                embed_by_hash[byte_hash] = {
+                    "media_type": meta["media_type"],
+                    "addresses": [addr],
+                    "fields": meta["fields"],
+                }
 
     # Strip non-rendered infrastructure only (script/style/noscript/template/
     # link). No chrome/role/class heuristics — chrome removal is a capture-time,
@@ -427,7 +432,7 @@ def _clean_html(
         return "", "", [], 0
 
     max_el = max(el_index_by_id.values()) if el_index_by_id else 0
-    embeds = _materialize_embeds(work, el_index_by_id, embed_by_hash) if record_id else []
+    embeds = _materialize_embeds(work, embed_by_hash) if record_id else []
     return (
         _collapse_excess_newlines(str(root)),
         _css_selector(root),
@@ -444,12 +449,15 @@ def _annotate_addressable(
     up from `el_index_by_id` by `id(tag)` — stable through chrome
     strip for surviving tags.
 
-    For `<img>` tags, also drop `src` and `srcset` — the original base64
-    `data:` URI is huge dead weight in the cleaned body, and the
-    addressing scheme (`data-el="N"`) is all a consumer needs to
-    construct a `corpus://<hash>?el=N` URI when it wants to fetch the
-    bytes."""
-    for tag in work.find_all(_ADDRESSABLE_TAGS):
+    For every inline-media carrier, also drop the base64 `data:` URI it
+    carries — huge dead weight in the cleaned body (a single inline video
+    can be hundreds of MB), and the addressing scheme (`data-el="N"`) is
+    all a consumer needs to construct a `corpus://<hash>?el=N` URI to
+    fetch the bytes: `<img>` loses `src`/`srcset`; `<video>`/`<audio>`
+    lose their own `src` and their `<source>` children are removed; an
+    `<a href="data:…">` attachment loses its `href` (its label text
+    stays). The carrier survives as a body-empty positioning marker."""
+    for tag in work.find_all(is_addressable):
         if not isinstance(tag, Tag):
             continue
         idx = el_index_by_id.get(id(tag))
@@ -457,52 +465,90 @@ def _annotate_addressable(
             continue
         tag["data-el"] = str(idx)
         if tag.name == "img":
-            if "src" in tag.attrs:
-                del tag.attrs["src"]
-            if "srcset" in tag.attrs:
-                del tag.attrs["srcset"]
+            tag.attrs.pop("src", None)
+            tag.attrs.pop("srcset", None)
+        elif tag.name in ("video", "audio"):
+            tag.attrs.pop("src", None)
+            for source in list(tag.find_all("source")):
+                if isinstance(source, Tag):
+                    source.decompose()
+        elif tag.name == "a":
+            href = tag.get("href")
+            if isinstance(href, str) and href.startswith("data:"):
+                tag.attrs.pop("href", None)
 
 
 def _materialize_embeds(
     work: BeautifulSoup,
-    el_index_by_id: dict[int, int],
     embed_by_hash: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Filter the pre-strip embed manifest down to embeds whose imgs
-    survived chrome strip, then convert each entry to an embed dict
-    (`{media_type, address, transport, fields}`, the shape
-    `records.append_embed_block` consumes). Collapses single-entry
-    `addresses` lists to scalar `address` per the polymorphic
-    str | list[str] convention (spec §4.3)."""
-    surviving_img_addresses: set[str] = set()
-    for img in work.find_all("img"):
-        if not isinstance(img, Tag):
-            continue
-        idx = el_index_by_id.get(id(img))
-        if idx:
-            surviving_img_addresses.add(f"el={idx}")
+    """Filter the pre-strip embed manifest down to carriers that survived chrome strip,
+    then convert each entry to an embed dict (`{media_type, address, transport, fields}`,
+    the shape `records.append_embed_block` consumes). Collapses single-entry `addresses`
+    lists to scalar `address` per the polymorphic str | list[str] convention (spec §4.3).
+
+    Survival is read off the committed `data-el` attribute of every surviving addressable
+    element — robust to the carrier-specific base64 stripping in `_annotate_addressable`
+    (which removes an `<a>` carrier's `data:` href, so re-running the membership predicate
+    on the stripped tree would miss it)."""
+    surviving_addresses: set[str] = set()
+    for tag in work.find_all(attrs={"data-el": True}):
+        if isinstance(tag, Tag):
+            surviving_addresses.add(f"el={tag.get('data-el')}")
 
     out: list[dict[str, Any]] = []
     for byte_hash, meta in embed_by_hash.items():
-        kept = [a for a in meta["addresses"] if a in surviving_img_addresses]
+        kept = [a for a in meta["addresses"] if a in surviving_addresses]
         if not kept:
             continue
         address: str | list[str] = kept[0] if len(kept) == 1 else kept
-        extra: dict[str, Any] = {
-            "width": meta["width"],
-            "height": meta["height"],
-        }
-        if meta.get("alt"):
-            extra["alt"] = meta["alt"]
         out.append(
             {
                 "media_type": meta["media_type"],
                 "address": address,
                 "transport": f"blake3:{byte_hash}",
-                "fields": extra,
+                "fields": dict(meta.get("fields") or {}),
             }
         )
     return out
+
+
+def _compute_embed_metadata(tag: Tag) -> dict[str, Any] | None:
+    """Embed descriptor for an inline-media carrier — `{media_type, byte_hash, fields}` —
+    or None when the element carries no usable inline bytes. Dispatches by carrier:
+
+    - `<img>` → `_compute_img_embed_metadata` (keeps the PIL/SVG `width`/`height` logic;
+      `fields` carries `width`/`height` and `alt` when present).
+    - `<video>`/`<audio>` → bytes from the carrier's `data:` source; no dimensions
+      (the drafter is mechanical — no ffprobe), so `fields` is empty.
+    - `<a href="data:…">` → an attachment; `fields` carries `filename` when recoverable
+      from the link label.
+
+    `byte_hash` is the full 64-char blake3 of the decoded bytes (the `transport`/dedup key,
+    matching artifact identity)."""
+    if tag.name == "img":
+        meta = _compute_img_embed_metadata(tag)
+        if meta is None:
+            return None
+        fields: dict[str, Any] = {"width": meta["width"], "height": meta["height"]}
+        if meta.get("alt"):
+            fields["alt"] = meta["alt"]
+        return {"media_type": meta["media_type"], "byte_hash": meta["byte_hash"], "fields": fields}
+
+    uri = carrier_data_uri(tag)
+    if uri is None:
+        return None
+    parsed = parse_data_uri(uri)
+    if parsed is None:
+        return None
+    media_type, raw = parsed
+    byte_hash = _blake3.blake3(raw).hexdigest()
+    carrier_fields: dict[str, Any] = {}
+    if tag.name == "a":
+        filename = attachment_filename(tag)
+        if filename:
+            carrier_fields["filename"] = filename
+    return {"media_type": media_type, "byte_hash": byte_hash, "fields": carrier_fields}
 
 
 def _compute_img_embed_metadata(img: Tag) -> dict[str, Any] | None:

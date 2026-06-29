@@ -632,7 +632,7 @@ A PDF `page=<N>` is a **page selector**, not an unconditional render: a per-page
 
 `fit=` presets are **implementation-defined**, not enumerated here: a preset (e.g. `llm`) bounds the result to a consumer's budget — typically a vision model's maximum input dimensions and pixel count — and those limits are model-dependent and drift over time, so freezing them into the spec would rot. The normative contract is only that `fit=` downscales aspect-preserving and never enlarges; the concrete bounds of any named preset live in the resolver implementation.
 
-Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<N>` (a 1-indexed index to *any* element in an HTML artifact; what it materializes is determined by the element, e.g. an `<img>`'s image bytes or a text element's region), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
+Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<N>` (a 1-indexed index to *any* addressable element in an HTML artifact — content blocks plus inline-media carriers `<img>`/`<video>`/`<audio>`/`<a href="data:…">`; what it materializes is determined by the element, e.g. an `<img>`'s rendered image, a `<video>`/attachment carrier's raw bytes, or a text element's region), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
 
 ### 6.3 The resolver
 
@@ -1121,7 +1121,7 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 
 | Axis | Example | Typical source |
 |---|---|---|
-| element | `el=<N>` / `el=<N>-<M>` | marked-up / HTML text (any element by 1-indexed position; output determined by the element) |
+| element | `el=<N>` / `el=<N>-<M>` | marked-up / HTML text (any element by 1-indexed position; output determined by the element — an `<img>` renders to an image, a `<video>`/`<audio>` or `<a href="data:…">` attachment carrier materializes to its raw bytes, a text element to its region) |
 | page | `page=<N>` | paginated documents |
 | block | `block=<N>` | block-structured documents without fixed pages |
 | sheet | `sheet=<name>` (+ `bbox=<A1-range>`) | spreadsheets |

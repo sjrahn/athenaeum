@@ -303,10 +303,14 @@ def test_draft_cli_refuses_non_stub(tmp_path):
 
 def test_html_drafter_registered_and_axis_aligned():
     assert "text/text_html" in draft.REGISTRY
-    # The `el=N` index axis MUST match the resolver's addressable-tag set, or
+    # The structural `el=N` axis MUST match the resolver's addressable-tag set, or
     # `corpus://<hash>?el=N` resolves to the wrong element (or out of range).
     assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
-    # The EPUB drafter/resolver carry a third copy of the same axis (spine=<N>&el=<K>
+    # Actual HTML `el=N` membership goes through the shared `is_addressable` predicate —
+    # the drafter imports the resolver's, so they name the same elements by construction
+    # (the predicate extends the structural axis with inline-media carriers).
+    assert draft_html.is_addressable is transforms_html.is_addressable
+    # The EPUB drafter/resolver carry a third copy of the structural axis (spine=<N>&el=<K>
     # image addresses must be consistent across formats) — keep all three in lockstep.
     from corpus import epub as epub_mod
 
@@ -647,10 +651,94 @@ def test_html_drafter_prefers_largest_srcset(tmp_path, run_drafter):
     emb = embeds[0]
     # the 2x variant (40x32), NOT the displayed 10x8 thumbnail
     assert emb["fields"]["width"] == 40 and emb["fields"]["height"] == 32
-    # the el= resolver materialises the same largest variant (drafter/resolver agree)
+    # the el= resolver materialises the same largest variant (drafter/resolver agree).
+    # `el=` now yields an HtmlElRef; an <img> ref renders to a PIL image terminally.
     n = str(emb["address"]).split("=", 1)[1]
-    img = transforms_html.extract_el(BeautifulSoup(p.read_bytes(), "html.parser"), n, {})
+    ref = transforms_html.extract_el(BeautifulSoup(p.read_bytes(), "html.parser"), n, {})
+    img = transforms_html.render_htmlel_image(ref, {})
     assert img.size == (40, 32)
+
+
+def _png_data_uri(w: int, h: int) -> str:
+    import io as _io
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (w, h), (1, 2, 3)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _bytes_data_uri(media_type: str, raw: bytes) -> str:
+    return f"data:{media_type};base64," + base64.b64encode(raw).decode()
+
+
+def test_is_addressable_extends_structural_axis_with_media_carriers():
+    """`is_addressable` is the shared `el=N` membership predicate. It admits the structural
+    axis plus inline-media carriers (`<video>`/`<audio>`, `<a href="data:…">`), but NOT a
+    bare `<a>` / `<source>` — so the per-message `<a href="sms://…">` deep links the
+    imessage exporter emits never consume an `el=` index."""
+    soup = BeautifulSoup(
+        "<p>x</p>"
+        '<img src="data:image/png;base64,AA==">'
+        "<video><source src=\"data:video/mp4;base64,AA==\"></video>"
+        "<audio><source src=\"data:audio/mp4;base64,AA==\"></audio>"
+        '<a href="data:text/x-vcard;base64,AA==">card</a>'
+        '<a href="sms://open?message-guid=X">timestamp</a>'
+        '<source src="data:video/mp4;base64,AA==">',
+        "html.parser",
+    )
+    addressable = [t.name for t in soup.find_all(transforms_html.is_addressable)]
+    # p, img, video, audio, a[data:] — in document order. The sms:// <a> and the bare
+    # <source> are excluded.
+    assert addressable == ["p", "img", "video", "audio", "a"]
+    sms_a = soup.find("a", href=lambda h: h and h.startswith("sms://"))
+    assert transforms_html.is_addressable(sms_a) is False
+
+
+def test_html_drafter_materializes_video_audio_attachment_embeds(tmp_path, run_drafter):
+    """The drafter materializes every inline-media carrier — not just `<img>` — into an
+    embed, strips the (potentially huge) base64 from the body, and leaves a body-empty
+    `el=N` positioning marker. The non-`data:` `<a href="sms://…">` link stays in the body
+    and off the `el=` axis."""
+    img_uri = _png_data_uri(6, 4)
+    video_bytes = b"\x00\x00\x00\x18ftypmp42FAKEVIDEOBYTES"
+    vcard_bytes = b"BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nEND:VCARD\n"
+    p = tmp_path / "thread.html"
+    p.write_text(
+        "<html><body>"
+        '<p data-x="1"><a href="sms://open?message-guid=A">Dec 01, 2025</a> Me</p>'
+        f'<img src="{img_uri}" alt="a photo">'
+        f'<video controls><source src="{_bytes_data_uri("video/mp4", video_bytes)}"></video>'
+        f'<a href="{_bytes_data_uri("text/x-vcard", vcard_bytes)}">Click to download Jane Doe.vcf (46.00 B)</a>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    drafter = draft.get_drafter("text/text_html")
+    result, blocks = run_drafter(
+        drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html"
+    )
+    embeds = {e["media_type"]: e for e in (result.get("embeds") or [])}
+    assert set(embeds) == {"image/png", "video/mp4", "text/x-vcard"}
+    # The attachment carries its recovered filename; the video carries no dimensions.
+    assert embeds["text/x-vcard"]["fields"].get("filename") == "Jane Doe.vcf"
+    assert "width" not in embeds["video/mp4"]["fields"]
+    assert embeds["image/png"]["fields"]["width"] == 6
+
+    # Transports are the blake3 of the decoded bytes (round-trip identity).
+    import blake3 as _b3
+
+    assert embeds["video/mp4"]["transport"] == f"blake3:{_b3.blake3(video_bytes).hexdigest()}"
+
+    # Body: every base64 payload stripped; carriers survive as body-empty markers; the
+    # sms:// link stays.
+    text_seg = next(b for b in blocks if isinstance(b, segments.Segment))
+    body = text_seg.body
+    assert "base64" not in body and "FAKEVIDEO" not in body
+    soup = BeautifulSoup(body, "html.parser")
+    assert soup.find("video").get("data-el") is not None
+    assert not soup.find("video").find("source")  # <source> removed
+    assert soup.find("img").get("src") is None
+    assert soup.find("a", attrs={"data-el": True}).get("href") is None  # attachment href gone
+    assert soup.find("a", href=lambda h: h and h.startswith("sms://")) is not None
 
 
 def test_field_pairs_preserve_images_and_addressable_content(tmp_path, run_drafter):

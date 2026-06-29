@@ -132,16 +132,29 @@ def resolve(
             f"(declare `working_kind:` on its mime schema, or add it to the resolver table)"
         )
     final_kind = _predict_final_kind(parsed, initial_kind)
-    if final_kind not in KIND_TO_EXTENSION:
-        raise NotImplementedError(
-            f"final output kind {final_kind!r} has no cache extension registered"
-        )
-
     urihash_value = furi.urihash(canonical_uri)
-    cache_p = furi.cache_path(corpus_root, urihash_value, KIND_TO_EXTENSION[final_kind])
-    if cache_p.is_file() and not regenerate:
-        log.debug("cache hit: %s", cache_p)
-        return cache_p.resolve()
+    # A terminal `el=N` on HTML is polymorphic: an `<img>` materializes to a PNG image,
+    # a `<video>`/`<audio>`/`<a href="data:…">` carrier to raw bytes. The concrete output
+    # kind — hence the cache extension — isn't known until the element is selected, so the
+    # cache hit is a stem glob (cheap: no parse of a possibly-huge HTML) and the cache path
+    # is deferred until after the element is materialized.
+    terminal_htmlel = final_kind == "htmlel"
+    cache_p: Path | None
+    if terminal_htmlel:
+        cached = _find_cached_by_stem(corpus_root, urihash_value)
+        if cached is not None and not regenerate:
+            log.debug("cache hit: %s", cached)
+            return cached.resolve()
+        cache_p = None
+    else:
+        if final_kind not in KIND_TO_EXTENSION:
+            raise NotImplementedError(
+                f"final output kind {final_kind!r} has no cache extension registered"
+            )
+        cache_p = furi.cache_path(corpus_root, urihash_value, KIND_TO_EXTENSION[final_kind])
+        if cache_p.is_file() and not regenerate:
+            log.debug("cache hit: %s", cache_p)
+            return cache_p.resolve()
 
     # Build render context.
     ctx: transforms.RenderContext = {}
@@ -189,6 +202,7 @@ def resolve(
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")
 
     current_kind = initial_kind
+    terminal_mime: str | None = None
     try:
         for key, value in parsed.params:
             if key in _NOOP_PARAMS:
@@ -199,9 +213,9 @@ def resolve(
                     f"transform {key!r} not applicable to working kind {current_kind!r}"
                 )
             if promote:
-                # An image-kind op after a `pdfpage` (bbox/mark/fit/rotate/…): the page
-                # must be rendered to an image first.
-                working = _render_pdfpage(working, ctx)
+                # An image-kind op after a `pdfpage` or an HTML `htmlel` (bbox/mark/fit/
+                # rotate/…): the page / `<img>` carrier must be rendered to an image first.
+                working = _promote_to_image(working, current_kind, ctx)
                 current_kind = "image"
             log.debug("apply %s=%r (%s -> %s)", key, value, current_kind, handler.output_kind)
             working = handler.func(working, value, ctx)
@@ -211,19 +225,32 @@ def resolve(
         if current_kind == "pdfpage":
             working = _render_pdfpage(working, ctx)
             current_kind = "image"
+        # A terminal `htmlel` (bare `el=N`) materializes to its concrete output: an `<img>`
+        # to a PIL image (cache PNG), a media/attachment carrier to raw bytes (cache the
+        # media's native extension). The cache path was deferred — set it now.
+        if current_kind == "htmlel":
+            working, current_kind, terminal_ext, terminal_mime = _materialize_htmlel(
+                working, ctx
+            )
+            cache_p = furi.cache_path(corpus_root, urihash_value, terminal_ext)
     finally:
         # pypdfium2's PdfDocument is reference-counted; close explicitly.
         if pdf_doc is not None:
             pdf_doc.close()
 
-    if current_kind != final_kind:
+    # `terminal_htmlel` resolves its concrete kind (image|bytes) only after the element is
+    # selected, so the predicted sentinel `htmlel` legitimately differs from `current_kind`.
+    if not terminal_htmlel and current_kind != final_kind:
         raise RuntimeError(
             f"predicted final kind {final_kind!r} but transform chain produced {current_kind!r}"
         )
+    assert cache_p is not None  # set for every non-htmlel kind, and by the htmlel terminal
 
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     _write_to_cache(working, current_kind, cache_p)
-    _write_sidecar(corpus_root, canonical_uri, parsed.hash, cache_p, current_kind)
+    _write_sidecar(
+        corpus_root, canonical_uri, parsed.hash, cache_p, current_kind, mime_override=terminal_mime
+    )
     log.debug("cached: %s", cache_p)
     return cache_p.resolve()
 
@@ -234,14 +261,15 @@ def resolve(
 def _resolve_handler(current_kind: str, key: str):
     """Look up the transform handler for `(current_kind, key)`.
 
-    A `pdfpage` auto-promotes to `image` for image-kind ops: when no `(pdfpage, key)`
-    handler exists but `(image, key)` does, return `(image_handler, promote=True)` so the
-    caller renders the page to an image first. Otherwise `(handler, False)` or `(None, False)`.
+    An intermediate `pdfpage` / `htmlel` auto-promotes to `image` for image-kind ops:
+    when no `(<kind>, key)` handler exists but `(image, key)` does, return
+    `(image_handler, promote=True)` so the caller renders the page / `<img>` carrier to an
+    image first. Otherwise `(handler, False)` or `(None, False)`.
     """
     handler = transforms.lookup(current_kind, key)
     if handler is not None:
         return handler, False
-    if current_kind == "pdfpage":
+    if current_kind in ("pdfpage", "htmlel"):
         image_handler = transforms.lookup("image", key)
         if image_handler is not None:
             return image_handler, True
@@ -253,6 +281,46 @@ def _render_pdfpage(ref: Any, ctx: transforms.RenderContext) -> Any:
     from .transforms import pdf as pdf_transforms
 
     return pdf_transforms.render_pdfpage(ref, ctx)
+
+
+def _promote_to_image(working: Any, current_kind: str, ctx: transforms.RenderContext) -> Any:
+    """Render an intermediate selector (`pdfpage` / `htmlel`) to a PIL Image so a following
+    image-output op (bbox/mark/fit/…) can apply."""
+    if current_kind == "pdfpage":
+        return _render_pdfpage(working, ctx)
+    if current_kind == "htmlel":
+        from .transforms import html as html_transforms
+
+        return html_transforms.render_htmlel_image(working, ctx)
+    raise NotImplementedError(f"cannot promote working kind {current_kind!r} to image")
+
+
+def _materialize_htmlel(
+    ref: Any, ctx: transforms.RenderContext
+) -> tuple[Any, str, str, str]:
+    """Materialize a terminal `htmlel` (`HtmlElRef`) to its concrete output: an `<img>` to
+    a PIL image (kind `image`, ext `png`), or a media/attachment carrier to raw bytes (kind
+    `bytes`, the media's native extension). Returns `(working, kind, extension, mime)`."""
+    from . import mime as mime_mod
+    from .transforms import html as html_transforms
+
+    if ref.tag.name == "img":
+        return html_transforms.render_htmlel_image(ref, ctx), "image", "png", "image/png"
+    media_type, raw = html_transforms.htmlel_bytes(ref)
+    return raw, "bytes", mime_mod.extension_for(media_type), media_type
+
+
+def _find_cached_by_stem(corpus_root: Path, urihash_value: str) -> Path | None:
+    """Return an existing cache content file for `urihash_value` under any extension (the
+    polymorphic `htmlel` cache hit), or None. Excludes the `.json` sidecar."""
+    shard_dir = corpus_root / "cache" / paths.shard(urihash_value)
+    if not shard_dir.is_dir():
+        return None
+    for p in sorted(shard_dir.glob(f"{urihash_value}.*")):
+        if p.name.endswith(".json") or not p.is_file():
+            continue
+        return p
+    return None
 
 
 def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
@@ -327,6 +395,7 @@ def _write_sidecar(
     source_hash: str,
     cache_p: Path,
     kind: str,
+    mime_override: str | None = None,
 ) -> None:
     sidecar = furi.cache_sidecar_path(cache_p)
     sidecar.write_text(
@@ -334,7 +403,7 @@ def _write_sidecar(
             {
                 "uri": canonical_uri,
                 "source_hash": source_hash,
-                "mime": KIND_TO_MIME.get(kind, "application/octet-stream"),
+                "mime": mime_override or KIND_TO_MIME.get(kind, "application/octet-stream"),
                 "generated_at": (
                     datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
                 ),

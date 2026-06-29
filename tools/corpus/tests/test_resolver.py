@@ -205,6 +205,101 @@ def test_html_el_extracts_inline_image(tmp_path):
         assert im.size == (200, 150)
 
 
+def _ingest_html_bytes(corpus_root: Path, html: bytes) -> str:
+    """Stage inline HTML bytes as a corpus record + artifact. Returns the record id."""
+    import hashlib
+
+    import blake3 as _b3
+
+    rid = _b3.blake3(html).hexdigest()
+    LocalArtifactStore(corpus_root).local_path(rid, "html").parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    LocalArtifactStore(corpus_root).local_path(rid, "html").write_bytes(html)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {
+            "id": rid,
+            "description": "",
+            "status": "draft",
+            "transport": f"sha256:{hashlib.sha256(html).hexdigest()}",
+            "touch": "corpus.ingest@0.1.0",
+        }
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, uri="https://x.test/t", snapshot="2026-05-31T00:00:00Z")
+    records.dump(post, paths.record_path(corpus_root, rid))
+    return rid
+
+
+def _data_uri(media_type: str, raw: bytes) -> str:
+    import base64
+
+    return f"data:{media_type};base64," + base64.b64encode(raw).decode()
+
+
+def test_html_el_video_carrier_materializes_raw_bytes(tmp_path):
+    """A terminal `el=N` on a `<video>` carrier materializes the inline `<source>` bytes
+    verbatim — cached under the media's native extension, sidecar mime `video/mp4`, NOT a
+    rasterized image."""
+    import json
+
+    video = b"\x00\x00\x00\x18ftypmp42-not-a-real-codec-but-exact-bytes"
+    html = (
+        "<html><body><p>hi</p>"
+        f'<video controls><source src="{_data_uri("video/mp4", video)}"></video>'
+        "</body></html>"
+    ).encode()
+    root = _make_corpus(tmp_path)
+    rid = _ingest_html_bytes(root, html)
+    # Order: p(1), video(2). el=2 is the carrier.
+    out = resolver.resolve(f"corpus://{rid}?el=2", root)
+    assert out.is_file() and out.suffix == ".mp4"
+    assert out.read_bytes() == video  # byte-exact round trip
+    sidecar = json.loads(resolver.furi.cache_sidecar_path(out).read_text("utf-8"))
+    assert sidecar["mime"] == "video/mp4"
+    # Cache hit (the polymorphic stem glob) returns the same path without re-deriving.
+    assert resolver.resolve(f"corpus://{rid}?el=2", root) == out
+
+
+def test_html_el_attachment_carrier_materializes_raw_bytes(tmp_path):
+    """A terminal `el=N` on an `<a href="data:…">` attachment materializes its bytes."""
+    vcard = b"BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nEND:VCARD\n"
+    html = (
+        "<html><body><p>hi</p>"
+        f'<a href="{_data_uri("text/x-vcard", vcard)}">Click to download Jane Doe.vcf</a>'
+        "</body></html>"
+    ).encode()
+    root = _make_corpus(tmp_path)
+    rid = _ingest_html_bytes(root, html)
+    out = resolver.resolve(f"corpus://{rid}?el=2", root)
+    assert out.read_bytes() == vcard
+
+
+def test_html_el_img_carrier_still_renders_image(tmp_path):
+    """Regression: a terminal `el=N` on an `<img>` still renders a PNG image (unchanged),
+    and an image-output op after `el=N` (`bbox=`) still promotes the `<img>` to an image."""
+    import base64
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (20, 10), (4, 5, 6)).save(buf, "PNG")
+    img_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    html = f'<html><body><p>hi</p><img src="{img_uri}"></body></html>'.encode()
+    root = _make_corpus(tmp_path)
+    rid = _ingest_html_bytes(root, html)
+    out = resolver.resolve(f"corpus://{rid}?el=2", root)
+    assert out.suffix == ".png"
+    with Image.open(out) as im:
+        assert im.size == (20, 10)
+    cropped = resolver.resolve(f"corpus://{rid}?el=2&bbox=0,0,0.5,1.0", root)
+    assert cropped.suffix == ".png"
+    with Image.open(cropped) as im:
+        assert im.size == (10, 10)
+
+
 def test_regenerate_bypasses_cache(tmp_path):
     root = _make_corpus(tmp_path)
     rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
