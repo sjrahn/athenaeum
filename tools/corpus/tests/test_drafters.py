@@ -708,7 +708,8 @@ def test_html_drafter_materializes_video_audio_attachment_embeds(tmp_path, run_d
         '<p data-x="1"><a href="sms://open?message-guid=A">Dec 01, 2025</a> Me</p>'
         f'<img src="{img_uri}" alt="a photo">'
         f'<video controls><source src="{_bytes_data_uri("video/mp4", video_bytes)}"></video>'
-        f'<a href="{_bytes_data_uri("text/x-vcard", vcard_bytes)}">Click to download Jane Doe.vcf (46.00 B)</a>'
+        f'<a href="{_bytes_data_uri("text/x-vcard", vcard_bytes)}">'
+        "Click to download Jane Doe.vcf (46.00 B)</a>"
         "</body></html>",
         encoding="utf-8",
     )
@@ -863,3 +864,28 @@ def test_draft_canonical_selector_inert_when_canonical_disabled(tmp_path):
     a = records.load(paths.record_path(root, rid_a))
     b = records.load(paths.record_path(root, rid_b))
     assert "canonical" not in a.metadata and "canonical" not in b.metadata
+
+
+def test_origin_meta_overlay_parses_producer_declared_metas():
+    """`<meta name="corpus-origin-*">` tags declare a uri-less origin's overlay (spec §7.2):
+    `corpus-origin-schema` → the overlay id; each `corpus-origin-<field>` → an extended field;
+    a repeated field name collects into a list."""
+    from bs4 import BeautifulSoup
+
+    from corpus.draft.html import _origin_meta_overlay
+
+    html = (
+        "<html><head>"
+        '<meta name="corpus-origin-schema" content="imessage-export">'
+        '<meta name="corpus-origin-chat_name" content="Family group">'
+        '<meta name="corpus-origin-phone_number" content="+14035551234">'
+        '<meta name="corpus-origin-phone_number" content="+15875559876">'
+        '<meta name="description" content="ignored">'
+        "</head><body></body></html>"
+    )
+    schema_id, fields = _origin_meta_overlay(BeautifulSoup(html, "html.parser"))
+    assert schema_id == "imessage-export"
+    assert fields["chat_name"] == "Family group"
+    assert fields["phone_number"] == ["+14035551234", "+15875559876"]  # repeated → list
+    # No corpus-origin metas → empty.
+    assert _origin_meta_overlay(BeautifulSoup("<html></html>", "html.parser")) == (None, {})

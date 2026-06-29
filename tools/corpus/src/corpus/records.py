@@ -945,6 +945,25 @@ def merge_origin_fields(post: frontmatter.Post, fields: dict[str, Any]) -> None:
         target[key] = value
 
 
+def set_origin_schema_id(post: frontmatter.Post, schema_id: str) -> bool:
+    """Stamp `schema_id` as the most-recent origin block's overlay id — promoting its opener
+    to `<!--origin <id>-->`. Returns True when set.
+
+    Producer-declared overlay binding (spec §7.2): a uri-less origin (e.g. an `imessage-export`
+    local file) has no `uri:` to match, so the producer names the overlay directly — a capture
+    sidecar's `origin_schema:` at ingest, or an injected `corpus-origin-schema` meta the drafter
+    folds in. The bound id drives the derived `origin/<id>` classification, overlay guidance, and
+    `classify_when: origin.id` rules (§7.4) with no uri."""
+    schema_id = (schema_id or "").strip()
+    if not schema_id:
+        return False
+    origins = post.metadata.get("_origins") or []
+    if not origins:
+        return False
+    origins[-1]["id"] = schema_id
+    return True
+
+
 def append_classify_block(
     post: frontmatter.Post,
     *,

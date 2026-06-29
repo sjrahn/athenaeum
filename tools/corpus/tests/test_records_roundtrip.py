@@ -159,17 +159,53 @@ def test_derive_capture_origin_local_file_is_uri_less(tmp_path):
     src = tmp_path / "scan0001.pdf"
     src.write_bytes(b"%PDF-1.4\n")
 
-    uri, snapshot, fields = _derive_capture_origin(src, {})
+    uri, snapshot, fields, schema_id = _derive_capture_origin(src, {})
     assert uri is None
+    assert schema_id is None
     assert fields["filename"] == "scan0001.pdf"
     assert fields["source_modified"].endswith("Z")  # ISO-8601 UTC mtime
     assert snapshot  # ingest observation time
 
-    uri2, _snap2, fields2 = _derive_capture_origin(
+    uri2, _snap2, fields2, schema2 = _derive_capture_origin(
         src, {"source_url": "https://example.com/x", "fetched_at": "2026-06-29T00:00:00Z"}
     )
     assert uri2 == "https://example.com/x"
     assert fields2 == {}
+    assert schema2 is None
+
+
+def test_derive_capture_origin_producer_declared_overlay(tmp_path):
+    """A capture sidecar's `origin_schema:` + `origin_fields:` declare an overlay on a uri-less
+    local origin (spec §7.2) — the schema id is returned to stamp the block, the declared fields
+    merge beside the universal filename/source_modified."""
+    from corpus._cli.ingest import _derive_capture_origin
+
+    src = tmp_path / "chat.html"
+    src.write_bytes(b"<html></html>")
+    sidecar = {
+        "origin_schema": "imessage-export",
+        "origin_fields": {"chat_name": "Family group", "phone_number": ["+14035551234"]},
+    }
+    uri, _snap, fields, schema_id = _derive_capture_origin(src, sidecar)
+    assert uri is None
+    assert schema_id == "imessage-export"
+    assert fields["filename"] == "chat.html"  # universal local-file metadata kept
+    assert fields["chat_name"] == "Family group"  # producer-declared fields merged in
+    assert fields["phone_number"] == ["+14035551234"]
+
+
+def test_set_origin_schema_id_stamps_most_recent_block():
+    """`set_origin_schema_id` promotes the most-recent origin block's opener to
+    `<!--origin <id>-->` — the draft-time half of producer-declared binding (spec §7.2)."""
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64})
+    records.append_origin_block(
+        post, uri=None, snapshot="2026-06-29T00:00:00Z", fields={"filename": "chat.html"}
+    )
+    assert records.set_origin_schema_id(post, "imessage-export") is True
+    assert post.metadata["_origins"][-1]["id"] == "imessage-export"
+    assert records.derived_classifications(post) == ["origin/imessage-export"]
+    assert records.set_origin_schema_id(post, "  ") is False  # empty/whitespace is a no-op
 
 
 def test_local_origin_dedups_by_filename():

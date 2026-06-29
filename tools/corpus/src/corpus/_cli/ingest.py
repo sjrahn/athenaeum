@@ -20,6 +20,7 @@ import argparse
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import frontmatter
 import yaml
@@ -86,11 +87,13 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     store = get_store(corpus_root)
 
     sidecar = _read_sidecar(src)
-    origin_uri, origin_at, origin_fields = _derive_capture_origin(src, sidecar)
+    origin_uri, origin_at, origin_fields, origin_schema = _derive_capture_origin(src, sidecar)
 
     if record_file.is_file():
         post = records.load(record_file)
-        appended = _append_origin_if_new(post, origin_uri, origin_at, origin_fields)
+        appended = _append_origin_if_new(
+            post, origin_uri, origin_at, origin_fields, origin_schema
+        )
         touches.record_touch(post, touches.script_identifier("ingest"))
         records.dump(post, record_file)
         src.unlink()
@@ -127,7 +130,11 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     # `records.title_for`.
     records.set_artifact_block(post, mime=media_type, fields={})
     records.append_origin_block(
-        post, uri=origin_uri, snapshot=origin_at, fields=origin_fields or None
+        post,
+        uri=origin_uri,
+        snapshot=origin_at,
+        schema_id=origin_schema,
+        fields=origin_fields or None,
     )
     _emit_sidecar_issues(post, sidecar)
     records.dump(post, record_file)
@@ -143,7 +150,11 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
 
 
 def _append_origin_if_new(
-    post, uri: str | None, snapshot: str, fields: dict[str, str] | None = None
+    post,
+    uri: str | None,
+    snapshot: str,
+    fields: dict[str, Any] | None = None,
+    schema_id: str | None = None,
 ) -> bool:
     from corpus import records
     from corpus import urls as urlcanon
@@ -161,7 +172,9 @@ def _append_origin_if_new(
         for origin in records.iter_origin_blocks(post):
             if fname and (origin.get("fields") or {}).get("filename") == fname:
                 return False
-        records.append_origin_block(post, uri=None, snapshot=snapshot, fields=fields or None)
+        records.append_origin_block(
+            post, uri=None, snapshot=snapshot, schema_id=schema_id, fields=fields or None
+        )
         return True
 
     try:
@@ -179,7 +192,9 @@ def _append_origin_if_new(
                 canon_existing = str(c)
             if canon_existing == canon_new:
                 return False
-    records.append_origin_block(post, uri=uri, snapshot=snapshot, fields=fields or None)
+    records.append_origin_block(
+        post, uri=uri, snapshot=snapshot, schema_id=schema_id, fields=fields or None
+    )
     return True
 
 
@@ -228,26 +243,36 @@ def _read_sidecar(src: Path) -> dict:
         return {}
 
 
-def _derive_capture_origin(src: Path, sidecar: dict) -> tuple[str | None, str, dict[str, str]]:
-    """Origin seed for an ingested artifact.
+def _derive_capture_origin(
+    src: Path, sidecar: dict
+) -> tuple[str | None, str, dict[str, Any], str | None]:
+    """Origin seed for an ingested artifact — `(uri|None, snapshot, fields, schema_id|None)`.
 
-    A capture sidecar with a `source_url` yields a *retrieval* origin: `(uri, snapshot, {})`.
-    A bare dropped-in file has no retrieval source — the staging path is unlinked moments
-    later, so recording it as a `uri:` would be a reference dead on arrival — so it yields a
-    uri-less *local-file* origin carrying durable metadata instead:
-    `(None, snapshot, {"filename": …, "source_modified": …})` (spec §7.2). `filename` is the
-    basename; `source_modified` is the file's mtime (best-effort, omitted if unreadable)."""
+    A capture sidecar with a `source_url` yields a *retrieval* origin (uri + snapshot). A bare
+    dropped-in file has no retrieval source — the staging path is unlinked moments later, so a
+    `uri:` would be a reference dead on arrival — so it yields a uri-less *local-file* origin
+    carrying durable metadata instead: `filename` (basename) + `source_modified` (mtime,
+    best-effort) (spec §7.2).
+
+    A producer may also DECLARE an overlay (spec §7.2): the sidecar's `origin_schema:` (the
+    overlay id stamped on the block, the only way a uri-less origin binds an overlay) and
+    `origin_fields:` (its extended fields) are consumed here for either origin shape — e.g. an
+    `imessage-export` carrying `chat_name`/`phone_number`/`period`."""
     from corpus import touches
 
     uri = str(sidecar.get("source_url") or "").strip()
     discovered_at = str(sidecar.get("fetched_at") or "").strip() or touches.now_iso()
+    schema_id = str(sidecar.get("origin_schema") or "").strip() or None
+    declared = sidecar.get("origin_fields")
+    extra: dict[str, Any] = {str(k): v for k, v in declared.items()} if isinstance(declared, dict) else {}
     if uri:
-        return uri, discovered_at, {}
-    fields: dict[str, str] = {"filename": src.name}
+        return uri, discovered_at, dict(extra), schema_id
+    fields: dict[str, Any] = {"filename": src.name}
     mtime = _source_modified_iso(src)
     if mtime:
         fields["source_modified"] = mtime
-    return None, discovered_at, fields
+    fields.update(extra)
+    return None, discovered_at, fields, schema_id
 
 
 def _source_modified_iso(src: Path) -> str | None:

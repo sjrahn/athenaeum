@@ -62,6 +62,10 @@ class DrafterResult(TypedDict, total=False):
     issues: list[dict[str, Any]]
     canonical: str | None
     origin_fields: dict[str, Any]  # enrichment → origin block (spec §7.2)
+    # Producer-declared overlay id, from an injected `corpus-origin-schema` meta — stamped
+    # as the origin block's id (`<!--origin <id>-->`) by `_apply_drafter_result`. The way a
+    # uri-less origin (e.g. an imessage-export) binds an overlay with no uri to match (§7.2).
+    origin_schema: str | None
     # URLs the drafter discovers that are aliases of the captured origin (canonical
     # link, post-redirect final URL). Merged into the origin block's uri: list by
     # `_apply_drafter_result` — NOT artifact fields (spec §7.2).

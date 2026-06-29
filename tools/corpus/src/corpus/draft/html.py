@@ -284,6 +284,9 @@ def draft(
         origin_uri_aliases.append(v)
     if v := _meta_content(soup, "corpus-capture-url"):
         origin_uri_aliases.append(v)
+    # Producer-declared origin overlay injected as `<meta name="corpus-origin-*">` — the way a
+    # uri-less local origin (e.g. an imessage-export) binds an overlay with no uri (spec §7.2).
+    origin_schema, origin_meta_fields = _origin_meta_overlay(soup)
 
     issues: list[dict[str, Any]] = []
     if source := _detect_block_page(soup, fields.get("title")):
@@ -349,13 +352,18 @@ def draft(
     )
 
     recordbuild.add_blocks(build, segments)
-    return {
+    result: DrafterResult = {
         "fields": fields,
         "embeds": embeds,
         "issues": issues,
         "canonical": canonical,
         "origin_uri_aliases": origin_uri_aliases,
     }
+    if origin_schema:
+        result["origin_schema"] = origin_schema
+    if origin_meta_fields:
+        result["origin_fields"] = origin_meta_fields
+    return result
 
 
 def _clean_html(
@@ -1006,3 +1014,33 @@ def _meta_content(soup: BeautifulSoup, name: str | None = None, *, prop: str | N
     if prop and (tag := soup.find("meta", attrs={"property": prop})):
         return str(tag.get("content", "")).strip()
     return ""
+
+
+def _origin_meta_overlay(soup: BeautifulSoup) -> tuple[str | None, dict[str, Any]]:
+    """Producer-declared origin overlay injected as `<meta name="corpus-origin-*">` tags
+    (spec §7.2 — how a uri-less local origin like an imessage-export binds an overlay with no
+    uri to match). `corpus-origin-schema` names the overlay id stamped on the origin block;
+    every other `corpus-origin-<field>` contributes that extended field. A field name repeated
+    across metas collects into a list (a `string_or_list` field, e.g. a group's `phone_number`).
+    Returns `(schema_id | None, fields)`."""
+    schema_id: str | None = None
+    fields: dict[str, Any] = {}
+    for tag in soup.find_all("meta"):
+        if not isinstance(tag, Tag):
+            continue
+        name = str(tag.get("name") or "")
+        if not name.startswith("corpus-origin-"):
+            continue
+        key = name[len("corpus-origin-") :]
+        value = str(tag.get("content", "")).strip()
+        if not key or not value:
+            continue
+        if key == "schema":
+            schema_id = value
+            continue
+        if key in fields:
+            prev = fields[key]
+            fields[key] = [*prev, value] if isinstance(prev, list) else [prev, value]
+        else:
+            fields[key] = value
+    return schema_id, fields

@@ -287,6 +287,12 @@ def _apply_drafter_result(
     # primary-artifact bytes; this is where-it-came-from metadata — spec §7.2).
     records.merge_origin_fields(post, result.get("origin_fields") or {})
 
+    # Producer-declared overlay id (an injected `corpus-origin-schema` meta) → stamp the origin
+    # block's opener `<!--origin <id>-->`. The binding for a uri-less origin, which has no uri
+    # to match an overlay against (spec §7.2).
+    if schema_id := result.get("origin_schema"):
+        records.set_origin_schema_id(post, str(schema_id))
+
     # Origin-alias URLs the drafter discovered (canonical / post-redirect final) — fold
     # into the origin block's uri: list, not the artifact block (spec §7.2).
     for alias in result.get("origin_uri_aliases") or []:
