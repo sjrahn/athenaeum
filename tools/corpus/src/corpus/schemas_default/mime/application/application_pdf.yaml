@@ -45,7 +45,11 @@ normalization:
 
     A document may be **mixed** (`shape_summary: mixed`) — born-digital body pages plus scanned inserts, or vice versa. Decide per page from its row.
 
+    **Hybrid pages — a born-digital page can still hide raster content.** `shape_hint` keys on whole-page coverage (`image_coverage` ≥ 0.9 = scanned), so a born-digital page with a **sub-0.9 but nonzero** `image_coverage` (anything from ~0.05 up) is the tell that the page embeds a raster *region* — a figure, a chart, or a table rendered as an image — whose content is **NOT in the text layer**. `page=<N>&text` returns nothing (or garbage) for that region. Do not trust `&text` to have captured it: **render the page, find the raster region, and treat it as its own `page=<N>&bbox=...` segment** — a body-empty `image` segment with a `description:` for a figure/chart, and/or a sibling lossless `text/data-table` (or `text/ocr`) where the raster is a table or readable text. A born-digital page is "born-digital text plus zero or more raster inserts," not "all text."
+
     Don't re-extract content from the artifact yourself with `pdftotext`; `page=<N>&text` already gives you pypdf's extraction, and the rendered page is the real source of truth. **Use the resolver to render pages and look at them** — see below.
+
+    **Read every page as a raster at least once — even a born-digital one. This is mandatory.** The probe and the text layer are not enough to trust a page: `&text` silently mangles math and layout, and a born-digital page can hide a raster figure or table the text layer doesn't contain (see "Hybrid pages" above). So for **every page**, render it (`corpus resolve 'corpus://<hash>?page=<N>'`) and actually look at the pixels at least once — comparing what you see against the extracted text — *before* you decide how to segment it. A full-page overview render (~463 px) is enough for this compare-and-decide step: it shows you the layout, whether a region is a raster, and whether the text is intact. You then crop into any region you intend to transcribe losslessly (see "Crop-first is a REQUIREMENT"). **Never segment or transcribe a page you have not looked at.** (For a long PDF normalized in chunks, this happens within the pass that handles each page — every page in your chunk gets a raster read; you don't pre-read the whole document.)
 
     ## Scanned pages (image-of-document)
 
@@ -80,6 +84,8 @@ normalization:
 
     A `bbox` crop is in [0.0, 1.0] units of the page, so a 0.1 × 0.15 crop of an equation row is natively 170×330 pixels at 200 dpi — small enough that the harness has nothing to downsample. You see it at full source fidelity.
 
+    **Crop-first is a REQUIREMENT, not advice, for lossless work.** Before you transcribe a table, an equation, or any fine detail (footnotes, sub/superscripts, formula glyphs, a numeric grid) into a **lossless `text/*` segment** (`text/data-table`, `text/equation`, `text/ocr`, `text/code`), you MUST resolve a `page=<N>&bbox=...` crop of that exact region and read *it*. A transcription or description produced from a full-page (~463 px) render is **insufficient fidelity** and is not acceptable for a lossless body — the downsampling silently corrupts digits, superscripts, and glyphs, and lint cannot catch a wrong number. (Overview reads of full pages are fine for *recognizing* structure; they are not fine for *transcribing* it.) After writing your `bbox=` segments, verify the frames: `corpus preview <id> --page <N> --from-segments` redraws the committed boxes so you can confirm each crop frames what you transcribed.
+
     Use the crop-first tactic whenever you need to read fine detail:
 
     - **Equations** — crop the equation row (and the line of text introducing it). Read the LaTeX glyphs directly rather than reconstructing from pypdf's mangled Unicode-math output. A typical equation crop is ~0.8 wide and ~0.1 tall.
@@ -95,10 +101,10 @@ normalization:
 
     ### Page-walk strategy
 
-    - Read the cover page first (full render is fine — you're recognizing structure).
-    - For each page that contains an equation, a table, a figure, or any content where the drafter body shows pypdf-flavored damage: crop into the specific region(s) of interest.
-    - For short PDFs (≤10 pages), the overview-render-every-page step is cheap; do it.
-    - For long PDFs, sample strategically: cover, table of contents, then each page where the drafter body looks suspicious.
+    - **Render every page in your working range as a full-page raster at least once and look at it** — the compare-and-decide step from "Read every page as a raster" above. Not optional, and not limited to "suspicious" pages: a born-digital page that probes clean can still carry a hidden raster or layout the text layer flattens, and you only find out by looking.
+    - Cover page first (full render is fine — you're recognizing structure).
+    - For each page that carries an equation, a table, a figure, a hidden raster, or any region the text layer renders with pypdf damage: **crop into** the specific region(s) and read at full fidelity — required before any lossless transcription (see "Crop-first is a REQUIREMENT").
+    - A short PDF (≤10 pages) is a cheap full walk. A long PDF is read **per chunk** — the every-page raster read happens within the pass that normalizes each page (see "Large PDFs — chunked normalization"); you don't pre-read all 200 pages at once, but you never segment a page you haven't seen.
 
     ## Fresh per-page signals — `probe`
 
@@ -106,7 +112,7 @@ normalization:
 
     ## Forward reference
 
-    The bulk of body-refinement tactics — paragraph reflow, heading promotion, tables (markdown vs HTML fallback), equation LaTeX rendering, footnote renumbering, image description, definitions sections, re-segmentation — live on the `document` overlay. If its cues match (most PDFs in this corpus carry structured-document content), apply it and read its guidance via `corpus overlay document`. Its guidance is media-type-agnostic; this PDF schema's job is to add the pixel-level "go read the page" tactic, the PDF-specific re-segmentation rules below, and the chrome-address convention.
+    The bulk of media-agnostic body-refinement tactics — paragraph reflow, heading promotion, tables (markdown vs HTML fallback), equation LaTeX rendering, footnote renumbering, image description, definitions sections, re-segmentation — live on the `document` overlay. If its cues match (most PDFs in this corpus carry structured-document content), apply it and read its guidance via `corpus overlay document`. Its guidance is media-type-agnostic; this PDF schema's job is to add the pixel-level "go read the page" tactic, the PDF-specific re-segmentation rules below, and the chrome-address convention. **Note:** a corpus may stub the base `document` overlay (its tactics living only on a subclass like `document/product-manual`), so `corpus overlay document` can come back with no `normalization.guidance`. That's fine — this PDF schema is self-sufficient for the structural work: tables, figures, multi-region addressing, footnote ownership, and re-segmentation are all covered below. Don't block on the forward reference.
 
     For image segments inside the PDF, pick the structural kind on the opener (`<!--segment image/chart-->`, `image/figure`, `image/photo`, …; run `corpus atoms --atom image`). When the record as a whole is dominantly visual, the record-scope `visual-type` overlay (`corpus overlay visual-type`) adds idiom-specific description tactics.
 
@@ -124,21 +130,28 @@ normalization:
     - `page_count` — total pages.
     - `title`, `author`, `creation_date`, `producer` — from the PDF /Info dict; useful for description authoring but rarely reliable as cover-page title (publishers often leave /Info defaults like `Adobe Acrobat`, `Microsoft Word`, or the author's local username).
 
-    ## Sections — outline-driven grouping (SPECv2 §4.3)
+    ## Sections — group from the document's structure (SPEC §4.3)
 
-    The drafter is always sectionless (a flat list of `page=<N>` markers). **Sectioning is the normalizer's job**, driven by the PDF's outline:
+    The drafter is always sectionless (a flat list of `page=<N>` markers). **Sectioning is the normalizer's job.** A `<!--section-->` is the universal TOC unit: it groups child segments, carries an `entry:` label, and has **no body**.
+
+    **How a section's address works — read this before you assign one.** You do **not** compute a section's page range from the outline. A section's discrete-index address is the **auto-derived min-max page envelope of its child segments** (the value the tooling derives at compile; `bbox` is ignored — the envelope is over pages). So you assign segments to a section and the address *follows*: a section whose children span pages 4–9 is `pages=4-9`; a one-page section collapses to `pages=<N>`. Two consequences, both easy to get wrong:
+
+    - **Adjacent sections may legitimately share a boundary page.** Section A ending on page 9 and section B starting on page 9 is fine — there is no section-overlap rule. (What you must NOT do: give two *segments* the same `page=N&bbox` region, or two *sections* the same `pages=N` envelope — see below.)
+    - **`entry:` is a section / top-level-segment field ONLY.** A segment that lives *inside* a section must NOT carry `entry:` — the section is its TOC unit. Putting `entry:` on an in-section segment is a **hard compile error** (`in-section segment cannot carry entry`), not a soft lint. A figure's identifying label goes in its `description:`, never `entry:` (see "Figures, diagrams, charts").
+
+    **The outline is a starting point, not an authority.** Read it:
 
         corpus resolve 'corpus://<hash>?outline' --print
         # JSON tree of {title, page (1-indexed), children}; [] when the PDF has no bookmarks.
 
-    **PDF with an outline** (the op returns a non-empty tree). During your normalize pass, group the page's structural-unit segments under one `<!--section-->` per **top-level** outline entry, with:
+    A clean, complete outline maps each **top-level** entry to a section whose `entry:` is the bookmark title (verbatim) and whose children are the segments for that entry's page range; a synthetic `entry: Preamble` section wraps unbookmarked front matter (cover, Contents). But real outlines are frequently broken, and you section from the document's **genuine printed structure**, not the outline mechanically:
 
-    - `address: pages=<start>-<end>` — start page from the outline entry's destination; end page is the page before the next top-level entry (or `page_count` for the last). When a section is one page, the address collapses to `pages=<N>`.
-    - `entry: <outline title>` — the bookmark title, verbatim.
+    - **Missing top-level headings** — the outline omits real printed sections (an un-bookmarked "Consumer Information" leaflet). Add them as sections from the printed headings; don't let a naive "last entry runs to page_count" bury them.
+    - **Degenerate single bookmark** — the entire document nested under one bookmark (common in drug-label SPLs). Ignore it and section from the printed top-level headings.
+    - **Duplicate / non-monotonic entries** — many entries anchored to pp1–2, out of order, repeated (Highlights + a Contents listing + the body all bookmarked). Deduplicate to the real printed structure; ignore the noise.
+    - **Two top-level entries on the same page** — each would be a one-page section with the **same** `pages=<N>` address → an identity collision (two TOC units claiming one page span). Do NOT emit colliding same-page sections. Instead **group them under one coarser section** and carry the sub-structure as `##`/`###` prose headings on bbox-distinct child segments. This is the standard move for a dense single-page run of headings: one section, prose-headed sub-parts, a distinct `page=N&bbox` per part.
 
-    A synthetic `entry: Preamble` section wraps pages before the first outline entry (cover, About, Contents pages that aren't bookmarked). Segments for pages inside an outline entry's range become the children of that section.
-
-    **PDF without an outline** (the op returns `[]`). Stay sectionless. The normalizer MAY introduce sections during re-segmentation when document structure becomes apparent from the prose itself (numbered chapter headings, etc.) — see "Normalizer-introduced sections" below.
+    **PDF without an outline** (the op returns `[]`). Section from the printed structure when it's clearly present (see "Normalizer-introduced sections" below); otherwise stay sectionless — a legitimate shape for short or structure-light PDFs.
 
     ### What a section is NOT
 
@@ -169,7 +182,7 @@ normalization:
 
     1. Read the PDF's outline: `corpus resolve 'corpus://<hash>?outline' --print`. For each top-level entry you get `{title, page}` (1-indexed). End page is the page before the next top-level entry; the last entry runs to `page_count`.
     2. `corpus decompose <hash>`. In the manifest, group the existing `seg` lines under `section addr=pages=<start>-<end> entry="<outline title>"` lines per the outline ranges. A `seg` whose first page falls before the first outline entry (or a `page=0` chrome segment) goes under a synthetic `section ... entry="Preamble"`.
-    3. Keep each segment's body file, address, and entry exactly as they are — this upgrade is structural-only (it only adds section grouping), no content rewrite.
+    3. Keep each segment's body file and address exactly as they are — this upgrade is structural-only (it only adds section grouping), no content rewrite. **But drop the `entry:` from every segment you move under a section**: a previously top-level segment legitimately carried `entry:`, but once it's inside a section that `entry:` is a hard compile error (the section is now the TOC unit — its title moves to the section's `entry:`). A segment that stays top-level (a `page=0` chrome segment outside every section) keeps its `entry:`.
     4. `corpus compile <dir> --model <your-model-id>`. The record stays at `status: normalized`; the upgrade is itself a normalize pass, so it earns a touch.
 
     A sectionless PDF that produced a flat segment list MAY remain sectionless if the source has no outline — no upgrade required. Only wrap when the source carries an outline.
@@ -198,7 +211,7 @@ normalization:
     Embedded artifacts that interrupt prose get their own segment with an atom-prefixed classification:
 
     - `text/equation` — a display equation (and its `\tag{N}` numbering, if any). The body is the LaTeX form of the equation. If the equation has a following WHERE / variable-definition table, that's a SEPARATE `text/data-table` segment immediately after.
-    - `text/data-table` — a structured rows-and-columns block. The body is a markdown table (simple cases) or an HTML `<table>` (merged cells, multi-row headers, complex cells). See `corpus overlay document` for rendering tactics. (Run `corpus atoms --atom text` for the full list of lossless text overlays — `text/code`, `text/footnote`, `text/ocr`, etc.)
+    - `text/data-table` — a structured rows-and-columns block. The body is a markdown table (simple cases) or an HTML `<table>` (merged cells, multi-row headers, complex cells). See `corpus overlay document` for rendering tactics. **Body contract:** the body is the faithful table — header rows plus data rows. The table's printed **caption and footnote legend** (the `*`/`†` notes that decode its cells) are part of reading the table, so you may keep them *with* it (a leading caption line and/or a trailing legend in the same body) — OR split them into sibling `text` / `text/footnote` segments when the legend is long or shared across tables. Both lint clean; keep them in the body when they're short and specific to this table. A leading `##`/`###` heading is fine when a sub-section opens directly on the table with no prose to host it. (Run `corpus atoms --atom text` for the full list of lossless text overlays — `text/code`, `text/footnote`, `text/ocr`, etc.)
 
     The surrounding prose stays in bare `<!--segment text-->` segments with no overlay — that's the default "prose flow" segment. (Unique repeating chrome is also a bare `text` segment — see "Repeating page chrome" below.)
 
@@ -209,8 +222,7 @@ normalization:
     A figure on a PDF page is a **crop of the rendered page**, not a separately stored asset. The resolver rasterizes `page=N&bbox=...` from the PDF's own bytes on demand — the artifact *is* the source, exactly as a video framegrab is a slice of the video (see `schema/mime/video/video.yaml`). So a figure is a **bare `<!--segment image-->`** with:
 
     - `address: page=N&bbox=<x>,<y>,<w>,<h>` — the page region.
-    - `entry:` — a short identifying TOC label (e.g. "Figure 2 — WAG operation schematic").
-    - `description:` — a faithful description of what the crop **shows** (composition, on-screen text verbatim, chart/diagram structure), written after resolving and looking at the crop. Body stays **empty** (image atoms are body-empty per SPEC §4.3.2.3).
+    - `description:` — a faithful description of what the crop **shows** (composition, on-screen text verbatim, chart/diagram structure), written after resolving and looking at the crop. **Lead it with the figure's identifying label** ("Figure 2 — WAG operation schematic. …"): the label lives here, NOT in `entry:`. (`entry:` is a section / top-level-segment field; a figure segment *inside a section* that carries `entry:` is a **hard compile error** — see "Sections". Only a figure that is itself a sectionless top-level segment may use `entry:`.) Body stays **empty** (image atoms are body-empty per SPEC §4.3.2.3).
     - **No `<!--embed-->` block, and no `transport:` hash.** The `embed-missing-target` lint rule carves out `page=` addresses on PDF records precisely because no separate asset exists. Never compute a blake3 of a rendered crop and present it as an embed transport — that fabricates an asset the corpus doesn't store.
 
     A losslessly-transcribable region inside a figure (a data table, an equation, OCR-able caption text) is a **separate** `text/<overlay>` segment (`text/data-table`, `text/equation`, `text/ocr`) at a chained `page=N&bbox=...` address — sibling to the image marker, carrying the lossless body.
