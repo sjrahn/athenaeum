@@ -280,6 +280,42 @@ def test_origin_overlays_are_corpus_local(tmp_path):
     assert any(id_ == "example.com" for id_, _ in matched)
 
 
+def test_origin_overlay_matches_by_uri_scheme(tmp_path):
+    """A non-web scheme-family overlay (e.g. `imessage:`) matches by URI scheme, not host —
+    `applies_to.scheme` (or `schemes`). A `file://` or `https://` URI does NOT match it."""
+    root = _make_corpus(tmp_path)
+    _write_yaml(
+        root / "schema" / "origin" / "origin.yaml",
+        {
+            "description": "Universal origin fields.",
+            "extended_fields": {
+                "uri": {"type": "string_or_list", "required": True, "semantic_type": "uri"},
+                "snapshot": {"type": "string", "required": True, "semantic_type": "timestamp"},
+            },
+        },
+    )
+    _write_yaml(
+        root / "schema" / "origin" / "imessage.yaml",
+        {
+            "kind": "interpretive",
+            "description": "Apple Messages export origin.",
+            "applies_to": {"scheme": "imessage"},
+        },
+    )
+    schemas._sources.cache_clear()
+    matched = schemas.origin_overlays_for_uris(
+        root, ["imessage://chat/+14035551234,+14035555678/2026-W26"]
+    )
+    assert any(id_ == "imessage" for id_, _ in matched)
+    # Case-insensitive scheme; other schemes don't match.
+    assert any(
+        id_ == "imessage"
+        for id_, _ in schemas.origin_overlays_for_uris(root, ["IMESSAGE://chat/x/2025-12"])
+    )
+    assert schemas.origin_overlays_for_uris(root, ["https://example.com/"]) == []
+    assert schemas.origin_overlays_for_uris(root, ["file:///tmp/staged.html"]) == []
+
+
 def test_origin_universal_does_not_ship_in_package(tmp_path):
     """Sanity: the packaged source has no origin/origin.yaml — only corpora supply it."""
     root = _make_corpus(tmp_path)

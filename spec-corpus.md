@@ -675,8 +675,9 @@ An `origin` schema declares an overlay for one source of retrieval.
 
 - `kind: interpretive` — origin overlays are always interpretive (the match cue may be mechanical, but body guidance is interpretive).
 - `description` — prose framing of the publisher.
-- `applies_to.host_pattern` (string, optional) or `applies_to.host_patterns` (list[string], optional) — host pattern(s) the drafter matches against origin URIs.
+- `applies_to.host_pattern` (string, optional) or `applies_to.host_patterns` (list[string], optional) — host pattern(s) the drafter matches against origin URIs (the `web` family).
 - `applies_to.include_subdomains` (bool, default false).
+- `applies_to.scheme` (string, optional) or `applies_to.schemes` (list[string], optional) — URI scheme(s) the overlay matches, compared case-insensitively against an origin URI's scheme. This is how a **non-web scheme family** (e.g. `imessage:`, a future `urn:` / `s3:`) binds, since such URIs have no meaningful host. An overlay may declare host pattern(s), scheme(s), or both.
 - `applies_to.cues` (optional) — non-host cues for the matcher.
 - `normalization.guidance` (string) — markdown prose tactics.
 - `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`. A capturer's enrichment sidecar populates these — e.g. a yt-dlp capture's `ytdlp_<key>` fields (title, description, uploader, engagement counts, `ytdlp_comments`), declared by the artifact's mime schema `sidecar` section (§7.1) and merged onto the origin block at draft.

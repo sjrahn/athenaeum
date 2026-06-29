@@ -921,6 +921,29 @@ def add_origin_uri_alias(
     return True
 
 
+def prune_file_staging_origin_uris(post: frontmatter.Post) -> bool:
+    """On the most-recent origin block, drop `file://` staging URIs when a non-`file://`
+    URI is also present. Returns True when one was removed.
+
+    A `file://` origin uri is the local path the bytes sat at during ingest (the corpus
+    moves them into `artifacts/` and unlinks the staging file), not a retrieval origin. So
+    when a drafter folds in a declared source URL — a `<link rel=canonical>` or a
+    capture-injected `corpus-capture-url` (spec §7.2) — that real origin supersedes the
+    staging path. Guarded on a survivor: a record whose ONLY origin is `file://` (a genuine
+    local-file source with no declared web/synthetic origin) keeps it untouched."""
+    origins = post.metadata.get("_origins") or []
+    if not origins:
+        return False
+    target = origins[-1].get("fields") or {}
+    uri = target.get("uri")
+    uris = [str(u).strip() for u in (uri if isinstance(uri, list) else [uri]) if u]
+    non_file = [u for u in uris if not u.lower().startswith("file://")]
+    if not non_file or len(non_file) == len(uris):
+        return False
+    target["uri"] = non_file[0] if len(non_file) == 1 else non_file
+    return True
+
+
 def merge_origin_fields(post: frontmatter.Post, fields: dict[str, Any]) -> None:
     """Merge extra fields into the most-recent origin block (the one the current capture
     seeded), beside `uri:`/`snapshot:`.

@@ -711,8 +711,12 @@ def origin_overlays_for_uris(
     """Return `[(id, schema), ...]` for every origin overlay whose match predicate
     matches at least one URI in `uris`. Each overlay returned at most once.
 
-    Match predicate: `applies_to.host_pattern` (str) and/or `applies_to.host_patterns`
-    (list), with `applies_to.include_subdomains` (bool) flag — spec §7.2.
+    Match predicate (spec §7.2): web (http/https) overlays match by host —
+    `applies_to.host_pattern` (str) and/or `applies_to.host_patterns` (list), with the
+    `applies_to.include_subdomains` (bool) flag. Non-web scheme-family overlays (e.g.
+    `imessage:`, a future `urn:`/`s3:`) match by URI scheme — `applies_to.scheme` (str)
+    and/or `applies_to.schemes` (list), compared case-insensitively against the URI's
+    scheme. An overlay may declare either or both.
     """
     if not uris:
         return []
@@ -725,19 +729,37 @@ def origin_overlays_for_uris(
             patterns.append(str(applies_to["host_pattern"]))
         if "host_patterns" in applies_to:
             patterns.extend(str(p) for p in applies_to["host_patterns"])
-        if not patterns:
+        schemes: set[str] = set()
+        if "scheme" in applies_to:
+            schemes.add(str(applies_to["scheme"]).lower())
+        if "schemes" in applies_to:
+            schemes.update(str(s).lower() for s in applies_to["schemes"])
+        if not patterns and not schemes:
             continue
         include_subdomains = bool(applies_to.get("include_subdomains", False))
         for uri in uris:
             if not uri:
                 continue
-            for pattern in patterns:
-                if urlcanon.same_domain(uri, pattern, include_subdomains=include_subdomains):
-                    matched.setdefault(id_, schema)
-                    break
-            if id_ in matched:
+            if schemes and _uri_scheme(uri) in schemes:
+                matched.setdefault(id_, schema)
+                break
+            if any(
+                urlcanon.same_domain(uri, p, include_subdomains=include_subdomains)
+                for p in patterns
+            ):
+                matched.setdefault(id_, schema)
                 break
     return list(matched.items())
+
+
+def _uri_scheme(uri: str) -> str:
+    """The lowercased URI scheme (`imessage` from `imessage://chat/…`), or '' if none."""
+    from urllib.parse import urlsplit
+
+    try:
+        return urlsplit(uri.strip()).scheme.lower()
+    except Exception:
+        return ""
 
 
 def origin_ids_for_uris(corpus_root: Path, uris: list[str]) -> list[str]:

@@ -126,6 +126,29 @@ def test_derived_classifications_view(tmp_path):
     ]
 
 
+def test_prune_file_staging_origin_uris():
+    """A declared source URL (capture-url / canonical alias) supersedes a `file://` staging
+    path; a lone `file://` origin (genuine local source) is left untouched."""
+    # file:// staging path + a folded-in synthetic origin → file:// dropped.
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64})
+    records.append_origin_block(
+        post, uri="file:///tmp/capture/chat.html", snapshot="2026-06-29T00:00:00Z"
+    )
+    records.add_origin_uri_alias(post, "imessage://chat/+1403,+1587/2025-12")
+    assert records.prune_file_staging_origin_uris(post) is True
+    assert post.metadata["_origins"][-1]["fields"]["uri"] == "imessage://chat/+1403,+1587/2025-12"
+
+    # A lone file:// origin (no declared alias) is preserved — nothing to supersede it.
+    lone = frontmatter.Post("")
+    lone.metadata.update({"id": "b" * 64})
+    records.append_origin_block(
+        lone, uri="file:///home/me/scan.pdf", snapshot="2026-06-29T00:00:00Z"
+    )
+    assert records.prune_file_staging_origin_uris(lone) is False
+    assert lone.metadata["_origins"][-1]["fields"]["uri"] == "file:///home/me/scan.pdf"
+
+
 def test_segments_module_does_not_recognize_embed_openers():
     """Reconciliation #1: embeds belong to records.py, not segments.py."""
     body = "<!--embed image/png\naddress: page=1\ntransport: blake3:abc\n-->\n"
