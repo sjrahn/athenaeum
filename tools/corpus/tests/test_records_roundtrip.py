@@ -126,27 +126,81 @@ def test_derived_classifications_view(tmp_path):
     ]
 
 
-def test_prune_file_staging_origin_uris():
-    """A declared source URL (capture-url / canonical alias) supersedes a `file://` staging
-    path; a lone `file://` origin (genuine local source) is left untouched."""
-    # file:// staging path + a folded-in synthetic origin → file:// dropped.
+def test_append_origin_block_uri_optional_for_local_file():
+    """A dropped-in local file records a uri-LESS origin carrying `filename`/`source_modified`
+    instead of a `file://` staging path (spec §7.2). A later folded-in retrieval uri (the
+    iMessage `imessage://` injection) lands on the same block beside the file metadata."""
     post = frontmatter.Post("")
     post.metadata.update({"id": "a" * 64})
     records.append_origin_block(
-        post, uri="file:///tmp/capture/chat.html", snapshot="2026-06-29T00:00:00Z"
+        post,
+        uri=None,
+        snapshot="2026-06-29T00:00:00Z",
+        fields={"filename": "chat.html", "source_modified": "2025-12-31T10:00:00Z"},
     )
-    records.add_origin_uri_alias(post, "imessage://chat/+1403,+1587/2025-12")
-    assert records.prune_file_staging_origin_uris(post) is True
-    assert post.metadata["_origins"][-1]["fields"]["uri"] == "imessage://chat/+1403,+1587/2025-12"
+    fields = post.metadata["_origins"][-1]["fields"]
+    assert "uri" not in fields  # uri omitted entirely, not empty-string
+    assert fields["filename"] == "chat.html"
+    assert fields["source_modified"] == "2025-12-31T10:00:00Z"
 
-    # A lone file:// origin (no declared alias) is preserved — nothing to supersede it.
-    lone = frontmatter.Post("")
-    lone.metadata.update({"id": "b" * 64})
-    records.append_origin_block(
-        lone, uri="file:///home/me/scan.pdf", snapshot="2026-06-29T00:00:00Z"
+    # The drafter folds a synthetic retrieval origin onto the same (uri-less) block.
+    records.add_origin_uri_alias(post, "imessage://chat/+1403,+1587/2025-12")
+    fields = post.metadata["_origins"][-1]["fields"]
+    assert fields["uri"] == "imessage://chat/+1403,+1587/2025-12"
+    assert fields["filename"] == "chat.html"  # file metadata survives the fold
+
+
+def test_derive_capture_origin_local_file_is_uri_less(tmp_path):
+    """A dropped file with no capture sidecar yields a uri-less origin carrying the basename
+    and the file mtime — not a `file://` staging path dead on arrival. A sidecar `source_url`
+    yields a retrieval origin (uri, no local fields)."""
+    from corpus._cli.ingest import _derive_capture_origin
+
+    src = tmp_path / "scan0001.pdf"
+    src.write_bytes(b"%PDF-1.4\n")
+
+    uri, snapshot, fields = _derive_capture_origin(src, {})
+    assert uri is None
+    assert fields["filename"] == "scan0001.pdf"
+    assert fields["source_modified"].endswith("Z")  # ISO-8601 UTC mtime
+    assert snapshot  # ingest observation time
+
+    uri2, _snap2, fields2 = _derive_capture_origin(
+        src, {"source_url": "https://example.com/x", "fetched_at": "2026-06-29T00:00:00Z"}
     )
-    assert records.prune_file_staging_origin_uris(lone) is False
-    assert lone.metadata["_origins"][-1]["fields"]["uri"] == "file:///home/me/scan.pdf"
+    assert uri2 == "https://example.com/x"
+    assert fields2 == {}
+
+
+def test_local_origin_dedups_by_filename():
+    """Re-encountering the same bytes under the SAME filename appends no duplicate local
+    origin (dedup by filename — even when the mtime differs); a DIFFERENT filename is a
+    distinct local source and gets its own origin."""
+    from corpus._cli.ingest import _append_origin_if_new
+
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64})
+    records.append_origin_block(
+        post,
+        uri=None,
+        snapshot="2026-06-29T00:00:00Z",
+        fields={"filename": "scan.pdf", "source_modified": "2025-11-03T14:22:09Z"},
+    )
+    # Same filename, different mtime → skipped (filename is the key).
+    assert (
+        _append_origin_if_new(
+            post,
+            None,
+            "2026-06-30T00:00:00Z",
+            {"filename": "scan.pdf", "source_modified": "2099-01-01T00:00:00Z"},
+        )
+        is False
+    )
+    assert len(post.metadata["_origins"]) == 1
+    # Different filename → a second local origin.
+    added = _append_origin_if_new(post, None, "2026-06-30T00:00:00Z", {"filename": "copy.pdf"})
+    assert added is True
+    assert len(post.metadata["_origins"]) == 2
 
 
 def test_segments_module_does_not_recognize_embed_openers():

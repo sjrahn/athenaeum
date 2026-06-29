@@ -846,7 +846,7 @@ def set_artifact_block(
 def append_origin_block(
     post: frontmatter.Post,
     *,
-    uri: str | list[str],
+    uri: str | list[str] | None = None,
     snapshot: str,
     schema_id: str | None = None,
     subtype: str | None = None,
@@ -854,11 +854,17 @@ def append_origin_block(
 ) -> None:
     """Append a new `<!--origin-->` block to the record.
 
-    `uri` may be a string or list[string]. `snapshot` is ISO-8601. `schema_id` and
-    `subtype` qualify the block opener (None → bare). `fields` carries any additional
-    schema-declared extended fields beyond the universal uri:/snapshot:.
+    `uri` may be a string, list[string], or None. A *retrieval* origin carries a uri; a
+    dropped-in *local-file* origin omits it — the staging path the bytes sat at is unlinked
+    at ingest, so there is nothing to re-fetch — and carries `filename`/`source_modified`
+    in `fields` instead (spec §7.2). `snapshot` is ISO-8601. `schema_id` and `subtype`
+    qualify the block opener (None → bare). `fields` carries any additional schema-declared
+    extended fields beyond the universal uri:/snapshot:.
     """
-    block_fields: dict[str, Any] = {"uri": uri, "snapshot": snapshot}
+    block_fields: dict[str, Any] = {}
+    if uri:
+        block_fields["uri"] = uri
+    block_fields["snapshot"] = snapshot
     if fields:
         block_fields.update(fields)
     origins = post.metadata.setdefault("_origins", [])
@@ -918,29 +924,6 @@ def add_origin_uri_alias(
         target["uri"] = [str(uri).strip(), alias]
     else:
         target["uri"] = alias
-    return True
-
-
-def prune_file_staging_origin_uris(post: frontmatter.Post) -> bool:
-    """On the most-recent origin block, drop `file://` staging URIs when a non-`file://`
-    URI is also present. Returns True when one was removed.
-
-    A `file://` origin uri is the local path the bytes sat at during ingest (the corpus
-    moves them into `artifacts/` and unlinks the staging file), not a retrieval origin. So
-    when a drafter folds in a declared source URL — a `<link rel=canonical>` or a
-    capture-injected `corpus-capture-url` (spec §7.2) — that real origin supersedes the
-    staging path. Guarded on a survivor: a record whose ONLY origin is `file://` (a genuine
-    local-file source with no declared web/synthetic origin) keeps it untouched."""
-    origins = post.metadata.get("_origins") or []
-    if not origins:
-        return False
-    target = origins[-1].get("fields") or {}
-    uri = target.get("uri")
-    uris = [str(u).strip() for u in (uri if isinstance(uri, list) else [uri]) if u]
-    non_file = [u for u in uris if not u.lower().startswith("file://")]
-    if not non_file or len(non_file) == len(uris):
-        return False
-    target["uri"] = non_file[0] if len(non_file) == 1 else non_file
     return True
 
 

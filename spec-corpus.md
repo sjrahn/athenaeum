@@ -203,7 +203,7 @@ Contributes one entry — `mime/<mime-type>` — to the derived classifications 
 
 ##### 4.3.1.2 The origin block
 
-One or more per record. Each block describes one origin (one source of retrieval). The required body fields are `uri:` (string or list-of-strings — a canonical URL plus its shortlinks/redirects collapse to one block whose `uri:` is a list) and `snapshot:` (ISO-8601 timestamp of when this origin was observed). Multiple origin blocks describe genuinely separate sources. A capture with no retrieval URL (a local file) still records an origin, using a `file://` or filesystem-path `uri:`.
+One or more per record. Each block describes one origin (one source of retrieval). `snapshot:` (ISO-8601 timestamp of when this origin was observed) is always required. A *retrieval* origin also carries `uri:` (string or list-of-strings — a canonical URL plus its shortlinks/redirects collapse to one block whose `uri:` is a list). Multiple origin blocks describe genuinely separate sources. A capture with **no retrieval URL** (a dropped-in local file) records a uri-less origin: there is no retrievable source — the staging path is unlinked at ingest — so instead of a `file://` path that dies on arrival, the block carries the durable `filename` (basename) and `source_modified` (the file's mtime); see §7.2.
 
 ```
 <!--origin <id>
@@ -572,7 +572,7 @@ Three URI forms appear within the corpus:
 
 ### 5.2 Re-capture
 
-If the same bytes are encountered again, the record's identity is unchanged. The capture URL may differ across encounters, so origin blocks are append-only: each re-encounter checks the canonicalized capture URL against existing origin blocks' `uri:` entries and either appends to an existing origin's `uri:` list (when the new URL aliases an existing origin via known shortlink/redirect rules) or emits a new origin block (when it's genuinely a separate source).
+If the same bytes are encountered again, the record's identity is unchanged. The capture URL may differ across encounters, so origin blocks are append-only: each re-encounter checks the canonicalized capture URL against existing origin blocks' `uri:` entries and either appends to an existing origin's `uri:` list (when the new URL aliases an existing origin via known shortlink/redirect rules) or emits a new origin block (when it's genuinely a separate source). A re-dropped local file (a uri-less origin) dedups by `filename` instead of a URL — the same bytes under the same name append no duplicate origin, while the same bytes under a *different* name record a distinct local source (its own origin).
 
 If a URL re-fetched later yields different bytes, the new content produces a different hash and therefore a different record.
 
@@ -684,10 +684,11 @@ An `origin` schema declares an overlay for one source of retrieval.
 
 The drafter iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), the drafter promotes that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The promoted opener contributes `origin/<id>[/<subtype>]` to the derived classifications view.
 
-The universal `origin` overlay declares the two fields every origin block carries:
+The universal `origin` overlay declares the fields every origin block carries. `snapshot:` is always present; an origin carries **either** a retrieval `uri:` **or** local-file metadata:
 
-- `uri` — string or list-of-strings; the URI(s) by which the origin was reached (a `file://` or filesystem path for a local capture).
-- `snapshot` — ISO-8601 timestamp of observation.
+- `uri` (optional) — string or list-of-strings; the URI(s) by which the origin was reached. Present for a *retrieval* origin (a web capture, a synthetic-scheme source like `imessage://`). **Omitted** for a dropped-in local file: the staging path the bytes sat at is unlinked at ingest, so a `file://` path would be a reference dead on arrival — there is nothing to re-fetch.
+- `snapshot` — ISO-8601 timestamp of observation (when the corpus saw this origin).
+- `filename` / `source_modified` (local-file origins) — the dropped file's basename and its mtime (ISO-8601, `semantic_type: timestamp`, so it aggregates into the `timeline` view). These carry the durable provenance a `file://` path could not. A local-file origin omits `uri:` and carries these instead; an origin with neither a `uri:` nor local-file metadata is malformed.
 
 **Directory layout — namespaced by URI scheme family.** Origin overlays live under `schema/origin/<scheme-family>/<id>.yaml`, grouped by the URI scheme they are retrieved over so each family can carry its own match semantics. The `web` family (http/https) is keyed by host — `origin/web/<host>.yaml`, matched by `applies_to.host_pattern` — while `otherwise/` is the catch-all for un-namespaced schemes and other families (`urn/`, `file/`, `s3/`) get their own sub-namespace and match predicate as a corpus needs them. The universal `origin/origin.yaml` sits at the namespace root and layers into every overlay. The overlay **id is the bare `<id>`** (e.g. `youtube.com`) regardless of sub-namespace, so the `<!--origin youtube.com-->` opener and the `origin/youtube.com` classification are independent of where the file lives. `corpus init` seeds `origin/origin.yaml` + `origin/web/example.com.yaml`; the flat `origin/<id>.yaml` layout is still read for back-compat.
 

@@ -134,6 +134,32 @@ def test_origin_missing_or_uri_missing(tmp_path):
     assert any(f.rule_id == "origins-empty" for f in _lint(post, root))
 
 
+def test_origin_uri_less_local_file_lints_clean(tmp_path):
+    """A uri-less origin carrying local-file metadata (filename/source_modified) is valid —
+    a dropped-in file has no retrieval uri (spec §7.2)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_origins"] = []
+    records.append_origin_block(
+        post,
+        uri=None,
+        snapshot="2026-06-29T00:00:00Z",
+        fields={"filename": "scan.pdf", "source_modified": "2025-11-03T14:22:09Z"},
+    )
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "origin-without-source" for f in findings)
+    assert not any(f.rule_id == "origin-snapshot-missing" for f in findings)
+
+
+def test_origin_without_uri_or_local_metadata_is_malformed(tmp_path):
+    """An origin with neither a uri nor local-file metadata has no source identity → error."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_origins"] = []
+    records.append_origin_block(post, uri=None, snapshot="2026-06-29T00:00:00Z")
+    assert any(f.rule_id == "origin-without-source" for f in _lint(post, root))
+
+
 def test_embed_rules_read_metadata_zone(tmp_path):
     """Reconciliation #1 — embed format checks run on metadata-zone embeds."""
     root = _make_corpus(tmp_path)

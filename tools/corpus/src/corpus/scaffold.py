@@ -51,13 +51,16 @@ description: |
 extended_fields:
   uri:
     type: string_or_list
-    required: true
+    required: false
     semantic_type: uri
     description: |
       One or more URIs from which the artifact's bytes are retrievable for this
       origin. String when there's one URI; YAML list when canonical + shortlinks +
       post-redirect final URLs collapse to a single logical origin. Aggregated into
-      the `uris` derived view (§9.3).
+      the `uris` derived view (§9.3). Present for a RETRIEVAL origin (web capture,
+      synthetic scheme like imessage://); OMITTED for a dropped-in local file — the
+      staging path is unlinked at ingest, so there is nothing to re-fetch. Such an
+      origin carries `filename`/`source_modified` instead. Spec §7.2.
   snapshot:
     type: string
     required: true
@@ -66,6 +69,22 @@ extended_fields:
       ISO-8601 timestamp of when this origin was observed. For an origin block
       emitted at ingest, this is the capture timestamp; for re-captures, the most
       recent observation. Aggregated into the `timeline` derived view (§9.4).
+  filename:
+    type: string
+    required: false
+    description: |
+      Basename of a dropped-in local-file source (a bare `corpus ingest` with no
+      capture sidecar). The durable identity a `file://` staging path could not
+      provide. Absent for retrieval origins. Spec §7.2.
+  source_modified:
+    type: string
+    required: false
+    semantic_type: timestamp
+    description: |
+      ISO-8601 mtime of a dropped-in local-file source at ingest — typically when
+      the file was authored / scanned / exported. The keeper provenance for a local
+      file (the staging path is ephemeral). Aggregated into the `timeline` derived
+      view (§9.4). Absent for retrieval origins. Spec §7.2.
 """
 
 _README_TEMPLATE = """\

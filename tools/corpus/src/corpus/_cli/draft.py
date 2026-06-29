@@ -291,10 +291,6 @@ def _apply_drafter_result(
     # into the origin block's uri: list, not the artifact block (spec §7.2).
     for alias in result.get("origin_uri_aliases") or []:
         records.add_origin_uri_alias(post, str(alias), corpus_root=corpus_root)
-    # A declared source URL (canonical / capture-injected `corpus-capture-url`) supersedes a
-    # local `file://` staging path — that path is where the bytes sat at ingest, not a
-    # retrieval origin (spec §7.2). No-op when the only origin is `file://`.
-    records.prune_file_staging_origin_uris(post)
 
     # The content zone is built by the drafter on the Build (via `recordbuild.add_blocks`)
     # and emitted by `recordbuild.finish` in `run()` — not here.

@@ -272,15 +272,26 @@ def _rule_origins_empty(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_origin_uri_shape(post, blocks, root) -> Iterator[Finding]:
-    """Each origin block carries a non-empty `uri:` (string or list) and a `snapshot:`."""
+    """Each origin block carries a `snapshot:` and a source identity: either a `uri:`
+    (a retrieval origin) or local-file metadata (`filename`/`source_modified` — a dropped-in
+    file has no retrievable source, spec §7.2). An origin with neither is malformed."""
     for idx, origin in enumerate(_records.iter_origin_blocks(post)):
         fields = origin.get("fields") or {}
         uri = fields.get("uri")
-        if uri is None or (isinstance(uri, list) and not uri) or (isinstance(uri, str) and not uri.strip()):
+        has_uri = not (
+            uri is None
+            or (isinstance(uri, list) and not uri)
+            or (isinstance(uri, str) and not uri.strip())
+        )
+        has_local = bool(fields.get("filename") or fields.get("source_modified"))
+        if not has_uri and not has_local:
             yield Finding(
-                rule_id="origin-uri-missing",
+                rule_id="origin-without-source",
                 severity="error",
-                message=f"origin block #{idx + 1} missing required `uri:`.",
+                message=(
+                    f"origin block #{idx + 1} has neither a `uri:` nor local-file metadata "
+                    f"(`filename`/`source_modified`)."
+                ),
             )
         if not fields.get("snapshot"):
             yield Finding(

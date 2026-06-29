@@ -86,11 +86,11 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     store = get_store(corpus_root)
 
     sidecar = _read_sidecar(src)
-    origin_uri, origin_at = _derive_capture_origin(src, sidecar)
+    origin_uri, origin_at, origin_fields = _derive_capture_origin(src, sidecar)
 
     if record_file.is_file():
         post = records.load(record_file)
-        appended = _append_origin_if_new(post, origin_uri, origin_at)
+        appended = _append_origin_if_new(post, origin_uri, origin_at, origin_fields)
         touches.record_touch(post, touches.script_identifier("ingest"))
         records.dump(post, record_file)
         src.unlink()
@@ -98,7 +98,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         _relocate_info_sidecar(src, record_id)
         print(f"re-encounter: {record_file.relative_to(corpus_root)}")
         if appended:
-            print(f"  +origin: {origin_uri}")
+            print(f"  +origin: {origin_uri or origin_fields.get('filename', '(local file)')}")
         return 0
 
     # Persist bytes via the store, then unlink the staging file.
@@ -126,7 +126,9 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     # from the namespaced candidates (an artifact `*_title`, an origin `ytdlp_title`); see
     # `records.title_for`.
     records.set_artifact_block(post, mime=media_type, fields={})
-    records.append_origin_block(post, uri=origin_uri, snapshot=origin_at)
+    records.append_origin_block(
+        post, uri=origin_uri, snapshot=origin_at, fields=origin_fields or None
+    )
     _emit_sidecar_issues(post, sidecar)
     records.dump(post, record_file)
 
@@ -140,12 +142,28 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     return 0
 
 
-def _append_origin_if_new(post, uri: str, snapshot: str) -> bool:
+def _append_origin_if_new(
+    post, uri: str | None, snapshot: str, fields: dict[str, str] | None = None
+) -> bool:
     from corpus import records
     from corpus import urls as urlcanon
 
-    if not uri or not snapshot:
+    if not snapshot:
         return False
+
+    # Local-file origin (no retrieval uri): dedup by filename — re-dropping the same-named
+    # file's bytes appends no duplicate, while the same bytes under a DIFFERENT name is a
+    # distinct local source (its own origin). Matches any existing origin carrying that
+    # filename, including one that later gained a folded-in retrieval uri.
+    if not uri:
+        fields = fields or {}
+        fname = fields.get("filename")
+        for origin in records.iter_origin_blocks(post):
+            if fname and (origin.get("fields") or {}).get("filename") == fname:
+                return False
+        records.append_origin_block(post, uri=None, snapshot=snapshot, fields=fields or None)
+        return True
+
     try:
         canon_new = urlcanon.normalize(uri)
     except Exception:
@@ -161,7 +179,7 @@ def _append_origin_if_new(post, uri: str, snapshot: str) -> bool:
                 canon_existing = str(c)
             if canon_existing == canon_new:
                 return False
-    records.append_origin_block(post, uri=uri, snapshot=snapshot)
+    records.append_origin_block(post, uri=uri, snapshot=snapshot, fields=fields or None)
     return True
 
 
@@ -210,16 +228,38 @@ def _read_sidecar(src: Path) -> dict:
         return {}
 
 
-def _derive_capture_origin(src: Path, sidecar: dict) -> tuple[str, str]:
+def _derive_capture_origin(src: Path, sidecar: dict) -> tuple[str | None, str, dict[str, str]]:
+    """Origin seed for an ingested artifact.
+
+    A capture sidecar with a `source_url` yields a *retrieval* origin: `(uri, snapshot, {})`.
+    A bare dropped-in file has no retrieval source — the staging path is unlinked moments
+    later, so recording it as a `uri:` would be a reference dead on arrival — so it yields a
+    uri-less *local-file* origin carrying durable metadata instead:
+    `(None, snapshot, {"filename": …, "source_modified": …})` (spec §7.2). `filename` is the
+    basename; `source_modified` is the file's mtime (best-effort, omitted if unreadable)."""
     from corpus import touches
 
     uri = str(sidecar.get("source_url") or "").strip()
-    discovered_at = str(sidecar.get("fetched_at") or "").strip()
-    if not uri:
-        uri = src.resolve().as_uri()
-    if not discovered_at:
-        discovered_at = touches.now_iso()
-    return uri, discovered_at
+    discovered_at = str(sidecar.get("fetched_at") or "").strip() or touches.now_iso()
+    if uri:
+        return uri, discovered_at, {}
+    fields: dict[str, str] = {"filename": src.name}
+    mtime = _source_modified_iso(src)
+    if mtime:
+        fields["source_modified"] = mtime
+    return None, discovered_at, fields
+
+
+def _source_modified_iso(src: Path) -> str | None:
+    """ISO-8601 UTC (seconds) of the file's mtime, or None when unreadable. The durable
+    provenance for a dropped-in file — typically when it was authored / scanned / exported."""
+    from datetime import UTC, datetime
+
+    try:
+        ts = src.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(ts, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _cleanup_sidecar(src: Path) -> None:
