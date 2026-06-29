@@ -85,8 +85,19 @@ def build_facts(corpus_root: Path, post: frontmatter.Post) -> FactBase:
         for key, value in parse_qsl(parts.query, keep_blank_values=True):
             add(f"origin.query.{key}", value)
 
+    seen_origin_ids: set[str] = set()
     for origin_id, _schema in schemas.origin_overlays_for_uris(corpus_root, uris):
         add("origin.id", origin_id)
+        seen_origin_ids.add(origin_id)
+    # A stored block id — producer-declared (`<!--origin imessage-export-->` on a uri-less
+    # local origin, spec §7.2) or drafter-stamped at draft — is the only `origin.id` source the
+    # uri match misses. Without this a uri-less origin can't drive a `classify_when: origin.id`
+    # rule (e.g. conversation/imessage).
+    for origin in records.iter_origin_blocks(post):
+        oid = origin.get("id")
+        if oid and str(oid) not in seen_origin_ids:
+            add("origin.id", str(oid))
+            seen_origin_ids.add(str(oid))
 
     for origin in records.iter_origin_blocks(post):
         for key, value in (origin.get("fields") or {}).items():

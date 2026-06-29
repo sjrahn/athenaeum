@@ -89,6 +89,26 @@ def test_build_facts_fragment_for_spa_route(tmp_path):
     assert facts["origin.fragment"] == ["/vehicle/1/diagram/42"]
 
 
+def test_build_facts_origin_id_from_stored_block_id(tmp_path):
+    """A producer-declared / stored origin id (e.g. a uri-LESS `imessage-export` local origin)
+    contributes the `origin.id` fact — the only id source the uri match misses, so a
+    `classify_when: origin.id == imessage-export` rule can fire on a uri-less origin (§7.2)."""
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id="cc" * 32, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html")
+    records.append_origin_block(
+        post,
+        uri=None,
+        snapshot="2026-06-29T00:00:00Z",
+        schema_id="imessage-export",
+        fields={"filename": "chat.html", "source_modified": "2025-12-31T10:00:00Z"},
+    )
+    facts = cr.build_facts(tmp_path, post)
+    assert facts["origin.id"] == ["imessage-export"]
+    assert "origin.host" not in facts  # no uri → no uri facts, but the id still drives rules
+
+
 # ---------- evaluate: operators ---------- #
 
 

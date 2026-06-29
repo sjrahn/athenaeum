@@ -684,6 +684,8 @@ An `origin` schema declares an overlay for one source of retrieval.
 
 The drafter iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), the drafter promotes that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The promoted opener contributes `origin/<id>[/<subtype>]` to the derived classifications view.
 
+An overlay `id` may also be **producer-declared** rather than `uri:`-matched. A capturer/producer that knows what it ingested stamps the id directly — `<!--origin <id>-->` written at ingest with the overlay's extended fields — which is the only way a **uri-less** origin (a dropped-in local file, e.g. an `imessage-export`) binds an overlay, since there is no `uri:` to match. A stored `id` from either path is equivalent downstream: it contributes `origin/<id>[/<subtype>]` to the derived classifications view, its overlay's `normalization.guidance` surfaces for the normalizer, and it satisfies a `classify_when: origin.id` predicate (§7.4) — the producer-declared id is not re-derived from a `uri:`, so it works with none.
+
 The universal `origin` overlay declares the fields every origin block carries. `snapshot:` is always present; an origin carries **either** a retrieval `uri:` **or** local-file metadata:
 
 - `uri` (optional) — string or list-of-strings; the URI(s) by which the origin was reached. Present for a *retrieval* origin (a web capture, a synthetic-scheme source like `imessage://`). **Omitted** for a dropped-in local file: the staging path the bytes sat at is unlinked at ingest, so a `file://` path would be a reference dead on arrival — there is nothing to re-fetch.
@@ -750,7 +752,7 @@ When a record's membership in a class is decidable from **stable, deterministic 
 |---|---|
 | `mime` | the artifact block's MIME |
 | `origin.uri` / `origin.host` / `origin.path` / `origin.fragment` / `origin.query.<k>` | parts of an origin block's uri(s) — **any-origin** (matches if ≥1 origin uri satisfies) |
-| `origin.id` | id of a matched origin overlay (§7.2) |
+| `origin.id` | id of an origin overlay bound to the record — a `uri:`-matched overlay **or** a producer-declared / stored block id (§7.2); **any-origin** (matches if ≥1 origin block carries the id) |
 | `media.<field>` | normalized alias over the origin block's `ytdlp_<field>` fields (e.g. `media.channel_id`) — insulates rules from yt-dlp key drift |
 
 Each leaf is `{<fact>: {<op>: <value>}}`, exact-by-default: `equals` (scalar equality), `in` (set membership), `glob` (shell-glob, for path/fragment/uri), `matches` (anchored regex — a documented sharp tool), `exists: <bool>`. Combinators `all_of` / `any_of` / `none_of` each take a list; a bare mapping of several `{fact: {op}}` at one level is `all_of` sugar. A **list-valued** fact (any-origin facts, `media.tags`) tests *any element* for `equals`/`in` and *non-empty* for `exists`.
