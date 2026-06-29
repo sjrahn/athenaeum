@@ -70,8 +70,8 @@ def test_cache_path_uses_sharded_layout(tmp_path):
     uh = "f" * 64
     p = fu.cache_path(tmp_path, uh, "png")
     assert p == tmp_path / "cache" / "ff" / f"{uh}.png"
-    sc = fu.cache_sidecar_path(tmp_path, uh)
-    assert sc == tmp_path / "cache" / "ff" / f"{uh}.json"
+    sc = fu.cache_sidecar_path(p)
+    assert sc == tmp_path / "cache" / "ff" / f"{uh}.png.json"
 
 
 def test_get_last_returns_last_value_for_key():

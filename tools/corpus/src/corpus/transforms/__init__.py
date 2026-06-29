@@ -6,14 +6,16 @@ resolver can dispatch and validate the pipeline at each step.
 
 Kinds:
 
-- `"pdf"`   — `pypdfium2.PdfDocument`
-- `"html"`  — `bs4.BeautifulSoup`
-- `"image"` — `PIL.Image.Image`
-- `"video"` — `pathlib.Path` (P5)
-- `"audio"` — `pathlib.Path` (P5)
-- `"text"`  — `str` (P5)
-- `"zip"`   — `pathlib.Path` (the artifact `.zip`)
-- `"bytes"` — `bytes` (a raw member, cached verbatim)
+- `"pdf"`     — `pypdfium2.PdfDocument`
+- `"pdfpage"` — `transforms.pdf.PdfPageRef` (a selected page; renders to image on demand)
+- `"html"`    — `bs4.BeautifulSoup`
+- `"image"`   — `PIL.Image.Image`
+- `"video"`   — `pathlib.Path` (P5)
+- `"audio"`   — `pathlib.Path` (P5)
+- `"text"`    — `str` (P5)
+- `"json"`    — `str` (a pre-serialized JSON document, cached as `.json`)
+- `"zip"`     — `pathlib.Path` (the artifact `.zip`)
+- `"bytes"`   — `bytes` (a raw member, cached verbatim)
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ from typing import Any, TypedDict
 
 class RenderContext(TypedDict, total=False):
     dpi: int
+    # The source artifact on disk. PDF text/probe ops read it via pypdf (the working
+    # value is a pypdfium2 document); the resolver sets it for every resolve.
+    artifact_path: object  # pathlib.Path
     # Audio transforms consume `transcriber` to call out to the configured
     # TranscriptionAdapter. P3 wires the injection seam; the resolver defaults it.
     transcriber: object  # corpus.transcription.TranscriptionAdapter

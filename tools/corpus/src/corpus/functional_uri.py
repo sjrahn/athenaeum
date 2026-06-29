@@ -134,9 +134,11 @@ def cache_path(corpus_root: Path, urihash_value: str, extension: str) -> Path:
     return corpus_root / "cache" / paths.shard(urihash_value) / f"{urihash_value}.{ext}"
 
 
-def cache_sidecar_path(corpus_root: Path, urihash_value: str) -> Path:
-    """Return the cache sidecar (.json) path for a given urihash."""
-    return corpus_root / "cache" / paths.shard(urihash_value) / f"{urihash_value}.json"
+def cache_sidecar_path(cache_path: Path) -> Path:
+    """The sidecar (`.json`) path for a resolved cache file. Named after the full cache
+    filename (`<urihash>.<ext>.json`) so it never collides with a content file whose own
+    extension is `.json` (e.g. the PDF `probe`/`words`/`outline` ops)."""
+    return cache_path.with_name(cache_path.name + ".json")
 
 
 # ---------- ergonomics ---------- #

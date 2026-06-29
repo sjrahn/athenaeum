@@ -153,8 +153,7 @@ def test_drafter_registry_has_pdf_and_images():
 
 def test_pdf_drafter_scanned_emits_page_image_markers(tmp_path, run_drafter):
     root = _make_corpus(tmp_path)
-    # onepager.pdf is a PIL-rendered full-page-image PDF (no born-digital text layer) —
-    # the structural signature of a scanned image-of-document.
+    # onepager.pdf is a PIL-rendered full-page-image PDF (no born-digital text layer).
     rid = _ingest(root, "onepager.pdf", "application/pdf", "pdf")
     binary = LocalArtifactStore(root).local_path(rid, "pdf")
     drafter = draft.get_drafter("application/application_pdf")
@@ -174,9 +173,11 @@ def test_pdf_drafter_scanned_emits_page_image_markers(tmp_path, run_drafter):
     assert all(b.body == "" for b in blocks)
 
 
-def test_pdf_drafter_born_digital_extracts_text(tmp_path, run_drafter):
+def test_pdf_drafter_uniform_image_shape_for_born_digital(tmp_path, run_drafter):
+    """The drafter is now uniform: a born-digital PDF (real vector text, no full-page
+    image) drafts to the SAME body-empty image markers — NO text extraction, NO sections.
+    The normalizer pulls text via the resolver's page=N&text op."""
     root = _make_corpus(tmp_path)
-    # born_text.pdf carries real vector text and no full-page image → born-digital path.
     rid = _ingest(root, "born_text.pdf", "application/pdf", "pdf")
     binary = LocalArtifactStore(root).local_path(rid, "pdf")
     drafter = draft.get_drafter("application/application_pdf")
@@ -184,22 +185,34 @@ def test_pdf_drafter_born_digital_extracts_text(tmp_path, run_drafter):
         drafter, binary, corpus_root=root, record_id=rid, record_metadata={}
     )
     assert result.get("fields", {})["page_count"] == 2
-    # No outline → flat per-page text segments with extracted bodies.
     assert all(isinstance(b, segments.Segment) for b in blocks)
-    assert [b.atom for b in blocks] == ["text", "text"]
+    assert [b.atom for b in blocks] == ["image", "image"]
     assert [b.address for b in blocks] == ["page=1", "page=2"]
-    assert "born-digital" in blocks[0].body
-    assert "Second page" in blocks[1].body
+    assert all(b.body == "" for b in blocks)  # no text extracted at draft
 
 
-def test_pdf_scanned_detection(tmp_path):
-    """The structural detector keys on full-page-image coverage, not vendor strings."""
+def test_pdf_introspect_shape_signal(tmp_path):
+    """Born-digital vs scanned is now an advisory normalize-time signal (pdf_introspect),
+    not a drafter switch. Coverage keys on full-page-image area, not vendor strings."""
+    import pypdfium2 as pdfium
     from pypdf import PdfReader
 
-    from corpus.draft.pdf import _is_scanned_pdf
+    from corpus import pdf_introspect
 
-    assert _is_scanned_pdf(PdfReader(str(_FIXTURES / "onepager.pdf"))) is True
-    assert _is_scanned_pdf(PdfReader(str(_FIXTURES / "born_text.pdf"))) is False
+    for name, scanned in (("onepager.pdf", True), ("born_text.pdf", False)):
+        reader = PdfReader(str(_FIXTURES / name))
+        doc = pdfium.PdfDocument(str(_FIXTURES / name))
+        try:
+            probe = pdf_introspect.probe_document(reader, doc)
+        finally:
+            doc.close()
+        cov = probe["pages"][0]["image_coverage"]
+        if scanned:
+            assert cov >= pdf_introspect.SCANNED_COVERAGE
+            assert probe["pages"][0]["shape_hint"].startswith("scanned")
+        else:
+            assert cov < pdf_introspect.SCANNED_COVERAGE
+            assert probe["pages"][0]["shape_hint"] in ("born-digital", "no-text")
 
 
 def test_image_drafter_emits_metadata_and_positioning_marker(tmp_path, run_drafter):

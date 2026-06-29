@@ -66,8 +66,8 @@ def test_pdf_page_renders_to_cached_png(tmp_path):
     out = resolver.resolve(f"corpus://{rid}?page=1", root)
     assert out.is_file()
     assert out.suffix == ".png"
-    # Sidecar metadata exists.
-    sidecar = out.with_suffix(".json")
+    # Sidecar metadata exists (named after the full cache file: <name>.json).
+    sidecar = resolver.furi.cache_sidecar_path(out)
     assert sidecar.is_file()
     # Cache hit: second call returns the same path with no error.
     out2 = resolver.resolve(f"corpus://{rid}?page=1", root)
@@ -101,6 +101,91 @@ def test_pdf_page_with_bbox_resize_chain(tmp_path):
 
     with Image.open(out) as im:
         assert im.size == (300, 300)
+
+
+# ---- PDF introspection ops (selector + sub-op: text / words / probe / outline) ---- #
+
+
+def test_pdf_page_text_extracts_embedded_layer(tmp_path):
+    """`page=N&text` returns the page's embedded text layer as a cached .txt — NOT an
+    OCR of the raster. born_text.pdf carries real vector text."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "born_text.pdf", mime="application/pdf", ext="pdf")
+    out = resolver.resolve(f"corpus://{rid}?page=1&text", root)
+    assert out.suffix == ".txt"
+    assert "born-digital" in out.read_text("utf-8")
+    out2 = resolver.resolve(f"corpus://{rid}?page=2&text", root)
+    assert "Second page" in out2.read_text("utf-8")
+
+
+def test_pdf_page_words_returns_boxes(tmp_path):
+    """`page=N&words` returns JSON word boxes in [0,1] page fractions, origin top-left."""
+    import json
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "born_text.pdf", mime="application/pdf", ext="pdf")
+    out = resolver.resolve(f"corpus://{rid}?page=1&words", root)
+    assert out.suffix == ".json"
+    data = json.loads(out.read_text("utf-8"))
+    assert data["page"] == 1
+    assert data["word_count"] >= 1
+    assert "born" in " ".join(w["text"] for w in data["words"]).lower()
+    for w in data["words"]:
+        x, y, ww, hh = w["bbox"]
+        assert all(0.0 <= v <= 1.0 for v in (x, y, ww, hh))
+        assert x + ww <= 1.0 + 1e-6 and y + hh <= 1.0 + 1e-6
+
+
+def test_pdf_probe_document_reports_per_page_shape(tmp_path):
+    """`probe` (whole-doc) reports per-page signals + an advisory shape. onepager.pdf is a
+    full-page raster (scanned); born_text.pdf is born-digital with no outline."""
+    import json
+
+    root = _make_corpus(tmp_path)
+    scan = _ingest_fixture(root, "onepager.pdf", mime="application/pdf", ext="pdf")
+    probe = json.loads(resolver.resolve(f"corpus://{scan}?probe", root).read_text("utf-8"))
+    assert probe["page_count"] == 2
+    assert probe["pages"][0]["image_coverage"] >= 0.9
+    assert probe["shape_summary"].startswith("scanned")
+
+    born = _ingest_fixture(root, "born_text.pdf", mime="application/pdf", ext="pdf")
+    probe2 = json.loads(resolver.resolve(f"corpus://{born}?probe", root).read_text("utf-8"))
+    assert probe2["has_outline"] is False
+    assert probe2["pages"][0]["text_char_count"] > 0
+
+
+def test_pdf_page_probe_single_page(tmp_path):
+    import json
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "born_text.pdf", mime="application/pdf", ext="pdf")
+    page = json.loads(resolver.resolve(f"corpus://{rid}?page=1&probe", root).read_text("utf-8"))
+    assert page["page"] == 1
+    assert page["text_char_count"] > 0
+    assert page["shape_hint"] == "born-digital"
+
+
+def test_pdf_outline_resolves_empty_when_absent(tmp_path):
+    """`outline` resolves cleanly to `[]` for a PDF with no bookmarks."""
+    import json
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "born_text.pdf", mime="application/pdf", ext="pdf")
+    out = resolver.resolve(f"corpus://{rid}?outline", root)
+    assert out.suffix == ".json"
+    assert json.loads(out.read_text("utf-8")) == []
+
+
+def test_pdf_render_flag_matches_bare_page(tmp_path):
+    """`page=N&render` is the explicit form of a terminal `page=N` — both -> image."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "onepager.pdf", mime="application/pdf", ext="pdf")
+    from PIL import Image
+
+    out = resolver.resolve(f"corpus://{rid}?page=1&render", root)
+    assert out.suffix == ".png"
+    with Image.open(out) as im:
+        assert im.size == (1700, 2200)
 
 
 def test_html_el_extracts_inline_image(tmp_path):

@@ -605,7 +605,13 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 
 | Param | Input type | Output type | Description |
 |---|---|---|---|
-| `page=<N>` | PDF | image | Render page N (1-indexed) as an image. |
+| `page=<N>` | PDF | image | Select page N (1-indexed). On its own it renders the page as an image; an image op or `bbox=` after it auto-renders first. |
+| `page=<N>&render` | PDF page | image | Render the selected page as an image (the explicit form of a terminal `page=<N>`). |
+| `page=<N>&text` | PDF page | text | The page's embedded text layer, verbatim — not an OCR of the raster; empty when the page carries no text layer. |
+| `page=<N>&words` | PDF page | json | The page's text-layer words, each with a `bbox` (`[0.0, 1.0]` page fractions, origin top-left). |
+| `page=<N>&probe` | PDF page | json | Per-page structural signals: dimensions, rotation, text/image-coverage stats, an invisible-text flag, and an advisory shape hint. |
+| `probe` | PDF | json | Whole-document structural probe: per-page table, `/Info`, outline presence, and a shape summary. |
+| `outline` | PDF | json | The PDF outline / TOC tree (nested `{title, page, children}`). |
 | `time_range=<s>-<e>` | video / audio | media slice | Extract a time range. |
 | `stream_id=<id>` | multi-stream media | stream-isolated | Select a specific stream. |
 | `bbox=<x>,<y>,<w>,<h>` | image / spreadsheet | image / cell-range | Crop a relative region (image: floats in `[0.0, 1.0]`, origin top-left) or narrow a worksheet (spreadsheet: an A1 range, e.g. `bbox=B2:G30`). Polymorphic — see below. |
@@ -621,6 +627,8 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `dpi=<N>` | (render config) | (config) | Rasterization DPI for `page=<N>`. Position-independent. Default 200. |
 
 A parameter applied to an incompatible working type is a hard error.
+
+A PDF `page=<N>` is a **page selector**, not an unconditional render: a per-page op after it (`render`, `text`, `words`, `probe`) reads the *selected page* directly, so `page=<N>&text` returns the page's embedded text layer rather than an OCR of its render. A terminal `page=<N>` (and any image op or `bbox=` after it) renders the page to an image, so an `address: page=<N>` image marker (§4.3.2.2) still resolves to the page bytes. The whole-document ops `probe` and `outline` operate on the PDF itself (no page selected). These introspection ops are how a normalizer determines a PDF's shape and extracts its content — the drafter itself is uniform (§11).
 
 `fit=` presets are **implementation-defined**, not enumerated here: a preset (e.g. `llm`) bounds the result to a consumer's budget — typically a vision model's maximum input dimensions and pixel count — and those limits are model-dependent and drift over time, so freezing them into the spec would rot. The normative contract is only that `fit=` downscales aspect-preserving and never enlarges; the concrete bounds of any named preset live in the resolver implementation.
 
@@ -1005,7 +1013,7 @@ Export is idempotent and untracked. The output layout (filenames, directory stru
 
 Genuinely deferred items for this spec version:
 
-- **Automatic OCR.** A scanned PDF (every page a full-page raster) drafts to per-page body-empty `image` segments — the image-of-document shape (§7.1), the same as a standalone image-of-text — and transcription into `text/ocr` segments (§4.3.2) is a normalizer pass. Detection and representation are in scope and implemented; an *automatic* (non-agent) OCR step is deferred.
+- **Automatic PDF text / OCR extraction.** Every PDF drafts **uniformly** to per-page body-empty `image` segments addressed `page=<N>` — the image-of-document shape (§7.1), sectionless — regardless of whether it is born-digital or scanned. The drafter makes **no** born-digital-vs-scanned determination and extracts **no** text. Deciding a page's shape, pulling its embedded text layer, mapping text to regions, transcribing a scan into `text/ocr` segments (§4.3.2), and outline-driven sectioning are all **normalizer (agent) passes**, supported by the resolver's PDF introspection ops (`page=<N>&text`, `page=<N>&words`, `page=<N>&probe`, `probe`, `outline`; §6.2). What remains deferred is an *automatic* (non-agent) text-or-OCR pass.
 - **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified. (Building it requires reconciling the `<algo>:<hex>` embed `transport` encoding with the bare-hex record `id` — strip the prefix and confirm `algo == blake3` before matching.)
 - **Range-aware navigation** for content the resolver doesn't materialize.
 - **`page=<N>-<M>` ranges** and other open transforms beyond §6.2.

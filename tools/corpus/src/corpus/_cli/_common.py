@@ -54,7 +54,17 @@ TRANSFORM_GRAMMAR = """\
 Transform params — append to a corpus://<hash> URI as `?k=v&k2=v2`; they compose
 left-to-right, each operating on the previous step's output:
 
-  page=N             render PDF page N (1-indexed) -> image
+  PDF — select a page, then ask for a rendering (or probe the whole document):
+  page=N             select page N (1-indexed). A bare page=N renders it -> image
+  page=N&render      render the selected page -> image (explicit form of a bare page=N)
+  page=N&text        the page's embedded text layer -> text  (empty if it's a scan)
+  page=N&words       per-word boxes [{text, bbox:x,y,w,h}] as JSON -> json
+  page=N&probe       per-page probe: dims, rotation, text/image stats, shape hint -> json
+  probe              whole-document probe: per-page table + /Info + outline flag -> json
+  outline            the PDF outline / TOC tree -> json
+  (page=N&bbox=… and the image ops below auto-render the page first.)
+
+  Image:
   bbox=x,y,w,h       crop a region. x,y,w,h are FRACTIONS in [0,1]: a position (x,y)
   crop=x,y,w,h       plus a SIZE (WIDTH,HEIGHT) — NOT corners. x+w and y+h must be <=1.
   mark=x,y,w,h[;...] draw the region(s) on the FULL image (see where a crop lands;

@@ -74,6 +74,7 @@ _INITIAL_KIND_FOR_MIME: dict[str, str] = {
 KIND_TO_EXTENSION: dict[str, str] = {
     "image": "png",
     "text": "txt",
+    "json": "json",
     "audio": "mp3",
     "bytes": "bin",
 }
@@ -81,6 +82,7 @@ KIND_TO_EXTENSION: dict[str, str] = {
 KIND_TO_MIME: dict[str, str] = {
     "image": "image/png",
     "text": "text/plain",
+    "json": "application/json",
     "audio": "audio/mpeg",
     "bytes": "application/octet-stream",
 }
@@ -158,11 +160,16 @@ def resolve(
     duration = _record_duration(artifact_record)
     if duration is not None:
         ctx["video_duration_seconds"] = duration
+    # PDF text/probe ops read the source from disk via pypdf (the working value is a
+    # pypdfium2 document); hand them the artifact path.
+    ctx["artifact_path"] = artifact_binary
 
     # Initialize working value.
     working: Any
+    pdf_doc: pdfium.PdfDocument | None = None
     if initial_kind == "pdf":
-        working = pdfium.PdfDocument(str(artifact_binary))
+        pdf_doc = pdfium.PdfDocument(str(artifact_binary))
+        working = pdf_doc
     elif initial_kind == "html":
         from bs4 import BeautifulSoup
 
@@ -186,18 +193,28 @@ def resolve(
         for key, value in parsed.params:
             if key in _NOOP_PARAMS:
                 continue
-            handler = transforms.lookup(current_kind, key)
+            handler, promote = _resolve_handler(current_kind, key)
             if handler is None:
                 raise ValueError(
                     f"transform {key!r} not applicable to working kind {current_kind!r}"
                 )
+            if promote:
+                # An image-kind op after a `pdfpage` (bbox/mark/fit/rotate/…): the page
+                # must be rendered to an image first.
+                working = _render_pdfpage(working, ctx)
+                current_kind = "image"
             log.debug("apply %s=%r (%s -> %s)", key, value, current_kind, handler.output_kind)
             working = handler.func(working, value, ctx)
             current_kind = handler.output_kind
+        # A terminal `pdfpage` (bare `page=N`, or `page=N&dpi=…`) renders to image, so a
+        # segment's `address: page=N` image marker resolves to the page bytes as before.
+        if current_kind == "pdfpage":
+            working = _render_pdfpage(working, ctx)
+            current_kind = "image"
     finally:
         # pypdfium2's PdfDocument is reference-counted; close explicitly.
-        if isinstance(working, pdfium.PdfDocument):
-            working.close()
+        if pdf_doc is not None:
+            pdf_doc.close()
 
     if current_kind != final_kind:
         raise RuntimeError(
@@ -214,6 +231,30 @@ def resolve(
 # ---------- internals ---------- #
 
 
+def _resolve_handler(current_kind: str, key: str):
+    """Look up the transform handler for `(current_kind, key)`.
+
+    A `pdfpage` auto-promotes to `image` for image-kind ops: when no `(pdfpage, key)`
+    handler exists but `(image, key)` does, return `(image_handler, promote=True)` so the
+    caller renders the page to an image first. Otherwise `(handler, False)` or `(None, False)`.
+    """
+    handler = transforms.lookup(current_kind, key)
+    if handler is not None:
+        return handler, False
+    if current_kind == "pdfpage":
+        image_handler = transforms.lookup("image", key)
+        if image_handler is not None:
+            return image_handler, True
+    return None, False
+
+
+def _render_pdfpage(ref: Any, ctx: transforms.RenderContext) -> Any:
+    """Render a `pdfpage` selector to a PIL Image (auto-promotion + terminal render)."""
+    from .transforms import pdf as pdf_transforms
+
+    return pdf_transforms.render_pdfpage(ref, ctx)
+
+
 def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     """Walk the param chain consulting the registry; return the final kind. No
     transforms invoked. Used to determine the cache extension before the cache
@@ -222,10 +263,13 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     for key, _ in parsed.params:
         if key in _NOOP_PARAMS:
             continue
-        handler = transforms.lookup(current, key)
+        handler, _promote = _resolve_handler(current, key)
         if handler is None:
             raise ValueError(f"transform {key!r} not applicable to working kind {current!r}")
         current = handler.output_kind
+    # A terminal `pdfpage` renders to an image (see resolve()).
+    if current == "pdfpage":
+        current = "image"
     return current
 
 
@@ -235,7 +279,7 @@ def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
         if working.mode == "P":
             working = working.convert("RGBA")
         working.save(cache_p, format="PNG")
-    elif kind == "text":
+    elif kind in ("text", "json"):
         cache_p.write_text(working, encoding="utf-8")
     elif kind == "audio":
         # `working` is a Path to ffmpeg's temp output; move it into the cache.
@@ -284,7 +328,7 @@ def _write_sidecar(
     cache_p: Path,
     kind: str,
 ) -> None:
-    sidecar = furi.cache_sidecar_path(corpus_root, cache_p.stem)
+    sidecar = furi.cache_sidecar_path(cache_p)
     sidecar.write_text(
         json.dumps(
             {
