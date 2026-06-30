@@ -403,4 +403,6 @@ def test_corpus_local_capturer_loaded_and_selected(tmp_path):
     finally:
         # leave the shared REGISTRY / load-guard clean for other tests
         capture.REGISTRY.pop("echo", None)
-        capture._loaded_capturer_roots.discard(str(tmp_path.resolve()))
+        from corpus import local_code
+
+        local_code._loaded.discard((str(tmp_path.resolve()), "capturers"))

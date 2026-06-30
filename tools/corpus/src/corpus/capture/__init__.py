@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
-from .. import hashing, mime, paths, records, touches
+from .. import hashing, local_code, mime, paths, records, touches
 from .. import urls as urlcanon
 
 log = logging.getLogger("corpus.capture")
@@ -264,60 +264,14 @@ def get_capturer(
 
     fn = REGISTRY.get(name)
     if fn is None:
-        _load_corpus_capturers(corpus_root)  # corpus-local code capturers
+        # corpus-local code capturers (`<corpus_root>/capturers/*.py`)
+        local_code.load_corpus_modules(corpus_root, "capturers")
         fn = REGISTRY.get(name)
     if fn is None:
         raise CaptureError(
             f"unknown capturer {name!r} (registered: {sorted(REGISTRY)})"
         )
     return fn, recipe
-
-
-# Corpus roots whose `capturers/` have already been imported this process.
-_loaded_capturer_roots: set[str] = set()
-_capturer_load_seq = 0
-
-
-def _load_corpus_capturers(corpus_root: Path) -> None:
-    """Import a corpus's local `capturers/*.py` so their `@register`-decorated
-    capturers populate `REGISTRY`. Idempotent per `corpus_root`.
-
-    Each file is loaded **by path** (via `importlib.util.spec_from_file_location`,
-    not `sys.path`), so distinct corpora can't collide on a shared package name and
-    test corpora stay isolated. Single-file capturers only — relative imports
-    between corpus-local modules aren't supported.
-
-    **Trust boundary**: this executes Python from `corpus_root`. That code is
-    authored by the corpus owner — which is the entire point of the
-    capturer-replacement tier — but it IS code execution from the corpus directory.
-    """
-    global _capturer_load_seq
-
-    key = str(corpus_root.resolve())
-    if key in _loaded_capturer_roots:
-        return
-    _loaded_capturer_roots.add(key)  # mark before loading so a failure won't retry-loop
-
-    cap_dir = corpus_root / "capturers"
-    if not cap_dir.is_dir():
-        return
-
-    import importlib.util
-
-    seq = _capturer_load_seq
-    _capturer_load_seq += 1
-    for py in sorted(cap_dir.glob("*.py")):
-        if py.stem.startswith("_"):
-            continue
-        modname = f"_corpus_capturers_{seq}_{py.stem}"
-        try:
-            spec = importlib.util.spec_from_file_location(modname, py)
-            if spec is None or spec.loader is None:
-                continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as exc:
-            log.warning("failed to load corpus-local capturer %s: %s", py.name, exc)
 
 
 # ---------- public API ---------- #

@@ -19,7 +19,7 @@ import argparse
 import sys
 from typing import Any
 
-from corpus import content_hash, mime, paths, recordbuild, records, schemas, touches
+from corpus import content_hash, local_code, mime, paths, recordbuild, records, schemas, touches
 from corpus import draft as draft_pkg
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 from corpus.store import ArtifactMissing, get_store
@@ -68,6 +68,11 @@ def derive_record(
     mime_schema_id = schemas.mime_schema_id_for(corpus_root, media_type)
     if not mime_schema_id:
         raise DraftError(f"could not resolve mime schema id for {media_type!r}.")
+    # Import the corpus's own local drafter modules (`<corpus_root>/drafters/*.py`) so they
+    # self-register before any dispatch — a corpus specializes drafting of its own content
+    # (e.g. an origin-keyed HTML sub-drafter) without editing this package. Idempotent.
+    local_code.load_corpus_modules(corpus_root, "drafters")
+
     # Drafter selection: a mime schema MAY name a general draft `strategy` (overlay-driven
     # drafting — e.g. `zip-manifest` for self_contained archives), which decouples drafter
     # choice from the schema id so one general drafter serves many types tuned by config.

@@ -71,6 +71,7 @@ from __future__ import annotations
 import base64
 import io
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +150,17 @@ _ADDRESSABLE_TAGS = (
 _DATA_URI_RE = re.compile(
     r"^data:([a-z0-9+./\-]+);base64,(.+)$", re.DOTALL | re.IGNORECASE
 )
+# PIL format name → MIME, for relabeling an inline image the source declared under a
+# generic/non-image media type (e.g. imessage-exporter's `data:application/octet-stream`
+# carrying a JPEG). The decoded bytes are authoritative; PIL sniffs the real format.
+_PIL_FORMAT_MIME = {
+    "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif",
+    "webp": "image/webp", "bmp": "image/bmp", "tiff": "image/tiff",
+    "heic": "image/heic", "heif": "image/heif", "avif": "image/avif",
+    # MPO — a JPEG container iPhones emit (a primary baseline JPEG + auxiliary frames);
+    # its bytes start with the JPEG magic, so it materializes as a JPEG.
+    "mpo": "image/jpeg",
+}
 # SVG intrinsic-size parsing (PIL can't open SVG natively). Read the ROOT
 # `<svg>` tag ONLY — scanning the whole document for `width=`/`height=` grabs
 # the first inner element's size, a real bug seen on ALLDATA's ~600KB wiring
@@ -249,6 +261,60 @@ _BLOCK_PAGE_SIGNATURES: tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...]
 _DRAFTER_DETECTOR_ID = touches.script_identifier("draft.text/text_html")
 
 
+# ---------- corpus-local HTML sub-drafters (extension tier) ---------- #
+#
+# A corpus can specialize HTML drafting for its OWN content WITHOUT editing this package: a
+# module under `<corpus_root>/drafters/*.py` (loaded by `corpus.local_code` before draft —
+# see `_cli/draft.py`) calls `@register_html_subdrafter("<origin-id>")`, and `draft()` hands
+# off to it when the record's origin matches. The hook is GENERIC — this package knows nothing
+# about any specific corpus's formats (e.g. the Apple Messages drafter lives in the
+# corpus-private repo's `drafters/`, not here).
+#
+# A sub-drafter has the signature
+#     fn(soup: BeautifulSoup, *, text_algos: list[str]) -> (blocks, embeds, issues)
+# returning the content-zone blocks (Section/Segment), the embed dicts, and drafter issues —
+# the same trio the generic path produces. It may reuse this module's public
+# `compute_embed_metadata` and `corpus.transforms.html.is_addressable` so its `el=N`
+# addresses line up with the resolver.
+HtmlSubdrafter = Callable[..., tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]]]]
+_HTML_SUBDRAFTERS: dict[str, HtmlSubdrafter] = {}
+
+
+def register_html_subdrafter(origin_id: str) -> Callable[[HtmlSubdrafter], HtmlSubdrafter]:
+    """Register a corpus-local HTML sub-drafter for records whose origin id is `origin_id`
+    (a producer-declared `corpus-origin-schema`, or a stamped origin-block id). Last
+    registration wins, so a corpus re-loading its module re-registers cleanly."""
+
+    def decorator(fn: HtmlSubdrafter) -> HtmlSubdrafter:
+        _HTML_SUBDRAFTERS[origin_id] = fn
+        return fn
+
+    return decorator
+
+
+def get_html_subdrafter(origin_id: str) -> HtmlSubdrafter | None:
+    """The sub-drafter registered for `origin_id`, or None."""
+    return _HTML_SUBDRAFTERS.get(origin_id)
+
+
+def _html_subdrafter_for(
+    origin_schema: str | None, record_metadata: dict[str, Any] | None
+) -> HtmlSubdrafter | None:
+    """The registered sub-drafter for this record's origin, or None. Candidates are the
+    producer-declared `corpus-origin-schema` (read off the soup) plus every stamped
+    origin-block id on the stub — first match wins."""
+    candidates: list[str] = []
+    if origin_schema:
+        candidates.append(origin_schema)
+    for origin in (record_metadata or {}).get("_origins") or []:
+        if isinstance(origin, dict) and isinstance(origin.get("id"), str):
+            candidates.append(origin["id"])
+    for cid in candidates:
+        if (fn := _HTML_SUBDRAFTERS.get(cid)) is not None:
+            return fn
+    return None
+
+
 @register("text/text_html")
 def draft(
     html_path: Path,
@@ -317,29 +383,38 @@ def draft(
     if issue := _detect_charset_mismatch(raw):
         issues.append(issue)
 
-    cleaned_html, _root_selector, embeds, max_el = _clean_html(
-        soup, record_id=record_id
-    )
-
-    segments: list[Segment]
-    if cleaned_html:
-        # The wrapping cleaned-HTML segment spans every addressable
-        # element in the source artifact (some may have been chrome-
-        # stripped — gaps in the range are expected). The normalizer
-        # later breaks this into precise sub-ranges addressed by
-        # `el=N` or `el=N-M` per the html schema's structural-recovery
-        # guidance.
-        wrapper_address = f"el=1-{max_el}" if max_el >= 1 else "el=1"
-        segments = [
-            Segment(
-                atom="text",
-                address=wrapper_address,
-                perceptual=text_fingerprints(cleaned_html, text_algos),
-                body=cleaned_html,
-            )
-        ]
+    blocks: list[Any]
+    subdrafter = _html_subdrafter_for(origin_schema, record_metadata)
+    if subdrafter is not None:
+        # A corpus-local HTML sub-drafter claims this record's origin: hand off the whole
+        # content zone to it (e.g. a per-message chat transcript) instead of the single
+        # wrapping segment the generic path leaves for the normalizer. It returns the same
+        # (blocks, embeds, issues) trio, built from the same materializer so addresses /
+        # transports still line up with the resolver.
+        blocks, embeds, sub_issues = subdrafter(soup, text_algos=text_algos)
+        issues.extend(sub_issues)
     else:
-        segments = []
+        cleaned_html, _root_selector, embeds, max_el = _clean_html(
+            soup, record_id=record_id
+        )
+        if cleaned_html:
+            # The wrapping cleaned-HTML segment spans every addressable
+            # element in the source artifact (some may have been chrome-
+            # stripped — gaps in the range are expected). The normalizer
+            # later breaks this into precise sub-ranges addressed by
+            # `el=N` or `el=N-M` per the html schema's structural-recovery
+            # guidance.
+            wrapper_address = f"el=1-{max_el}" if max_el >= 1 else "el=1"
+            blocks = [
+                Segment(
+                    atom="text",
+                    address=wrapper_address,
+                    perceptual=text_fingerprints(cleaned_html, text_algos),
+                    body=cleaned_html,
+                )
+            ]
+        else:
+            blocks = []
 
     # Canonical hash per the mime schema's `canonical_strategy.algo`
     # (`blake3-canonical-html` — drop <script>/<style>/<svg>, collapse
@@ -351,7 +426,7 @@ def draft(
         algo.split("-", 1)[0], content_hash.compute(algo, html_path)
     )
 
-    recordbuild.add_blocks(build, segments)
+    recordbuild.add_blocks(build, blocks)
     result: DrafterResult = {
         "fields": fields,
         "embeds": embeds,
@@ -406,7 +481,7 @@ def _clean_html(
             if not isinstance(tag, Tag):
                 continue
             el_index_by_id[id(tag)] = n
-            meta = _compute_embed_metadata(tag)
+            meta = compute_embed_metadata(tag)
             if meta is None:
                 continue
             byte_hash = meta["byte_hash"]
@@ -521,7 +596,7 @@ def _materialize_embeds(
     return out
 
 
-def _compute_embed_metadata(tag: Tag) -> dict[str, Any] | None:
+def compute_embed_metadata(tag: Tag) -> dict[str, Any] | None:
     """Embed descriptor for an inline-media carrier — `{media_type, byte_hash, fields}` —
     or None when the element carries no usable inline bytes. Dispatches by carrier:
 
@@ -591,6 +666,15 @@ def _compute_img_embed_metadata(img: Tag) -> dict[str, Any] | None:
     try:
         with Image.open(io.BytesIO(raw)) as im:
             width, height = im.size
+            # The source may inline an image under a generic `data:application/octet-stream`
+            # (or otherwise non-image) media type — imessage-exporter does this. The bytes
+            # are a real image, so trust PIL's sniffed format: the embed gets typed
+            # correctly AND the resolver's <img> path (which sniffs the same way) can
+            # materialize it. Only override a generic/non-image label, never a specific
+            # `image/*` one.
+            sniffed = _PIL_FORMAT_MIME.get((im.format or "").lower())
+            if sniffed and not media_type.startswith("image/"):
+                media_type = sniffed
     except Exception:
         if media_type == "image/svg+xml":
             width, height = _svg_dimensions(raw)

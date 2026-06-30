@@ -889,3 +889,98 @@ def test_origin_meta_overlay_parses_producer_declared_metas():
     assert fields["phone_number"] == ["+14035551234", "+15875559876"]  # repeated → list
     # No corpus-origin metas → empty.
     assert _origin_meta_overlay(BeautifulSoup("<html></html>", "html.parser")) == (None, {})
+
+
+def test_html_subdrafter_hook_dispatches(tmp_path, run_drafter):
+    """A registered HTML sub-drafter claims a record by origin id: `draft()` hands the whole
+    content zone to it instead of the generic single-wrapper path. This hook is GENERIC and
+    format-agnostic — a corpus's own specialized drafter (e.g. Apple Messages) lives in that
+    corpus's `drafters/`, never in this package."""
+    from corpus.draft import html as draft_html
+
+    calls: list[bool] = []
+
+    @draft_html.register_html_subdrafter("test-export")
+    def _sub(soup, *, text_algos):  # noqa: ARG001
+        calls.append(True)
+        block = segments.Section(
+            address="el=1", entry="claimed",
+            segments=[segments.Segment(atom="text", address="el=1", body="hi")],
+        )
+        embed = {"media_type": "image/png", "address": "el=2",
+                 "transport": "blake3:" + "0" * 64, "fields": {}}
+        return [block], [embed], []
+
+    try:
+        p = tmp_path / "x.html"
+        p.write_text("<html><body><p>generic body</p></body></html>", encoding="utf-8")
+        drafter = draft.get_drafter("text/text_html")
+
+        # Routes when a stamped origin-block id matches the registration.
+        result, blocks = run_drafter(
+            drafter, p, record_id="0" * 64, record_metadata={"_origins": [{"id": "test-export"}]}
+        )
+        assert calls == [True]
+        assert len(blocks) == 1 and isinstance(blocks[0], segments.Section)
+        assert blocks[0].entry == "claimed"
+        assert result["embeds"][0]["media_type"] == "image/png"
+
+        # No matching origin → the generic single wrapping text segment, sub-drafter untouched.
+        _, generic = run_drafter(
+            drafter, p, record_id="0" * 64, record_metadata={"_origins": []}
+        )
+        assert calls == [True]  # not called again
+        assert len(generic) == 1 and isinstance(generic[0], segments.Segment)
+        assert generic[0].overlay is None
+    finally:
+        draft_html._HTML_SUBDRAFTERS.pop("test-export", None)
+
+
+def test_local_code_loads_corpus_drafters(tmp_path):
+    """`load_corpus_modules` imports `<root>/drafters/*.py` by path so they self-register —
+    including a module that defines a `@dataclass` (which resolves its module via
+    `sys.modules`, so the loader must register the module there before exec). Idempotent."""
+    from corpus import local_code
+    from corpus.draft import html as draft_html
+
+    d = tmp_path / "drafters"
+    d.mkdir()
+    (d / "mine.py").write_text(
+        "from dataclasses import dataclass\n"
+        "from corpus.draft.html import register_html_subdrafter\n"
+        "@dataclass\n"
+        "class _M:\n"
+        "    x: int = 0\n"
+        "@register_html_subdrafter('mine-export')\n"
+        "def draft_mine(soup, *, text_algos):\n"
+        "    return [], [], []\n",
+        encoding="utf-8",
+    )
+    try:
+        assert draft_html.get_html_subdrafter("mine-export") is None
+        local_code.load_corpus_modules(tmp_path, "drafters")
+        fn = draft_html.get_html_subdrafter("mine-export")
+        assert fn is not None and fn.__name__ == "draft_mine"
+        # A `_`-prefixed file is skipped; absent dir / None root are no-ops.
+        local_code.load_corpus_modules(tmp_path, "drafters")  # idempotent — no re-import/error
+        local_code.load_corpus_modules(None, "drafters")
+    finally:
+        draft_html._HTML_SUBDRAFTERS.pop("mine-export", None)
+        local_code._loaded.discard((str(tmp_path.resolve()), "drafters"))
+
+
+def test_html_resolver_materializes_octet_stream_labeled_image():
+    """The `<img>` resolver path sniffs an image inlined under a generic
+    `data:application/octet-stream` label (imessage-exporter does this) rather than
+    rejecting it — the bytes are decoded and PIL determines the real format."""
+    import io
+
+    from bs4 import BeautifulSoup
+
+    buf = io.BytesIO()
+    Image.new("RGB", (5, 4), (10, 20, 30)).save(buf, "PNG")
+    uri = "data:application/octet-stream;base64," + base64.b64encode(buf.getvalue()).decode()
+    img = BeautifulSoup(f'<img src="{uri}">', "html.parser").find("img")
+
+    out = transforms_html._img_tag_to_pil(img, "test")
+    assert out.size == (5, 4)

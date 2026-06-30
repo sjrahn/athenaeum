@@ -290,12 +290,20 @@ def _img_tag_to_pil(tag: Tag, selector_for_error: str) -> Image.Image:
             "the html resolver only handles inline base64 data URIs"
         )
     match = _DATA_URI_RE.match(src)
-    if not match:
-        raise ValueError(
-            f"<img src=> has an unrecognized data URI shape ({src[:80]!r}…); "
-            "expected `data:image/<format>;base64,<bytes>`"
-        )
-    raw = base64.b64decode(match.group(2))
+    if match:
+        raw = base64.b64decode(match.group(2))
+    else:
+        # The source may inline an image under a generic / non-image media type —
+        # imessage-exporter labels some inline JPEGs `data:application/octet-stream`. Decode
+        # any base64 data URI and let PIL sniff the real format from the bytes below; if
+        # they are not a decodable image, `Image.open` raises and we report that.
+        parsed = parse_data_uri(src)
+        if parsed is None:
+            raise ValueError(
+                f"<img src=> has an unrecognized data URI shape ({src[:80]!r}…); "
+                "expected `data:<media-type>;base64,<bytes>`"
+            )
+        raw = parsed[1]
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
