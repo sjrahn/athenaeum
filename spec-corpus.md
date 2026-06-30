@@ -827,6 +827,8 @@ Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-de
 
 An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest.
 
+A corpus may also specialize the **draft** of its own content with corpus-local drafter code — `<corpus_root>/drafters/*.py`, loaded mechanically before drafting (the draft-stage analogue of the corpus-local capturer in §7.2). Such a drafter claims a record by its origin id (a producer-declared or stamped overlay binding, §7.2) and builds the content zone in place of the generic body draft; the package ships none and knows nothing of any specific format. Implementation-defined — see impl-corpus §3.1.
+
 ### 8.2 The deterministic / LLM boundary
 
 | Operation | Type | Why |

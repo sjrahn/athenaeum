@@ -66,5 +66,6 @@ def load_corpus_modules(corpus_root: Path | None, subdir: str) -> None:
             except Exception:
                 sys.modules.pop(modname, None)
                 raise
-        except Exception as exc:  # noqa: BLE001 — one bad corpus module mustn't sink the rest
+        except Exception as exc:
+            # One bad corpus module mustn't sink the rest — log and move on.
             log.warning("failed to load corpus-local %s module %s: %s", subdir, py.name, exc)
