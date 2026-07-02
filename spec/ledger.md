@@ -1,0 +1,373 @@
+---
+spec_id: ATH-LEDGER
+title: "Ledger Specification"
+version: 1.0
+status: current
+license: "CC BY-SA 4.0"
+date_created: 2026-07-02
+date_modified: 2026-07-02
+---
+
+# Ledger Specification
+
+## 1. Overview
+
+### 1.1 What this is
+
+The **ledger** is the Athenaeum system's knowledge layer (`spec/athenaeum.md`): the tenant-partitioned fact substrate between the corpora (faithful bytes, `spec/corpus.md`) and the codices (targeted prose compilations, `spec/codex.md`). It holds **facts** — typed claims in which **every claim carries evidence**: `corpus://` URIs into captured bytes, span-precise where verified — and **interpretations**, the pre-assertion workspace beside them.
+
+The name is meant literally: a ledger is claims with evidence and an audit trail. Entries are *posted* (claims — asserted, each with computable trust) or held in *suspense* (interpretations — not yet assertable). The boundary between the two is physical (§1.3), which is what lets every consumer of the fact graph trust that everything in it is asserted knowledge.
+
+### 1.2 The hubs
+
+The ledger is partitioned by tenancy exactly as the corpus layer is — one hub per tenant boundary, each an independent repository:
+
+```
+corpus  ────interprets────▶  ledger            (public: self-contained)
+corpus-private ─interprets─▶ ledger-private    (private: may extend public entities)
+```
+
+- **Placement rule:** a fact lives in the hub matching the **most private evidence it cites**. A claim citing any `corpus-private` record belongs in `ledger-private`, whatever else it cites.
+- **The extends rule:** the same entity id in both hubs is **the same entity by definition** — the private hub's file extends the public identity with additional (private) claims. Validation confirms `type`/`name` agreement. A genuinely different private entity MUST NOT reuse a public id.
+- **Direction:** the private hub sees the public hub (references its entity ids, cites the public corpus); the public hub is self-contained and never references anything private. The same asymmetry as the corpora.
+- One knowledge substrate, many consumers: codices target the ledger; expert agents read it directly. Knowledge is authored once, here — never re-authored per presentation.
+
+### 1.3 The assertion boundary
+
+**Claims are asserted; interpretations are not.** The claim `status` ladder (§5.3) is a state machine over *asserted* knowledge — a claim is born at the lowest rung its evidence supports and is promoted **in place** as evidence accrues. Uncertainty about an asserted claim is ladder position, not a separate file.
+
+An interpretation exists when the epistemic content **isn't claim-shaped** (§7): an identity guess resolving to a graph merge, a working assessment with no settled predicate, negative/corrective knowledge whose job is to tombstone errors, or an ingestion need. Interpretations sit physically beside the facts so that no consumer of `facts/` ever has to filter speculation out of knowledge.
+
+### 1.4 Terminology
+
+| Term | Definition |
+|---|---|
+| **Hub** | One ledger repository (`ledger`, `ledger-private`); the tenancy partition unit. |
+| **Fact file** | JSON under `facts/{type}/{slug}.json` — an entity or an edge, holding claims. |
+| **Claim** | One atomic, typed, **asserted** statement with evidence (§5). |
+| **Evidence** | A `corpus://` citation grounding a claim, graded by `kind` (§6). |
+| **Interpretation** | A structured **pre-assertion** item: hypothesis, assessment, correction, or need (§7). |
+| **Authentication bar** | The evidence threshold for `confirmed` (§5.4). |
+| **`ledger://` URI** | The external reference form for ledger content: `ledger://{hub}/{id}` or `…/{id}:{claim}` (§10). |
+
+## 2. The hub manifest — `ledger.yaml`
+
+Each hub carries a `ledger.yaml` read by the tooling:
+
+```yaml
+name: ledger-private            # == the repo/directory name
+description: >-
+  …
+corpus: corpus-private          # the corpus this hub interprets — cited bare: corpus://{hash}
+extends: ledger                 # public hub this one may extend (private hubs only)
+```
+
+- `corpus` names a manifest-registered corpus (`spec/athenaeum.md` §2.3); its records are cited with **bare** URIs. Evidence into the *other* tenancy's corpus uses the **qualified** form `corpus://{corpus}/{hash}` and is legal only in the direction tenancy allows (private cites public; never the reverse). Evidence into any undeclared corpus is a validation error.
+- `extends` (private hubs) names the public hub whose entity ids may be extended (§1.2).
+
+## 3. Layout
+
+```
+ledger[-private]/
+├── ledger.yaml
+├── CLAUDE.md                  # the hub's operating guide
+├── facts/
+│   ├── SCHEMA.md              # the fact model + hub conventions
+│   ├── VOCAB.md               # GENERATED — vocabulary registry (§8)
+│   └── {type}/{slug}.json
+├── interpretations/
+│   ├── SCHEMA.md
+│   └── {slug}.json
+├── open-questions.md          # work-list: generated block + curated items (§7.4)
+├── coverage.md                # GENERATED corpus→ledger coverage ledger (§9)
+└── docs/                      # process docs — never world knowledge
+```
+
+There is no `notes/` in a hub: prose lives in codices. World knowledge lives only in `facts/` + `interpretations/`; the boundary is strict.
+
+## 4. Facts
+
+### 4.1 Identity
+
+Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(-[a-z0-9]+)*`): human-meaningful, wikilink-friendly, stable. The id is the filename stem; a fact's `type` is its parent directory name; both equalities are validated. Ids MUST be unique across a hub's facts *and* interpretations together, and a private hub MUST NOT mint an id that collides with a public id unless it is extending that entity (§1.2).
+
+### 4.2 Entity files — `facts/{type}/{slug}.json`
+
+A durable noun and the claims intrinsic to it:
+
+```jsonc
+{
+  "id": "lateral-raise",           // slug; == filename stem; wikilink target
+  "type": "exercise",              // == directory name; types minted as evidence needs them
+  "name": "Lateral raise",
+  "aliases": ["side raise"],       // optional
+  "meta": "…",                     // optional authoring commentary — never a claim, needs no evidence
+  "claims": [ /* Claim objects, §5 */ ]
+}
+```
+
+A bare `{id, type, name}` **stub is valid** — every fact file is independently valid; there is no "incomplete" state. A stub is a signal: it marks the capture frontier and surfaces in the generated work-list. Any entity referenced as a claim `object` or an interpretation's `about` MUST have at least a stub — no dangling references. (A private-hub extension of a public entity repeats only `{id, type, name}` + its private claims.)
+
+### 4.3 Edge files — `facts/{edge-type}/{slug}.json`
+
+A claim cluster not owned by a single entity — an event, an episode, a comparison, a dated series:
+
+```jsonc
+{
+  "id": "…", "type": "…",
+  "subject": "entity-id",          // the primary entity, for edge types that have one
+  "participants": ["a", "b"],      // and/or the entities the edge spans
+  "title": "…",
+  "period": "2026-09",
+  "meta": "…",
+  "claims": [ /* Claim objects */ ]
+}
+```
+
+A file is an edge when it carries `subject` and/or `participants`; otherwise it is an entity. Long time-series and episodic clusters belong in edges.
+
+## 5. Claims
+
+### 5.1 The Claim object
+
+```jsonc
+{
+  "id": "lateral-raise:targets",   // "{file-id}:{short}" — unique within the hub
+  "predicate": "targets",          // registered in VOCAB.md (§8)
+  "value": "…",                    // literal (string/number/bool/array/object) — ATTRIBUTE claims
+  "object": "lateral-deltoid",     // an entity id — RELATIONAL claims
+  "qualifiers": { "attribution": "…" },
+  "period": "2019/..",             // when the fact HOLDS (§5.2)
+  "status": "provisional",         // the ladder (§5.3)
+  "asof": "2026-06-22",            // when the fact was OBSERVED
+  "reasoning": "…",                // the argument, for anything not stated verbatim by the source
+  "evidence": [ /* Evidence objects, §6 — ≥1 unless the file is a pure stub */ ]
+}
+```
+
+Field semantics:
+
+- **`value` + `object` together is legitimate**: on a relational claim, `object` is the machine edge and `value` a human gloss. One claim's worth of content per claim — if a `value` hides several independently-checkable assertions of different confidence, split it.
+- **Structured values over prose blobs**: list-shaped knowledge (form cues, ingredients, steps, spec tables) takes array/object values, one checkable element each.
+- **`reasoning`** carries inference rationale — never smuggled into an evidence `note`.
+- Wikilinks (`[[slug]]`) in string values are permitted and validated against fact ids (own hub, plus the extended public hub from a private hub).
+- Never store a relation *and* its inverse; symmetric relations are stored once. Which side stores a directed relation is a hub convention, documented per type.
+- **Attribute the voice.** Advice, technique, opinion, analysis are claims about what someone asserts: `status: reported`, the speaker in `attribution`. Two voices stay two claims.
+
+### 5.2 Time
+
+- **`period`** — when the fact is/was true of the world: ISO date, month, or year; range `a/b`; open range `a/..`; `~` prefix for circa.
+- **`asof`** — when the supporting observation was made (a record's origin `snapshot` date is the natural choice).
+- Time never rides in ad-hoc qualifiers. Time-varying measurements are datapoints: keep `asof`, put the axis in a qualifier, land long series in an edge.
+
+### 5.3 The epistemic ladder — `status`
+
+The state machine over asserted claims. Epistemic only — time lives in `period`/`asof`. A claim moves up **in place**; it is never re-filed.
+
+| Status | Meaning |
+|---|---|
+| `confirmed` | Authenticated per the bar (§5.4). |
+| `provisional` | A single non-authoritative source states it directly and plainly. The default birth state; seek corroboration. |
+| `inferred` | Deduced from evidence, not stated verbatim — the argument lives in `reasoning`. |
+| `reported` | A person asserts it (advice, opinion, testimony); name the voice in `attribution`. |
+| `disputed` | A standing, specific reason to doubt it — a `correction` interpretation cites it (§7). Keep the evidence. |
+| `conflicting` | Independent sources disagree; keep all evidence, explain per evidence `note`. |
+
+Every rung is an assertion. Pre-assertion content (a suspicion, a guess) is an interpretation, not a low-status claim (§1.3). A hub MAY retire statuses it has no use for (registered per §8); it MUST NOT mint new ones.
+
+### 5.4 The authentication bar
+
+A claim may be **`confirmed`** only when it has:
+
+> at least one **authoritative** evidence artifact, **or** two or more **independent** records (different corpus hashes, different provenance) — and nothing else in the graph contradicting it.
+
+Validation enforces the bar mechanically. Corroboration is multiple evidence entries on one claim; conflict is `conflicting` with all evidence kept; a graph contradiction is `disputed` plus the challenging `correction`.
+
+## 6. Evidence
+
+### 6.1 The Evidence object
+
+```jsonc
+{
+  "uri": "corpus://826482aa…?time_range=00:54-00:58",  // the load-bearing field
+  "quote": "…",                    // optional verbatim span from the resolved content
+  "note": "…",                     // optional human hint about the ARTIFACT (what/why)
+  "kind": "direct"                 // authoritative | direct | incidental
+}
+```
+
+**`kind` grades the artifact so trust is computed, not vibed:**
+
+- `authoritative` — an artifact whose *function* is to certify the datum (a manual for its product's specs, a monograph or government database for a drug's properties, an official statement for its own content). Authority is **scoped**.
+- `direct` — a first-party statement in informal media.
+- `incidental` — a passing mention or background detail; the weakest grade.
+
+### 6.2 URI discipline
+
+- `uri` MUST be a resolvable `corpus://` URI with the **full 64-hex** blake3. Span parameters (`?el=`, `?page=`, `?time_range=`, `?frame=`, `?page=N&bbox=`, `?path=`, `#anchor`) follow the corpus functional-URI grammar (`spec/corpus.md` §6).
+- **Bare = the hub's own corpus** (`ledger.yaml` `corpus:`); **qualified** (`corpus://{corpus}/{hash}`) = the other tenancy's corpus, legal only private-citing-public (§2).
+- **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
+- **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§11.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
+
+### 6.3 Source honesty
+
+Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. When the needed source is a still-mechanical `draft` record, request normalization (`corpus enqueue`) rather than citing draft text — validation flags evidence whose record is not `normalized`. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
+
+## 7. Interpretations
+
+### 7.1 What they are
+
+Structured, evidence-linked **pre-assertion** items, physically beside the facts. A claim that is merely uncertain still lives in `facts/` — that is what the ladder is for. An interpretation exists when the thing itself isn't claim-shaped:
+
+- an **identity guess** — "these two mentions are the same thing"; resolves by a graph merge, not a status bump;
+- a **working assessment** — a synthesis with no settled predicate shape (including coverage-gap assessments: "the corpus attests X only shallowly; here is what to capture");
+- a **correction** — durable negative/corrective knowledge ("X is NOT attested"; "claim Y is wrong"), including challenges to existing claims; refuted hypotheses stay as **tombstones** so future harvesters don't re-infer them;
+- a **need** — an ingestion/verification request, carried on whichever interpretation needs it.
+
+### 7.2 The Interpretation object — `interpretations/{slug}.json`
+
+```jsonc
+{
+  "id": "…",                       // slug; shares the hub id namespace (§4.1)
+  "kind": "hypothesis",            // hypothesis | assessment | correction
+  "about": ["entity-or-edge-id"],
+  "statement": "…",
+  "confidence": "likely",          // hypotheses only: speculative | plausible | likely
+  "reasoning": "…",
+  "based_on": ["corpus://…", "file-id:short"],   // empty = a hunch, not repo material
+  "would_resolve": ["…"],
+  "proposes": { /* a draft Claim object (§5.1), for claim-shaped hypotheses */ },
+  "needs": [
+    { "action": "capture", "why": "…" },                       // enqueue | search | capture | observe
+    { "action": "enqueue", "record": "corpus://…", "why": "…" }
+  ],
+  "status": "open",                // §7.3
+  "resolution": null,
+  "asof": "2026-07-02"
+}
+```
+
+**`proposes`** is the typed edge between the two state machines: a claim-shaped hypothesis carries its draft claim, so promotion is mechanical — tooling moves the proposed claim into the target fact file at the highest status the bar allows, stamps `resolution` with the claim id, and sets `status: promoted` (`ledger promote <id>`).
+
+### 7.3 Lifecycle
+
+```
+             ┌── promoted ──→ the content now lives as claim(s); resolution names them
+hypothesis ──┤   (open)
+             └── refuted  ──→ TOMBSTONE — kept so future harvesters don't re-infer it
+
+assessment / correction:  standing ──→ retired (superseded / no longer relevant)
+```
+
+A `correction` challenging an existing claim names the claim id in `based_on`; the challenged claim carries `status: disputed` until resolved — validation cross-checks the pair.
+
+### 7.4 Generated work-lists
+
+`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-entity frontier; hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
+
+## 8. Vocabulary
+
+Every predicate, qualifier key, entity type, and edge type in use is registered in the hub's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
+
+- Reuse before minting; a new term lands as a visible diff, never a silent addition.
+- Vocabulary grows organically — minted when real evidence needs it, never pre-built.
+- **Retired vocabulary** stays listed with its reason; using a retired term is a validation error.
+- Per-type conventions (e.g. an applicability discipline for vehicle-variant claims) live in the hub's `facts/SCHEMA.md` beside the vocabulary they govern.
+- A private hub SHOULD reuse its public hub's vocabulary where meanings coincide; validation surfaces near-duplicate predicates across the pair.
+
+## 9. Coverage
+
+Each hub carries the **coverage obligation for its corpus**: every in-scope record of the corpus it interprets should be *represented* — cited as evidence by at least one fact or interpretation. `coverage.md` is the generated ledger (covered / backlog / out-of-scope with reasons). A represented-but-shallow topic becomes a coverage-gap assessment with `capture` needs — the ledger is *designed* to generate ingestion demand. Coverage is how the hub proves the compendium thesis over its corpus: nothing captured goes unrepresented silently.
+
+(There is no ceding between hubs: each hub covers exactly its own corpus. Presentation scope is a codex concern, `spec/codex.md`.)
+
+## 10. Referencing the ledger
+
+External consumers (codices, expert agents, deliverables) reference ledger content as:
+
+```
+ledger://{hub}/{id}              → a fact (entity or edge) or an interpretation
+ledger://{hub}/{id}:{short}      → a specific claim
+```
+
+Facts, claims, and interpretations are citable; **generated views are not**. Within a hub (and from a private hub into its extended public hub), plain slugs suffice — wikilinks and `object` references resolve by id. A codex declares which hubs it targets (`spec/codex.md` §2) and inherits the tenancy rule: a public deliverable never references private-hub content, even by id.
+
+## 11. Validation
+
+### 11.1 The check contract
+
+Validation is deterministic, hub-local plus read-only corpus access. It MUST verify at minimum:
+
+**Structure** — JSON well-formedness; id == filename stem; type == directory; id uniqueness across facts + interpretations; claim-id format and uniqueness; entity/edge shape.
+
+**Hub topology** — extends-rule conformance (id collisions with the public hub are extensions with matching `type`/`name`, or errors); no public-hub reference to anything private.
+
+**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, or wikilinks; no relation stored with its inverse.
+
+**Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing; `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` objects well-formed against §5.1.
+
+**Evidence** — URI grammar and hub discipline (§6.2); cited records exist; cited records are `normalized` (warn when a declared `enqueue` need covers the draft).
+
+**Views** — `VOCAB.md`, `open-questions.md` generated blocks, and `coverage.md` regenerable and current.
+
+### 11.2 Evidence verification (the anti-hallucination gate)
+
+Beyond record existence, validation MUST — once per claim edit, and on demand — verify the evidence *content*:
+
+1. **Anchor resolution**: every span parameter resolves against the cited record (the segment address exists; the page/region/time-range is within bounds).
+2. **Quote verification**: every `quote` is found verbatim (modulo whitespace normalization) within the content the URI resolves to.
+3. **Snapshot binding**: an evidence entry records the cited record's normalization state (its latest `touch` identity) at verification time, so a later re-normalization flags the evidence for re-verification instead of silently rotting.
+
+A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.
+
+*(Implementation note, non-normative: the shared ledger package (`ath ledger …`) implements this contract, replacing the per-codex `check.py` copies that preceded the ledger layer.)*
+
+---
+
+## Appendix A: Worked example (non-normative)
+
+A public-hub entity with an asserted claim, its private-hub extension, and a claim-shaped hypothesis with `proposes`:
+
+```jsonc
+// ledger/facts/vehicle/pontiac-g8.json  (public hub)
+{
+  "id": "pontiac-g8", "type": "vehicle", "name": "Pontiac G8",
+  "claims": [{
+    "id": "pontiac-g8:platform", "predicate": "platform", "object": "gm-zeta",
+    "status": "confirmed", "asof": "2026-06-30",
+    "evidence": [
+      { "uri": "corpus://3a71…?el=42", "quote": "…built on GM's Zeta platform…", "kind": "authoritative" },
+      { "uri": "corpus://9c02…?page=3", "kind": "direct" }
+    ]
+  }]
+}
+```
+
+```jsonc
+// ledger-private/facts/vehicle/pontiac-g8.json  (extends the public entity)
+{
+  "id": "pontiac-g8", "type": "vehicle", "name": "Pontiac G8",
+  "claims": [{
+    "id": "pontiac-g8:owned-by", "predicate": "owned_by", "object": "steven-rahn",
+    "status": "confirmed", "asof": "2026-05-12",
+    "evidence": [{ "uri": "corpus://55ab…?page=1", "quote": "…", "kind": "authoritative", "note": "bill of sale" }]
+  }]
+}
+```
+
+```jsonc
+// ledger/interpretations/base-v6-transmission-is-5l40e.json
+{
+  "id": "base-v6-transmission-is-5l40e", "kind": "hypothesis",
+  "about": ["pontiac-g8"], "confidence": "likely",
+  "statement": "The base V6's automatic is the 5L40-E.",
+  "based_on": ["corpus://71fe…?el=18"],
+  "proposes": {
+    "id": "pontiac-g8:base-v6-transmission", "predicate": "transmission",
+    "object": "5l40e", "qualifiers": { "applies_to": "base-v6" },
+    "evidence": [{ "uri": "corpus://71fe…?el=18", "kind": "incidental" }]
+  },
+  "would_resolve": ["a service-manual spec table naming the V6 transmission"],
+  "status": "open", "asof": "2026-07-02"
+}
+```
