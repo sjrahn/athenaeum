@@ -6,8 +6,8 @@ in-memory index), and the **outbound links** found in its normalized body. An ou
 is *captured* when its URL already maps to a corpus record (a cross-reference) and
 *uncaptured* otherwise — the uncaptured ones are what the submit phase will later ingest.
 
-Pure: stdlib + the `corpus` library (no API, no HTTP). The API layer (`corpus.api.index`)
-adds the classification-shared records and serializes the node shape.
+Pure: stdlib + the `corpus` library (no HTTP). A serving layer can add
+classification-shared records and serialize the node shape on top.
 """
 
 from __future__ import annotations

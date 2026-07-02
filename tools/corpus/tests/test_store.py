@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from corpus import paths
 from corpus.store import ArtifactMissing, ArtifactStore, LocalArtifactStore, get_store
 from corpus.store._errors import classify_remote_error
 

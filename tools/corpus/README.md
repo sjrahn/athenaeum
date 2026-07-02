@@ -27,12 +27,12 @@ Three forms — pick one per your situation:
 [project]
 dependencies = ["ath-corpus"]
 [tool.uv.sources]
-ath-corpus = { path = "../shared/tools/corpus", editable = true }
+ath-corpus = { path = "../../tools/corpus", editable = true }
 
 # Git subdirectory (CI / pinned to a revision)
 [project]
 dependencies = [
-    "ath-corpus @ git+https://code.example.org/athenaeum/shared.git@<rev>#subdirectory=tools/corpus",
+    "ath-corpus @ git+https://code.example.org/athenaeum/athenaeum.git@<rev>#subdirectory=tools/corpus",
 ]
 
 # Built wheel (release; built via `uv build` and published to Forgejo's package registry)

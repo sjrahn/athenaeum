@@ -28,15 +28,15 @@ def run(args: argparse.Namespace) -> int:
     for rel, label in sorted(seen.items()):
         print(f"  [{label}] {rel}")
     print()
-    print(f"Atomic overlays:")
+    print("Atomic overlays:")
     for slash in _schemas.list_atomic_overlays(root):
         print(f"  {slash}")
     print()
-    print(f"Composite namespaces (corpus-local):")
+    print("Composite namespaces (corpus-local):")
     for ns in _schemas.list_classifications(root):
         print(f"  {ns}")
     print()
-    print(f"Issue ids:")
+    print("Issue ids:")
     for iid in _schemas.list_issue_ids(root):
         print(f"  {iid}")
     return 0

@@ -24,7 +24,7 @@ def run(args: argparse.Namespace) -> int:
         print("no atomic overlays declared.")
         return 0
     for slash_id in ids:
-        atom, _, sub = slash_id.partition("/")
+        atom, _, _sub = slash_id.partition("/")
         overlay = schemas.load_atomic_overlay(root, atom, slash_id)
         lossless = (overlay or {}).get("enables_lossless") if overlay else False
         marker = "lossless" if lossless else "non-lossless"

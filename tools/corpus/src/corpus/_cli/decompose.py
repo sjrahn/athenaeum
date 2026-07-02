@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from corpus import paths, records, recordbuild, segments
+from corpus import paths, recordbuild, records, segments
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
@@ -32,5 +32,5 @@ def run(args: argparse.Namespace) -> int:
         post, blocks, out_dir, source=str(record_file), orig_sha256=orig_sha
     )
     print(f"decomposed {record_id[:12]} → {out_dir}")
-    print(f"  manifest.corpus, meta.yaml, bodies/, desc/")
+    print("  manifest.corpus, meta.yaml, bodies/, desc/")
     return 0

@@ -901,7 +901,7 @@ def test_html_subdrafter_hook_dispatches(tmp_path, run_drafter):
     calls: list[bool] = []
 
     @draft_html.register_html_subdrafter("test-export")
-    def _sub(soup, *, text_algos):  # noqa: ARG001
+    def _sub(soup, *, text_algos):
         calls.append(True)
         block = segments.Section(
             address="el=1", entry="claimed",

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from corpus import lint as _lint
-from corpus import paths, records, recordbuild, segments, touches
+from corpus import paths, recordbuild, records, segments, touches
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
