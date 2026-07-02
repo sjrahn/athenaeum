@@ -1,3 +1,7 @@
+# Member repos — independent git repos managed via athenaeum.yaml, never tracked here
+corpora/
+codices/
+
 # Xcode / Apple clients (see APPLE-CLIENT-PLAN.md)
 clients/**/xcuserdata/
 clients/**/DerivedData/
