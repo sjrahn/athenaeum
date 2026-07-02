@@ -1,7 +1,7 @@
 ---
 spec_id: ATH-CORPUS
 title: "Corpus Specification"
-version: 1.0
+version: 2.0
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
@@ -12,7 +12,9 @@ date_modified: 2026-07-02
 
 A **corpus** is the foundation layer of the Athenaeum system: a content-addressed archive of captured artifacts, represented as markdown records. This document is its complete specification, in two parts. **Part I (§1–§11)** is the normative data contract — every record in every corpus conforms to it, and tooling across the system cites its section numbers. **Part II (§12)** is the implementation guide: non-normative notes on how the reference pipeline produces conforming records. Two appendices follow — the glossary (Appendix A) and a non-normative content-type taxonomy (Appendix B).
 
-The corpus sits beneath the codex layer, which consumes it through `corpus://` functional URIs — see [`athenaeum.md`](athenaeum.md) for the system architecture and [`codex.md`](codex.md) for the codex contract.
+The corpus sits beneath the ledger layer, which interprets it through `corpus://` functional URIs — see [`athenaeum.md`](athenaeum.md) for the system architecture, [`ledger.md`](ledger.md) for the knowledge layer, and [`codex.md`](codex.md) for the codex contract.
+
+**Version 2.0** removed the corpus's interpretive classification system — the `composite` umbrella, the classify block, section-scope composites, the `concept` context namespace, and the interpretive `reference` emission path — in favor of the ledger layer: a record describes its bytes, retrieval, and faithful form; what its content *means* is asserted one layer up, with evidence pointing back down. Removed sections are **tombstoned in place** (numbering preserved, successor named) rather than renumbered, so 1.0-era citations of this spec still land somewhere true.
 
 ---
 
@@ -22,9 +24,9 @@ The corpus sits beneath the codex layer, which consumes it through `corpus://` f
 
 ### 1.1 What this is
 
-A **corpus** is a content-addressed archive of captured artifacts, accessed through faithfully represented markdown proxies called **records**. Artifacts are deconstructed into addressable segments and normalized to text, either losslessly or by description. Artifacts can stack classifications for the purposes of discoverability and improved normalization.
+A **corpus** is a content-addressed archive of captured artifacts, accessed through faithfully represented markdown proxies called **records**. Artifacts are deconstructed into addressable segments and normalized to text, either losslessly or by description. A record classifies its artifact **mechanically** — what the bytes are (media type) and where they came from (origin); what the content *means* is the ledger layer's concern ([`ledger.md`](ledger.md)), asserted there as claims whose evidence points back into the record.
 
-A record is a single markdown file. The YAML frontmatter at its head carries a small bytes-identity header — what these bytes ARE (their hashes), the editorial summary, the provenance chain of processing passes. The **record body** below the frontmatter is organized into three **zones**: a **metadata zone** declaring what the artifact is, where it came from, what classifications apply to it, and what assets it embeds; a **content zone** carrying the rendered content as sections and segments; and an **annotations zone** carrying observations about the record. Each zone holds a small set of HTML-comment block families; §4.3 specifies the grammar.
+A record is a single markdown file. The YAML frontmatter at its head carries a small bytes-identity header — what these bytes ARE (their hashes), the editorial summary, the provenance chain of processing passes. The **record body** below the frontmatter is organized into three **zones**: a **metadata zone** declaring what the artifact is, where it came from, and what assets it embeds; a **content zone** carrying the rendered content as sections and segments; and an **annotations zone** carrying observations about the record. Each zone holds a small set of HTML-comment block families; §4.3 specifies the grammar.
 
 ### 1.2 The transport model
 
@@ -54,13 +56,13 @@ captured bytes              (no identity yet — staging only)
        ▼
    stub record              identity established; bytes persisted in the corpus's binary store
        │
-       │ draft              deterministic: media-type schema runs, then mechanical classifications in declared order
+       │ draft              deterministic: media-type schema runs; overlay-declared emissions follow
        ▼
    draft record             faithful first-pass body, segment layout established, mechanical metadata-zone blocks emitted
        │
-       │ normalize          LLM-guided: interpretive classifications run, description authored, body may be re-segmented
+       │ normalize          LLM-guided faithful-form pass: description authored, body re-segmented / shaped where judged
        ▼
- normalized record          ready for use
+ normalized record          faithful form finalized — ready to cite
 ```
 
 Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. Re-running any stage is an expected refinement pattern, not a fallback; every stage from ingest onward appends a `touch[]` entry to the record's provenance chain (which `re-stub` may reset, §8.4).
@@ -75,9 +77,9 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 4. **The record body as universal representation.** Every artifact carries a markdown body composed of segments. This projects every modality — text, image, audio, video — into a common representational space. Search, similarity, and embeddings all operate on the body.
 
-5. **Transports declare, content fills.** Format-specific machinery (address scheme, extraction strategy, body shape) lives on the media-type schema. Content-specific tactics live on classifications. The two layers don't bleed.
+5. **Transports declare, content fills.** Format-specific machinery (address scheme, extraction strategy, body shape) lives on the media-type schema. Content-shaping tactics live on origin overlays (per source) and atom overlays (per form). The layers don't bleed.
 
-6. **Deterministic before LLM.** Media-type schemas and mechanical classifications are scripts; interpretive classifications are LLM-guidance. The boundary is sharp so each stage's outputs are auditable.
+6. **Deterministic before LLM.** Capture, ingest, and draft are scripts; the normalize pass is LLM-guided **faithful-form** work whose every output is checkable against the bytes in the same file. Interpretation — what content means — is not a corpus stage at all: it happens in the ledger, with evidence citing back into the record.
 
 7. **On-demand derived views.** Cross-cutting aggregates and richer modal projections are computed by walking body blocks and semantic-tagged fields, or by resolving functional URIs — never persisted alongside the record.
 
@@ -85,9 +87,9 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 9. **Offline-first.** Only `capture` requires network access. Ingest, draft, normalize, and URI resolution all operate on local data.
 
-10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, classifications, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block. A field is named **bare** when its block opener already identifies its provenance: an artifact block names the format (its MIME), a classify block names the composite (`<namespace>/<id>`), so their fields are `title`/`author`/`isbn`, never `pdf_title`/`book_isbn`. A provenance prefix survives only where the opener does *not* carry it — an origin block's `ytdlp_title` (the opener names the source record, not the extraction tool), or a metadata sub-standard the format embeds (`exif_*`, `og_*`). (Prefixing every field was a holdover from when these all shared the frontmatter's flat namespace; once each rides its own self-identifying block, the prefix only echoes the block.)
+10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block. A field is named **bare** when its block opener already identifies its provenance: an artifact block names the format (its MIME), a context block names its namespace (`<namespace>/<id>`), so their fields are `title`/`author`/`severity`, never `pdf_title`/`issue_severity`. A provenance prefix survives only where the opener does *not* carry it — an origin block's `ytdlp_title` (the opener names the source record, not the extraction tool), or a metadata sub-standard the format embeds (`exif_*`, `og_*`). (Prefixing every field was a holdover from when these all shared the frontmatter's flat namespace; once each rides its own self-identifying block, the prefix only echoes the block.)
 
-11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
+11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks — the artifact block yields `mime/*`, qualified origin blocks yield `origin/*`. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
 
 ---
 
@@ -101,17 +103,18 @@ The `id` field is bare hex with no algorithm prefix because the algorithm is inv
 
 ## 3. Schema namespaces
 
-A corpus's schemas are organized into five spec-reserved **namespaces**. Three are primitive **axes** — each bound to a single block-keyword role in the record body — and two are umbrellas: `composite` for classifications, `context` for annotations:
+A corpus's schemas are organized into four spec-reserved **namespaces**. Three are primitive **axes** — each bound to a single block-keyword role in the record body — and one is an umbrella: `context` for annotations:
 
 | Namespace | Role | What it declares |
 |---|---|---|
 | `mime` | Declares the **artifact block**. | Per-media-type fields, address scheme, body-draft behavior, container disposition. |
-| `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes. |
-| `atom` | Declares the **atomic classification** on a **segment block**. | Per-atom-and-subtype overlays: what kind of content a segment carries, and (for text-atom overlays) whether it licenses a shaped lossless body. |
-| `composite` | The umbrella for every user-defined **classification** namespace. | Per-namespace classifications declared via the **classify block** (`composite/<namespace>/<id>`). |
-| `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (cited sources), … |
+| `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes, how to capture and draft it. |
+| `atom` | Declares the **atomic classification** on a **segment block**. | Per-atom-and-subtype overlays: what *form* of content a segment carries, and (for text-atom overlays) whether it licenses a shaped lossless body. |
+| `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (declared dependent links), `relation` (declared cross-links), … |
 
-A record references a schema by the qualified id encoded on a block opener — for example, `<!--classify <namespace>/<id>-->`. The schema loader resolves the id by walking a chain of declarations from most-specific to least-specific:
+*(2.0)* The 1.0 model had a fifth namespace — `composite`, the umbrella for user-defined classification namespaces asserted on records via classify blocks. It was removed: what content means is knowledge, and knowledge lives in the ledger, minted mechanically by harvest rules where membership is deterministic and authored as claims where it is not (`ledger.md` §8, §10). See the §7.4 tombstone for where each of its parts went.
+
+A record references a schema by the qualified id encoded on a block opener — for example, `<!--context <namespace>/<id>-->`. The schema loader resolves the id by walking a chain of declarations from most-specific to least-specific:
 
 1. The subtype-overlay declaration (`<namespace>/<id>/<subtype>`), if a subtype is present on the opener.
 2. The id declaration (`<namespace>/<id>`).
@@ -135,8 +138,8 @@ A record is always at one of three statuses:
 | Status | Meaning | Stage that produced it |
 |---|---|---|
 | `stub` | Identity established; bytes persisted in the corpus's binary store; artifact block emitted; first origin block populated from capture context; content zone empty. | ingest |
-| `draft` | Media-type schema and any mechanical classifications applied; record body's content zone segmented per the media-type schema; mechanical classify and embed blocks emitted; drafter-detected issue context blocks emitted. | draft |
-| `normalized` | Interpretive classifications applied; description authored; content zone re-segmented where the LLM judged appropriate; interpretive classify and issue context blocks surfaced. | normalize |
+| `draft` | Media-type schema applied; record body's content zone segmented per the media-type schema; embed blocks and overlay-declared context blocks (references, relations, drafter-detected issues) emitted. | draft |
+| `normalized` | Faithful form finalized: description authored; content zone re-segmented and shaped where the LLM judged appropriate; faithfulness issues surfaced. | normalize |
 
 ### 4.2 Frontmatter
 
@@ -160,7 +163,7 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 
 A touch identifier is a short bare string distinguishing a processing pass. The sequence is `touch[]` — a bare string when the chain has one entry, a list otherwise; the chain records the record's **current-shape provenance** (which passes produced the shape it has now). It is not an immutable history: `re-stub` resets it (§8.4), so a re-stubbed record's chain reflects its post-reset lineage, not every pass it ever saw.
 
-- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>`, where `<module>` may be a dotted path (e.g. `draft.<mime-type-id>`, `classify.<namespace>-<id>`). The `<package>.<module>` identifies the code path; `<version>` is its installed version.
+- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>`, where `<module>` may be a dotted path (e.g. `draft.<mime-type-id>`). The `<package>.<module>` identifies the code path; `<version>` is its installed version.
 - **LLM models** use the canonical model identifier with any context modifier in brackets — e.g. `<model-id>[<modifier>]`.
 - **Combined tooling + model** — a single pass that is both a deterministic re-assembly and the LLM pass it carries joins the two with `+`: `<package>.<module>@<version>+<model-id>`.
 
@@ -178,11 +181,10 @@ Every block has the same shape: an HTML comment whose opener line carries a keyw
 ─── metadata zone ────────────────────────
 <!--artifact <mime-type>-->               # exactly 1
 <!--origin [<id>[/<subtype>]]-->          # 1..N
-<!--classify <namespace>/<id>-->          # 0..N
 <!--embed <mime-type>-->                  # 0..N
 
 ─── content zone ─────────────────────────
-<!--section [<namespace>/<id>]-->         # 0..N (each contains 0..N segments)
+<!--section-->                            # 0..N (each contains 0..N segments)
 or
 <!--segment <atom>-->                     # 0..N (sectionless top-level segments)
 
@@ -190,11 +192,11 @@ or
 <!--context <namespace>/<id>[/<subtype>]--># 0..N (record- or segment-scoped via address:)
 ```
 
-Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant (only the order among classify blocks matters — §4.3.1.3); the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
+Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant; the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
 
 #### 4.3.1 The metadata zone
 
-The metadata zone carries the artifact's identity, its origins, its applied classifications, and its embedded assets. Four block families.
+The metadata zone carries the artifact's identity, its origins, and its embedded assets. Three block families.
 
 ##### 4.3.1.1 The artifact block
 
@@ -241,22 +243,9 @@ The origin block subsumes:
 - The origin-identifying classification (qualified `<id>` opener).
 - Any origin-specific extended fields the schema overlay declares.
 
-##### 4.3.1.3 The classify block
+##### 4.3.1.3 The classify block *(removed in 2.0)*
 
-Zero or more per record. Each block carries the fields a classification overlay declares.
-
-```
-<!--classify <namespace>/<id>
-<extended-field-1>: <value>
-<extended-field-2>: <value>
--->
-```
-
-The opener argument is the namespace-qualified classification id, optionally subclassed (`<namespace>/<id>/<subtype>`). Contributes one entry `<namespace>/<id>[/<subtype>]` to the derived classifications view.
-
-One field name is **reserved**: `provenance`. `provenance: auto` marks a block stamped by the deterministic `classify_when` engine (§7.4) — the engine owns it, stripping and regenerating it on every re-draft / reclassify. Its absence (or `provenance: asserted`) marks a hand- or normalizer-asserted block, which the engine never touches (§4.4.6). No composite may declare `provenance` as an `extended_field`.
-
-Block order within the metadata zone follows execution order: mechanical classify blocks first (in drafter-declared order, `provenance: auto` among them), then interpretive (in normalizer-discovered order). The parser preserves order; tools rely on it so that later passes can read earlier passes' fields.
+*Retired.* The classify block asserted record-scope interpretive classification — the `composite` umbrella's surface. That assertion is knowledge, and it moved to the ledger: what a record documents is expressed as ledger entities and claims whose evidence cites the record (`ledger.md`), minted mechanically by **harvest rules** where membership is deterministic (`ledger.md` §10) and authored where it is not. The corpus-side classifications view (§9.1) retains its structural-derived rows (`mime/*`, `origin/*`). The reserved `provenance` field survives on context blocks (§4.3.3.1) with the same semantics.
 
 ##### 4.3.1.4 The embed block
 
@@ -318,10 +307,10 @@ The content zone carries the record body's rendered content — structural secti
 
 ##### 4.3.2.1 The section block
 
-A **section** is the universal grouping primitive — a chapter, a heading-delimited block, a sheet, a user turn, a speaker run. It is the table-of-contents unit. A section has its own opener that may carry a single composite classification — `<!--section <namespace>/<id>-->`, what kind of section this is (§4.4) — and a YAML header carrying an address and an optional `entry` (the TOC label). Sections contain segments; they have no body of their own.
+A **section** is the universal grouping primitive — a chapter, a heading-delimited block, a sheet, a user turn, a speaker run. It is the table-of-contents unit. A section has a bare opener and a YAML header carrying an address and an optional `entry` (the TOC label). Sections contain segments; they have no body of their own.
 
 ```
-<!--section [<namespace>/<id>]
+<!--section
 address: <address>
 entry: <TOC label>
 -->
@@ -353,7 +342,7 @@ A section's child segments arrange themselves along the media's natural axis:
 | `entry` | Optional | The TOC label — written by the drafter when the source has a natural title; by the normalizer otherwise. |
 | `description` | Optional | Scope-specific description of what this section IS — used when the section's address is a self-materializable asset (an artifact-self-slice with no embed, §4.3.1.4) and no child segment carries the description. Normalizer-written. |
 
-The section's composite classification, if any, rides on the opener line as `<!--section <namespace>/<id>-->` — exactly as an atomic overlay rides a segment opener (§4.3.2.2) and a namespaced id rides a classify block (§4.3.1.3). A section carries at most one composite; the composite's extended fields sit flat in the section header. The overlay's declaring schema must permit section scope (its `applies_at` must include `section`, §7.4).
+*(2.0)* Section openers are bare. The 1.0 section-scope composite — what a passage IS on its own terms — is expressed, when a domain cares, as a ledger claim whose evidence anchors the section's span (`ledger.md` §6); the record itself makes no such assertion. See the §4.4.3 tombstone.
 
 ###### Section emission
 
@@ -428,17 +417,19 @@ Segment bodies may carry:
 
 ###### Body-draft mode contract
 
-The mime schema is the **only** body-drafter — it alone owns the content zone. A pass operating in body-draft mode **completely overwrites** any existing content zone in the record body. No dependency on prior content; no expectation that future content survives; same bytes always produce the same content zone (modulo extractor version). Body-drafting is total replacement. Mechanical classifications are metadata-only and never body-draft (§7.4).
+The mime schema is the **only** body-drafter — it alone owns the content zone. A pass operating in body-draft mode **completely overwrites** any existing content zone in the record body. No dependency on prior content; no expectation that future content survives; same bytes always produce the same content zone (modulo extractor version). Body-drafting is total replacement. Overlay-declared emissions (§7.2) are metadata/annotations-only and never body-draft.
 
 #### 4.3.3 The annotations zone
 
 The annotations zone carries observations *about* the record — problems with it, sources it cites, derived relations. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
 
-**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a cited source resolved toward its record (`reference`), an overlay-declared chrome extraction (`aside`), a corpus-graph relation (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`issue`, `aside`, `relation`) auto-populate *only* on real signal and *only* where schema-gated — in particular an `aside` block exists **solely** where an origin or composite overlay declares the extraction, and there are none absent that declaration. The **`reference`** namespace is **dual-source**: an *interpretive* citation the normalizer finds in the content, **or** a *mechanical*, **overlay-declared** dependent reference emitted at capture (`provenance: auto`, §4.3.3.3 / §7.2) — both require a referent actually present in the content (a citation, or a declared link in the page). Absent real signal the annotations zone is **empty** — the normal state for most records.
+**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a declared dependent link resolved toward capture (`reference`), an overlay-declared chrome extraction (`aside`), a source-declared cross-link (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`aside`, `reference`, `relation`) auto-populate *only* on real signal and *only* where overlay-gated — each exists **solely** where an origin overlay declares the extraction, and there are none absent that declaration; every block requires a referent actually present in the content (a declared link or structure in the page). `issue` is the one namespace with an asserted path: the normalizer surfaces **faithfulness** problems (garbled OCR, truncated content) beside the drafter's mechanical detections. Absent real signal the annotations zone is **empty** — the normal state for most records.
+
+*(2.0)* The 1.0 interpretive `reference` path — normalizer-found citations in the content — moved to the ledger: a found citation is a `capture`/`search` need or, where the domain cares, a citation edge with span evidence (`ledger.md` §7). The 1.0 `concept` namespace was removed outright (§4.3.3.4). Content-*meaning* observations of every kind are ledger material; the annotations zone records only what is mechanical or faithfulness-scoped.
 
 ##### 4.3.3.1 The context block
 
-Zero or more per record. Each is a typed observation, optionally pinned to a segment. The opener `<namespace>/<id>` matches the corresponding `context/<namespace>/<id>` overlay (mirroring how a classify block matches `composite/<namespace>/<id>`); an optional `<subtype>` extends it.
+Zero or more per record. Each is a typed observation, optionally pinned to a segment. The opener `<namespace>/<id>` matches the corresponding `context/<namespace>/<id>` overlay; an optional `<subtype>` extends it.
 
 ```
 <!--context <namespace>/<id>
@@ -452,7 +443,7 @@ provenance: auto                         # optional reserved field (see below)
 
 A context block with an `address:` field is **segment-scoped**; without it, **record-scoped**. The optional **`quote:`** (a verbatim span copied from the addressed segment's body) sharpens the anchor to the exact phrase; **`occurrence:`** disambiguates when that span repeats. Because the body is an immutable rendering of the immutable artifact, a verbatim `quote:` survives re-drafts where a character offset would not.
 
-One field name is **reserved**: `provenance` (same semantics as on the classify block, §4.4.6). `provenance: auto` marks an engine-stamped block (a drafter detection, a derived-graph sweep) that is regenerated on re-run; its absence (or `provenance: asserted`) marks a human- or normalizer-asserted block that the engine never touches. No namespace may declare `provenance` as an overlay field.
+One field name is **reserved**: `provenance` (§4.4.6). `provenance: auto` marks an engine-stamped block (a drafter detection, an overlay-declared emission) that is stripped and regenerated on re-run; its absence (or `provenance: asserted`) marks a human- or normalizer-asserted block that the engine never touches. No namespace may declare `provenance` as an overlay field.
 
 Context blocks **do not** contribute to the derived classifications view (§9.1) — they surface in the derived `context` view, of which the `issues` view (§9.2) is the `issue`-namespace projection. Conceptually, a *classification* says what the content IS; a *context* records something observed about it.
 
@@ -468,32 +459,37 @@ Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `seve
 
 ##### 4.3.3.3 The `reference` namespace
 
-A `reference` context block (`<!--context reference-->`) records a source the body cites — a book, an article, a bare external link — pinned to the mention via `address:` (+ `quote:`) and resolved up the **three-tier citation ladder** (§4.4.5): `attribution_text` (free text) → `source_url` (a resolvable URL) → `source_uri` (a functional `corpus://<id>` URI pointing at the separately-captured record). It is the addressable, segment-scoped realization of the citation model §4.4.3 deferred: a casual mention is captured first as free text and progressively researched toward a lossless intra-corpus link, without the host record ever changing shape.
+A `reference` context block (`<!--context reference-->`) records a **declared dependent link** — a product page's manual, a spec sheet — emitted at draft from an origin overlay's `capture.references` declaration (§7.2), carrying `provenance: auto` and a corpus-local **`role`** field (`manual`, `spec-sheet`, …; schema-declared closed set, treated gracefully when unknown). It is pinned to its link's mention via `address:`/`quote:` (the link text) and carries the **citation ladder** (§4.4.5) at tier 1–2: `attribution_text` (the link text) → `source_url` (the resolved href).
 
-**Two emission paths.** A `reference` block is either *interpretive* — authored by the normalizer from a citation present in the body — or *mechanical* — emitted at draft from an origin overlay's `capture.references` declaration (§7.2), carrying `provenance: auto` and a corpus-local **`role`** field (`manual`, `spec-sheet`, …; schema-declared closed set, treated gracefully when unknown). A mechanical reference is pinned to its link's segment via `address:`/`quote:` (the link text) and stops at tier 2 (`source_url` = the resolved href); the mechanical drafter **never** writes tier 3. Whether that URL is itself a captured record is a **read-time derived edge** — resolved from `source_url` against the URI index by `derived_views.references` (§9.9) / `corpus links --references`, never baked into the record — so `draft` stays a pure function of the artifact (it reads no corpus state) and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded. A *stored* tier-3 `source_uri` is written only by an asserted reference whose target has no resolvable `source_url` (§4.4.5). As an `auto` block it is regenerated on re-draft; an asserted (normalizer or human) reference at the same anchor is never overwritten.
+**The intra-corpus edge is derived, never stored.** Whether `source_url` is itself a captured record is a **read-time derived edge** — resolved against the URI index by `derived_views.references` (§9.9) / `corpus links --references`, never baked into the record — so `draft` stays a pure function of the artifact (it reads no corpus state) and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded. As an `auto` block it is regenerated on re-draft.
 
-##### 4.3.3.4 The `concept` namespace
+*(2.0)* The 1.0 interpretive emission path (normalizer-authored citations found in the body, including the stored tier-3 `source_uri`) moved to the ledger (§4.3.3 note). The reference block is now mechanical-only: capture plumbing, not citation knowledge.
 
-A `concept` context block (`<!--context concept-->`) records a concept the body invokes — an entity, idea, work, or place — resolved against an **external local knowledge base** (Wikipedia/Wikidata), *not* a corpus record. This is the deliberate counterpart to `reference`'s tier-3 `source_uri`: a reference resolves toward a captured artifact (`corpus://<id>`), whereas a concept resolves toward an external authority the corpus does **not** capture (§11) — there is no value in re-capturing Wikipedia when it is run locally and read in place.
+##### 4.3.3.4 The `concept` namespace *(removed in 2.0)*
 
-Like `reference`, it rides a lossy→lossless identity ladder: `label:` (free-text display name) → `url:` (the resolvable article URL) → `concept:` (the stable canonical id). The `concept:` id is the **join key** — `wikidata:Q<n>` (preferred, version-stable), `enwiki:<Article_Title>` (a local-dump article when no QID is resolved), or `local:<slug>` (a corpus-local custom concept) — by which records that invoke the same concept are related without either knowing about the other. As elsewhere, **scope** carries meaning: a block with `address:` (+ optional `quote:`) is a **mention** pinned to a span; an `address:`-less block records the record's **aboutness** as a whole. Concepts surface through the derived `concepts` view (§9.7).
+*Retired.* The concept block was the ledger's shadow: a per-record entity annotation resolved against an external knowledge base (Wikipedia/Wikidata), built because no internal entity layer existed — its `concept:` id was "the join key by which records that invoke the same concept are related without either knowing about the other," which is precisely what a ledger entity is. The ledger replaces every part of it: record-scope *aboutness* is coverage (`ledger.md` §9); a span-scoped *mention* is claim evidence anchored by a functional URI; the external join key (`wikidata:Q…`) is an entity-level external-identity claim made once, not stamped per record. The local-KB machinery (1.0 §12.12) retires with it.
+
+##### 4.3.3.5 The `relation` namespace
+
+A `relation` context block (`<!--context relation[/<predicate>]-->`) records a **source-declared cross-link** from this record toward another resource — navigation structure actually present in the content (a "related information" rail, sibling-page links) — typically lifted from chrome the faithful body drops, making the annotations zone its proper side-channel home. Mechanical: the lift is declared per host on the origin overlay (`capture.relations`, §7.2) and emitted at draft with `provenance: auto`. The target is recorded as `target_text`/`target_url` — **URL-tier only**: at the corpus layer a record never links another record by id; the URL is the edge, resolved to a captured record at read time exactly as references are (§9.9). An optional `predicate` subtype names the relation kind per the corpus-local overlay.
+
+*(Migration note, non-normative: relation blocks emitted by 1.0-era normalize passes are asserted-labeled; they relabel to `provenance: auto` as origin-declared lifting lands in the drafter.)*
 
 ### 4.4 Classifications: scope and fidelity
 
-Classifications identify what a record (and its sections and segments) IS. The framework rests on two ideas: what *kind* of classification is being made (four axes) and what structural *scope* it applies at (three scopes — record, section, segment).
+Classifications identify what a record (and its segments) IS — **structurally**: its format, its retrieval source, the form of its content. What a record's content *means* is not a classification at this layer; it is ledger knowledge (`ledger.md`). The framework rests on two ideas: what *kind* of classification is being made (three axes) and what structural *scope* it applies at.
 
-#### 4.4.1 The four classification axes
+#### 4.4.1 The three classification axes
 
-Every classification falls along one of four conceptual axes. Each axis has its own block, its own schema namespace, and its own scope rules.
+Every classification falls along one of three conceptual axes. Each axis has its own block, its own schema namespace, and its own scope rules.
 
 | Axis | What it identifies | Block | Schema namespace |
 |---|---|---|---|
 | **media-type** | The format / container / transport of the bytes. | artifact block (exactly 1) | `mime` |
 | **origin** | Where the bytes came from. | origin block (1..N) | `origin` |
-| **atomic** | What kind of atomic content a segment carries. | segment-block opener | `atom` |
-| **composite** | A named recurring pattern that combines axes. | classify block at record scope; section opener at section scope | `composite` |
+| **atomic** | What *form* of atomic content a segment carries. | segment-block opener | `atom` |
 
-**media-type** and **origin** are properties of the bytes — they live at record scope only. **atomic** and **composite** are interpretive judgments — they apply at the structural scope(s) where they're meaningful.
+**media-type** and **origin** are properties of the bytes — they live at record scope only. **atomic** is a **structural-form** judgment — what shape of content a segment carries (a table, a transcript, a chat message, a screenshot), checkable against the bytes like everything else in the faithful zone; it applies at segment scope. *(2.0: the 1.0 model called the atomic axis "interpretive" and had a fourth axis — **composite**, domain meaning at record and section scope. Composite moved to the ledger; atomic was never meaning — see the constitution in §7.3.)*
 
 Atomic-axis schemas declare two extra keys beyond the universal classification fields:
 
@@ -502,69 +498,53 @@ Atomic-axis schemas declare two extra keys beyond the universal classification f
 
 A segment carries **exactly one** atomic class id, on the opener line. When multiple representations apply to the same source region, each becomes its own segment.
 
-#### 4.4.2 Three scopes
+#### 4.4.2 Scopes
 
-Classifications attach at three structural scopes — record, section, segment — plus the **embed**, where the media-type axis attaches via each embed's MIME:
+Classifications attach at two structural scopes — record and segment — plus the **embed**, where the media-type axis attaches via each embed's MIME:
 
-| Axis | Record | Section | Segment | Embed |
-|---|---|---|---|---|
-| media-type | ✓ (artifact MIME, via artifact block) | — | — | ✓ (per-embed MIME on the opener line) |
-| origin | ✓ (capture-time match, via origin block) | — | — | — |
-| atomic | — | — | ✓ (on the segment opener) | — |
-| composite | ✓ (via classify block) | ✓ (on the section opener) | — | — |
+| Axis | Record | Segment | Embed |
+|---|---|---|---|
+| media-type | ✓ (artifact MIME, via artifact block) | — | ✓ (per-embed MIME on the opener line) |
+| origin | ✓ (capture-time match, via origin block) | — | — |
+| atomic | — | ✓ (on the segment opener) | — |
 
-#### 4.4.3 Section scope: one composite (open item — citations)
+Sections carry no classification in 2.0 (§4.4.3).
 
-A section carries **at most one** composite, on its opener — the section's identity (what this passage IS on its own terms).
+#### 4.4.3 Section scope *(dissolved in 2.0)*
 
-A richer model has been considered for **citations**, where a borrowed section would carry both an *identity* composite (what the passage is) and a *role* composite (what it does in the host record), so a host can integrate quoted, embedded, or forwarded material without losing the material's own identity. That dual-composite form is **not yet reconciled** with the one-composite-on-the-opener grammar and is not specified here; treat section composites as single-identity for now. Citation lineage in the interim is carried by the citation field group (§4.4.4) and the three-tier ladder (§4.4.5) — whose segment-scoped realization now ships as the `reference` context block (§4.3.3.3). What remains deferred is only the section-scope identity+role dual composite.
+*Retired.* The 1.0 section-scope composite (a passage's identity — "this section is a recipe") and the further-deferred identity+role dual-composite citation model (borrowed material carrying both what it is and what it does in the host) are both expressed as **ledger claims over section spans**: span-precise evidence URIs make "what this passage is" and "what this passage does here" two claims about one anchor, with no record-side mechanism at all. Nothing remains at this layer.
 
-#### 4.4.4 Scope-driven fidelity
+#### 4.4.4 Scope-driven fidelity *(removed in 2.0)*
 
-A composite schema's extended fields decompose into three field groups by scope (§7.4):
+*Retired with the composite namespace.* The three field groups (descriptive / structural / citation) organized composite extended fields by scope; composite fields are now claim values and qualifiers in the ledger. The citation field group's survivor is the mechanical reference block's ladder (§4.4.5).
 
-- **Descriptive** — common across scopes the schema declares.
-- **Structural** — record-scope only.
-- **Citation** — section-scope only: the resolvable-source fields `attribution_text`, `source_url`, `source_uri` (the §4.4.5 ladder). The further fields `cited_by_reason`, `in_point`, `out_point` belong to the **deferred** dual-composite citation model (§4.4.3) and are not yet a usable contract.
+#### 4.4.5 The citation ladder (mechanical)
 
-#### 4.4.5 Three-tier lineage ladder
-
-A cited source progresses from lossy toward lossless through the citation field group:
+A declared dependent link progresses from lossy toward lossless:
 
 | Tier | Citation field | Meaning |
 |---|---|---|
-| **1** | `attribution_text` | Free-text. Ambiguous but captured. |
+| **1** | `attribution_text` | Free-text (the link text). Ambiguous but captured. |
 | **2** | `source_url` | Resolvable URL. |
-| **3** | `source_uri` | Functional URI pointing to a separately-captured full record. |
+| **3** | *(derived, never stored)* | The captured record the URL resolves to. |
 
-Host records never change shape — enrichment happens at the linked target. This ladder is carried by the **`reference` context block** (§4.3.3.3), which pins the citation to the exact mention via `address:`/`quote:` and applies at any scope; the section-opener citation fields (below) are the section-scope special case.
+The ladder is carried by the **`reference` context block** (§4.3.3.3), pinned to the exact mention via `address:`/`quote:`. Host records never change shape — enrichment happens at the linked target. Tier 3 is always a **read-time resolution** of `source_url` against the URI index (§9.9): `draft` reads no corpus state and stays a pure function of the artifact, and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded rather than leaving a stored pointer that dangles. *(2.0: the 1.0 asserted tier-3 `source_uri` — a hand-linked citation with no resolvable URL — moved to the ledger with the rest of citation knowledge.)*
 
-**Tier 3 is stored only when *asserted*.** For a **link-backed** reference — anything carrying a `source_url`, including every mechanical (`provenance: auto`) one — the tier-3 edge is a **read-time resolution** of `source_url` against the URI index (`derived_views.references` §9.9, mirroring `corpus links --references`), surfaced as a derived `resolved_uri`/`captured` and **never persisted**. The mechanical drafter therefore writes no `source_uri`: `draft` reads no corpus state and stays a pure function of the artifact, and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded rather than leaving a stored pointer that dangles. A `source_uri` is *stored* only by an asserted (normalizer/human) reference whose target has no resolvable `source_url` to derive from (a born-internal record, or an explicit hand link); lint's dangling-target check (§4.3.3.3) then fires only on such an asserted pointer.
+#### 4.4.6 Provenance
 
-#### 4.4.6 Mechanical vs interpretive kind
+A record's metadata and annotations have one of three **provenances** (who put a datum there, and what re-running does to it):
 
-Each **composite** classification schema declares `kind: mechanical` or `kind: interpretive` (§7.4). (The other axes fix their kind: atom schemas declare `kind: atomic` (§7.3); origin overlays are always `kind: interpretive` (§7.2).)
-
-| Kind | When it runs | What it does |
+| Provenance | How it appears | On re-run |
 |---|---|---|
-| **mechanical** | Draft time | Ships with an extraction script. |
-| **interpretive** | Normalize time | LLM-guidance prose. |
+| **structural-derived** | `mime/*`, `origin/*` — walked from the artifact / origin blocks (§9.1) | recomputed |
+| **auto** | a context block with `provenance: auto` — a drafter detection or an overlay-declared emission (references §4.3.3.3, relations §4.3.3.5) | stripped + regenerated from the current overlays |
+| **asserted** | a context block with no `provenance` — human / normalizer (faithfulness issues) | never touched |
 
-Block ordering reflects execution order: mechanical first (drafter-declared order), then interpretive (normalizer-discovered order).
-
-**Provenance ladder.** Orthogonal to `kind` (which says *where the payload runs*), a record-scope classification has one of three **provenances** (who put it there, and what re-running does to it):
-
-| Provenance | How it appears | On re-draft / reclassify |
-|---|---|---|
-| **structural-derived** | `mime/*`, `origin/*` — walked from the artifact / origin blocks (§9.1), never a classify block | recomputed |
-| **auto** | a classify block with `provenance: auto` — a `classify_when` match (§7.4) | stripped + regenerated from the current rules |
-| **asserted** | a classify block with no `provenance` — human / normalizer | never touched |
-
-`classify_when` thus **decouples where membership is decided from where the payload is consumed**: an `interpretive` composite can have its membership stamped `auto` at draft, while its `normalization.guidance` is still applied at normalize. A `provenance: auto` block whose overlay was deleted or no longer matches is *stale* — `corpus reclassify` re-converges it; lint warns (`classification-stale`).
+*(2.0: the 1.0 ladder's classify-block rows — `classify_when` auto-membership and asserted composites — moved to the ledger; deterministic membership is now a harvest rule with the same auto/asserted discipline at the claim level, `ledger.md` §10.)*
 
 #### 4.4.7 Re-run lifetime
 
-Classify blocks persist across re-runs **unless their declaring schema is itself re-run**. A re-draft of the mime schema refreshes the artifact block and, for a body-draft mime schema, re-runs the body draft (re-segmenting the content zone and re-emitting embeds). A re-draft of a specific mechanical classification refreshes only that classify block. A re-normalize refreshes only the interpretive classify blocks (and may re-segment the content zone). To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
+Metadata- and annotations-zone blocks persist across re-runs **unless the pass that owns them is itself re-run**. A re-draft of the mime schema refreshes the artifact block and, for a body-draft mime schema, re-runs the body draft (re-segmenting the content zone, re-emitting embeds and overlay-declared `auto` context blocks). A re-normalize refreshes the faithful-form work (descriptions, segmentation, the editorial fields) and asserted faithfulness issues. To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
 
 ---
 
@@ -656,7 +636,7 @@ Resolver results may be cached. Cache lifetime, eviction policy, and storage loc
 
 ## 7. Schema declarations
 
-§3 introduced the five namespaces and the schema-loader resolution chain. This section specifies what the four schema-declaration namespaces (`mime`, `origin`, `atom`, `composite`) declare; the `context` umbrella's overlays are specified alongside the context block in §4.3.3.
+§3 introduced the four namespaces and the schema-loader resolution chain. This section specifies what the three schema-declaration namespaces (`mime`, `origin`, `atom`) declare; the `context` umbrella's overlays are specified alongside the context block in §4.3.3.
 
 ### 7.1 The mime namespace
 
@@ -670,7 +650,7 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 - `draft` (optional) — drafting controls beyond `mode`. `draft.strategy` names a general, *type-agnostic* drafter registered by strategy name rather than schema id (e.g. `zip-manifest`), so one drafter serves many schemas whose representation differs only by config; the strategy's config rides alongside it (e.g. `draft.manifest`). Absent a strategy, the drafter is dispatched by schema id. This is the drafting analogue of the origin overlay's `capture` block — overlay-driven, but keyed by media type (the mime schema) rather than by host.
 - `artifact_kind` (required) — `self_contained` (produces one record, lifting nested-stream metadata when present — the disposition for ordinary single-content files too) or `decomposable` (a raw archive that explodes into one record per member). No default.
 - `address_scheme` — the parameters the schema expects in segment `address:` values.
-- `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. The artifact block holds only facts about the **primary-artifact bytes** (e.g. ffprobe codec / dimensions / streams); source metadata from a capturer's enrichment sidecar does NOT live here — see `sidecar`. Vendor/domain identity (what a bundle *is*, beyond its bytes) does NOT live here either — that is a classification overlay's concern, filled by the normalizer (e.g. an `unraid/diagnostic-package` composite over a kept-whole zip).
+- `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. The artifact block holds only facts about the **primary-artifact bytes** (e.g. ffprobe codec / dimensions / streams); source metadata from a capturer's enrichment sidecar does NOT live here — see `sidecar`. Vendor/domain identity (what a bundle *is*, beyond its bytes) does NOT live here either — that is knowledge, asserted in the ledger as an entity/claims citing the record, minted mechanically by a harvest rule keyed on the kept-whole MIME (`ledger.md` §10).
 - `sidecar` (optional) — for an artifact type a capturer enriches with a companion metadata sidecar (e.g. a yt-dlp `.info.json`), declares what is lifted and where. `source` names the sidecar (e.g. `ytdlp-info-json`); `ytdlp_keys` lists the info.json keys copied — each into the **origin block** as a flat `ytdlp_<key>` field (§7.2), the mapping guidance the drafter applies. The sidecar is companion metadata staged in `capture/<hash>.<suffix>`, read at draft, then **deleted** — never persisted to `artifacts/` (only the artifact carries the `<hash>` name there). It is *non-primary-source* metadata, so nothing from it goes to the artifact block, the body, or the frontmatter `description`.
 - `transport_algos` — additional byte-hash algorithms to compute beyond the primary blake3 `id`.
 - `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps the drafter performs before hashing. The canonicalization MAY be scoped to a **content region** — hashing only the article-content text and excluding per-page framing (title, breadcrumb, entry-specific headings) — so two records holding the same content reached by different URLs share a `canonical` and collapse to one record (the duplicate's URL folded into the original). The content-region selector is host-specific and supplied by the origin overlay (not this schema); when it matches nothing the canonicalization falls back to the whole document.
@@ -681,7 +661,9 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 
 An `origin` schema declares an overlay for one source of retrieval.
 
-- `kind: interpretive` — origin overlays are always interpretive (the match cue may be mechanical, but body guidance is interpretive).
+- `kind: interpretive` — origin overlays are always interpretive (the match cue may be mechanical, but body guidance is consumed by the LLM normalize pass).
+
+An origin overlay's `normalization.guidance` is **body-shaping tactics** — how to render this source's content faithfully — and, with subtypes (`origin/<id>/<subtype>`), it is the home for **per-page-shape** guidance within a host (how a procedure page vs. an index page of the same site normalizes). *(2.0: this guidance role was previously split with composite overlays; the domain-semantic half of composite guidance moved to ledger per-type conventions, the body-shaping half lands here.)*
 - `description` — prose framing of the publisher.
 - `applies_to.host_pattern` (string, optional) or `applies_to.host_patterns` (list[string], optional) — host pattern(s) the drafter matches against origin URIs (the `web` family).
 - `applies_to.include_subdomains` (bool, default false).
@@ -692,7 +674,7 @@ An `origin` schema declares an overlay for one source of retrieval.
 
 The drafter iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), the drafter promotes that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The promoted opener contributes `origin/<id>[/<subtype>]` to the derived classifications view.
 
-An overlay `id` may also be **producer-declared** rather than `uri:`-matched. A capturer/producer that knows what it ingested stamps the id directly — `<!--origin <id>-->` written with the overlay's extended fields — which is the only way a **uri-less** origin (a dropped-in local file, e.g. an `imessage-export`) binds an overlay, since there is no `uri:` to match. Two mechanisms, both yielding the same stamped block: (a) a **capture sidecar** at ingest carries `origin_schema:` (the overlay id) + `origin_fields:` (its extended fields), consumed by the ingestor; (b) the producer injects **`<meta name="corpus-origin-schema">`** + per-field `<meta name="corpus-origin-<field>">` tags into the captured artifact, which the (mechanical) drafter folds onto the origin block (a repeated field meta collects into a list). A stored `id` from any path is equivalent downstream: it contributes `origin/<id>[/<subtype>]` to the derived classifications view, its overlay's `normalization.guidance` surfaces for the normalizer, and it satisfies a `classify_when: origin.id` predicate (§7.4) — the producer-declared id is not re-derived from a `uri:`, so it works with none.
+An overlay `id` may also be **producer-declared** rather than `uri:`-matched. A capturer/producer that knows what it ingested stamps the id directly — `<!--origin <id>-->` written with the overlay's extended fields — which is the only way a **uri-less** origin (a dropped-in local file, e.g. an `imessage-export`) binds an overlay, since there is no `uri:` to match. Two mechanisms, both yielding the same stamped block: (a) a **capture sidecar** at ingest carries `origin_schema:` (the overlay id) + `origin_fields:` (its extended fields), consumed by the ingestor; (b) the producer injects **`<meta name="corpus-origin-schema">`** + per-field `<meta name="corpus-origin-<field>">` tags into the captured artifact, which the (mechanical) drafter folds onto the origin block (a repeated field meta collects into a list). A stored `id` from any path is equivalent downstream: it contributes `origin/<id>[/<subtype>]` to the derived classifications view, its overlay's `normalization.guidance` surfaces for the normalizer, and it satisfies an `origin.id` predicate in a ledger harvest rule (`ledger.md` §10) — the producer-declared id is not re-derived from a `uri:`, so it works with none.
 
 The universal `origin` overlay declares the fields every origin block carries. `snapshot:` is always present; an origin carries **either** a retrieval `uri:` **or** local-file metadata:
 
@@ -715,6 +697,7 @@ The universal `origin` overlay declares the fields every origin block carries. `
   - `cookies_from_host` — `true` (default) pulls the capture URL's own-origin cookies from a running CDP browser session into yt-dlp; `false` disables; a list adds extra origin scopes. Lets a logged-in session unlock a host's full content.
   - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded into the record's metadata) rather than forming separate records.
   - `references:` — `[{match, role, capture, cross_host}]` — declares which of a captured page's outbound links are **dependent reference material** (a PDP's product manual, a spec sheet). Each rule's `match` (`selector` / `href_pattern` / `text_pattern` / `rel`; present keys ANDed, rules ORed) selects `<a>` elements in the drafted DOM. **Emission is a draft-stage concern** (the anchor needs the segmented body): each distinct declared link (resolved + normalized, excluding the record's own origin URIs) emits one `reference` context block (§4.3.3.3) on the primary record, with `provenance: auto`, the rule's `role`, and tier 2 (`source_url`). The mechanical drafter writes **no** tier-3 `source_uri` and reads no corpus state: whether the target is itself a record is a read-time derived edge resolved from `source_url` (`derived_views.references` §9.9 / `corpus links --references`), so `draft` stays a pure function of the artifact and the edge tracks the corpus (`captured ⇄ pending`) instead of a stored pointer that rots under removal/supersession (§4.3.3.3). **Fetching** the target is a separate **capture-side** action: `capture: true` (or `corpus capture --with-references`) fetches it **once, at depth 1**, as its own record (content-hash deduped) right after the primary; `capture: false` (default) is surface-only and the deferred `corpus crawl --references` pass fetches pending targets on demand. `cross_host: allow` (the default for references — manuals are off-host) permits reaching declaration matches on other hosts, but **only** matches — never a general cross-host crawl. Distinct from `also_capture`, whose bytes **enrich the primary record** rather than forming separate, referenced records. Absent the section the feature is inert (no hardcoded link knowledge).
+  - `relations:` — `[{match, predicate}]` — the sibling of `references:` for **source-declared cross-link structure** (a "related information" rail, sibling-page navigation): the same match grammar selects the links, and draft emits one `relation` context block per distinct target (§4.3.3.5) with `provenance: auto`, the rule's `predicate` as the block subtype, and `target_text`/`target_url`. Relations are edges, not fetch demands — there is no `capture:` key; a relation target enters the corpus only through the ordinary crawl/capture paths. Absent the section, inert.
 - `transcription:` — per-host audio transcription (read at draft time). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
 - `canonical:` — `content_selector` scoping the `canonical` hash to the article-content region (§7.1). *(Currently inert — `canonical:` is not persisted; see the §7.1 `canonical_strategy` status note.)*
 - `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the keys lifted from the `.info.json` come from the artifact mime schema's `sidecar.ytdlp_keys` (§7.1). Because the sidecar is *non-primary-source* metadata, every lifted key lands on the **origin block** as a flat `ytdlp_<key>` field (e.g. `ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts) — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a `ytdlp_comments` list field; `webpage_url` / `original_url` fold into the origin `uri:` aliases. The sidecar is **draft-time-only enrichment** — staged in `capture/`, consumed at draft, then deleted; it is one-shot (a re-draft after deletion does not re-apply it; the extracted fields already persist on the record). The only content the media drafters write to the body is the **transcript**, derived from the primary artifact's own audio.
@@ -728,54 +711,29 @@ An `atom` schema declares an atomic-axis overlay that may attach to a segment.
 - `applies_to.atom` — `text`, `image`, `audio`, or `video`. Must match the id's axis segment (e.g. `text` in `atom/text/data-table`).
 - `applies_to.cues` (optional) — heuristic patterns for the normalizer.
 - `enables_lossless` (boolean, default `false`) — when `true`, this overlay licenses a shaped lossless body in the text-atom segment that carries it. Only valid on `applies_to.atom: text` overlays. The overlay's other declarations describe what shape the body takes.
-- `extended_fields` (optional) — id-specific fields. For lossless-enabling overlays these typically describe address-shape requirements.
-- `normalization.guidance` (string) — markdown prose tactics.
+- `extended_fields` (optional) — id-specific fields. For lossless-enabling overlays these typically describe address-shape requirements; for envelope-bearing forms (a chat message's `sender`/`timestamp`) they carry the segment's structural envelope, verbatim from the source.
+- `normalization.guidance` (string) — markdown prose tactics for rendering the form faithfully.
 
 A segment carries exactly one atomic class id, on the opener line.
 
-### 7.4 The composite namespace
+**The atom constitution.** Atom overlays declare **form, never meaning**: the shape of a lossless body, the structural envelope of a segment, extraction tactics for a region's faithful rendering. "This text is a table," "this image is a screenshot," "this segment is one chat bubble with this sender and timestamp" are form statements, checkable against the bytes. A subtype whose payload is domain semantics — what the content is *about* — is wrong at this layer; that is a ledger claim over the segment's span (`ledger.md` §6).
 
-`composite` is the umbrella for **classification** namespaces — every user-defined namespace is a sub-namespace under `composite`, surfacing through the generic classify block at record scope, or a composite on the section opener at section scope. (Annotation overlays — `issue`, `reference`, … — live under the separate `context/` umbrella and surface through the context block, §3 / §4.3.3, not here.)
+### 7.4 The composite namespace *(removed in 2.0)*
 
-A classification schema (mechanical or interpretive) declares:
+*Retired with the classify block (§4.3.1.3).* The `composite` umbrella was the corpus's interpretive classification system — a pre-ledger claims system embedded in the archival layer. Where each part went:
 
-- `kind: mechanical` or `kind: interpretive`.
-- `description` — prose definition.
-- `applies_at` — list of scopes (subset of `[record, section]`). Default `[record]`.
-- `applies_to.content_types` (mechanical only) — MIMEs the classification can apply to.
-- `applies_to.cues` (optional) — heuristic patterns.
-- `classify_when` (optional) — a **deterministic** membership predicate (below). When present, the drafter auto-assigns the class to every record it matches and stamps the classify block `provenance: auto` (§4.3.1.3). Orthogonal to `kind` — a `classify_when` may sit on an `interpretive` overlay (membership decided at draft; the `normalization.guidance` payload still consumed at normalize).
-- `script` (mechanical only) — reference to the extraction script. A mechanical classification extracts metadata only — it emits/fills classify blocks and never drafts the record body (the mime schema is the sole body-drafter; §4.3.2.2).
-- `normalization.guidance` (interpretive only) — class-specific tactics in prose.
-- `extended_fields` — fields the matching classify block carries. Named **bare**, never prefixed with the composite id: the classify opener's `<namespace>/<id>` already scopes them (§principle 10), so a `composite/book` carries `title`/`author`/`isbn`, not `book_title`/`book_author`/`book_isbn`.
-- `subclasses` (optional, interpretive) — finer-grained categories.
-
-#### Deterministic membership — `classify_when`
-
-When a record's membership in a class is decidable from **stable, deterministic facts**, the class declares a `classify_when` predicate and the drafter assigns it at draft time — so every record of a known kind reaches the normalizer with that class (and its `normalization.guidance`) already attached, rather than re-deriving membership each pass. It is **mechanical** (no LLM, no network, no clock) and **pure opt-in**: a corpus with no `classify_when` overlays behaves exactly as one without this feature.
-
-`classify_when` is evaluated over a flat, normalized **fact base**:
-
-| Fact | Source |
+| 1.0 mechanism | 2.0 successor |
 |---|---|
-| `mime` | the artifact block's MIME |
-| `origin.uri` / `origin.host` / `origin.path` / `origin.fragment` / `origin.query.<k>` | parts of an origin block's uri(s) — **any-origin** (matches if ≥1 origin uri satisfies) |
-| `origin.id` | id of an origin overlay bound to the record — a `uri:`-matched overlay **or** a producer-declared / stored block id (§7.2); **any-origin** (matches if ≥1 origin block carries the id) |
-| `media.<field>` | normalized alias over the origin block's `ytdlp_<field>` fields (e.g. `media.channel_id`) — insulates rules from yt-dlp key drift |
+| User-defined classification namespaces | Ledger **types and predicates**, under VOCAB discipline (`ledger.md` §8) |
+| Asserted classify blocks (record scope) | **Claims** with record evidence (`ledger.md` §5–§6) |
+| Section-scope composites | Claims with span evidence (§4.4.3) |
+| `classify_when` deterministic membership | **Harvest rules** (`ledger.md` §10) — the same fact base and predicate grammar, evaluated ledger-side over corpus records |
+| Mechanical extraction scripts | Harvest-rule `mint` templates over the same fact base |
+| Domain-semantic `normalization.guidance` | Per-type authoring conventions (the hub's `facts/SCHEMA.md`, `ledger.md` §8) |
+| Body-shaping guidance keyed by page type | The origin overlay (subtypes, §7.2) or an atom overlay (§7.3) |
+| `extended_fields` | Claim values and qualifiers |
 
-Each leaf is `{<fact>: {<op>: <value>}}`, exact-by-default: `equals` (scalar equality), `in` (set membership), `glob` (shell-glob, for path/fragment/uri), `matches` (anchored regex — a documented sharp tool), `exists: <bool>`. Combinators `all_of` / `any_of` / `none_of` each take a list; a bare mapping of several `{fact: {op}}` at one level is `all_of` sugar. A **list-valued** fact (any-origin facts, `media.tags`) tests *any element* for `equals`/`in` and *non-empty* for `exists`.
-
-Three guarantees bound false positives: (1) exact-match operators are the default; (2) **a missing fact is *false*** for every operator except `exists: false` — an HTML record has no `media.channel_id`, so a video rule can never fire on it (no null-matches-anything path exists); (3) the interpretive `applies_to.cues.body_contains` is **not** part of this fact base and MUST NOT be promoted to a deterministic trigger — body keywords are the canonical false-positive source and stay normalizer-only.
-
-#### Scope-aware extended fields
-
-A composite schema's `extended_fields` decompose into three field groups by scope:
-
-- **Descriptive** — apply at every scope the schema declares in `applies_at`.
-- **Structural** — apply at record scope only.
-- **Citation** — apply at section scope only.
-
-Group membership is declared per-field by adding `applies_at:` inside the field's mapping.
+The fact base and predicate grammar that `classify_when` defined are now specified in the harvest-rule contract (`ledger.md` §10), unchanged in substance: draft-visible facts only (`mime`, `origin.*`, `media.*`), exact-by-default operators, missing-fact-is-false, and body keywords permanently excluded as the canonical false-positive source.
 
 ### 7.5 Semantic-type vocabulary
 
@@ -806,7 +764,7 @@ The `id` field is the exception — always bare blake3 hex (algorithm is invaria
 
 ### 7.7 Atom fingerprint strategies
 
-Perceptual fingerprinting is **opt-in** and **schema-gated**. A segment carries a `perceptual:` only when a `fingerprint` knob resolves on for its record — fingerprints are a near-duplicate / similarity-search signal, not part of a faithful first-pass draft, so the default is **off** and a record with no `perceptual:` is normal. The knob is a top-level field on a **mime schema** (the per-file-type default) and may be overridden on a **composite classification** (for records of that class). Values: `false` / absent = off; `true` = on with each atom's *default* algorithm; an algorithm name or a list = on with those algorithms (a list yields a list-valued `perceptual:`). Resolution precedence, most-specific first: `corpus draft --fingerprint` / `--no-fingerprint` › composite classification (assigned classify block, then mechanical composites) › mime schema › off. Only what is knowable at draft is consulted; an **interpretive** composite (assigned by the normalizer post-draft) takes effect on a later recompile.
+Perceptual fingerprinting is **opt-in** and **schema-gated**. A segment carries a `perceptual:` only when a `fingerprint` knob resolves on for its record — fingerprints are a near-duplicate / similarity-search signal, not part of a faithful first-pass draft, so the default is **off** and a record with no `perceptual:` is normal. The knob is a top-level field on a **mime schema** (the per-file-type default) and may be overridden on an **origin overlay** (for records from that source). Values: `false` / absent = off; `true` = on with each atom's *default* algorithm; an algorithm name or a list = on with those algorithms (a list yields a list-valued `perceptual:`). Resolution precedence, most-specific first: `corpus draft --fingerprint` / `--no-fingerprint` › origin overlay › mime schema › off.
 
 When fingerprinting is on, the algorithm for a segment is determined by its `atom:`, not by the source media-type. Each atom has a default algorithm; the knob may select an alternative where the atom supports more than one:
 
@@ -828,12 +786,12 @@ The `<algo>:<hex>` value records which algorithm produced it, so a record self-d
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
 | `ingest` | blake3 of bytes → `id`; additional algorithms per the mime schema's `transport_algos` → `transport:`; MIME detect → artifact-block opener; evaluate the mime schema's `artifact_kind`; emit stub with first origin block from capture context; persist binary in the corpus's binary store. | `<pkg>.ingest@<v>` |
-| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then each mechanical classification in declared order (each emits/fills its classify block — metadata only); drafter-detected issue context blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>`, then `<pkg>.classify.<namespace>-<id>@<v>` per mechanical classification |
-| `normalize` | Interpretive classifications run via LLM; may fill classify-block fields, re-segment the content zone, surface issue context blocks; description authored. | `<model-id>` |
+| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then the origin overlay's declared emissions (`reference`/`relation` context blocks); drafter-detected issue context blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>` |
+| `normalize` | The faithful-form LLM pass: re-segments and shapes the content zone where judged appropriate, authors descriptions and the two editorial fields, surfaces faithfulness issues. | `<model-id>` |
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
 
-An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest.
+An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest. `capture.relations` (§7.2) drives the same draft-stage emission for declared cross-link structure (`relation` blocks, §4.3.3.5), with no capture side.
 
 A corpus may also specialize the **draft** of its own content with corpus-local drafter code — `<corpus_root>/drafters/*.py`, loaded mechanically before drafting (the draft-stage analogue of the corpus-local capturer in §7.2). Such a drafter claims a record by its origin id (a producer-declared or stamped overlay binding, §7.2) and builds the content zone in place of the generic body draft; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
 
@@ -844,23 +802,21 @@ A corpus may also specialize the **draft** of its own content with corpus-local 
 | Hashing, MIME detection, mime schema lookup | deterministic | mechanical |
 | Container disposition | deterministic | schema-declared |
 | Mime schema's body draft, artifact-block field extraction, and `canonical` hashing | deterministic | scriptable |
-| Mechanical classification field extraction | deterministic | scripted |
 | Origin-host matching | deterministic | mechanical |
-| Overlay-declared reference emission (draft) / depth-1 dependent capture (capture) | deterministic | overlay-declared |
+| Overlay-declared reference/relation emission (draft) / depth-1 dependent capture (capture) | deterministic | overlay-declared |
 | Functional URI evaluation | deterministic | spec mandates |
 | Description authoring | LLM | requires understanding |
-| Body re-segmentation under interpretive guidance | LLM | requires judgment |
-| Interpretive classification field filling | LLM | by definition |
-| Issue surfacing | LLM (content) / drafter (mechanical) | depends on kind |
+| Body re-segmentation and shaping under overlay guidance | LLM | requires judgment |
+| Issue surfacing | LLM (faithfulness) / drafter (mechanical) | depends on kind |
 
 ### 8.3 Re-runs
 
 Every stage is independently re-runnable; re-runs are **scoped**.
 
 - **Re-ingest** — re-encounters bytes that match an existing `id`. Appends a touch identifier; may append to origin blocks.
-- **Re-draft (full)** — re-runs the mime schema followed by every mechanical classification.
+- **Re-draft (full)** — re-runs the mime schema and the overlay-declared emissions.
 - **Re-draft (scoped)** — re-runs only one schema. Refreshes ONLY the blocks/fields declared by that schema.
-- **Re-normalize** — re-runs interpretive classifications.
+- **Re-normalize** — re-runs the faithful-form pass.
 - **Re-resolve** — bare resolver-cache regeneration.
 
 Each re-run appends a new `touch[]` entry.
@@ -872,7 +828,7 @@ Each re-run appends a new `touch[]` entry.
 | What survives | What is reset |
 |---|---|
 | `id`, `transport` — byte-intrinsic. | `title` and `description` → empty; `canonical`, `perceptual` (record-scope). |
-| The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's body fields, all classify blocks, all embed blocks, all sections/segments, all context blocks. |
+| The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's body fields, all embed blocks, all sections/segments, all context blocks. |
 | `visibility`. | `status` → `stub`; record body's content zone → empty. |
 | `touch[]` collapses to its first entry (the original ingest touch) plus the re-stub touch. | |
 | The persisted bytes. | |
@@ -883,7 +839,7 @@ Re-stub is invoked deliberately — never automatic. Its uses:
 - Records whose accumulated normalize work was wrong.
 - Migration from a deprecated schema generation.
 
-Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It is also the natural translation point for migrating records from prior schema generations: a re-stub accepts older frontmatter on input and always writes v1.0-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
+Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It is also the natural translation point for migrating records from prior schema generations: a re-stub accepts older frontmatter on input and always writes a current-spec-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
 
 ### 8.5 The normalization queue
 
@@ -905,7 +861,7 @@ A queue entry moves `idle → requested → claimed → idle`, recording the las
 
 **Done** means the normalizer set `status: normalized` *and* the record lints clean — `finalize` enforces both halves.
 
-**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (§7.4); because domain knowledge rides in overlays, one generic loop serves every domain — a codex contributes by authoring overlays and enqueuing, not by supplying a normalizer.
+**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline requires `normalized` records (`ledger.md` §6.3): a hub contributes by enqueuing, never by supplying a normalizer.
 
 **Entry lifecycle and pruning.** A request and its claim are transient — each transition supersedes the prior state — but a settled pass records its **outcome** so a requester's `await` can resolve it, and so a *re-normalization* is distinguishable from an earlier pass (which `status` alone cannot tell apart, since a re-normalized record is still `normalized`). An outcome is **coordination state, not history**: the record's own `status` and `touch[]` are the durable trail. Because a requester may `await` after a loop iteration ends, an outcome is **never discarded at loop end** — that would race the awaiter, dropping it to the `status` fallback. Outcomes are instead garbage-collected by **age**: a settled outcome past a grace window (plus any orphaned scratch) is prunable, never a live request or claim — so the queue's footprint stays bounded without dropping an outcome a requester still needs. The grace window and the prune trigger are operational policy, not part of the contract.
 
@@ -917,7 +873,7 @@ Cross-cutting aggregates over a record's frontmatter and body blocks, computed o
 
 ### 9.1 The `classifications` view
 
-Computed by walking the metadata zone:
+Computed by walking the metadata zone — structural-derived only (§4.4.6):
 
 ```
 classifications := []
@@ -926,22 +882,19 @@ on <!--artifact <mime-type>-->:
 on <!--origin <id>[/<subtype>]-->:
   if id present:
     classifications += ["origin/<id>[/<subtype>]"]
-on <!--classify <namespace>/<id>[/<subtype>]-->:
-  classifications += ["<namespace>/<id>[/<subtype>]"]
 dedupe preserving body order
 ```
 
-Embed blocks and context blocks are NOT included. Composites on **section** openers are also not included — they are section-scoped identity (read by walking the content zone, §4.3.2.1), not record-scope classifications. The walk does not distinguish provenance (§4.4.6): a `provenance: auto` classify block contributes its `<namespace>/<id>` entry exactly like an asserted one, so auto classes surface to `find --classification` and the normalizer for free.
-
-A record carrying an artifact block, one qualified origin block, and one classify block yields:
+Embed blocks and context blocks are NOT included. A record carrying an artifact block and one qualified origin block yields:
 
 ```
 [
   "mime/<mime-type>",
-  "origin/<origin-id>",
-  "<namespace>/<id>"
+  "origin/<origin-id>"
 ]
 ```
+
+*(2.0: the classify-block rows are gone with the composite namespace. "What does this record document" is a ledger query — the claims citing the record (`ath ledger worklist`, `ledger.md` §13) and the hub's coverage ledger (`ledger.md` §9).)*
 
 ### 9.2 The `issues` view
 
@@ -987,9 +940,9 @@ Three **cumulative** estimates of a record's size as model context, for budgetin
 
 The text tokenizer and the image constants are an implementation choice (§12.13), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
 
-### 9.7 The `concepts` view
+### 9.7 The `concepts` view *(removed in 2.0)*
 
-The `concept`-namespace projection of the context view (§4.3.3.4) — the dual of the `issues` view (§9.2). Each entry is a concept the record invokes, with its identity ladder (`label`, `url`, `concept`) and optional anchor (`address`, `quote`, `occurrence`); a segment-scoped entry is a *mention*, a record-scoped entry is *aboutness*. The `concept` id (`wikidata:Q…` / `enwiki:…` / `local:…`) is the join key by which independently-annotated records that invoke the same concept are related (§4.3.3.4). Like every §9 view it is computed on demand and never persisted.
+*Retired with the `concept` namespace (§4.3.3.4).* "Which records invoke this entity" is a ledger query: the entity's claims' evidence URIs point at the records, and coverage (`ledger.md` §9) is the record-first direction.
 
 ### 9.8 How views are computed
 
@@ -1005,7 +958,7 @@ Views are computed at query time.
 
 ### 9.9 The `references` view
 
-The `reference`-namespace projection of the context view (§4.3.3.3) — the sibling of the `issues` (§9.2) and `concepts` (§9.7) views. Each entry carries the ladder (`attribution_text`, `source_url`, `source_uri`), the anchor (`address`, `quote`, `occurrence`), `provenance`, and `role`. The resolved `source_uri` is the directional edge to the cited/depended-on record; the reverse ("records that reference *this* one") is a corpus-wide read derivable from these edges but, like cross-record content addressing (§11), the corpus-wide index is not specified here. Computed on demand, never persisted.
+The `reference`-namespace projection of the context view (§4.3.3.3) — the sibling of the `issues` view (§9.2), and the pattern the `relation` namespace (§4.3.3.5) follows. Each entry carries the stored ladder (`attribution_text`, `source_url`), the anchor (`address`, `quote`, `occurrence`), `provenance`, `role`, and the **derived** tier-3 resolution (`resolved_uri`/`captured`, computed against the URI index at read time — §4.4.5). The resolved edge is directional toward the depended-on record; the reverse ("records that reference *this* one") is a corpus-wide read derivable from these edges but, like cross-record content addressing (§11), the corpus-wide index is not specified here. Computed on demand, never persisted.
 
 ---
 
@@ -1034,7 +987,6 @@ Genuinely deferred items for this spec version:
 - **Whole-corpus build tooling** — single-record export is in scope; bulk operations are not.
 - **Export to non-markdown formats.**
 - **Additional semantic types** beyond the closed seven.
-- **Capturing the concept knowledge base.** Wikipedia/Wikidata is referenced by `concept` blocks (§4.3.3.4) as an external authority run locally; the corpus does not capture its articles as records, and the local KB (acquisition, search, read) is an implementation concern (§12.12), not a corpus-layer contract.
 - **Recursive dependent capture.** `capture.references` (§7.2) fetches declared references at **depth 1** only; following a grabbed reference's own references — and any general multi-hop crawl — remains `corpus crawl`'s job, not the capture-alongside path.
 
 ---
@@ -1054,7 +1006,7 @@ corpus-<name>/
 ├── README.md                optional
 ├── records/                 tracked: record markdown files
 │   └── <id[:2]>/<id>.md
-├── schema/                  tracked: mime / origin / atom / composite / context
+├── schema/                  tracked: mime / origin / atom / context
 ├── artifacts/               UNTRACKED: raw-bytes cache
 │   └── <id[:2]>/<id>.<ext>
 ├── capture/                 UNTRACKED: in-progress capture staging
@@ -1082,7 +1034,7 @@ schema/<namespace>/<axis>/<axis>_<id>.yaml       specific declaration
 
 The **underscore-flattened** subtype convention (`text_html.yaml` inside `text/`, rather than `html.yaml`) keeps filenames self-describing.
 
-Inside `composite/`, namespaces with no axis decomposition use the simpler `schema/composite/<namespace>/<id>.yaml` form, with the namespace universal at `schema/composite/<namespace>/<namespace>.yaml`. Annotation overlays follow the same pattern under `schema/context/` — `context/<ns>/<ns>.yaml` layering under `context/<ns>/<id>.yaml` (the bundled `issue` overlays live here, not under `composite/`).
+Annotation overlays use the namespace pattern under `schema/context/` — `context/<ns>/<ns>.yaml` layering under `context/<ns>/<id>.yaml` (the bundled `issue` overlays live here).
 
 Inside `origin/`, overlays nest by **URI scheme family** (§7.2): `schema/origin/web/<host>.yaml` for http(s) sources (host-matched), `schema/origin/otherwise/<id>.yaml` as the catch-all, and other families (`urn/`, `file/`, `s3/`) as a corpus needs them, with the namespace universal at `schema/origin/origin.yaml`. The overlay id is the bare `<id>` regardless of sub-namespace; the flat `schema/origin/<id>.yaml` form is still read for back-compat. `corpus init` seeds `origin/origin.yaml` + `origin/web/example.com.yaml`.
 
@@ -1130,7 +1082,7 @@ Ingest emits the stub record (§4.1). The frontmatter carries only the bytes-ide
 - The **artifact block**, its body holding the format-intrinsic extended fields the mime schema declares, named bare (`title`/`author`/`page_count`, not `pdf_title`; §4.3.1.1). Sources: PDF info dict, EXIF, ID3, HTML `<meta>`, OPF Dublin Core, ffprobe streams.
 - The first **origin block** from capture context — `uri:` + `snapshot:`, or the uri-less local-file form (§7.2).
 
-No `content_type`, `hashes`, `classifications`, `tags`, or `uris`/`capture_dates` frontmatter — none of those exist in the v1.0 model. The content zone is empty; draft fills it. Classifications are not stamped here either — `classify_when` membership is applied at draft (§12.4.5).
+No `content_type`, `hashes`, `classifications`, `tags`, or `uris`/`capture_dates` frontmatter — none of those exist in this model. The content zone is empty; draft fills it.
 
 #### 12.3.5 Dedup, re-capture, and capture provenance
 
@@ -1208,7 +1160,7 @@ A page's most relevant outbound links are part of the capture itself — a produ
 
 ### 12.4 Draft
 
-Draft brings a stub to `status: draft`, applying schemas in the §8.1 order: the mime schema first — the sole body-drafter, segmenting the content zone, emitting embeds, filling the artifact block's bare fields — then atom overlays on segment openers, then mechanical composites in declared order (metadata only; each fills its own classify block, stamped `provenance: auto` where membership came from `classify_when`). A classification is never a frontmatter array and carries no justification field — the `classifications` list is a derived view (§9.1) — and records carry no `tags` field.
+Draft brings a stub to `status: draft`, applying schemas in the §8.1 order: the mime schema first — the sole body-drafter, segmenting the content zone, emitting embeds, filling the artifact block's bare fields — with atom overlays riding segment openers, then the origin overlay's declared emissions (`reference`/`relation` context blocks, `provenance: auto`). A classification is never a frontmatter array and carries no justification field — the `classifications` list is a derived view (§9.1) — and records carry no `tags` field.
 
 #### 12.4.1 Per-format drafters
 
@@ -1218,7 +1170,7 @@ Conversion produces the artifact's body as well-formed markdown. It is MIME-driv
 - **`application/pdf`** → `draft/pdf.py` is uniform and mechanical: every PDF drafts to the same shape — one body-empty `image` segment per page addressed `page=<N>`, sectionless — plus the `/Info` fields on the artifact block (`page_count`, `title`, `author`, `producer`, `creation_date`, `modification_date`). The drafter makes no born-digital-vs-scanned determination and extracts no text; the page raster is the faithful transport unit (§11). Everything an agent needs to determine a page's shape and recover its content is exposed at normalize time through the resolver's introspection ops (§6.2): `page=<N>&text`, `page=<N>&words`, `page=<N>&probe` / `probe`, and `outline`. The normalizer uses these to pull born-digital text into prose segments, OCR a scan into `text/ocr` at `page=<N>&bbox=…` (so the corpus owns OCR provenance — engine/confidence/region — rather than laundering a pre-baked machine-OCR layer), and wrap pages into sections from the outline (`pages=<start>-<end>`). Resolver mechanics: `page=<N>` yields an intermediate `pdfpage` selector so a sub-op reads the page directly rather than OCR'ing a render; a terminal `pdfpage` — or an image op / `bbox=` after it — auto-renders to image, so a `page=` image segment stays a self-slice needing no embed (`lint._self_slice`). `words`/`probe`/`outline` cache as `json`. Canonical: `blake3-canonical-pdf` (per-page extracted text; persist currently disabled — §7.1 note).
 - **`application/epub+zip`** → the EPUB drafter (`draft/epub.py` + the pure `corpus.epub` OPF reader). `self_contained` — an EPUB is one work, one record. Emits one bare `text` segment per spine (reading-order) content document, addressed `spine=<N>`, with a mechanically-cleaned structural-HTML body (same philosophy as the HTML drafter), and groups them into sections by the book's navigation document (EPUB 3 nav → EPUB 2 NCX): top-level TOC entries become sections (`address: spines=<start>-<end>`, `entry:` = the part/chapter title), spine docs before the first TOC target become a synthetic `Front matter` section — the exact analogue of the PDF outline wrap (`pages=`/`page=` ↔ `spines=`/`spine=`). A book with no usable nav drafts sectionless, like an outline-less PDF. Each `<img>` references a separately-stored zip member, so it becomes an **embed** (addressed `spine=<N>&el=<K>`, `transport` = blake3 of the member bytes, deduped across the book; the body keeps a src-stripped `<img data-el="K">` placeholder) — the HTML drafter's embed model, not the PDF's bare-image-segment model. That address materializes through `transforms/epub.py`: `spine=<N>` selects the OPF content document and binds a resolver over the book's zip image members, then `el=<K>` resolves the addressed `<img>` to its member bytes — so a recorded address round-trips to byte-identical content (the resolved bytes' blake3 == the embed's recorded `transport`; el-indexing is shared with the drafter via `corpus.epub.addressable_image_bytes`). Publication metadata (Dublin Core) lands as bare artifact fields (`title`/`creator`/`language`/…; `spine_item_count`/`toc_entry_count` record the shape). Canonical: `blake3-canonical-epub` (concatenated spine text — packaging-invariant).
 - **Raw `application/zip`** → `decomposable` by default (the bundled schema): the ingestor explodes it into one captured artifact per member; the container produces no record. A corpus that wants a *particular* zip-shaped bundle kept whole declares its own `self_contained` mime schema for it (recognized by shape via `applies_to.zip_member_patterns`, §12.3.2) and points it at the `zip-manifest` drafter.
-- **`draft.strategy: zip-manifest`** → the general `self_contained`-zip drafter (`draft/zip_manifest.py`), selected by *strategy* rather than schema id (`corpus.draft.STRATEGY_REGISTRY`), so one drafter serves any number of bundle types that differ only by the schema's `draft.manifest` config. It records the archive as an **embed manifest**. The modeling point: a zip member is a *transport* (a file with its own bytes + MIME), not a content atom — and an embed is precisely "an embedded transport". So every member becomes an embed (`transport` = blake3 of the member bytes, `media_type` content-sniffed, addressed `path=<relpath>`, root-stripped per `manifest.root_strip`) that the normalizer describes — and the content zone is **empty**: a pure container has no content atoms of its own, and a member's bytes are verbatim + resolvable, so nothing is transcribed. The folder hierarchy lives in the `path=` addresses (a tree is a derived rendering, not stored blocks). `media_type` is content-sniffed (`_is_text`: UTF-8, no NULs), not extension-guessed, so a `.cfg`/extensionless log is `text/plain`; a precise extension guess (`application/json`, `image/png`) is kept; an opaque binary is `application/octet-stream`. Bytes materialize through `transforms/zip.py`: `corpus://<id>?path=<relpath>` → the member bytes. The artifact block carries generic zip facts only — `member_count`, `uncompressed_bytes`, `compressed_bytes`, `compression`, `encrypted`, `comment`; a single wrapper dir's name is a fallback `title` candidate. The drafter knows nothing about any vendor: recognizing a bundle as, say, an Unraid diagnostics package and surfacing its identity is codex-layer domain knowledge, carried by a classification overlay (a composite whose `classify_when: {mime: {equals: …}}` auto-applies on the kept-whole MIME) and filled by the normalizer — not by this drafter, and not on the artifact block. An empty archive yields a blocking `partial-content` issue; because such a record has no content-zone segments, the `embed-unreferenced` lint is relaxed for it (the embeds ARE the content).
+- **`draft.strategy: zip-manifest`** → the general `self_contained`-zip drafter (`draft/zip_manifest.py`), selected by *strategy* rather than schema id (`corpus.draft.STRATEGY_REGISTRY`), so one drafter serves any number of bundle types that differ only by the schema's `draft.manifest` config. It records the archive as an **embed manifest**. The modeling point: a zip member is a *transport* (a file with its own bytes + MIME), not a content atom — and an embed is precisely "an embedded transport". So every member becomes an embed (`transport` = blake3 of the member bytes, `media_type` content-sniffed, addressed `path=<relpath>`, root-stripped per `manifest.root_strip`) that the normalizer describes — and the content zone is **empty**: a pure container has no content atoms of its own, and a member's bytes are verbatim + resolvable, so nothing is transcribed. The folder hierarchy lives in the `path=` addresses (a tree is a derived rendering, not stored blocks). `media_type` is content-sniffed (`_is_text`: UTF-8, no NULs), not extension-guessed, so a `.cfg`/extensionless log is `text/plain`; a precise extension guess (`application/json`, `image/png`) is kept; an opaque binary is `application/octet-stream`. Bytes materialize through `transforms/zip.py`: `corpus://<id>?path=<relpath>` → the member bytes. The artifact block carries generic zip facts only — `member_count`, `uncompressed_bytes`, `compressed_bytes`, `compression`, `encrypted`, `comment`; a single wrapper dir's name is a fallback `title` candidate. The drafter knows nothing about any vendor: recognizing a bundle as, say, an Unraid diagnostics package and surfacing its identity is ledger knowledge — a harvest rule keyed on the kept-whole MIME mints the entity mechanically (`ledger.md` §10) — not this drafter's concern, and not the artifact block's. An empty archive yields a blocking `partial-content` issue; because such a record has no content-zone segments, the `embed-unreferenced` lint is relaxed for it (the embeds ARE the content).
 - **`audio/*`** → speech-to-text transcription (reference: Whisper), with timestamps and speaker turn markers where determinable. `audio/mp4` covers `.m4a`/`.m4b` audiobooks (an `.m4b` magic-sniffs as `video/mp4` on its generic ISOBMFF brand; `mime.detect` refines it by extension so it routes to transcription — embedded chapter markers and cover-art `mjpeg` are not consumed in v1).
 - **`video/*`** → audio transcription + per-keyframe descriptions when the schema asks for them.
 - **`image/*`** → a single body-empty `image` segment addressed `bbox=0,0,1,1` (`draft/image.py`); the image is its own self-artifact — no embed; the bytes are the record's, materialized via the `bbox=` functional URI (§4.3.1.4). Any visual description is normalizer-written on the segment `description:`; an optional `perceptual:` when the fingerprint knob resolves on. No VLM/OCR in the deterministic drafter.
@@ -1235,13 +1187,11 @@ A corpus can specialize the draft of its *own* content without editing the packa
 
 #### 12.4.4 Perceptual fingerprinting (opt-in)
 
-A segment gets a `perceptual:` only when `schemas.resolve_fingerprint(corpus_root, media_type, post, cli_override)` resolves on — precedence CLI (`corpus draft --fingerprint` / `--no-fingerprint`) › composite classification › mime-schema `fingerprint` knob › off (the default; §7.7). The resolved knob (`true` = the atom's default algorithm, an algorithm name, or a list) becomes concrete per-atom algorithms via `fingerprint.algos_for_atom(atom, knob)`, computed by `fingerprint.text_fingerprints` / `image_fingerprints` (a registry keyed by algorithm, mirroring `content_hash._STRATEGIES`). Resolution at draft only sees the mime default, mechanical composites, and already-present classify blocks; an interpretive composite (assigned by the normalizer post-draft) takes effect on a later `corpus redraft`. Algorithm selection is schema-only; the CLI flag is on/off.
+A segment gets a `perceptual:` only when `schemas.resolve_fingerprint(corpus_root, media_type, post, cli_override)` resolves on — precedence CLI (`corpus draft --fingerprint` / `--no-fingerprint`) › origin overlay › mime-schema `fingerprint` knob › off (the default; §7.7). The resolved knob (`true` = the atom's default algorithm, an algorithm name, or a list) becomes concrete per-atom algorithms via `fingerprint.algos_for_atom(atom, knob)`, computed by `fingerprint.text_fingerprints` / `image_fingerprints` (a registry keyed by algorithm, mirroring `content_hash._STRATEGIES`). Algorithm selection is schema-only; the CLI flag is on/off.
 
-#### 12.4.5 Deterministic auto-classification (`classify_when`)
+#### 12.4.5 Deterministic auto-classification *(removed in 2.0)*
 
-A composite overlay that declares a `classify_when` predicate (§7.4) is stamped onto every matching record at draft as a classify block with `provenance: auto`. The engine is `classify_rules.py`: `build_facts(corpus_root, post)` extracts the flat fact base (`mime`; `origin.host`/`path`/`fragment`/`query.<k>`/`id` — any-origin, list-valued; `media.<field>` by inverting the `ytdlp_` prefix off the origin block's fields, so the alias set tracks `draft/_sidecar.py` automatically); `evaluate(predicate, facts)` runs the `all_of`/`any_of`/`none_of` + `equals`/`in`/`glob`/`matches`/`exists` grammar (pure, total, missing-fact-⇒-false); `matching_classes` scans `schemas.iter_all_classifications` (namespace base and every subclass, deep-merged). `apply_auto_classifications(corpus_root, post)` is the idempotent strip-all-`provenance: auto` + regenerate-from-rules fixpoint — auto blocks placed before any surviving non-auto block (§4.3.1.3), asserted blocks untouched. The hook sits in `_cli.draft.derive_record` after the drafter result is applied (origin `ytdlp_*` present) and before the status flip, so both `corpus draft` and `corpus redraft` self-heal auto blocks. It is the mechanical, membership-at-draft path — complementary to, and never merged with, `classify_match.candidates()` (the interpretive body-cue matcher the normalizer consumes). Pure opt-in: no `classify_when` anywhere ⇒ no behavior change.
-
-**`corpus classify` / `corpus reclassify`** operate on **stored** records (not a re-stub), preserving the body and asserted blocks — re-evaluating only auto membership. `corpus classify <hash> [--dry-run] [--json]` does one record (printing the satisfying fact as the "why"); `corpus reclassify [target] [--mime/--host/--classification/--status] [--dry-run]` is the bulk re-propagation after authoring or editing an overlay. Both are body-safe and so default to all statuses including `normalized` — unlike `redraft`, which refuses `normalized`. Membership can also be asserted manually: `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it alone). Lint's `classification-stale` (warning) flags a `provenance: auto` block whose overlay was deleted or no longer matches; the fix is `corpus reclassify`.
+*Retired with the composite namespace (§7.4).* The `classify_when` engine, `corpus classify`, `corpus reclassify`, and lint's `classification-stale` all retire; deterministic membership is now a ledger **harvest rule** over the same fact base (`ledger.md` §10), evaluated ledger-side (`ath ledger harvest`) as a pure function of the corpus's mechanical record facts — so `draft` no longer carries any classification hook at all.
 
 #### 12.4.6 Bulk recompile (`corpus redraft`)
 
@@ -1267,9 +1217,8 @@ Normalization brings a record from `draft` to `normalized` (§8.1). It is interp
 
 #### 12.5.1 The interpretive pass
 
-The normalizer refines the record:
+The normalizer refines the record — faithful-form work only:
 
-- Applies matching **interpretive** composite classifications — each as its own classify block (no `provenance`, so the auto engine never touches it), with the overlay's `normalization.guidance` consumed here.
 - Improves formatting fidelity (broken tables, malformed lists); resolves encoding ambiguity where determinable.
 - Writes asset descriptions on embeds and on self-slice / non-lossless segments via `description:` (lossy interpretation — never in a faithful segment body); fills embed `alt` only when the source provides it.
 - Surfaces problems as `<!--context issue/<id>-->` blocks in the annotations zone.
@@ -1291,11 +1240,10 @@ Failures here are pipeline bugs; they should fail loudly.
 
 #### 12.5.3 Annotations in practice
 
-A context block stores as `{namespace, id, subtype, fields}` — the same shape as a classify block — in `post.metadata["_contexts"]`. The bundled namespaces are `issue`, `reference`, and `concept` (§4.3.3); a corpus may add its own under `schema/context/<ns>/`. Context is scarce by design (§4.3.3), and there is deliberately no bundled free-text `note` namespace — that would invite scratchpad flooding. The `aside` and `relation` namespaces named in §4.3.3 have no bundled overlays yet; they are deferred.
+A context block stores as `{namespace, id, subtype, fields}` in `post.metadata["_contexts"]`. The bundled namespaces are `issue` and `reference` (§4.3.3); a corpus may add its own under `schema/context/<ns>/` (`relation` overlays are corpus-local, per §4.3.3.5). Context is scarce by design (§4.3.3), and there is deliberately no bundled free-text `note` namespace — that would invite scratchpad flooding. The `aside` namespace named in §4.3.3 has no bundled overlay yet; it is deferred.
 
 - **Issue loading and parse tolerance.** `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml`. `records.iter_issue_blocks` / `append_issue_block` are shims over `_contexts` filtered to the `issue` namespace, so drafters/detectors, `health.unresolved_issues`, the §9.2 view, and lint's issue rules share one path. The reader is parse-tolerant: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write.
-- **Reference lint.** `reference-unresolved` flags a stored `source_uri` that doesn't resolve to a captured record — only ever an *asserted* one, since the mechanical drafter writes no `source_uri` (§12.3.10). `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay.
-- **Concept.** The block stays lean — the `label → url → concept` ladder plus the optional `address:`/`quote:` anchor; the human-facing gloss is fetched live from the knowledge base (§12.12) at serialize time, never stored. Authored by `corpus concept link` (manual) today; an automatic content-scanning annotation pass is deferred.
+- **Reference lint.** `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay. *(The 1.0 `reference-unresolved` lint retired with the stored tier-3 `source_uri`, §4.4.5.)*
 - **Decompose/compile conventions.** The manifest keeps a dedicated `issue <id> sev= res= detector=` line for the issue namespace and a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`). Two conventions keep the working dir hand-editable: `status` is authored only on the manifest `record … status=` line (not duplicated in `meta.yaml`, where an edit would be a silent no-op), and `meta.yaml` renders a multi-line string as a YAML block literal (`|`) so a multi-line `description` never reads as a truncated stump. An address list in the manifest is bracketed and `|`-separated (`[a|b|…]`), not comma-separated — a single address (e.g. `bbox=x,y,w,h`) already contains commas.
 
 #### 12.5.4 Normalizer-support commands
@@ -1303,8 +1251,8 @@ A context block stores as `{namespace, id, subtype, fields}` — the same shape 
 The LLM normalizer never reads `schema/*.yaml` directly; it works through read-only commands (`_cli/{diagnose,guidance,overlay,preview}.py`, surfacing the §9 derived views and the §6 resolver):
 
 - **`corpus diagnose <hash> [--json]`** — the first call: a one-page brief combining the derived views (classifications / issues / uris) with a quick-lint and the record's context blocks.
-- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / composite overlay for the record.
-- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a candidate classification, so the normalizer fills a classify block without reading YAML. Given a bare host instead, it falls back to the origin overlay and prints its host match, declared operational sections, and `normalization.guidance`.
+- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / atom overlay for the record.
+- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a mime or atom overlay, so the normalizer works without reading YAML. Given a bare host instead, it falls back to the origin overlay and prints its host match, declared operational sections, and `normalization.guidance`.
 - **`corpus lint <target> [--json]`** — the conformance gate; `--json` emits a single JSON array of findings (each = the `Finding` fields + `record_id`), across all records when `<target>` is omitted.
 - **`corpus preview <target> [--page N] [--mark x,y,w,h]… [--full] [-o out.png]`** — the cropping loop's *eyes* (§12.5.5). Renders the artifact (an image, or a PDF page via `--page`) with each proposed bbox outlined on the full image so a vision-model normalizer can see where a region sits, judge the fit, and adjust before committing. Read-only — it never writes the record; the agent commits regions separately by editing the record body. Fits the render to the `llm` budget by default; prints the cache path, or copies to `-o`.
 
@@ -1348,34 +1296,15 @@ That bare loop is the **scheduled** shape: a tick (cron) drains until dry, then 
 
 **Operator runbook.** The operating modes and result lifecycle are surfaced via `corpus workflow normalize-loop` — guidance for *running* the tooling, distinct from `corpus guidance <id>` (per-record). Runbooks are markdown shipped in the package (`corpus/workflows/`, loaded via `importlib.resources`); `corpus workflow` lists them, shows a runbook, or narrows to a section. The queue verbs' `--help` cross-reference it. Keeping the runbook in the package means the operating modes are maintained once, in the tooling, not duplicated per corpus.
 
-### 12.6 The curator feedback loop
+### 12.6 The curator feedback loop *(reshaped in 2.0)*
 
-Composite classification schemas are corpus-local and corpus-author-driven (§7.4); they emerge from observed patterns in how the corpus is used, not from upfront design — and the package ships none.
+The 1.0 loop authored composite overlays from observed patterns. The loop survives; its outputs relocate:
 
-**Pattern detection.** The curator periodically scans for patterns that warrant a classification: origin / fact frequency (many records share a host or a deterministic fact — a `ytdlp_channel_id`, a URL shape — a candidate for a `classify_when`-keyed class); recurring extended-field values (a candidate sub-classification); codex-driven demand (the codex layer, `codex.md`, reaches for metadata that isn't yet extracted).
+**Pattern detection.** The curator periodically scans for patterns worth encoding: origin / fact frequency (many records share a host or a deterministic fact — a `ytdlp_channel_id`, a URL shape); recurring body shapes within a host; demand flowing down from above (a ledger hub's needs and coverage gaps, `ledger.md` §7/§9).
 
-**Schema authoring.** A composite overlay lives at `schema/composite/<namespace>/<id>.yaml` (namespace universal at `<namespace>/<namespace>.yaml`) and declares (§7.4):
+**Where each pattern lands.** A recurring *deterministic membership* pattern becomes a ledger **harvest rule** (`ledger.md` §10 — authored in the hub, evaluated by `ath ledger harvest`). Recurring *body-shape* guidance becomes origin-overlay guidance (per host / subtype, §7.2) or an atom overlay (per form, §7.3). Recurring *link structure* becomes a `capture.references` / `capture.relations` declaration (§7.2). Domain conventions for authoring claims land in the hub's `facts/SCHEMA.md`, never in corpus schemas.
 
-```yaml
-kind: mechanical          # or interpretive
-applies_at: [record]      # subset of [record, section]; default [record]
-applies_to:
-  content_types: [...]    # mechanical only
-classify_when:            # optional deterministic membership predicate
-  all_of:
-    - media.channel_id: {equals: "UC-..."}
-extended_fields:          # bare — the classify opener scopes them
-  episode_date: {type: string, semantic_type: timestamp}
-normalization:
-  guidance: |             # interpretive payload (consumed at normalize)
-    ...
-```
-
-`classify_when` is the deterministic-membership lever: the drafter stamps the class on every matching record at draft with `provenance: auto`. It is orthogonal to `kind` — an `interpretive` overlay may carry one, so membership is decided at draft while its guidance is still applied at normalize.
-
-**Re-propagation.** Authoring or editing an overlay does not touch existing records until a sweep re-evaluates membership: `corpus reclassify` for a `classify_when` change (body-safe, all statuses), `corpus redraft` when the change is to a mime schema, drafter, or fingerprint knob (§12.4.5, §12.4.6). Lint's `classification-stale` flags stale auto blocks; `git diff records/` is the review surface for any sweep.
-
-**Schema evolution.** As patterns refine, overlays iterate — narrow a too-broad `classify_when`, augment weak `extended_fields`, split a class into subclasses — each iteration followed by a targeted `corpus reclassify` (or `redraft`) over the affected scope.
+**Re-propagation.** Corpus-side overlay changes re-propagate with `corpus redraft` (scoped by `--host`/`--mime`; `git diff records/` is the review surface). Ledger-side rule changes re-propagate with `ath ledger harvest` — records are untouched.
 
 ### 12.7 Re-run verbs
 
@@ -1383,19 +1312,18 @@ Every stage is independently re-runnable (§8.3); each re-run appends a `touch[]
 
 - **Re-ingest** — automatic on re-encountered bytes matching an existing `id`; folds the capture into origin blocks (§12.3.5), never a new record.
 - **`corpus redraft`** — re-derive from the retained artifact + current schemas/tooling (§12.4.6).
-- **`corpus reclassify`** — re-evaluate `classify_when` membership over stored records (§12.4.5); body-safe, all statuses.
-- **Re-normalize** — enqueue the record again (§12.5.6); refreshes interpretive classify and issue context blocks, may re-segment.
+- **Re-normalize** — enqueue the record again (§12.5.6); refreshes the faithful-form work and faithfulness issues, may re-segment.
 - **`corpus compile`** — reassemble a record from a decomposed manifest (§12.4.2) — a different input than `redraft`'s artifact.
 - **`re-stub`** — the deliberate reset to `status: stub` (§8.4).
 
-**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (a drafter or mime-schema change), `--classification` (a reworked composite), `--status` (e.g. only `draft`).
+**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (a drafter or mime-schema change), `--classification` (a `mime/*` / `origin/*` class), `--status` (e.g. only `draft`).
 
 ### 12.8 Maintenance: GC and record removal
 
 Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a routine, age-gated sweep of regenerable data (`gc`) and a deliberate, ref-checked removal of a tracked record (`rm` / `forget-origin`). Nothing here is normative — Part I is silent on removal; this is CLI hygiene over the storage layout (§12.1).
 
 - **`corpus gc`** prunes, by file mtime, four regenerable categories — never a tracked record, a live queue entry, or an artifact that still has a record: **`cache`** (resolver output; re-warms on the next resolve), **`staging`** (leftover `capture/` debris — sidecars, crawl coordination files, abandoned partials), **`orphans`** (artifacts with no owning record — ingest is the only writer of `artifacts/`, so an orphan is exactly an artifact file whose record is gone: the debris of a `--force` re-capture, a re-stub, or a hand-`rm`), and **`export`** (regenerable bundles). Previews by default (counts + bytes per category); `--yes` deletes. `--older-than DAYS` sets the grace window (default 7; `0` prunes everything now) — generous beyond the brief window in ingest between writing an artifact and its record, so the orphan sweep never races a fresh capture. `--include` restricts the set; `--json` emits the structured result. Idempotent, empty-shard-tidying, safe on a cron tick.
-- **`corpus rm <id>`** removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards. *Dry-run by default*: without `--yes`/`--force` it prints the plan (paths, sizes, inbound referrers) and deletes nothing. *Ref-checked*: `inbound_references` scans every record's `reference` blocks (§4.3.3.3) for one citing the target — a tier-3 `source_uri: corpus://<id>` directly, or a tier-2 `source_url` that resolves to it — and refuses a cited record (exit 1) unless `--force`, naming the would-be-dangling referrers. *Reproducibility-warned*: the artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes. It deliberately does not touch the resolver cache (cache is keyed by functional-URI hash, so there is no clean per-record slice); `gc` reclaims orphaned cache by age.
+- **`corpus rm <id>`** removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards. *Dry-run by default*: without `--yes`/`--force` it prints the plan (paths, sizes, inbound referrers) and deletes nothing. *Ref-checked*: `inbound_references` scans every record's `reference` blocks (§4.3.3.3) for one citing the target — a `source_url` that resolves to it — and refuses a cited record (exit 1) unless `--force`, naming the would-be-dangling referrers. (Ledger evidence citing the record is the other inbound-reference class; checking it is a ledger-side concern — `ath ledger worklist` names the citing claims.) *Reproducibility-warned*: the artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes. It deliberately does not touch the resolver cache (cache is keyed by functional-URI hash, so there is no clean per-record slice); `gc` reclaims orphaned cache by age.
 - **`corpus forget-origin <id> <uri>`** handles the many-to-one provenance case: identical bytes accrue multiple origin aliases (§5.2); when one alias is wrong, this drops it without removing the record. Matched by identity key (§12.3.9), so a query-noise spelling still matches. Refuses when it is the record's only origin (that is an `rm`) and is a no-op when the uri isn't among the origins. An origin block whose every uri was forgotten is dropped; the edit appends a `corpus.forget-origin@` touch. It edits the tracked `.md` (git-recoverable), so it acts by default with `--dry-run` to preview — the asymmetry with `rm`'s dry-run default is deliberate (a tracked-text edit vs. irreproducible byte loss).
 - **`corpus capture --force --replace`** is a supersession ergonomic over `rm`: `--replace` (requires `--force`) snapshots the records holding the URL before the capture and, if the new bytes produced a different record id, retires the prior record(s) for that URL, reclaiming the old artifact bytes. When the bytes are identical, the capture folds into the existing record and nothing is retired.
 
@@ -1445,9 +1373,9 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 
 Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single address or an ordered list (for non-contiguous spans, in reading order); query-reserved characters in a value are percent-encoded.
 
-### 12.12 The concept knowledge base
+### 12.12 The concept knowledge base *(removed in 2.0)*
 
-The `concept` blocks of §4.3.3.4 resolve against a **local Wikipedia knowledge base**: a Kiwix **ZIM** archive read via `libzim` (full-text search, title suggestion, article read, best-effort Wikidata-QID parse from article HTML). `libzim` is lazy-imported behind an optional extra, so the base library never depends on it; the ZIM path resolves from CLI flag / environment / `[corpus.wiki]` config, and one ZIM can front every corpus. `concepts.ConceptResolver` layers a corpus-local registry (`<root>/concepts/*.yaml` — `local:<slug>` custom concepts, the curatorial extension point) over the ZIM, local-first, unifying search and get. The display gloss is fetched live from the KB and never written to a record (concept blocks stay lean); without a ZIM the resolver degrades to local-registry-only. The corpus never captures KB articles as records (§11).
+*Retired with the `concept` namespace (§4.3.3.4).* The local Wikipedia/Wikidata KB (Kiwix ZIM via `libzim`), `concepts.ConceptResolver`, the corpus-local `concepts/*.yaml` registry, and `corpus concept link` all retire from the corpus contract. External-authority identity is a ledger concern: an entity claims its `wikidata:Q…` id once, as an external-identity claim.
 
 ### 12.13 Token counting
 
@@ -1463,9 +1391,19 @@ Flagged for follow-up; not all are blockers.
 
 - **Sharding crossover** (applies to both corpus and codex layers). When does single-level hex-prefix sharding stop being adequate — at what record count do we move to two-level (`a7/f3/…`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change; the codex layer defers to this entry (see `codex.md`).
 - **URI index persistence.** The URI → `id` lookup (`records.build_uri_index`) is rebuilt-on-start from the records — the settled default (an in-memory query engine, not a data store). A persistent side-file is a deferred perf optimization, not an open design question.
-- **Schema validation.** `corpus lint` validates *records*, not schemas; a `validate-schemas` command (a `classify_when` predicate's ops parseable, `extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field) is still missing.
+- **Schema validation.** `corpus lint` validates *records*, not schemas; a `validate-schemas` command (`extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field, `capture.*` sections parseable) is still missing.
 - **Multi-corpus capture.** When the same content needs to land in multiple corpora, capture is currently a copy step on top; a "capture into multiple corpora" mode is a possible future feature.
 - **Segment-anchored mechanical references.** Overlay-declared reference emission is record-scoped today (§12.3.10), while §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing the gap needs a reliable DOM→segment mapping.
+
+### 12.16 The 2.0 migration (non-normative)
+
+The migration story for the 1.0 → 2.0 contract change, recorded here because 10,000+ records conform to 1.0. Field inventory at the time of the change (public + private corpora): ~10,200 classify blocks, of which ~10,100 were `provenance: auto` (regenerable derivations); ~93 asserted classify blocks; ~146 interpretive `reference` blocks; ~77,000 `relation` blocks (mechanical in nature, asserted-labeled); zero `concept` blocks; zero `aside` blocks.
+
+1. **Tooling alignment first.** The corpus tooling sheds the classify subsystem (the classify-block grammar, `classify_when` engine, `corpus classify`/`reclassify`, composite schema loading, the classifications view's composite rows, `classification-stale` lint, the concept resolver + `corpus concept`) before any record sweep, so lint and health define 2.0 conformance.
+2. **Strip the derived.** All `provenance: auto` classify blocks are stripped in one sweep — they are derivations, re-mintable as ledger harvest output; nothing is lost.
+3. **Harvest the asserted.** Asserted classify blocks and interpretive reference blocks carry real interpretation: they convert to ledger entities/claims (evidence = the carrying record) and capture needs respectively, as part of the ledger migration. Until the hubs exist, the extraction inventory is the migration's staging artifact.
+4. **Schemas retire into rules.** Composite schema YAMLs leave `schema/` and become source material for harvest rules (`classify_when` → `match`, extraction scripts → `mint`), hub `SCHEMA.md` conventions (domain guidance), and origin-overlay guidance (body-shaping parts — notably the per-page-type guidance of large mechanical families).
+5. **Relations relabel on re-draft.** 1.0-era relation blocks relabel to `provenance: auto` as origin-declared lifting (`capture.relations`) lands in the drafter; until then they are grandfathered as-is (§4.3.3.5 migration note).
 
 ---
 
@@ -1485,18 +1423,14 @@ Flagged for follow-up; not all are blockers.
 | **Zone** | One of three partitions of the record body: metadata, content, annotations. |
 | **Artifact block** | `<!--artifact <mime-type>-->` — exactly one per record. Opener arg is the authoritative media-type declaration. |
 | **Origin block** | `<!--origin [<id>[/<subtype>]]-->` — one or more per record. Carries `uri:` and `snapshot:`. |
-| **Classify block** | `<!--classify <namespace>/<id>[/<subtype>]-->` — zero or more per record. |
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
-| **Section block** | `<!--section [<namespace>/<id>]-->` — structural grouping; the TOC unit. May carry one composite on the opener. Contains zero or more segments. |
+| **Section block** | `<!--section-->` — structural grouping; the TOC unit. Contains zero or more segments. |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
-| **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, …); record- or segment-scope (via `address:`). |
-| **Namespace** | One of `mime`, `origin`, `atom`, `composite`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
-| **Mechanical classification** | `kind: mechanical` schema + associated script. Runs at draft time. |
-| **Interpretive classification** | `kind: interpretive` schema with LLM-guidance prose. Runs at normalize time. |
-| **`classify_when`** | A deterministic membership predicate on a composite schema (§7.4). When it matches a record's fact base, the drafter auto-assigns the class at draft time and stamps the classify block `provenance: auto`. Orthogonal to `kind`. |
-| **Provenance** | On a classify or context block (§4.4.6): `provenance: auto` = engine-stamped (a `classify_when` match or a detector), stripped and regenerated on every re-draft / reclassify; absent or `asserted` = human/normalizer, never auto-touched. |
+| **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, `relation`, …); record- or segment-scope (via `address:`). |
+| **Namespace** | One of `mime`, `origin`, `atom`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
+| **Provenance** | On a context block (§4.4.6): `provenance: auto` = engine-stamped (a detector or overlay-declared emission), stripped and regenerated on re-run; absent or `asserted` = human/normalizer, never auto-touched. |
 | **Self-contained / decomposable** | Container disposition declared by the mime schema (`artifact_kind`, required). `self_contained` produces one record (lifting nested-stream metadata when present; also the disposition for ordinary single-content files); `decomposable` explodes a raw archive into one record per member. |
-| **Mode** | A mime schema's drafting behavior: `extract-only` or `body-draft`. Mechanical classifications are metadata-only and never body-draft. |
+| **Mode** | A mime schema's drafting behavior: `extract-only` or `body-draft`. |
 | **Capture, Ingest, Draft, Normalize** | Pipeline stages. |
 | **Touch** | A single processing pass. Recorded in `touch[]`. |
 | **Touch chain** | The ordered list `touch[0..N]`. Records current-shape provenance; reset by re-stub (§8.4). |
@@ -1513,7 +1447,7 @@ Flagged for follow-up; not all are blockers.
 
 ## Appendix B: Content types (non-normative)
 
-A curatorial vocabulary for the content **sources** a corpus is expected to hold, and how each maps onto the model. These are planning terms, not schema fields: they inform capture planning, and become classifications (§4.4) wherever a distinction is worth recording.
+A curatorial vocabulary for the content **sources** a corpus is expected to hold, and how each maps onto the model. These are planning terms, not schema fields: they inform capture planning, and become ledger types (`ledger.md` §8) wherever a distinction is worth recording.
 
 ### B.1 Source taxonomy
 
@@ -1528,7 +1462,7 @@ A curatorial vocabulary for the content **sources** a corpus is expected to hold
 There is **no per-content-type metadata schema** and no "document kind" field. A content type expresses itself through three orthogonal mechanisms:
 
 1. **MIME type** (`mime` namespace, §7.1) — the artifact's media type (`text/html`, `application/pdf`, `application/epub+zip`, `video/mp4`, …) selects the drafter, the addressing scheme, and the canonicalization strategy. A "research paper" is just an `application/pdf` artifact; a "blog post" is `text/html`.
-2. **Classifications** (§4.4; `composite` namespace, §7.4) — stackable, schema-declared labels record *what kind of thing* an artifact is and any signal worth capturing (e.g. a codex-defined `peer-reviewed` / `preprint` credibility-signal classification, surfaced as a derived view). Classifications replace per-document enum metadata fields entirely.
+2. **Ledger assertion** (`ledger.md`) — *what kind of thing* an artifact documents, and any domain signal worth recording (e.g. a `peer-reviewed` / `preprint` credibility signal), is asserted as typed claims whose evidence cites the record — minted mechanically by harvest rules where membership is deterministic (`ledger.md` §10). This replaces per-document enum metadata fields entirely. *(1.0 expressed this as corpus-side composite classifications.)*
 3. **Origin** (`origin` namespace, §7.2) — capture provenance: source URL(s), capture timestamp, per-host capture recipe. "Where it came from" lives here.
 
-Backlog growth, grooming, and prioritization of what to capture are **curatorial** concerns owned by the codex layer above the corpus, not corpus-pipeline stages — see [`codex.md`](codex.md).
+Backlog growth, grooming, and prioritization of what to capture are **curatorial** concerns owned by the layers above the corpus — the ledger's needs and coverage gaps generate ingestion demand (`ledger.md` §7, §9) — not corpus-pipeline stages.

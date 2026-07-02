@@ -52,7 +52,7 @@ The system has three data layers and one driver:
 | **Artifact record** | One captured file's faithful markdown proxy in a corpus, named by the blake3 of its bytes. |
 | **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file holds typed claims; each claim carries evidence entries whose `corpus://` URIs ground it in captured bytes. |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved against a loaded corpus. Grammar: `spec/corpus.md` §6. |
-| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{hub}/{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §11). |
+| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{hub}/{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
 | **Curator** | The corpus-resident operating persona (public hub): assess → prioritize → propose → execute → report, with capture and commits owner-gated. |
 | **Normalizer** | The interpretive agent pass that takes a record from mechanical `draft` to faithful `normalized`. |
 | **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope. |
@@ -126,7 +126,7 @@ A corpus never references a ledger or codex; a ledger never references a codex; 
 
 ## 3. The corpus layer
 
-At architecture altitude: a **corpus** is a content-addressed archive of artifacts, each carried by a faithful markdown record (`records/{ab}/{blake3}.md`, one-level sharding) whose body decomposes the artifact into addressable segments, and whose lifecycle is `stub → draft → normalized` — deterministic ingest and draft, interpretive normalize driven through an external request/claim queue. Schemas (five namespaces: `mime`, `origin`, `atom`, `composite`, `context`) drive normalization and classification per media type, per source, and per corpus. Artifact bytes live in an untracked content-addressed store; records, schemas, and corpus-local extensions are tracked.
+At architecture altitude: a **corpus** is a content-addressed archive of artifacts, each carried by a faithful markdown record (`records/{ab}/{blake3}.md`, one-level sharding) whose body decomposes the artifact into addressable segments, and whose lifecycle is `stub → draft → normalized` — deterministic ingest and draft, then an LLM **faithful-form** pass driven through an external request/claim queue. Schemas (four namespaces: `mime`, `origin`, `atom`, `context`) drive capture, drafting, and faithful rendering per media type, per source, and per form. A record classifies its artifact mechanically only (`mime/*`, `origin/*`); what its content *means* is asserted in the ledger, never in the record — a record contains nothing unfalsifiable against its own bytes. Artifact bytes live in an untracked content-addressed store; records, schemas, and corpus-local extensions are tracked.
 
 Everything in that paragraph — the record grammar, schema system, lifecycle, functional-URI grammar, derived views, queue contract — is specified normatively by **`spec/corpus.md`**. This document adds only the system-level constraints:
 
@@ -157,10 +157,10 @@ A codex may additionally *operate* — embed an agent that acts on the systems i
 | Operation | Type |
 |---|---|
 | Capture (fetch, hash, store), ingest, MIME detection | Deterministic |
-| Draft (mechanical body extraction) | Deterministic |
-| Normalize (faithful interpretive refinement) | LLM agent pass |
-| Classification: mechanical `classify_when` rules / interpretive fields | Deterministic / LLM respectively |
+| Draft (mechanical body extraction, overlay-declared emissions) | Deterministic |
+| Normalize (faithful-form refinement: shaping, descriptions) | LLM agent pass |
 | Functional-URI resolution, derived views | Deterministic |
+| Ledger harvest (mechanical claim minting from corpus facts) | Deterministic |
 | Ledger fact authoring and interpretation | LLM agent pass |
 | Ledger validation (check, evidence verification, promote mechanics) | Deterministic |
 | Codex scope materialization | Deterministic |
@@ -174,8 +174,8 @@ If the operation could produce different valid outputs depending on judgment, it
 
 - **The orchestrator persona** (orchestrator repo) — principal developer for the system: specs, tooling, cross-member coherence, member health. Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory.
 - **The Curator** (public corpus) — the corpus operating loop: assess → prioritize → propose → execute → report. External captures, deletions, and commits are owner-gated.
-- **The Normalizer** (corpus agent) — one record (or small batch) per invocation, draft → normalized, through the decompose/edit/compile substrate; never hand-edits record markdown. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself.
-- **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, per hub, under each hub's SCHEMA/CLAUDE discipline; validation and promotion mechanics are deterministic tooling.
+- **The Normalizer** (corpus agent) — one record (or small batch) per invocation, draft → normalized, through the decompose/edit/compile substrate; never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
+- **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, per hub, under each hub's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling.
 - **Codex compilers** — the synthesis passes that render scoped facts into a codex's voice; scope materialization and the build are deterministic tooling.
 
 Agent passes are one-item-scoped, report to their driver, and share no state beyond the repos themselves. Concurrency is the driver's decision.
@@ -185,7 +185,7 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 One distribution — **`athenaeum`** (Python, `tools/` in the orchestrator repo) — ships the system's CLIs:
 
 - **`corpus`** — the corpus pipeline and query surface: capture / ingest / draft / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, store, gc. Auto-discovers its corpus root; accepts `--corpus-root`.
-- **`ath`** — the orchestrator umbrella: `ath sync` / `ath status` against the manifest; `ath corpus …` delegation; `ath ledger …` (hub validation, evidence verification, promote, generators) and `ath codex …` (scope, build, leak check) — landing with the shared ledger/codex packages. Deliberately no bare `ledger` or `codex` commands.
+- **`ath`** — the orchestrator umbrella: `ath sync` / `ath status` against the manifest; `ath corpus …` delegation; `ath ledger …` (hub validation, evidence verification, harvest, promote, generators, worklist) and `ath codex …` (scope, build, leak check) — landing with the shared ledger/codex packages. Deliberately no bare `ledger` or `codex` commands.
 
 Tooling agnosticism is normative: no member ids or paths in code; member-local extensions load through declared seams; a third party brings their own org, members, and agents to the same distribution.
 

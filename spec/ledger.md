@@ -49,8 +49,9 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 | **Evidence** | A `corpus://` citation grounding a claim, graded by `kind` (§6). |
 | **Interpretation** | A structured **pre-assertion** item: hypothesis, assessment, correction, or need (§7). |
 | **Authentication bar** | The evidence threshold for `confirmed` (§5.4). |
-| **Invariant** | A declared constraint over the fact graph, validated deterministically (§10). |
-| **`ledger://` URI** | The external reference form for ledger content: `ledger://{hub}/{id}` or `…/{id}:{claim}` (§11). |
+| **Harvest rule** | A deterministic derivation minting auto-provenance facts/claims from corpus record facts (§10). |
+| **Invariant** | A declared constraint over the fact graph, validated deterministically (§11). |
+| **`ledger://` URI** | The external reference form for ledger content: `ledger://{hub}/{id}` or `…/{id}:{claim}` (§12). |
 
 ## 2. The hub manifest — `ledger.yaml`
 
@@ -80,8 +81,10 @@ ledger[-private]/
 ├── interpretations/
 │   ├── SCHEMA.md
 │   └── {slug}.json
+├── harvest/
+│   └── {slug}.yaml            # mechanical claim-minting rules over the corpus (§10)
 ├── invariants/
-│   └── {slug}.yaml            # declared constraints over the fact graph (§10)
+│   └── {slug}.yaml            # declared constraints over the fact graph (§11)
 ├── open-questions.md          # work-list: generated block + curated items (§7.4)
 ├── coverage.md                # GENERATED corpus→ledger coverage ledger (§9)
 └── docs/                      # process docs — never world knowledge
@@ -95,7 +98,7 @@ There is no `notes/` in a hub: prose lives in codices. World knowledge lives onl
 
 Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(-[a-z0-9]+)*`): human-meaningful, wikilink-friendly, stable. The id is the filename stem; a fact's `type` is its parent directory name; both equalities are validated. Ids MUST be unique across a hub's facts *and* interpretations together, and a private hub MUST NOT mint an id that collides with a public id unless it is extending that entity (§1.2).
 
-**Ids carry lineage.** Once minted, an id never silently disappears — external consumers hold `ledger://` URIs (§11) the hub does not control. When entities merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing file becomes a **redirect tombstone** — `{"id": "old-slug", "type": "…", "merged_into": "survivor-slug"}` and nothing else; its claims move to the survivor. References (wikilinks, claim `object`s, `ledger://`) resolve through redirects, **one hop only**: merging into an id that is itself a redirect retargets the older tombstone to the final survivor. Outright deletion is reserved for content that should never have existed.
+**Ids carry lineage.** Once minted, an id never silently disappears — external consumers hold `ledger://` URIs (§12) the hub does not control. When entities merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing file becomes a **redirect tombstone** — `{"id": "old-slug", "type": "…", "merged_into": "survivor-slug"}` and nothing else; its claims move to the survivor. References (wikilinks, claim `object`s, `ledger://`) resolve through redirects, **one hop only**: merging into an id that is itself a redirect retargets the older tombstone to the final survivor. Outright deletion is reserved for content that should never have existed.
 
 ### 4.2 Entity files — `facts/{type}/{slug}.json`
 
@@ -213,7 +216,7 @@ Validation enforces the bar mechanically. Corroboration is multiple evidence ent
 - `uri` MUST be a resolvable `corpus://` URI with the **full 64-hex** blake3. Span parameters (`?el=`, `?page=`, `?time_range=`, `?frame=`, `?page=N&bbox=`, `?path=`, `#anchor`) follow the corpus functional-URI grammar (`spec/corpus.md` §6).
 - **Bare = the hub's own corpus** (`ledger.yaml` `corpus:`); **qualified** (`corpus://{corpus}/{hash}`) = the other tenancy's corpus, legal only private-citing-public (§2).
 - **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
-- **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§12.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
+- **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§13.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
 
 ### 6.3 Source honesty
 
@@ -228,7 +231,7 @@ Structured, evidence-linked **pre-assertion** items, physically beside the facts
 - an **identity guess** — "these two mentions are the same thing"; resolves by a graph merge, not a status bump;
 - a **working assessment** — a synthesis with no settled predicate shape (including coverage-gap assessments: "the corpus attests X only shallowly; here is what to capture");
 - a **correction** — durable negative/corrective knowledge ("X is NOT attested"; "claim Y is wrong"), including challenges to existing claims; refuted hypotheses stay as **tombstones** so future harvesters don't re-infer them;
-- a **need** — an ingestion/verification request, carried on whichever interpretation needs it.
+- a **need** — an ingestion/verification request, carried on whichever interpretation needs it. Citations found while reading content land here too (as of ATH-CORPUS 2.0 the corpus carries only mechanically-declared references): a source a record cites is a `capture`/`search` need — or, where the domain cares about the citation itself, an edge with span evidence.
 
 ### 7.2 The Interpretation object — `interpretations/{slug}.json`
 
@@ -266,7 +269,7 @@ hypothesis ──┤   (open)
 assessment / correction:  standing ──→ retired (superseded / no longer relevant)
 ```
 
-A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a canonical-JSON hash, stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§12.2), extended to the claim the dispute is about.
+A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a canonical-JSON hash, stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§13.2), extended to the claim the dispute is about.
 
 ### 7.4 Generated work-lists
 
@@ -277,7 +280,7 @@ A `correction` challenging an existing claim names it in **`challenges`** — th
 Every predicate, qualifier key, entity type, and edge type in use is registered in the hub's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
 
 - Reuse before minting; a new term lands as a visible diff, never a silent addition.
-- Vocabulary grows organically — minted when real evidence needs it, never pre-built.
+- Vocabulary grows organically — minted when real evidence needs it, never pre-built. The one sanctioned pre-built form is a **declared import**: an adopted domain bundle's vocabulary (§10, the domain-package seam) enters `VOCAB.md` marked as imported — adoption is itself the evidence of need.
 - **Retired vocabulary** stays listed with its reason; using a retired term is a validation error.
 - Per-type conventions (e.g. an applicability discipline for vehicle-variant claims) live in the hub's `facts/SCHEMA.md` beside the vocabulary they govern.
 - A private hub SHOULD reuse its public hub's vocabulary where meanings coincide; validation surfaces near-duplicate predicates across the pair.
@@ -288,9 +291,33 @@ Each hub carries the **coverage obligation for its corpus**: every in-scope reco
 
 (There is no ceding between hubs: each hub covers exactly its own corpus. Presentation scope is a codex concern, `spec/codex.md`.)
 
-## 10. Invariants
+## 10. Harvest — mechanical claims
 
-Declared constraints over the fact graph — the **coherence** half of ledger integrity (evidence verification, §12.2, is the **grounding** half). An invariant is data, not code: `invariants/{slug}.yaml`:
+Interpretation is authored; membership and structure often need not be. A hub MAY declare **harvest rules** — `harvest/{slug}.yaml` — deterministic derivations that sweep the corpus the hub interprets and mint facts and claims mechanically. Harvest is the ledger-side successor of the corpus's 1.0 `classify_when` engine (ATH-CORPUS 2.0 §7.4): the corpus stopped asserting what its records mean; the same deterministic membership now mints knowledge in the layer that owns it.
+
+```yaml
+id: alldata-procedures
+description: Every AllData procedure page is a claim on its vehicle-system entity.
+match:                            # deterministic predicate over corpus record facts
+  origin.id: {equals: alldata.com}
+mint:                             # templated from the matched record's facts
+  entity: { id: "…", type: "…", name: "…" }        # stub minted if absent
+  claims:
+    - { predicate: "…", value: "…", evidence_kind: direct }
+```
+
+Semantics:
+
+- **Deterministic.** A harvest run is a pure function of the corpus's mechanical record facts — no LLM, no network, no clock. The **fact base** is exactly what the corpus drafter exposes: `mime`, `origin.uri`/`host`/`path`/`fragment`/`query.<k>`, `origin.id`, `media.<field>` — with the 1.0 `classify_when` operator grammar (`equals`/`in`/`glob`/`matches`/`exists`; `all_of`/`any_of`/`none_of`; exact-by-default, missing-fact-is-false) carried over unchanged. Body keywords are permanently excluded — the canonical false-positive source stays out of deterministic rules.
+- **Auto provenance, asserted wins.** Harvested facts and claims carry `provenance: auto` and are stripped and regenerated on every run (rules or records changed → output converges); anything a human edits loses its `auto` mark and the harvester never touches it again. An auto claim never overwrites an asserted one.
+- **Born low.** A harvested claim's evidence is the matched record (span-level where the rule can address it); its status is capped at `provisional` — confirmation is earned through the bar (§5.4), never minted.
+- **Registered like everything else.** Harvested types and predicates appear in `VOCAB.md` (§8) with their counts; a new rule lands as a visible diff, and its first run *is* the review surface.
+
+*(Non-normative — the domain-package seam.)* Harvest rules (§10), invariants (§11), types + predicates (§8), and per-type authoring conventions (`facts/SCHEMA.md`) are deliberately shaped as **one bundleable unit**: together they are a complete declarative domain model — a fiction package's character/scene types, no-overlap invariants, and narrative-position conventions; a methodology package's condition/parameter types and citation disciplines. A bundling/import mechanism is intentionally deferred until a second real domain demands it; when adopted, a package's vocabulary enters `VOCAB.md` as a **declared import**, never a silent mint — adoption is the evidence of need that the organic-growth rule (§8) requires.
+
+## 11. Invariants
+
+Declared constraints over the fact graph — the **coherence** half of ledger integrity (evidence verification, §13.2, is the **grounding** half). An invariant is data, not code: `invariants/{slug}.yaml`:
 
 ```yaml
 id: residence-no-overlap
@@ -312,12 +339,12 @@ Built-in constraint kinds:
 
 Semantics:
 
-- **Deterministic**, run by validation (§12.1); a violation names the exact claims.
+- **Deterministic**, run by validation (§13.1); a violation names the exact claims.
 - **Resolution is human, and binary**: either the invariant is wrong — amend it, and validation emits the **migration worklist** of claims and dependent notes to revisit — or a claim is wrong — challenge it with a `correction` (§7), sending it to `disputed`. An invariant is never silently bent.
 - **Hub scope**: the public hub validates its own facts; a private hub validates the *merged view* of extended entities (its claims plus the public claims) against both hubs' invariants — cross-tenancy coherence is checked where visibility allows, privately, and never the reverse.
 - **Grown organically**, like vocabulary: declare an invariant when a real inconsistency class appears, never ahead of one. A new invariant lands as a visible diff, and its first validation run *is* the audit.
 
-## 11. Referencing the ledger
+## 12. Referencing the ledger
 
 External consumers (codices, expert agents, deliverables) reference ledger content as:
 
@@ -328,9 +355,9 @@ ledger://{hub}/{id}:{short}      → a specific claim
 
 Facts, claims, and interpretations are citable; **generated views are not**. Within a hub (and from a private hub into its extended public hub), plain slugs suffice — wikilinks and `object` references resolve by id, following redirect tombstones (§4.1) so references survive merges and renames. A codex declares which hubs it targets (`spec/codex.md` §2) and inherits the tenancy rule: a public deliverable never references private-hub content, even by id.
 
-## 12. Validation
+## 13. Validation
 
-### 12.1 The check contract
+### 13.1 The check contract
 
 Validation is deterministic, hub-local plus read-only corpus access. It MUST verify at minimum:
 
@@ -344,11 +371,13 @@ Validation is deterministic, hub-local plus read-only corpus access. It MUST ver
 
 **Evidence** — URI grammar and hub discipline (§6.2); cited records exist; cited records are `normalized` (warn when a declared `enqueue` need covers the draft).
 
-**Invariants** — every declared invariant (§10) holds; violations name the claims; an amended invariant emits its migration worklist.
+**Harvest** — harvested (`provenance: auto`) facts/claims converge with the current rules (stale output is an error the harvester fixes); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
+
+**Invariants** — every declared invariant (§11) holds; violations name the claims; an amended invariant emits its migration worklist.
 
 **Views** — `VOCAB.md`, `open-questions.md` generated blocks, and `coverage.md` regenerable and current. Validation SHOULD additionally expose the **disagreement view**: attributed (`reported`) claims diverging from `confirmed` claims on the same predicate — the enumerated gap between what voices assert and what evidence establishes, which downstream experts surface as "the community believes X; the evidence says Y."
 
-### 12.2 Evidence verification (the anti-hallucination gate)
+### 13.2 Evidence verification (the anti-hallucination gate)
 
 Beyond record existence, validation MUST — once per claim edit, and on demand — verify the evidence *content*:
 
