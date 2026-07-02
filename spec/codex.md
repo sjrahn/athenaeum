@@ -116,6 +116,8 @@ The tenancy rule follows content into deliverables: **a published site may only 
 
 A codex targeting only the public ledger has no restrictions; its public and private profiles coincide.
 
+**Tenancy is the mandatory profile axis, not the only one.** A profile may gate visibility on any attribute derivable from claim metadata — the general mechanism is a filter over the scoped claims and their evidence. The exemplar: a fiction codex over a novel corpus gates on **narrative position** — a fact's introduction point is its earliest evidence anchor, so a "reader at chapter N" profile renders only knowledge the story has revealed by that point, and the companion wiki unfolds with the reader without a separate spoiler mechanism. Audience tiers and progress gates are the same filter wearing different predicates.
+
 ## 7. Validation
 
 Deterministic, per-codex:

@@ -52,7 +52,7 @@ The system has three data layers and one driver:
 | **Artifact record** | One captured file's faithful markdown proxy in a corpus, named by the blake3 of its bytes. |
 | **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file holds typed claims; each claim carries evidence entries whose `corpus://` URIs ground it in captured bytes. |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved against a loaded corpus. Grammar: `spec/corpus.md` §6. |
-| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{hub}/{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §10). |
+| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{hub}/{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §11). |
 | **Curator** | The corpus-resident operating persona (public hub): assess → prioritize → propose → execute → report, with capture and commits owner-gated. |
 | **Normalizer** | The interpretive agent pass that takes a record from mechanical `draft` to faithful `normalized`. |
 | **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope. |

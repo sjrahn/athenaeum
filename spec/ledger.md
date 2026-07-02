@@ -48,7 +48,8 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 | **Evidence** | A `corpus://` citation grounding a claim, graded by `kind` (§6). |
 | **Interpretation** | A structured **pre-assertion** item: hypothesis, assessment, correction, or need (§7). |
 | **Authentication bar** | The evidence threshold for `confirmed` (§5.4). |
-| **`ledger://` URI** | The external reference form for ledger content: `ledger://{hub}/{id}` or `…/{id}:{claim}` (§10). |
+| **Invariant** | A declared constraint over the fact graph, validated deterministically (§10). |
+| **`ledger://` URI** | The external reference form for ledger content: `ledger://{hub}/{id}` or `…/{id}:{claim}` (§11). |
 
 ## 2. The hub manifest — `ledger.yaml`
 
@@ -78,6 +79,8 @@ ledger[-private]/
 ├── interpretations/
 │   ├── SCHEMA.md
 │   └── {slug}.json
+├── invariants/
+│   └── {slug}.yaml            # declared constraints over the fact graph (§10)
 ├── open-questions.md          # work-list: generated block + curated items (§7.4)
 ├── coverage.md                # GENERATED corpus→ledger coverage ledger (§9)
 └── docs/                      # process docs — never world knowledge
@@ -207,7 +210,7 @@ Validation enforces the bar mechanically. Corroboration is multiple evidence ent
 - `uri` MUST be a resolvable `corpus://` URI with the **full 64-hex** blake3. Span parameters (`?el=`, `?page=`, `?time_range=`, `?frame=`, `?page=N&bbox=`, `?path=`, `#anchor`) follow the corpus functional-URI grammar (`spec/corpus.md` §6).
 - **Bare = the hub's own corpus** (`ledger.yaml` `corpus:`); **qualified** (`corpus://{corpus}/{hash}`) = the other tenancy's corpus, legal only private-citing-public (§2).
 - **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
-- **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§11.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
+- **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§12.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
 
 ### 6.3 Source honesty
 
@@ -281,7 +284,36 @@ Each hub carries the **coverage obligation for its corpus**: every in-scope reco
 
 (There is no ceding between hubs: each hub covers exactly its own corpus. Presentation scope is a codex concern, `spec/codex.md`.)
 
-## 10. Referencing the ledger
+## 10. Invariants
+
+Declared constraints over the fact graph — the **coherence** half of ledger integrity (evidence verification, §12.2, is the **grounding** half). An invariant is data, not code: `invariants/{slug}.yaml`:
+
+```yaml
+id: residence-no-overlap
+description: A person has at most one primary residence at a time.
+applies_to: { type: person, predicate: residence }
+constraint: temporal-no-overlap
+severity: error                  # error | warning
+```
+
+Built-in constraint kinds:
+
+| Kind | Holds when |
+|---|---|
+| `unique` | at most one matching claim per entity (optionally `per:` a qualifier key — e.g. one price per retailer) |
+| `exclusive` | at most one of an enumerated predicate/value set holds per entity |
+| `temporal-no-overlap` | the `period`s of matching claims on one entity do not overlap |
+| `requires` | a matching claim implies another claim exists (predicate template) |
+| `cardinality` | matching-claim count per entity within declared bounds |
+
+Semantics:
+
+- **Deterministic**, run by validation (§12.1); a violation names the exact claims.
+- **Resolution is human, and binary**: either the invariant is wrong — amend it, and validation emits the **migration worklist** of claims and dependent notes to revisit — or a claim is wrong — challenge it with a `correction` (§7), sending it to `disputed`. An invariant is never silently bent.
+- **Hub scope**: the public hub validates its own facts; a private hub validates the *merged view* of extended entities (its claims plus the public claims) against both hubs' invariants — cross-tenancy coherence is checked where visibility allows, privately, and never the reverse.
+- **Grown organically**, like vocabulary: declare an invariant when a real inconsistency class appears, never ahead of one. A new invariant lands as a visible diff, and its first validation run *is* the audit.
+
+## 11. Referencing the ledger
 
 External consumers (codices, expert agents, deliverables) reference ledger content as:
 
@@ -292,9 +324,9 @@ ledger://{hub}/{id}:{short}      → a specific claim
 
 Facts, claims, and interpretations are citable; **generated views are not**. Within a hub (and from a private hub into its extended public hub), plain slugs suffice — wikilinks and `object` references resolve by id. A codex declares which hubs it targets (`spec/codex.md` §2) and inherits the tenancy rule: a public deliverable never references private-hub content, even by id.
 
-## 11. Validation
+## 12. Validation
 
-### 11.1 The check contract
+### 12.1 The check contract
 
 Validation is deterministic, hub-local plus read-only corpus access. It MUST verify at minimum:
 
@@ -308,9 +340,11 @@ Validation is deterministic, hub-local plus read-only corpus access. It MUST ver
 
 **Evidence** — URI grammar and hub discipline (§6.2); cited records exist; cited records are `normalized` (warn when a declared `enqueue` need covers the draft).
 
-**Views** — `VOCAB.md`, `open-questions.md` generated blocks, and `coverage.md` regenerable and current.
+**Invariants** — every declared invariant (§10) holds; violations name the claims; an amended invariant emits its migration worklist.
 
-### 11.2 Evidence verification (the anti-hallucination gate)
+**Views** — `VOCAB.md`, `open-questions.md` generated blocks, and `coverage.md` regenerable and current. Validation SHOULD additionally expose the **disagreement view**: attributed (`reported`) claims diverging from `confirmed` claims on the same predicate — the enumerated gap between what voices assert and what evidence establishes, which downstream experts surface as "the community believes X; the evidence says Y."
+
+### 12.2 Evidence verification (the anti-hallucination gate)
 
 Beyond record existence, validation MUST — once per claim edit, and on demand — verify the evidence *content*:
 
@@ -320,7 +354,7 @@ Beyond record existence, validation MUST — once per claim edit, and on demand 
 
 A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.
 
-*(Implementation note, non-normative: the shared ledger package (`ath ledger …`) implements this contract, replacing the per-codex `check.py` copies that preceded the ledger layer.)*
+*(Implementation note, non-normative: the shared ledger package (`ath ledger …`) implements this contract, replacing the per-codex `check.py` copies that preceded the ledger layer. Beyond checking, it ships the revision-workflow generator — `ath ledger worklist`: fact → the notes deriving from it; record → the claims citing it; invariant → the claims violating it. Every edit to the durable layer deterministically yields the list of dependents to revisit; the worklist is the revision process, not a lint report.)*
 
 ---
 
