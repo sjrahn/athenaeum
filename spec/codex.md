@@ -103,8 +103,9 @@ The build compiles the vault into the deliverable. The reference deployment is *
 3. **Resolve wikilinks** natively (vault-internal links become site links; Quartz handles this).
 4. **Surface provenance**: each note's rendered page exposes its `generated_from` chain — the reader can walk prose → fact → claim → evidence → bytes.
 5. **Fail loudly on unresolvables.** A citation that no longer resolves fails the build (or renders an explicit broken-reference marker in dev builds); silent drops are forbidden.
+6. **Emit the build certificate.** Every build freezes its reproducibility tuple: the codex commit (the vault as compiled), the targeted hub commits, the touch identity of every corpus record cited or rastered, the tooling version, and the profile. Certificates are **write-only evidence, never working state**: rebuilding from the same tuple MUST reproduce the site — that equality is the audit — and ledger or corpus movement since the last certificate is a *detected transition*, surfaced as the regeneration worklist (`ath ledger worklist`), never discovered by readers.
 
-The build is deterministic (`spec/athenaeum.md` §6.1): same vault + same ledger + same corpus state = same site.
+The build is deterministic (`spec/athenaeum.md` §6.1): same tuple = same site — the certificate is that guarantee made citable. (Note *generation* above the build is interpretive and not byte-reproducible; the certificate pins the vault commit precisely so the deterministic half is auditable and the interpretive half gets an honest staleness signal.)
 
 ## 6. Profiles and tenancy
 
@@ -125,7 +126,7 @@ Deterministic, per-codex:
 - Manifest sanity: declared ledgers exist; scope selectors resolve; excludes are visible.
 - Scope integrity: every note's `generated_from` files are in the computed scope and exist; no note without a backing entity; staleness (note older than any source).
 - Prose honesty: every note section maps to backing claims (tooling-assisted; the no-unbacked-prose rule is ultimately editorial discipline plus spot-verification).
-- Build: all references resolve; rastered assets present; the public-profile leak check (§6).
+- Build: all references resolve; rastered assets present; the public-profile leak check (§6); the last certificate re-derives (§5), with hub or corpus movement since it reported as the rebuild worklist.
 
 *(Implementation note, non-normative: codex tooling ships with the shared ledger package as `ath codex …` — scope materialization, note scaffolding, build, leak check.)*
 

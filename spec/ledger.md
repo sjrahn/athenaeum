@@ -44,6 +44,7 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 |---|---|
 | **Hub** | One ledger repository (`ledger`, `ledger-private`); the tenancy partition unit. |
 | **Fact file** | JSON under `facts/{type}/{slug}.json` — an entity or an edge, holding claims. |
+| **Redirect tombstone** | A fact file reduced to `{id, type, merged_into}` — the lineage a merged or renamed id leaves behind (§4.1). |
 | **Claim** | One atomic, typed, **asserted** statement with evidence (§5). |
 | **Evidence** | A `corpus://` citation grounding a claim, graded by `kind` (§6). |
 | **Interpretation** | A structured **pre-assertion** item: hypothesis, assessment, correction, or need (§7). |
@@ -93,6 +94,8 @@ There is no `notes/` in a hub: prose lives in codices. World knowledge lives onl
 ### 4.1 Identity
 
 Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(-[a-z0-9]+)*`): human-meaningful, wikilink-friendly, stable. The id is the filename stem; a fact's `type` is its parent directory name; both equalities are validated. Ids MUST be unique across a hub's facts *and* interpretations together, and a private hub MUST NOT mint an id that collides with a public id unless it is extending that entity (§1.2).
+
+**Ids carry lineage.** Once minted, an id never silently disappears — external consumers hold `ledger://` URIs (§11) the hub does not control. When entities merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing file becomes a **redirect tombstone** — `{"id": "old-slug", "type": "…", "merged_into": "survivor-slug"}` and nothing else; its claims move to the survivor. References (wikilinks, claim `object`s, `ledger://`) resolve through redirects, **one hop only**: merging into an id that is itself a redirect retargets the older tombstone to the final survivor. Outright deletion is reserved for content that should never have existed.
 
 ### 4.2 Entity files — `facts/{type}/{slug}.json`
 
@@ -240,6 +243,7 @@ Structured, evidence-linked **pre-assertion** items, physically beside the facts
   "based_on": ["corpus://…", "file-id:short"],   // empty = a hunch, not repo material
   "would_resolve": ["…"],
   "proposes": { /* a draft Claim object (§5.1), for claim-shaped hypotheses */ },
+  "challenges": { "claim": "file-id:short", "state": "blake3:…" },  // corrections only: the claim under challenge, pinned as it stood (§7.3)
   "needs": [
     { "action": "capture", "why": "…" },                       // enqueue | search | capture | observe
     { "action": "enqueue", "record": "corpus://…", "why": "…" }
@@ -262,7 +266,7 @@ hypothesis ──┤   (open)
 assessment / correction:  standing ──→ retired (superseded / no longer relevant)
 ```
 
-A `correction` challenging an existing claim names the claim id in `based_on`; the challenged claim carries `status: disputed` until resolved — validation cross-checks the pair.
+A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a canonical-JSON hash, stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§12.2), extended to the claim the dispute is about.
 
 ### 7.4 Generated work-lists
 
@@ -322,7 +326,7 @@ ledger://{hub}/{id}              → a fact (entity or edge) or an interpretatio
 ledger://{hub}/{id}:{short}      → a specific claim
 ```
 
-Facts, claims, and interpretations are citable; **generated views are not**. Within a hub (and from a private hub into its extended public hub), plain slugs suffice — wikilinks and `object` references resolve by id. A codex declares which hubs it targets (`spec/codex.md` §2) and inherits the tenancy rule: a public deliverable never references private-hub content, even by id.
+Facts, claims, and interpretations are citable; **generated views are not**. Within a hub (and from a private hub into its extended public hub), plain slugs suffice — wikilinks and `object` references resolve by id, following redirect tombstones (§4.1) so references survive merges and renames. A codex declares which hubs it targets (`spec/codex.md` §2) and inherits the tenancy rule: a public deliverable never references private-hub content, even by id.
 
 ## 12. Validation
 
@@ -334,9 +338,9 @@ Validation is deterministic, hub-local plus read-only corpus access. It MUST ver
 
 **Hub topology** — extends-rule conformance (id collisions with the public hub are extensions with matching `type`/`name`, or errors); no public-hub reference to anything private.
 
-**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, or wikilinks; no relation stored with its inverse.
+**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, or wikilinks; no relation stored with its inverse; redirect tombstones (§4.1) satisfy references and resolve in one hop (the `merged_into` target exists and is not itself a redirect; a redirect carries no claims).
 
-**Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing; `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` objects well-formed against §5.1.
+**Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
 **Evidence** — URI grammar and hub discipline (§6.2); cited records exist; cited records are `normalized` (warn when a declared `enqueue` need covers the draft).
 
