@@ -16,9 +16,10 @@ While `REFORGE.md` exists at the root, it is the active restructuring plan — r
 athenaeum/                    ← this repo's working tree (the workspace root)
 ├── CLAUDE.md                 ← you are here
 ├── REFORGE.md                ← active restructuring plan (self-deletes when it graduates)
+├── athenaeum.yaml            ← the member manifest — the registry `ath` reads
 ├── spec/                     ← the specs (pre-reforge versions until the Phase 4 rewrites land)
 ├── docs/CONTENT-TYPES.md     ← content-type taxonomy (folds into the corpus spec at Phase 4)
-├── tools/corpus/             ← ath-corpus: the corpus library + `corpus` CLI (Python 3.12, uv)
+├── tools/                    ← the `athenaeum` distribution: `ath` + `corpus` CLIs (Python 3.12, uv)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs
 │   ├── corpus/               ←   public/world captures (has the /curator skill)
@@ -35,16 +36,21 @@ The **corpus** layer is the foundation: content-addressed archives of captured a
 ## Common commands
 
 ```bash
-# The corpus CLI — a uv TOOL install (editable against tools/corpus; gotcha #1):
+# Both CLIs come from ONE uv TOOL install of tools/ (editable; gotcha #1). Reinstall after moving it:
+uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with cryptography
+
+# The ath umbrella — system verbs against athenaeum.yaml (run anywhere under this tree):
+ath status                          # orchestrator repo + every member: branch, dirty, ahead/behind
+ath sync                            # clone missing members; fetch + report the rest (--pull to ff)
+ath corpus <cmd>                    # delegation shim — identical to `corpus <cmd>`
+
+# The corpus CLI:
 corpus --help                       # works anywhere; auto-discovers the corpus root by cwd
 corpus health --summary             # run from corpora/corpus or corpora/corpus-private
 corpus lint <hash-prefix>
 
-# Reinstall after moving/renaming tools/corpus:
-uv tool install --reinstall --editable "tools/corpus[capture,media,fingerprint]" --with cryptography
-
-# Corpus tooling test suite + lint (from tools/corpus; gotcha #2 for the pytest invocation):
-cd tools/corpus && uv sync --extra capture --extra media --extra office --extra fingerprint --extra tokens
+# Tooling test suite + lint (from tools/; gotcha #2 for the pytest invocation):
+cd tools && uv sync --extra capture --extra media --extra office --extra fingerprint --extra tokens
 uv run --no-sync python -m pytest -q      # expect all green
 uv run --no-sync ruff check src tests     # expect clean
 

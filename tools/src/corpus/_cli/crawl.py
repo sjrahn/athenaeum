@@ -40,7 +40,7 @@ from corpus.capture import recipes
 
 log = logging.getLogger("corpus.crawl")
 
-DEFAULT_USER_AGENT = "ath-corpus-crawl/0.1"
+DEFAULT_USER_AGENT = "athenaeum-crawl/0.1"
 DEFAULT_DEPTH = 2
 DEFAULT_COUNT = 50
 DEFAULT_DELAY = 1.0

@@ -1,7 +1,7 @@
 [project]
-name = "ath-corpus"
+name = "athenaeum"
 version = "0.1.0"
-description = "Corpus tooling for ATH-CORPUS v1.0 — capture, ingest, draft, resolve, lint."
+description = "Athenaeum system tooling — the corpus pipeline (capture, ingest, draft, resolve, lint) and the ath orchestrator umbrella."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "CC-BY-SA-4.0"
@@ -52,6 +52,7 @@ tokens         = ["tiktoken>=0.8"]
 wiki           = ["libzim>=3"]
 
 [project.scripts]
+ath = "ath._cli:main"
 corpus = "corpus._cli:main"
 
 [build-system]
@@ -59,7 +60,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/corpus"]
+packages = ["src/corpus", "src/ath"]
 
 # Ship the bundled universal schemas (YAML) + the vendor dir (README, and the
 # SingleFile bundle when an operator has dropped it in) + the workflow runbooks

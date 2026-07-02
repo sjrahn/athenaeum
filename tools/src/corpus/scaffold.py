@@ -40,7 +40,7 @@ _UNIVERSAL_ORIGIN_YAML = """\
 # live at `schema/origin/web/<host>.yaml`.
 #
 # Origin is a per-corpus concern (sources of retrieval are corpus-specific), so this
-# file is corpus-local — the `ath-corpus` package does NOT bundle a universal origin.
+# file is corpus-local — the `athenaeum` package does NOT bundle a universal origin.
 # Extend or constrain as your corpus requires.
 #
 # See spec-corpus.md §7.2.
@@ -94,10 +94,10 @@ A corpus repository — content-addressed records under `records/`, origin overl
 under `schema/origin/`, classification schemas under `schema/composite/<namespace>/`,
 annotation overlays under `schema/context/<namespace>/`.
 Universal `mime` / `atom` / `context/issue` schemas resolve from the
-[`ath-corpus`][] package's bundled defaults; `origin`, `composite`, and `context` are
+[`athenaeum`][] package's bundled defaults; `origin`, `composite`, and `context` are
 per-corpus concerns so they live here.
 
-[`ath-corpus`]: ../athenaeum/tools/corpus
+[`athenaeum`]: ../athenaeum/tools
 
 ## Layout
 
@@ -128,7 +128,7 @@ corpus lint <hash>      # conformance check
 corpus diagnose <hash>  # snapshot + classification candidates
 ```
 
-See `ath-corpus`'s README for the full surface.
+See the `athenaeum` package README for the full surface.
 """
 
 _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
@@ -243,7 +243,7 @@ _EXAMPLE_CAPTURER_PY = '''\
 
 Drop a single-file module in this directory and decorate a function with
 `@register("<name>")`; a capture recipe's `capturer: <name>` then routes matching
-origins to it. The `ath-corpus` package imports this directory ONLY when a recipe
+origins to it. The `athenaeum` package imports this directory ONLY when a recipe
 names a capturer it doesn't ship -- and it imports (executes) your code, so treat
 this as your corpus's own trusted code.
 

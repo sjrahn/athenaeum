@@ -30,7 +30,7 @@ def _lazy_import():
     except ImportError as e:
         raise ImportError(
             "S3 backend requires the `[s3]` extra. Install with: "
-            "uv pip install 'ath-corpus[s3]'"
+            "uv pip install 'athenaeum[s3]'"
         ) from e
     return boto3, ClientError
 

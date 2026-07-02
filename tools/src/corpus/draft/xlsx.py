@@ -54,7 +54,7 @@ def _openpyxl():
     except ImportError as e:
         raise ImportError(
             "xlsx drafting requires the `[office]` extra. Install with: "
-            "uv pip install 'ath-corpus[office]'"
+            "uv pip install 'athenaeum[office]'"
         ) from e
     return openpyxl
 

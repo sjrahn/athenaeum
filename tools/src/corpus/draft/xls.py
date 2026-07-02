@@ -41,7 +41,7 @@ def _xlrd():
     except ImportError as e:
         raise ImportError(
             "xls drafting requires the `[office]` extra. Install with: "
-            "uv pip install 'ath-corpus[office]'"
+            "uv pip install 'athenaeum[office]'"
         ) from e
     return xlrd
 

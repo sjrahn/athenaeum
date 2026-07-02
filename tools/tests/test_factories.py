@@ -80,7 +80,7 @@ def test_get_store_azure_without_extra_raises_clean_error(tmp_path, monkeypatch)
     def fake_lazy():
         raise ImportError(
             "Azure backend requires the `[azure]` extra. Install with: "
-            "uv pip install 'ath-corpus[azure]'"
+            "uv pip install 'athenaeum[azure]'"
         )
 
     monkeypatch.setattr(az_mod, "_lazy_import", fake_lazy)

@@ -35,7 +35,7 @@ def _lazy_import():
     except ImportError as e:
         raise ImportError(
             "Azure backend requires the `[azure]` extra. Install with: "
-            "uv pip install 'ath-corpus[azure]' (or pip install …)"
+            "uv pip install 'athenaeum[azure]' (or pip install …)"
         ) from e
     return BlobServiceClient, DefaultAzureCredential
 

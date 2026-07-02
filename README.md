@@ -5,8 +5,17 @@ A knowledge normalization and curation system: capture any artifact, normalize i
 This repo — **`athenaeum/athenaeum`** — is the system's definition and driver:
 
 - **`spec/`** — the specifications (system architecture, the corpus contract, the codex contract).
-- **`tools/corpus/`** — `ath-corpus`, the corpus library and `corpus` CLI: capture → ingest → draft → normalize pipeline, functional `corpus://` URI resolver, schema system, lint, health.
+- **`athenaeum.yaml`** — the member manifest: the single registry of the system's corpora and codices.
+- **`tools/`** — the `athenaeum` distribution, shipping two CLIs: `ath` (the orchestrator umbrella — member sync/status against the manifest, corpus delegation) and `corpus` (the corpus pipeline: capture → ingest → draft → normalize, the functional `corpus://` URI resolver, schemas, lint, health).
 - **`.claude/skills/orchestrator/`** — the resident principal-developer persona and its institutional memory.
+
+Bootstrap on a fresh machine:
+
+```bash
+git clone https://code.example.org/athenaeum/athenaeum.git && cd athenaeum
+uv tool install --editable "tools[capture,media,fingerprint]" --with cryptography
+ath sync    # clones every member from athenaeum.yaml
+```
 
 The member repos live in the same Forgejo org and are cloned beneath this tree (gitignored):
 

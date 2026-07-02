@@ -640,7 +640,7 @@ def _capture_video(
     except ImportError as e:
         raise CaptureError(
             "video capture requires the `[media]` extra. Install with: "
-            "uv pip install 'ath-corpus[media]'"
+            "uv pip install 'athenaeum[media]'"
         ) from e
 
     base = _sanitize_filename(url)
@@ -839,7 +839,7 @@ def _capture_via_playwright(
     except ImportError as e:
         raise CaptureError(
             "HTML/binary capture requires the `[capture]` extra. Install with: "
-            "uv pip install 'ath-corpus[capture]' && playwright install chromium"
+            "uv pip install 'athenaeum[capture]' && playwright install chromium"
         ) from e
 
     from . import interactions
