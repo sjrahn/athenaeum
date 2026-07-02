@@ -1,4 +1,4 @@
-"""The re-stub operation per spec-corpus.md §8.4.
+"""The re-stub operation per spec/corpus.md §8.4.
 
 Returns a record to `status: stub`, ready for a fresh draft pass. Everything
 **derived from a schema decision** is discarded. Everything **tied to the bytes

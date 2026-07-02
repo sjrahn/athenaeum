@@ -2,13 +2,21 @@
 spec_id: ATH-CORPUS
 title: "Corpus Specification"
 version: 1.0
-status: draft
+status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
-date_modified: 2026-06-05
+date_modified: 2026-07-02
 ---
 
 # Corpus Specification
+
+A **corpus** is the foundation layer of the Athenaeum system: a content-addressed archive of captured artifacts, represented as markdown records. This document is its complete specification, in two parts. **Part I (§1–§11)** is the normative data contract — every record in every corpus conforms to it, and tooling across the system cites its section numbers. **Part II (§12)** is the implementation guide: non-normative notes on how the reference pipeline produces conforming records. Two appendices follow — the glossary (Appendix A) and a non-normative content-type taxonomy (Appendix B).
+
+The corpus sits beneath the codex layer, which consumes it through `corpus://` functional URIs — see [`athenaeum.md`](athenaeum.md) for the system architecture and [`codex.md`](codex.md) for the codex contract.
+
+---
+
+# Part I — The contract (normative)
 
 ## 1. Overview
 
@@ -112,7 +120,7 @@ A record references a schema by the qualified id encoded on a block opener — f
 
 Each layer's declared fields extend its parent's; conflicts resolve in favor of the most-specific declaration.
 
-The on-disk organization of these schemas is implementation-discretionary; a reference layout appears in the implementation notes appendix.
+The on-disk organization of these schemas is implementation-discretionary; a reference layout appears in Part II (§12.2).
 
 ---
 
@@ -827,7 +835,7 @@ Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-de
 
 An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest.
 
-A corpus may also specialize the **draft** of its own content with corpus-local drafter code — `<corpus_root>/drafters/*.py`, loaded mechanically before drafting (the draft-stage analogue of the corpus-local capturer in §7.2). Such a drafter claims a record by its origin id (a producer-declared or stamped overlay binding, §7.2) and builds the content zone in place of the generic body draft; the package ships none and knows nothing of any specific format. Implementation-defined — see impl-corpus §3.1.
+A corpus may also specialize the **draft** of its own content with corpus-local drafter code — `<corpus_root>/drafters/*.py`, loaded mechanically before drafting (the draft-stage analogue of the corpus-local capturer in §7.2). Such a drafter claims a record by its origin id (a producer-declared or stamped overlay binding, §7.2) and builds the content zone in place of the generic body draft; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
 
 ### 8.2 The deterministic / LLM boundary
 
@@ -977,7 +985,7 @@ Three **cumulative** estimates of a record's size as model context, for budgetin
 - `blocks` — tokens in the whole record markdown (frontmatter + every metadata/annotation block + the content zone). Always ≥ `body`.
 - `full` — `blocks` plus an image-token estimate summed over image embed blocks and an image artifact, each `≈ min(width·height, cap) / pixels-per-token` from the declared dimensions (`0` when dimensions are absent).
 
-The text tokenizer and the image constants are an implementation choice (impl-corpus.md), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
+The text tokenizer and the image constants are an implementation choice (§12.13), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
 
 ### 9.7 The `concepts` view
 
@@ -1026,67 +1034,372 @@ Genuinely deferred items for this spec version:
 - **Whole-corpus build tooling** — single-record export is in scope; bulk operations are not.
 - **Export to non-markdown formats.**
 - **Additional semantic types** beyond the closed seven.
-- **Capturing the concept knowledge base.** Wikipedia/Wikidata is referenced by `concept` blocks (§4.3.3.4) as an external authority run locally; the corpus does not capture its articles as records, and the local KB (acquisition, search, read) is an implementation concern (impl-corpus.md), not a corpus-layer contract.
+- **Capturing the concept knowledge base.** Wikipedia/Wikidata is referenced by `concept` blocks (§4.3.3.4) as an external authority run locally; the corpus does not capture its articles as records, and the local KB (acquisition, search, read) is an implementation concern (§12.12), not a corpus-layer contract.
 - **Recursive dependent capture.** `capture.references` (§7.2) fetches declared references at **depth 1** only; following a grabbed reference's own references — and any general multi-hop crawl — remains `corpus crawl`'s job, not the capture-alongside path.
 
 ---
 
-## 12. Implementation notes (non-normative)
+# Part II — Implementation guide (non-normative)
 
-This section catalogs conventional realizations of the spec contracts. None of it is mandated; an implementation is free to make different choices as long as it honors the contracts above.
+## 12. Implementation guide
 
-### 12.1 On-disk layout
+This part describes how the reference pipeline — the `corpus` tooling shipped by the orchestrator repo — produces records that conform to Part I: which passes run in what order, where files land on disk, detection and dedup strategy, queue mechanics, and maintenance. Part I says what each record carries; this part says how the pipeline gets there. Nothing here is mandated: an implementation is free to make different choices as long as it honors the Part I contracts, and where the two disagree, Part I wins and this part gets corrected.
 
-A typical filesystem-backed corpus is organized as:
+### 12.1 On-disk layout and sharding
+
+A typical filesystem-backed corpus:
 
 ```
 corpus-<name>/
 ├── README.md                optional
 ├── records/                 tracked: record markdown files
-├── artifacts/               UNTRACKED: raw binary cache
+│   └── <id[:2]>/<id>.md
+├── schema/                  tracked: mime / origin / atom / composite / context
+├── artifacts/               UNTRACKED: raw-bytes cache
+│   └── <id[:2]>/<id>.<ext>
 ├── capture/                 UNTRACKED: in-progress capture staging
 ├── cache/                   UNTRACKED: resolver-output cache
+│   └── <urihash[:2]>/<urihash>.<ext>
 ├── queue/                   UNTRACKED: normalization request/claim state (§8.5)
-└── schema/                  tracked: all schemas
-    ├── mime/
-    ├── origin/
-    ├── atom/
-    └── composite/
-        ├── issue/
-        └── <user-namespace>/
+├── export/                  UNTRACKED: regenerable export bundles (§10)
+└── .gitignore               lists the untracked directories
 ```
 
-`records/` and `schema/` are tracked in version control. `artifacts/`, `capture/`, `cache/`, and `queue/` are regenerable and conventionally listed in `.gitignore`.
+- **`records/` and `schema/` are tracked** in version control; the markdown records are the source of truth.
+- **`artifacts/` is the binary cache and is never tracked** — a corpus's `.gitignore` lists it. The cache is regenerable from blake3 plus capture provenance: destroyable and rebuildable at any time. The contract is only "given a blake3, this corpus can produce the bytes" (§2); a local filesystem shard, an object store, an S3-compatible bucket, or a content-addressed store all satisfy it. Consumers should not hard-code the path scheme — they should ask the corpus how to locate `<blake3>`.
+- **Sharding is one level deep, by the first two hex characters of the leading hash**, with the same depth for `records/`, `artifacts/`, and `cache/`. That gives 256 buckets: at ~10k records the average bucket holds ~40 entries; at 100k, ~400. Deeper trees are a layout choice, not a contract (§12.15). The full hash stays in the filename, so a copy outside its shard directory still names itself fully — useful for moves, backups, and ad-hoc inspection.
+- **Capture staging** lives under `capture/`: failed or abandoned captures sit there without consuming corpus identity space, and ingest unlinks a staged capture on success.
 
-### 12.2 Sharding
+### 12.2 Schema directory layout
 
-For large filesystem-backed corpora, files under `records/`, `artifacts/`, and `cache/` are conventionally sharded by the first two hex characters of the leading hash:
-
-```
-records/<id[:2]>/<id>.md
-artifacts/<id[:2]>/<id>.<ext>
-cache/<urihash[:2]>/<urihash>.<ext>
-```
-
-This keeps any single directory under ~256 entries until the corpus reaches ~16k items per slot. Other sharding strategies (deeper trees, content-addressed object stores, etc.) work equally well.
-
-### 12.3 Schema directory layout
-
-The schema namespaces of §3 are conventionally laid out as:
+The namespaces of §3 are conventionally laid out as:
 
 ```
 schema/<namespace>/<namespace>.yaml              namespace universal
-schema/<namespace>/<axis>/<axis>.yaml            axis common guidance (mime and atom namespaces)
+schema/<namespace>/<axis>/<axis>.yaml            axis common guidance (mime and atom)
 schema/<namespace>/<axis>/<axis>_<id>.yaml       specific declaration
 ```
 
-The **underscore-flattened** subtype convention (`text_html.yaml` inside `text/` rather than `html.yaml`) keeps filenames self-describing.
+The **underscore-flattened** subtype convention (`text_html.yaml` inside `text/`, rather than `html.yaml`) keeps filenames self-describing.
 
-Inside `composite/`, namespaces with no axis decomposition use the simpler `schema/composite/<namespace>/<id>.yaml` form, with the namespace universal at `schema/composite/<namespace>/<namespace>.yaml`.
+Inside `composite/`, namespaces with no axis decomposition use the simpler `schema/composite/<namespace>/<id>.yaml` form, with the namespace universal at `schema/composite/<namespace>/<namespace>.yaml`. Annotation overlays follow the same pattern under `schema/context/` — `context/<ns>/<ns>.yaml` layering under `context/<ns>/<id>.yaml` (the bundled `issue` overlays live here, not under `composite/`).
 
-Inside `origin/`, overlays nest by **URI scheme family** (§7.2): `schema/origin/web/<host>.yaml` for http(s) sources (host-matched), `schema/origin/otherwise/<id>.yaml` as the catch-all, and other scheme families (`urn/`, `file/`, `s3/`) as a corpus needs them, with the namespace universal at `schema/origin/origin.yaml`. The overlay id is the bare `<id>` regardless of sub-namespace; the flat `schema/origin/<id>.yaml` form is read for back-compat.
+Inside `origin/`, overlays nest by **URI scheme family** (§7.2): `schema/origin/web/<host>.yaml` for http(s) sources (host-matched), `schema/origin/otherwise/<id>.yaml` as the catch-all, and other families (`urn/`, `file/`, `s3/`) as a corpus needs them, with the namespace universal at `schema/origin/origin.yaml`. The overlay id is the bare `<id>` regardless of sub-namespace; the flat `schema/origin/<id>.yaml` form is still read for back-compat. `corpus init` seeds `origin/origin.yaml` + `origin/web/example.com.yaml`.
 
-### 12.4 Resolver surface
+### 12.3 Capture
+
+A capture takes a target — URL, filesystem path, manual upload — and produces a record plus its binary in the content-addressed store. The pipeline is content-addressed end-to-end: identity is the hash of the bytes.
+
+#### 12.3.1 Fetch and capturer routing
+
+**Routing is overlay-driven — no hardcoded host knowledge.** The capturer is chosen by the origin overlay's `capture.capturer:` field (`browser` — Playwright/HTML, the default; `video` — yt-dlp; or a corpus-local capturer name); `corpus capture --video` / `--no-video` are one-off overrides. There is no built-in video-host list: a host that should go to yt-dlp declares `capturer: video` in its overlay, so an undeclared video URL captures as HTML unless `--video` is passed.
+
+- **HTTP/HTTPS URL** — fetched with redirect-following enabled. The original requested URL and the final-after-redirect URL both land on the record's first origin block (`uri:` list).
+- **Filesystem path** — copied from staging, which is unlinked at ingest; the origin block is uri-less and carries `filename` + `source_modified` instead (§7.2).
+- **Manual upload** — the operator supplies the bytes and any origin URI.
+
+Inline media a transport merely *references* (images in an HTML page, etc.) are not separate records: the body drafter emits an embed block per asset (deduped by `transport` byte-hash) plus an `image`/`audio`/`video` positioning segment in the content zone (§4.3.1.4) — never an intra-corpus wikilink (those are reserved for cross-*artifact* references, §4.3.2.2). A transport the schema declares `decomposable` (a raw archive) is the exception: the ingestor explodes it into one captured artifact per member. Hyperlinks to *other* resources are reconciled to intra-corpus references during cross-reference resolution (§12.4.7).
+
+**Corpus-local capturers.** A corpus can ship its own capturer code under `<corpus_root>/capturers/*.py`. `corpus.local_code.load_corpus_modules(corpus_root, subdir)` imports these by path (`importlib`, not `sys.path`, so distinct corpora cannot collide on a module name), registering each module in `sys.modules` before exec, idempotently per `(root, subdir)`, with per-file failures logged and skipped. Trust boundary: this executes Python from the corpus root — the corpus owner's own code, which is the point of the tier — but a serving layer never captures or drafts, so merely fronting a corpus never runs it.
+
+#### 12.3.2 MIME detection
+
+MIME detection selects the **mime schema** that drives the rest of the pipeline (container disposition, `transport_algos`, address scheme, drafter):
+
+1. **Magic-byte sniffing** — the primary path (`mime.detect`). Inspect the leading bytes; refine ambiguous container magic by form-type and extension (a RIFF prefix → webp/wav/avi by its offset-8 form-type; an ISOBMFF `.m4b` → `audio/mp4`, not `video/mp4`, so it routes to transcription rather than the video keyframe path). A `PK\x03\x04` zip is refined by its members (`_refine_zip`): universal formats (OOXML / EPUB / JAR) match fixed internal paths baked into the tooling, while a corpus's *own* zip-shaped types (a diagnostics export, a backup bundle) match their schema-declared shape signatures (`applies_to.zip_members` / `zip_member_patterns`, §7.1) when a `corpus_root` is in scope — vendor-specific recognition lives in the overlay, not the package, and an unrecognized zip stays `application/zip`.
+2. **Extension hint** — disambiguates where magic is generic, and names the type for extensionless or schema-id-from-filename cases.
+3. **`unknown` sentinel** — when both fail. Record the gap; the artifact is still valid, it just gets no format-specific drafting.
+
+The detected MIME becomes the **artifact block's opener argument**, which is authoritative — there is no frontmatter media-type field (§4.3.1.1).
+
+#### 12.3.3 Hashing
+
+The hash families of §2 / §4.2.1 land at different stages (§7.6 encoding):
+
+- **blake3 of the bytes** — always, at ingest. The artifact's `id` (bare hex): identity and filename stem.
+- **`transport_algos`** — additional byte-level algorithms the mime schema declares (e.g. `sha256` for interoperability), computed at ingest into `transport:` as `<algo>:<hex>`. The primary blake3 is on `id` and is not duplicated here.
+- **`canonical`** — a content-canonical hash computed at **draft** by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`). Currently computed but **not persisted** (see the §7.1 status note); without it `records.content_key()` returns `None` and `find_content_duplicate` short-circuits, so the cross-URL content-dedup fold is inert.
+- **`perceptual`** — atom fingerprints (image pHash, text simhash, …), **opt-in and schema-gated**, computed at draft only when the fingerprint knob resolves on (§12.4.4); default off. Per-segment on multi-atom records, record-scope on single-atom ones (§7.7).
+
+There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash. A MIME with no canonical strategy and no fingerprint knob is blake3-`id`-only, and that record is normal.
+
+#### 12.3.4 The stub record
+
+Ingest emits the stub record (§4.1). The frontmatter carries only the bytes-identity header — `id`, `transport:` (any `transport_algos`), `status: stub`, `touch: [<pkg>.ingest@<v>]`, and the two editorial fields `title: ''` / `description: ''`, empty until the normalizer authors them (§4.2.1). Everything else lands in body blocks:
+
+- The **artifact block**, its body holding the format-intrinsic extended fields the mime schema declares, named bare (`title`/`author`/`page_count`, not `pdf_title`; §4.3.1.1). Sources: PDF info dict, EXIF, ID3, HTML `<meta>`, OPF Dublin Core, ffprobe streams.
+- The first **origin block** from capture context — `uri:` + `snapshot:`, or the uri-less local-file form (§7.2).
+
+No `content_type`, `hashes`, `classifications`, `tags`, or `uris`/`capture_dates` frontmatter — none of those exist in the v1.0 model. The content zone is empty; draft fills it. Classifications are not stamped here either — `classify_when` membership is applied at draft (§12.4.5).
+
+#### 12.3.5 Dedup, re-capture, and capture provenance
+
+Ingest looks the artifact up by `id` against the existing corpus:
+
+- **Match** — the bytes are already in the corpus. Fold the new capture into the existing record's origin blocks: append the inbound URL to a matching origin's `uri:` list when it aliases one (via known shortlink/redirect + `url_equivalent` rules), or emit a new origin block when it is a genuinely separate source (§5.2). Never a new record.
+- **No match** — a new artifact. Write the record under `records/` and the binary under `artifacts/`.
+
+Dedup is the natural side effect of content addressing. Two pre-download stages catch a duplicate *before* the (expensive, especially video) fetch: the cheap string-identity `find_by_uri` short-circuit, and the redirect-aware short-link resolution (§12.3.9).
+
+Capture provenance lives in **origin blocks** (§4.3.1.2), never frontmatter: one block per distinct source, its `uri:` list collecting the spellings that resolve to it (request URL, final-after-redirect URL, shortlink, mirror), deduped by identity key (§12.3.9), plus the `snapshot:` timestamp. The pipeline does **not** record per-event metadata (which URI was used at which moment, the redirect chain, the HTTP method); recovering a particular (uri, time) capture package is a job for an out-of-band capture log, not the record.
+
+#### 12.3.6 Browser capture recipes (per-host interactions and fidelity)
+
+A web capture renders the page in a headless browser, drives it to surface all displayable media, then writes a self-contained SingleFile snapshot (CSS/fonts/images inlined as `data:` URIs). What the browser does before the snapshot is an ordered list of **interactions**, declared in the matching origin overlay's `capture.interactions:` (§7.2); absent a recipe, a conservative default of `scroll: full` → `expand: all` → `scroll: full` runs. Each step is a single-key mapping; steps are best-effort (a bad selector never aborts a capture):
+
+- `scroll: full` — scroll top-to-bottom, hydrating lazy-loaded / below-the-fold media.
+- `expand: all` (or `details`) — open `<details>` and click `[aria-expanded="false"]` accordions/tabs.
+- `click: {selector, repeat, delay_ms}` — advance carousels / load-more buttons.
+- `wait: {ms}` or `wait: {selector, timeout_ms}` — settle async loads.
+- `hover: {selector}` — trigger hover-reveal media.
+- `remove: ['#header', 'footer', '.ad']` — delete matching elements from the live DOM before the snapshot. **This is where page chrome is removed.** The HTML drafter (§12.4.1) is deliberately mechanical and never guesses what is chrome, so stripping nav/header/footer/ads/cookie-notices is a per-host decision made here, where the site's real structure is known. Removing chrome at capture also keeps its images from being inlined and embedded. (Link-bearing navigation the crawl needs — breadcrumbs, related-item rails — is preserved by *not* listing it here.)
+- `eval: "<javascript>"` — escape hatch for site-specific DOM surgery (fetch-and-inject an AJAX-on-click tab, promote a `data-*` high-res image URL into `src` so it gets inlined). An async-function string is awaited before the snapshot.
+
+The snapshot's **fidelity** is a per-host tier (`capture.fidelity:` — `exact` | `balanced` | `lean`, default `balanced`; `FIDELITY_PRESETS` in `capture/__init__.py`). On asset-heavy SPAs the self-contained inlining (web/icon fonts in redundant formats, app icon-sprite SVGs) is re-inlined into every page, dwarfs the content, and defeats content-addressed dedup (each page's whole-file hash differs). `balanced` drops redundant font/image/media alternates (≈−76%, no rendering risk); `lean` also prunes unused CSS (≈−91%); `exact` keeps everything for presentation-critical sites. The tiers touch only the gitignored `artifacts/` — the mechanical drafter reads DOM text/tables, so the drafted record is byte-identical across tiers. The resolved tier is stamped into a `corpus-fidelity` meta tag; `corpus capture --fidelity` / `corpus crawl --fidelity` override per run.
+
+Capture config (`capturer`, `transport`, `fidelity`, `interactions`, `viewport`) lives on the per-host origin overlay under its `capture:` section (§7.2); global defaults can sit on the universal `origin.yaml`. `scaffold.py`'s example overlay shows the full annotated shape.
+
+#### 12.3.7 The video (yt-dlp) pathway
+
+The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp:` and merged straight into `YoutubeDL` (full passthrough — `format`, `getcomments`, `impersonate`, …); the library forces `outtmpl` / `logger` / the resolved cookie file after the merge so an overlay can't break output, logging, or auth. `capture.cookies_from_host` (default `true`) pulls the capture URL's own-origin cookies from a running CDP browser (`--remote-debugging-port=9222`) into yt-dlp, so a logged-in session unlocks a host's full content (e.g. the full format ladder rather than a degraded anonymous one). yt-dlp writes a `.info.json` enrichment sidecar (post metadata + comments); ingest renames it to `capture/<hash>.info.json` and leaves it in staging — it is draft-time-only enrichment, never persisted to `artifacts/`.
+
+**Sidecar → origin block (draft time), then deleted.** The `.info.json` is *non-primary-source* metadata, so `draft/_sidecar.py` lifts every declared key into the **origin block** as a flat `ytdlp_<key>` field (`ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts, …) via `records.merge_origin_fields` — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when returned) becomes a `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:` aliases. The lifted key set is schema-declared — `sidecar.ytdlp_keys` on the video/audio mime schema (§7.1); the drafter is mechanical, not hardcoded. One datum is *structural* rather than flat: **`chapters[]`** (the uploader's outline). A video that ships chapter markers is sectioned by them — each chapter title becomes a section `entry` and the chapter bounds become the section time-ranges, in preference to the default speaker-run sectioning. Chapters are consumed into section structure, never copied to a `ytdlp_*` field; a section's `entry`/address is metadata structure, not body content, so this respects the same primary-artifact boundary. The only body content a media drafter writes is the **transcript**, derived from the primary artifact's own audio.
+
+**Title is normalizer-owned.** The frontmatter `title` (like `description`) stays empty through draft; the normalizer authors it from the block-level candidates — the artifact block's bare `title`, or an origin `ytdlp_title` (the `ytdlp_` prefix survives because the origin opener names the source record, not the tool; §4.2.1). A media drafter's title candidate routes to the origin's `ytdlp_title` (an A/V artifact block carries no `title`); for display, `records.title_for` reads the frontmatter `title`, falling back to the artifact `title`, then `ytdlp_title`. After a successful draft, `_cli/draft._cleanup_enrichment` deletes the sidecar; enrichment is one-shot (re-capture to restore — the extracted fields already persist on the record).
+
+**Per-host transcription (draft time).** The audio/video drafters resolve the record's origin host and read the overlay's `transcription:` section (`draft/_hostcfg.py`): absent → the global `[corpus.transcription]` adapter; `enabled: false` → skip (an `info` issue, not a `warning`); `adapter`/`base_url` → a per-host backend that overrides the global even when the corpus default is `noop`.
+
+#### 12.3.8 Pagination reconciliation
+
+A paginated work — a thread / multi-page article / gallery a site splits across `?page=N` / `/page-N` URLs — is **one logical artifact**. The overlay's `capture.pagination` knob (§7.2; browser capturer only; `capture/pagination.py` + `_reconcile_pagination`) walks the pages and ingests a single merged record instead of capturing page 1 only or fragmenting the work into N content-addressed records. Both `corpus capture` and `corpus crawl` route through `capture_and_ingest`, so the branch lives there, after the dedup short-circuit:
+
+1. **Walk + stage.** Each page is fetched through the staging-only `capture()` path (so its `url_rewrite` / `interactions` / chrome-strip / fidelity all apply per page), its HTML read into memory, and its staging file unlinked immediately — `_sanitize_filename` drops the query string, so `?page=N` pages would otherwise collide on one staging name, and per-page bytes must never be content-addressed. The next page is found by `<link/a rel=next>` (the `<link>` survives the chrome strip — it lives in `<head>`) or a `next.selector` override; the walk stops at no-next, a repeat URL, or `max_pages` (flagged).
+2. **Merge.** Page 1 is the framework. The content region is the declared `content_selector`, else the host's `canonical.content_selector`, else a structural diff of page 1 vs page 2 (`detect_region`: descend while exactly one matched-identity child differs; the container whose children then diverge is the region). Each later page's content children are appended into page 1's region, **deduped by element id or a normalized-subtree hash** (so a repeated quoted-OP / threaded post isn't double-counted); a page adding zero new children stops the walk.
+3. **Ingest once.** The merged HTML is written to one staging file and ingested — the sole content-addressed artifact + record. A single page (no next link) skips the round-trip and ingests the original snapshot bytes verbatim, so its id is byte-identical to a non-paginated capture (and no pagination provenance is attached).
+4. **Provenance.** The clean seed is the recorded origin URI; every constituent page URL — both the bare site form (what a crawl discovers) and the pinned `url_rewrite` form — is folded in via `records.add_origin_uri_alias`, plus a `pagination: {pages, form, posts}` field via `records.merge_origin_fields` (`posts` is the id-aware item count — `_count_items` counts id-bearing region children when any are present, so framework `div`s inside the region don't inflate it; else all children). When the merged count falls short of an advertised `expect_count.selector` value, or `max_pages` was hit, a `pagination-incomplete` `warning` issue (capture-stage detector `corpus.capture`) is emitted rather than silently shipping a lossy record.
+
+**Crawl interaction.** Recording every constituent URL as an alias makes the dedup short-circuit fire when a crawl later discovers `/page-N`, resolving to the merged record instead of re-capturing. `crawl._expand` additionally drops any link already in the expanding record's own origin URIs, keeping those pages out of the frontier (genuine content links — post permalinks, cross-thread — are kept).
+
+#### 12.3.9 URL equivalence and redirect-aware short-link dedup
+
+A record's origin URI list should hold **one URI per distinct resource**, and an inbound URL should match a record whenever it denotes the same resource, even when the spelling differs (query noise, `/page-1` ≡ bare). The per-host `capture.url_equivalent` overlay section (§7.2) declares this; the tooling reduces every URL to an **identity key** and compares keys instead of normalized strings.
+
+- **The primitive** is `urls.identity_key(url, equivalent, *, url_rewrite)` (pure, stdlib-only). `urls.normalize_equivalence` coerces the overlay value to a canonical config; the key is `normalize` → (if `on_rewritten`) apply `url_rewrite` first → (if `query: drop`) strip the query → apply the `rules` in order (via the shared `urls.apply_rewrite_rules`) → tidy a dangling delimiter → fold a sub-path trailing slash (`…/a/b/` ≡ `…/a/b`). With no config it returns exactly `normalize(url)`, so the layer is inert (opt-in) for any host that does not declare it. The trailing-slash fold is in `identity_key`, **not** `normalize`, on purpose: `normalize`'s output is the URL `crawl._expand` stores and re-fetches (a server may distinguish `/a/b` from `/a/b/`), so the fetched form keeps its slash while the comparison key folds it.
+- **Identity ≠ fetch.** The identity key is a comparison key only. Crawl still stores the fetchable normalized URL in its frontier/visited; only the dedup *comparison* uses identity keys. Equivalence must never decide which bytes are fetched (that is `url_rewrite` / `interactions`).
+- **The recipe-aware wrapper** `recipes.identity_key_for_url(corpus_root, url)` resolves the host's `capture` recipe once and passes its `url_equivalent` + `url_rewrite` to `identity_key`; single-URL sites (`records.find_by_uri`) call it directly, while bulk sites (`records.build_uri_index`, `crawl._expand`) memoize the recipe by host.
+- **The four identity sites** all key by `identity_key`: `build_uri_index`/`find_by_uri` (capture short-circuit + raw-URL resolve), `crawl._expand` (frontier dedup, folding in the own-URI exclusion), `_reconcile_pagination` (within-walk seen-set + constituent-alias recording), and `records.add_origin_uri_alias(post, alias, *, corpus_root=)` — which, given `corpus_root`, skips an alias whose identity key matches an existing origin URI, keeping origin blocks minimal. Where a host declares the page-form equivalence, it supersedes pagination's bare+pinned dual-alias recording — a fragment-only pin (`#flat`) collapses to the bare form, while a genuinely path-changing `url_rewrite` still records both.
+
+`identity_key` canonicalizes a URL *string* and never touches the network, so an **opaque short link** (`https://vt.tiktok.com/XXXX/`) keys differently from the canonical it 301s to. The redirect-resolution layer closes that gap by following the redirect chain to the final URL **without downloading the artifact**:
+
+- **The primitive** is `redirects.resolve_final_url(url)` (pure stdlib): a per-hop HEAD (falling back to a body-less GET on 405/501) follows `Location` headers up to `MAX_HOPS`, never reading a response body — so even when the final URL serves a multi-megabyte video, the probe stays cheap. Redirect loops, hop-cap, non-web `Location`s, and any network/parse failure all return the input unchanged: a probe never breaks the caller, it only improves dedup when it succeeds. `redirects.is_probably_short_link(url)` is a conservative gate (known shortener hosts, `vt.`/`vm.` subdomains, or a single short opaque path segment) so a normal canonical URL never pays the network round-trip.
+- **The recipe-aware wrapper** `recipes.resolve_identity_for_url(corpus_root, url)` returns `(final_url, identity_key)`: it follows redirects only when the URL looks like a short link, then computes the identity key from the **final** URL — so the destination host's `url_equivalent` strips the volatile query the canonical resolves with, and a short link whose apex differs from its destination (`youtu.be` → `youtube.com`) picks up the destination's equivalence rules.
+- **Capture short-circuit (second stage).** `capture_and_ingest` keeps the cheap string-identity `find_by_uri` first; on a miss, `_redirect_dedup` runs the redirect-aware resolution and re-checks — catching a fresh short link to an already-captured canonical **before** the download, and folding the short link into the matched record's origin URI list as an alias. `--force` skips both stages, and the short-link heuristic keeps the probe off the hot path.
+- **`corpus check <url>`** (`_cli/check.py`) is the read-only surface: the same resolution (canonicalize + overlay recipe + redirect-follow), then `find_by_uri`, reporting the matching record hash + path or "not captured". It never captures, ingests, downloads, or writes. Script contract: exit `0` already captured, `1` not captured, `2` usage error, `3` resolution error; `--json` emits `{url, resolved_url, identity_key, redirected, captured, record, path}`; `--no-follow-redirects` does a string-identity-only check (offline / fast).
+
+#### 12.3.10 Dependent references (`capture.references`)
+
+A page's most relevant outbound links are part of the capture itself — a product-detail page's manual or spec sheet far more than the other hundred links on the page. The per-host `capture.references` overlay section (§7.2) declares which links those are; the tooling emits a `reference` context block (§4.3.3.3) for each and, opt-in, fetches it depth-1 as its own record. The home is one module, `corpus.references` — *declare, match, emit* — with the *fetch* delegating to the existing capture/crawl machinery. Opt-in throughout: no rules → entirely inert.
+
+- **The rules** (`references.parse_rules` → `ReferenceRule`): a list of `{match, role, capture, cross_host}`. A rule's `match` keys (`selector` CSS, `href_pattern`/`text_pattern` regex on the resolved href / anchor text, `rel` token) are ANDed; rules are ORed. `role` (corpus-local label — `manual`, `spec-sheet`) rides onto the emitted reference; `capture: true` opts the target into the depth-1 grab (default false = annotate only); `cross_host: allow` (the default — manuals are off-host) lets a match reach another host, `same` host-restricts it. Parse-tolerant: a non-mapping entry, a rule with no match key, or a bad `cross_host` is skipped, never fatal.
+- **Matching** (`references.match` / `matches_for_record`): parse the DOM, scope candidate anchors by `selector` (else all `<a href>`), apply the AND filters, resolve relatives against the base URL, normalize, drop non-crawlable hrefs (`urls.is_crawlable_href` — the same filter `links`/`crawl` use), enforce `cross_host: same`, and dedupe by URL (DOM order, first rule wins for role/capture). `matches_for_record` applies the host's rules against the record's primary origin URI and excludes self-links. Shared by draft emission, `corpus links --references`, and the grab.
+- **Emission is draft-stage** (`references.emit_overlay_references`, called from the draft core right after the per-host canonical content-scoping). Each match emits one `<!--context reference-->` with `provenance: auto`, the rule's `role`, tier-1 `attribution_text` (the link text), and tier-2 `source_url` (the resolved href). It stops at tier 2: the mechanical drafter writes **no** tier-3 `source_uri` and reads **no** corpus state, keeping `draft` a pure function of the artifact (§4.3.3.3). Whether `source_url` is itself a record is a read-time derived edge: `derived_views.references` (§9.9) resolves it against the URI index and surfaces `captured`/`resolved_uri`, so the edge self-heals (`captured ⇄ pending`) under capture/removal/supersession. Idempotent for free: `draft` runs only on a clean stub and `redraft` re-stubs first, so emission only ever appends. **Known gap:** emission is HTML-only and *record-scoped* in the current implementation — no segment anchor is written, because the declared link usually sits in un-segmented chrome and a brittle DOM→segment map would mis-pin it. §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing this gap is an open item (§12.15).
+- **The depth-1 grab** (`references.fetch_references`): `select_for_capture(matches, force=)` picks targets — `force=True` (`--with-references`) all, `force=False` (`--no-references`) none, `force=None` (default) the rules' own `capture: true`. Each selected, not-already-captured target is fetched once via `capture_and_ingest` — depth is fixed at 1 (a grabbed target is ingested as a stub, never expanded; multi-hop stays `crawl`'s job, §11). Best-effort: a per-target failure is recorded, not raised. Surfaces: `corpus capture --with-references` / `--no-references` (the inline grab after the primary ingest), `corpus crawl --references [seed]` (the deferred sweep; `--dry-run` lists pending targets).
+- **Discovery + view.** `corpus links --references <record>` previews the declared subset, each line annotated `[role=…, captured|pending, auto?]`. The `references` derived view (§9.9) is the `reference`-namespace projection; the reverse edge (which records reference *this* one) is a corpus-wide read, not indexed (§9.9 / §11).
+
+### 12.4 Draft
+
+Draft brings a stub to `status: draft`, applying schemas in the §8.1 order: the mime schema first — the sole body-drafter, segmenting the content zone, emitting embeds, filling the artifact block's bare fields — then atom overlays on segment openers, then mechanical composites in declared order (metadata only; each fills its own classify block, stamped `provenance: auto` where membership came from `classify_when`). A classification is never a frontmatter array and carries no justification field — the `classifications` list is a derived view (§9.1) — and records carry no `tags` field.
+
+#### 12.4.1 Per-format drafters
+
+Conversion produces the artifact's body as well-formed markdown. It is MIME-driven and shells out to deterministic tooling:
+
+- **`text/html`, `application/xhtml+xml`** → the mechanical HTML drafter (`draft/html.py`). It removes only non-rendered infrastructure (scripts/styles/comments), assigns `el=N` addressing to every content element of the raw artifact (the shared `transforms.html.is_addressable` predicate — content-bearing blocks and inline-media carriers, not layout-only `div`/`span` wrappers), emits dedup'd embeds, and emits one cleaned-`<body>` text segment. The `el=N` axis is the structural `_ADDRESSABLE_TAGS` set (content blocks + `<img>`) plus inline-media carriers: `<video>`/`<audio>` (materialized from their inline `<source data:…>`) and `<a href="data:…">` attachments (vCards, files). Every carrier becomes a dedup'd embed (`transport` = blake3 of the decoded bytes; `media_type` from the data URI; an attachment keeps its recovered `filename`, an image its `width`/`height`/`alt`), and the carrier's base64 `data:` payload is stripped from the body — the carrier survives as a body-empty `el=N` positioning marker (critical: a single inline video can be hundreds of MB). A bare `<a>`/`<source>` is not addressable — only a `data:`-bearing one — so per-message deep links never consume an index. The carrier→bytes round-trip lives on the resolver side (`transforms/html.py`); drafter and resolver import the same predicate + helpers, so they name the same elements `el=N` by construction (asserted in `test_drafters.py`). The drafter does **not** strip page chrome — a universal tool can't reliably tell chrome from content, and a wrong guess drops content silently; chrome removal is a capture-time, per-host decision (§12.3.6). Structural recovery (headings/tables/lists/equations) is the normalizer's job.
+- **`application/pdf`** → `draft/pdf.py` is uniform and mechanical: every PDF drafts to the same shape — one body-empty `image` segment per page addressed `page=<N>`, sectionless — plus the `/Info` fields on the artifact block (`page_count`, `title`, `author`, `producer`, `creation_date`, `modification_date`). The drafter makes no born-digital-vs-scanned determination and extracts no text; the page raster is the faithful transport unit (§11). Everything an agent needs to determine a page's shape and recover its content is exposed at normalize time through the resolver's introspection ops (§6.2): `page=<N>&text`, `page=<N>&words`, `page=<N>&probe` / `probe`, and `outline`. The normalizer uses these to pull born-digital text into prose segments, OCR a scan into `text/ocr` at `page=<N>&bbox=…` (so the corpus owns OCR provenance — engine/confidence/region — rather than laundering a pre-baked machine-OCR layer), and wrap pages into sections from the outline (`pages=<start>-<end>`). Resolver mechanics: `page=<N>` yields an intermediate `pdfpage` selector so a sub-op reads the page directly rather than OCR'ing a render; a terminal `pdfpage` — or an image op / `bbox=` after it — auto-renders to image, so a `page=` image segment stays a self-slice needing no embed (`lint._self_slice`). `words`/`probe`/`outline` cache as `json`. Canonical: `blake3-canonical-pdf` (per-page extracted text; persist currently disabled — §7.1 note).
+- **`application/epub+zip`** → the EPUB drafter (`draft/epub.py` + the pure `corpus.epub` OPF reader). `self_contained` — an EPUB is one work, one record. Emits one bare `text` segment per spine (reading-order) content document, addressed `spine=<N>`, with a mechanically-cleaned structural-HTML body (same philosophy as the HTML drafter), and groups them into sections by the book's navigation document (EPUB 3 nav → EPUB 2 NCX): top-level TOC entries become sections (`address: spines=<start>-<end>`, `entry:` = the part/chapter title), spine docs before the first TOC target become a synthetic `Front matter` section — the exact analogue of the PDF outline wrap (`pages=`/`page=` ↔ `spines=`/`spine=`). A book with no usable nav drafts sectionless, like an outline-less PDF. Each `<img>` references a separately-stored zip member, so it becomes an **embed** (addressed `spine=<N>&el=<K>`, `transport` = blake3 of the member bytes, deduped across the book; the body keeps a src-stripped `<img data-el="K">` placeholder) — the HTML drafter's embed model, not the PDF's bare-image-segment model. That address materializes through `transforms/epub.py`: `spine=<N>` selects the OPF content document and binds a resolver over the book's zip image members, then `el=<K>` resolves the addressed `<img>` to its member bytes — so a recorded address round-trips to byte-identical content (the resolved bytes' blake3 == the embed's recorded `transport`; el-indexing is shared with the drafter via `corpus.epub.addressable_image_bytes`). Publication metadata (Dublin Core) lands as bare artifact fields (`title`/`creator`/`language`/…; `spine_item_count`/`toc_entry_count` record the shape). Canonical: `blake3-canonical-epub` (concatenated spine text — packaging-invariant).
+- **Raw `application/zip`** → `decomposable` by default (the bundled schema): the ingestor explodes it into one captured artifact per member; the container produces no record. A corpus that wants a *particular* zip-shaped bundle kept whole declares its own `self_contained` mime schema for it (recognized by shape via `applies_to.zip_member_patterns`, §12.3.2) and points it at the `zip-manifest` drafter.
+- **`draft.strategy: zip-manifest`** → the general `self_contained`-zip drafter (`draft/zip_manifest.py`), selected by *strategy* rather than schema id (`corpus.draft.STRATEGY_REGISTRY`), so one drafter serves any number of bundle types that differ only by the schema's `draft.manifest` config. It records the archive as an **embed manifest**. The modeling point: a zip member is a *transport* (a file with its own bytes + MIME), not a content atom — and an embed is precisely "an embedded transport". So every member becomes an embed (`transport` = blake3 of the member bytes, `media_type` content-sniffed, addressed `path=<relpath>`, root-stripped per `manifest.root_strip`) that the normalizer describes — and the content zone is **empty**: a pure container has no content atoms of its own, and a member's bytes are verbatim + resolvable, so nothing is transcribed. The folder hierarchy lives in the `path=` addresses (a tree is a derived rendering, not stored blocks). `media_type` is content-sniffed (`_is_text`: UTF-8, no NULs), not extension-guessed, so a `.cfg`/extensionless log is `text/plain`; a precise extension guess (`application/json`, `image/png`) is kept; an opaque binary is `application/octet-stream`. Bytes materialize through `transforms/zip.py`: `corpus://<id>?path=<relpath>` → the member bytes. The artifact block carries generic zip facts only — `member_count`, `uncompressed_bytes`, `compressed_bytes`, `compression`, `encrypted`, `comment`; a single wrapper dir's name is a fallback `title` candidate. The drafter knows nothing about any vendor: recognizing a bundle as, say, an Unraid diagnostics package and surfacing its identity is codex-layer domain knowledge, carried by a classification overlay (a composite whose `classify_when: {mime: {equals: …}}` auto-applies on the kept-whole MIME) and filled by the normalizer — not by this drafter, and not on the artifact block. An empty archive yields a blocking `partial-content` issue; because such a record has no content-zone segments, the `embed-unreferenced` lint is relaxed for it (the embeds ARE the content).
+- **`audio/*`** → speech-to-text transcription (reference: Whisper), with timestamps and speaker turn markers where determinable. `audio/mp4` covers `.m4a`/`.m4b` audiobooks (an `.m4b` magic-sniffs as `video/mp4` on its generic ISOBMFF brand; `mime.detect` refines it by extension so it routes to transcription — embedded chapter markers and cover-art `mjpeg` are not consumed in v1).
+- **`video/*`** → audio transcription + per-keyframe descriptions when the schema asks for them.
+- **`image/*`** → a single body-empty `image` segment addressed `bbox=0,0,1,1` (`draft/image.py`); the image is its own self-artifact — no embed; the bytes are the record's, materialized via the `bbox=` functional URI (§4.3.1.4). Any visual description is normalizer-written on the segment `description:`; an optional `perceptual:` when the fingerprint knob resolves on. No VLM/OCR in the deterministic drafter.
+- **`text/markdown`, `text/plain`** → passthrough with minimal cleanup (one `text` segment, body = the source text).
+- **`unknown`** → best-effort fallback; emit a metadata-only body summarizing what little can be determined.
+
+#### 12.4.2 One construction path (the constituent model)
+
+Every drafter builds the record's content zone through the **`recordbuild.Build` ops** — `add_blocks` → `open_section`/`add_segment` (which enforce body⟺lossless per segment) — and `recordbuild.finish` emits + grammar-validates it. These are the same ops `compile` replays from a decomposed `manifest.corpus`, so draft / redraft / decompose / compile / normalize all construct records identically, and a drafted record decomposes then recompiles byte-for-byte. This is the substrate the LLM normalizer works on: it edits the decomposed **constituent files** (per-segment body / description sidecars + the ops manifest) and recompiles deterministically — never rewriting a monolithic markdown blob — which makes whole classes of structural corruption unrepresentable. (`begin_from_post` seeds the Build for draft/redraft; `begin` seeds it from a `meta.yaml` for compile.)
+
+#### 12.4.3 Corpus-local drafters
+
+A corpus can specialize the draft of its *own* content without editing the package — the draft-stage analogue of the corpus-local capturer (§12.3.1). `_cli/draft.derive_record` loads `<corpus_root>/drafters/*.py` (via the same `local_code` loader and trust boundary) before any dispatch. The first hook is HTML: a module calls `@draft.html.register_html_subdrafter("<origin-id>")`, and the mechanical HTML drafter hands the whole content zone to it when the record's origin matches — a producer-declared `corpus-origin-schema` meta or a stamped origin-block id (§7.2) — instead of leaving the single wrapping `el=1-N` segment for the normalizer. The sub-drafter returns the same `(blocks, embeds, issues)` trio the generic path produces and reuses the public `compute_embed_metadata` + `transforms.html.is_addressable`, so its `el=N` addresses and embed transports line up with the resolver by construction. The record envelope (title, origin fields, canonical) stays the generic path's; only the content zone is delegated. Format-specific drafters, atoms, and overlays for private content live in the owning corpus repo, never in the package.
+
+#### 12.4.4 Perceptual fingerprinting (opt-in)
+
+A segment gets a `perceptual:` only when `schemas.resolve_fingerprint(corpus_root, media_type, post, cli_override)` resolves on — precedence CLI (`corpus draft --fingerprint` / `--no-fingerprint`) › composite classification › mime-schema `fingerprint` knob › off (the default; §7.7). The resolved knob (`true` = the atom's default algorithm, an algorithm name, or a list) becomes concrete per-atom algorithms via `fingerprint.algos_for_atom(atom, knob)`, computed by `fingerprint.text_fingerprints` / `image_fingerprints` (a registry keyed by algorithm, mirroring `content_hash._STRATEGIES`). Resolution at draft only sees the mime default, mechanical composites, and already-present classify blocks; an interpretive composite (assigned by the normalizer post-draft) takes effect on a later `corpus redraft`. Algorithm selection is schema-only; the CLI flag is on/off.
+
+#### 12.4.5 Deterministic auto-classification (`classify_when`)
+
+A composite overlay that declares a `classify_when` predicate (§7.4) is stamped onto every matching record at draft as a classify block with `provenance: auto`. The engine is `classify_rules.py`: `build_facts(corpus_root, post)` extracts the flat fact base (`mime`; `origin.host`/`path`/`fragment`/`query.<k>`/`id` — any-origin, list-valued; `media.<field>` by inverting the `ytdlp_` prefix off the origin block's fields, so the alias set tracks `draft/_sidecar.py` automatically); `evaluate(predicate, facts)` runs the `all_of`/`any_of`/`none_of` + `equals`/`in`/`glob`/`matches`/`exists` grammar (pure, total, missing-fact-⇒-false); `matching_classes` scans `schemas.iter_all_classifications` (namespace base and every subclass, deep-merged). `apply_auto_classifications(corpus_root, post)` is the idempotent strip-all-`provenance: auto` + regenerate-from-rules fixpoint — auto blocks placed before any surviving non-auto block (§4.3.1.3), asserted blocks untouched. The hook sits in `_cli.draft.derive_record` after the drafter result is applied (origin `ytdlp_*` present) and before the status flip, so both `corpus draft` and `corpus redraft` self-heal auto blocks. It is the mechanical, membership-at-draft path — complementary to, and never merged with, `classify_match.candidates()` (the interpretive body-cue matcher the normalizer consumes). Pure opt-in: no `classify_when` anywhere ⇒ no behavior change.
+
+**`corpus classify` / `corpus reclassify`** operate on **stored** records (not a re-stub), preserving the body and asserted blocks — re-evaluating only auto membership. `corpus classify <hash> [--dry-run] [--json]` does one record (printing the satisfying fact as the "why"); `corpus reclassify [target] [--mime/--host/--classification/--status] [--dry-run]` is the bulk re-propagation after authoring or editing an overlay. Both are body-safe and so default to all statuses including `normalized` — unlike `redraft`, which refuses `normalized`. Membership can also be asserted manually: `corpus classify <hash> <namespace>/<id> --field k=v` (validated, no `provenance`, so the auto engine leaves it alone). Lint's `classification-stale` (warning) flags a `provenance: auto` block whose overlay was deleted or no longer matches; the fix is `corpus reclassify`.
+
+#### 12.4.6 Bulk recompile (`corpus redraft`)
+
+A drafted record is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an in-place `.md` rewrite, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. `corpus redraft [target] [--mime/--host/--status] [--dry-run] [--fingerprint]` applies the per-record draft core across the corpus via a clean re-stub (`restub.restub_post` with the touch chain collapsed to the original ingest entry, no re-stub touch) — so an unchanged record re-derives byte-for-byte and is not rewritten (idempotent; `--dry-run` reports the set, writing nothing). It refuses `normalized` records unless `--force`, since re-deriving discards normalization. Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest* (§12.4.2) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to canonical text without writing, so redraft can compare against disk.)
+
+Pipeline-state provenance is the `touch[]` chain (§4.2.2): each pass appends a `<pkg>.<module>@<version>` (or `<model-id>`) identifier, so the latest touch's tooling version encodes the spec era of the record's current shape and re-run targeting reads it. There is no separate `conversion_method` / `conversion_tool` field.
+
+#### 12.4.7 Cross-reference resolution
+
+After the body exists, scan segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already an embed + segment (§12.4.1). For each hyperlink:
+
+1. Map the URL → `id` by querying the corpus's URI index (`records.build_uri_index` — every record's origin `uri:` list keyed by identity, §12.3.9).
+2. If matched, rewrite as a raw intra-corpus wikilink `[[<id>|original link text]]` — no URI scheme prefix; these are layer-local cross-artifact references (§4.3.2.2 / §5.1).
+3. If unmatched, leave the plain markdown URL. The target is outside the corpus and may resolve on a later re-resolution pass once it is captured.
+
+This is purely mechanical: the pipeline does not invent links the original content didn't contain. A lightweight sweep re-runs just this pass against existing bodies — useful after a batch of captures resolves URLs left as plain markdown in older records.
+
+**Reconciliation tooling.** The on-demand counterpart ships as `corpus links` (per-record) and `corpus crawl` (frontier BFS): both extract a record's `<a href>`, resolve relatives against its origin URI, normalize, and look each up in the URI index. A hit means the reference is already captured; a miss is the crawl frontier. `corpus links --show-captured` annotates which is which. Link extraction filters hrefs through `urls.is_crawlable_href`, which keeps client-side routing fragments (`#/route`, `#!/route` — on a hash-routed SPA the fragment *is* the resource identity) while dropping bare anchors (`#section`) and the `javascript:`/`mailto:`/`tel:` schemes.
+
+### 12.5 Normalize
+
+Normalization brings a record from `draft` to `normalized` (§8.1). It is interpretive — performed by an external agent session driven through the queue (§8.5, §12.5.6), never by the tooling itself.
+
+#### 12.5.1 The interpretive pass
+
+The normalizer refines the record:
+
+- Applies matching **interpretive** composite classifications — each as its own classify block (no `provenance`, so the auto engine never touches it), with the overlay's `normalization.guidance` consumed here.
+- Improves formatting fidelity (broken tables, malformed lists); resolves encoding ambiguity where determinable.
+- Writes asset descriptions on embeds and on self-slice / non-lossless segments via `description:` (lossy interpretation — never in a faithful segment body); fills embed `alt` only when the source provides it.
+- Surfaces problems as `<!--context issue/<id>-->` blocks in the annotations zone.
+- Authors the frontmatter `title` and `description` (the two editorial fields, empty until now).
+- Re-segments the content zone where judged appropriate (structural only), and sets `status: normalized`.
+
+The pass MUST preserve faithfulness (§1.5 principle 3): no information that wasn't in the source; descriptive content lives on `description:` / `alt`, never in a segment body.
+
+#### 12.5.2 Self-verification
+
+Before declaring the record normalized, the normalizer confirms:
+
+- The artifact-block opener MIME matches the actual MIME of the stored binary (the opener is authoritative, §12.3.2).
+- The `id` (blake3) matches the binary's hash.
+- The on-disk record path matches the shard convention.
+- `corpus lint` is clean at `normalized` severity — lint is the executable encoding of the spec's required-field and grammar rules.
+
+Failures here are pipeline bugs; they should fail loudly.
+
+#### 12.5.3 Annotations in practice
+
+A context block stores as `{namespace, id, subtype, fields}` — the same shape as a classify block — in `post.metadata["_contexts"]`. The bundled namespaces are `issue`, `reference`, and `concept` (§4.3.3); a corpus may add its own under `schema/context/<ns>/`. Context is scarce by design (§4.3.3), and there is deliberately no bundled free-text `note` namespace — that would invite scratchpad flooding. The `aside` and `relation` namespaces named in §4.3.3 have no bundled overlays yet; they are deferred.
+
+- **Issue loading and parse tolerance.** `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml`. `records.iter_issue_blocks` / `append_issue_block` are shims over `_contexts` filtered to the `issue` namespace, so drafters/detectors, `health.unresolved_issues`, the §9.2 view, and lint's issue rules share one path. The reader is parse-tolerant: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write.
+- **Reference lint.** `reference-unresolved` flags a stored `source_uri` that doesn't resolve to a captured record — only ever an *asserted* one, since the mechanical drafter writes no `source_uri` (§12.3.10). `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay.
+- **Concept.** The block stays lean — the `label → url → concept` ladder plus the optional `address:`/`quote:` anchor; the human-facing gloss is fetched live from the knowledge base (§12.12) at serialize time, never stored. Authored by `corpus concept link` (manual) today; an automatic content-scanning annotation pass is deferred.
+- **Decompose/compile conventions.** The manifest keeps a dedicated `issue <id> sev= res= detector=` line for the issue namespace and a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`). Two conventions keep the working dir hand-editable: `status` is authored only on the manifest `record … status=` line (not duplicated in `meta.yaml`, where an edit would be a silent no-op), and `meta.yaml` renders a multi-line string as a YAML block literal (`|`) so a multi-line `description` never reads as a truncated stump. An address list in the manifest is bracketed and `|`-separated (`[a|b|…]`), not comma-separated — a single address (e.g. `bbox=x,y,w,h`) already contains commas.
+
+#### 12.5.4 Normalizer-support commands
+
+The LLM normalizer never reads `schema/*.yaml` directly; it works through read-only commands (`_cli/{diagnose,guidance,overlay,preview}.py`, surfacing the §9 derived views and the §6 resolver):
+
+- **`corpus diagnose <hash> [--json]`** — the first call: a one-page brief combining the derived views (classifications / issues / uris) with a quick-lint and the record's context blocks.
+- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / composite overlay for the record.
+- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a candidate classification, so the normalizer fills a classify block without reading YAML. Given a bare host instead, it falls back to the origin overlay and prints its host match, declared operational sections, and `normalization.guidance`.
+- **`corpus lint <target> [--json]`** — the conformance gate; `--json` emits a single JSON array of findings (each = the `Finding` fields + `record_id`), across all records when `<target>` is omitted.
+- **`corpus preview <target> [--page N] [--mark x,y,w,h]… [--full] [-o out.png]`** — the cropping loop's *eyes* (§12.5.5). Renders the artifact (an image, or a PDF page via `--page`) with each proposed bbox outlined on the full image so a vision-model normalizer can see where a region sits, judge the fit, and adjust before committing. Read-only — it never writes the record; the agent commits regions separately by editing the record body. Fits the render to the `llm` budget by default; prints the cache path, or copies to `-o`.
+
+#### 12.5.5 The image toolkit
+
+This group was shaped by reviewing real normalizer runs on image-of-document records (scanned/photographed forms), whose dominant friction was `bbox=` **semantics**: agents read `bbox=x,y,w,h` as corner coordinates, overflowed `x+w>1`, and the resolve failed. The fixes target that directly: the `crop=`/`bbox=` bounds error names the format and the overflowing axis (`… bbox is x,y,WIDTH,HEIGHT, NOT corners`), `corpus resolve`/`corpus preview --help` print the full transform grammar (`_common.TRANSFORM_GRAMMAR`), and `mime/image/image.yaml` carries `normalization.guidance` teaching the bbox convention, crop-first legibility, orientation, and the verify loop.
+
+- **`mark=x,y,w,h[;…]`** (image → image, §6.2) — draws the region(s) onto the full image rather than cropping to them: the inspection dual of `crop=`/`bbox=` (a cycling high-visibility stroke, auto-labeled `1..N`, width ∝ image size). Composes after `page=`, so `corpus://<id>?page=4&mark=0.1,0.1,0.6,0.3` outlines a box on a rendered PDF page — how an agent that can't run a browser sees a proposed crop, as a PNG with the box burned in.
+- **`fit=<W>x<H>` | `fit=<preset>`** — downscale to fit, aspect-preserving and reduce-only; distinct from `resize=` (forces exact dimensions, may distort or enlarge). The **`llm` preset** bounds the image to a vision model's input budget: long edge ≤ `LLM_MAX_EDGE` (1568 px) and total pixels ≤ `LLM_MAX_PIXELS` (1,150,000), the smaller scale winning. These constants live in `transforms/image.py`, not Part I — §6.2 keeps presets implementation-defined because model limits drift. PDF `dpi=` is the other half of the dial: rasterize at the DPI you want, then `fit=llm` caps the result.
+- **`rotate=90|180|270`** and **`auto_orient`** — right a sideways/upside-down phone photo or scan before the agent reads it; `corpus preview --rotate`/`--auto-orient` expose them.
+- **`autocontrast`** (1% cutoff) and **`contrast=<factor>`** — pull a faint scan toward readable; `corpus preview --autocontrast` exposes the flag.
+
+The split that keeps `fit` honest: the transforms stay pure (no implicit fitting), and only the agent-facing surface defaults the budget on — `corpus preview` fits to `llm` unless `--full` (a preview *is* going into model context), while a raw `corpus resolve` applies `fit=` only when the URI says so (a codex embedding a crop in a human-facing deliverable wants native resolution). A typical loop iteration: `corpus preview <id> --page 4 --mark 0.1,0.1,0.6,0.3 -o /tmp/look.png`, read it, adjust, repeat; once right, write the segment at `page=4&bbox=0.1,0.1,0.6,0.3`. **`corpus preview --from-segments <id>`** is the verify half: it reads the record's already-committed bbox segment addresses (grouped by `page=`) and draws them, so the normalizer can confirm each written address frames the span it meant.
+
+One caveat the image guidance makes explicit: unlike a PDF (vector source, re-renderable at higher `dpi=`), an image's resolution is fixed — cropping can't add detail, so for fine print on a low-res capture the levers are crop-tight + `resize=` (interpolated enlargement, not new detail) + `autocontrast`; there is no DPI escape hatch.
+
+#### 12.5.6 Queue mechanics
+
+The queue contract is §8.5; the verbs live in `_cli/{enqueue,drain,finalize,release,await,queue}.py` over the `corpus.queue` library.
+
+**State layout.** External, untracked, under `<root>/queue/` (gitignored alongside `artifacts/`, `capture/`, `cache/`), one marker per record: `<id>.req` (pending request: `requested_at`, `requested_by`), `<id>.claim` (in-flight: `claimed_at`, `claimed_by`), `<id>.result` (last terminal outcome: `completed` | `failed`, with `reason`). A record's queue state is a pure function of which marker exists; markers are JSON written atomically (temp sibling + `os.replace`). The queue never touches `records/` — every verb is read-only on the record (`finalize` reads it to lint; `await` reads `status` as a fallback).
+
+**Atomic claim.** `drain` claims by `os.rename(<id>.req → <id>.claim)` — atomic on POSIX, so when two loop sessions race, exactly one wins (the loser's rename raises and it moves to the next candidate). Requests are claimed FIFO by `requested_at`. An empty queue returns nothing on stdout and exit 1 — the loop's stop signal (per §8.5 this is a non-error empty result; the exit code exists only to break the loop). A stale `.claim` (a dead session) is reclaimable once `claimed_at` is older than `--lease` (default 30 min); reclaim renames it back to `.req`. A duplicate pass from an over-eager reclaim is wasteful, not unsafe (re-normalization is idempotent), so reclaim is best-effort.
+
+**The loop session** (the agent, not the tooling) drives it:
+
+```bash
+while id=$(corpus drain --by "$SESSION"); do
+    corpus guidance "$id"     # merged overlay normalization.guidance (§12.5.4)
+    # ...the agent normalizes $id in-session: title, description, embed/segment
+    #    descriptions, re-segmentation; sets status: normalized; recompiles...
+    corpus finalize "$id" || corpus release "$id" --failed "<reason>"
+done
+```
+
+That bare loop is the **scheduled** shape: a tick (cron) drains until dry, then the model sleeps until the next tick — the model polls, waking on a clock even when the queue is empty. `drain --wait` moves the poll off the model: it long-polls the claim primitive in the subprocess and returns the instant a request is claimable, blocking instead of exiting on an empty queue (until `--timeout`, if set; `--interval` sets the poll cadence, default 2 s). The wait holds no claim — `drain` claims atomically only at the moment it succeeds — so an interrupt mid-wait leaks nothing. A **standing** loop runs `corpus drain --wait` under a persistent runner that re-invokes per claim, so the (expensive) model wakes only when there is genuinely work. The contract is unchanged: `--wait` is an ergonomic over the same atomic claim.
+
+**The done gate.** `finalize` refuses (exit 1, claim left intact) unless the record is `status: normalized` *and* lints with no error-severity findings — a dirty pass is never reported complete. A requester (a codex agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code, so it works for a re-normalization of an already-`normalized` record (status alone can't tell the new pass apart — the queue entry can). Because per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every codex; a codex contributes by authoring overlays and enqueuing, never by supplying a normalizer.
+
+**Result lifecycle.** `.req` and `.claim` are transient — each transition is an atomic rename that consumes the prior marker — but a settled pass leaves a `<id>.result` that nothing removes on its own (§8.5: an outcome must outlive the pass so a decoupled requester can await after the loop tick ends). Results are GC'd by age: `corpus queue --prune [--older-than DAYS]` (default 7 d; `0` = now) removes settled results past the grace window and sweeps crash-orphaned `*.tmp.*` scratch, never touching live `.req`/`.claim`. Run it periodically; it is idempotent.
+
+**Operator runbook.** The operating modes and result lifecycle are surfaced via `corpus workflow normalize-loop` — guidance for *running* the tooling, distinct from `corpus guidance <id>` (per-record). Runbooks are markdown shipped in the package (`corpus/workflows/`, loaded via `importlib.resources`); `corpus workflow` lists them, shows a runbook, or narrows to a section. The queue verbs' `--help` cross-reference it. Keeping the runbook in the package means the operating modes are maintained once, in the tooling, not duplicated per corpus.
+
+### 12.6 The curator feedback loop
+
+Composite classification schemas are corpus-local and corpus-author-driven (§7.4); they emerge from observed patterns in how the corpus is used, not from upfront design — and the package ships none.
+
+**Pattern detection.** The curator periodically scans for patterns that warrant a classification: origin / fact frequency (many records share a host or a deterministic fact — a `ytdlp_channel_id`, a URL shape — a candidate for a `classify_when`-keyed class); recurring extended-field values (a candidate sub-classification); codex-driven demand (the codex layer, `codex.md`, reaches for metadata that isn't yet extracted).
+
+**Schema authoring.** A composite overlay lives at `schema/composite/<namespace>/<id>.yaml` (namespace universal at `<namespace>/<namespace>.yaml`) and declares (§7.4):
+
+```yaml
+kind: mechanical          # or interpretive
+applies_at: [record]      # subset of [record, section]; default [record]
+applies_to:
+  content_types: [...]    # mechanical only
+classify_when:            # optional deterministic membership predicate
+  all_of:
+    - media.channel_id: {equals: "UC-..."}
+extended_fields:          # bare — the classify opener scopes them
+  episode_date: {type: string, semantic_type: timestamp}
+normalization:
+  guidance: |             # interpretive payload (consumed at normalize)
+    ...
+```
+
+`classify_when` is the deterministic-membership lever: the drafter stamps the class on every matching record at draft with `provenance: auto`. It is orthogonal to `kind` — an `interpretive` overlay may carry one, so membership is decided at draft while its guidance is still applied at normalize.
+
+**Re-propagation.** Authoring or editing an overlay does not touch existing records until a sweep re-evaluates membership: `corpus reclassify` for a `classify_when` change (body-safe, all statuses), `corpus redraft` when the change is to a mime schema, drafter, or fingerprint knob (§12.4.5, §12.4.6). Lint's `classification-stale` flags stale auto blocks; `git diff records/` is the review surface for any sweep.
+
+**Schema evolution.** As patterns refine, overlays iterate — narrow a too-broad `classify_when`, augment weak `extended_fields`, split a class into subclasses — each iteration followed by a targeted `corpus reclassify` (or `redraft`) over the affected scope.
+
+### 12.7 Re-run verbs
+
+Every stage is independently re-runnable (§8.3); each re-run appends a `touch[]` entry. Re-processing is how the corpus absorbs improvement: new schemas, a better extractor / transcriber, an upgraded normalization model, or newly-captured artifacts that resolve old cross-references. The CLI mapping:
+
+- **Re-ingest** — automatic on re-encountered bytes matching an existing `id`; folds the capture into origin blocks (§12.3.5), never a new record.
+- **`corpus redraft`** — re-derive from the retained artifact + current schemas/tooling (§12.4.6).
+- **`corpus reclassify`** — re-evaluate `classify_when` membership over stored records (§12.4.5); body-safe, all statuses.
+- **Re-normalize** — enqueue the record again (§12.5.6); refreshes interpretive classify and issue context blocks, may re-segment.
+- **`corpus compile`** — reassemble a record from a decomposed manifest (§12.4.2) — a different input than `redraft`'s artifact.
+- **`re-stub`** — the deliberate reset to `status: stub` (§8.4).
+
+**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (a drafter or mime-schema change), `--classification` (a reworked composite), `--status` (e.g. only `draft`).
+
+### 12.8 Maintenance: GC and record removal
+
+Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a routine, age-gated sweep of regenerable data (`gc`) and a deliberate, ref-checked removal of a tracked record (`rm` / `forget-origin`). Nothing here is normative — Part I is silent on removal; this is CLI hygiene over the storage layout (§12.1).
+
+- **`corpus gc`** prunes, by file mtime, four regenerable categories — never a tracked record, a live queue entry, or an artifact that still has a record: **`cache`** (resolver output; re-warms on the next resolve), **`staging`** (leftover `capture/` debris — sidecars, crawl coordination files, abandoned partials), **`orphans`** (artifacts with no owning record — ingest is the only writer of `artifacts/`, so an orphan is exactly an artifact file whose record is gone: the debris of a `--force` re-capture, a re-stub, or a hand-`rm`), and **`export`** (regenerable bundles). Previews by default (counts + bytes per category); `--yes` deletes. `--older-than DAYS` sets the grace window (default 7; `0` prunes everything now) — generous beyond the brief window in ingest between writing an artifact and its record, so the orphan sweep never races a fresh capture. `--include` restricts the set; `--json` emits the structured result. Idempotent, empty-shard-tidying, safe on a cron tick.
+- **`corpus rm <id>`** removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards. *Dry-run by default*: without `--yes`/`--force` it prints the plan (paths, sizes, inbound referrers) and deletes nothing. *Ref-checked*: `inbound_references` scans every record's `reference` blocks (§4.3.3.3) for one citing the target — a tier-3 `source_uri: corpus://<id>` directly, or a tier-2 `source_url` that resolves to it — and refuses a cited record (exit 1) unless `--force`, naming the would-be-dangling referrers. *Reproducibility-warned*: the artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes. It deliberately does not touch the resolver cache (cache is keyed by functional-URI hash, so there is no clean per-record slice); `gc` reclaims orphaned cache by age.
+- **`corpus forget-origin <id> <uri>`** handles the many-to-one provenance case: identical bytes accrue multiple origin aliases (§5.2); when one alias is wrong, this drops it without removing the record. Matched by identity key (§12.3.9), so a query-noise spelling still matches. Refuses when it is the record's only origin (that is an `rm`) and is a no-op when the uri isn't among the origins. An origin block whose every uri was forgotten is dropped; the edit appends a `corpus.forget-origin@` touch. It edits the tracked `.md` (git-recoverable), so it acts by default with `--dry-run` to preview — the asymmetry with `rm`'s dry-run default is deliberate (a tracked-text edit vs. irreproducible byte loss).
+- **`corpus capture --force --replace`** is a supersession ergonomic over `rm`: `--replace` (requires `--force`) snapshots the records holding the URL before the capture and, if the new bytes produced a different record id, retires the prior record(s) for that URL, reclaiming the old artifact bytes. When the bytes are identical, the capture folds into the existing record and nothing is retired.
+
+### 12.9 Resolver surface and cache
 
 A common resolver surface is a CLI that writes the materialized result to disk and prints its absolute path:
 
@@ -1095,19 +1408,11 @@ $ resolve 'corpus://<hash>?<params>'
 /abs/path/to/cache/<shard>/<urihash>.<ext>
 ```
 
-Conventional flags: `--regenerate` to bypass cache, `--json` to print a sidecar with derivation metadata. Library and HTTP-service surfaces are equally valid.
+Conventional flags: `--regenerate` to bypass cache, `--json` to print a sidecar with derivation metadata. Library and HTTP-service surfaces are equally valid (§6.3).
 
-### 12.5 Cache layout
+The cache layout mirrors the sharding convention — `cache/<urihash[:2]>/<urihash>.<ext>`, where `urihash = hash(<canonical-uri>)`, with a `<name>.json` sidecar for JSON-valued ops so extensions can't collide. Cache invalidation is by deletion; eviction policy is implementation-defined (§6.4).
 
-A common resolver-cache layout mirrors the sharding convention:
-
-```
-cache/<urihash[:2]>/<urihash>.<ext>
-```
-
-where `urihash = hash(<canonical-uri>)`. Cache invalidation is by deletion; eviction policy is implementation-defined.
-
-### 12.6 Export output layout
+### 12.10 Export output layout
 
 A common export layout writes one directory per exported record:
 
@@ -1119,9 +1424,9 @@ export/<record_id>/
 └── ...
 ```
 
-with embed-rewrite mapping each functional URI to a sequentially numbered local file.
+with the §10 embed-rewrite mapping each functional URI to a sequentially numbered local file.
 
-### 12.7 Common address schemes (illustrative)
+### 12.11 Common address schemes (illustrative)
 
 Media-type schemas declare their own address grammar (§4.3.2). Schemes that have proven useful in practice, as examples only:
 
@@ -1136,8 +1441,31 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 | region | `bbox=<x>,<y>,<w>,<h>` | image crops (relative floats) |
 | turn | `turn=<N>` | turn-structured transcripts / sessions |
 | stream | `stream_id=<id>` | multi-stream media (composed onto another axis) |
+| path | `path=<relpath>` | archive members (kept-whole zips) |
 
 Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single address or an ordered list (for non-contiguous spans, in reading order); query-reserved characters in a value are percent-encoded.
+
+### 12.12 The concept knowledge base
+
+The `concept` blocks of §4.3.3.4 resolve against a **local Wikipedia knowledge base**: a Kiwix **ZIM** archive read via `libzim` (full-text search, title suggestion, article read, best-effort Wikidata-QID parse from article HTML). `libzim` is lazy-imported behind an optional extra, so the base library never depends on it; the ZIM path resolves from CLI flag / environment / `[corpus.wiki]` config, and one ZIM can front every corpus. `concepts.ConceptResolver` layers a corpus-local registry (`<root>/concepts/*.yaml` — `local:<slug>` custom concepts, the curatorial extension point) over the ZIM, local-first, unifying search and get. The display gloss is fetched live from the KB and never written to a record (concept blocks stay lean); without a ZIM the resolver degrades to local-registry-only. The corpus never captures KB articles as records (§11).
+
+### 12.13 Token counting
+
+The `token_counts` view (§9.6) is computed with: text counted by a local BPE tokenizer approximating the target model's (an `o200k`-class vocabulary), lazy-imported behind an optional extra with a chars/4 heuristic fallback so the base library carries no tokenizer dependency; and an image-token estimate of `≈ min(width·height, 1,150,000 px) / 750` per image, from declared dimensions (`0` when absent). The tokenizer fetches its vocabulary on first use and caches it — warm the cache once for offline operation. Like every §9 view, the counts are never persisted to records; a search index may cache them per record (alongside size and segment count) for filtering and statistics.
+
+### 12.14 Serving a corpus
+
+No server is part of the corpus contract — a corpus is a directory of records, schemas, and caches, fully usable offline through the library and CLI (§1.5 principle 9). A serving layer may front one or more corpora — records, derived views (§9), artifact bytes, resolver output (§6) — over HTTP for browsing or search. It should remain a thin read surface that serializes what the library already produces, adding no parsing, derivation, or resolution logic of its own, and it never drafts, normalizes, or executes corpus-local code. Multi-corpus routing (mapping public ids to corpus roots) is a serving-layer concern; the tooling itself is single-root per invocation. One sharp edge: a functional-URI value passed through a URL query string must be fully percent-encoded.
+
+### 12.15 Open implementation questions
+
+Flagged for follow-up; not all are blockers.
+
+- **Sharding crossover** (applies to both corpus and codex layers). When does single-level hex-prefix sharding stop being adequate — at what record count do we move to two-level (`a7/f3/…`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change; the codex layer defers to this entry (see `codex.md`).
+- **URI index persistence.** The URI → `id` lookup (`records.build_uri_index`) is rebuilt-on-start from the records — the settled default (an in-memory query engine, not a data store). A persistent side-file is a deferred perf optimization, not an open design question.
+- **Schema validation.** `corpus lint` validates *records*, not schemas; a `validate-schemas` command (a `classify_when` predicate's ops parseable, `extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field) is still missing.
+- **Multi-corpus capture.** When the same content needs to land in multiple corpora, capture is currently a copy step on top; a "capture into multiple corpora" mode is a possible future feature.
+- **Segment-anchored mechanical references.** Overlay-declared reference emission is record-scoped today (§12.3.10), while §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing the gap needs a reliable DOM→segment mapping.
 
 ---
 
@@ -1180,3 +1508,27 @@ Addresses compose with `&` (e.g. `page=<N>&bbox=<x>,<y>,<w>,<h>`); a single addr
 | **Transport hash** | `transport:` — the bytes-level hash of the file. Encoded as `<algo>:<hex>`. |
 | **Canonical hash** | `canonical:` — the canonicalized-content hash. *(Currently not persisted — disabled 2026-06-28, see §7.1.)* |
 | **Perceptual hash** | `perceptual:` — atom-canonical content fingerprint. |
+
+---
+
+## Appendix B: Content types (non-normative)
+
+A curatorial vocabulary for the content **sources** a corpus is expected to hold, and how each maps onto the model. These are planning terms, not schema fields: they inform capture planning, and become classifications (§4.4) wherever a distinction is worth recording.
+
+### B.1 Source taxonomy
+
+| Family | Kinds |
+|---|---|
+| **Website** | news article · forum post / thread · opinion / editorial · blog post · reference article (Wikipedia / wiki) |
+| **Print** (physical / electronic) | fiction · non-fiction · textbook · reference manual · script / screenplay · research paper |
+| **Audio-visual** | video (e.g. YouTube) · podcast · television · feature film · documentary |
+
+### B.2 How a content type lands in the corpus
+
+There is **no per-content-type metadata schema** and no "document kind" field. A content type expresses itself through three orthogonal mechanisms:
+
+1. **MIME type** (`mime` namespace, §7.1) — the artifact's media type (`text/html`, `application/pdf`, `application/epub+zip`, `video/mp4`, …) selects the drafter, the addressing scheme, and the canonicalization strategy. A "research paper" is just an `application/pdf` artifact; a "blog post" is `text/html`.
+2. **Classifications** (§4.4; `composite` namespace, §7.4) — stackable, schema-declared labels record *what kind of thing* an artifact is and any signal worth capturing (e.g. a codex-defined `peer-reviewed` / `preprint` credibility-signal classification, surfaced as a derived view). Classifications replace per-document enum metadata fields entirely.
+3. **Origin** (`origin` namespace, §7.2) — capture provenance: source URL(s), capture timestamp, per-host capture recipe. "Where it came from" lives here.
+
+Backlog growth, grooming, and prioritization of what to capture are **curatorial** concerns owned by the codex layer above the corpus, not corpus-pipeline stages — see [`codex.md`](codex.md).

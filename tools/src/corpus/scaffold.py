@@ -43,7 +43,7 @@ _UNIVERSAL_ORIGIN_YAML = """\
 # file is corpus-local — the `athenaeum` package does NOT bundle a universal origin.
 # Extend or constrain as your corpus requires.
 #
-# See spec-corpus.md §7.2.
+# See spec/corpus.md §7.2.
 
 description: |
   Universal fields every origin block carries.

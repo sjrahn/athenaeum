@@ -2,7 +2,7 @@
 # (<!--context issue/<id>-->) regardless of issue type. Per-type extensions live at
 # context/issue/<id>.yaml; subtype-specific at context/issue/<id>/<subtype>.yaml.
 #
-# See spec-corpus.md §4.3.3 (context block) and §4.3.3.1 (the issue namespace).
+# See spec/corpus.md §4.3.3 (context block) and §4.3.3.1 (the issue namespace).
 
 description: |
   Universal fields every issue carries on its <!--context issue/<id>--> block, regardless

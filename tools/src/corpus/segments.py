@@ -1,6 +1,6 @@
 """Content-zone block grammar — emit + parse Sections and Segments.
 
-Per spec-corpus.md §4.3, the record body has three zones. This module owns the
+Per spec/corpus.md §4.3, the record body has three zones. This module owns the
 **content** zone: sections and segments. The **metadata** zone — including
 `<!--embed--><br>` blocks — is owned by `records.py` (reconciliation #1 vs the reference,
 which routed embeds through this module).

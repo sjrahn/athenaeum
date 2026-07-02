@@ -1,4 +1,4 @@
-"""Derived views per spec-corpus.md §9.
+"""Derived views per spec/corpus.md §9.
 
 Cross-cutting aggregates over a record's body blocks (and the touch chain), computed
 on demand. None are persisted.

@@ -17,8 +17,7 @@ athenaeum/                    ← this repo's working tree (the workspace root)
 ├── CLAUDE.md                 ← you are here
 ├── REFORGE.md                ← active restructuring plan (self-deletes when it graduates)
 ├── athenaeum.yaml            ← the member manifest — the registry `ath` reads
-├── spec/                     ← the specs (pre-reforge versions until the Phase 4 rewrites land)
-├── docs/CONTENT-TYPES.md     ← content-type taxonomy (folds into the corpus spec at Phase 4)
+├── spec/                     ← the specs: athenaeum.md (ATH-ARCH) · corpus.md (ATH-CORPUS) · codex.md (ATH-CODEX)
 ├── tools/                    ← the `athenaeum` distribution: `ath` + `corpus` CLIs (Python 3.12, uv)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs

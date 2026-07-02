@@ -1,6 +1,6 @@
 """Touch-chain audit field.
 
-Per spec-corpus.md §4.2.2. Each record carries a `touch:` field (string or list[string]) —
+Per spec/corpus.md §4.2.2. Each record carries a `touch:` field (string or list[string]) —
 one identifier per processing pass.
 
 Forms:

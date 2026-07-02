@@ -6,7 +6,7 @@ ranked list of candidates labelled by match basis. The normalizer consumes this 
 (via `corpus diagnose`) as its authoritative discovery, removing the need to
 enumerate the schema directory or read overlay yamls before deciding which to apply.
 
-See spec-corpus.md §7 for the overlay structure (`applies_to` / `cues` /
+See spec/corpus.md §7 for the overlay structure (`applies_to` / `cues` /
 `content_types` / subclasses).
 """
 

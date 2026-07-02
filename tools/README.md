@@ -1,6 +1,6 @@
 # ath-corpus
 
-Corpus tooling for [ATH-CORPUS v1.0](../../spec-corpus.md) — parse, lint, draft, resolve,
+Corpus tooling for [ATH-CORPUS v1.0](../../spec/corpus.md) — parse, lint, draft, resolve,
 derive views, and orchestrate the capture → ingest → draft → normalize pipeline that produces
 spec-conformant corpus records.
 
@@ -71,7 +71,7 @@ tools/corpus/
 
 ## Conformance authority
 
-[`spec-corpus.md`](../../spec-corpus.md) (ATH-CORPUS v1.0) is the contract. Where this
+[`spec/corpus.md`](../../spec/corpus.md) (ATH-CORPUS v1.0) is the contract. Where this
 implementation needs something the spec doesn't cover, the spec gets updated first.
 
 The reference port source is `LuklaCloud/Corpus` (the "CarbonAi" corpus). Where the reference
