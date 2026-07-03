@@ -46,6 +46,10 @@ class VerifyResult:
     verified: int = 0
     unverifiable: int = 0
     stamped: int = 0
+    # quotes verified against the WHOLE record because their anchor addresses
+    # content the markdown can't scope (time_range, path, bbox …) — verified,
+    # but honestly weaker than anchor-scoped
+    record_scoped: int = 0
 
     @property
     def ok(self) -> bool:
@@ -89,19 +93,30 @@ _SEPARATORS_RE = re.compile(r"[\s\-]+")
 
 def _quote_found(quote: str, haystack: str) -> bool:
     """Verbatim modulo normalization. `...`/`…` inside a quote is elision, and
-    `|` separates table-column fragments (a quote may read a 2D table down a
-    column — no linear text contains that adjacency): every fragment must be
-    found verbatim, order-free. A separator-squashed retry (whitespace and
-    hyphens removed from both sides) absorbs list bullets, inline-markup word
+    `|` separates fragments across cell boundaries; every fragment must be
+    found verbatim IN DOCUMENT ORDER — a quote is a reading of the record,
+    never a bag of true substrings (order-free matching let "Head bolts |
+    100 ft-lb" assemble from the wrong table rows). What order cannot prove
+    — which column a table cell sits in — belongs in the evidence `note`,
+    not the quote. A separator-squashed retry (whitespace and hyphens
+    removed from both sides) absorbs list bullets, inline-markup word
     splits, and soft-wrap artifacts — the characters stay verbatim."""
     hay = _norm(haystack)
-    squashed_hay = _SEPARATORS_RE.sub("", hay)
+    parts = [p for p in _ELLIPSIS_RE.split(quote) if p.strip()]
 
-    def found(part: str) -> bool:
-        n = _norm(part)
-        return n in hay or _SEPARATORS_RE.sub("", n) in squashed_hay
+    def scan(h: str, squash: bool) -> bool:
+        pos = 0
+        for part in parts:
+            n = _norm(part)
+            if squash:
+                n = _SEPARATORS_RE.sub("", n)
+            i = h.find(n, pos)
+            if i < 0:
+                return False
+            pos = i + len(n)
+        return True
 
-    return all(found(part) for part in _ELLIPSIS_RE.split(quote) if part.strip())
+    return scan(hay, squash=False) or scan(_SEPARATORS_RE.sub("", hay), squash=True)
 
 
 def _parse_axis_values(addr: str | list[str]) -> list[tuple[str, int, int]]:
@@ -309,6 +324,8 @@ def verify_ledger(
                     res.unverifiable += 1
                     continue
                 res.verified += 1
+                if status == "unchecked" and quote:
+                    res.record_scoped += 1
                 if stamp:
                     prev = e.get("verified")
                     # re-stamp only when the snapshot identity moved — the

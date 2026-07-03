@@ -157,7 +157,9 @@ def _cmd_verify(argv: Sequence[str]) -> int:
         print(f"WARN  {w}")
     for e in res.errors:
         print(f"ERROR {e}")
-    print(f"\n{res.verified} verified, {res.unverifiable} unverifiable, "
+    scoped = (f" ({res.record_scoped} record-scoped: anchor unresolvable, "
+              "quote found record-wide)" if res.record_scoped else "")
+    print(f"\n{res.verified} verified{scoped}, {res.unverifiable} unverifiable, "
           f"{res.stamped} stamped — {len(res.errors)} errors, "
           f"{len(res.warnings)} warnings")
     return 0 if res.ok else 1

@@ -225,3 +225,34 @@ def test_coverage_counts(system: Path) -> None:
     assert "## corpus-private" in text
     assert "2 of 3 records represented" in text  # the group record is backlog
     assert "| `imessage-export` | 3 | 2 |" in text
+
+
+def test_quote_found_requires_document_order() -> None:
+    """Fragments must be a FORWARD reading of the record — backward assembly
+    of true substrings is refuted (the anti- "Head bolts | 100 ft-lb" rule)."""
+    from ledger.verify import _quote_found
+
+    table = ("<tr><td>Head bolts</td><td>22 ft-lb</td></tr>"
+             "<tr><td>Wheel lug nuts</td><td>100 ft-lb</td></tr>")
+    assert _quote_found("Head bolts | 22 ft-lb", table)
+    assert _quote_found("Head bolts ... lug nuts", table)
+    assert not _quote_found("100 ft-lb | Head bolts", table)
+    assert not _quote_found("lug nuts ... Head bolts", table)
+
+
+def test_unchecked_anchor_quote_counts_record_scoped(system: Path) -> None:
+    """A quote behind an unresolvable anchor (?path=, time_range=) verifies
+    against the whole record — counted, so the class can't grow silently."""
+    ledger = system / "ledger"
+    (ledger / "facts" / "person").mkdir(parents=True, exist_ok=True)
+    (ledger / "facts" / "person" / "zip.json").write_text(json.dumps({
+        "id": "zip", "type": "person", "name": "Zip",
+        "claims": [{"id": "zip:x", "predicate": "greeting", "value": "x",
+                    "status": "provisional", "asof": "2023-03-01",
+                    "evidence": [{"uri": f"corpus://{H1}?path=member.txt",
+                                  "quote": "hello from   the fixture",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin(_corpora(system))
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1 and res.record_scoped == 1
