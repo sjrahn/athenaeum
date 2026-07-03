@@ -1,0 +1,505 @@
+"""The ledger validation core: structure, graph, epistemics, evidence,
+sensitivity, schemas, invariants, views (spec/ledger.md §13.1)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from ath._cli import main as ath_main
+from ledger._cli import main as ledger_main
+from ledger.check import run_check
+from ledger.corpora import CorpusJoin, RegisteredCorpus
+from ledger.model import canonical_claim_state, intervals_overlap, period_interval
+
+H_PUB = "a" * 64      # resolves in the public corpus
+H_PRIV = "b" * 64     # resolves only in the private corpus
+H_BOTH = "c" * 64     # resolves in both → public evidence
+H_PUB2 = "d" * 64     # second public record
+H_DRAFT = "e" * 64    # public, still a draft
+H_GONE = "f" * 64     # resolves nowhere
+
+OPENQ_SKELETON = (
+    "# Open questions\n\n<!--worklist:begin-->\n<!--worklist:end-->\n\n## Curated\n"
+)
+
+
+def _record(corpus_root: Path, h: str, status: str = "normalized") -> None:
+    p = corpus_root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"---\nid: {h}\ntitle: t\nstatus: {status}\n---\n\nbody\n", encoding="utf-8")
+
+
+@pytest.fixture()
+def system(tmp_path: Path) -> Path:
+    root = tmp_path
+    (root / "athenaeum.yaml").write_text(
+        "org: https://example.test/org\n"
+        "corpora:\n"
+        "  corpus:\n"
+        "    visibility: public\n"
+        "  corpus-private:\n"
+        "    visibility: private\n"
+        "ledger:\n"
+        "  ledger:\n"
+        "references:\n"
+        "  wikipedia:\n"
+        "    description: test mirror\n"
+        "    mirror: /mirrors/wp.zim\n"
+        "    snapshot: '2026-06'\n"
+    )
+    pub = root / "corpora" / "corpus"
+    priv = root / "corpora" / "corpus-private"
+    for h in (H_PUB, H_BOTH, H_PUB2):
+        _record(pub, h)
+    _record(pub, H_DRAFT, status="draft")
+    for h in (H_PRIV, H_BOTH):
+        _record(priv, h)
+    ledger = root / "ledger"
+    (ledger / "facts").mkdir(parents=True)
+    (ledger / "interpretations").mkdir()
+    (ledger / "ledger.yaml").write_text(
+        "name: ledger\ncorpora: [corpus, corpus-private]\n"
+    )
+    (ledger / "open-questions.md").write_text(OPENQ_SKELETON)
+    return root
+
+
+def _fact(root: Path, type_: str, obj: dict) -> Path:
+    p = root / "ledger" / "facts" / type_ / f"{obj['id']}.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    return p
+
+
+def _interp(root: Path, obj: dict) -> Path:
+    p = root / "ledger" / "interpretations" / f"{obj['id']}.json"
+    p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    return p
+
+
+def _join(root: Path) -> CorpusJoin:
+    return CorpusJoin([
+        RegisteredCorpus("corpus", root / "corpora" / "corpus", private=False),
+        RegisteredCorpus("corpus-private", root / "corpora" / "corpus-private", private=True),
+    ])
+
+
+def _check(root: Path, **kw):
+    return run_check(root / "ledger", _join(root), {"wikipedia"}, **kw)
+
+
+def _regen(root: Path) -> None:
+    assert ledger_main(["regen", "--root", str(root)]) == 0
+
+
+def _claim(fact_id: str, short: str, **over) -> dict:
+    c = {
+        "id": f"{fact_id}:{short}",
+        "predicate": short.replace("-", "_"),
+        "value": "x",
+        "status": "provisional",
+        "asof": "2026-07-02",
+        "evidence": [{"uri": f"corpus://{H_PUB}", "kind": "direct"}],
+    }
+    c.update(over)
+    return c
+
+
+# ------------------------------------------------------------------ happy path
+
+
+def test_clean_ledger_is_green(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "gorguts", "type": "artist", "name": "Gorguts",
+        "artifacts": [{"uri": f"corpus://{H_PUB}", "role": "documents"}],
+        "claims": [_claim("gorguts", "formed", value="1989", period="1989",
+                          evidence=[{"uri": f"corpus://{H_PUB}?el=2", "kind": "authoritative"}],
+                          status="confirmed")],
+    })
+    _fact(system, "album", {"id": "obscura", "type": "album", "name": "Obscura",
+                            "claims": [_claim("obscura", "released-by", predicate="released_by",
+                                              object="gorguts", period="1998")]})
+    _interp(system, {
+        "id": "obscura-length", "kind": "hypothesis", "about": ["obscura"],
+        "statement": "Obscura runs about an hour.", "confidence": "plausible",
+        "reasoning": "listing shows 60:01", "based_on": [f"corpus://{H_PUB}?el=3"],
+        "proposes": {"id": "obscura:length", "predicate": "length", "value": "60:01",
+                     "evidence": [{"uri": f"corpus://{H_PUB}?el=3", "kind": "direct"}]},
+        "needs": [{"action": "capture", "why": "a second listing to corroborate"}],
+        "status": "open", "asof": "2026-07-02",
+    })
+    _regen(system)
+    rep = _check(system)
+    assert rep.errors == []
+    assert rep.warnings == []
+    assert rep.counts["facts"] == 2
+    assert rep.counts["claims"] == 2
+    assert rep.counts["private_claims"] == 0
+
+
+# ------------------------------------------------------------------- structure
+
+
+def test_structure_errors(system: Path) -> None:
+    p = _fact(system, "artist", {"id": "wrong", "type": "artist", "name": "X"})
+    p.rename(p.with_name("other.json"))
+    _fact(system, "album", {"id": "mistyped", "type": "artist", "name": "Y"})
+    _fact(system, "artist", {"id": "junk", "type": "artist", "name": "Z", "extra": 1})
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "!= filename stem" in msgs
+    assert "!= directory" in msgs
+    assert "unknown concept keys" in msgs
+
+
+def test_id_namespace_shared_with_interpretations(system: Path) -> None:
+    _fact(system, "artist", {"id": "dup", "type": "artist", "name": "X"})
+    _interp(system, {"id": "dup", "kind": "assessment", "statement": "s",
+                     "reasoning": "r", "based_on": [f"corpus://{H_PUB}"],
+                     "status": "standing", "asof": "2026-07-02"})
+    rep = _check(system)
+    assert any("share one namespace" in e for e in rep.errors)
+
+
+def test_concept_needs_name_and_stub_is_valid(system: Path) -> None:
+    _fact(system, "artist", {"id": "nameless", "type": "artist"})
+    _fact(system, "artist", {"id": "stub-ok", "type": "artist", "name": "Stub"})
+    rep = _check(system)
+    assert any("no name" in e for e in rep.errors)
+    assert not any("stub-ok" in e for e in rep.errors)
+
+
+# ------------------------------------------------------------------- evidence
+
+
+def test_uri_discipline(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            _claim("x", "a", evidence=[{"uri": f"corpus://corpus-private/{H_PRIV}",
+                                        "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"uri": f"corpus://{H_GONE}", "kind": "direct"}]),
+            _claim("x", "c", evidence=[{"uri": "https://example.com", "kind": "direct"}]),
+            _claim("x", "d", evidence=[{"uri": f"ref://musicbrainz/{'1'*8}",
+                                        "kind": "authoritative"}]),
+            _claim("x", "e", evidence=[{"uri": "ref://wikipedia/Gorguts",
+                                        "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "retired qualified form" in msgs
+    assert "resolves in no registered corpus" in msgs
+    assert "not a corpus:// or ref:// citation" in msgs
+    assert "'musicbrainz' is not registered" in msgs
+    assert "wikipedia" not in msgs
+
+
+def test_draft_citation_error_downgraded_by_need(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "a", evidence=[{"uri": f"corpus://{H_DRAFT}",
+                                               "kind": "direct"}])],
+    })
+    rep = _check(system)
+    assert any("still status=draft" in e for e in rep.errors)
+    _interp(system, {
+        "id": "need-draft", "kind": "assessment", "statement": "normalize it",
+        "reasoning": "cited", "based_on": [f"corpus://{H_DRAFT}"],
+        "needs": [{"action": "enqueue", "record": f"corpus://{H_DRAFT}", "why": "cited"}],
+        "status": "standing", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    assert not any("still status=draft" in e for e in rep.errors)
+    assert any("still status=draft" in w for w in rep.warnings)
+
+
+def test_no_corpus_skips_resolution(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "a", evidence=[{"uri": f"corpus://{H_GONE}",
+                                               "kind": "direct"}])],
+    })
+    rep = _check(system, no_corpus=True)
+    assert not any("resolves in no registered corpus" in e for e in rep.errors)
+    assert any("--no-corpus" in n for n in rep.notes)
+
+
+# ----------------------------------------------------------------- sensitivity
+
+
+def test_sensitivity_is_derived(system: Path) -> None:
+    _fact(system, "person", {
+        "id": "p", "type": "person", "name": "P",
+        "claims": [
+            _claim("p", "a", evidence=[{"uri": f"corpus://{H_PRIV}", "kind": "direct"}]),
+            _claim("p", "b", evidence=[{"uri": f"corpus://{H_BOTH}", "kind": "direct"}]),
+        ],
+    })
+    _fact(system, "place", {
+        "id": "home", "type": "place", "name": "Home", "sensitivity": "private",
+        "claims": [_claim("home", "a")],
+    })
+    rep = _check(system)
+    # H_PRIV resolves only privately → claim a is private-backed; H_BOTH is public.
+    assert rep.counts["private_claims"] == 1
+    # p has a public claim → file public; home asserts private → file private.
+    assert rep.counts["private_files"] == 1
+
+
+def test_asserted_sensitivity_is_upward_only(system: Path) -> None:
+    _fact(system, "person", {
+        "id": "p", "type": "person", "name": "P", "sensitivity": "public",
+        "claims": [_claim("p", "a", sensitivity="public")],
+    })
+    rep = _check(system)
+    assert sum("upward only" in e for e in rep.errors) == 2
+
+
+# ------------------------------------------------------------------ epistemics
+
+
+def test_authentication_bar(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            _claim("x", "weak", status="confirmed",
+                   evidence=[{"uri": f"corpus://{H_PUB}", "kind": "direct"}]),
+            _claim("x", "strong", status="confirmed",
+                   evidence=[{"uri": f"corpus://{H_PUB}", "kind": "direct"},
+                             {"uri": f"corpus://{H_PUB2}", "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    assert sum("authentication bar" in e for e in rep.errors) == 1
+
+
+def test_reported_requires_attribution(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "opinion", status="reported")],
+    })
+    rep = _check(system)
+    assert any("attribution" in e for e in rep.errors)
+
+
+def test_harvest_provenance_capped_provisional(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "a", provenance="auto", status="confirmed",
+                          evidence=[{"uri": f"corpus://{H_PUB}", "kind": "authoritative"}])],
+    })
+    rep = _check(system)
+    assert any("capped at provisional" in e for e in rep.errors)
+
+
+def test_challenge_pin_lifecycle(system: Path) -> None:
+    claim = _claim("x", "wrong", status="disputed")
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    interp = {
+        "id": "x-wrong-challenge", "kind": "correction", "about": ["x"],
+        "statement": "claim x:wrong misreads the source.",
+        "reasoning": "the quote is about a different model year",
+        "based_on": [f"corpus://{H_PUB}"],
+        "challenges": {"claim": "x:wrong", "state": canonical_claim_state(claim)},
+        "status": "standing", "asof": "2026-07-02",
+    }
+    _interp(system, interp)
+    rep = _check(system)
+    assert not any("re-review" in w for w in rep.warnings)
+    assert not any("disputed claim has no standing correction" in e for e in rep.errors)
+    # edit the claim's content → the pin flags re-review
+    claim["value"] = "y"
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    rep = _check(system)
+    assert any("needs re-review" in w for w in rep.warnings)
+
+
+def test_disputed_requires_standing_correction(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "a", status="disputed")],
+    })
+    rep = _check(system)
+    assert any("no standing correction" in e for e in rep.errors)
+
+
+# ----------------------------------------------------------------------- graph
+
+
+def test_redirects_resolve_one_hop(system: Path) -> None:
+    _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
+    _fact(system, "artist", {"id": "old", "type": "artist", "merged_into": "survivor"})
+    _fact(system, "artist", {"id": "older", "type": "artist", "merged_into": "old"})
+    _fact(system, "album", {
+        "id": "a", "type": "album", "name": "A",
+        "claims": [_claim("a", "by", predicate="released_by", object="old")],
+    })
+    rep = _check(system)
+    # object through one redirect hop is fine; a redirect chain is not
+    assert not any("dangling object" in e for e in rep.errors)
+    assert any("one-hop rule" in e for e in rep.errors)
+
+
+def test_dangling_references(system: Path) -> None:
+    _fact(system, "album", {
+        "id": "a", "type": "album", "name": "A",
+        "claims": [_claim("a", "by", predicate="released_by", object="ghost",
+                          value="by [[nobody]]")],
+    })
+    _fact(system, "event", {"id": "e", "type": "event", "subject": "ghost",
+                            "participants": ["ghost2"], "title": "E",
+                            "claims": [_claim("e", "happened")]})
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "dangling object 'ghost'" in msgs
+    assert "[[nobody]]" in msgs
+    assert "dangling subject" in msgs
+    assert "dangling participant" in msgs
+
+
+# --------------------------------------------------------------------- schemas
+
+
+def test_schema_conformance(system: Path) -> None:
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: a song\n"
+        "fields:\n  appears_on: { target: album }\n  length: {}\n"
+        "roster_roles: [tablature-of, performance-of]\n"
+    )
+    _fact(system, "artist", {"id": "band", "type": "artist", "name": "B"})
+    _fact(system, "song", {
+        "id": "s", "type": "song", "name": "S",
+        "artifacts": [{"uri": f"corpus://{H_PUB}", "role": "bucket-things"}],
+        "claims": [_claim("s", "appears-on", predicate="appears_on", object="band")],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "targets 'album'" in msgs
+    assert "not among the 'song' schema's roster_roles" in msgs
+    # a stub song with no claims is frontier, not an error
+    _fact(system, "song", {"id": "s2", "type": "song", "name": "S2"})
+    rep = _check(system)
+    assert not any("s2" in e for e in rep.errors)
+
+
+# ------------------------------------------------------------------ invariants
+
+
+def test_invariants(system: Path) -> None:
+    inv_dir = system / "ledger" / "invariants"
+    inv_dir.mkdir()
+    (inv_dir / "one-platform.yaml").write_text(
+        "id: one-platform\ndescription: a vehicle has one platform\n"
+        "applies_to: { type: vehicle, predicate: platform }\n"
+        "constraint: unique\nseverity: error\n"
+    )
+    (inv_dir / "residence-no-overlap.yaml").write_text(
+        "id: residence-no-overlap\ndescription: one residence at a time\n"
+        "applies_to: { type: person, predicate: residence }\n"
+        "constraint: temporal-no-overlap\nseverity: warning\n"
+    )
+    _fact(system, "vehicle", {
+        "id": "v", "type": "vehicle", "name": "V",
+        "claims": [_claim("v", "platform-a", predicate="platform"),
+                   _claim("v", "platform-b", predicate="platform")],
+    })
+    _fact(system, "person", {
+        "id": "p", "type": "person", "name": "P",
+        "claims": [_claim("p", "res-1", predicate="residence", period="2019/2021"),
+                   _claim("p", "res-2", predicate="residence", period="2020/..")],
+    })
+    rep = _check(system)
+    assert any("one-platform" in e and "2 matching claims" in e for e in rep.errors)
+    assert any("residence-no-overlap" in w and "overlapping" in w for w in rep.warnings)
+
+
+def test_period_calculus() -> None:
+    assert period_interval("2019") == ((2019, 1, 1), (2019, 12, 31))
+    assert period_interval("~2020-03") == ((2020, 3, 1), (2020, 3, 31))
+    assert period_interval("2019/..")[1] == (9999, 12, 31)
+    a = period_interval("2019/2021")
+    b = period_interval("2021-06")
+    c = period_interval("2022")
+    assert intervals_overlap(a, b)
+    assert not intervals_overlap(a, c)
+
+
+# ----------------------------------------------------------------------- views
+
+
+def test_views_regen_and_staleness(system: Path) -> None:
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "artifacts": [{"uri": f"corpus://{H_PUB}", "role": "documents"}],
+        "claims": [_claim("x", "formed", qualifiers={"attribution": "him"},
+                          status="reported")],
+    })
+    rep = _check(system)
+    assert any("VOCAB.md" in w and "missing" in w for w in rep.warnings)
+    _regen(system)
+    rep = _check(system)
+    assert not any("VOCAB.md" in w for w in rep.warnings)
+    vocab = (system / "ledger" / "facts" / "VOCAB.md").read_text()
+    assert "| `artist` | 1 |" in vocab
+    assert "| `formed` | 1 |" in vocab
+    assert "| `documents` | 1 |" in vocab
+    assert "| `attribution` | 1 |" in vocab
+    # a new fact makes the views stale
+    _fact(system, "artist", {"id": "y", "type": "artist", "name": "Y"})
+    rep = _check(system)
+    assert any("VOCAB.md" in w and "stale" in w for w in rep.warnings)
+    assert any("open-questions.md" in w for w in rep.warnings)  # stub frontier appeared
+
+
+def test_retired_vocabulary_is_rejected(system: Path) -> None:
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X",
+                             "claims": [_claim("x", "shoe-size", predicate="shoe_size")]})
+    _regen(system)
+    vocab_path = system / "ledger" / "facts" / "VOCAB.md"
+    text = vocab_path.read_text().replace(
+        "| term | kind | reason |\n|---|---|---|",
+        "| term | kind | reason |\n|---|---|---|\n| `shoe_size` | predicate | too silly |",
+    )
+    vocab_path.write_text(text)
+    rep = _check(system)
+    assert any("retired vocabulary" in e.lower() for e in rep.errors)
+
+
+def test_worklist_lists_open_interpretations_and_frontier(system: Path) -> None:
+    _fact(system, "artist", {"id": "stub", "type": "artist", "name": "Stub"})
+    _interp(system, {
+        "id": "who-knows", "kind": "hypothesis", "about": ["stub"],
+        "statement": "Stub might be from Quebec.", "confidence": "speculative",
+        "reasoning": "r", "based_on": [f"corpus://{H_PUB}"],
+        "needs": [{"action": "search", "why": "hometown source"}],
+        "status": "open", "asof": "2026-07-02",
+    })
+    _regen(system)
+    openq = (system / "ledger" / "open-questions.md").read_text()
+    assert "**hypothesis** (speculative) `who-knows`" in openq
+    assert "(search)" in openq
+    assert "stub `stub` (artist)" in openq
+    assert "## Curated" in openq  # content outside the block survives
+
+
+# ----------------------------------------------------------------- cli surface
+
+
+def test_ath_ledger_dispatch(system: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _regen(system)
+    assert ath_main(["ledger", "check", "--root", str(system)]) == 0
+    out = capsys.readouterr().out
+    assert "1 fact files" in out
+    _fact(system, "artist", {"id": "bad", "type": "artist"})
+    assert ath_main(["ledger", "check", "--root", str(system)]) == 1
+
+
+def test_ledger_yaml_must_name_registered_corpora(system: Path) -> None:
+    (system / "ledger" / "ledger.yaml").write_text("name: ledger\ncorpora: [nope]\n")
+    assert ledger_main(["check", "--root", str(system)]) == 2

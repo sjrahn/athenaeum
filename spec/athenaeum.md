@@ -95,6 +95,8 @@ org: https://code.example.org/athenaeum   # remote base: {org}/{name}.git
 corpora:
   {name}:
     description: …        # the member's role, one line
+    visibility: …          # public | private — DEFAULT private (fail closed); the declared
+                           # tenancy that drives derived sensitivity (spec/ledger.md §6.4)
     path: …                # optional — default corpora/{name}
     remote: …              # optional — default {org}/{name}.git
 ledger:

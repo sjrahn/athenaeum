@@ -37,6 +37,9 @@ class Member:
     path: Path  # absolute working-tree location
     remote: str
     description: str
+    # Declared tenancy — meaningful for corpora, where it drives derived
+    # sensitivity (spec/ledger.md §6.4). Default private: fail closed.
+    visibility: str = "private"
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,11 @@ def load(root: Path) -> list[Member]:
                     raise ManifestError(f"{layer}/{name}: no remote and no org to derive one from")
                 remote = f"{org}/{name}.git"
             default_path = f"{dirname}/{name}" if dirname else str(name)
+            visibility = str(spec.get("visibility") or "private")
+            if visibility not in ("public", "private"):
+                raise ManifestError(
+                    f"{layer}/{name}: visibility must be 'public' or 'private', got {visibility!r}"
+                )
             members.append(
                 Member(
                     name=str(name),
@@ -90,6 +98,7 @@ def load(root: Path) -> list[Member]:
                     path=(root / str(spec.get("path") or default_path)).resolve(),
                     remote=remote,
                     description=str(spec.get("description") or ""),
+                    visibility=visibility,
                 )
             )
     return members

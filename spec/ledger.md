@@ -262,7 +262,7 @@ Only assert what a source shows. Model knowledge is a *lead* for searching or ca
 
 Tenancy at the knowledge layer is computed, not partitioned (§1.2):
 
-- **Evidence sensitivity is a lookup.** A cited hash is **private** iff it resolves *only* in private corpora; bytes present in a public corpus are public evidence even if also captured privately. `ref://` evidence is public.
+- **Evidence sensitivity is a lookup.** A cited hash is **private** iff it resolves *only* in private corpora — a corpus is private iff its manifest registration declares it (`visibility:`, default private — fail closed; `spec/athenaeum.md` §2.3). Bytes present in a public corpus are public evidence even if also captured privately. `ref://` evidence is public.
 - **A claim is private-backed** iff any of its evidence is private, or it asserts `sensitivity: private`. The override is **upward only** — derived privacy is a floor no assertion lowers. (A claim can be private on public evidence — a claim about your home citing a public map; the reverse cannot exist.)
 - **A fact file is private** iff every claim and roster entry it carries is private-backed, or it asserts `sensitivity: private` — existence itself can be the leak.
 - Sensitivity gates **nothing inside the ledger** — everything here is the owner's. It is the claim metadata codex profiles filter on and the public-profile leak check enforces (`spec/codex.md` §6): the mandatory profile axis, computed at its source.
@@ -324,7 +324,7 @@ hypothesis ──┤   (open)
 assessment / correction:  standing ──→ retired (superseded / no longer relevant)
 ```
 
-A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a canonical-JSON hash, stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§13.2), extended to the claim the dispute is about.
+A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a blake3 hash of the claim object's canonical JSON — keys sorted, minimal separators — **excluding `status` and evidence `verified` stamps**, since the dispute mechanism moves the former and verification tooling writes the latter; stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§13.2), extended to the claim the dispute is about.
 
 ### 7.4 Generated work-lists
 

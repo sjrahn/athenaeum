@@ -21,6 +21,9 @@ System:
   status        working-tree state of the orchestrator repo and every member
   sync          clone missing members; fetch + report the rest (--pull to fast-forward)
 
+Layers:
+  ledger ...    the ledger's deterministic surface: check, regen (spec/ledger.md)
+
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)
 
@@ -40,6 +43,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from corpus._cli import main as corpus_main
 
         return corpus_main(rest)
+    if cmd == "ledger":
+        from ledger._cli import main as ledger_main
+
+        return ledger_main(rest)
     if cmd == "sync":
         from ath._cli.sync import run
 
