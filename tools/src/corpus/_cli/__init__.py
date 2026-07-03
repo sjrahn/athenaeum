@@ -19,7 +19,7 @@ __all__ = ["dispatch", "main"]
 # (group, one-line help). Order within a group preserved at render time.
 _COMMANDS: dict[str, tuple[str, str]] = {
     # Scaffolding (P1)
-    "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/composite/<ns>/)"),
+    "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/)"),
     # Capture & ingest (P2; capture added P4)
     "capture":         ("Capture & ingest",       "Capture a URL into capture/, then ingest to a record stub"),
     "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
@@ -28,8 +28,6 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
     "redraft":         ("Capture & ingest",       "Bulk re-derive records from their artifacts (deterministic recompile)"),
-    "classify":        ("Capture & ingest",       "Stamp a record's deterministic auto-classifications (classify_when)"),
-    "reclassify":      ("Capture & ingest",       "Bulk re-propagate auto-classifications after an overlay change"),
     # Normalization queue (P6) — request/claim contract for the interpretive normalize stage (spec §8.5)
     "enqueue":         ("Normalize",              "Request a (re-)normalization pass for a record"),
     "drain":           ("Normalize",              "Claim the next queued record (prints its id; empty queue → exit 1)"),
@@ -40,15 +38,12 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Crawl & discovery (P4)
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
-    # Concepts (P5)
-    "wiki":            ("Concepts",               "Search / read the local Wikipedia knowledge base (concept KB)"),
-    "concept":         ("Concepts",               "Link a concept (Wikipedia/local) to a record — writes a concept context block"),
     # Inspect (P1)
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
-    "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + candidate classifications (normalizer's first call)"),
+    "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + block TOC (normalizer's first call)"),
     "guidance":        ("Inspect",                "Print the normalization guidance for a record's mime + applied overlays"),
     "workflow":        ("Inspect",                "Operating-mode runbooks for the tooling (loop modes, queue lifecycle)"),
-    "overlay":         ("Inspect",                "Show a classification overlay's field-spec + tactics (for a candidate)"),
+    "overlay":         ("Inspect",                "Show an origin overlay's declarations + normalization tactics"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream the content-zone body to stdout"),
@@ -64,9 +59,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
     # Query (P1)
-    "find":            ("Query",                  "List records matching status / mime / origin / classification"),
+    "find":            ("Query",                  "List records matching status / mime / origin"),
     "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
-    "classifications": ("Query",                  "List composite namespaces declared in schema/"),
     "hosts":           ("Query",                  "Count records by origin host"),
     "schemas":         ("Query",                  "List packaged + corpus-local schemas (debug)"),
 }
@@ -77,7 +71,6 @@ _GROUP_ORDER: tuple[str, ...] = (
     "Capture & ingest",
     "Normalize",
     "Crawl & discovery",
-    "Concepts",
     "Inspect",
     "Edit",
     "Storage",

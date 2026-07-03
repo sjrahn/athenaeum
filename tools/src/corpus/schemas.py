@@ -13,8 +13,6 @@ The four reserved top-level namespaces:
   and the per-id overlays live corpus-local; `corpus init` seeds the universal +
   `web/example.com.yaml` at scaffold time. The flat `origin/<id>.yaml` layout is read
   tolerantly for back-compat. The overlay id is the bare `<id>` regardless of sub-namespace.
-- `composite/<namespace>/<namespace>.yaml` (+ `<sub_id>.yaml`) — user-defined
-  classification namespaces (the `classify` block). **Per-corpus concern; not packaged.**
 - `context/<namespace>/<namespace>.yaml` (+ `<id>.yaml`) — annotation-zone overlays (the
   `context` block, spec §4.3.3): `issue`, `reference`, `note`, … `context/issue/<id>.yaml`
   carries issue overlays — the universal `context/issue/issue.yaml` ships in the package;
@@ -22,8 +20,10 @@ The four reserved top-level namespaces:
 
 Why the split: `mime` and `atom` describe *format and fidelity* (a PDF is a PDF;
 a transcript is a transcript) — universal. `origin` describes *sources of
-retrieval*, `composite` describes *classification axes*, and `context` describes
-*observations about a record* — all corpus-specific decisions.
+retrieval* and `context` describes *observations about a record* — both
+corpus-specific decisions. (The 1.0 `composite` classification umbrella was removed
+in ATH-CORPUS 2.0 — what content means is asserted in the ledger, not the record;
+`composite` stays a reserved namespace so the 1.0 layout is never repurposed.)
 
 Resolution model (the keystone):
 
@@ -182,7 +182,6 @@ def cache_clear() -> None:
     _sources.cache_clear()
     load_mime_schema.cache_clear()
     mime_schema_id_for.cache_clear()
-    load_classification_schema.cache_clear()
     load_origin_overlay_by_id.cache_clear()
     load_context_schema.cache_clear()
 
@@ -427,152 +426,7 @@ def list_atomic_overlays(
     return out
 
 
-# ---------- composite classification schemas (corpus-local only) ---------- #
-
-
-def _classification_namespaces(corpus_root: Path) -> list[str]:
-    """Return ids of user-defined classification namespaces under
-    `schema/composite/` (corpus-local only — composite namespaces are never bundled).
-    The `issue` subdirectory is excluded — issue overlays have their own loader.
-    """
-    schema_dir = corpus_root / "schema" / "composite"
-    if not schema_dir.is_dir():
-        return []
-    out: list[str] = []
-    for path in sorted(schema_dir.iterdir()):
-        if not path.is_dir() or path.name == "issue":
-            continue
-        if (path / f"{path.name}.yaml").is_file():
-            out.append(path.name)
-    return out
-
-
-def list_classifications(corpus_root: Path) -> list[str]:
-    """Return the names of composite namespaces the corpus declares (sorted)."""
-    return _classification_namespaces(corpus_root)
-
-
-@lru_cache(maxsize=256)
-def load_classification_schema(
-    corpus_root: Path, class_id: str
-) -> dict[str, Any] | None:
-    """Return the composite classification overlay for `class_id`, or None.
-
-    `class_id` accepts either `<ns>` (the namespace base) or `<ns>/<sub_id>`
-    (a subclass). Composite schemas live corpus-local only — no packaged fallback.
-    The namespace base is NOT deep-merged under a subclass; callers compose as
-    needed (mostly because composite namespaces compose flatly, not hierarchically).
-    """
-    parts = [p for p in class_id.split("/") if p]
-    if not parts:
-        return None
-    namespace = parts[0]
-    target = parts[1] if len(parts) >= 2 else namespace
-    path = corpus_root / "schema" / "composite" / namespace / f"{target}.yaml"
-    if not path.is_file():
-        return None
-    with path.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
-
-
-def list_classification_subclasses(
-    corpus_root: Path, namespace: str
-) -> list[str]:
-    """Return subclass ids under `namespace`, sorted. The namespace base is excluded."""
-    d = corpus_root / "schema" / "composite" / namespace
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.yaml") if p.stem != namespace)
-
-
-def load_classification_subclass(
-    corpus_root: Path, namespace: str, sub_id: str
-) -> dict[str, Any] | None:
-    return load_classification_schema(corpus_root, f"{namespace}/{sub_id}")
-
-
-def iter_classification_subclasses(
-    corpus_root: Path, namespace: str
-) -> list[tuple[str, dict[str, Any]]]:
-    """Return `[(sub_id, schema), ...]` for every subclass under `namespace`."""
-    out: list[tuple[str, dict[str, Any]]] = []
-    for sub_id in list_classification_subclasses(corpus_root, namespace):
-        sub_schema = load_classification_subclass(corpus_root, namespace, sub_id)
-        if sub_schema is None:
-            continue
-        out.append((sub_id, sub_schema))
-    return out
-
-
-def _load_all_classification_schemas(
-    corpus_root: Path,
-) -> list[tuple[str, dict[str, Any]]]:
-    out: list[tuple[str, dict[str, Any]]] = []
-    for class_id in list_classifications(corpus_root):
-        schema = load_classification_schema(corpus_root, class_id)
-        if schema is None:
-            continue
-        out.append((class_id, schema))
-    return out
-
-
-def classifications_by_kind(
-    corpus_root: Path, kind: str, *, media_type: str | None = None
-) -> list[tuple[str, dict[str, Any]]]:
-    """Return `[(class_id, schema)]` for every composite whose `kind:` matches.
-
-    `media_type` is honored only for `kind: mechanical`.
-    """
-    out: list[tuple[str, dict[str, Any]]] = []
-    kind_l = kind.lower()
-    for class_id, schema in _load_all_classification_schemas(corpus_root):
-        if str(schema.get("kind", "")).lower() != kind_l:
-            continue
-        if kind_l == "mechanical" and media_type is not None:
-            applies = (schema.get("applies_to") or {}).get("content_types") or []
-            if media_type not in applies:
-                continue
-        out.append((class_id, schema))
-    return out
-
-
-def mechanical_classifications_for(
-    corpus_root: Path, media_type: str
-) -> list[tuple[str, dict[str, Any]]]:
-    """Return mechanical composites (including their subclasses, merged) whose
-    `applies_to.content_types` includes `media_type`. The namespace base's `kind`
-    propagates to each subclass via deep-merge."""
-    out: list[tuple[str, dict[str, Any]]] = []
-    for ns_id, ns_schema in _load_all_classification_schemas(corpus_root):
-        if str(ns_schema.get("kind", "")).lower() != "mechanical":
-            continue
-        ns_applies = (ns_schema.get("applies_to") or {}).get("content_types") or []
-        if not ns_applies or media_type in ns_applies:
-            out.append((ns_id, ns_schema))
-        for sub_id, sub_schema in iter_classification_subclasses(corpus_root, ns_id):
-            merged = _deep_merge(ns_schema, sub_schema)
-            sub_applies = (merged.get("applies_to") or {}).get("content_types") or []
-            if not sub_applies or media_type in sub_applies:
-                out.append((f"{ns_id}/{sub_id}", merged))
-    return out
-
-
-def iter_all_classifications(
-    corpus_root: Path,
-) -> list[tuple[str, dict[str, Any]]]:
-    """Return `[(class_id, merged_schema)]` for **every** composite overlay — each namespace
-    base AND every subclass (the base deep-merged under the subclass) — regardless of `kind`.
-
-    The base+subclass walk `mechanical_classifications_for` does, minus the MIME gate, so a
-    caller that keys on any field (e.g. `classify_when`, spec §7.4) sees the subclass overlays
-    the kind-filtered loaders skip — `interpretive_classifications_for` walks namespace **bases
-    only**, which would miss `source/majority-report`-style subclasses."""
-    out: list[tuple[str, dict[str, Any]]] = []
-    for ns_id, ns_schema in _load_all_classification_schemas(corpus_root):
-        out.append((ns_id, ns_schema))
-        for sub_id, sub_schema in iter_classification_subclasses(corpus_root, ns_id):
-            out.append((f"{ns_id}/{sub_id}", _deep_merge(ns_schema, sub_schema)))
-    return out
+# ---------- fingerprint resolution ---------- #
 
 
 def resolve_fingerprint(
@@ -583,56 +437,47 @@ def resolve_fingerprint(
 ) -> bool | str | list[str]:
     """Resolve the `fingerprint` schema knob for a record at draft time. Precedence,
     most-specific first: CLI override (`--fingerprint` / `--no-fingerprint`) >
-    composite classification > mime schema > ``False``. Returns the raw knob — `False`
-    (off), `True` (on, each atom's default algorithm), or an algorithm name / list —
-    which `fingerprint.algos_for_atom` then resolves per atom. Default off, so
-    fingerprinting is opt-in (spec §7.2).
-
-    Only what is knowable AT DRAFT is consulted: the mime default, **mechanical**
-    composites (deterministic from the MIME), and any `<!--classify-->` blocks already
-    on the record. Interpretive composites (e.g. `composite/document`) are assigned by
-    the normalizer *after* draft, so their override takes effect on a later recompile
-    (`corpus redraft`) once the classify block is present."""
+    origin overlay > mime schema > ``False`` (spec §7.7). Returns the raw knob —
+    `False` (off), `True` (on, each atom's default algorithm), or an algorithm
+    name / list — which `fingerprint.algos_for_atom` then resolves per atom.
+    Default off, so fingerprinting is opt-in (spec §7.2).
+    """
     if cli_override is not None:
         return cli_override
-    comp = _composite_fingerprint(corpus_root, media_type, post)
-    if comp is not None:
-        return comp
+    ov = _origin_fingerprint(corpus_root, post)
+    if ov is not None:
+        return ov
     mime_schema = load_mime_schema(corpus_root, media_type)
     if isinstance(mime_schema, dict) and "fingerprint" in mime_schema:
         return mime_schema["fingerprint"]
     return False
 
 
-def _composite_fingerprint(
-    corpus_root: Path, media_type: str, post: Any
+def _origin_fingerprint(
+    corpus_root: Path, post: Any
 ) -> bool | str | list[str] | None:
-    """The most-specific composite `fingerprint` value, or None when no composite sets
-    it. Order: already-assigned classify blocks (subclass then namespace base), then
-    mechanical composites applicable to `media_type`. First explicit value wins (so a
-    specific `false` overrides a broader `true`)."""
+    """The most-specific origin-overlay `fingerprint` value, or None when no overlay
+    sets it. Order: overlays named by the record's qualified origin blocks, then
+    overlays whose match predicate matches an origin URI. First explicit value wins
+    (so a specific `false` overrides a broader `true`)."""
     from corpus import records  # lazy: records imports schemas
 
-    for blk in records.iter_classify_blocks(post):
-        ns = str(blk.get("namespace") or "")
-        cid = str(blk.get("id") or ns)
-        class_ids = ([f"{ns}/{cid}"] if cid and cid != ns else []) + ([ns] if ns else [])
-        for class_id in class_ids:
-            sch = load_classification_schema(corpus_root, class_id)
-            if isinstance(sch, dict) and "fingerprint" in sch:
-                return sch["fingerprint"]
-    for _class_id, sch in mechanical_classifications_for(corpus_root, media_type):
+    seen: set[str] = set()
+    for blk in records.iter_origin_blocks(post):
+        id_ = str(blk.get("id") or "")
+        if not id_ or id_ in seen:
+            continue
+        seen.add(id_)
+        sch = load_origin_overlay_by_id(corpus_root, id_)
+        if isinstance(sch, dict) and "fingerprint" in sch:
+            return sch["fingerprint"]
+    uris = list(records.iter_origin_uris(post))
+    for id_, sch in origin_overlays_for_uris(corpus_root, uris):
+        if id_ in seen:
+            continue
         if isinstance(sch, dict) and "fingerprint" in sch:
             return sch["fingerprint"]
     return None
-
-
-def interpretive_classifications_for(
-    corpus_root: Path, media_type: str | None = None
-) -> list[tuple[str, dict[str, Any]]]:
-    """Interpretive composites do not gate by MIME; `media_type` is accepted for
-    signature parity but ignored."""
-    return classifications_by_kind(corpus_root, "interpretive", media_type=media_type)
 
 
 # ---------- origin schemas ---------- #
@@ -769,8 +614,8 @@ def origin_ids_for_uris(corpus_root: Path, uris: list[str]) -> list[str]:
 # ---------- context (annotation-zone) schemas ---------- #
 #
 # The `context` block (spec §4.3.3) draws its overlays from a reserved top-level `context/`
-# umbrella — separate from `composite/` (which is classifications only). `issue` is one
-# namespace here (`context/issue/`); `reference`, `note`, `aside`, `relation` join it.
+# umbrella. `issue` is one namespace here (`context/issue/`); `reference`, `aside`,
+# `relation` join it.
 
 
 @lru_cache(maxsize=256)

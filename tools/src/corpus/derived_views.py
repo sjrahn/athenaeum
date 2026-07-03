@@ -5,13 +5,13 @@ on demand. None are persisted.
 
 The views:
 
-- `classifications` (§9.1) — walks artifact + origin + classify blocks.
+- `classifications` (§9.1) — walks artifact + origin blocks (structural-derived only, 2.0).
 - `context` (§4.3.3) — walks context blocks across all annotation namespaces.
 - `issues` (§9.2) — the `issue`-namespace projection of `context`.
 - `uris` (§9.3) — origin URIs + semantic_type:uri-tagged schema fields.
 - `timeline` (§9.4) — origin snapshots + semantic_type:timestamp-tagged fields.
 - `identifiers` (§9.5) — semantic_type:identifier-tagged fields + the record's id.
-- `concepts` (§9.7) — the `concept`-namespace projection of `context`.
+- `references` (§9.9) — the `reference` projection of `context`; edge derived at read time.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ def _iter_tagged_fields(
     target_semantic: str,
 ) -> Iterator[tuple[str, Any]]:
     """Yield `(field_name, value)` for every body-block field declaration tagged
-    `semantic_type: <target_semantic>` across the matching mime schema, every origin
-    schema, and every classify-block schema (namespace + optional subclass).
+    `semantic_type: <target_semantic>` across the matching mime schema and every
+    qualified origin block's overlay.
     """
     seen_fields: set[str] = set()
 
@@ -62,26 +62,6 @@ def _iter_tagged_fields(
             origin_schema, block_fields, target_semantic, seen_fields
         )
 
-    # Classify schemas — walk each classify block. Schema sits at one file
-    # (namespace) or two (namespace + subclass when `id != namespace`).
-    for classify in records.iter_classify_blocks(post):
-        namespace = classify.get("namespace") or ""
-        cid = classify.get("id") or ""
-        ns_schema = schemas.load_classification_schema(corpus_root, namespace)
-        if ns_schema is None:
-            continue
-        block_fields = classify.get("fields") or {}
-        yield from _walk_schema_fields(
-            ns_schema, block_fields, target_semantic, seen_fields
-        )
-        if cid and cid != namespace:
-            sub_schema = schemas.load_classification_subclass(corpus_root, namespace, cid)
-            if isinstance(sub_schema, dict):
-                yield from _walk_schema_fields(
-                    sub_schema, block_fields, target_semantic, seen_fields
-                )
-
-
 def _walk_schema_fields(
     schema: dict[str, Any],
     block_fields: dict[str, Any],
@@ -99,8 +79,8 @@ def _walk_schema_fields(
             continue
         if field_name not in block_fields:
             # Declared with the target semantic but not populated in THIS block — don't
-            # mark it seen, or a later block (origin/classify) that does populate the same
-            # field name would be silently suppressed.
+            # mark it seen, or a later block that does populate the same field name
+            # would be silently suppressed.
             continue
         seen_fields.add(field_name)
         yield field_name, block_fields[field_name]
@@ -168,30 +148,11 @@ def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
     return out
 
 
-def concepts(post: frontmatter.Post) -> list[dict[str, Any]]:
-    """§9.7 — derive `concepts[]`: the `concept`-namespace projection of the context view.
-
-    Each entry is the concept block's fields — the identity ladder (`label`, `url`, `concept`)
-    plus the optional anchor (`address`, `quote`, `occurrence`). Concepts reference an external
-    local knowledge base (Wikipedia/Wikidata) by id/URL, not a corpus record (spec §4.3.3.4):
-    a segment-scoped entry (with `address`) is a mention; a record-scoped entry is aboutness.
-    """
-    out: list[dict[str, Any]] = []
-    for concept in records.iter_concept_blocks(post):
-        entry: dict[str, Any] = {}
-        if concept.get("subtype"):
-            entry["subtype"] = concept["subtype"]
-        for k, v in (concept.get("fields") or {}).items():
-            entry[k] = v
-        out.append(entry)
-    return out
-
-
 def references(
     corpus_root: Path, post: frontmatter.Post, *, index: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
     """§9.9 — derive `references[]`: the `reference`-namespace projection of the context
-    view (§4.3.3.3) — the sibling of `issues` (§9.2) and `concepts` (§9.7).
+    view (§4.3.3.3) — the sibling of `issues` (§9.2).
 
     Each entry carries the reference block's stored fields — the citation ladder
     (`attribution_text`, `source_url`, and, only on an *asserted* reference, a stored

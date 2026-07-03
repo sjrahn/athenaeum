@@ -32,7 +32,10 @@ def _make_golden(tmp_path):
         snapshot="2026-05-31T00:00:00Z",
         schema_id="example.com",
     )
-    records.append_classify_block(post, namespace="document", id="document")
+    # Legacy 1.0 classify block — retired grammar, must still round-trip losslessly.
+    post.metadata.setdefault("_classifies", []).append(
+        {"namespace": "document", "id": "document", "subtype": None, "fields": {}}
+    )
     # Reconciliation #1: embed lives in the METADATA zone.
     records.append_embed_block(
         post,
@@ -118,11 +121,11 @@ def test_derived_classifications_view(tmp_path):
     records.dump(post, p)
     loaded = records.load(p)
     derived = records.derived_classifications(loaded)
-    # Per spec §9.1: mime, origin, classify contribute; embeds and issues do not.
+    # Per spec §9.1 (2.0): mime + origin contribute; legacy classify blocks,
+    # embeds, and issues do not.
     assert derived == [
         "mime/application/pdf",
         "origin/example.com",
-        "document",
     ]
 
 

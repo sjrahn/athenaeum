@@ -14,7 +14,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--status", help="Filter by status: stub | draft | normalized.")
     parser.add_argument("--mime", help="Filter by artifact MIME type.")
     parser.add_argument("--host", help="Filter by origin URI host (substring match).")
-    parser.add_argument("--classification", help="Filter by derived classification id.")
+    parser.add_argument("--classification", help="Filter by derived classification id (mime/* or origin/*).")
     parser.add_argument("--json", action="store_true", help="JSON output.")
     add_corpus_root_arg(parser)
 

@@ -572,63 +572,36 @@ def _rule_context_shape(post, blocks, root) -> Iterator[Finding]:
                 )
 
 
-def _rule_reference_resolvable(post, blocks, root) -> Iterator[Finding]:
-    """A `reference` context whose ladder has reached `source_uri` (a `corpus://<id>` link,
-    §4.4.5) must point at an existing record — a dangling target is stale research."""
-    from corpus import paths
-
-    for idx, ctx in enumerate(_records.iter_context_blocks(post)):
-        if (ctx.get("namespace") or "") != "reference":
-            continue
-        source_uri = str((ctx.get("fields") or {}).get("source_uri") or "").strip()
-        if not source_uri:
-            continue
-        m = re.match(r"corpus://([0-9a-fA-F]{6,64})", source_uri)
-        if not m or not paths.record_path(root, m.group(1)).is_file():
-            yield Finding(
-                rule_id="reference-unresolved",
-                severity="warning",
-                message=(
-                    f"reference #{idx + 1} `source_uri: {source_uri}` does not resolve to a "
-                    f"captured record."
-                ),
-            )
-
-
-def _rule_classification_stale(post, blocks, root) -> Iterator[Finding]:
-    """A `provenance: auto` classify block must correspond to a live composite overlay whose
-    `classify_when` still matches the record (spec §7.4). When the overlay was deleted, dropped
-    its rule, or the rule no longer fires, the stamp is stale — `corpus reclassify` regenerates.
-    Hand-/normalizer-asserted blocks (no `provenance`) are exempt."""
-    from corpus import classify_rules
-
-    overlays = dict(_schemas.iter_all_classifications(root))
-    facts = None
+def _rule_classify_retired(post, blocks, root) -> Iterator[Finding]:
+    """The classify block and section-scope composites were removed in ATH-CORPUS 2.0:
+    what content means is ledger knowledge (harvest rules / claims, `ledger.md` §10),
+    never a record assertion. A surviving block is a 1.0-era record awaiting migration —
+    flagged, not failed (parse stays tolerant; `load`/`dump` round-trip it losslessly)."""
     for blk in _records.iter_classify_blocks(post):
-        if (blk.get("fields") or {}).get("provenance") != "auto":
-            continue
-        class_id = classify_rules.class_id_of(blk)
-        predicate = (overlays.get(class_id) or {}).get("classify_when")
-        if not predicate:
+        ns = blk.get("namespace") or ""
+        cid = blk.get("id") or ""
+        qualified = f"{ns}/{cid}" if cid and cid != ns else ns
+        yield Finding(
+            rule_id="classify-block-retired",
+            severity="warning",
+            message=(
+                f"classify block `{qualified}` is retired (ATH-CORPUS 2.0 §4.3.1.3): "
+                f"interpretive classification moved to the ledger. Strip the block; "
+                f"assert the knowledge as a ledger concept/claim citing this record."
+            ),
+            subtype=qualified,
+        )
+    for top_i, blk in enumerate(blocks, 1):
+        if isinstance(blk, _segments.Section) and blk.classification:
             yield Finding(
-                rule_id="classification-stale",
+                rule_id="section-composite-retired",
                 severity="warning",
                 message=(
-                    f"auto classification `{class_id}` has no live `classify_when` overlay; "
-                    f"run `corpus reclassify`."
+                    f"section {top_i} carries composite `{blk.classification}` — section-scope "
+                    f"composites dissolved in ATH-CORPUS 2.0 (§4.4.3): express it as a ledger "
+                    f"claim over the section span."
                 ),
-            )
-            continue
-        if facts is None:
-            facts = classify_rules.build_facts(root, post)
-        if not classify_rules.evaluate(predicate, facts):
-            yield Finding(
-                rule_id="classification-stale",
-                severity="warning",
-                message=(
-                    f"auto classification `{class_id}` no longer matches its rule; "
-                    f"run `corpus reclassify`."
-                ),
+                address=_addr_str(blk.address),
             )
 
 
@@ -689,202 +662,6 @@ def _rule_mime_extension_mismatch(post, blocks, root) -> Iterator[Finding]:
         ),
         fields={"expected": ext, "found": found_exts},
     )
-
-
-def _collect_extended_fields(ns_schema: dict, sub_schema: dict | None) -> dict[str, Any]:
-    """Union of namespace-level and (optional) subclass-level `extended_fields`."""
-    out: dict[str, Any] = {}
-    ns_fields = ns_schema.get("extended_fields") or {}
-    if isinstance(ns_fields, dict):
-        out.update(ns_fields)
-    if isinstance(sub_schema, dict):
-        sub_fields = sub_schema.get("extended_fields") or {}
-        if isinstance(sub_fields, dict):
-            out.update(sub_fields)
-    return out
-
-
-def _value_matches_type(value: Any, expected_type: str) -> bool:
-    """Light type validation (PyYAML-shaped). `None` always passes (required handled
-    separately); `bool` is explicitly rejected for integer/number."""
-    if value is None:
-        return True
-    t = expected_type.lower()
-    if t in ("string", "str"):
-        return isinstance(value, str)
-    if t in ("integer", "int"):
-        return isinstance(value, int) and not isinstance(value, bool)
-    if t in ("number", "float"):
-        return isinstance(value, int | float) and not isinstance(value, bool)
-    if t in ("boolean", "bool"):
-        return isinstance(value, bool)
-    if t in ("array", "list"):
-        return isinstance(value, list)
-    if t in ("object", "dict", "mapping"):
-        return isinstance(value, dict)
-    return True  # unknown declared type — be permissive
-
-
-def _rule_classify_fields(post, blocks, root) -> Iterator[Finding]:
-    """Validate every applied classify block's fields against the overlay's
-    `extended_fields` (union of namespace + subclass). Emits required-missing / type / unknown.
-
-    `required` is a completeness contract, gated like §4.3.2.2 entries: a missing required field
-    is an *error* on a normalized record but only a *warning* at draft, so a normalizer can apply
-    an overlay and backfill its fields incrementally without tripping the draft lint gate."""
-    status = post.metadata.get("status", "")
-    for cb in _records.iter_classify_blocks(post):
-        ns = cb.get("namespace") or ""
-        cid = cb.get("id") or ""
-        sub = cb.get("subtype") or ""
-        if not ns:
-            continue
-        overlay_id = f"{ns}/{cid}" if cid and cid != ns else ns
-        if sub:
-            overlay_id = f"{overlay_id}/{sub}"
-        schema = _schemas.load_classification_schema(root, ns)
-        if not isinstance(schema, dict):
-            continue
-        sub_schema = (
-            _schemas.load_classification_subclass(root, ns, cid) if cid and cid != ns else None
-        )
-        declared = _collect_extended_fields(schema, sub_schema)
-        provided = cb.get("fields") or {}
-        # reserved engine field — not an extended field (spec §4.3.1.3)
-        provided = {k: v for k, v in provided.items() if k != "provenance"}
-        for fname, fspec in declared.items():
-            if (
-                isinstance(fspec, dict)
-                and fspec.get("required")
-                and (fname not in provided or provided[fname] in (None, "", []))
-            ):
-                yield Finding(
-                    rule_id="classify-field-required-missing",
-                    severity="error" if status == "normalized" else "warning",
-                    message=f"`{overlay_id}` requires field `{fname}` but it is missing or empty.",
-                    subtype=overlay_id,
-                    fields={"field": fname, "overlay": overlay_id},
-                )
-        for fname, value in provided.items():
-            fspec = declared.get(fname)
-            if not isinstance(fspec, dict):
-                continue
-            expected_type = str(fspec.get("type") or "string").lower()
-            if not _value_matches_type(value, expected_type):
-                yield Finding(
-                    rule_id="classify-field-type",
-                    severity="error",
-                    message=(
-                        f"`{overlay_id}` field `{fname}` value does not match declared type "
-                        f"`{expected_type}` (got {type(value).__name__})."
-                    ),
-                    subtype=overlay_id,
-                    fields={"field": fname, "expected_type": expected_type},
-                )
-        for fname in provided:
-            if fname not in declared:
-                yield Finding(
-                    rule_id="classify-field-unknown",
-                    severity="warning",
-                    message=(
-                        f"`{overlay_id}` carries field `{fname}` which is not declared in the "
-                        f"overlay's `extended_fields`."
-                    ),
-                    subtype=overlay_id,
-                    fields={"field": fname, "overlay": overlay_id},
-                )
-
-
-def _rule_section_composite_fields(post, blocks, root) -> Iterator[Finding]:
-    """Validate a section-scope composite (`<!--section <ns>/<id>-->`): the overlay must
-    declare `applies_at: section`, and the section's fields (its `description` + header extras)
-    must satisfy the overlay's `extended_fields`. `description` is universal, never unknown.
-
-    Required-field completeness is gated like the classify path: error at normalized, warning at
-    draft (a section composite may be applied before its fields are backfilled)."""
-    status = post.metadata.get("status", "")
-    for top_i, blk in enumerate(blocks, 1):
-        if not isinstance(blk, _segments.Section) or not blk.classification:
-            continue
-        parts = [p for p in str(blk.classification).split("/") if p]
-        if not parts:
-            continue
-        ns = parts[0]
-        cid = parts[1] if len(parts) >= 2 else ns
-        overlay_id = str(blk.classification)
-        schema = _schemas.load_classification_schema(root, ns)
-        if not isinstance(schema, dict):
-            yield Finding(
-                rule_id="section-composite-scope-invalid",
-                severity="error",
-                message=f"section {top_i} declares composite `{overlay_id}` but no such overlay exists.",
-                address=_addr_str(blk.address),
-                fields={"overlay": overlay_id},
-            )
-            continue
-        sub_schema = (
-            _schemas.load_classification_subclass(root, ns, cid) if cid and cid != ns else None
-        )
-        applies_at = (sub_schema or schema).get("applies_at") or ["record"]
-        if "section" not in applies_at:
-            yield Finding(
-                rule_id="section-composite-scope-invalid",
-                severity="error",
-                message=(
-                    f"section {top_i} applies composite `{overlay_id}`, but the overlay does not "
-                    f"declare `applies_at: section` (declares {applies_at})."
-                ),
-                address=_addr_str(blk.address),
-                fields={"overlay": overlay_id},
-            )
-            continue
-        declared = _collect_extended_fields(schema, sub_schema)
-        provided: dict[str, Any] = dict(blk.extra or {})
-        if blk.description is not None:
-            provided["description"] = blk.description
-        for fname, fspec in declared.items():
-            if (
-                isinstance(fspec, dict)
-                and fspec.get("required")
-                and (fname not in provided or provided[fname] in (None, "", []))
-            ):
-                yield Finding(
-                    rule_id="section-field-required-missing",
-                    severity="error" if status == "normalized" else "warning",
-                    message=f"section {top_i} (`{overlay_id}`) requires field `{fname}` but it is missing or empty.",
-                    address=_addr_str(blk.address),
-                    subtype=overlay_id,
-                    fields={"field": fname, "overlay": overlay_id},
-                )
-        for fname, value in provided.items():
-            fspec = declared.get(fname)
-            if isinstance(fspec, dict):
-                expected_type = str(fspec.get("type") or "string").lower()
-                if not _value_matches_type(value, expected_type):
-                    yield Finding(
-                        rule_id="section-field-type",
-                        severity="error",
-                        message=(
-                            f"section {top_i} (`{overlay_id}`) field `{fname}` value does not match "
-                            f"declared type `{expected_type}` (got {type(value).__name__})."
-                        ),
-                        address=_addr_str(blk.address),
-                        subtype=overlay_id,
-                        fields={"field": fname, "expected_type": expected_type},
-                    )
-        for fname in provided:
-            if fname != "description" and fname not in declared:
-                yield Finding(
-                    rule_id="section-field-unknown",
-                    severity="warning",
-                    message=(
-                        f"section {top_i} (`{overlay_id}`) carries field `{fname}` which is not "
-                        f"declared in the overlay's `extended_fields`."
-                    ),
-                    address=_addr_str(blk.address),
-                    subtype=overlay_id,
-                    fields={"field": fname, "overlay": overlay_id},
-                )
 
 
 def _rule_entry_missing(post, blocks, root) -> Iterator[Finding]:
@@ -1256,7 +1033,7 @@ def _rule_body_unknown_comment(post, blocks, root) -> Iterator[Finding]:
             severity="error",
             message=(
                 f"body contains {count} HTML comment(s) with unrecognized opener `<!--{kind}-->`. "
-                f"Allowed block keywords: artifact, origin, classify, embed, section, segment, context."
+                f"Allowed block keywords: artifact, origin, embed, section, segment, context."
             ),
             fields={"opener": kind, "count": count},
         )
@@ -1310,18 +1087,11 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
-    ("reference-resolvable", _rule_reference_resolvable),
-    ("classification-stale", _rule_classification_stale),
+    ("classify-block-retired", _rule_classify_retired),
+    ("section-composite-retired", _rule_classify_retired),
     # normalizer-support parity (luklacloud intent)
     ("description-too-long", _rule_description_too_long),
     ("mime-extension-mismatch", _rule_mime_extension_mismatch),
-    ("classify-field-required-missing", _rule_classify_fields),
-    ("classify-field-type", _rule_classify_fields),
-    ("classify-field-unknown", _rule_classify_fields),
-    ("section-composite-scope-invalid", _rule_section_composite_fields),
-    ("section-field-required-missing", _rule_section_composite_fields),
-    ("section-field-type", _rule_section_composite_fields),
-    ("section-field-unknown", _rule_section_composite_fields),
     ("entry-missing", _rule_entry_missing),
     ("segment-body-requires-lossless", _rule_segment_body_lossless_contract),
     ("segment-description-required", _rule_segment_body_lossless_contract),
@@ -1371,9 +1141,9 @@ def lint(
     out: list[Finding] = []
     seen_fns: set[int] = set()
     for _rule_id, fn in _REGISTRY:
-        # A handler may be registered under several rule_ids (e.g. the classify-field /
-        # section-field / lossless-contract validators each emit a family of rule_ids); run
-        # each unique function once and let it yield its full family.
+        # A handler may be registered under several rule_ids (e.g. the retired-block /
+        # lossless-contract validators each emit a family of rule_ids); run each unique
+        # function once and let it yield its full family.
         if id(fn) in seen_fns:
             continue
         seen_fns.add(id(fn))

@@ -1,12 +1,12 @@
 """Print the normalization guidance that applies to a record — deterministically.
 
-`corpus guidance <hash>` resolves a record, reads its `<!--artifact-->` MIME and its applied
-`<!--classify-->` / qualified `<!--origin-->` overlays, and prints, for each, the schema file
-path plus that schema's `normalization.guidance` prose. So the normalizer never has to guess a
-schema filename or walk `schema/` by hand — schema yaml stays a library implementation detail.
+`corpus guidance <hash>` resolves a record, reads its `<!--artifact-->` MIME and its qualified
+`<!--origin-->` overlays, and prints, for each, the schema file path plus that schema's
+`normalization.guidance` prose. So the normalizer never has to guess a schema filename or walk
+`schema/` by hand — schema yaml stays a library implementation detail.
 
-For *candidate* (not-yet-applied) overlays use `corpus diagnose`'s candidate section; for one
-overlay's field-spec + guidance in isolation use `corpus overlay <id>`. Markdown to stdout.
+For one overlay's field-spec + guidance in isolation use `corpus overlay <id>`. Markdown to
+stdout.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--mime-only",
         action="store_true",
-        help="print only the mime-schema guidance (skip applied classify/origin overlays).",
+        help="print only the mime-schema guidance (skip applied origin overlays).",
     )
     add_corpus_root_arg(parser)
 
@@ -47,24 +47,6 @@ def run(args: argparse.Namespace) -> int:
 
     if args.mime_only:
         return 0
-
-    classifies = list(records.iter_classify_blocks(post))
-    if classifies:
-        print("## applied classification overlays\n")
-        for blk in classifies:
-            ns = str(blk.get("namespace") or "")
-            cid = blk.get("id")
-            if not ns:
-                continue
-            ns_schema = schemas.load_classification_schema(corpus_root, ns) or {}
-            _print_guidance_block(
-                f"classify {ns}", f"schema/composite/{ns}/{ns}.yaml", ns_schema, level=3
-            )
-            if cid and cid != ns:
-                sub_schema = schemas.load_classification_subclass(corpus_root, ns, str(cid)) or {}
-                _print_guidance_block(
-                    f"classify {ns}/{cid}", f"schema/composite/{ns}/{cid}.yaml", sub_schema, level=3
-                )
 
     origins = [b for b in records.iter_origin_blocks(post) if b.get("id")]
     if origins:

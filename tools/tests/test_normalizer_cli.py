@@ -1,8 +1,8 @@
 """Normalizer-support commands — `diagnose` / `guidance` / `overlay` + `lint --json`.
 
-Smoke each command over a tmp corpus: the markdown carries its expected sections / field table /
-candidate footer; `corpus overlay <host>` resolves an origin overlay (not just composite); and
-`lint --json` emits a single JSON array of findings.
+Smoke each command over a tmp corpus: the markdown carries its expected sections;
+`corpus overlay <host>` resolves an origin overlay; and `lint --json` emits a single
+JSON array of findings.
 """
 
 from __future__ import annotations
@@ -16,24 +16,12 @@ from corpus import paths, records, schemas, segments
 from corpus._cli import dispatch
 
 RID = "a1" * 32
-_BASE = "kind: interpretive\ndescription: src.\napplies_at: [record]\nextended_fields: {}\n"
-_MR = (
-    "kind: interpretive\n"
-    "description: The Majority Report.\n"
-    "applies_at: [record]\n"
-    "applies_to:\n  content_types: [video/mp4]\n  cues:\n    body_contains: [seder]\n"
-    "normalization:\n  guidance: |\n    Segment by news topic, not chapter marker.\n"
-    "extended_fields:\n  episode_date: {type: string, required: true}\n"
-)
 
 
 def _corpus(tmp_path: Path) -> Path:
     root = tmp_path / "c"
     (root / "records").mkdir(parents=True)
-    d = root / "schema" / "composite" / "source"
-    d.mkdir(parents=True)
-    (d / "source.yaml").write_text(_BASE, encoding="utf-8")
-    (d / "mr.yaml").write_text(_MR, encoding="utf-8")
+    (root / "schema").mkdir()
     schemas.cache_clear()
     return root
 
@@ -59,10 +47,9 @@ def test_diagnose_one_pager(tmp_path, capsys):
     rc = dispatch(["diagnose", RID, "--corpus-root", str(root)])
     assert rc == 0
     out = capsys.readouterr().out
-    for section in ("## Lint", "## Derived views", "## Candidate", "## Content-zone"):
+    for section in ("## Lint", "## Derived views", "## Content-zone"):
         assert section in out
-    assert "source/mr" in out  # the cue-matching candidate surfaces
-    assert "corpus classify <hash> <id>" in out  # the apply footer
+    assert "## Candidate" not in out  # candidate ranking retired with the composite umbrella
 
 
 def test_diagnose_json(tmp_path, capsys):
@@ -71,34 +58,34 @@ def test_diagnose_json(tmp_path, capsys):
     dispatch(["diagnose", RID, "--json", "--corpus-root", str(root)])
     obj = json.loads(capsys.readouterr().out)
     assert obj["record"] == RID and obj["mime"] == "video/mp4"
-    assert any(c["overlay_id"] == "source/mr" for c in obj["candidates"])
+    assert "candidates" not in obj  # retired with the composite umbrella
 
 
 def test_guidance(tmp_path, capsys):
     root = _corpus(tmp_path)
     _record(root)
-    # Apply the overlay so its guidance shows under "applied classification overlays".
-    dispatch(["classify", RID, "source/mr", "--field", "episode_date=2026-06-05",
-              "--corpus-root", str(root)])
-    capsys.readouterr()
+    od = root / "schema" / "origin" / "web"
+    od.mkdir(parents=True)
+    (od / "youtube.com.yaml").write_text(
+        "applies_to:\n  host_pattern: youtube.com\n  include_subdomains: true\n"
+        "normalization:\n  guidance: |\n    Treat the transcript as the primary text.\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+    # Qualify the record's origin block so the overlay counts as applied.
+    path = paths.record_path(root, RID)
+    post = records.load(path)
+    records.set_origin_schema_id(post, "youtube.com")
+    records.dump(post, path)
     dispatch(["guidance", RID, "--corpus-root", str(root)])
     out = capsys.readouterr().out
     assert "## mime schema" in out
-    assert "Segment by news topic" in out  # the subclass guidance prose
-
-
-def test_overlay_field_table(tmp_path, capsys):
-    root = _corpus(tmp_path)
-    dispatch(["overlay", "source/mr", "--corpus-root", str(root)])
-    out = capsys.readouterr().out
-    assert "# overlay source/mr" in out
-    assert "| field | type | required" in out
-    assert "episode_date" in out and "Segment by news topic" in out
+    assert "Treat the transcript as the primary text" in out  # applied origin guidance
 
 
 def test_overlay_resolves_origin_overlay(tmp_path, capsys):
-    """`corpus overlay <host>` falls back to an origin overlay (not just composite) so the
-    normalizer can read a host's origin guidance at normalize time."""
+    """`corpus overlay <host>` resolves an origin overlay so the normalizer can read a
+    host's origin guidance at normalize time."""
     root = _corpus(tmp_path)
     od = root / "schema" / "origin"
     od.mkdir(parents=True)
@@ -122,7 +109,7 @@ def test_overlay_unknown_is_error(tmp_path):
     try:
         dispatch(["overlay", "nope.example", "--corpus-root", str(root)])
     except SystemExit as e:
-        assert e.code  # neither composite nor origin → non-zero exit
+        assert e.code  # no such origin overlay → non-zero exit
     else:
         raise AssertionError("expected SystemExit for an unknown overlay")
 

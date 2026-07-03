@@ -39,7 +39,9 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
         uri="https://example.com/g.pdf",
         snapshot="2026-05-31T00:00:00Z",
     )
-    records.append_classify_block(post, namespace="document", id="document")
+    post.metadata.setdefault("_classifies", []).append(
+        {"namespace": "document", "id": "document", "subtype": None, "fields": {}}
+    )
     records.append_embed_block(
         post,
         media_type="image/png",

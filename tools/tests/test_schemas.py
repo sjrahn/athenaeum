@@ -206,133 +206,12 @@ def test_fallback_d_corpus_overrides_mid_rung_axis(tmp_path):
     assert "page_count" in extended
 
 
-# ---------- the per-corpus seam: composite is corpus-local only ---------- #
+# ---------- resolve_fingerprint precedence (CLI > origin overlay > mime > off) ---------- #
 
 
-def test_composite_namespace_is_corpus_local(tmp_path):
-    """A corpus declares its own composite/<ns>/ — not bundled."""
-    root = _make_corpus(tmp_path)
-    schemas._sources.cache_clear()
-    # No composite namespaces by default in a vendor-nothing corpus.
-    assert schemas.list_classifications(root) == []
-
-    # Add a local composite namespace.
-    ns_dir = root / "schema" / "composite" / "document"
-    _write_yaml(
-        ns_dir / "document.yaml",
-        {
-            "kind": "interpretive",
-            "description": "Generic document classification.",
-            "applies_at": ["record"],
-            "extended_fields": {},
-        },
-    )
-    schemas._sources.cache_clear()
-    assert schemas.list_classifications(root) == ["document"]
-    loaded = schemas.load_classification_schema(root, "document")
-    assert loaded is not None
-    assert loaded["kind"] == "interpretive"
-
-
-# ---------- origin overlays: universal packaged, per-host local ---------- #
-
-
-def test_origin_overlays_are_corpus_local(tmp_path):
-    """Origin is a per-corpus concern (sources of retrieval are corpus-specific).
-    Neither the universal `origin/origin.yaml` nor per-host overlays ship in the
-    package; both live corpus-local. The scaffold writes the universal at
-    `corpus init` time (see test_scaffold)."""
-    root = _make_corpus(tmp_path)
-    # Vendor a universal origin overlay (what `corpus init` writes for real corpora).
-    _write_yaml(
-        root / "schema" / "origin" / "origin.yaml",
-        {
-            "description": "Universal origin fields.",
-            "extended_fields": {
-                "uri": {"type": "string_or_list", "required": True, "semantic_type": "uri"},
-                "snapshot": {"type": "string", "required": True, "semantic_type": "timestamp"},
-            },
-        },
-    )
-    # Define a per-host overlay locally.
-    _write_yaml(
-        root / "schema" / "origin" / "example.com.yaml",
-        {
-            "kind": "interpretive",
-            "description": "Example.com origin.",
-            "applies_to": {"host_pattern": "example.com", "include_subdomains": True},
-            "extended_fields": {
-                "publisher_section": {"type": "string", "required": False},
-            },
-        },
-    )
-    schemas._sources.cache_clear()
-    overlay = schemas.load_origin_overlay_by_id(root, "example.com")
-    assert overlay is not None
-    extended = overlay.get("extended_fields") or {}
-    # Local per-host fields present:
-    assert "publisher_section" in extended
-    # Local universal uri/snapshot fields layer in:
-    assert "uri" in extended
-    assert "snapshot" in extended
-    # Matching by URI uses the host pattern:
-    matched = schemas.origin_overlays_for_uris(root, ["https://www.example.com/page"])
-    assert any(id_ == "example.com" for id_, _ in matched)
-
-
-def test_origin_overlay_matches_by_uri_scheme(tmp_path):
-    """A non-web scheme-family overlay (e.g. `imessage:`) matches by URI scheme, not host —
-    `applies_to.scheme` (or `schemes`). A `file://` or `https://` URI does NOT match it."""
-    root = _make_corpus(tmp_path)
-    _write_yaml(
-        root / "schema" / "origin" / "origin.yaml",
-        {
-            "description": "Universal origin fields.",
-            "extended_fields": {
-                "uri": {"type": "string_or_list", "required": True, "semantic_type": "uri"},
-                "snapshot": {"type": "string", "required": True, "semantic_type": "timestamp"},
-            },
-        },
-    )
-    _write_yaml(
-        root / "schema" / "origin" / "imessage.yaml",
-        {
-            "kind": "interpretive",
-            "description": "Apple Messages export origin.",
-            "applies_to": {"scheme": "imessage"},
-        },
-    )
-    schemas._sources.cache_clear()
-    matched = schemas.origin_overlays_for_uris(
-        root, ["imessage://chat/+14035551234,+14035555678/2026-W26"]
-    )
-    assert any(id_ == "imessage" for id_, _ in matched)
-    # Case-insensitive scheme; other schemes don't match.
-    assert any(
-        id_ == "imessage"
-        for id_, _ in schemas.origin_overlays_for_uris(root, ["IMESSAGE://chat/x/2025-12"])
-    )
-    assert schemas.origin_overlays_for_uris(root, ["https://example.com/"]) == []
-    assert schemas.origin_overlays_for_uris(root, ["file:///tmp/staged.html"]) == []
-
-
-def test_origin_universal_does_not_ship_in_package(tmp_path):
-    """Sanity: the packaged source has no origin/origin.yaml — only corpora supply it."""
-    root = _make_corpus(tmp_path)
-    schemas._sources.cache_clear()
-    sources = schemas._sources(root)
-    packaged = sources[1]  # corpus-local, package
-    assert not packaged.exists("origin/origin.yaml"), (
-        "package must not ship origin/origin.yaml — origin is a per-corpus concern"
-    )
-
-
-# ---------- resolve_fingerprint precedence (CLI > composite > mime > off) ---------- #
-
-
-def _post_with_classifies(classifies):
+def _bare_post(origins=None):
     post = frontmatter.Post("")
-    post.metadata["_classifies"] = classifies
+    post.metadata["_origins"] = list(origins or [])
     return post
 
 
@@ -347,7 +226,7 @@ def test_resolve_fingerprint_cli_override_wins(tmp_path):
     root = _make_corpus(tmp_path)
     _write_plain_mime(root, fingerprint=True)  # schema says ON …
     schemas.cache_clear()
-    post = _post_with_classifies([])
+    post = _bare_post()
     # … but the CLI override decides outright, either way.
     assert schemas.resolve_fingerprint(root, "text/plain", post, True) is True
     assert schemas.resolve_fingerprint(root, "text/plain", post, False) is False
@@ -361,22 +240,30 @@ def test_resolve_fingerprint_mime_default_and_off(tmp_path):
         {"applies_to": {"content_types": ["text/markdown"]}, "mode": "body-draft"},
     )
     schemas.cache_clear()
-    post = _post_with_classifies([])
+    post = _bare_post()
     # mime knob (an algorithm name) flows through; absent knob → off.
     assert schemas.resolve_fingerprint(root, "text/plain", post, None) == "simhash"
     assert schemas.resolve_fingerprint(root, "text/markdown", post, None) is False
 
 
-def test_resolve_fingerprint_composite_overrides_mime(tmp_path):
+def test_resolve_fingerprint_origin_overlay_overrides_mime(tmp_path):
     root = _make_corpus(tmp_path)
     _write_plain_mime(root, fingerprint=True)  # mime defaults ON …
     _write_yaml(
-        root / "schema" / "composite" / "document" / "document.yaml",
-        {"kind": "interpretive", "applies_to": {"content_types": []}, "fingerprint": False},
+        root / "schema" / "origin" / "web" / "example.com.yaml",
+        {
+            "applies_to": {"host_pattern": "example.com", "include_subdomains": True},
+            "fingerprint": False,
+        },
     )
     schemas.cache_clear()
-    # … but an assigned `document` classify block (most-specific) turns it OFF.
-    with_doc = _post_with_classifies([{"namespace": "document", "id": "document"}])
-    assert schemas.resolve_fingerprint(root, "text/plain", with_doc, None) is False
-    # No classify block → the interpretive composite doesn't apply at draft → mime wins.
-    assert schemas.resolve_fingerprint(root, "text/plain", _post_with_classifies([]), None) is True
+    # … but the record's qualified origin overlay (most-specific) turns it OFF.
+    qualified = _bare_post([{"id": "example.com", "subtype": None, "fields": {}}])
+    assert schemas.resolve_fingerprint(root, "text/plain", qualified, None) is False
+    # An unqualified origin still matches by URI (the drafter path).
+    by_uri = _bare_post(
+        [{"id": None, "subtype": None, "fields": {"uri": ["https://example.com/x"]}}]
+    )
+    assert schemas.resolve_fingerprint(root, "text/plain", by_uri, None) is False
+    # No origin match → mime wins.
+    assert schemas.resolve_fingerprint(root, "text/plain", _bare_post(), None) is True

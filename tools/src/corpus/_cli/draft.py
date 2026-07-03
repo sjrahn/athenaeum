@@ -34,7 +34,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help=(
             "force perceptual fingerprinting on (--fingerprint) or off "
             "(--no-fingerprint), overriding the schema `fingerprint` knob. Default "
-            "(unset): the schema decides — off unless a mime/composite schema opts in. "
+            "(unset): the schema decides — off unless an origin overlay or mime schema opts in. "
             "Algorithm selection is schema-only (e.g. `fingerprint: dhash`)."
         ),
     )
@@ -101,7 +101,7 @@ def derive_record(
     # the metadata-zone result + `finish` emits/validates.
     build = recordbuild.begin_from_post(post, corpus_root)
     # Whether (and with which algorithm) to compute perceptual fingerprints: CLI
-    # override > composite classification > mime schema > off (spec §7.2). The drafter
+    # override > origin overlay > mime schema > off (spec §7.7). The drafter
     # resolves the per-atom algorithms from this knob via `fingerprint.algos_for_atom`.
     fingerprint = schemas.resolve_fingerprint(corpus_root, media_type, post, fingerprint_cli)
     drafter_kwargs: dict[str, Any] = dict(
@@ -148,23 +148,13 @@ def derive_record(
     # Opt-in overlay-declared dependent references (spec §4.3.3.3 / §7.2): if the record's
     # origin host declares `capture.references` rules, emit a `provenance: auto` `reference`
     # context block for each declared dependent link in the page (a PDP's product manual,
-    # etc.), resolved to tier 3 (`source_uri`) when the target is already a record. HTML-only
-    # (the rules match a DOM); pure opt-in (no rules → nothing emitted). Like the auto
-    # classifications below, idempotent under `redraft` (re-stub clears context blocks first).
+    # etc.) at tier 2 (`source_url`) — tier 3 is a read-time edge, never stored (spec
+    # §4.4.5). HTML-only (the rules match a DOM); pure opt-in (no rules → nothing
+    # emitted); idempotent under `redraft` (re-stub clears context blocks first).
     if media_type == "text/html":
         from corpus import references
 
         references.emit_overlay_references(post, corpus_root, binary_file)
-
-    # Deterministic auto-classification: stamp a `provenance: auto` classify block for every
-    # composite overlay whose `classify_when` predicate matches this record's facts (spec
-    # §7.4). Runs here — origin `ytdlp_*` fields are on the record (`_apply_drafter_result`)
-    # and the body is built. Pure opt-in: a corpus with no `classify_when` overlays adds
-    # nothing. Idempotent, so `redraft` (which routes through `derive_record` on a fresh stub)
-    # self-heals auto blocks for free.
-    from corpus import classify_rules
-
-    classify_rules.apply_auto_classifications(corpus_root, post)
 
     # Append draft touch + flip status.
     touches.record_touch(post, touches.script_identifier("draft." + mime_schema_id))
@@ -228,11 +218,6 @@ def run(args: argparse.Namespace) -> int:
     derived = records.derived_classifications(post)
     if derived:
         print(f"  derived classifications: {derived}")
-    from corpus import classify_rules
-
-    auto = classify_rules.auto_class_ids(post)
-    if auto:
-        print(f"  auto classifications: {auto}")
     return 0
 
 

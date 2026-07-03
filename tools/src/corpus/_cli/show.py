@@ -47,12 +47,7 @@ def run(args: argparse.Namespace) -> int:
 
     classifies = list(records.iter_classify_blocks(post))
     if classifies:
-        print(f"\nclassifies ({len(classifies)}):")
-        for cb in classifies:
-            ns = cb.get("namespace")
-            cid = cb.get("id")
-            sub = cb.get("subtype") or ""
-            print(f"  {ns}/{cid}{('/' + sub) if sub else ''}")
+        print(f"\nclassifies ({len(classifies)}): LEGACY — retired in ATH-CORPUS 2.0; see `corpus lint`")
 
     embeds = list(records.iter_embed_blocks(post))
     if embeds:

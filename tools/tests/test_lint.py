@@ -350,70 +350,44 @@ def test_segment_same_address_different_opener_id_is_ok(tmp_path):
     assert not any(f.rule_id == "segment-address-duplicate" for f in findings)
 
 
-# ---------- classification-stale (auto-classification provenance) ---------- #
-
-_CHANNEL = "UC-3jIAlnQmbbVMV6gR7K8aQ"
-_MR_OVERLAY = (
-    "kind: interpretive\ndescription: MR.\napplies_at: [record]\n"
-    "classify_when:\n  all_of:\n    - mime: {equals: video/mp4}\n"
-    f"    - media.channel_id: {{equals: {_CHANNEL}}}\n"
-)
-
-
-def _corpus_with_rule(tmp_path: Path, *, overlay: str | None = _MR_OVERLAY) -> Path:
-    root = _make_corpus(tmp_path)
-    src = root / "schema" / "composite" / "source"
-    src.mkdir(parents=True)
-    (src / "source.yaml").write_text("kind: interpretive\ndescription: s.\napplies_at: [record]\n")
-    if overlay is not None:
-        (src / "majority-report.yaml").write_text(overlay)
-    return root
-
-
-def _mr_video(channel: str = _CHANNEL) -> frontmatter.Post:
-    post = _clean_post()
-    records.set_artifact_block(post, mime="video/mp4")
-    post.metadata["_origins"] = []
-    records.append_origin_block(
-        post, uri="https://www.youtube.com/watch?v=x", snapshot="2026-06-05T00:00:00Z"
-    )
-    records.merge_origin_fields(post, {"ytdlp_channel_id": channel})
-    return post
+# ---------- retired 1.0 grammar (classify blocks / section composites) ---------- #
 
 
 def _add_classify(post, fields):
-    records.append_classify_block(post, namespace="source", id="majority-report", fields=fields)
+    post.metadata.setdefault("_classifies", []).append(
+        {"namespace": "source", "id": "majority-report", "subtype": None, "fields": fields}
+    )
 
 
-def test_classification_stale_clean_when_rule_matches(tmp_path):
-    root = _corpus_with_rule(tmp_path)
-    post = _mr_video()
+def test_classify_block_flags_retired(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
     _add_classify(post, {"provenance": "auto"})
-    assert not any(f.rule_id == "classification-stale" for f in _lint(post, root))
+    fired = [f for f in _lint(post, root) if f.rule_id == "classify-block-retired"]
+    assert len(fired) == 1 and fired[0].severity == "warning"
 
 
-def test_classification_stale_warns_when_overlay_missing(tmp_path):
-    root = _corpus_with_rule(tmp_path, overlay=None)  # no majority-report.yaml
-    post = _mr_video()
-    _add_classify(post, {"provenance": "auto"})
-    stale = [f for f in _lint(post, root) if f.rule_id == "classification-stale"]
-    assert len(stale) == 1 and stale[0].severity == "warning"
+def test_section_composite_flags_retired(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    sec = segments.Section(
+        address="block=1", entry="x", classification="recipe/dinner", segments=[]
+    )
+    fired = [
+        f
+        for f in lint.lint(post, [sec], root)
+        if f.rule_id == "section-composite-retired"
+    ]
+    assert len(fired) == 1 and fired[0].severity == "warning"
 
 
-def test_classification_stale_warns_when_rule_no_longer_matches(tmp_path):
-    root = _corpus_with_rule(tmp_path)
-    post = _mr_video(channel="UC-different")  # overlay exists but record no longer matches
-    _add_classify(post, {"provenance": "auto"})
-    stale = [f for f in _lint(post, root) if f.rule_id == "classification-stale"]
-    assert len(stale) == 1 and stale[0].severity == "warning"
-
-
-def test_classification_stale_exempts_asserted_blocks(tmp_path):
-    root = _corpus_with_rule(tmp_path, overlay=None)
-    post = _mr_video()
-    # No `provenance` field → hand-asserted → never flagged, even with no overlay.
-    _add_classify(post, {})
-    assert not any(f.rule_id == "classification-stale" for f in _lint(post, root))
+def test_clean_record_has_no_retired_findings(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    assert not any(
+        f.rule_id in ("classify-block-retired", "section-composite-retired")
+        for f in _lint(post, root)
+    )
 
 
 # ---------- normalizer-support parity rules ---------- #
@@ -423,75 +397,11 @@ def _fired(post, root, blocks=None):
     return {f.rule_id for f in lint.lint(post, blocks if blocks is not None else [], root)}
 
 
-def _comp_overlay(root: Path, sub: str, body: str) -> None:
-    d = root / "schema" / "composite" / "source"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "source.yaml").write_text("kind: interpretive\ndescription: s\napplies_at: [record]\n")
-    (d / f"{sub}.yaml").write_text(body)
-    from corpus import schemas
-
-    schemas.cache_clear()
-
-
 def test_description_too_long(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
     post.metadata["description"] = "word " * 801
     assert "description-too-long" in _fired(post, root)
-
-
-def test_classify_field_validators(tmp_path):
-    root = _make_corpus(tmp_path)
-    _comp_overlay(
-        root,
-        "mr",
-        "kind: interpretive\ndescription: mr\napplies_at: [record]\nextended_fields:\n"
-        "  episode_date: {type: string, required: true}\n  views: {type: integer}\n",
-    )
-    post = _clean_post()
-    records.append_classify_block(
-        post, namespace="source", id="mr", fields={"views": "NaN", "bogus": 1}
-    )
-    fired = _fired(post, root)
-    assert {
-        "classify-field-required-missing",
-        "classify-field-type",
-        "classify-field-unknown",
-    } <= fired
-    # A well-formed block lints clean for these rules.
-    post2 = _clean_post()
-    records.append_classify_block(
-        post2, namespace="source", id="mr", fields={"episode_date": "2026-06-05", "views": 5}
-    )
-    assert not {f for f in _fired(post2, root) if f.startswith("classify-field")}
-
-
-def test_classify_field_required_gated_by_status(tmp_path):
-    """A missing required field is a draft warning (apply-then-backfill) but a normalized error,
-    mirroring entry-missing — so applying an overlay never trips the draft lint gate."""
-    root = _make_corpus(tmp_path)
-    _comp_overlay(
-        root,
-        "mr",
-        "kind: interpretive\ndescription: mr\napplies_at: [record]\nextended_fields:\n"
-        "  episode_date: {type: string, required: true}\n",
-    )
-
-    def _required(post):
-        return [
-            f for f in lint.lint(post, [], root) if f.rule_id == "classify-field-required-missing"
-        ]
-
-    draft = _clean_post()  # status: draft
-    records.append_classify_block(draft, namespace="source", id="mr", fields={})
-    fired = _required(draft)
-    assert len(fired) == 1 and fired[0].severity == "warning"
-
-    norm = _clean_post()
-    norm.metadata["status"] = "normalized"
-    records.append_classify_block(norm, namespace="source", id="mr", fields={})
-    fired = _required(norm)
-    assert len(fired) == 1 and fired[0].severity == "error"
 
 
 def test_segment_lossless_contract(tmp_path):

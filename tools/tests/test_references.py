@@ -344,9 +344,8 @@ def test_references_derived_view_projection(tmp_path):
     assert {v.get("role") for v in view} == {"manual", "spec-sheet"}
     # targets uncaptured → the read-time edge resolves to pending, no resolved_uri
     assert all(v["captured"] is False and "resolved_uri" not in v for v in view)
-    # not surfaced in the issues/concepts projections
+    # not surfaced in the issues projection
     assert derived_views.issues(post) == []
-    assert derived_views.concepts(post) == []
 
 
 def test_references_view_resolves_edge_at_read_time(tmp_path):

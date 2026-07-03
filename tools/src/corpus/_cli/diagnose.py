@@ -2,10 +2,10 @@
 
 `corpus diagnose <hash>` emits a single markdown one-pager: the §4.2 core frontmatter, each
 metadata-zone block, the content-zone block TOC, the derived classifications/issues/uris views,
-a quick-lint section, and the ranked **candidate classifications**. A normalizer pass runs this
-first. The Lint section here is the `DIAGNOSE_QUICK_RULES` subset — the full overlay-aware
-ruleset (classify-field validation, body sanity, embed integrity, …) is the verification gate at
-`corpus lint <hash>`, which the pass must clear before flipping `status: normalized`.
+and a quick-lint section. A normalizer pass runs this first. The Lint section here is the
+`DIAGNOSE_QUICK_RULES` subset — the full overlay-aware ruleset (body sanity, embed
+integrity, …) is the verification gate at `corpus lint <hash>`, which the pass must clear
+before flipping `status: normalized`.
 
 `--json` emits the same data as one JSON object. Markdown to stdout.
 """
@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from corpus import classify_match, derived_views, paths, records, segments
+from corpus import derived_views, paths, records, segments
 from corpus import lint as _lint
 from corpus import mime as _mime
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
@@ -89,30 +89,6 @@ def _check_artifact(corpus_root: Path, record_id: str, post) -> dict[str, Any]:
     }
 
 
-# ---------- candidate data (shared by markdown + json) ---------- #
-
-
-def _applied_set(post) -> set[str]:
-    applied: set[str] = set()
-    for cb in records.iter_classify_blocks(post):
-        ns = cb.get("namespace") or ""
-        id_ = cb.get("id") or ""
-        sub = cb.get("subtype") or ""
-        if not ns:
-            continue
-        full = f"{ns}/{id_}" if id_ and id_ != ns else ns
-        applied.add(f"{full}/{sub}" if sub else full)
-    return applied
-
-
-_BASES_IN_ORDER = (
-    ("mime+cue", "strong (mime + cue both matched)"),
-    ("cue-only", "cue-only (body cues matched; mime not declared or didn't match)"),
-    ("mime-only", "mime-only (mime matched; no body cues hit)"),
-    ("shape-based", "shape-based (overlay declares neither axis — evaluate by body shape)"),
-)
-
-
 # ---------- markdown ---------- #
 
 
@@ -170,15 +146,13 @@ def _emit(corpus_root, record_id, post, blocks, findings, artifact_info) -> None
         _yaml_block(artifact.get("fields") or {}, empty="_(no extended fields)_")
 
     _emit_block_group("`<!--origin-->`", list(records.iter_origin_blocks(post)), _origin_label)
-    _emit_block_group("`<!--classify-->`", list(records.iter_classify_blocks(post)), _classify_label)
-    _emit_block_group("`<!--context-->`", list(records.iter_context_blocks(post)), _classify_label)
+    _emit_block_group("`<!--context-->`", list(records.iter_context_blocks(post)), _ns_label)
 
     print("## Derived views\n")
     print(f"- **classifications[]**: {records.derived_classifications(post) or '_(empty)_'}")
     print(f"- **issues[]**: {len(derived_views.issues(post))} entry(s)")
     print(f"- **uris[]**: {derived_views.uris(corpus_root, post)}\n")
 
-    _emit_candidates_md(post, corpus_root)
     _emit_toc(post, blocks)
 
 
@@ -197,7 +171,7 @@ def _origin_label(ob: dict) -> str:
     return f"{id_}/{ob['subtype']}" if ob.get("subtype") else id_
 
 
-def _classify_label(cb: dict) -> str:
+def _ns_label(cb: dict) -> str:
     ns = cb.get("namespace")
     id_ = cb.get("id")
     label = id_ if ns == id_ else f"{ns}/{id_}"
@@ -211,46 +185,6 @@ def _emit_block_group(kind: str, items: list[dict], labeller) -> None:
     for i, blk in enumerate(items, 1):
         print(f"### {i}. {labeller(blk)}\n")
         _yaml_block(blk.get("fields") or {}, empty="_(no fields)_")
-
-
-def _emit_candidates_md(post, corpus_root) -> None:
-    cands = classify_match.candidates(post, corpus_root)
-    print("## Candidate classifications\n")
-    if not cands:
-        print("_(no candidates — record matched no interpretive overlay)_\n")
-        return
-    applied = _applied_set(post)
-    if applied:
-        print(f"_(already applied: {', '.join(sorted(applied))})_\n")
-    by_basis: dict[str, list] = {}
-    for c in cands:
-        by_basis.setdefault(c.basis, []).append(c)
-    for basis, label in _BASES_IN_ORDER:
-        bucket = by_basis.get(basis) or []
-        if not bucket:
-            continue
-        print(f"**{label}**:\n")
-        cap = 6 if basis == "shape-based" else len(bucket)
-        for c in bucket[:cap]:
-            mark = "  ⚠ already applied" if c.overlay_id in applied else ""
-            cue_str = ""
-            if c.matched_cues:
-                shown = c.matched_cues[:3]
-                more = len(c.matched_cues) - len(shown)
-                cue_str = f"cues=[{', '.join(shown)}{f' +{more}' if more else ''}]"
-            parts = [
-                p
-                for p in (cue_str, f"mime={c.matched_mime}" if c.matched_mime else "", f"fields={len(c.extended_fields)}")
-                if p
-            ]
-            print(f"- `{c.overlay_id}` — {'; '.join(parts)}{mark}")
-        if len(bucket) > cap:
-            print(f"- _(+{len(bucket) - cap} more: {', '.join(c.overlay_id for c in bucket[cap:])})_")
-        print()
-    print(
-        "_Inspect with `corpus overlay <id>`; apply with "
-        "`corpus classify <hash> <id> [--field key=value ...]`._\n"
-    )
 
 
 def _emit_toc(post, blocks) -> None:
@@ -274,18 +208,6 @@ def _emit_toc(post, blocks) -> None:
 
 
 def _emit_json(corpus_root, record_id, post, blocks, findings, artifact_info) -> None:
-    applied = _applied_set(post)
-    cands = [
-        {
-            "overlay_id": c.overlay_id,
-            "basis": c.basis,
-            "matched_cues": c.matched_cues,
-            "matched_mime": c.matched_mime,
-            "fields": len(c.extended_fields),
-            "applied": c.overlay_id in applied,
-        }
-        for c in classify_match.candidates(post, corpus_root)
-    ]
     toc = [
         {
             "kind": "section" if isinstance(b, segments.Section) else "segment",
@@ -306,7 +228,6 @@ def _emit_json(corpus_root, record_id, post, blocks, findings, artifact_info) ->
             "classifications": records.derived_classifications(post),
             "issues": len(derived_views.issues(post)),
             "uris": derived_views.uris(corpus_root, post),
-            "candidates": cands,
             "blocks": toc,
         },
         sys.stdout,

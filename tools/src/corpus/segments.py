@@ -119,6 +119,8 @@ class Section:
 
     `classification` carries an optional composite id on the opener (e.g.
     `<!--section <namespace>/<id>-->`); bare `<!--section-->` has classification=None.
+    Section-scope composites dissolved in ATH-CORPUS 2.0 (§4.4.3) — the grammar is
+    kept parse/emit-tolerant for 1.0-era records; lint flags them for migration.
 
     `description` is normalizer-written prose used when the section's address is an
     artifact-self-slice with no matching embed (spec §4.3.1.4 carve-out).
@@ -462,7 +464,7 @@ def _parse_section_header(
 ) -> tuple[Section, int]:
     """Parse a `<!--section-->` block's header and return the constructed Section plus
     the index of the line after the header closer."""
-    # Optional composite id on the opener: `<!--section <ns>/<id>`. Bare carries None.
+    # Optional legacy composite id on the opener (1.0): `<!--section <ns>/<id>`. Bare = None.
     opener_suffix = lines[start].rstrip().removeprefix(_SECTION_OPENER).strip()
     classification = opener_suffix or None
 

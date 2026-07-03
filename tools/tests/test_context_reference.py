@@ -2,8 +2,8 @@
 
 Covers: context block parse/emit round-trip (any namespace, with the `quote`/`occurrence`
 locator); the legacy `<!--issue-->` read path upgrading to `<!--context issue/…-->` on write;
-the `context()` derived view + its `issues()` projection; and the reference citation ladder +
-its lint (`reference-unresolved`, `context-namespace-unknown`).
+the `context()` derived view + its `issues()` projection; and the reference citation ladder
++ its lint (`context-namespace-unknown`).
 """
 
 from __future__ import annotations
@@ -147,7 +147,10 @@ def test_reference_resolved_to_captured_record_lints_clean(tmp_path):
     assert not any(f.rule_id == "context-namespace-unknown" for f in findings)
 
 
-def test_reference_dangling_source_uri_warns(tmp_path):
+def test_reference_stored_source_uri_not_linted(tmp_path):
+    """The stored tier-3 `source_uri` died in ATH-CORPUS 2.0 (§4.4.5 — tier 3 is derived,
+    never stored); a legacy block carrying one is tolerated and no longer resolution-checked
+    (the read-time edge in `derived_views.references` supersedes it)."""
     root = _corpus(tmp_path)
     post = _post()
     records.append_context_block(
@@ -157,8 +160,7 @@ def test_reference_dangling_source_uri_warns(tmp_path):
         fields={"source_uri": f"corpus://{'cc' * 32}"},  # no such record
     )
     findings = _lint(post, root)
-    refs = [f for f in findings if f.rule_id == "reference-unresolved"]
-    assert len(refs) == 1 and refs[0].severity == "warning"
+    assert not any(f.rule_id == "reference-unresolved" for f in findings)
 
 
 def test_unknown_context_namespace_warns(tmp_path):

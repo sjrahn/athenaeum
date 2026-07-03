@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import frontmatter
-import yaml
 
 from corpus import derived_views, records, schemas, segments
 
@@ -19,24 +18,7 @@ def _make_corpus(tmp_path: Path) -> Path:
 
 
 def _make_golden_record(corpus_root: Path) -> Path:
-    """Same golden record as test_records_roundtrip, but located inside a corpus
-    with `document` composite namespace registered so derived_views can resolve it."""
-    # Register a local `document` composite namespace.
-    ns_dir = corpus_root / "schema" / "composite" / "document"
-    ns_dir.mkdir(parents=True)
-    (ns_dir / "document.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "kind": "interpretive",
-                "description": "Generic document classification.",
-                "applies_at": ["record"],
-                "extended_fields": {},
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
+    """Same golden record as test_records_roundtrip, located inside a corpus tree."""
     p = corpus_root / "records" / "aa" / ("a" * 64 + ".md")
     p.parent.mkdir(parents=True)
     post = frontmatter.Post("")
@@ -59,7 +41,6 @@ def _make_golden_record(corpus_root: Path) -> Path:
         uri="https://example.com/golden.pdf",
         snapshot="2026-05-31T00:00:00Z",
     )
-    records.append_classify_block(post, namespace="document", id="document")
     records.append_embed_block(
         post,
         media_type="image/png",
@@ -84,8 +65,8 @@ def test_classifications_view(tmp_path):
     p = _make_golden_record(root)
     post = records.load(p)
     derived = derived_views.classifications(post)
-    # §9.1: mime + classify (origin is bare → contributes nothing).
-    assert derived == ["mime/application/pdf", "document"]
+    # §9.1 (2.0): mime only here (origin is bare → contributes nothing).
+    assert derived == ["mime/application/pdf"]
 
 
 def test_issues_view_returns_structured(tmp_path):

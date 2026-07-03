@@ -32,10 +32,6 @@ def run(args: argparse.Namespace) -> int:
     for slash in _schemas.list_atomic_overlays(root):
         print(f"  {slash}")
     print()
-    print("Composite namespaces (corpus-local):")
-    for ns in _schemas.list_classifications(root):
-        print(f"  {ns}")
-    print()
     print("Issue ids:")
     for iid in _schemas.list_issue_ids(root):
         print(f"  {iid}")

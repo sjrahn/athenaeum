@@ -24,8 +24,8 @@ rendering, not stored blocks).
 `member_count`, `uncompressed_bytes`, `compressed_bytes`, `compression`, `encrypted`,
 `comment` — for every record (the embed's `media_type` carries each member's type). It does
 NOT know about any *vendor* — recognizing a bundle as "an Unraid diagnostics package" and
-surfacing its identity (version, hostname, …) is **domain knowledge for the codex layer**: a
-classification overlay (`classify_when` on the MIME) + the normalizer, not this drafter.
+surfacing its identity (version, hostname, …) is **ledger knowledge**: a harvest rule keyed
+on the kept-whole MIME (`ledger.md` §10) + the normalizer, not this drafter.
 
 `draft.manifest` config (optional):
     root_strip   bool — strip the single wrapper dir from member paths + the title.

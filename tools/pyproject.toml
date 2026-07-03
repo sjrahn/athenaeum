@@ -45,11 +45,6 @@ claude-session = []
 # tiktoken is lazy-imported (never at module load), so the base install + import guard stay
 # clean without this extra; without it token counts fall back to a chars/4 heuristic.
 tokens         = ["tiktoken>=0.8"]
-# Local Wikipedia/Wikidata knowledge base for the `concept` annotation namespace (corpus.wiki).
-# libzim reads a Kiwix ZIM (full-text search + article read) entirely offline. It is
-# lazy-imported (never at module load), so the base install + import guard stay clean without
-# this extra; the CLI/API degrade gracefully (clear error / 503) when it or the ZIM is absent.
-wiki           = ["libzim>=3"]
 
 [project.scripts]
 ath = "ath._cli:main"

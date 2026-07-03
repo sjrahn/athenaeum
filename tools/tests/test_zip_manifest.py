@@ -4,7 +4,7 @@ A zip member is a transport (a file with its own bytes + MIME), not a content at
 drafter records each member as an embed (an embedded transport) in the metadata zone and
 leaves the content zone empty — bytes resolve via `path=`, the hierarchy lives in the
 addresses. The MIME schema is mechanical only (detect + self_contained + drafter); vendor
-identity is a `classify_when` classification overlay filled by the normalizer.
+identity is ledger knowledge — a harvest rule keyed on the kept-whole MIME (`ledger.md` §10).
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import frontmatter
 import pytest
 
 from corpus import (
-    classify_rules,
     lint,
     mime,
     paths,
@@ -52,18 +51,6 @@ draft:
     root_strip: true
 """
 
-# The codex-layer identity overlay: auto-applies on the MIME; fields are normalizer-filled.
-_COMPOSITE_BASE = "class_id: unraid\nkind: interpretive\napplies_at: [record]\n"
-_COMPOSITE_SUB = """\
-class_id: unraid/diagnostic-package
-kind: interpretive
-applies_at: [record]
-classify_when:
-  mime: { equals: application/vnd.unraid.diagnostics+zip }
-extended_fields:
-  unraid_version: {type: string, required: false, source: body, description: OS version.}
-"""
-
 _ROOT = "tower-diagnostics-20260622/"
 _MEMBERS = {
     f"{_ROOT}unraid-7.0.0.txt": b"Unraid version 7.0.0\n",
@@ -79,10 +66,6 @@ def _make_corpus(tmp_path: Path) -> Path:
     mime_dir = root / "schema" / "mime" / "application"
     mime_dir.mkdir(parents=True)
     (mime_dir / "application_unraid_diagnostics.yaml").write_text(_SCHEMA_YAML, encoding="utf-8")
-    comp_dir = root / "schema" / "composite" / "unraid"
-    comp_dir.mkdir(parents=True)
-    (comp_dir / "unraid.yaml").write_text(_COMPOSITE_BASE, encoding="utf-8")
-    (comp_dir / "diagnostic-package.yaml").write_text(_COMPOSITE_SUB, encoding="utf-8")
     schemas._sources.cache_clear()
     schemas.zip_signatures.cache_clear()
     schemas.load_mime_schema.cache_clear()
@@ -210,7 +193,7 @@ def test_drafter_is_embeds_only(tmp_path):
     assert by_addr["path=logs/core.dat"]["media_type"] == "application/octet-stream"
     assert all(e["transport"].startswith("blake3:") for e in result["embeds"])
 
-    # No vendor identity on the artifact block — that's the classification overlay's job.
+    # No vendor identity on the artifact block — that's ledger-harvest knowledge, not bytes.
     assert "unraid_version" not in result["fields"]
     recordbuild.finish(build)
 
@@ -268,16 +251,6 @@ def test_body_empty_normalized_relaxed_for_manifest():
     bare.metadata["status"] = "normalized"
     findings = list(lint._rule_body_empty_normalized(bare, [], None))
     assert findings and findings[0].rule_id == "body-empty-normalized"
-
-
-def test_vendor_identity_is_a_classify_overlay(tmp_path):
-    # The mechanical MIME identifies the type; the codex-layer composite auto-applies on it.
-    root = _make_corpus(tmp_path)
-    post = frontmatter.Post("")
-    post.metadata.update({"id": "a" * 64, "status": "draft"})
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    classify_rules.apply_auto_classifications(root, post)
-    assert "unraid/diagnostic-package" in classify_rules.auto_class_ids(post)
 
 
 def test_path_resolves_member_bytes_end_to_end(tmp_path):

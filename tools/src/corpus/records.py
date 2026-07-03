@@ -1,7 +1,7 @@
 """Record I/O — frontmatter + zone-aware block parse/emit (spec §4).
 
 A record is a markdown file with YAML frontmatter (spec §4.2) plus a body with three
-zones (spec §4.3): metadata (artifact + origin + classify + embed), content
+zones (spec §4.3): metadata (artifact + origin + embed, plus legacy classify), content
 (section + segment), and annotations (issue).
 
 This module owns the **metadata** and **annotation** zones — including embeds
@@ -20,7 +20,7 @@ Exposes:
 - Accessors: `media_type_for`, `title_for`, `artifact_block`, `iter_origin_blocks`,
   `iter_classify_blocks`, `iter_embed_blocks`, `iter_context_blocks`, `iter_issue_blocks`,
   `primary_origin_uri`.
-- Mutators: `set_artifact_block`, `append_origin_block`, `append_classify_block`,
+- Mutators: `set_artifact_block`, `append_origin_block`,
   `append_embed_block`, `append_context_block`, `append_issue_block`.
 - Hash helpers: `format_hash(algo, hex_value)`.
 - Stub creation: `stub_frontmatter(...)` returns the minimal frontmatter dict; the
@@ -32,7 +32,7 @@ Frontmatter core fields (spec §4.2 — the only fields, in spec order):
 Block grammar (spec §4.3):
     Metadata zone:    <!--artifact <mime-type>-->     (exactly 1)
                       <!--origin [<id>[/<subtype>]]--> (1..N)
-                      <!--classify <namespace>/<id>[/<subtype>]--> (0..N)
+                      <!--classify <ns>/<id>[/<sub>]-->    (legacy 1.0; tolerated, lint-flagged)
                       <!--embed <mime-type>-->         (0..N)
     Content zone:     <!--section [<ns>/<id>]-->       (0..N)  or
                       <!--segment <atom>[/<id>]-->     (0..N) sectionless
@@ -100,7 +100,7 @@ def load(path: Path) -> frontmatter.Post:
 
     Parses YAML frontmatter, then walks the body's three zones:
 
-    - Metadata zone (artifact + origin + classify + embed blocks). Block fields are
+    - Metadata zone (artifact + origin + embed blocks, plus legacy 1.0 classify). Block fields are
       merged into `post.metadata` under namespaced keys (`_artifact`, `_origins`,
       `_classifies`, `_embeds`).
     - Content zone (section/segment blocks). Left in `post.content` verbatim for
@@ -137,7 +137,7 @@ def dumps(post: frontmatter.Post) -> str:
 
     Order:
         frontmatter (core fields only, in spec order)
-        metadata zone:     <!--artifact-->, <!--origin-->*, <!--classify-->*, <!--embed-->*
+        metadata zone:     <!--artifact-->, <!--origin-->*, <!--classify-->* (legacy), <!--embed-->*
         content zone:      post.content verbatim (section/segment)
         annotations zone:  <!--context-->*
 
@@ -589,7 +589,11 @@ def iter_origin_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
 
 
 def iter_classify_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
-    """Yield each `<!--classify-->` block as `{namespace, id, subtype, fields}`."""
+    """Yield each legacy `<!--classify-->` block as `{namespace, id, subtype, fields}`.
+
+    The classify block was removed in ATH-CORPUS 2.0 (spec §4.3.1.3 tombstone) — nothing
+    consumes it; the grammar is kept parse/emit-tolerant so a 1.0-era record round-trips
+    without data loss, and lint flags the block for migration (`classify-block-retired`)."""
     yield from (post.metadata.get("_classifies") or [])
 
 
@@ -616,19 +620,6 @@ def iter_issue_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
         if (ctx.get("namespace") or "") == "issue":
             yield {
                 "id": ctx.get("id"),
-                "subtype": ctx.get("subtype"),
-                "fields": ctx.get("fields") or {},
-            }
-
-
-def iter_concept_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
-    """Yield each `concept`-namespace context block as `{subtype, fields}`.
-
-    The `concept` namespace projection of `iter_context_blocks` (spec §4.3.3.4); the shape the
-    `concepts` derived view (§9.7) and the API concept index/facet consume."""
-    for ctx in iter_context_blocks(post):
-        if (ctx.get("namespace") or "") == "concept":
-            yield {
                 "subtype": ctx.get("subtype"),
                 "fields": ctx.get("fields") or {},
             }
@@ -953,7 +944,7 @@ def set_origin_schema_id(post: frontmatter.Post, schema_id: str) -> bool:
     local file) has no `uri:` to match, so the producer names the overlay directly — a capture
     sidecar's `origin_schema:` at ingest, or an injected `corpus-origin-schema` meta the drafter
     folds in. The bound id drives the derived `origin/<id>` classification, overlay guidance, and
-    `classify_when: origin.id` rules (§7.4) with no uri."""
+    ledger harvest rules matching on `origin.id` (`ledger.md` §10) with no uri."""
     schema_id = (schema_id or "").strip()
     if not schema_id:
         return False
@@ -962,21 +953,6 @@ def set_origin_schema_id(post: frontmatter.Post, schema_id: str) -> bool:
         return False
     origins[-1]["id"] = schema_id
     return True
-
-
-def append_classify_block(
-    post: frontmatter.Post,
-    *,
-    namespace: str,
-    id: str,
-    subtype: str | None = None,
-    fields: dict[str, Any] | None = None,
-) -> None:
-    """Append a new `<!--classify-->` block to the record."""
-    classifies = post.metadata.setdefault("_classifies", [])
-    classifies.append(
-        {"namespace": namespace, "id": id, "subtype": subtype, "fields": fields or {}}
-    )
 
 
 def append_embed_block(
@@ -1055,10 +1031,12 @@ def append_issue_block(
 def derived_classifications(post: frontmatter.Post) -> list[str]:
     """Compute the derived `classifications[]` view by walking metadata blocks.
 
-    Per spec §9.1: artifact contributes `mime/<mime-type>`; each qualified origin
-    block contributes `origin/<id>[/<subtype>]`; each classify block contributes
-    `<namespace>/<id>[/<subtype>]`. Dedupe preserving body order. Embeds and issues
-    do not contribute (embeds are assets, issues are problems; separate views).
+    Per spec §9.1 (2.0 — structural-derived only): artifact contributes
+    `mime/<mime-type>`; each qualified origin block contributes
+    `origin/<id>[/<subtype>]`. Dedupe preserving body order. Embeds and issues do
+    not contribute (embeds are assets, issues are problems; separate views), and
+    legacy classify blocks no longer do (interpretive classification is ledger
+    knowledge, ATH-CORPUS 2.0).
     """
     result: list[str] = []
     seen: set[str] = set()
@@ -1076,21 +1054,6 @@ def derived_classifications(post: frontmatter.Post) -> list[str]:
             continue
         subtype = origin.get("subtype")
         entry = f"origin/{id_}/{subtype}" if subtype else f"origin/{id_}"
-        if entry not in seen:
-            result.append(entry)
-            seen.add(entry)
-
-    for classify in iter_classify_blocks(post):
-        namespace = classify.get("namespace") or ""
-        id_ = classify.get("id") or ""
-        subtype = classify.get("subtype")
-        if not namespace or not id_:
-            continue
-        if namespace == id_:
-            entry = f"{id_}/{subtype}" if subtype else id_
-        else:
-            base = f"{namespace}/{id_}"
-            entry = f"{base}/{subtype}" if subtype else base
         if entry not in seen:
             result.append(entry)
             seen.add(entry)

@@ -197,7 +197,7 @@ def test_expected_count_parses_int():
 
 def _init_corpus(tmp_path: Path) -> Path:
     root = tmp_path / "c"
-    assert dispatch(["init", str(root), "--namespace", "document"]) == 0
+    assert dispatch(["init", str(root)]) == 0
     return root
 
 

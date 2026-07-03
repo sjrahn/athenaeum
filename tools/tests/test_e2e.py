@@ -4,9 +4,9 @@ Drives the real CLI (`corpus._cli.dispatch`, the same path the console script ru
 through the full lifecycle on a corpus that vendors NO universal schemas — proving
 the generalization holds:
 
-  (a) every step succeeds though `schema/` holds only `composite/<ns>/` + the local
-      origin overlay — the universal mime / atom / composite-issue schemas resolve
-      from the packaged defaults;
+  (a) every step succeeds though `schema/` holds only the local origin overlays —
+      the universal mime / atom / context-issue schemas resolve from the packaged
+      defaults;
   (b) no `corpus.toml` / creds — `LocalArtifactStore` writes + reads `artifacts/`;
   (c) a video with the NoOp transcriber drafts to a record + a spec-clean
       `transcription-unavailable` issue (no crash);
@@ -33,11 +33,10 @@ _HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
 def _init(tmp_path: Path) -> Path:
     root = tmp_path / "scratch"
-    assert dispatch(["init", str(root), "--namespace", "document"]) == 0
+    assert dispatch(["init", str(root)]) == 0
     # Vendor-nothing: no universal mime/atom schemas live locally.
     assert not (root / "schema" / "mime").exists()
     assert not (root / "schema" / "atom").exists()
-    assert (root / "schema" / "composite" / "document").is_dir()
     assert not (root / "corpus.toml").exists()  # (b) no config
     return root
 
