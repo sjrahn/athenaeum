@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ledger.model import is_edge, is_redirect, load_json_dir
-
 from codex.manifest import CodexManifest
+from ledger.model import is_edge, is_redirect, load_json_dir
 
 
 def materialize(ledger_root: Path, manifest: CodexManifest) -> tuple[

@@ -13,8 +13,6 @@ stubbed) id-and-all, and links to private facts redact.
 
 from __future__ import annotations
 
-import json
-
 from ledger.corpora import CorpusJoin
 from ledger.model import CORPUS_URI_RE, is_edge
 

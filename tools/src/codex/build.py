@@ -1,4 +1,4 @@
-"""The build — resolve · raster · link · leak-check · certify (`spec/codex.md` §5–§6).
+"""The build — resolve · raster · link · leak-check · certify (`spec/codex.md` §5, §6).
 
 Compiles the generated vault into a renderer-ready content tree: every
 `corpus://` footnote resolves to a human citation, every functional-URI embed
@@ -18,12 +18,11 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ledger.corpora import CorpusJoin, _read_frontmatter
-from ledger.model import CORPUS_URI_RE
-
 from codex.manifest import CodexManifest
 from codex.notes import fact_private, generate
 from codex.scope import materialize
+from ledger.corpora import CorpusJoin, _read_frontmatter
+from ledger.model import CORPUS_URI_RE
 
 _EMBED_RE = re.compile(r"!\[\[(corpus://[^\]|]+)(?:\|([^\]]*))?\]\]")
 _FOOTNOTE_URI_RE = re.compile(r"`(corpus://[0-9a-f]{64}[^`]*)`")
