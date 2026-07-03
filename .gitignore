@@ -1,7 +1,9 @@
-# Member repos — independent git repos managed via athenaeum.yaml, never tracked here
-corpora/
-ledger/
-codices/
+# Member repos — independent git repos managed via athenaeum.yaml, never tracked here.
+# Anchored to the root: unanchored `ledger/` also swallowed tools/src/ledger (a whole
+# package silently untracked — found in the 2026-07-03 critical pass).
+/corpora/
+/ledger/
+/codices/
 
 # macOS Finder metadata
 .DS_Store
