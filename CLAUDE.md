@@ -10,7 +10,7 @@ While `REFORGE.md` exists at the root, it is the active restructuring plan — r
 
 ## What this repo is
 
-**`athenaeum/athenaeum`** — the orchestrator repo of the Athenaeum system: the system's definition (specs), its shared tooling (the corpus library/CLI, the `ath` umbrella, and the ledger + codex packages as they land), and its driver (the orchestrator persona). Every other part of the system is an independent member repo in the same Forgejo org (`code.example.org/athenaeum`), cloned beneath this working tree at gitignored paths.
+**`athenaeum/athenaeum`** — the orchestrator repo of the Athenaeum system: the system's definition (specs), its shared tooling (the corpus library/CLI, the `ath` umbrella, and the ledger + codex packages), and its driver (the orchestrator persona). Every other part of the system is an independent member repo in the same Forgejo org (`code.example.org/athenaeum`), cloned beneath this working tree at gitignored paths.
 
 ```
 athenaeum/                    ← this repo's working tree (the workspace root)
@@ -25,7 +25,7 @@ athenaeum/                    ← this repo's working tree (the workspace root)
 │   └── corpus-private/       ←   personal captures (no persona by design)
 ├── ledger/                   ← UNTRACKED member clone — the knowledge layer (one repo)
 └── codices/                  ← UNTRACKED member clones — targeted compilations
-    ├── codex-general/  codex-pontiac-g8/  codex-steven/   (migrating into the ledger, reforge 5c)
+    ├── codex-general/  codex-pontiac-g8/  codex-steven/   (thin targeting repos: codex.yaml + notes/ + certificates/)
     └── codex-homelab/                                      (pre-pattern; migration pending)
 ```
 
@@ -54,8 +54,14 @@ cd tools && uv sync --extra capture --extra media --extra office --extra fingerp
 uv run --no-sync python -m pytest -q      # expect all green
 uv run --no-sync ruff check src tests     # expect clean
 
-# Codex validation (from any codex under codices/):
-python3 tools/check.py                     # exits 0; corpus joins hardcoded ../../corpora/* until the codex package lands
+# The ledger layer (spec/ledger.md §13 — run before every ledger commit):
+ath ledger check                    # the validation contract — must pass
+ath ledger verify                   # evidence verification: anchors + verbatim quotes (--stamp binds snapshots)
+ath ledger harvest                  # mechanical minting rules; also: promote | stamp | worklist | regen
+
+# The codex layer (spec/codex.md):
+ath codex <name> check              # manifest sanity + vault currency
+ath codex <name> build --profile public   # also: scope | notes; public builds run the leak check
 ```
 
 ## Key principles
@@ -65,4 +71,4 @@ python3 tools/check.py                     # exits 0; corpus joins hardcoded ../
 - **Members are config-driven.** No member path may be hardcoded in shared tooling (`--corpus-root`, the manifest, `codex.yaml`).
 - **Deterministic before LLM.** Capture/ingest/draft are mechanical; normalize and codex authoring are interpretive agent passes. Keep the boundary sharp.
 - **Parse tolerantly.** Log and skip unparseable records rather than failing a whole corpus.
-- **Member repos commit through their own disciplines** — corpus content work boots `/curator` in `corpora/corpus`; codices are freely iterable until the shared codex package fixes their contract.
+- **Member repos commit through their own disciplines** — corpus content work boots `/curator` in `corpora/corpus`; ledger commits pass `ath ledger check`; codex vaults are generated, validated by `ath codex <name> check`.

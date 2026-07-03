@@ -1,7 +1,7 @@
 [project]
 name = "athenaeum"
 version = "0.1.0"
-description = "Athenaeum system tooling — the corpus pipeline (capture, ingest, draft, resolve, lint) and the ath orchestrator umbrella."
+description = "Athenaeum system tooling — the corpus pipeline (capture, ingest, draft, resolve, lint), the ath orchestrator umbrella, and the ledger + codex layers."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "CC-BY-SA-4.0"

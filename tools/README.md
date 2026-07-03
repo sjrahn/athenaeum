@@ -1,79 +1,61 @@
-# ath-corpus
+# athenaeum
 
-Corpus tooling for [ATH-CORPUS v1.0](../../spec/corpus.md) — parse, lint, draft, resolve,
-derive views, and orchestrate the capture → ingest → draft → normalize pipeline that produces
-spec-conformant corpus records.
+The Athenaeum system's shared tooling distribution — one Python package
+shipping four libraries and two CLIs:
 
-Provides:
+| Package | Surface | Contract |
+|---|---|---|
+| `corpus` | `corpus <subcommand>` — parse, lint, draft, resolve, derive views, and orchestrate the capture → ingest → draft → normalize pipeline | [ATH-CORPUS v2.0](../spec/corpus.md) |
+| `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `corpus`, `ledger`, `codex`) | [ATH-ARCH](../spec/athenaeum.md) |
+| `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH-LEDGER](../spec/ledger.md) |
+| `codex` | `ath codex <name> scope\|notes\|build\|check` — targeting, vault generation, the certified build with the public-profile leak check | [ATH-CODEX](../spec/codex.md) |
 
-- An importable Python library (`import corpus`).
-- A CLI (`corpus <subcommand>`).
-- Bundled **universal** schemas (`mime`, `origin/origin`, `atom/**`, `composite/issue/**`).
-
-Each consuming corpus repo supplies only its **own** records and its **own**
-`composite/<namespace>/` classification + issue schemas.
-
-## Status
-
-In active development. Phase 1 (core model + schema loader + derived views + lint + edit loop)
-underway. See the [athenaeum skill logbook](../../.claude/skills/athenaeum/references/logbook.md).
+Also bundled: the **universal** corpus schemas (`mime`, `origin`, `atom/**`,
+`context/issue/**`). Each corpus repo supplies only its own records and its
+own corpus-local schema extensions; the ledger and codices carry no tooling
+of their own.
 
 ## Install
 
-Three forms — pick one per your situation:
+Both CLIs come from ONE uv tool install of this directory (editable for dev;
+see the workspace root `CLAUDE.md`, gotcha #1):
 
-```toml
-# Editable path (sibling checkout of the athenaeum-org `shared` repo, recommended for dev)
-[project]
-dependencies = ["ath-corpus"]
-[tool.uv.sources]
-ath-corpus = { path = "../../tools/corpus", editable = true }
-
-# Git subdirectory (CI / pinned to a revision)
-[project]
-dependencies = [
-    "ath-corpus @ git+https://code.example.org/athenaeum/athenaeum.git@<rev>#subdirectory=tools/corpus",
-]
-
-# Built wheel (release; built via `uv build` and published to Forgejo's package registry)
-[project]
-dependencies = ["ath-corpus>=0.1"]
+```bash
+uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with cryptography
 ```
+
+Consuming repos never vendor or path-depend on this package — the CLIs
+auto-discover the corpus root / member manifest by cwd.
 
 ## Dev quickstart
 
 ```bash
-cd tools/corpus
-uv sync                                # install base + dev tools
-uv run pytest                          # run the test suite
-uv run corpus --help                   # CLI dispatcher
+cd tools
+uv sync --extra capture --extra media --extra office --extra fingerprint --extra tokens
+uv run --no-sync python -m pytest -q      # the suite — expect all green (gotcha #2: not `uv run pytest`)
+uv run --no-sync ruff check src tests     # expect clean
 
 # Heavy backends are opt-in via extras:
-uv sync --extra capture --extra media  # Playwright + yt-dlp
-uv sync --extra office                 # openpyxl + xlrd + python-docx
-uv sync --extra fingerprint            # imagehash + pyacoustid + simhash
-uv sync --extra azure                  # azure-storage-blob + azure-identity
-uv sync --extra s3                     # boto3
+#   capture (Playwright)  media (yt-dlp)  office (openpyxl/xlrd/python-docx)
+#   fingerprint (imagehash/pyacoustid/simhash)  tokens  azure  s3
 ```
 
 ## Layout
 
 ```
-tools/corpus/
-├── pyproject.toml
+tools/
+├── pyproject.toml          # one distribution: packages src/{corpus,ath,ledger,codex}
 ├── README.md
-├── src/corpus/
-│   ├── ...                 # core library
-│   ├── schemas_default/    # BUNDLED universal schemas (mime/origin/atom/composite/issue)
-│   └── _cli/               # unified `corpus <subcommand>` dispatcher
+├── src/
+│   ├── corpus/             # ATH-CORPUS library + `corpus` CLI (+ schemas_default/)
+│   ├── ath/                # the umbrella CLI: manifest, status/sync, delegation shims
+│   ├── ledger/             # model, check, verify, harvest, promote, views, coverage
+│   └── codex/              # manifest, scope, notes, build (raster + leak check + certificate)
 └── tests/
 ```
 
 ## Conformance authority
 
-[`spec/corpus.md`](../../spec/corpus.md) (ATH-CORPUS v1.0) is the contract. Where this
-implementation needs something the spec doesn't cover, the spec gets updated first.
-
-The reference port source is `LuklaCloud/Corpus` (the "CarbonAi" corpus). Where the reference
-diverges from our spec — chiefly embed-zone placement, issue block shape, origin schema
-layout — **our spec wins**.
+The specs in [`../spec/`](../spec/) are the contract. Where this
+implementation needs something a spec doesn't cover, the spec gets updated
+first (workspace root `CLAUDE.md`, key principles).
