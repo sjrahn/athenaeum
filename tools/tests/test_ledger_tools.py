@@ -156,6 +156,12 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
     # drift: the pin excludes verified stamps, so stamping didn't change the state
     assert canonical_claim_state(fact["claims"][0]) == canonical_claim_state(
         {k: v for k, v in fact["claims"][0].items()})
+    # a later-day re-run must NOT re-stamp: only a moved touch identity may
+    # rewrite fact files (else every verify run churns the whole tree)
+    res2 = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-03")
+    assert res2.verified == 1 and res2.stamped == 0
+    fact2 = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
+    assert fact2["claims"][0]["evidence"][0]["verified"]["at"] == "2026-07-02"
 
 
 def test_promote_and_stamp(system: Path) -> None:

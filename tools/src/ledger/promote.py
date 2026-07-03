@@ -1,4 +1,4 @@
-"""Mechanical promotion + challenge-pin stamping (`spec/ledger.md` §7.2–§7.3).
+"""Mechanical promotion + challenge-pin stamping (`spec/ledger.md` §7.2—§7.3).
 
 `promote` moves a claim-shaped hypothesis's `proposes` draft into its target
 fact file at the highest status the authentication bar allows, stamps the

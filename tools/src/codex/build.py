@@ -76,6 +76,12 @@ def build(
 ) -> BuildResult:
     if profile != "private" and profile not in manifest.profiles:
         raise BuildError(f"profile {profile!r} not declared in codex.yaml")
+    if not join.complete:
+        # with a registered corpus absent, every hash it holds resolves nowhere
+        # and sensitivity cannot be derived — the wall would fail open (§6.4)
+        raise BuildError(
+            f"corpus join incomplete — missing on disk: {', '.join(join.missing)}; "
+            "sensitivity is underivable, refusing to build (run `ath sync`)")
     redact = str((manifest.profiles.get(profile) or {}).get("redact", "exclude"))
     res = BuildResult(profile=profile)
 
@@ -98,13 +104,13 @@ def build(
             res.problems.append(f"embed {uri!r}: not a corpus URI")
             return match.group(0)
         h = m.group(1)
-        if profile != "private" and join.is_private(h):
-            res.problems.append(f"embed corpus://{h[:12]}…: private asset in a "
-                                f"{profile} build")
-            return match.group(0)
         holders = join.holders(h)
         if not holders:
             res.problems.append(f"embed corpus://{h[:12]}…: resolves in no corpus")
+            return match.group(0)
+        if profile != "private" and join.is_private(h):
+            res.problems.append(f"embed corpus://{h[:12]}…: private asset in a "
+                                f"{profile} build")
             return match.group(0)
         from corpus import functional_uri, resolver
 
@@ -154,9 +160,11 @@ def build(
         for f in sorted(content.rglob("*.md")):
             text = f.read_text(encoding="utf-8")
             for h in set(_HASH_RE.findall(text)):
-                if join.is_private(h):
+                private = join.is_private(h)
+                if private is not False:  # unresolvable fails closed
                     res.problems.append(
-                        f"LEAK {f.relative_to(content)}: private hash {h[:12]}…")
+                        f"LEAK {f.relative_to(content)}: "
+                        f"{'private' if private else 'unresolvable'} hash {h[:12]}…")
             for fid in private_ids:
                 if fid in text:
                     res.problems.append(

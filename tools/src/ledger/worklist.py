@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ledger import invariants as invariants_mod
-from ledger.model import WIKILINK_RE, load_json_dir
+from ledger.model import load_json_dir
 
 
 def worklist(ledger_root: Path, ref: str) -> list[str]:

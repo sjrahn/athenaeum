@@ -35,7 +35,6 @@ def _group_key(facts: dict) -> str:
 
 def render_coverage(ledger_root: Path, corpora: list[RegisteredCorpus]) -> str:
     from corpus import records
-
     from ledger.harvest import record_facts
 
     covered = represented_hashes(ledger_root)

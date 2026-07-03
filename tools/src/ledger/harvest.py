@@ -71,11 +71,12 @@ def load_rules(ledger_root: Path) -> list[dict]:
                     "fact — hash-only rules may roster/claim but never mint (§10)"
                 )
             for m in _TEMPLATE_RE.finditer(str(concept["id"])):
-                if not m.group(1).startswith("origin."):
-                    raise HarvestError(
-                        f"{f.name}: concept id may only be keyed by origin facts, "
-                        f"got {{{m.group(1)}}}"
-                    )
+                for key in (m.group(1), m.group(3)):
+                    if key is not None and not key.startswith("origin."):
+                        raise HarvestError(
+                            f"{f.name}: concept id may only be keyed by origin "
+                            f"facts, got {{{key}}}"
+                        )
         rules.append(data)
     return rules
 

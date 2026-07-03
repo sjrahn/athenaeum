@@ -183,3 +183,69 @@ def test_ath_codex_dispatch(system: Path, capsys: pytest.CaptureFixture[str]) ->
     assert (system / "codices" / "codex-demo" / "notes" / "band" / "gorguts.md").is_file()
     assert ath_main(["codex", "codex-demo", "build", "--root", str(system),
                      "--profile", "public"]) == 0
+
+
+def test_build_refuses_incomplete_join(system: Path) -> None:
+    """A missing registered corpus makes every hash it holds unresolvable —
+    sensitivity is underivable, so the wall fails closed (spec/codex.md §6)."""
+    import shutil
+
+    from ath._cli import main as ath_main
+    from codex.build import BuildError
+
+    manifest = load_codex(system / "codices" / "codex-demo")
+    shutil.rmtree(system / "corpora" / "corpus-private")
+    join = _join(system)
+    assert not join.complete
+    with pytest.raises(BuildError, match="incomplete"):
+        build(manifest, system / "ledger", join, profile="public",
+              today="2026-07-03")
+    with pytest.raises(BuildError, match="incomplete"):
+        build(manifest, system / "ledger", join, profile="private",
+              today="2026-07-03")
+    # the CLI's vault surfaces refuse too
+    assert ath_main(["codex", "codex-demo", "notes", "--root", str(system)]) == 2
+    assert ath_main(["codex", "codex-demo", "check", "--root", str(system)]) == 2
+
+
+def test_unresolvable_evidence_fails_closed(system: Path) -> None:
+    """Evidence citing a hash that resolves in no corpus is private-backed."""
+    dangling = "c" * 64
+    p = system / "ledger" / "facts" / "album" / "obscura.json"
+    o = json.loads(p.read_text())
+    o["claims"][0]["evidence"] = [{"uri": f"corpus://{dangling}", "kind": "direct"}]
+    p.write_text(json.dumps(o))
+    manifest = load_codex(system / "codices" / "codex-demo")
+    scoped, riding, _ = materialize(system / "ledger", manifest)
+    vault = generate(scoped, riding, _join(system), profile="public",
+                     today="2026-07-03")
+    assert "album/obscura.md" not in vault  # sole claim fails closed → fully private
+
+
+def test_interp_claim_id_basis_inherits_privacy(system: Path) -> None:
+    """based_on may cite claim ids (§7.2): the interpretation inherits the
+    claim's privacy; an unresolvable basis fails closed."""
+    interps = system / "ledger" / "interpretations"
+    (interps / "tour-guess.json").write_text(json.dumps({
+        "id": "tour-guess", "kind": "hypothesis", "about": ["gorguts"],
+        "statement": "The 2019 show was the Colored Sands tour.",
+        "confidence": "plausible", "reasoning": "r",
+        "based_on": ["gorguts:seen-live"],  # a private-backed claim
+        "status": "open", "asof": "2026-01-01",
+    }))
+    (interps / "ghost-basis.json").write_text(json.dumps({
+        "id": "ghost-basis", "kind": "hypothesis", "about": ["gorguts"],
+        "statement": "GHOSTBASIS statement.",
+        "confidence": "plausible", "reasoning": "r",
+        "based_on": ["no-such-fact:no-such-claim"],
+        "status": "open", "asof": "2026-01-01",
+    }))
+    manifest = load_codex(system / "codices" / "codex-demo")
+    scoped, riding, _ = materialize(system / "ledger", manifest)
+    join = _join(system)
+    priv = generate(scoped, riding, join, profile="private", today="2026-07-03")
+    assert "Colored Sands" in priv["band/gorguts.md"]
+    assert "GHOSTBASIS" in priv["band/gorguts.md"]
+    pub = generate(scoped, riding, join, profile="public", today="2026-07-03")
+    assert "Colored Sands" not in pub["band/gorguts.md"]
+    assert "GHOSTBASIS" not in pub["band/gorguts.md"]

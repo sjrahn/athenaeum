@@ -2,7 +2,7 @@
 
 Checks work on plain dicts (parse tolerantly, author strictly): this module
 holds the key sets, vocabularies, and grammar regexes of `spec/ledger.md`
-§4–§7, the canonical claim-state hash of §7.3, and the period calculus of
+§4—§7, the canonical claim-state hash of §7.3, and the period calculus of
 §5.2 used by temporal invariants.
 """
 

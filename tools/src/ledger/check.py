@@ -102,9 +102,9 @@ def run_check(
         rep.note("corpus join skipped (--no-corpus): resolution, status, and sensitivity "
                  "checks not run")
     elif not join.complete:
-        rep.note(f"corpus join skipped: registered corpora missing on disk "
+        rep.warn("corpus join", f"registered corpora missing on disk "
                  f"({', '.join(join.missing)}) — resolution, status, and sensitivity "
-                 "checks not run")
+                 "checks NOT run; this check result certifies structure only")
 
     # ---------------------------------------------------------------- indexes
     ids: dict[str, Path] = {}
@@ -378,7 +378,7 @@ def run_check(
 
     # file-level derived sensitivity (§6.4)
     if resolve_live:
-        for f, o in facts.items():
+        for _f, o in facts.items():
             if is_redirect(o):
                 continue
             carried = []
@@ -396,7 +396,7 @@ def run_check(
         rep.note(f"sensitivity: {private_claims} private-backed claims, "
                  f"{private_files} private fact files (derived, §6.4)")
     else:
-        for _, o, c in all_claims:
+        for _, _o, c in all_claims:
             c.pop("_private", None)
 
     # --------------------------------------------------------- interpretations
@@ -522,7 +522,7 @@ def run_check(
                 rep.err(where, "need requires a why")
 
     # disputed ⇄ standing correction pairing
-    for f, o, c in all_claims:
+    for f, _o, c in all_claims:
         if c.get("status") == "disputed":
             cid = str(c.get("id"))
             if cid not in standing_challenges:
@@ -541,7 +541,7 @@ def run_check(
 
     # the disagreement view (§13.1 Views): what voices assert vs what the
     # evidence establishes, enumerated — never an error, always surfaced
-    for f, o in facts.items():
+    for _f, o in facts.items():
         by_pred: dict[object, list[dict]] = {}
         for c in o.get("claims") or []:
             if isinstance(c, dict):

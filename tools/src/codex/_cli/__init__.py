@@ -78,6 +78,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"WARN  {p}", file=sys.stderr)
         return 0
 
+    if cmd in ("notes", "check") and not join.complete:
+        # sensitivity is underivable over a partial join — the wall fails closed
+        print(f"ath codex: corpus join incomplete (missing on disk: "
+              f"{', '.join(join.missing)}) — refusing to generate or compare "
+              "the vault; run `ath sync`", file=sys.stderr)
+        return 2
+
     if cmd == "notes":
         from datetime import date
 

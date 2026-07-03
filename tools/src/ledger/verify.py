@@ -60,7 +60,8 @@ _BLOCK_TAG_RE = re.compile(
 _TAG_RE = re.compile(r"<[^>]+>")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _ELLIPSIS_RE = re.compile(r"\s*(?:\.\.\.|…|\|)\s*")
-_CHAR_FOLD = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', " ": " "})
+_CHAR_FOLD = str.maketrans(  # the fold table IS the ambiguous chars — noqa: RUF001
+    {"’": "'", "‘": "'", "“": '"', "”": '"', " ": " "})  # noqa: RUF001
 
 
 def _norm(s: str) -> str:
@@ -309,10 +310,14 @@ def verify_ledger(
                     continue
                 res.verified += 1
                 if stamp:
-                    stamped = {"touch": content.touch}
-                    if today:
-                        stamped["at"] = today
-                    if e.get("verified") != stamped:
+                    prev = e.get("verified")
+                    # re-stamp only when the snapshot identity moved — the
+                    # `at` date alone must not rewrite the tree on every run
+                    if not (isinstance(prev, dict)
+                            and prev.get("touch") == content.touch):
+                        stamped: dict[str, str] = {"touch": content.touch}
+                        if today:
+                            stamped["at"] = today
                         e["verified"] = stamped
                         res.stamped += 1
                         dirty = True

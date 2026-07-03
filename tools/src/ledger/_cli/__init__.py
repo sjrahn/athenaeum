@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from ath.manifest import Member, ManifestError, find_root, load, load_references
+from ath.manifest import ManifestError, Member, find_root, load, load_references
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 
 _USAGE = """\

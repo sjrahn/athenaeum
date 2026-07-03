@@ -14,7 +14,7 @@ stubbed) id-and-all, and links to private facts redact.
 from __future__ import annotations
 
 from ledger.corpora import CorpusJoin
-from ledger.model import CORPUS_URI_RE, is_edge
+from ledger.model import CLAIM_ID_RE, CORPUS_URI_RE, is_edge
 
 PRIVATE_MARK = "*(private evidence)*"
 
@@ -23,7 +23,10 @@ def _evidence_private(uri: str, join: CorpusJoin) -> bool:
     m = CORPUS_URI_RE.match(uri)
     if not m:
         return False  # ref:// is public; malformed is check's problem
-    return bool(join.is_private(m.group(1)))
+    private = join.is_private(m.group(1))
+    # None = resolves in no corpus (dangling, or a corpus missing on disk):
+    # sensitivity is underivable, so the tenancy wall fails CLOSED (§6.4)
+    return True if private is None else bool(private)
 
 
 def claim_private(claim: dict, join: CorpusJoin) -> bool:
@@ -49,10 +52,25 @@ def fact_private(fact: dict, join: CorpusJoin) -> bool:
     return bool(carried) and all(carried)
 
 
-def interp_private(interp: dict, join: CorpusJoin) -> bool:
-    return any(
-        _evidence_private(str(b), join) for b in interp.get("based_on") or []
-    )
+def interp_private(interp: dict, join: CorpusJoin,
+                   claims_by_id: dict[str, dict]) -> bool:
+    """`based_on` may cite corpus URIs, ref:// entries, or claim ids (§7.2) —
+    a claim-id basis inherits that claim's privacy; anything unresolvable
+    fails closed."""
+    for b in interp.get("based_on") or []:
+        s = str(b)
+        if CORPUS_URI_RE.match(s):
+            if _evidence_private(s, join):
+                return True
+        elif s.startswith("ref://"):
+            continue  # reference datasets are public mirrors
+        elif CLAIM_ID_RE.match(s):
+            c = claims_by_id.get(s)
+            if c is None or claim_private(c, join):
+                return True
+        else:
+            return True  # unrecognized basis — underivable, fail closed
+    return False
 
 
 def _render_value(value: object) -> str:
@@ -79,6 +97,12 @@ def generate(
     """→ {vault-relative path: markdown}. The private profile renders all."""
     public = profile != "private"
     out: dict[str, str] = {}
+    claims_by_id = {
+        c["id"]: c
+        for o in scoped.values()
+        for c in o.get("claims") or []
+        if isinstance(c, dict) and c.get("id")
+    }
 
     def link(ref: str | None) -> str:
         if not ref:
@@ -103,7 +127,7 @@ def generate(
         sources = [f"ledger/facts/{fact.get('type')}/{fid}.json"]
         mine = [o for o in riding.values() if fid in (o.get("about") or [])]
         if public:
-            mine = [o for o in mine if not interp_private(o, join)]
+            mine = [o for o in mine if not interp_private(o, join, claims_by_id)]
         sources += [f"ledger/interpretations/{o.get('id')}.json"
                     for o in sorted(mine, key=lambda o: str(o.get("id")))]
 

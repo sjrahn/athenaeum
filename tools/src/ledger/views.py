@@ -110,7 +110,7 @@ def render_vocab(counters: dict[str, Counter], defs: dict[str, dict[str, str]],
     start, end = (m.format("retired") for m in _SECTION_MARKS)
     lines = ["| term | kind | reason |", "|---|---|---|"]
     for row in retired:
-        padded = (row + ["", "", ""])[:3]
+        padded = [*row, "", "", ""][:3]
         lines.append(f"| `{padded[0]}` | {padded[1]} | {padded[2]} |")
     parts.append(f"\n## Retired\n\n{start}\n" + "\n".join(lines) + f"\n{end}\n")
     return "".join(parts)
@@ -171,7 +171,7 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
                 frontier.append(f"- `{fact.get('id')}` ({fact.get('type')}) — schema fields "
                                 f"not yet attested: {', '.join(missing)}")
     if frontier:
-        lines += ["", "### Frontier (stubs + schema conformance)", ""] + frontier
+        lines += ["", "### Frontier (stubs + schema conformance)", "", *frontier]
     return "\n".join(lines)
 
 
