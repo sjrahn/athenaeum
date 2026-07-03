@@ -153,6 +153,7 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
         lines = ["*(no open interpretations)*"]
 
     frontier: list[str] = []
+    field_gaps: dict[tuple[str, str], list[str]] = {}
     for fact in sorted(facts.values(), key=lambda f: str(f.get("id", ""))):
         if is_redirect(fact) or is_edge(fact):
             continue
@@ -164,12 +165,24 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
             continue
         schema = schemas.get(str(fact.get("type")))
         if schema:
-            declared = set((schema.get("fields") or {}).keys())
+            # only `expected: true` fields are owed — unmarked fields register
+            # vocabulary and validate targets, their absence means nothing
+            owed = {name for name, spec in (schema.get("fields") or {}).items()
+                    if isinstance(spec, dict) and spec.get("expected")}
             carried = {str(c.get("predicate")) for c in claims if isinstance(c, dict)}
-            missing = sorted(declared - carried)
-            if missing:
-                frontier.append(f"- `{fact.get('id')}` ({fact.get('type')}) — schema fields "
-                                f"not yet attested: {', '.join(missing)}")
+            for fieldname in sorted(owed - carried):
+                field_gaps.setdefault(
+                    (str(fact.get("type")), fieldname), []).append(str(fact.get("id")))
+    # schema gaps aggregate per (type, field) — an expected field most facts
+    # lack is one worklist line with examples, never a flood
+    for (t, fieldname), fids in sorted(field_gaps.items()):
+        if len(fids) <= 5:
+            frontier.append(f"- `{t}.{fieldname}` not yet attested: "
+                            + ", ".join(f"`{i}`" for i in fids))
+        else:
+            sample = ", ".join(f"`{i}`" for i in fids[:3])
+            frontier.append(f"- `{t}.{fieldname}` not yet attested on {len(fids)} "
+                            f"facts ({sample}, …)")
     if frontier:
         lines += ["", "### Frontier (stubs + schema conformance)", "", *frontier]
     return "\n".join(lines)

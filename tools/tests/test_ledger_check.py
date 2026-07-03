@@ -387,6 +387,64 @@ def test_schema_conformance(system: Path) -> None:
     assert not any("s2" in e for e in rep.errors)
 
 
+def test_schema_union_target(system: Path) -> None:
+    """`target` may list admissible types (spec §4.4) — any listed type passes,
+    anything else is mis-shape."""
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: a song\n"
+        "fields:\n  tribute_to: { target: [artist, song] }\n"
+    )
+    _fact(system, "artist", {"id": "band", "type": "artist", "name": "B"})
+    _fact(system, "album", {"id": "lp", "type": "album", "name": "LP"})
+    _fact(system, "song", {
+        "id": "ok", "type": "song", "name": "OK",
+        "claims": [_claim("ok", "tribute", predicate="tribute_to", object="band")],
+    })
+    rep = _check(system)
+    assert not any("tribute" in e for e in rep.errors)
+    _fact(system, "song", {
+        "id": "bad", "type": "song", "name": "Bad",
+        "claims": [_claim("bad", "tribute", predicate="tribute_to", object="lp")],
+    })
+    rep = _check(system)
+    assert any("targets ['artist', 'song']" in e and "'album'" in e
+               for e in rep.errors)
+    # a malformed target shape is a schema error
+    (system / "ledger" / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: a song\nfields:\n  tribute_to: { target: 7 }\n"
+    )
+    rep = _check(system)
+    assert any("target must be a type or a list" in e for e in rep.errors)
+
+
+def test_frontier_aggregates_per_field(system: Path) -> None:
+    """An `expected: true` field most facts lack renders as ONE aggregated
+    worklist line, not a per-fact flood; an unmarked field is admissible
+    vocabulary and never frontier."""
+    from ledger.views import render_worklist
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: a song\n"
+        "fields:\n  appears_on: { target: album, expected: true }\n"
+        "  covered_by: { target: artist }\n"
+    )
+    for i in range(7):
+        _fact(system, "song", {
+            "id": f"song-{i}", "type": "song", "name": f"S{i}",
+            "claims": [_claim(f"song-{i}", "length", predicate="length",
+                              value="3:00")],
+        })
+    from ledger.model import load_json_dir
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    from ledger.schemas import load_schemas
+    schemas, _ = load_schemas(system / "ledger")
+    block = render_worklist(facts, {}, schemas)
+    assert "`song.appears_on` not yet attested on 7 facts" in block
+    assert block.count("appears_on") == 1  # one line, not seven
+    assert "covered_by" not in block  # admissible, not owed — no frontier
+
+
 # ------------------------------------------------------------------ invariants
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles"}
-FIELD_KEYS = {"target", "description"}
+FIELD_KEYS = {"target", "description", "expected"}
 
 
 def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
@@ -50,6 +50,16 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
             bad = set(fspec) - FIELD_KEYS
             if bad:
                 errors.append(f"{where}: field {fname!r} unknown keys {sorted(bad)}")
+            target = fspec.get("target")
+            if target is not None and not (
+                isinstance(target, str)
+                or (isinstance(target, list)
+                    and all(isinstance(t, str) for t in target))
+            ):
+                errors.append(f"{where}: field {fname!r} target must be a type "
+                              "or a list of admissible types")
+            if not isinstance(fspec.get("expected", False), bool):
+                errors.append(f"{where}: field {fname!r} expected must be a bool")
         roles = data.get("roster_roles")
         if roles is not None and not (
             isinstance(roles, list) and all(isinstance(r, str) for r in roles)

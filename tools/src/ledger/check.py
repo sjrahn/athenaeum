@@ -303,7 +303,8 @@ def run_check(
                 fspec = ((schema or {}).get("fields") or {}).get(str(pred)) or {}
                 want = fspec.get("target") if isinstance(fspec, dict) else None
                 got = live_facts.get(target, {}).get("type")
-                if want and got != want:
+                admissible = want if isinstance(want, list) else [want] if want else []
+                if admissible and got not in admissible:
                     rep.err(where, f"schema: {o.get('type')}.{pred} targets {want!r}, "
                                    f"object {obj!r} is a {got!r}")
         for s in _iter_strings(c.get("value")):

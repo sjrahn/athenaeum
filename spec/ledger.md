@@ -158,17 +158,17 @@ A concept schema is the declared shape of a concept type — the 1.0 composite s
 ```yaml
 type: song
 description: A recorded or performed musical work.
-fields:                          # predicates this type is expected to carry
-  appears_on: { target: album }  # relational — the claim object must be an `album`
-  composed_by: { target: artist }
+fields:                          # the type's registered predicates
+  appears_on: { target: album, expected: true }  # relational + owed: frontier when missing
+  composed_by: { target: artist }  # relational — the claim object must be an `artist`
   length: {}                     # attribute — value shape per SCHEMA.md conventions
 roster_roles: [tablature-of, performance-of, interview]
 ```
 
 Semantics:
 
-- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves to the wrong type, an unregistered roster role.
-- **Stubs stay valid.** A concept missing schema-declared fields is *frontier*, not failure — conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. A type with no schema is equally legal: schemas are earned structure, not a gate.
+- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), an unregistered roster role.
+- **Stubs stay valid.** A concept missing a schema field marked `expected: true` is *frontier*, not failure — conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most people are nobody's `father_of`). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
 
 ## 5. Claims
