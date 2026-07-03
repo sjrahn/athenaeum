@@ -22,7 +22,9 @@ System:
   sync          clone missing members; fetch + report the rest (--pull to fast-forward)
 
 Layers:
-  ledger ...    the ledger's deterministic surface: check, regen (spec/ledger.md)
+  ledger ...    the ledger's deterministic surface: check, verify, harvest,
+                promote, stamp, worklist, regen (spec/ledger.md)
+  codex ...     the codex layer: scope, notes, build (spec/codex.md)
 
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)
@@ -47,6 +49,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ledger._cli import main as ledger_main
 
         return ledger_main(rest)
+    if cmd == "codex":
+        from codex._cli import main as codex_main
+
+        return codex_main(rest)
     if cmd == "sync":
         from ath._cli.sync import run
 
