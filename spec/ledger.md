@@ -197,6 +197,7 @@ Semantics:
 
 - **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
 - **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
+- **Timeboxed fields.** A field may declare `timeboxed: true` — e.g. `residence: { target: place, timeboxed: true }` — meaning every claim under that predicate owes a `period`: an attested residence or employment episode without a timespan is half a fact, and `asof` alone records observation, never duration. Like owed fields, a missing timebox is *frontier* (a labeled chase on the work-list, §7.4), never an error — the gap says "find the start/end", which is exactly how new evidence that widens a period announces where it belongs.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
 
 ## 5. Claims
@@ -356,7 +357,7 @@ A `correction` challenging an existing claim names it in **`challenges`** — th
 
 ### 7.4 Generated work-lists
 
-`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and schema-conformance frontier — owed fields and unmet expectations (§4.2, §4.4); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
+`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and schema-conformance frontier — owed fields, unmet expectations, and missing timeboxes (§4.2, §4.4); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
 
 ## 8. Vocabulary
 
@@ -457,7 +458,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
-**Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields and unmet expectations alike — land on the work-list as frontier, never as stub errors.
+**Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields, unmet expectations, and missing timeboxes alike — land on the work-list as frontier, never as stub errors.
 
 **Invariants** — every declared invariant (§11) holds; violations name the claims; an amended invariant emits its migration worklist.
 
@@ -468,7 +469,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 Beyond record existence, validation MUST — once per claim edit, and on demand — verify the evidence *content*:
 
 1. **Anchor resolution**: every span parameter resolves against the cited record (the segment address exists; the page/region/time-range is within bounds).
-2. **Quote verification**: every `quote` is found verbatim (modulo whitespace normalization) within the content the URI resolves to.
+2. **Quote verification**: every `quote` is found verbatim (modulo whitespace and presentational-markup normalization — inline markers such as `<u>…</u>` vanish before matching, so a quote cites the *rendered* text and never truncates around markup) within the content the URI resolves to. The citable content includes normalizer-written prose the record carries beside segment bodies — embed descriptions, section entries, title/description frontmatter — with the evidence discipline that a quote of *derived* prose (an image's description is the normalizer's reading, not the artifact's bytes) rides `kind: incidental`, never `direct` or `authoritative`.
 3. **Snapshot binding**: an evidence entry records the cited record's normalization state (its latest `touch` identity) at verification time — for `ref://` evidence, the dataset's mirror snapshot version (§6.5) — so a later re-normalization or mirror update flags the evidence for re-verification instead of silently rotting.
 
 A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.

@@ -173,8 +173,13 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
             add(seg.address, *block_texts(seg))
     try:
         for embed in records.iter_embed_blocks(post):
-            add(embed.get("address"), str(embed.get("description") or ""),
-                str(embed.get("title") or ""))
+            # embed extras (description, title) ride under `fields` in the
+            # parsed block — read both homes, or descriptions silently vanish
+            # from the citable text (the 2026-07-03 extraction pass hit this)
+            flds = embed.get("fields") if isinstance(embed.get("fields"), dict) else {}
+            add(embed.get("address"),
+                str(embed.get("description") or flds.get("description") or ""),
+                str(embed.get("title") or flds.get("title") or ""))
     except Exception:
         pass
     # frontmatter prose and origin-block field values are record content too —

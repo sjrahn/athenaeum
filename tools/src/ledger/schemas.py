@@ -14,7 +14,8 @@ import yaml
 
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
                "expectations"}
-FIELD_KEYS = {"target", "description", "expected", "values", "participant"}
+FIELD_KEYS = {"target", "description", "expected", "values", "participant",
+              "timeboxed"}
 EXPECTATION_KEYS = {"when", "expect", "description"}
 
 
@@ -70,6 +71,8 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
                 errors.append(f"{where}: field {fname!r} values must be a list of strings")
             if not isinstance(fspec.get("participant", False), bool):
                 errors.append(f"{where}: field {fname!r} participant must be a bool")
+            if not isinstance(fspec.get("timeboxed", False), bool):
+                errors.append(f"{where}: field {fname!r} timeboxed must be a bool")
         roles = data.get("roster_roles")
         if roles is not None and not (
             isinstance(roles, list) and all(isinstance(r, str) for r in roles)

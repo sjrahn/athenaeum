@@ -155,6 +155,7 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
 
     frontier: list[str] = []
     field_gaps: dict[tuple[str, str, str], list[str]] = {}
+    timebox_gaps: dict[tuple[str, str], list[str]] = {}
     live = [f for f in facts.values() if not is_redirect(f)]
     edges = [f for f in live if is_edge(f)]
     for fact in sorted(live, key=lambda f: str(f.get("id", ""))):
@@ -190,6 +191,17 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
                     field_gaps.setdefault(
                         (str(fact.get("type")), str(fieldname), label), [],
                     ).append(str(fact.get("id")))
+        # `timeboxed: true` fields owe every claim a `period` — an attested
+        # residence/employment episode without a timespan is half a fact; the
+        # gap is a chase (frontier), never an error (§4.4)
+        timeboxed = {name for name, spec in (schema.get("fields") or {}).items()
+                     if isinstance(spec, dict) and spec.get("timeboxed")}
+        for c in claims:
+            if (isinstance(c, dict) and str(c.get("predicate")) in timeboxed
+                    and not c.get("period")):
+                timebox_gaps.setdefault(
+                    (str(fact.get("type")), str(c.get("predicate"))), [],
+                ).append(str(c.get("id") or fact.get("id")))
     # schema gaps aggregate per (type, field, expectation) — an owed field most
     # facts lack is one worklist line with examples, never a flood
     for (t, fieldname, label), fids in sorted(field_gaps.items()):
@@ -201,6 +213,14 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
             sample = ", ".join(f"`{i}`" for i in fids[:3])
             frontier.append(f"- `{t}.{fieldname}`{tag} not yet attested on {len(fids)} "
                             f"facts ({sample}, …)")
+    for (t, fieldname), cids in sorted(timebox_gaps.items()):
+        if len(cids) <= 5:
+            frontier.append(f"- `{t}.{fieldname}` claims missing their timebox "
+                            f"(`period`): " + ", ".join(f"`{i}`" for i in cids))
+        else:
+            sample = ", ".join(f"`{i}`" for i in cids[:3])
+            frontier.append(f"- `{t}.{fieldname}` claims missing their timebox "
+                            f"(`period`) on {len(cids)} claims ({sample}, …)")
     if frontier:
         lines += ["", "### Frontier (stubs + schema conformance)", "", *frontier]
     return "\n".join(lines)

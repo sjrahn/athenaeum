@@ -565,6 +565,42 @@ def test_expectations_frontier(system: Path) -> None:
     assert "date_of_birth" not in block
 
 
+def test_timeboxed_fields_frontier(system: Path) -> None:
+    """`timeboxed: true` (§4.4): every claim under the predicate owes a
+    `period` — an episode without a timespan is half a fact. The gap is a
+    chase on the frontier, never an error; `asof` alone does not satisfy it."""
+    from ledger.model import load_json_dir
+    from ledger.schemas import load_schemas
+    from ledger.views import render_worklist
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "person.yaml").write_text(
+        "type: person\ndescription: a person\n"
+        "fields:\n  residence: { timeboxed: true }\n  interest: {}\n"
+    )
+    _fact(system, "person", {"id": "kat", "type": "person", "name": "Kat",
+                             "claims": [
+                                 _claim("kat", "res-a", predicate="residence"),
+                                 _claim("kat", "res-b", predicate="residence",
+                                        period="2020/2022"),
+                                 _claim("kat", "hobby", predicate="interest"),
+                             ]})
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    schemas, errs = load_schemas(system / "ledger")
+    assert not errs
+    block = render_worklist(facts, {}, schemas)
+    assert ("`person.residence` claims missing their timebox (`period`): "
+            "`kat:res-a`") in block
+    assert "kat:res-b" not in block       # a period satisfies the timebox
+    assert "kat:hobby" not in block       # unmarked fields owe nothing
+    # shape: timeboxed must be a bool
+    (system / "ledger" / "schemas" / "person.yaml").write_text(
+        "type: person\ndescription: a person\n"
+        "fields:\n  residence: { timeboxed: sometimes }\n"
+    )
+    _, errs = load_schemas(system / "ledger")
+    assert any("timeboxed must be a bool" in e for e in errs)
+
+
 # ------------------------------------------------------------------ invariants
 
 

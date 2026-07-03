@@ -164,6 +164,49 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
     assert fact2["claims"][0]["evidence"][0]["verified"]["at"] == "2026-07-02"
 
 
+def test_verify_embed_descriptions_and_inline_markup(system: Path) -> None:
+    """Embed descriptions are citable record content (§13.2) — the parsed
+    block carries them under `fields`, and verification must read that home
+    (the 2026-07-03 extraction pass found them silently invisible). Inline
+    presentational markup (`<u>…</u>`) vanishes at normalization, so a quote
+    cites the rendered text straight through it."""
+    h4 = "4" * 64
+    p = system / "corpora" / "corpus-private" / "records" / h4[:2] / f"{h4}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"---\nid: {h4}\ntitle: ''\nstatus: normalized\n"
+        "touch:\n- corpus.ingest@0.1.0\n- corpus.compile@0.1.0\n---\n\n"
+        "<!--artifact text/html\n-->\n\n"
+        "<!--origin imessage-export\nsnapshot: '2026-07-01T00:00:00Z'\n"
+        "period: 2025-05\nhandle: '+14035551234'\n-->\n\n"
+        f"<!--embed image/jpeg\naddress: el=2\ntransport: blake3:{'a' * 64}\n"
+        "description: a cat with pricked ears sits watching the screen\n-->\n\n"
+        "<!--segment text/message\naddress: el=1\nsender: Me\n-->\n"
+        "the wedding is <u>Oct 26th</u> in revy\n<!--/segment-->\n",
+        encoding="utf-8",
+    )
+    ledger = system / "ledger"
+    (ledger / "facts" / "person").mkdir()
+    (ledger / "facts" / "person" / "kat.json").write_text(json.dumps({
+        "id": "kat", "type": "person", "name": "Kat",
+        "claims": [
+            {"id": "kat:cat", "predicate": "possession", "value": "a cat",
+             "status": "provisional", "asof": "2025-05-31",
+             "evidence": [{"uri": f"corpus://{h4}?el=2",
+                           "quote": "a cat with pricked ears", "kind": "incidental"}]},
+            {"id": "kat:wedding", "predicate": "description", "value": "x",
+             "status": "provisional", "asof": "2025-05-31",
+             "evidence": [{"uri": f"corpus://{h4}?el=1",
+                           "quote": "the wedding is Oct 26th in revy",
+                           "kind": "direct"}]},
+        ],
+    }))
+    join = CorpusJoin(_corpora(system))
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 2
+    assert not res.errors and not res.warnings
+
+
 def test_promote_and_stamp(system: Path) -> None:
     ledger = system / "ledger"
     (ledger / "facts" / "person").mkdir()
