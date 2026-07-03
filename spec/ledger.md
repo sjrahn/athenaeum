@@ -151,9 +151,9 @@ A claim cluster not owned by a single concept — an event, an episode, a compar
 
 A file is an edge when it carries `subject` and/or `participants`; otherwise it is a concept. Long time-series and episodic clusters belong in edges.
 
-### 4.4 Concept schemas — `schemas/{type}.yaml`
+### 4.4 Schemas — `schemas/{type}.yaml`
 
-A concept schema is the declared shape of a concept type — the 1.0 composite schemas reborn at the layer that owns meaning (ATH-CORPUS 2.0):
+A schema is the declared shape of a fact type — a concept type or an edge type — the 1.0 composite schemas reborn at the layer that owns meaning (ATH-CORPUS 2.0):
 
 ```yaml
 type: song
@@ -165,10 +165,38 @@ fields:                          # the type's registered predicates
 roster_roles: [tablature-of, performance-of, interview]
 ```
 
+An edge type's schema may additionally declare its span, and a field may carry an enumerated value vocabulary — the pattern that keeps a tie's *kind* as data instead of a predicate taxonomy:
+
+```yaml
+type: relationship
+description: A person↔person tie. The tie's kind is data, never new schema fields.
+participants: [person, person]   # positional — participant i must resolve to type i
+fields:
+  kind:
+    values: [friend, sibling, father-of, care-provider-of]  # enumerated value vocabulary
+    target: person
+    participant: true            # the object, when present, must be a participant
+  interaction: {}
+```
+
+Any type's schema may declare **expectations** — conditional owed-ness, the declared half of gap-finding (§7.4):
+
+```yaml
+# on schemas/person.yaml — owed only for facts the `when` selects:
+expectations:
+  - description: close family of steven-rahn — identity coordinates are chase-worthy
+    when: { relationship: { kind: [sibling, father-of, mother-of], with: steven-rahn } }
+    expect: [date_of_birth, phone, email]
+# on schemas/employment.yaml — no `when`: owed on every fact of the type:
+expectations:
+  - description: every employment episode is timeboxed
+    expect: [period]             # the reserved name `period` is the fact's own timebox
+```
+
 Semantics:
 
-- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), an unregistered roster role.
-- **Stubs stay valid.** A concept missing a schema field marked `expected: true` is *frontier*, not failure — conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most people are nobody's `father_of`). A type with no schema is equally legal: schemas are earned structure, not a gate.
+- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
+- **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
 
 ## 5. Claims
@@ -328,7 +356,7 @@ A `correction` challenging an existing claim names it in **`challenges`** — th
 
 ### 7.4 Generated work-lists
 
-`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and schema-conformance frontier (§4.2, §4.4); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
+`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and schema-conformance frontier — owed fields and unmet expectations (§4.2, §4.4); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
 
 ## 8. Vocabulary
 
@@ -337,7 +365,7 @@ Every predicate, qualifier key, concept type, edge type, and roster role in use 
 - Reuse before minting; a new term lands as a visible diff, never a silent addition.
 - Vocabulary grows organically — minted when real evidence needs it, never pre-built. The one sanctioned pre-built form is a **declared import**: an adopted domain bundle's vocabulary (§10, the domain-package seam) enters `VOCAB.md` marked as imported — adoption is itself the evidence of need.
 - **Retired vocabulary** stays listed with its reason; using a retired term is a validation error.
-- Per-type conventions (e.g. an applicability discipline for vehicle-variant claims) live in `facts/SCHEMA.md` beside the vocabulary they govern; shapes that harden graduate into concept schemas (§4.4).
+- Per-type conventions (e.g. an applicability discipline for vehicle-variant claims) live in `facts/SCHEMA.md` beside the vocabulary they govern; shapes that harden graduate into schemas (§4.4).
 
 ## 9. Coverage
 
@@ -429,7 +457,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
-**Schemas** — declared concept schemas (§4.4) hold: relational fields target the declared type; roster roles are registered; conformance gaps land on the work-list as frontier, never as stub errors.
+**Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields and unmet expectations alike — land on the work-list as frontier, never as stub errors.
 
 **Invariants** — every declared invariant (§11) holds; violations name the claims; an amended invariant emits its migration worklist.
 

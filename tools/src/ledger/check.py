@@ -1,7 +1,7 @@
 """The validation core — `spec/ledger.md` §13.1, deterministic and read-only.
 
 Structure, graph, epistemics, evidence discipline, derived sensitivity,
-concept-schema conformance, invariants, and generated-view currency. Evidence
+schema conformance, invariants, and generated-view currency. Evidence
 *content* verification (§13.2 — anchors, quotes, snapshot binding) is a
 separate, heavier pass layered on top of this one.
 
@@ -201,6 +201,21 @@ def run_check(
             for p in o.get("participants") or []:
                 if resolve_id(str(p)) is None:
                     rep.err(where, f"dangling participant {p!r}")
+            declared_parts = (schemas.get(str(o.get("type"))) or {}).get("participants")
+            if declared_parts:
+                parts = [str(p) for p in o.get("participants") or []]
+                if len(parts) != len(declared_parts):
+                    rep.err(where, f"schema: {o.get('type')} declares participants "
+                                   f"{declared_parts}, found {len(parts)}")
+                else:
+                    for i, (pid, want) in enumerate(zip(parts, declared_parts,
+                                                        strict=True)):
+                        resolved = resolve_id(pid)
+                        got = live_facts.get(resolved or "", {}).get("type")
+                        # dangling participants already errored above
+                        if got is not None and got != want:
+                            rep.err(where, f"schema: participants[{i}] {pid!r} is a "
+                                           f"{got!r}, declared {want!r}")
 
         for entry in o.get("artifacts") or []:
             if not isinstance(entry, dict):
@@ -293,15 +308,26 @@ def run_check(
         if "asof" not in c and "period" not in c:
             rep.warn(where, "no asof or period (when was this observed/true?)")
 
+        fspec = ((schemas.get(str(o.get("type"))) or {}).get("fields") or {}).get(str(pred))
+        if not isinstance(fspec, dict):
+            fspec = {}
+        values = fspec.get("values")
+        if values is not None and c.get("value") is not None \
+                and str(c.get("value")) not in values:
+            rep.err(where, f"schema: {o.get('type')}.{pred} value {c.get('value')!r} "
+                           f"not among declared values {values}")
         obj = c.get("object")
+        if fspec.get("participant") and obj is not None:
+            parts = [str(p) for p in o.get("participants") or []]
+            if str(obj) not in parts:
+                rep.err(where, f"schema: {o.get('type')}.{pred} object must be one of "
+                               f"the edge's participants {parts} (got {obj!r})")
         if obj is not None:
             target = resolve_id(str(obj))
             if target is None:
                 rep.err(where, f"dangling object {obj!r}")
             else:
-                schema = schemas.get(str(o.get("type")))
-                fspec = ((schema or {}).get("fields") or {}).get(str(pred)) or {}
-                want = fspec.get("target") if isinstance(fspec, dict) else None
+                want = fspec.get("target")
                 got = live_facts.get(target, {}).get("type")
                 admissible = want if isinstance(want, list) else [want] if want else []
                 if admissible and got not in admissible:

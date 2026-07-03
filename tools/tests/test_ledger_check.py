@@ -445,6 +445,126 @@ def test_frontier_aggregates_per_field(system: Path) -> None:
     assert "covered_by" not in block  # admissible, not owed — no frontier
 
 
+def test_edge_schema_participants(system: Path) -> None:
+    """An edge schema's `participants` is positional: count and per-slot type
+    are validated; a type mismatch or count divergence is mis-shape (§4.4)."""
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "relationship.yaml").write_text(
+        "type: relationship\ndescription: a person-person tie\n"
+        "participants: [person, person]\n"
+        "fields:\n  kind: { values: [friend, sibling] }\n"
+    )
+    for pid in ("a", "b"):
+        _fact(system, "person", {"id": pid, "type": "person", "name": pid.upper(),
+                                 "claims": [_claim(pid, "email", predicate="email")]})
+    _fact(system, "organization", {"id": "org", "type": "organization", "name": "O",
+                                   "claims": [_claim("org", "d", predicate="description")]})
+    _fact(system, "relationship", {
+        "id": "a--b", "type": "relationship", "participants": ["a", "b"],
+        "claims": [_claim("a--b", "kind", predicate="kind", value="friend")],
+    })
+    _fact(system, "relationship", {
+        "id": "a--org", "type": "relationship", "participants": ["a", "org"],
+        "claims": [_claim("a--org", "kind", predicate="kind", value="friend")],
+    })
+    _fact(system, "relationship", {
+        "id": "solo", "type": "relationship", "participants": ["a"],
+        "claims": [_claim("solo", "kind", predicate="kind", value="friend")],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert not any("a--b.json" in e for e in rep.errors)
+    assert "participants[1] 'org' is a 'organization', declared 'person'" in msgs
+    assert "declares participants ['person', 'person'], found 1" in msgs
+
+
+def test_schema_values_and_participant_flag(system: Path) -> None:
+    """A field's `values` is an enumerated value vocabulary; `participant: true`
+    pins a directed kind's object to the edge's own participants (§4.4)."""
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "relationship.yaml").write_text(
+        "type: relationship\ndescription: a person-person tie\n"
+        "fields:\n"
+        "  kind: { values: [friend, father-of], target: person, participant: true }\n"
+    )
+    for pid in ("a", "b", "c"):
+        _fact(system, "person", {"id": pid, "type": "person", "name": pid.upper(),
+                                 "claims": [_claim(pid, "email", predicate="email")]})
+    _fact(system, "relationship", {
+        "id": "a--b", "type": "relationship", "participants": ["a", "b"],
+        "claims": [_claim("a--b", "kind", predicate="kind", value="father-of",
+                          object="b")],
+    })
+    _fact(system, "relationship", {
+        "id": "b--c", "type": "relationship", "participants": ["b", "c"],
+        "claims": [
+            _claim("b--c", "kind", predicate="kind", value="nemesis"),
+            _claim("b--c", "kind-2", predicate="kind", value="father-of", object="a"),
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert not any("a--b.json" in e for e in rep.errors)
+    assert "value 'nemesis' not among declared values" in msgs
+    assert "object must be one of the edge's participants ['b', 'c'] (got 'a')" in msgs
+
+
+def test_expectations_frontier(system: Path) -> None:
+    """Conditional owed-ness (§4.4): an `expectations` entry owes its fields
+    only on the facts its `when` selects — and never on the `with:` fact
+    itself. The reserved name `period` owes the fact's own timebox, which
+    puts edges on the frontier too."""
+    from ledger.model import load_json_dir
+    from ledger.schemas import load_schemas
+    from ledger.views import render_worklist
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "person.yaml").write_text(
+        "type: person\ndescription: a person\n"
+        "fields:\n  date_of_birth: {}\n"
+        "expectations:\n"
+        "  - description: family birthdays are chase-worthy\n"
+        "    when: { relationship: { kind: [sibling], with: steven } }\n"
+        "    expect: [date_of_birth]\n"
+    )
+    (system / "ledger" / "schemas" / "employment.yaml").write_text(
+        "type: employment\ndescription: an employment episode\n"
+        "expectations:\n"
+        "  - description: every episode is timeboxed\n"
+        "    expect: [period]\n"
+    )
+    for pid in ("steven", "kat", "stranger"):
+        _fact(system, "person", {"id": pid, "type": "person", "name": pid.title(),
+                                 "claims": [_claim(pid, "email", predicate="email")]})
+    _fact(system, "organization", {"id": "acme", "type": "organization", "name": "Acme",
+                                   "claims": [_claim("acme", "d", predicate="description")]})
+    _fact(system, "relationship", {
+        "id": "steven--kat", "type": "relationship", "participants": ["steven", "kat"],
+        "claims": [_claim("steven--kat", "kind", predicate="kind", value="sibling")],
+    })
+    _fact(system, "employment", {
+        "id": "steven--acme", "type": "employment", "participants": ["steven", "acme"],
+        "claims": [_claim("steven--acme", "role", predicate="employed_by",
+                          object="acme")],
+    })
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    schemas, _ = load_schemas(system / "ledger")
+    block = render_worklist(facts, {}, schemas)
+    assert ("`person.date_of_birth` — family birthdays are chase-worthy — "
+            "not yet attested: `kat`") in block
+    # steven (named by with:) and stranger (not family) are never owed
+    assert "`steven`" not in block
+    assert "`stranger`" not in block
+    # the employment edge has no period → frontier via the reserved name
+    assert "`employment.period`" in block and "`steven--acme`" in block
+    # attesting the owed field clears the gap
+    _fact(system, "person", {"id": "kat", "type": "person", "name": "Kat",
+                             "claims": [_claim("kat", "dob", predicate="date_of_birth",
+                                               value="1990-01-01")]})
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    block = render_worklist(facts, {}, schemas)
+    assert "date_of_birth" not in block
+
+
 # ------------------------------------------------------------------ invariants
 
 

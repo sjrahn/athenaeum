@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 from ledger.model import CORPUS_REF_RE, is_edge, is_redirect
+from ledger.schemas import expectation_selects
 
 VOCAB_PATH = "facts/VOCAB.md"
 OPENQ_PATH = "open-questions.md"
@@ -153,39 +154,70 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
         lines = ["*(no open interpretations)*"]
 
     frontier: list[str] = []
-    field_gaps: dict[tuple[str, str], list[str]] = {}
-    for fact in sorted(facts.values(), key=lambda f: str(f.get("id", ""))):
-        if is_redirect(fact) or is_edge(fact):
-            continue
+    field_gaps: dict[tuple[str, str, str], list[str]] = {}
+    live = [f for f in facts.values() if not is_redirect(f)]
+    edges = [f for f in live if is_edge(f)]
+    for fact in sorted(live, key=lambda f: str(f.get("id", ""))):
         claims = fact.get("claims") or []
         roster = fact.get("artifacts") or []
-        if not claims and not roster:
+        if not is_edge(fact) and not claims and not roster:
             frontier.append(f"- stub `{fact.get('id')}` ({fact.get('type')}) — no claims, "
                             "no roster")
             continue
         schema = schemas.get(str(fact.get("type")))
-        if schema:
-            # only `expected: true` fields are owed — unmarked fields register
-            # vocabulary and validate targets, their absence means nothing
-            owed = {name for name, spec in (schema.get("fields") or {}).items()
-                    if isinstance(spec, dict) and spec.get("expected")}
-            carried = {str(c.get("predicate")) for c in claims if isinstance(c, dict)}
-            for fieldname in sorted(owed - carried):
+        if not schema:
+            continue
+        carried = {str(c.get("predicate")) for c in claims if isinstance(c, dict)}
+
+        def met(name: str, fact: dict = fact, carried: set[str] = carried) -> bool:
+            # the reserved name `period` is the fact's own timebox (§4.4)
+            return bool(fact.get("period")) if name == "period" else name in carried
+
+        # only `expected: true` fields are owed unconditionally — unmarked fields
+        # register vocabulary and validate targets, their absence means nothing
+        owed = {name for name, spec in (schema.get("fields") or {}).items()
+                if isinstance(spec, dict) and spec.get("expected")}
+        for fieldname in sorted(owed):
+            if not met(fieldname):
                 field_gaps.setdefault(
-                    (str(fact.get("type")), fieldname), []).append(str(fact.get("id")))
-    # schema gaps aggregate per (type, field) — an expected field most facts
-    # lack is one worklist line with examples, never a flood
-    for (t, fieldname), fids in sorted(field_gaps.items()):
+                    (str(fact.get("type")), fieldname, ""), []).append(str(fact.get("id")))
+        for exp in schema.get("expectations") or []:
+            if not isinstance(exp, dict) or not expectation_selects(exp, fact, edges):
+                continue
+            label = str(exp.get("description") or _when_label(exp.get("when")))
+            for fieldname in exp.get("expect") or []:
+                if not met(str(fieldname)):
+                    field_gaps.setdefault(
+                        (str(fact.get("type")), str(fieldname), label), [],
+                    ).append(str(fact.get("id")))
+    # schema gaps aggregate per (type, field, expectation) — an owed field most
+    # facts lack is one worklist line with examples, never a flood
+    for (t, fieldname, label), fids in sorted(field_gaps.items()):
+        tag = f" — {label} —" if label else ""
         if len(fids) <= 5:
-            frontier.append(f"- `{t}.{fieldname}` not yet attested: "
+            frontier.append(f"- `{t}.{fieldname}`{tag} not yet attested: "
                             + ", ".join(f"`{i}`" for i in fids))
         else:
             sample = ", ".join(f"`{i}`" for i in fids[:3])
-            frontier.append(f"- `{t}.{fieldname}` not yet attested on {len(fids)} "
+            frontier.append(f"- `{t}.{fieldname}`{tag} not yet attested on {len(fids)} "
                             f"facts ({sample}, …)")
     if frontier:
         lines += ["", "### Frontier (stubs + schema conformance)", "", *frontier]
     return "\n".join(lines)
+
+
+def _when_label(when: object) -> str:
+    """A compact rendering of an expectation's selector, for unlabeled gaps."""
+    if not isinstance(when, dict) or not when:
+        return "expected"
+    (etype, sel), = when.items()
+    bits = [str(etype)]
+    if isinstance(sel, dict):
+        if sel.get("kind"):
+            bits.append("kind " + "/".join(str(k) for k in sel["kind"]))
+        if sel.get("with"):
+            bits.append(f"with {sel['with']}")
+    return " ".join(bits)
 
 
 def fresh_openq(ledger_root: Path, facts: dict[Path, dict], interps: dict[Path, dict],
