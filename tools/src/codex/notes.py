@@ -136,7 +136,8 @@ def generate(
         footnotes: list[str] = []
         embeds: list[str] = []
 
-        def cite(evidence: list) -> str:
+        def cite(evidence: list, notes: list[str] = footnotes,
+                 gallery: list[str] = embeds) -> str:
             nonlocal notes_idx
             marks = []
             for e in evidence or []:
@@ -146,12 +147,12 @@ def generate(
                 marks.append(f"[^{notes_idx}]")
                 quote = f' — "{e["quote"]}"' if e.get("quote") else ""
                 uri = str(e.get("uri", ""))
-                footnotes.append(f"[^{notes_idx}]: `{uri}` "
-                                 f"({e.get('kind', '?')}){quote}")
+                notes.append(f"[^{notes_idx}]: `{uri}` "
+                             f"({e.get('kind', '?')}){quote}")
                 # a visual anchor (a PDF page, a video frame, a region) embeds —
                 # the build rasters it through the corpus resolver
                 if any(f"{p}=" in uri for p in ("page", "bbox", "frame")):
-                    embeds.append(f"![[{uri}|evidence [{notes_idx}]]]")
+                    gallery.append(f"![[{uri}|evidence [{notes_idx}]]]")
             return "".join(marks)
 
         claims = [c for c in fact.get("claims") or [] if isinstance(c, dict)]
@@ -207,6 +208,6 @@ def generate(
             lines.append("")
 
         if footnotes:
-            lines += footnotes + [""]
+            lines += [*footnotes, ""]
         out[f"{fact.get('type')}/{fid}.md"] = "\n".join(lines)
     return out
