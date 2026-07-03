@@ -103,7 +103,7 @@ Fact files are **concepts** — durable real-world nouns (§4.2) — and **edges
 
 ### 4.1 Identity
 
-Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(-[a-z0-9]+)*`): human-meaningful, wikilink-friendly, stable. The id is the filename stem; a fact's `type` is its parent directory name; both equalities are validated. Ids MUST be unique across the ledger's facts *and* interpretations together.
+Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(--?[a-z0-9]+)*`): human-meaningful, wikilink-friendly, stable. A double hyphen conventionally separates the two sides of a pair edge id (`steven-rahn--greg-rahn`). The id is the filename stem; a fact's `type` is its parent directory name; both equalities are validated. Ids MUST be unique across the ledger's facts *and* interpretations together.
 
 **Identity is real-world identity.** A concept id names the thing, not any record of it. When identity is established mechanically it comes from **origin-native keys** — a source's own stable identifiers exposed in origin facts (§10) — so re-captures and mirrors of the same thing converge on the same concept rather than minting shadows.
 
