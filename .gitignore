@@ -1,5 +1,6 @@
 # Member repos — independent git repos managed via athenaeum.yaml, never tracked here
 corpora/
+ledger/
 codices/
 
 # macOS Finder metadata

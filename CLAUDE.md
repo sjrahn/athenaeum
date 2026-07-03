@@ -10,27 +10,28 @@ While `REFORGE.md` exists at the root, it is the active restructuring plan — r
 
 ## What this repo is
 
-**`athenaeum/athenaeum`** — the orchestrator repo of the Athenaeum system: the system's definition (specs), its shared tooling (the corpus library/CLI, and the `ath` umbrella + codex package as they land), and its driver (the orchestrator persona). Every other part of the system is an independent member repo in the same Forgejo org (`code.example.org/athenaeum`), cloned beneath this working tree at gitignored paths.
+**`athenaeum/athenaeum`** — the orchestrator repo of the Athenaeum system: the system's definition (specs), its shared tooling (the corpus library/CLI, the `ath` umbrella, and the ledger + codex packages as they land), and its driver (the orchestrator persona). Every other part of the system is an independent member repo in the same Forgejo org (`code.example.org/athenaeum`), cloned beneath this working tree at gitignored paths.
 
 ```
 athenaeum/                    ← this repo's working tree (the workspace root)
 ├── CLAUDE.md                 ← you are here
 ├── REFORGE.md                ← active restructuring plan (self-deletes when it graduates)
 ├── athenaeum.yaml            ← the member manifest — the registry `ath` reads
-├── spec/                     ← the specs: athenaeum.md (ATH-ARCH) · corpus.md (ATH-CORPUS) · codex.md (ATH-CODEX)
+├── spec/                     ← the specs: athenaeum.md (ATH-ARCH) · corpus.md (ATH-CORPUS) · ledger.md (ATH-LEDGER) · codex.md (ATH-CODEX)
 ├── tools/                    ← the `athenaeum` distribution: `ath` + `corpus` CLIs (Python 3.12, uv)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs
 │   ├── corpus/               ←   public/world captures (has the /curator skill)
 │   └── corpus-private/       ←   personal captures (no persona by design)
-└── codices/                  ← UNTRACKED member clones — domain expert repos
-    ├── codex-general/  codex-pontiac-g8/  codex-steven/   (facts/claims/evidence model)
+├── ledger/                   ← UNTRACKED member clone — the knowledge layer (one repo)
+└── codices/                  ← UNTRACKED member clones — targeted compilations
+    ├── codex-general/  codex-pontiac-g8/  codex-steven/   (migrating into the ledger, reforge 5c)
     └── codex-homelab/                                      (pre-pattern; migration pending)
 ```
 
 ## The system in one paragraph
 
-The **corpus** layer is the foundation: content-addressed archives of captured artifacts (blake3 identity, faithful normalized markdown records, `stub → draft → normalized` lifecycle), specified by the corpus spec in `spec/`. Two hubs enforce tenant isolation as a *repo boundary*: public and private content never mix. The **codex** layer sits above: domain repos whose fact graphs cite corpus records downward via `corpus://` URIs with span-level evidence. The **orchestrator** (this repo) defines the contracts, ships the tooling, and drives the whole.
+The **corpus** layer is the foundation: content-addressed archives of captured artifacts (blake3 identity, faithful normalized markdown records, `stub → draft → normalized` lifecycle), specified by the corpus spec in `spec/`. Two hubs enforce tenant isolation as a *repo boundary*: public and private content never mix. The **ledger** layer is the knowledge: one repo of concepts — materialized real-world things — carrying typed claims in which every claim cites evidence downward (`corpus://` URIs resolved by blake3 across the corpora, span-precise; `ref://` into mirrored reference datasets), with privacy as *derived sensitivity*, never a partition. The **codex** layer is the expertise: targetings of ledger facts that compile to prose deliverables, where the public-profile leak check is the tenancy wall. The **orchestrator** (this repo) defines the contracts, ships the tooling, and drives the whole.
 
 ## Common commands
 

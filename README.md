@@ -4,8 +4,8 @@ A knowledge normalization and curation system: capture any artifact, normalize i
 
 This repo — **`athenaeum/athenaeum`** — is the system's definition and driver:
 
-- **`spec/`** — the specifications (system architecture, the corpus contract, the codex contract).
-- **`athenaeum.yaml`** — the member manifest: the single registry of the system's corpora and codices.
+- **`spec/`** — the specifications (system architecture, the corpus contract, the ledger contract, the codex contract).
+- **`athenaeum.yaml`** — the member manifest: the single registry of the system's corpora, ledger, codices, and reference-dataset mirrors.
 - **`tools/`** — the `athenaeum` distribution, shipping two CLIs: `ath` (the orchestrator umbrella — member sync/status against the manifest, corpus delegation) and `corpus` (the corpus pipeline: capture → ingest → draft → normalize, the functional `corpus://` URI resolver, schemas, lint, health).
 - **`.claude/skills/orchestrator/`** — the resident principal-developer persona and its institutional memory.
 
@@ -23,8 +23,9 @@ The member repos live in the same Forgejo org and are cloned beneath this tree (
 |---|---|---|
 | `corpus` | corpus (public hub) | world artifacts — web, PDF, video, reference databases |
 | `corpus-private` | corpus (private hub) | personal artifacts — messages, documents, records |
-| `codex-*` | codex | domain fact graphs citing the corpora as evidence |
+| `ledger` | ledger | the fact substrate — concepts and claims citing the corpora as evidence |
+| `codex-*` | codex | targeted compilations of ledger facts into prose deliverables |
 
-The two layers: a **corpus** is a content-addressed archive of immutable artifacts with faithful markdown proxies (the truth layer); a **codex** is a domain repo whose facts carry claim-level evidence chains into the corpora (the knowledge layer). Tenant isolation is a repo boundary — public and private corpora never mix.
+The three data layers: a **corpus** is a content-addressed archive of immutable artifacts with faithful markdown proxies (the bytes); the **ledger** is the single fact substrate — concepts carrying evidence-backed claims, privacy as derived sensitivity (the knowledge); a **codex** is a targeting of ledger facts that compiles to prose (the expertise). Tenant isolation is a repo boundary where sharing lives — public and private corpora never mix, and the codex build's leak check walls what publishes.
 
 `REFORGE.md`, while present, tracks the 2026-07 restructuring that gave the system this shape.

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from ath._cli import main
-from ath.manifest import ManifestError, find_root, load
+from ath.manifest import ManifestError, find_root, load, load_references
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -17,9 +17,9 @@ def _git(cwd: Path, *args: str) -> None:
 
 @pytest.fixture()
 def system(tmp_path: Path) -> Path:
-    """A miniature system: two bare 'remotes' + an orchestrator root with a manifest."""
+    """A miniature system: three bare 'remotes' + an orchestrator root with a manifest."""
     remotes = tmp_path / "remotes"
-    for name in ("corpus", "codex-demo"):
+    for name in ("corpus", "ledger", "codex-demo"):
         bare = remotes / f"{name}.git"
         bare.mkdir(parents=True)
         _git(bare, "init", "--bare", "--initial-branch=main", ".")
@@ -40,6 +40,9 @@ def system(tmp_path: Path) -> Path:
         "corpora:\n"
         "  corpus:\n"
         "    description: test hub\n"
+        "ledger:\n"
+        "  ledger:\n"
+        "    description: test ledger\n"
         "codices:\n"
         "  codex-demo:\n"
     )
@@ -50,13 +53,42 @@ def test_manifest_defaults(system: Path) -> None:
     members = load(system)
     assert [(m.name, m.layer) for m in members] == [
         ("corpus", "corpora"),
+        ("ledger", "ledger"),
         ("codex-demo", "codices"),
     ]
-    corpus, demo = members
+    corpus, ledger, demo = members
     assert corpus.path == system / "corpora" / "corpus"
     assert corpus.remote.endswith("/remotes/corpus.git")
     assert corpus.description == "test hub"
+    assert ledger.path == system / "ledger"  # the ledger sits at the workspace root
     assert demo.path == system / "codices" / "codex-demo"
+
+
+def test_manifest_exactly_one_ledger(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(
+        "org: https://x\nledger:\n  ledger:\n  ledger-two:\n"
+    )
+    with pytest.raises(ManifestError, match="exactly one ledger"):
+        load(tmp_path)
+
+
+def test_manifest_references(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(
+        "org: https://x\n"
+        "references:\n"
+        "  wikipedia:\n"
+        "    description: English Wikipedia, ZIM mirror\n"
+        "    mirror: /mirrors/wikipedia.zim\n"
+        "    snapshot: '2026-06'\n"
+    )
+    (ref,) = load_references(tmp_path)
+    assert ref.dataset == "wikipedia"
+    assert ref.mirror == "/mirrors/wikipedia.zim"
+    assert ref.snapshot == "2026-06"
+    (tmp_path / "athenaeum.yaml").write_text("org: https://x\nreferences: {}\n")
+    assert load_references(tmp_path) == []
+    (tmp_path / "athenaeum.yaml").write_text("org: https://x\n")
+    assert load_references(tmp_path) == []
 
 
 def test_manifest_overrides_and_errors(tmp_path: Path) -> None:
@@ -112,7 +144,7 @@ def test_status_missing_then_clean(system: Path, capsys: pytest.CaptureFixture[s
     # the orchestrator root itself is not a git repo in this fixture → MISSING row
     assert main(["status", "--root", str(system)]) == 1
     out = capsys.readouterr().out
-    assert out.count("MISSING") == 3  # root + 2 members
+    assert out.count("MISSING") == 4  # root + 3 members
     _git(system, "init", "--initial-branch=main", ".")
     assert main(["sync", "--root", str(system)]) == 0
     capsys.readouterr()
