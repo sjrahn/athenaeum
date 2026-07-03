@@ -20,7 +20,7 @@ The system has three data layers and one driver:
 
 - **The corpus layer is the foundation — the bytes.** A corpus is a content-addressed archive of captured artifacts, each identified by the blake3 hash of its bytes and represented by a faithful markdown record. Corpora are the unit of tenant isolation. The corpus contract is **`spec/corpus.md`** (ATH-CORPUS).
 
-- **The ledger layer is the knowledge — the claims.** The ledger is the tenant-partitioned fact substrate: typed claims in which every claim carries `corpus://` evidence, with an epistemic status ladder, plus the pre-assertion workspace (interpretations) beside them. Knowledge is authored once, here. The ledger contract is **`spec/ledger.md`** (ATH-LEDGER).
+- **The ledger layer is the knowledge — the claims.** The ledger is the single fact substrate: **concepts** (materialized real-world things) and edges carrying typed claims in which every claim carries `corpus://`/`ref://` evidence, with an epistemic status ladder, plus the pre-assertion workspace (interpretations) beside them. Knowledge is authored once, here; privacy is derived sensitivity, not a partition. The ledger contract is **`spec/ledger.md`** (ATH-LEDGER).
 
 - **The codex layer is the expertise — the compendiums.** A codex is a targeting of ledger facts that compiles to prose: a scope, an editorial voice, a generated Obsidian vault, and a published deliverable with every reference resolved. Codices own no knowledge and are cheap to mint. The codex contract is **`spec/codex.md`** (ATH-CODEX).
 
@@ -29,10 +29,10 @@ The system has three data layers and one driver:
 ### 1.2 Design principles
 
 1. **Layered foundation.** The corpus depends on nothing; the ledger depends on the corpora; a codex depends on the ledger. Each layer knows nothing of the layers above it. References point downward only.
-2. **Tenant isolation is a repo boundary — at every layer.** Public and private corpora are separate repositories with mutually exclusive content, and the ledger layer partitions the same way (`ledger`, `ledger-private`). No tooling, schema, or convention may blur tenants; visibility and access control operate at the repository, which is why the boundary is one.
+2. **Tenant isolation is a repo boundary where sharing lives.** Public and private corpora are separate repositories with mutually exclusive content — corpora are shareable artifacts, so their wall is physical. The ledger above them is deliberately **one repository** (the system's intermediate representation, never itself shared); privacy there is *derived sensitivity* on claims (`spec/ledger.md` §6.4), and becomes a hard boundary again exactly where content goes public: the codex build's leak check. No tooling, schema, or convention may blur tenants at the corpus layer or pass private-backed content through a public profile.
 3. **Content addressing.** An artifact's identity is the blake3 hash of its bytes — permanent, and identical in every corpus that holds those bytes.
 4. **Faithfulness below, interpretation above.** Corpus records are faithful renderings that add no information; interpretation lives in the ledger, where every interpretive move carries evidence and an epistemic status; editorial voice lives in the codices, where every sentence traces to a ledger fact.
-5. **Evidence is the contract between the layers.** A ledger claim cites `corpus://` URIs — optionally span-precise (`?el=`, `?page=`, `?time_range=`, `?bbox=`) — and the system's validation verifies those citations mechanically: anchors resolve, quotes match verbatim, re-normalized records flag their citers. Traceability is not a style; it is a checked invariant.
+5. **Evidence is the contract between the layers.** A ledger claim cites `corpus://` URIs — resolved by blake3 across the corpora, optionally span-precise (`?el=`, `?page=`, `?time_range=`, `?bbox=`) — or `ref://` citations into mirrored reference datasets, and the system's validation verifies those citations mechanically: anchors resolve, quotes match verbatim, re-normalized records and updated mirrors flag their citers. Traceability is not a style; it is a checked invariant.
 6. **Members are config-driven.** The manifest (§2.3) and each codex's `codex.yaml` are the only places membership and joins are declared. Shared tooling never hardcodes a member path or id; a third party points the same tooling at their own org, corpora, and codices.
 7. **Deterministic before LLM.** Every pipeline stage whose output is a function of its input is a script; every stage requiring judgment is an agent pass. The boundary is sharp so each stage's outputs are auditable and independently re-runnable.
 8. **Durable vs regenerable, everywhere.** Tracked content is durable and reviewed (records, facts, schemas, specs); derived content (caches, resolved views, notes, build outputs) is regenerable and disposable. The same inversion appears at every layer.
@@ -47,12 +47,14 @@ The system has three data layers and one driver:
 | **Member** | An independent git repository registered in the manifest: a corpus or a codex. Members live in the same forge org as the orchestrator repo. |
 | **Manifest** | `athenaeum.yaml` at the orchestrator root — the single registry of members and the runtime join the tooling reads (§2.3). |
 | **Corpus** | A content-addressed archive of artifacts with faithful markdown records; the unit of tenant isolation. Contract: `spec/corpus.md`. |
-| **Ledger (hub)** | The tenant-partitioned fact substrate: facts (asserted claims with evidence) + interpretations (the pre-assertion workspace). One hub per tenancy (`ledger`, `ledger-private`). Contract: `spec/ledger.md`. |
+| **Ledger** | The single fact substrate: concepts + edges holding asserted claims with evidence, plus interpretations (the pre-assertion workspace). One repository interpreting every corpus; privacy is derived sensitivity, walled at the codex build. Contract: `spec/ledger.md`. |
+| **Concept** | A materialized real-world thing in the ledger — typed, optionally schema-shaped; records are its evidence and artifact roster, never its identity (`spec/ledger.md` §4). |
 | **Codex** | A targeting of ledger facts that compiles to prose: scope + voice + generated vault + published deliverable. Owns no knowledge. Contract: `spec/codex.md`. |
 | **Artifact record** | One captured file's faithful markdown proxy in a corpus, named by the blake3 of its bytes. |
-| **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file holds typed claims; each claim carries evidence entries whose `corpus://` URIs ground it in captured bytes. |
-| **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved against a loaded corpus. Grammar: `spec/corpus.md` §6. |
-| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{hub}/{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
+| **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file (concept or edge) holds typed claims; each claim carries evidence entries whose `corpus://` / `ref://` URIs ground it in captured bytes or mirrored reference datasets. |
+| **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id + snapshot version via `ref://` (`spec/ledger.md` §6.5). |
+| **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 across the registered corpora. Grammar: `spec/corpus.md` §6. |
+| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
 | **Curator** | The corpus-resident operating persona (public hub): assess → prioritize → propose → execute → report, with capture and commits owner-gated. |
 | **Normalizer** | The interpretive agent pass that takes a record from mechanical `draft` to faithful `normalized`. |
 | **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope. |
@@ -76,9 +78,7 @@ athenaeum/                        ← working tree of athenaeum/athenaeum
 ├── corpora/                      ← members, UNTRACKED
 │   ├── corpus/                   ←   public hub (bytes)
 │   └── corpus-private/           ←   private hub (bytes)
-├── ledgers/                      ← members, UNTRACKED
-│   ├── ledger/                   ←   public hub (knowledge)
-│   └── ledger-private/           ←   private hub (knowledge)
+├── ledger/                       ← member, UNTRACKED — the knowledge layer (one repo, spec/ledger.md §1.2)
 └── codices/                      ← members, UNTRACKED
     └── codex-{name}/
 ```
@@ -97,16 +97,22 @@ corpora:
     description: …        # the member's role, one line
     path: …                # optional — default corpora/{name}
     remote: …              # optional — default {org}/{name}.git
-ledgers:
-  {name}:
+ledger:
+  {name}:                  # exactly one (spec/ledger.md §1.2)
     description: …
-    path: …                # optional — default ledgers/{name}
+    path: …                # optional — default {name}/ at the workspace root
     remote: …
 codices:
   {name}:
     description: …
     path: …                # optional — default codices/{name}
     remote: …
+
+references:                # reference datasets (spec/ledger.md §6.5) — mirrored databases, not git members
+  {dataset}:
+    description: …
+    mirror: …              # the local mirror source (a ZIM file, a dump, an extract)
+    snapshot: …            # the pinned snapshot version cited by evidence verification
 ```
 
 Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo and running `ath sync`.
@@ -114,15 +120,15 @@ Members are keyed by name; manifest order is presentation order. The manifest re
 ### 2.4 Reference directions
 
 ```
-ledger ──corpus://──▶ corpus           (downward: claim evidence, span-precise)
-ledger-private ──▶ ledger              (downward within the layer: private extends public)
-codex ──scope──▶ ledger hub(s)         (downward: targeting; notes derive from facts)
+ledger ──corpus://──▶ corpora          (downward: claim evidence, blake3-resolved, span-precise)
+ledger ──ref://──▶ reference mirrors   (downward: linked external databases, snapshot-pinned)
+codex ──scope──▶ ledger                (downward: targeting; notes derive from facts)
 consumers ──ledger://──▶ ledger        (external knowledge reads: agents, deliverables)
 corpus ──▶ (nothing)                   (the foundation references nothing above it)
 orchestrator ──manifest──▶ members     (operational, not a data reference)
 ```
 
-A corpus never references a ledger or codex; a ledger never references a codex; the public side of any layer never references the private side. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). Notes and other generated views are never citation targets. These directions are validated, not just conventional.
+A corpus never references a ledger or codex; a ledger never references a codex; within the corpus layer, the public hub never references the private one. The ledger cites both corpora — privacy there is derived claim sensitivity, and it becomes a wall at the codex build's public-profile leak check, never before. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). Notes and other generated views are never citation targets. These directions are validated, not just conventional.
 
 ## 3. The corpus layer
 
@@ -136,15 +142,15 @@ Everything in that paragraph — the record grammar, schema system, lifecycle, f
 
 ## 4. The ledger layer
 
-At architecture altitude: the **ledger** is the tenant-partitioned fact substrate — one hub per tenancy (`ledger` interprets the public corpus and is self-contained; `ledger-private` interprets the private corpus and may extend public entities, never the reverse). A **fact** is a typed entity or edge holding **claims**; every claim carries **evidence** (`corpus://` URIs, span-precise where verified) and a position on the epistemic status ladder, promoted in place as evidence accrues. Beside the facts sits the **pre-assertion workspace** — interpretations: identity guesses, working assessments, corrections/tombstones, and ingestion needs. The boundary is physical: everything in `facts/` is asserted; consumers never filter speculation out of knowledge.
+At architecture altitude: the **ledger** is the single fact substrate — one repository interpreting every registered corpus. There is deliberately no ledger-side tenant partition: the ledger is the system's intermediate representation, never itself published; privacy is **derived sensitivity** on claims (evidence resolving only in private corpora, or an asserted upward override) and becomes a wall at the codex build. A **fact** is a typed **concept** — a materialized real-world thing, for which records are evidence and artifact roster, never identity — or an **edge**, holding **claims**; every claim carries **evidence** (`corpus://` URIs resolved by blake3 across the corpora, span-precise where verified; `ref://` citations into mirrored reference datasets) and a position on the epistemic status ladder, promoted in place as evidence accrues. Beside the facts sits the **pre-assertion workspace** — interpretations: identity guesses, working assessments, corrections/tombstones, and ingestion needs. The boundary is physical: everything in `facts/` is asserted; consumers never filter speculation out of knowledge.
 
-Knowledge is authored **once**, in the ledger — never re-authored per presentation. Each hub carries the coverage obligation for its corpus (every in-scope record represented by at least one fact or interpretation), which is how the system proves nothing captured goes unrepresented silently. Everything in this paragraph is specified normatively by **`spec/ledger.md`**, including the evidence-verification gate — anchors resolve, quotes match verbatim, snapshot binding flags rot — that makes the system's traceability a checked invariant.
+Knowledge is authored **once**, in the ledger — never re-authored per presentation. The ledger carries the coverage obligation for every corpus it interprets (every in-scope record represented — cited as evidence or rostered on a concept), which is how the system proves nothing captured goes unrepresented silently. Everything in this paragraph is specified normatively by **`spec/ledger.md`**, including the evidence-verification gate — anchors resolve, quotes match verbatim, snapshot binding flags rot — that makes the system's traceability a checked invariant.
 
 Historical note: the fact model was born *inside* the first codices (under ATH-ARCH v12's agent-owned convention), generalized across all of them, and graduated into this layer once cross-codex identity made the fragmentation visible. The `same_as` cross-codex protocol, the `codex://` publication surface, and coverage-ceding machinery were all compensations for that fragmentation, and all dissolved with it.
 
 ## 5. The codex layer
 
-A **codex is a targeting of facts that compiles to prose**: a scope over the ledger hubs, an editorial voice, a generated Obsidian vault of notes (each note's frontmatter naming the exact ledger files it derives from), and a **build** that renders the deliverable — the reference deployment is Quartz — with every reference resolved: `corpus://` footnotes become citations, functional-URI embeds are rastered through the corpus resolver into real assets, wikilinks become site links, and each page exposes its provenance chain (prose → fact → claim → evidence → bytes).
+A **codex is a targeting of facts that compiles to prose**: a scope over the ledger, an editorial voice, a generated Obsidian vault of notes (each note's frontmatter naming the exact ledger files it derives from), and a **build** that renders the deliverable — the reference deployment is Quartz — with every reference resolved: `corpus://` footnotes become citations, functional-URI embeds are rastered through the corpus resolver into real assets, wikilinks become site links, and each page exposes its provenance chain (prose → fact → claim → evidence → bytes).
 
 Codices own no knowledge and are cheap to mint: a new compendium is a scope and a voice. Everything below the ledger is regenerable. Tenancy follows content into deliverables — **build profiles** ensure a publicly deployed site contains only what its audience may see (private-backed content excluded or stubbed; a leak check validates the built output). The codex contract — manifest, scope semantics, note provenance, build obligations, profiles — is **`spec/codex.md`**.
 
@@ -160,7 +166,7 @@ A codex may additionally *operate* — embed an agent that acts on the systems i
 | Draft (mechanical body extraction, overlay-declared emissions) | Deterministic |
 | Normalize (faithful-form refinement: shaping, descriptions) | LLM agent pass |
 | Functional-URI resolution, derived views | Deterministic |
-| Ledger harvest (mechanical claim minting from corpus facts) | Deterministic |
+| Ledger harvest (mechanical concept/claim minting from corpus facts, origin-keyed) | Deterministic |
 | Ledger fact authoring and interpretation | LLM agent pass |
 | Ledger validation (check, evidence verification, promote mechanics) | Deterministic |
 | Codex scope materialization | Deterministic |
@@ -175,7 +181,7 @@ If the operation could produce different valid outputs depending on judgment, it
 - **The orchestrator persona** (orchestrator repo) — principal developer for the system: specs, tooling, cross-member coherence, member health. Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory.
 - **The Curator** (public corpus) — the corpus operating loop: assess → prioritize → propose → execute → report. External captures, deletions, and commits are owner-gated.
 - **The Normalizer** (corpus agent) — one record (or small batch) per invocation, draft → normalized, through the decompose/edit/compile substrate; never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
-- **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, per hub, under each hub's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling.
+- **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (`spec/ledger.md` §4).
 - **Codex compilers** — the synthesis passes that render scoped facts into a codex's voice; scope materialization and the build are deterministic tooling.
 
 Agent passes are one-item-scoped, report to their driver, and share no state beyond the repos themselves. Concurrency is the driver's decision.
@@ -185,7 +191,7 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 One distribution — **`athenaeum`** (Python, `tools/` in the orchestrator repo) — ships the system's CLIs:
 
 - **`corpus`** — the corpus pipeline and query surface: capture / ingest / draft / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, store, gc. Auto-discovers its corpus root; accepts `--corpus-root`.
-- **`ath`** — the orchestrator umbrella: `ath sync` / `ath status` against the manifest; `ath corpus …` delegation; `ath ledger …` (hub validation, evidence verification, harvest, promote, generators, worklist) and `ath codex …` (scope, build, leak check) — landing with the shared ledger/codex packages. Deliberately no bare `ledger` or `codex` commands.
+- **`ath`** — the orchestrator umbrella: `ath sync` / `ath status` against the manifest; `ath corpus …` delegation; `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist) and `ath codex …` (scope, build, leak check) — landing with the shared ledger/codex packages. Deliberately no bare `ledger` or `codex` commands.
 
 Tooling agnosticism is normative: no member ids or paths in code; member-local extensions load through declared seams; a third party brings their own org, members, and agents to the same distribution.
 
@@ -199,4 +205,4 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 
 ---
 
-*Version 13 (2026-07) supersedes v12's two-layer draft: the orchestrator becomes a specified component (eponymous repo + manifest + `ath`); the fact model born inside the first codices graduates into its own tenant-partitioned layer — the ledger (ATH-LEDGER) — leaving codices as targeted compilations (ATH-CODEX); and the retired viewer/server stack is descoped from the architecture. The corpus contract is unchanged.*
+*Version 13 (2026-07) supersedes v12's two-layer draft: the orchestrator becomes a specified component (eponymous repo + manifest + `ath`); the fact model born inside the first codices graduates into its own layer — the single ledger (ATH-LEDGER), where concepts materialize real-world things and privacy is derived sensitivity — leaving codices as targeted compilations (ATH-CODEX); and the retired viewer/server stack is descoped from the architecture. The corpus contract moved to 2.0 (classification to the ledger) in the same revision.*
