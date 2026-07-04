@@ -230,6 +230,9 @@ class RemovalPlan:
     artifact_path: str | None  # relative to corpus_root
     artifact_size: int
     referrers: list[Referrer] = field(default_factory=list)
+    # Promoted member records this record is a CONTAINER for (spec §12.8, fourth guard):
+    # removing it strands their bytes. Named, and refused without --force.
+    contained_promoted: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -287,6 +290,32 @@ def inbound_references(
     return out
 
 
+def _contained_promoted(corpus_root: Path, record_id: str) -> list[str]:
+    """Ids of promoted member records this record is a **container** for — existing records
+    whose id is one of this record's declared embed members (spec §2, §12.8). Removing the
+    container strands their bytes (they have no `artifacts/` entry of their own), so `rm`
+    names them and refuses without `--force`. Parse-tolerant: an unreadable target contributes
+    nothing rather than crashing the plan."""
+    from . import containment
+
+    rpath = paths.record_path(corpus_root, record_id)
+    if not rpath.is_file():
+        return []
+    try:
+        post = records.load(rpath)
+    except Exception:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for member_hex in containment.member_hashes(post):
+        if member_hex == record_id or member_hex in seen:
+            continue
+        seen.add(member_hex)
+        if paths.record_path(corpus_root, member_hex).is_file():
+            out.append(member_hex)
+    return out
+
+
 def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int]:
     """Return the content-addressed artifact path + size for `record_id`, or (None, 0)."""
     shard_dir = corpus_root / "artifacts" / paths.shard(record_id)
@@ -319,6 +348,7 @@ def plan_removal(
                 artifact_path=str(apath.relative_to(corpus_root)) if apath else None,
                 artifact_size=asize,
                 referrers=inbound.get(rid, []),
+                contained_promoted=_contained_promoted(corpus_root, rid),
             )
         )
     return plans
@@ -344,7 +374,9 @@ def remove_records(
     for plan in plans:
         if not plan.exists:
             continue
-        if plan.referrers and not force:
+        # Refuse a cited record (dangling referrer) or a container of promoted members
+        # (stranded bytes, spec §12.8) unless forced.
+        if (plan.referrers or plan.contained_promoted) and not force:
             blocked.append(plan.record_id)
             continue
         if execute:

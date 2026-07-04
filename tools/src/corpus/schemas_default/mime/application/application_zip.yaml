@@ -1,20 +1,27 @@
 description: |
-  Raw ZIP archive — a generic container, not a structured-document container
-  like OOXML xlsx / docx / pptx. Per SPECv2, the default disposition for
-  raw zip is `artifact_kind: decomposable`: the ingestor treats the file
-  like a folder of members, ingests each member as its own captured
-  artifact, and the container itself does not produce a record. The
-  unwrap happens in the `corpus ingest` dispatcher module
-  (`scripts/src/corpus/_cli/ingest.py`, `_ingest_decomposable`).
+  Raw ZIP archive — a generic container, not a structured-document container like
+  OOXML xlsx/docx/pptx or EPUB. Per ATH-CORPUS 2.1 (the containment amendment) it
+  drafts as a self-contained embed **manifest**: every member becomes a
+  content-addressed embed (blake3 `transport` + `path=<relpath>` address), the
+  content zone stays empty, and any member may later be **promoted** to a first-class
+  record whose bytes never leave the archive (spec §1.2, §8.1, §12.4). Raw zips no
+  longer explode at ingest — a member record exists only where someone deliberately
+  promoted it.
 
-  Structured-zip media types (xlsx, docx, pptx, epub, jar, …) are
-  detected one level deeper in `scripts/src/corpus/mime.py:_refine_zip`
-  by looking for telltale parts inside the zip (e.g. `xl/workbook.xml`
-  for xlsx). Those route to their own self-contained media-type schemas
-  and do not reach this entry.
+  Structured-zip media types (xlsx, docx, pptx, epub, jar — fixed internal layouts)
+  are detected one level deeper in `corpus/mime.py:_refine_zip` by their telltale
+  parts (e.g. `xl/workbook.xml` for xlsx) and route to their own self-contained
+  drafters; they never reach this entry. A corpus that wants a *particular*
+  archive-shaped bundle recognized as its own type declares its shape via
+  `applies_to.zip_member_patterns` (§7.1) and points it at this same `zip-manifest`
+  strategy.
 applies_to:
   content_types:
   - application/zip
-artifact_kind: decomposable
+# Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
+# materializes a member's bytes (`transforms/zip.py`).
+working_kind: zip
 transport_algos:
 - sha256
+draft:
+  strategy: zip-manifest

@@ -128,6 +128,7 @@ from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
+from . import tar_manifest as _tar_manifest  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
 from . import xls as _xls  # noqa: E402, F401
 from . import xlsx as _xlsx  # noqa: E402, F401

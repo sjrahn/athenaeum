@@ -1,0 +1,18 @@
+description: |
+  mbox mailbox — a flat concatenation of email messages, each introduced by a `From `
+  envelope line (the magic this schema is detected by, spec §12.3.2). Commonly a member
+  of a mail export (a Google Takeout `.mbox`), reachable by **promotion** from its
+  containing archive (spec §8.1) — which is why a truthful mbox artifact type matters
+  even before the corpus interprets the mailbox itself.
+
+  **extract-only.** There is no mbox body drafter yet: decomposing a mailbox into one
+  promotable record per message (`msg=<N>` addressing, with the `From ` delimiter and
+  `>From ` un-stuffing semantics pinned here so member bytes are deterministic — spec
+  §12.11) is a later arc. A promoted mbox record is a faithful stub whose bytes resolve
+  through its container; the message-manifest drafter lands when the corpus needs it.
+applies_to:
+  content_types:
+  - application/mbox
+mode: extract-only
+transport_algos:
+- sha256

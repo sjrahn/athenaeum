@@ -34,9 +34,9 @@ from typing import Any
 import pypdfium2 as pdfium
 from PIL import Image
 
+from . import containment, paths, records, transforms
 from . import functional_uri as furi
 from . import mime as mime_mod
-from . import paths, records, transforms
 from .store import ArtifactStore, get_store
 from .transcription import TranscriptionAdapter, get_transcriber
 
@@ -113,7 +113,11 @@ def resolve(
         store = get_store(corpus_root)
     if transcriber is None:
         transcriber = get_transcriber(corpus_root)
-    artifact_binary = store.ensure_local(parsed.hash, mime_mod.extension_for(media_type))
+    # Containment-aware (spec §2/§12.9): a standalone artifact when present, else the bytes
+    # streamed out of the promoted record's container via the member index.
+    artifact_binary = containment.ensure_local_bytes(
+        corpus_root, parsed.hash, mime_mod.extension_for(media_type), store=store
+    )
 
     # Bare URI — no derivation; the caller wants the source binary.
     if parsed.is_bare:
@@ -192,11 +196,11 @@ def resolve(
         with Image.open(artifact_binary) as im:
             im.load()
             working = im.copy()
-    elif initial_kind in ("video", "audio", "epub", "zip"):
+    elif initial_kind in ("video", "audio", "epub", "zip", "tar"):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
         # transform opens the zip to select a content document and its image members; the
-        # zip `path=` transform opens the archive to extract a member.
+        # zip / tar `path=` transforms open the archive to extract a member.
         working = artifact_binary
     else:
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")

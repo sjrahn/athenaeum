@@ -33,16 +33,12 @@ on the kept-whole MIME (`ledger.md` §10) + the normalizer, not this drafter.
 
 from __future__ import annotations
 
-import codecs
-import mimetypes
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import blake3
-
 from corpus import records, touches, ziparchive
-from corpus.draft import DrafterResult, register_strategy
+from corpus.draft import DrafterResult, _manifest, register_strategy
 
 if TYPE_CHECKING:
     from corpus import recordbuild
@@ -55,9 +51,6 @@ _COMPRESSION_NAMES = {
     zipfile.ZIP_BZIP2: "bzip2",
     zipfile.ZIP_LZMA: "lzma",
 }
-
-# Stream members in 1 MiB chunks so a multi-GB member is never held in RAM all at once.
-_CHUNK = 1 << 20
 
 
 @register_strategy("zip-manifest")
@@ -114,7 +107,13 @@ def draft(
                     }
                 )
     except zipfile.BadZipFile:
-        return {"issues": [_issue("unreadable archive (corrupt or not a zip).")]}
+        return {
+            "issues": [
+                _manifest.partial_content_issue(
+                    _DETECTOR, "unreadable archive (corrupt or not a zip)."
+                )
+            ]
+        }
 
     # No content zone: members are transports (embeds), not content atoms.
 
@@ -134,7 +133,7 @@ def draft(
 
     issues: list[dict[str, Any]] = []
     if member_count == 0:
-        issues.append(_issue("archive contains no files."))
+        issues.append(_manifest.partial_content_issue(_DETECTOR, "archive contains no files."))
 
     result: DrafterResult = {"fields": fields, "embeds": embeds, "issues": issues}
     if canonical_algo:
@@ -147,52 +146,14 @@ def draft(
 
 
 def _media_type(rel: str, is_text: bool) -> str:
-    """The member's MIME — and, since the embed carries it, the text-vs-binary distinction.
-    Text is decided by **content** (UTF-8, no NULs — see `_digest_and_text`), not extension,
-    so a `.cfg`/`.conf`/extensionless config or log is `text/plain` rather than misclassified
-    binary; a precise extension guess (`application/json`, `image/png`) is kept; an opaque
-    binary is `application/octet-stream`."""
-    guessed = mimetypes.guess_type(rel)[0]
-    if is_text:
-        return guessed or "text/plain"
-    return guessed or "application/octet-stream"
+    """Thin wrapper over the shared `_manifest.media_type` (see there)."""
+    return _manifest.media_type(rel, is_text)
 
 
 def _digest_and_text(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[str, bool]:
-    """Stream a member once — blake3 transport digest + a text/binary sniff — without
-    materializing it whole (a diagnostics bundle can hold multi-GB logs). Text is decided
-    over the full bytes (no NUL byte, valid UTF-8), same verdict as a whole-member read,
-    using an incremental decoder so a multibyte char split across a chunk boundary isn't
-    misread. Raises `RuntimeError` for an encrypted member (no password), like `zipfile.read`.
-    A non-UTF-8 text encoding (rare on the Linux bundles this targets) reads as binary."""
-    b3 = blake3.blake3()
-    decoder = codecs.getincrementaldecoder("utf-8")()
-    is_text = True
+    """Stream a member once — blake3 transport digest + a text/binary sniff — via the shared
+    `_manifest.digest_and_text`, opening the member without materializing it whole (a
+    diagnostics bundle can hold multi-GB logs). Raises `RuntimeError` for an encrypted member
+    (no password), like `zipfile.read` — `zf.open` raises before the stream is consumed."""
     with zf.open(info) as fp:
-        while chunk := fp.read(_CHUNK):
-            b3.update(chunk)
-            if is_text:
-                if b"\x00" in chunk:
-                    is_text = False
-                else:
-                    try:
-                        decoder.decode(chunk)
-                    except UnicodeDecodeError:
-                        is_text = False
-    if is_text:
-        try:
-            decoder.decode(b"", final=True)  # a truncated trailing multibyte → not text
-        except UnicodeDecodeError:
-            is_text = False
-    return b3.hexdigest(), is_text
-
-
-def _issue(description: str) -> dict[str, Any]:
-    return {
-        "id": "partial-content",
-        "subtype": "empty-body",
-        "severity": "blocking",
-        "resolution": "open",
-        "detector": _DETECTOR,
-        "fields": {"description": description},
-    }
+        return _manifest.digest_and_text(fp)

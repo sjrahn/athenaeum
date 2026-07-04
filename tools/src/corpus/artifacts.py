@@ -43,7 +43,11 @@ def exists(corpus_root: Path, record_id: str, ext: str) -> bool:
 
 
 def ensure_local(corpus_root: Path, record_id: str, ext: str) -> Path:
-    return get_store(corpus_root).ensure_local(record_id, ext)
+    # Containment-aware (spec §2/§12.9): a standalone artifact when present, else the bytes
+    # materialized through the promoted record's container via the member index.
+    from . import containment
+
+    return containment.ensure_local_bytes(corpus_root, record_id, ext)
 
 
 def put(corpus_root: Path, record_id: str, ext: str, src: Path) -> None:

@@ -78,6 +78,8 @@ def _print_plans(result: maintenance.RemovalResult) -> None:
                 warn_repro = True
         for ref in plan.referrers:
             print(f"{'':14}cited by: {ref.record_id[:12]} ({ref.via})")
+        for member in plan.contained_promoted:
+            print(f"{'':14}contains promoted: {member[:12]} (bytes would be stranded)")
     if warn_repro:
         print("  note: artifact bytes are gitignored — removal is undoable only by re-capture.")
 
@@ -86,8 +88,9 @@ def _print_outcome(result: maintenance.RemovalResult, *, execute: bool) -> int:
     if result.blocked:
         names = ", ".join(b[:12] for b in result.blocked)
         print(
-            f"refused {len(result.blocked)} cited record(s): {names} "
-            f"— re-run with --force to remove anyway.",
+            f"refused {len(result.blocked)} record(s): {names} "
+            f"— cited by another record, or a container of promoted members. "
+            f"Re-run with --force to remove anyway.",
             file=sys.stderr,
         )
     if not execute:
@@ -116,6 +119,7 @@ def _to_dict(result: maintenance.RemovalResult) -> dict:
                 "referrers": [
                     {"id": r.record_id, "via": r.via, "pointer": r.pointer} for r in p.referrers
                 ],
+                "contained_promoted": p.contained_promoted,
             }
             for p in result.plans
         ],

@@ -12,7 +12,11 @@ byte-identical content — the same drafter↔transform contract the EPUB pair s
 from __future__ import annotations
 
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from typing import IO
 
 
 def member_names(zf: zipfile.ZipFile) -> list[str]:
@@ -53,3 +57,39 @@ def resolve_member(zip_path: Path, rel: str) -> bytes:
         if root and (root + rel) in names:
             return zf.read(root + rel)
     raise ValueError(f"path={rel}: no such member in archive")
+
+
+def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
+    """Map a rendered (possibly root-stripped) member path back to the archive's actual
+    member name — exact match first, else the re-derived-root form. `ValueError` if none."""
+    names = set(member_names(zf))
+    if rel in names:
+        return rel
+    root = common_root(list(names))
+    if root and (root + rel) in names:
+        return root + rel
+    raise ValueError(f"path={rel}: no such member in archive")
+
+
+@contextmanager
+def open_member(zip_path: Path, rel: str) -> Iterator[IO[bytes]]:
+    """Stream a member's bytes without materializing it whole — the streaming counterpart of
+    `resolve_member`, for the store-fallback / promote paths where a member can be multi-GB
+    (spec §12.9). A zip's central directory is random-access, so opening one member is cheap
+    regardless of archive size. Yields a binary file-like open for the life of the `with`."""
+    with zipfile.ZipFile(zip_path) as zf:
+        name = _actual_member(zf, rel)
+        with zf.open(name) as fp:
+            yield fp
+
+
+def member_source_modified(zip_path: Path, rel: str) -> str | None:
+    """The member's modification time as an ISO-8601 string (local, no tz — a zip stores a
+    naive DOS timestamp), or None when unreadable. The durable `source_modified` provenance a
+    promoted record's origin block carries (spec §7.2, §8.1)."""
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            info = zf.getinfo(_actual_member(zf, rel))
+            return datetime(*info.date_time).isoformat(timespec="seconds")
+    except (ValueError, OSError):
+        return None

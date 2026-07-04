@@ -52,10 +52,18 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"PK\x03\x04", "application/zip"),  # refined below
     (0, b"ID3", "audio/mpeg"),
     (0, b"\xff\xfb", "audio/mpeg"),
+    # Uncompressed tar (POSIX ustar / GNU): the `ustar` magic sits at offset 257 (inside the
+    # first member header). A gzip-wrapped tar (`.tgz`) hides this behind gzip magic and is
+    # refined by `_refine_gzip`. The tar family drafts as an embed manifest (spec §12.4).
+    (257, b"ustar", "application/x-tar"),
+    # mbox mailbox: every message begins with a `From ` envelope line, and the archive opens
+    # with one. Extract-only (its members are promotable per `msg=<N>`, a later arc — §12.11).
+    (0, b"From ", "application/mbox"),
 )
 
 
-_SNIFF_BYTES = 16
+# 512 bytes so the tar `ustar` magic at offset 257 is inside the sniff window.
+_SNIFF_BYTES = 512
 
 
 def detect(path: Path, corpus_root: Path | None = None) -> str:
@@ -69,21 +77,70 @@ def detect(path: Path, corpus_root: Path | None = None) -> str:
     with path.open("rb") as fh:
         head = fh.read(_SNIFF_BYTES)
 
+    # gzip magic is refined by peeking inside — a gzip wrapping a tar is a `.tgz` (spec §12.4).
+    if head[0:2] == b"\x1f\x8b":
+        return _refine_gzip(path)
+
+    sig = _scan_signatures(head)
+    if sig == "application/zip":
+        return _refine_zip(path, corpus_root)
+    if sig in ("video/mp4", "video/quicktime"):
+        return _refine_isobmff(path, sig)
+    if sig:
+        return sig
+
+    guessed, _ = mimetypes.guess_type(path.name)
+    return guessed or "unknown"
+
+
+def sniff_head(head: bytes, filename: str | None = None) -> str:
+    """MIME from a byte prefix (+ optional filename) alone — the streaming counterpart of
+    `detect` for a container member whose bytes arrive as a stream (promote, §8.1), where no
+    seekable path is available for the zip central-directory / gzip decompress refinements. A
+    zip/gzip member therefore stays at its generic container type; the magic-byte types the
+    manifest members actually carry (mbox, pdf, images, json, …) resolve precisely."""
+    if head[0:2] == b"\x1f\x8b":
+        return "application/gzip"  # a streaming head can't cheaply confirm a wrapped tar
+    sig = _scan_signatures(head)
+    if sig in ("video/mp4", "video/quicktime"):
+        return _isobmff_by_suffix(Path(filename).suffix if filename else "", sig)
+    if sig:
+        return sig
+    if filename:
+        guessed, _ = mimetypes.guess_type(filename)
+        if guessed:
+            return guessed
+    return "unknown"
+
+
+def _scan_signatures(head: bytes) -> str | None:
+    """Return the raw magic-byte type for `head` (before any path-based refinement), or None.
+    Shared by `detect` (path available) and `sniff_head` (bytes only)."""
     if head[0:4] == b"RIFF":
         refined = _refine_riff(head)
         if refined:
             return refined
-
     for offset, prefix, mime in _SIGNATURES:
         if head[offset : offset + len(prefix)] == prefix:
-            if mime == "application/zip":
-                return _refine_zip(path, corpus_root)
-            if mime in ("video/mp4", "video/quicktime"):
-                return _refine_isobmff(path, mime)
             return mime
+    return None
 
-    guessed, _ = mimetypes.guess_type(path.name)
-    return guessed or "unknown"
+
+def _refine_gzip(path: Path) -> str:
+    """A gzip stream whose decompressed head is a tar (`ustar` magic at offset 257) is a
+    `.tgz` → `application/x-tar` (one schema/drafter/transform serves plain and gzipped tar;
+    `tarfile` auto-detects the compression). A gzip wrapping anything else stays the generic
+    `application/gzip`. Peeks only the leading decompressed bytes, never the whole stream."""
+    import gzip
+
+    try:
+        with gzip.open(path, "rb") as gz:
+            inner = gz.read(_SNIFF_BYTES)
+    except (OSError, EOFError, gzip.BadGzipFile):
+        return "application/gzip"
+    if inner[257:262] == b"ustar":
+        return "application/x-tar"
+    return "application/gzip"
 
 
 # Audio-in-MP4 extensions. Most `.m4b` audiobooks (and `.m4a` audio) carry a generic
@@ -97,7 +154,12 @@ _ISOBMFF_AUDIO_EXTENSIONS = {".m4a", ".m4b"}
 def _refine_isobmff(path: Path, video_mime: str) -> str:
     """Refine a generic-brand ISOBMFF `video/mp4` to `audio/mp4` when the filename
     extension marks it as audio (`.m4a`/`.m4b`). Otherwise keep the video MIME."""
-    if path.suffix.lower() in _ISOBMFF_AUDIO_EXTENSIONS:
+    return _isobmff_by_suffix(path.suffix, video_mime)
+
+
+def _isobmff_by_suffix(suffix: str, video_mime: str) -> str:
+    """The suffix-only half of `_refine_isobmff`, shared with `sniff_head`."""
+    if video_mime == "video/mp4" and suffix.lower() in _ISOBMFF_AUDIO_EXTENSIONS:
         return "audio/mp4"
     return video_mime
 
@@ -205,6 +267,8 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "video/x-matroska": "mkv",
         "video/x-msvideo": "avi",
         "application/zip": "zip",
+        "application/x-tar": "tar",
+        "application/mbox": "mbox",
         "application/x-ndjson": "jsonl",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
         "application/vnd.ms-excel.sheet.macroEnabled.12": "xlsm",

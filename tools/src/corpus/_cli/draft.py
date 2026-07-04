@@ -19,10 +19,20 @@ import argparse
 import sys
 from typing import Any
 
-from corpus import content_hash, local_code, mime, paths, recordbuild, records, schemas, touches
+from corpus import (
+    containment,
+    content_hash,
+    local_code,
+    mime,
+    paths,
+    recordbuild,
+    records,
+    schemas,
+    touches,
+)
 from corpus import draft as draft_pkg
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
-from corpus.store import ArtifactMissing, get_store
+from corpus.store import ArtifactMissing
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -90,7 +100,11 @@ def derive_record(
         if drafter is None:
             raise DraftError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
 
-    binary_file = get_store(corpus_root).ensure_local(record_id, mime.extension_for(media_type))
+    # Containment-aware byte access (spec §2/§12.9): a promoted member record drafts from the
+    # bytes streamed out of its container just as a standalone record drafts from `artifacts/`.
+    binary_file = containment.ensure_local_bytes(
+        corpus_root, record_id, mime.extension_for(media_type)
+    )
 
     # The mime schema owns the canonical-hash strategy; pass its algo to the drafter so a
     # corpus that overrides `canonical_strategy.algo` is honoured (drafters fall back to

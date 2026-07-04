@@ -154,14 +154,24 @@ def missing_artifacts(
     limit: int = 50,
     skip_remote_check: bool = False,
 ) -> list[dict[str, Any]]:
-    """Records whose bytes are absent locally. `category`: `not_hydrated` (present in
+    """Records **unresolvable by any route** (spec §12.17): no standalone file AND not
+    resolvable through a container. A promoted record (bytes resident inside its container,
+    no `artifacts/` entry) is NOT missing — it resolves via the member index (§2/§12.9), so it
+    is skipped here. For a genuinely absent standalone, `category`: `not_hydrated` (present in
     the configured remote store), `lost` (absent there too), or `unknown` (remote not
-    checked). Routes through the `ArtifactStore`, so it works on any backend."""
+    checked). Cheap — an index lookup, never byte streaming. Routes through the `ArtifactStore`,
+    so it works on any backend."""
+    from . import containment, paths
     from . import mime as mime_mod
-    from . import paths
     from .store import get_store
 
     store = get_store(corpus_root)
+    # A record whose id is any other record's declared embed member is container-resolvable
+    # (spec §2). Built from the already-loaded refs — an index lookup, no byte streaming.
+    container_resolvable: set[str] = set()
+    for r in refs:
+        container_resolvable.update(containment.member_hashes(r.post))
+
     remote: set[str] | None = None
     if not skip_remote_check:
         try:
@@ -180,6 +190,8 @@ def missing_artifacts(
         ext = mime_mod.extension_for(mime)
         if store.is_local(r.record_id, ext):
             continue
+        if r.record_id in container_resolvable:
+            continue  # no standalone file, but resolvable through its container (§12.9)
         blob = f"{paths.shard(r.record_id)}/{r.record_id}.{ext.lstrip('.')}"
         if remote is None:
             category = "unknown"

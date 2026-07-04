@@ -1,0 +1,30 @@
+description: |
+  Tar archive — `.tar` (uncompressed) and `.tgz` (gzip-wrapped). Both carry the same
+  logical container (a concatenation of member transports), so one schema serves both:
+  MIME detection maps a gzip-wrapping-a-tar to `application/x-tar` (spec §12.3.2), and
+  `tarfile` auto-detects the compression, so the stored extension is a tooling
+  convenience — identity is the blake3 of the archive bytes.
+
+  Like a raw zip, a tar drafts as a self-contained embed **manifest** (the shared
+  `tar-manifest` strategy): every member becomes a content-addressed embed (blake3
+  `transport` + `path=<relpath>` address), the content zone stays empty, and any
+  member may later be **promoted** to a first-class record whose bytes never leave the
+  archive (spec §1.2, §8.1, §12.4). A `.tgz` is a solid gzip stream, so a member's
+  bytes cost one streaming decompress on first touch and are cache-warm after (§12.9).
+applies_to:
+  content_types:
+  - application/x-tar
+# Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
+# materializes a member's bytes (`transforms/tar.py`).
+working_kind: tar
+transport_algos:
+- sha256
+draft:
+  strategy: tar-manifest
+address_scheme:
+- param: path
+  type: string
+  description: |-
+    `path=<relpath>` — an archive member by its (optionally root-stripped) path. The
+    address the `tar-manifest` drafter records on each member's embed; round-trips to
+    byte-identical content via `transforms/tar.py`.

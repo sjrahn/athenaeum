@@ -1,9 +1,10 @@
 """Ingest a single file from capture/ → records/<shard>/<hash>.md.
 
 Computes blake3 + auxiliary byte hashes declared by the matching mime schema's
-`transport_algos`. MIME detect → `<!--artifact <mime>-->` opener. Honors
-`artifact_kind` per spec §1.2 — `decomposable` containers iterate their members
-and route each through ingest; the container itself produces no record.
+`transport_algos`. MIME detect → `<!--artifact <mime>-->` opener. Every transport is
+self-contained (spec §1.2, 2.1): a raw archive lands as one record and drafts as an
+embed manifest; its members are reachable by promotion (`corpus promote`, §8.1), not
+by exploding at ingest.
 
 If the file's bytes are already in the corpus, this is an idempotent re-encounter:
 the existing record gains a touch entry. If the capture URL differs from any
@@ -18,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -62,17 +62,10 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
             f"Author schema/mime/<axis>/<axis>_<subtype>.yaml first, then re-run."
         )
 
-    # Spec §1.2: artifact_kind is REQUIRED, no default.
-    artifact_kind = str(mt_schema.get("artifact_kind", "")).strip().lower()
-    if artifact_kind not in ("self_contained", "decomposable"):
-        sys.exit(
-            f"mime schema for {media_type!r} is missing required `artifact_kind` "
-            f"(must be `self_contained` or `decomposable`, spec §1.2)."
-        )
-
-    if artifact_kind == "decomposable":
-        return _ingest_decomposable(corpus_root, src, mt_schema)
-
+    # Spec §1.2 (2.1): every transport is self-contained — there is no `artifact_kind`
+    # disposition anymore, and no explode-at-ingest path. A raw archive is ingested as one
+    # record and drafts as an embed manifest; a schema still declaring `artifact_kind` is
+    # ignored (tolerant parsing, §7.1 / §12.17). Members become records via `corpus promote`.
     aux_algos = tuple(str(a) for a in mt_schema.get("transport_algos", []) if a)
     digests = hashing.hash_file(src, also=aux_algos)
     record_id = digests["blake3"]
@@ -196,40 +189,6 @@ def _append_origin_if_new(
         post, uri=uri, snapshot=snapshot, schema_id=schema_id, fields=fields or None
     )
     return True
-
-
-def _ingest_decomposable(corpus_root: Path, src: Path, mt_schema: dict) -> int:
-    """Decomposable artifact: extract members into capture/, ingest each, remove
-    container. Per spec §1.2, the container itself produces no record."""
-    capture_dir = src.parent
-    member_count = 0
-    container_sidecar = _read_sidecar(src)
-
-    if zipfile.is_zipfile(src):
-        with zipfile.ZipFile(src) as zf:
-            for member in zf.namelist():
-                if member.endswith("/"):
-                    continue
-                data = zf.read(member)
-                safe_name = member.replace("/", "_").replace("\\", "_")
-                staged = capture_dir / f"{src.stem}__{safe_name}"
-                staged.write_bytes(data)
-                if container_sidecar:
-                    _write_sidecar(staged, container_sidecar)
-                _ingest_one(corpus_root, staged)
-                member_count += 1
-    else:
-        sys.exit(f"declared decomposable but unsupported container: {src}")
-
-    src.unlink()
-    _cleanup_sidecar(src)
-    print(f"decomposed {member_count} member(s) from {src.name}")
-    return 0
-
-
-def _write_sidecar(src: Path, payload: dict) -> None:
-    sidecar_path = src.with_suffix(src.suffix + ".capture.yaml")
-    sidecar_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def _read_sidecar(src: Path) -> dict:
