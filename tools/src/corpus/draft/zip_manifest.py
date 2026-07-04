@@ -50,6 +50,8 @@ _COMPRESSION_NAMES = {
     zipfile.ZIP_DEFLATED: "deflate",
     zipfile.ZIP_BZIP2: "bzip2",
     zipfile.ZIP_LZMA: "lzma",
+    # Method 93 — the per-member codec `corpus assemble` writes (Python 3.14+; `corpus.assembly`).
+    getattr(zipfile, "ZIP_ZSTANDARD", 93): "zstd",
 }
 
 

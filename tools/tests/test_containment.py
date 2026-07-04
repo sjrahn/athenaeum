@@ -215,13 +215,64 @@ def test_rm_refuses_to_strand_a_promoted_member(tmp_path):
     _promote(root, f"corpus://{cid}?path=note.txt")
     pid = _b3(payload)
 
-    # Dry run names the promoted member and refuses.
+    # Only one container holds pid and it has no standalone artifact — removal would strand it,
+    # so the dry run names the promoted member and refuses.
     blocked = maintenance.remove_records(root, [cid], execute=True)
     assert cid in blocked.blocked and cid not in blocked.removed
-    assert pid in blocked.plans[0].contained_promoted
+    assert pid in blocked.plans[0].stranded_promoted
+    assert not blocked.plans[0].surviving_routes
     assert paths.record_path(root, cid).is_file()  # not removed
 
     # --force removes anyway (the failure mode is then loud: pid becomes unresolvable).
     forced = maintenance.remove_records(root, [cid], force=True, execute=True)
     assert cid in forced.removed
     assert not paths.record_path(root, cid).is_file()
+
+
+def test_rm_proceeds_when_another_container_holds_the_member(tmp_path):
+    """Route-aware guard (§12.8/§12.17): a promoted member also held by a SECOND container is not
+    stranded by removing the first — removal proceeds and the surviving container route is named."""
+    root = _corpus(tmp_path)
+    payload = b"held by two containers\n"
+    # Identical member bytes in two different archives → one promoted id, two container routes.
+    z1 = _zip(tmp_path / "one.zip", {"note.txt": payload, "extra1.txt": b"x1"})
+    z2 = _zip(tmp_path / "two.zip", {"note.txt": payload, "extra2.txt": b"x2"})
+    cid1 = _ingest_and_draft(root, z1)
+    cid2 = _ingest_and_draft(root, z2)
+    _promote(root, f"corpus://{cid1}?path=note.txt")
+    pid = _b3(payload)
+
+    plan = maintenance.plan_removal(root, [cid1])[0]
+    assert pid not in plan.stranded_promoted
+    assert pid in {m for m, _ in plan.surviving_routes}
+    assert any(cid2[:12] in route for _, route in plan.surviving_routes)
+
+    # Not blocked; removal proceeds without --force, and pid still resolves out of cid2.
+    result = maintenance.remove_records(root, [cid1], execute=True)
+    assert cid1 in result.removed and not result.blocked
+    assert not paths.record_path(root, cid1).is_file()
+    out = resolver.resolve(f"corpus://{pid}", root)
+    assert out.read_bytes() == payload
+
+
+def test_rm_proceeds_when_member_has_a_standalone_artifact(tmp_path):
+    """A promoted member with its own standalone artifact survives its container's removal —
+    residence-present is an independent route (§2), so the guard does not block."""
+    root = _corpus(tmp_path)
+    payload = b"also standalone\n"
+    z = _zip(tmp_path / "b.zip", {"note.txt": payload})
+    cid = _ingest_and_draft(root, z)
+    _promote(root, f"corpus://{cid}?path=note.txt")
+    pid = _b3(payload)
+
+    # Give the promoted member a standalone artifact (a `pack`/re-ingest could produce this).
+    standalone = tmp_path / "note.txt"
+    standalone.write_bytes(payload)
+    LocalArtifactStore(root).put(pid, "txt", standalone)
+
+    plan = maintenance.plan_removal(root, [cid])[0]
+    assert pid not in plan.stranded_promoted
+    assert any(m == pid and "standalone" in route for m, route in plan.surviving_routes)
+
+    result = maintenance.remove_records(root, [cid], execute=True)
+    assert cid in result.removed and not result.blocked

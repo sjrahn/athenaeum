@@ -230,9 +230,13 @@ class RemovalPlan:
     artifact_path: str | None  # relative to corpus_root
     artifact_size: int
     referrers: list[Referrer] = field(default_factory=list)
-    # Promoted member records this record is a CONTAINER for (spec §12.8, fourth guard):
-    # removing it strands their bytes. Named, and refused without --force.
-    contained_promoted: list[str] = field(default_factory=list)
+    # Promoted member records this record is a CONTAINER for (spec §12.8, fourth guard). The
+    # guard is route-aware (§12.17): removing this container strands a promoted member ONLY when
+    # it has no other resolution route — no standalone artifact and no OTHER container declaring
+    # it. `stranded_promoted` is the block trigger (refused without --force); `surviving_routes`
+    # names members that survive via another route (removal proceeds, the route is noted).
+    stranded_promoted: list[str] = field(default_factory=list)
+    surviving_routes: list[tuple[str, str]] = field(default_factory=list)  # (member_id, route)
 
 
 @dataclass
@@ -290,30 +294,45 @@ def inbound_references(
     return out
 
 
-def _contained_promoted(corpus_root: Path, record_id: str) -> list[str]:
-    """Ids of promoted member records this record is a **container** for — existing records
-    whose id is one of this record's declared embed members (spec §2, §12.8). Removing the
-    container strands their bytes (they have no `artifacts/` entry of their own), so `rm`
-    names them and refuses without `--force`. Parse-tolerant: an unreadable target contributes
-    nothing rather than crashing the plan."""
+def _analyze_contained(
+    corpus_root: Path, container_id: str, member_index: dict[str, list[tuple[str, str]]]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split the promoted member records this record contains into `(stranded, surviving)` — the
+    route-aware fourth guard (spec §12.8 / §12.17). A promoted member is one whose id is a
+    declared embed of this container AND which exists as its own record (§2). Removing the
+    container strands that member ONLY when it has no OTHER resolution route: no standalone
+    artifact file, and no OTHER container in the member index declaring it. When a route
+    survives, removal is safe and the surviving route is named. Parse-tolerant: an unreadable
+    container contributes nothing rather than crashing the plan."""
     from . import containment
 
-    rpath = paths.record_path(corpus_root, record_id)
+    rpath = paths.record_path(corpus_root, container_id)
     if not rpath.is_file():
-        return []
+        return [], []
     try:
         post = records.load(rpath)
     except Exception:
-        return []
-    out: list[str] = []
+        return [], []
+    stranded: list[str] = []
+    surviving: list[tuple[str, str]] = []
     seen: set[str] = set()
     for member_hex in containment.member_hashes(post):
-        if member_hex == record_id or member_hex in seen:
+        if member_hex == container_id or member_hex in seen:
             continue
         seen.add(member_hex)
-        if paths.record_path(corpus_root, member_hex).is_file():
-            out.append(member_hex)
-    return out
+        if not paths.record_path(corpus_root, member_hex).is_file():
+            continue  # not a promoted record — no record-borne bytes to strand
+        apath, _ = _find_artifact(corpus_root, member_hex)
+        if apath is not None:
+            surviving.append((member_hex, f"standalone artifact {apath.name}"))
+            continue
+        others = [(c, a) for c, a in member_index.get(member_hex, []) if c != container_id]
+        if others:
+            c, a = others[0]
+            surviving.append((member_hex, f"container {c[:12]} ({a})"))
+        else:
+            stranded.append(member_hex)
+    return stranded, surviving
 
 
 def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int]:
@@ -333,13 +352,18 @@ def plan_removal(
     corpus_root: Path, ids: list[str], *, index: dict[str, str] | None = None
 ) -> list[RemovalPlan]:
     """Compute, without deleting, what removing each `id` entails: its record/artifact
-    paths + sizes and the records that would be left citing it."""
+    paths + sizes, the records that would be left citing it, and — route-aware (§12.8) — which
+    promoted members it contains would be stranded vs. survive via another route."""
+    from . import containment
+
     inbound = inbound_references(corpus_root, set(ids), index=index)
+    member_index = containment.build_member_index(corpus_root)
     plans: list[RemovalPlan] = []
     for rid in ids:
         rpath = paths.record_path(corpus_root, rid)
         exists = rpath.is_file()
         apath, asize = _find_artifact(corpus_root, rid)
+        stranded, surviving = _analyze_contained(corpus_root, rid, member_index)
         plans.append(
             RemovalPlan(
                 record_id=rid,
@@ -348,7 +372,8 @@ def plan_removal(
                 artifact_path=str(apath.relative_to(corpus_root)) if apath else None,
                 artifact_size=asize,
                 referrers=inbound.get(rid, []),
-                contained_promoted=_contained_promoted(corpus_root, rid),
+                stranded_promoted=stranded,
+                surviving_routes=surviving,
             )
         )
     return plans
@@ -374,9 +399,10 @@ def remove_records(
     for plan in plans:
         if not plan.exists:
             continue
-        # Refuse a cited record (dangling referrer) or a container of promoted members
-        # (stranded bytes, spec §12.8) unless forced.
-        if (plan.referrers or plan.contained_promoted) and not force:
+        # Refuse a cited record (dangling referrer) or a container whose removal would strand a
+        # promoted member with no other route (spec §12.8, route-aware) unless forced. A member
+        # that survives via another route (`surviving_routes`) does NOT block.
+        if (plan.referrers or plan.stranded_promoted) and not force:
             blocked.append(plan.record_id)
             continue
         if execute:

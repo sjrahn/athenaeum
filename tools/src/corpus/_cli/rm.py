@@ -78,8 +78,10 @@ def _print_plans(result: maintenance.RemovalResult) -> None:
                 warn_repro = True
         for ref in plan.referrers:
             print(f"{'':14}cited by: {ref.record_id[:12]} ({ref.via})")
-        for member in plan.contained_promoted:
-            print(f"{'':14}contains promoted: {member[:12]} (bytes would be stranded)")
+        for member in plan.stranded_promoted:
+            print(f"{'':14}contains promoted: {member[:12]} (bytes would be stranded — no other route)")
+        for member, route in plan.surviving_routes:
+            print(f"{'':14}contains promoted: {member[:12]} (survives via {route})")
     if warn_repro:
         print("  note: artifact bytes are gitignored — removal is undoable only by re-capture.")
 
@@ -119,7 +121,10 @@ def _to_dict(result: maintenance.RemovalResult) -> dict:
                 "referrers": [
                     {"id": r.record_id, "via": r.via, "pointer": r.pointer} for r in p.referrers
                 ],
-                "contained_promoted": p.contained_promoted,
+                "stranded_promoted": p.stranded_promoted,
+                "surviving_routes": [
+                    {"member": m, "route": r} for m, r in p.surviving_routes
+                ],
             }
             for p in result.plans
         ],

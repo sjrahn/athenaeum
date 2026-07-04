@@ -25,6 +25,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "promote":         ("Capture & ingest",       "Mint a record for a container member (corpus://<id>?<member-address>)"),
+    "assemble":        ("Capture & ingest",       "Repackage delivered export archives into one containment-friendly bundle"),
     "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
