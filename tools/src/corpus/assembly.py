@@ -378,16 +378,19 @@ def _apply_rewrites(relpath: str, rules: list[dict]) -> tuple[str, bool]:
 
 
 def _derive_services(original_relpaths: list[str]) -> list[str]:
-    """The distinct top-level dirs under the original members' common root — the export's
+    """The distinct top-level DIRS under the original members' common root — the export's
     service slices (`Mail`, `Calendar`, …). Mechanical from the member paths (there is no
     declared manifest); when the members share a single wrapper root (`Takeout/`), the service
-    is the FIRST component beneath it, else the first path component itself."""
+    is the FIRST component beneath it, else the first path component itself. A root-level FILE
+    (Meta's `start_here.html`) is a member, not a category — it derives nothing."""
     if not original_relpaths:
         return []
     root = ziparchive.common_root(original_relpaths)
     services: list[str] = []
     for rel in original_relpaths:
         stripped = ziparchive.relpath(rel, root)
+        if "/" not in stripped:
+            continue
         head = stripped.split("/", 1)[0]
         if head and head not in services:
             services.append(head)

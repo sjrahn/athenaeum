@@ -97,10 +97,15 @@ def test_zip_part(tmp_path):
 def test_services_no_common_wrapper(tmp_path):
     """When members share no single wrapper dir (an Instagram-style export), the top-level dirs
     ARE the services — the derivation is `top-level dirs under the common root`, and the root is
-    then empty (spec §7.2 services)."""
-    src = _zip(tmp_path / "s.zip", {"content/a.txt": b"a", "messages/b.txt": b"b"})
+    then empty (spec §7.2 services). A root-level FILE (Meta's `start_here.html`) is a member of
+    the bundle but never a service — categories are dirs."""
+    src = _zip(
+        tmp_path / "s.zip",
+        {"content/a.txt": b"a", "messages/b.txt": b"b", "start_here.html": b"<html/>"},
+    )
     res = assembly.assemble([_part(src)], [], tmp_path / "bundle.zip")
     assert res.services == ["content", "messages"]
+    assert "start_here.html" in _members(tmp_path / "bundle.zip")
 
 
 # ---------- union / dedup / conflict ---------- #
