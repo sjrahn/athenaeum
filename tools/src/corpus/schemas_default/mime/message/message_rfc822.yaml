@@ -1,0 +1,50 @@
+description: |
+  A single RFC822 / MIME email message — one headers-plus-body unit. Typically **promoted**
+  from an mbox container (`corpus://<mbox-id>?msg=<N>`, spec §8.1 / §12.11), its bytes never
+  leaving the mailbox; or ingested standalone as an `.eml` (detected by header shape, §12.3.2).
+
+  The mechanical drafter (`draft/eml.py`) does three things:
+
+  1. **Headers → the artifact block** (RFC2047-decoded, single-line, empty ones omitted):
+     `subject` (also the `title` candidate), `from`, `to`, `cc`, `bcc`, `date`, `message_id`,
+     `in_reply_to`, `references` (a YAML list of message-ids in file order), and `thread_id`
+     (Gmail `X-GM-THRID`, when present). Thread reconstruction is a frontmatter query:
+     `references` / `in_reply_to` ↔ `message_id` joins across sibling records; `thread_id`
+     groups them. The drafted body carries NO headers block.
+
+  2. **Body = the reply text only.** It renders the `text/plain` part (else the `text/html`
+     part reduced to text — with `.gmail_quote` / `.gmail_extra` / `.yahoo_quoted` / `blockquote`
+     reply containers removed) and then mechanically trims trailing **quoted history** from the
+     FIRST confidently-matched marker to EOF (the prior thread lives as its own records; the raw
+     bytes retain everything). Markers, conservative and deterministic — prefers false negatives,
+     keeping everything when none matches: an `On <…> wrote:` attribution (one line or wrapped
+     over two) directly preceding a `>`-quoted line; `-----Original Message-----`; a long
+     underscore rule; an Outlook forwarded-header block (`From:` with a nearby `Sent:` and
+     `To:`/`Subject:`); or a `>`-quoted run extending to EOF. Signatures precede the quote and
+     are kept. The normalizer refines edge cases the mechanical pass left.
+
+  3. **Every non-body MIME part → an embed** addressed `part=<N>` (attachments, inline images,
+     nested messages). The text alternatives the body consumed are skipped (they are content,
+     not members). Each declared part is **promotable** (§8.1) — a contract PDF attachment
+     becomes a first-class `application/pdf` record whose bytes never leave the message. Because
+     these embeds are message members (not body-flow assets a mechanical pass can position), the
+     `embed-unreferenced` lint is relaxed for a message/rfc822 record — the normalizer links an
+     inline image into the body when it belongs there.
+applies_to:
+  content_types:
+  - message/rfc822
+mode: body-draft
+# Resolver's initial working kind: `part=<N>` materializes a MIME part's decoded bytes
+# (`transforms/message.py`).
+working_kind: message
+transport_algos:
+- sha256
+address_scheme:
+- param: part
+  type: integer
+  description: |-
+    `part=<N>` — the 1-indexed Nth **addressable part** in depth-first pre-order (every leaf
+    part, plus every nested `message/rfc822` counted as a whole, not descended into; multipart
+    containers get no ordinal), materialized as its **CTE-decoded** payload bytes (identity is
+    the decoded bytes, not the base64/QP transfer text). The address the eml drafter records on
+    each non-body part's embed; round-trips to byte-identical content via `transforms/message.py`.

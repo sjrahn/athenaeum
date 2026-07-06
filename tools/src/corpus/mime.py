@@ -21,6 +21,9 @@ from pathlib import Path
 # `.jsonl` / `.ndjson` filename suffix.
 mimetypes.add_type("application/x-ndjson", ".jsonl")
 mimetypes.add_type("application/x-ndjson", ".ndjson")
+# A single RFC822 email message. Detected by header shape (below); the `.eml` suffix names
+# it for the extension fallback (not registered by default on every platform).
+mimetypes.add_type("message/rfc822", ".eml")
 
 # Magic-byte signatures: (offset, prefix_bytes, mime).
 _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
@@ -57,13 +60,36 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     # refined by `_refine_gzip`. The tar family drafts as an embed manifest (spec §12.4).
     (257, b"ustar", "application/x-tar"),
     # mbox mailbox: every message begins with a `From ` envelope line, and the archive opens
-    # with one. Extract-only (its members are promotable per `msg=<N>`, a later arc — §12.11).
+    # with one. Its messages are declared + promotable per `msg=<N>` (spec §12.11); a message
+    # promoted out of it is `message/rfc822` (detected by header shape below).
     (0, b"From ", "application/mbox"),
 )
 
 
 # 512 bytes so the tar `ustar` magic at offset 257 is inside the sniff window.
 _SNIFF_BYTES = 512
+
+# message/rfc822 (a single email message, typically a promoted mbox `msg=<N>`) has no magic
+# number — it opens with RFC5322 headers. Two tiers keep false positives off ordinary text:
+#   • STRONG, distinctively-email header prefixes → confident even with no extension (the
+#     path a promoted message takes: its basename is the bare ordinal, so no `.eml` hint).
+#   • a WEAK "first two lines are header-shaped" fallback, applied only AFTER the extension
+#     hint (so a `.yaml`/`.txt` whose first lines look like `key: value` isn't shadowed).
+# The mbox separator `From ` (a SPACE, matched by `_SIGNATURES` at offset 0) always wins
+# first — an mbox opens with the separator, an eml never does.
+_EML_STRONG_PREFIXES: tuple[bytes, ...] = (
+    b"Return-Path:",
+    b"Delivered-To:",
+    b"Received:",
+    b"X-GM-THRID",
+    b"DKIM-Signature:",
+    b"ARC-Seal:",
+    b"Message-ID:",
+    b"MIME-Version:",
+)
+# An RFC5322 header field-name is printable ASCII except space and colon (33-57, 59-126),
+# followed by a colon and at least one space/tab.
+_EML_HEADER_RE = re.compile(rb"^[\x21-\x39\x3b-\x7e]+:[ \t]")
 
 
 def detect(path: Path, corpus_root: Path | None = None) -> str:
@@ -90,7 +116,13 @@ def detect(path: Path, corpus_root: Path | None = None) -> str:
         return sig
 
     guessed, _ = mimetypes.guess_type(path.name)
-    return guessed or "unknown"
+    if guessed:
+        return guessed
+    # Last resort before `unknown`: the weak email-header shape (runs after the extension
+    # hint, so it never shadows a recognized suffix).
+    if _looks_like_message(head):
+        return "message/rfc822"
+    return "unknown"
 
 
 def sniff_head(head: bytes, filename: str | None = None) -> str:
@@ -110,6 +142,8 @@ def sniff_head(head: bytes, filename: str | None = None) -> str:
         guessed, _ = mimetypes.guess_type(filename)
         if guessed:
             return guessed
+    if _looks_like_message(head):
+        return "message/rfc822"
     return "unknown"
 
 
@@ -123,7 +157,25 @@ def _scan_signatures(head: bytes) -> str | None:
     for offset, prefix, mime in _SIGNATURES:
         if head[offset : offset + len(prefix)] == prefix:
             return mime
+    # A distinctively-email header prefix (checked after the magic table, so mbox's `From `
+    # separator and every binary magic win first) is a confident message/rfc822 signal.
+    if head[:5] != b"From " and head.startswith(_EML_STRONG_PREFIXES):
+        return "message/rfc822"
     return None
+
+
+def _looks_like_message(head: bytes) -> bool:
+    """The WEAK email-header test: the first TWO logical lines are header-shaped (or the
+    second is a folded continuation). Two consecutive `field: value` lines is a far stronger
+    signal than one, so an ordinary `key: value` config/text file doesn't trip it. Never
+    fires for an mbox (its first line is the `From ` separator)."""
+    if head[:5] == b"From ":
+        return False
+    lines = head.split(b"\n", 2)
+    if len(lines) < 2 or not _EML_HEADER_RE.match(lines[0]):
+        return False
+    second = lines[1]
+    return bool(_EML_HEADER_RE.match(second)) or second[:1] in (b" ", b"\t")
 
 
 def _refine_gzip(path: Path) -> str:
@@ -270,6 +322,7 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "application/x-tar": "tar",
         "application/mbox": "mbox",
         "application/x-ndjson": "jsonl",
+        "message/rfc822": "eml",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
         "application/vnd.ms-excel.sheet.macroEnabled.12": "xlsm",
         "application/vnd.ms-excel": "xls",

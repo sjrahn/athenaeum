@@ -1,18 +1,46 @@
 description: |
-  mbox mailbox — a flat concatenation of email messages, each introduced by a `From `
-  envelope line (the magic this schema is detected by, spec §12.3.2). Commonly a member
-  of a mail export (a Google Takeout `.mbox`), reachable by **promotion** from its
-  containing archive (spec §8.1) — which is why a truthful mbox artifact type matters
-  even before the corpus interprets the mailbox itself.
+  mbox mailbox — a flat concatenation of RFC822 email messages, each introduced by a
+  `From ` envelope line (the magic this schema is detected by, spec §12.3.2). Commonly a
+  member of a mail export (a Google Takeout `.mbox`), reachable by **promotion** from its
+  containing archive (spec §8.1).
 
-  **extract-only.** There is no mbox body drafter yet: decomposing a mailbox into one
-  promotable record per message (`msg=<N>` addressing, with the `From ` delimiter and
-  `>From ` un-stuffing semantics pinned here so member bytes are deterministic — spec
-  §12.11) is a later arc. A promoted mbox record is a faithful stub whose bytes resolve
-  through its container; the message-manifest drafter lands when the corpus needs it.
+  **Selective message manifest.** Unlike a zip/tar — whose ingest manifests every member —
+  a mailbox may hold 10^5 messages, so members are declared **on demand**:
+  `corpus draft <mbox-id> --messages 5,12,90-95` extracts the named 1-indexed messages,
+  records each as a `message/rfc822` embed addressed `msg=<N>`, and leaves the rest
+  undeclared. Re-running unions with the already-declared set (a changed hash for a declared
+  ordinal is a hard error); a plain `corpus draft <mbox-id>` drafts an empty manifest (the
+  mailbox summary only). A declared message is **promotable** (§8.1) — its bytes never leave
+  the mailbox; `corpus://<mbox-id>?msg=<N>` streams them out (`transforms/mbox.py`).
+
+  **Extraction semantics (pinned — spec §12.11).** A separator line is any line beginning
+  with `From ` (mboxrd). Ordinals are 1-indexed in file order. Message N's bytes are
+  everything AFTER separator line N (the separator line and its terminator excluded) up to
+  but NOT including separator line N+1 (or EOF) — verbatim, including a trailing blank line
+  before the next separator; line terminators are preserved (this corpus's export is CRLF).
+  Un-stuffing (mboxrd): within the message bytes, a line matching `^>+From ` loses exactly
+  one leading `>`. Member bytes — hence the member blake3 — are computed over the UN-STUFFED
+  bytes, so a promoted message round-trips as a standalone `message/rfc822` artifact.
+
+  (Pinned against this corpus's 3.5 GB Gmail export: all 80,780 `From ` lines are real
+  envelopes — the `^From ` count equals both the `^From \d+@xxx ` count and the strict
+  asctime-envelope count — so the plain mboxrd separator rule yields exactly one separator
+  per message; 489 `>From ` body lines confirm Gmail applied `>`-stuffing, so un-stuffing is
+  load-bearing, not a no-op.)
 applies_to:
   content_types:
   - application/mbox
-mode: extract-only
+# Resolver's initial working kind for the functional-URI pipeline: `msg=<N>` materializes a
+# single message's bytes (`transforms/mbox.py`).
+working_kind: mbox
 transport_algos:
 - sha256
+draft:
+  strategy: mbox-manifest
+address_scheme:
+- param: msg
+  type: integer
+  description: |-
+    `msg=<N>` — the 1-indexed Nth message's un-stuffed bytes as `message/rfc822`. The
+    address the `mbox-manifest` drafter records on each declared message's embed;
+    round-trips to byte-identical content via `transforms/mbox.py`.

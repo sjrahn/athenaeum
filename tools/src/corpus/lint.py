@@ -858,7 +858,14 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
     Skipped for a **manifest** record — one with no content-zone segments at all (e.g. a
     self_contained archive recorded as embeds, where each member is an embedded transport).
     There is no content flow to position the embeds within, so they ARE the content, not
-    flow-assets, and "unreferenced" is not a defect."""
+    flow-assets, and "unreferenced" is not a defect.
+
+    Also skipped for a **message/rfc822** record: its `part=<N>` embeds are the email's MIME
+    members (attachments, inline images, nested messages) declared for promotion, not
+    body-flow assets a mechanical draft can position — the normalizer links an inline image
+    into the body when it belongs there (spec §12.11)."""
+    if _records.media_type_for(post) == "message/rfc822":
+        return
     has_segment = any(
         isinstance(b, _segments.Segment)
         or (isinstance(b, _segments.Section) and b.segments)

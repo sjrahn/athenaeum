@@ -38,6 +38,17 @@ from corpus.store import ArtifactMissing
 def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("target", help="Hash, hex prefix, or record file path.")
     parser.add_argument(
+        "--messages",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "mbox only: declare the 1-indexed messages to manifest as `message/rfc822` "
+            "embeds — a comma list of ordinals and `lo-hi` ranges (e.g. `5,12,90-95`). "
+            "Cumulative: re-running unions with the already-declared set. Omit to draft an "
+            "empty manifest (the mailbox summary only)."
+        ),
+    )
+    parser.add_argument(
         "--fingerprint",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -60,6 +71,7 @@ def derive_record(
     corpus_root,
     *,
     fingerprint_cli: bool | None = None,
+    messages: list[int] | None = None,
 ) -> None:
     """Re-derive `post`'s draft content from its retained artifact, **in place**: resolve
     the mime schema + drafter, build the content zone through the recordbuild ops, apply
@@ -132,6 +144,11 @@ def derive_record(
     # drafters don't take it, so it's passed only on the strategy path.
     if strategy:
         drafter_kwargs["mime_schema"] = mt_schema
+        # The mbox manifest is selective + cumulative: it takes the CLI's `--messages`
+        # ordinals to declare (unioned with the record's already-declared set). Other
+        # strategy drafters don't accept it, so it's passed only for this one.
+        if strategy == "mbox-manifest":
+            drafter_kwargs["messages"] = messages
     result = drafter(binary_file, **drafter_kwargs)
 
     _apply_drafter_result(post, result, mime_schema_id, corpus_root)
@@ -180,19 +197,49 @@ def run(args: argparse.Namespace) -> int:
     record_id, record_file = paths.resolve_record(corpus_root, args.target)
     post = records.load(record_file)
 
-    # `draft` is a stub→draft transition. Re-running it would append duplicate embed/issue
-    # blocks (the metadata zone isn't reset here), so refuse a non-stub record and point at
-    # the clean re-run path: `re-stub` (which collapses the body) then `draft`.
+    from corpus.draft import mbox_manifest
+
+    media_type = records.media_type_for(post)
+    mt_schema = schemas.load_mime_schema(corpus_root, media_type) or {}
+    is_mbox = str((mt_schema.get("draft") or {}).get("strategy") or "") == "mbox-manifest"
+
+    # `--messages` selects which mailbox messages to declare — mbox-only.
+    messages_spec = getattr(args, "messages", None)
+    if messages_spec is not None and not is_mbox:
+        sys.exit(f"--messages is only valid for an mbox record (this is {media_type or 'untyped'}).")
+    ordinals: list[int] | None = None
+    if messages_spec:
+        try:
+            ordinals = mbox_manifest.parse_message_spec(messages_spec)
+        except ValueError as exc:
+            sys.exit(str(exc))
+
     status = str(post.metadata.get("status") or "").lower()
-    if status and status != "stub":
+    if is_mbox:
+        # The mbox manifest is cumulative: declaring more messages re-runs on an already
+        # `draft` record and unions the embeds (spec §12.11). Only `normalized` is refused.
+        if status and status not in ("stub", "draft"):
+            sys.exit(
+                f"record status is {status!r}; mbox declaration runs on a 'stub' or 'draft' "
+                f"record (re-stub a normalized one first)."
+            )
+    elif status and status != "stub":
+        # `draft` is a stub→draft transition. Re-running it would append duplicate embed/issue
+        # blocks (the metadata zone isn't reset here), so refuse a non-stub record and point at
+        # the clean re-run path: `re-stub` (which collapses the body) then `draft`.
         sys.exit(
             f"record status is {status!r}, not 'stub'; `corpus draft` only runs on a stub. "
             f"Run `corpus re-stub {args.target}` first to re-draft."
         )
 
     try:
-        derive_record(post, corpus_root, fingerprint_cli=getattr(args, "fingerprint", None))
-    except (DraftError, ArtifactMissing) as exc:
+        derive_record(
+            post,
+            corpus_root,
+            fingerprint_cli=getattr(args, "fingerprint", None),
+            messages=ordinals,
+        )
+    except (DraftError, ArtifactMissing, mbox_manifest.MessageHashConflict) as exc:
         sys.exit(str(exc))
 
     extension = mime.extension_for(records.media_type_for(post))

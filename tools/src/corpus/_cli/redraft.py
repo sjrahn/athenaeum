@@ -38,10 +38,15 @@ def redraft_record(
     ingest entry (no re-stub touch), so re-deriving an unchanged record reproduces a
     fresh-draft record byte-for-byte. Raises `DraftError` / `ArtifactMissing` when the
     record can't be re-derived."""
+    from corpus.draft import mbox_manifest
+
     post = records.load(record_file)
     chain = touches.touch_list(post)
+    # The mbox manifest's declared ordinals are user intent, not derivable from the bytes, and
+    # re-stub clears embeds — so capture them before the reset and re-declare them (spec §12.11).
+    messages = mbox_manifest.declared_ordinals(post) or None
     stub = restub.restub_post(post, touch_chain=[chain[0]] if chain else [])
-    derive_record(stub, corpus_root, fingerprint_cli=fingerprint_cli)
+    derive_record(stub, corpus_root, fingerprint_cli=fingerprint_cli, messages=messages)
     return records.dumps(stub)
 
 

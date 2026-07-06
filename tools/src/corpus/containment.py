@@ -86,11 +86,38 @@ def _archive_family(media_type: str) -> str | None:
 def open_member_stream(
     container_path: Path, container_media_type: str, address: str
 ) -> Iterator[IO[bytes]]:
-    """Stream a container member's bytes (spec §12.9), dispatching on the container's archive
-    family. Yields a binary file-like for the life of the `with`; raises `ValueError` for an
+    """Stream a container member's bytes (spec §12.9), dispatching on the container's media
+    type. Yields a binary file-like for the life of the `with`; raises `ValueError` for an
     address scheme / container type this can't materialize."""
-    family = _archive_family(container_media_type)
     key, _, value = str(address).partition("=")
+    # An mbox is a container whose members are addressed `msg=<N>` (spec §12.11) — a
+    # streaming scan yields the un-stuffed message bytes, never loading the mailbox whole.
+    if container_media_type == "application/mbox" and key == "msg":
+        from . import mboxfile
+
+        try:
+            ordinal = int(value)
+        except ValueError as exc:
+            raise ValueError(f"mbox member {address!r}: msg= needs an integer ordinal") from exc
+        with mboxfile.open_member(container_path, ordinal) as fp:
+            yield fp
+        return
+    # An email is a container whose members are addressed `part=<N>` (spec §12.11) — the
+    # decoded MIME part's bytes. A single message is bounded (parsed whole), so this yields a
+    # BytesIO rather than a scan; the mailbox it may itself live in is the unbounded thing.
+    if container_media_type == "message/rfc822" and key == "part":
+        import io
+
+        from . import emlfile
+
+        try:
+            ordinal = int(value)
+        except ValueError as exc:
+            raise ValueError(f"eml member {address!r}: part= needs an integer ordinal") from exc
+        data = emlfile.resolve_part(container_path.read_bytes(), ordinal)
+        yield io.BytesIO(data)
+        return
+    family = _archive_family(container_media_type)
     if key != "path" or family is None:
         raise ValueError(
             f"cannot stream member {address!r} from a {container_media_type!r} container"
@@ -106,6 +133,21 @@ def member_source_metadata(
     """The member's durable provenance for a promoted record's origin block (spec §7.2, §8.1):
     `filename` (member basename) and, when the archive records it, `source_modified` (mtime)."""
     key, _, value = str(address).partition("=")
+    # An mbox message has no member filename and no meaningful per-member mtime (its ordinal
+    # is a position, not a name) — a promoted message's origin carries the lineage uri only.
+    if container_media_type == "application/mbox" and key == "msg":
+        return {}
+    # An email part carries its declared filename (e.g. a promoted `contract.pdf`) when it
+    # names itself; no meaningful mtime.
+    if container_media_type == "message/rfc822" and key == "part":
+        from . import emlfile
+
+        try:
+            ordinal = int(value)
+        except ValueError:
+            return {}
+        filename = emlfile.part_filename(container_path.read_bytes(), ordinal)
+        return {"filename": filename} if filename else {}
     meta: dict[str, str] = {"filename": value.rsplit("/", 1)[-1]}
     family = _archive_family(container_media_type)
     if key == "path" and family:

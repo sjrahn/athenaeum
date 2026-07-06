@@ -16,6 +16,8 @@ Kinds:
 - `"json"`    — `str` (a pre-serialized JSON document, cached as `.json`)
 - `"zip"`     — `pathlib.Path` (the artifact `.zip`)
 - `"tar"`     — `pathlib.Path` (the artifact `.tar` / `.tgz`; `tarfile` auto-detects gzip)
+- `"mbox"`    — `pathlib.Path` (the artifact `.mbox`; `msg=<N>` streams one message out)
+- `"message"` — `pathlib.Path` (the artifact `.eml`; `part=<N>` decodes one MIME part)
 - `"bytes"`   — `bytes` (a raw member, cached verbatim)
 """
 
@@ -77,6 +79,8 @@ from . import audio as _audio  # noqa: E402, F401
 from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
+from . import mbox as _mbox  # noqa: E402, F401
+from . import message as _message  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import tar as _tar  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
