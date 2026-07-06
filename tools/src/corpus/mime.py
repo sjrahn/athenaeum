@@ -128,14 +128,21 @@ def detect(path: Path, corpus_root: Path | None = None) -> str:
 def sniff_head(head: bytes, filename: str | None = None) -> str:
     """MIME from a byte prefix (+ optional filename) alone — the streaming counterpart of
     `detect` for a container member whose bytes arrive as a stream (promote, §8.1), where no
-    seekable path is available for the zip central-directory / gzip decompress refinements. A
-    zip/gzip member therefore stays at its generic container type; the magic-byte types the
-    manifest members actually carry (mbox, pdf, images, json, …) resolve precisely."""
+    seekable path is available for the zip central-directory / gzip decompress refinements.
+    A zip-magic member refines WITHIN the family by its declared extension
+    (`_ZIP_EXT_REFINEMENTS` — the directory sits at the end of a zip, out of a streamed
+    head's reach); a bare or unrecognized name stays `application/zip`, and gzip stays
+    generic. The magic-byte types the manifest members actually carry (mbox, pdf, images,
+    json, …) resolve precisely."""
     if head[0:2] == b"\x1f\x8b":
         return "application/gzip"  # a streaming head can't cheaply confirm a wrapped tar
     sig = _scan_signatures(head)
     if sig in ("video/mp4", "video/quicktime"):
         return _isobmff_by_suffix(Path(filename).suffix if filename else "", sig)
+    if sig == "application/zip" and filename:
+        refined = _ZIP_EXT_REFINEMENTS.get(Path(filename).suffix.lower())
+        if refined:
+            return refined
     if sig:
         return sig
     if filename:
@@ -237,6 +244,18 @@ def _refine_riff(head: bytes) -> str | None:
 
 # Telltale central-directory member paths that distinguish a structured zip-shaped
 # container from a raw zip. Checked in order; first match wins.
+# The zip family's package types by declared extension — `sniff_head`'s streaming stand-in
+# for `_refine_zip`'s central-directory check. The magic confirms the FAMILY; the declared
+# name refines the package within it. A lying extension surfaces at draft (parse-tolerant,
+# the drafter finds no telltale members), never as a wrong byte identity.
+_ZIP_EXT_REFINEMENTS: dict[str, str] = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".epub": "application/epub+zip",
+    ".jar": "application/java-archive",
+}
+
 _ZIP_SIGNATURES: tuple[tuple[str, str], ...] = (
     (
         "xl/workbook.xml",

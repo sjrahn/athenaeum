@@ -6,6 +6,7 @@ trim), and every non-body MIME part as a `part=<N>` embed, promotable via contai
 from __future__ import annotations
 
 import argparse
+import io
 import shutil
 import zipfile
 from email import policy
@@ -259,6 +260,36 @@ def test_part_transform_and_promote_pdf(tmp_path):
     assert origin["filename"] == "contract.pdf"  # the part named itself
     # Resolves back through containment.
     assert resolver.resolve(f"corpus://{pid}", root).read_bytes() == _PDF
+
+
+def test_promote_docx_part_refines_zip_mime(tmp_path):
+    """A promoted OOXML attachment types as its package mime, not application/zip — the
+    ordinal `part=` address carries no extension, so the sniff name comes from the embed's
+    declared `filename` and refines the zip-magic head within the family."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
+        zf.writestr("word/document.xml", "<w:document/>")
+    docx_bytes = buf.getvalue()
+    em = EmailMessage()
+    em["From"] = "a@x"
+    em["Subject"] = "handbook"
+    em.set_content("see attached")
+    em.add_attachment(
+        docx_bytes,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="Volunteer Handbook.docx",
+    )
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, em.as_bytes(policy=policy.SMTP))
+    _draft(root, eid)
+    assert _promote(root, f"corpus://{eid}?part=2") == 0
+    post = records.load(paths.record_path(root, _b3(docx_bytes)))
+    assert (
+        records.media_type_for(post)
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 
 
 # ---------- charset tolerance ---------- #

@@ -96,8 +96,12 @@ def run(args: argparse.Namespace) -> int:
         sys.exit(str(e))
 
     # 3. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
-    #    transport_algos). Never loads the member whole (spec §8.1 / §12.9).
-    basename = member_address.rsplit("=", 1)[-1].rsplit("/", 1)[-1]
+    #    transport_algos). Never loads the member whole (spec §8.1 / §12.9). The sniff name
+    #    prefers the embed's declared `filename` — an ordinal address (`part=3`) carries no
+    #    extension, and the extension is what refines a zip-magic member within its family.
+    basename = (embed.get("fields") or {}).get("filename") or member_address.rsplit(
+        "=", 1
+    )[-1].rsplit("/", 1)[-1]
     try:
         media_type, computed_id, aux = _sniff_and_hash(
             corpus_root, container_path, container_media_type, member_address, basename

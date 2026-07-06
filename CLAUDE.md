@@ -37,7 +37,7 @@ The **corpus** layer is the foundation: content-addressed archives of captured a
 
 ```bash
 # Both CLIs come from ONE uv TOOL install of tools/ (editable; gotcha #1). Reinstall after moving it:
-uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with cryptography
+uv tool install --reinstall --editable "tools[capture,media,fingerprint,office]" --with cryptography
 
 # The ath umbrella — system verbs against athenaeum.yaml (run anywhere under this tree):
 ath status                          # orchestrator repo + every member: branch, dirty, ahead/behind

@@ -100,6 +100,23 @@ def test_sniff_head_magic_types():
     assert mime.sniff_head(bytes(hdr), "nested.tar") == "application/x-tar"
 
 
+def test_sniff_head_zip_family_refines_by_extension():
+    """Zip magic + a declared package extension refines within the family (the central
+    directory a seekable `detect` would check is out of a streamed head's reach)."""
+    zip_head = b"PK\x03\x04" + b"\x00" * 26
+    assert (
+        mime.sniff_head(zip_head, "Volunteer Handbook Winnipeg 2026.docx")
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert (
+        mime.sniff_head(zip_head, "schedule.XLSX")
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert mime.sniff_head(zip_head, "book.epub") == "application/epub+zip"
+    assert mime.sniff_head(zip_head, "bundle.zip") == "application/zip"
+    assert mime.sniff_head(zip_head) == "application/zip"
+
+
 # ---------- drafter ---------- #
 
 
