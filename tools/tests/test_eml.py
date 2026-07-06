@@ -140,6 +140,25 @@ def test_headers_lift_to_artifact_block(tmp_path):
     assert "**From:**" not in body and "Subject:" not in body
 
 
+def test_recipient_headers_split_per_mailbox(tmp_path):
+    """to/cc/bcc are string-or-list: one mailbox stays a str, several split into a str[] —
+    and a comma inside a quoted display name is never a split point."""
+    em = EmailMessage()
+    em["From"] = "a@example.com"
+    em["To"] = '"Rahn, Steven" <s@example.com>, =?utf-8?q?Ren=C3=A9e?= <renee@example.com>'
+    em["Cc"] = "solo@example.com"
+    em["Subject"] = "recipient split"
+    em.set_content("body")
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, em.as_bytes(policy=policy.SMTP))
+    assert _draft(root, eid) == 0
+    post = records.load(paths.record_path(root, eid))
+    fields = records.artifact_block(post)["fields"]
+    assert fields["to"] == ['"Rahn, Steven" <s@example.com>', "Renée <renee@example.com>"]
+    assert fields["cc"] == "solo@example.com"
+    assert "bcc" not in fields
+
+
 # ---------- reply-only body ---------- #
 
 

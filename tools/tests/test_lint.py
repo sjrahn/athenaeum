@@ -423,7 +423,10 @@ def test_entry_missing(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
     seg = segments.Segment(atom="text", address="el=1", body="hi")  # no entry
-    assert "entry-missing" in {f.rule_id for f in lint.lint(post, [seg], root)}
+    seg2 = segments.Segment(atom="text", address="el=2", body="ho")  # no entry
+    assert "entry-missing" in {f.rule_id for f in lint.lint(post, [seg, seg2], root)}
+    # A single top-level block is exempt — the record is its own TOC line.
+    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [seg], root)}
 
 
 def test_body_sanity_rules(tmp_path):

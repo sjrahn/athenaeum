@@ -666,7 +666,11 @@ def _rule_mime_extension_mismatch(post, blocks, root) -> Iterator[Finding]:
 
 def _rule_entry_missing(post, blocks, root) -> Iterator[Finding]:
     """Every top-level block (section / top-level segment) should carry a non-empty `entry`
-    (the §4.3.2.2 TOC label) — error on a normalized record, warning otherwise."""
+    (the §4.3.2.2 TOC label) — error on a normalized record, warning otherwise. A record
+    whose content zone is a SINGLE top-level block is exempt: it is its own TOC line (the
+    frontmatter title already carries it), so an `entry` would only duplicate the title."""
+    if len(blocks) <= 1:
+        return
     status = post.metadata.get("status", "")
     missing = [i + 1 for i, blk in enumerate(blocks) if not (getattr(blk, "entry", None) or "").strip()]
     if not missing:

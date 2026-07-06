@@ -391,7 +391,7 @@ A segment carries a segment body only when that body is a faithful, lossless ren
 |---|---|
 | `description` | The segment's scope-specific description — what this segment IS at its address and under its overlay. Distinct from the matching embed's `description` (which describes the whole asset). Normalizer-written. |
 | `perceptual` | An atom-canonical content fingerprint (§7.7) using the `<algo>:<hex>` prefix convention. |
-| `entry` | A short identifying label — the TOC line. Sectionless records carry `entry:` on the top-level segment; in-section segments don't (the section is the TOC unit). |
+| `entry` | A short identifying label — the TOC line. MULTI-block sectionless records carry `entry:` on each top-level segment; in-section segments don't (the section is the TOC unit); and a record whose content zone is a single top-level block carries none — such a record is its own TOC line, already labelled by the frontmatter `title`. |
 | `speaker` | An integer diarization index identifying who is speaking in this `audio` segment. |
 
 The atomic classification, if any, lives on the opener line as `<!--segment <atom>/<id>-->`. A segment carries exactly one atomic class id; when multiple representations apply to the same source region, each becomes its own segment with its own opener (and identity is the `(opener-id, address)` pair).

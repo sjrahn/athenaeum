@@ -35,7 +35,12 @@ def _record(root: Path) -> None:
         post, uri="https://youtube.com/watch?v=x", snapshot="2026-06-05T00:00:00Z"
     )
     post.content = segments.emit(
-        [segments.Segment(atom="text", address="el=1", body="sam seder news")]
+        [
+            segments.Segment(atom="text", address="el=1", body="sam seder news"),
+            # a second entry-less top block so entry-missing fires (single-block records
+            # are exempt — the record is its own TOC line)
+            segments.Segment(atom="text", address="el=2", body="more news"),
+        ]
     )
     post.metadata["status"] = "draft"
     records.dump(post, paths.record_path(root, RID))

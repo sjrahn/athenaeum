@@ -4,8 +4,9 @@ Mechanical drafter for a single email message — one promoted out of an mbox
 (`corpus://<mbox-id>?msg=<N>`, §8.1) or ingested standalone as an `.eml`. Three moves:
 
 1. **Headers → artifact block** (RFC2047-decoded, single-line, omit-empty): subject (also the
-   `title` candidate), from / to / cc / bcc, date, message_id, in_reply_to, references (list,
-   file order), thread_id (Gmail `X-GM-THRID`). Thread reconstruction is then a frontmatter
+   `title` candidate), from, to / cc / bcc (string-or-list: split per mailbox — a str for one
+   recipient, a str[] for several), date, message_id, in_reply_to, references (list, file
+   order), thread_id (Gmail `X-GM-THRID`). Thread reconstruction is then a frontmatter
    query — references / in_reply_to ↔ message_id joins across siblings, thread_id groups them.
 2. **Body = the reply text only.** Renders the `text/plain` part (else `text/html` reduced to
    text) and mechanically trims trailing **quoted history** (the prior thread lives as its own
@@ -25,6 +26,7 @@ Tolerates the multipart shapes real mail takes: `multipart/alternative` nested i
 from __future__ import annotations
 
 import re
+from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,8 @@ from corpus.segments import Segment
 _DETECTOR = touches.script_identifier("draft.message/message_rfc822")
 
 # Headers lifted onto the artifact block as `field: value`, RFC2047-decoded, single-line.
+# Recipient headers (to/cc/bcc) are string-or-list: split per mailbox, so a roster is
+# queryable without re-parsing RFC5322 comma rules downstream.
 _SCALAR_HEADERS = (
     ("subject", "Subject"),
     ("from", "From"),
@@ -48,6 +52,7 @@ _SCALAR_HEADERS = (
     ("message_id", "Message-ID"),
     ("in_reply_to", "In-Reply-To"),
 )
+_ADDRESS_FIELDS = frozenset({"to", "cc", "bcc"})
 
 
 @register("message/message_rfc822")
@@ -102,7 +107,8 @@ def draft(
 def _artifact_fields(msg) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key, header in _SCALAR_HEADERS:
-        if value := _header(msg, header):
+        value = _addresses(msg, header) if key in _ADDRESS_FIELDS else _header(msg, header)
+        if value:
             fields[key] = value
     if subject := fields.get("subject"):
         fields["title"] = subject  # title candidate; the normalizer authors frontmatter title
@@ -111,6 +117,36 @@ def _artifact_fields(msg) -> dict[str, Any]:
     if thread_id := _header(msg, "X-GM-THRID"):
         fields["thread_id"] = thread_id
     return fields
+
+
+_NAME_SPECIALS = re.compile(r'[][\\()<>@,:;".]')
+_NAME_ESCAPES = re.compile(r'[\\"]')
+
+
+def _addresses(msg, name: str) -> str | list[str] | None:
+    """A recipient header split per mailbox — a str for one address, a str[] for several
+    (the corpus string-or-list convention). `getaddresses` does the RFC5322 split, so a comma
+    inside a quoted display name (`"Rahn, Steven" <s@x>`) is never a split point. Falls back
+    to the raw single-line value when no mailbox parses out (tolerant, never lossy)."""
+    value = _header(msg, name)
+    if value is None:
+        return None
+    mailboxes = [_format_mailbox(n, a) for n, a in getaddresses([value]) if (n, a) != ("", "")]
+    if not mailboxes:
+        return value
+    return mailboxes[0] if len(mailboxes) == 1 else mailboxes
+
+
+def _format_mailbox(name: str, addr: str) -> str:
+    """`Name <addr>` with RFC5322 display-name quoting, keeping the name unicode-VERBATIM —
+    stdlib `formataddr` would RFC2047-re-encode a non-ASCII name, and the artifact block
+    stores decoded values."""
+    if not name:
+        return addr
+    escaped = _NAME_ESCAPES.sub(r"\\\g<0>", name)
+    if _NAME_SPECIALS.search(name):
+        return f'"{escaped}" <{addr}>'
+    return f"{escaped} <{addr}>"
 
 
 def _header(msg, name: str) -> str | None:

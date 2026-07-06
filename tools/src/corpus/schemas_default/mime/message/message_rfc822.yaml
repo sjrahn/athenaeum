@@ -12,6 +12,10 @@ description: |
      `references` / `in_reply_to` ↔ `message_id` joins across sibling records; `thread_id`
      groups them. The drafted body carries NO headers block.
 
+     The recipient headers (`to`, `cc`, `bcc`) are string-or-list: split per mailbox — a
+     str for one recipient, a str[] for several (a comma inside a quoted display name is
+     never a split point).
+
   2. **Body = the reply text only.** It renders the `text/plain` part (else the `text/html`
      part reduced to text — with `.gmail_quote` / `.gmail_extra` / `.yahoo_quoted` / `blockquote`
      reply containers removed) and then mechanically trims trailing **quoted history** from the
@@ -85,6 +89,12 @@ normalization:
     artifact, never twice in one body. Keep signatures. Keep terse bodies: a two-word reply
     is usually the genuine message, not a defect. Whitespace and wrap cleanup is fine;
     adding or paraphrasing content is not (§1.5 principle 3).
+
+    Do NOT put `entry:` on the body segment. `entry` is the TOC line (§4.4), and a
+    single-body message record IS its own TOC line — the frontmatter title already carries
+    it. Segment-level `entry` is reserved for multi-segment sectionless records, which an
+    email body is not; sections, if you ever have cause to introduce them here, carry
+    their own.
 
     ## Attachments and inline images
 
