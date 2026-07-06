@@ -48,3 +48,53 @@ address_scheme:
     containers get no ordinal), materialized as its **CTE-decoded** payload bytes (identity is
     the decoded bytes, not the base64/QP transfer text). The address the eml drafter records on
     each non-body part's embed; round-trips to byte-identical content via `transforms/message.py`.
+normalization:
+  method: refinement
+  guidance: |
+    One email message — usually one turn of a larger conversation. The mechanical draft is
+    already close to final (headers on the artifact block, reply-only body in one text
+    segment, every non-body MIME part a `part=` embed), so the pass is refinement, not
+    reconstruction.
+
+    ## Read the thread first
+
+    A single turn rarely explains itself. Before authoring a word, reconstruct the
+    conversation from the frontmatter joins the drafter laid down: `thread_id` groups
+    sibling records, `references` / `in_reply_to` ↔ `message_id` orders them, `date` breaks
+    ties. Read every sibling record so the title and description say what this message is
+    DOING in its thread, not merely what its subject line claims. Not every referenced
+    message has a record — a gap in the chain is context you may still recover from the raw
+    bytes' quoted history (resolve the record id), but describe only this message's turn.
+
+    ## Title and description
+
+    Subjects repeat across a thread (`Re:`/`Fwd:` chains), so the artifact block's `title`
+    candidate cannot distinguish siblings. Shape the frontmatter title
+    `<clean subject> — <sender short name> (<YYYY-MM-DD>)`: strip the `Re:`/`Fwd:` rubble
+    but keep the subject recognizable; the sender + date make the record findable among its
+    siblings. The description is 1–3 sentences: who wrote to whom, when, and what the
+    message does in its conversation (asks, answers, confirms, declines, attaches — the
+    move, with its particulars). Name people and organizations plainly; every fact from
+    this message or its thread, nothing invented.
+
+    ## Body
+
+    The drafter's quoted-history trim is deliberately conservative (false negatives keep
+    everything). Remove residual quoted history it missed — verify against the raw bytes
+    when the cut looks doubtful; the prior turns live in their own records and in the
+    artifact, never twice in one body. Keep signatures. Keep terse bodies: a two-word reply
+    is usually the genuine message, not a defect. Whitespace and wrap cleanup is fine;
+    adding or paraphrasing content is not (§1.5 principle 3).
+
+    ## Attachments and inline images
+
+    Embeds are message members. Author a `description:` on notable embeds — from filename,
+    MIME, and size when identity is evident; resolve `corpus://<id>?part=<N>` and view the
+    bytes when it isn't and the member matters. Anything deeper belongs on the member's own
+    record after promotion (§8.1), never transcribed here. Link an inline image into the
+    body (an image segment at its `part=` address, description on the embed) only when the
+    author is SHOWING it as part of the message flow; signature logos, banners, and
+    tracking pixels stay unreferenced (`embed-unreferenced` is relaxed for this mime).
+
+    Surface faithfulness problems as issue blocks in the annotations zone; author the two
+    editorial fields; set `status: normalized`.
