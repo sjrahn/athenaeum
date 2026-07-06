@@ -19,6 +19,10 @@ athenaeum/                    ← this repo's working tree (the workspace root)
 ├── athenaeum.yaml            ← the member manifest — the registry `ath` reads
 ├── spec/                     ← the specs: athenaeum.md (ATH-ARCH) · corpus.md (ATH-CORPUS) · ledger.md (ATH-LEDGER) · codex.md (ATH-CODEX)
 ├── tools/                    ← the `athenaeum` distribution: `ath` + `corpus` CLIs (Python 3.12, uv)
+├── docs/                     ← the system's runbooks — members carry no docs/ of their own
+│                                (capture-operations · imessage-workflow · export-sources · normalize-drain-loop;
+│                                 tooling operating modes ship IN the package: `corpus workflow <name>`)
+├── .claude/agents/           ← dispatchable workers: normalizer (sonnet 1M) · ledger-scribe (opus 1M)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs
 │   ├── corpus/               ←   public/world captures (has the /curator skill)
