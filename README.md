@@ -7,13 +7,15 @@ This repo — **`athenaeum/athenaeum`** — is the system's definition and drive
 - **`spec/`** — the specifications (system architecture, the corpus contract, the ledger contract, the codex contract).
 - **`athenaeum.yaml`** — the member manifest: the single registry of the system's corpora, ledger, codices, and reference-dataset mirrors.
 - **`tools/`** — the `athenaeum` distribution, shipping two CLIs: `ath` (the orchestrator umbrella — member sync/status against the manifest, corpus delegation) and `corpus` (the corpus pipeline: capture → ingest → draft → normalize, the functional `corpus://` URI resolver, schemas, lint, health).
-- **`.claude/skills/orchestrator/`** — the resident principal-developer persona and its institutional memory.
+- **`docs/`** — the system's runbooks (capture operations, the iMessage cycle, export sources, the normalize drain loop). Members carry no docs of their own; tooling operating modes ship inside the package (`corpus workflow <name>`).
+- **`.claude/agents/`** — the dispatchable workers: `normalizer` (faithful-form record refinement, either corpus) and `ledger-scribe` (evidence-backed claim authoring).
+- **`.claude/skills/orchestrator/`** — the resident principal-developer persona and its institutional memory. The one persona in the system — member repos carry none.
 
 Bootstrap on a fresh machine:
 
 ```bash
 git clone https://code.example.org/athenaeum/athenaeum.git && cd athenaeum
-uv tool install --editable "tools[capture,media,fingerprint]" --with cryptography
+uv tool install --editable "tools[capture,media,fingerprint,office]" --with cryptography
 ath sync    # clones every member from athenaeum.yaml
 ```
 

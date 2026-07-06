@@ -25,8 +25,9 @@ athenaeum/                    ← this repo's working tree (the workspace root)
 ├── .claude/agents/           ← dispatchable workers: normalizer (sonnet 1M) · ledger-scribe (opus 1M)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs
-│   ├── corpus/               ←   public/world captures (has the /curator skill)
-│   └── corpus-private/       ←   personal captures (no persona by design)
+│   ├── corpus/               ←   public/world captures
+│   └── corpus-private/       ←   personal captures
+│                                (members carry no personas — the orchestrator is the system's one persona)
 ├── ledger/                   ← UNTRACKED member clone — the knowledge layer (one repo)
 └── codices/                  ← UNTRACKED member clones — targeted compilations
     ├── codex-general/  codex-pontiac-g8/  codex-steven/   (thin targeting repos: codex.yaml + notes/ + certificates/)
@@ -75,4 +76,4 @@ ath codex <name> build --profile public   # also: scope | notes; public builds r
 - **Members are config-driven.** No member path may be hardcoded in shared tooling (`--corpus-root`, the manifest, `codex.yaml`).
 - **Deterministic before LLM.** Capture/ingest/draft are mechanical; normalize and codex authoring are interpretive agent passes. Keep the boundary sharp.
 - **Parse tolerantly.** Log and skip unparseable records rather than failing a whole corpus.
-- **Member repos commit through their own disciplines** — corpus content work boots `/curator` in `corpora/corpus`; ledger commits pass `ath ledger check`; codex vaults are generated, validated by `ath codex <name> check`.
+- **Member repos commit through their own gates** — corpus records pass `corpus lint` / `health` (field guide: `docs/capture-operations.md`); ledger commits pass `ath ledger check`; codex vaults are generated, validated by `ath codex <name> check`. No member carries a persona — the orchestrator drives them all.
