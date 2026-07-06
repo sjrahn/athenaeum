@@ -1,7 +1,14 @@
-"""Capture a URL into capture/, then ingest it to a record stub.
+"""Capture a URL — or replay a manual save — into capture/, then ingest to a stub.
 
 Thin wrapper over `corpus.capture`: turns argv into a `CaptureOptions`, then
 calls `capture()` (with `--no-ingest`) or `capture_and_ingest()`.
+
+When the positional argument resolves to an **existing local file** rather than a
+URL, it is treated as a manual SingleFile save and captured **from-save** (§12.3.12):
+the save's SingleFile banner supplies the origin URL + saved date, the host overlay's
+`capture.interactions` are replayed against the saved DOM in a headless browser (with
+all live network aborted — the save is the honest state), and the re-snapshot ingests
+with the origin `snapshot:` stamped to the saved date. The source file is retained.
 
 Stdout (default):       absolute path of the resulting record.
 Stdout (--no-ingest):   absolute path of the captured file.
@@ -13,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from corpus import capture as capture_lib
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
@@ -20,7 +28,7 @@ from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 def configure(parser: argparse.ArgumentParser) -> None:
     p = parser
-    p.add_argument("url", help="the URL to capture")
+    p.add_argument("url", help="the URL to capture, or a path to a manual SingleFile save (from-save)")
     p.add_argument(
         "--no-ingest",
         action="store_true",
@@ -152,6 +160,12 @@ def run(args: argparse.Namespace) -> int:
         force=args.force,
     )
 
+    # From-save: the positional argument is an existing local file (a manual SingleFile
+    # save), not a URL. Replay it through the browser rather than fetching (§12.3.12).
+    src = Path(args.url)
+    if src.is_file():
+        return _run_from_save(args, corpus_root, opts, src.resolve())
+
     # Snapshot which records hold this URL BEFORE the capture, so --replace can tell a
     # genuinely-new record (different bytes) from a fold into an existing one.
     prior_ids = _prior_owners(corpus_root, args.url) if args.replace else []
@@ -171,6 +185,40 @@ def run(args: argparse.Namespace) -> int:
     _maybe_grab_references(args, corpus_root, record_path, opts)
     if args.replace:
         _maybe_replace(corpus_root, record_path, prior_ids)
+    print(record_path)
+    return 0
+
+
+def _run_from_save(args, corpus_root, opts, src) -> int:
+    """From-save capture of a local manual SingleFile save (§12.3.12). Mirrors the URL
+    path's short-circuit / `--force` / `--replace` semantics — keyed on the save's
+    resolved banner URL, not the file path — and retains the source file."""
+    log = logging.getLogger("corpus.capture")
+    try:
+        prov = capture_lib.resolve_from_save_provenance(src)
+    except capture_lib.CaptureError as e:
+        sys.exit(str(e))
+
+    # --replace supersession is keyed on the RESOLVED page URL, not the file path.
+    prior_ids = _prior_owners(corpus_root, prov.url) if args.replace else []
+
+    try:
+        if args.no_ingest:
+            result = capture_lib.capture_from_save(src, corpus_root=corpus_root, opts=opts)
+            print(result.capture_path)
+            return 0
+        record_path = capture_lib.capture_from_save_and_ingest(
+            src, corpus_root=corpus_root, opts=opts
+        )
+    except capture_lib.CaptureError as e:
+        sys.exit(str(e))
+
+    if record_path is None:
+        sys.exit("capture: ingest failed")
+
+    if args.replace:
+        _maybe_replace(corpus_root, record_path, prior_ids)
+    log.info("from-save: source retained at %s (a manual save is never deleted)", src)
     print(record_path)
     return 0
 

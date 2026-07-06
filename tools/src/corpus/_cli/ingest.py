@@ -80,7 +80,9 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     store = get_store(corpus_root)
 
     sidecar = _read_sidecar(src)
-    origin_uri, origin_at, origin_fields, origin_schema = _derive_capture_origin(src, sidecar)
+    origin_uri, origin_at, origin_fields, origin_schema = _derive_capture_origin(
+        src, sidecar, media_type
+    )
 
     if record_file.is_file():
         post = records.load(record_file)
@@ -203,21 +205,28 @@ def _read_sidecar(src: Path) -> dict:
 
 
 def _derive_capture_origin(
-    src: Path, sidecar: dict
+    src: Path, sidecar: dict, media_type: str | None = None
 ) -> tuple[str | None, str, dict[str, Any], str | None]:
     """Origin seed for an ingested artifact — `(uri|None, snapshot, fields, schema_id|None)`.
 
-    A capture sidecar with a `source_url` yields a *retrieval* origin (uri + snapshot). A bare
-    dropped-in file has no retrieval source — the staging path is unlinked moments later, so a
-    `uri:` would be a reference dead on arrival — so it yields a uri-less *local-file* origin
-    carrying durable metadata instead: `filename` (basename) + `source_modified` (mtime,
-    best-effort) (spec §7.2).
+    Three tiers, most-authoritative first:
+
+    1. A capture sidecar with a `source_url` yields a *retrieval* origin (uri + snapshot).
+    2. Otherwise, an HTML file carrying a **SingleFile banner** (a manual save dropped
+       straight into `capture/` and ingested with no capture step) yields a retrieval origin
+       from the banner: `uri:` = the banner URL, `snapshot:` = the banner saved date (parsed
+       to ISO-8601 with its numeric offset preserved — the moment the human saved it, spec
+       §12.3.4). The banner is scanned only in a bounded head.
+    3. Otherwise a bare dropped-in file has no retrieval source — the staging path is unlinked
+       moments later, so a `uri:` would be a reference dead on arrival — so it yields a
+       uri-less *local-file* origin carrying durable metadata instead: `filename` (basename)
+       + `source_modified` (mtime, best-effort) (spec §7.2).
 
     A producer may also DECLARE an overlay (spec §7.2): the sidecar's `origin_schema:` (the
     overlay id stamped on the block, the only way a uri-less origin binds an overlay) and
     `origin_fields:` (its extended fields) are consumed here for either origin shape — e.g. an
     `imessage-export` carrying `chat_name`/`phone_number`/`period`."""
-    from corpus import touches
+    from corpus import singlefile, touches
 
     uri = str(sidecar.get("source_url") or "").strip()
     discovered_at = str(sidecar.get("fetched_at") or "").strip() or touches.now_iso()
@@ -226,6 +235,11 @@ def _derive_capture_origin(
     extra: dict[str, Any] = {str(k): v for k, v in declared.items()} if isinstance(declared, dict) else {}
     if uri:
         return uri, discovered_at, dict(extra), schema_id
+    # Tier 2 — the SingleFile banner (HTML only; explicit sidecar above still wins).
+    if media_type == "text/html":
+        if banner := singlefile.banner_origin(src):
+            banner_uri, banner_at = banner
+            return banner_uri, banner_at, dict(extra), schema_id
     fields: dict[str, Any] = {"filename": src.name}
     mtime = _source_modified_iso(src)
     if mtime:

@@ -347,6 +347,217 @@ def capture_and_ingest(
     return _ingest_capture(result, original_url=canonical, corpus_root=corpus_root)
 
 
+# ---------- from-save (replay a manual SingleFile save) ---------- #
+
+
+@dataclass
+class FromSaveProvenance:
+    """The URL + moment a manual SingleFile save records — its honest provenance."""
+
+    url: str
+    saved_at: str
+    source: str  # "banner" | "sidecar"
+
+
+def resolve_from_save_provenance(src: Path) -> FromSaveProvenance:
+    """Resolve `(url, saved_at)` for a manual save. The SingleFile banner (§12.3.4) is
+    the primary source — the URL the human was on and the moment they saved it; absent a
+    banner, a `<file>.capture.yaml` sidecar's `source_url` / `fetched_at`. Raises
+    `CaptureError` when neither yields a URL: from-save must know WHAT was saved (to look
+    up the host recipe) and WHEN (to snapshot-stamp the origin)."""
+    from .. import singlefile
+
+    if banner := singlefile.banner_origin(src):
+        url, saved_at = banner
+        return FromSaveProvenance(url=url, saved_at=saved_at, source="banner")
+
+    sidecar_path = src.with_suffix(src.suffix + ".capture.yaml")
+    if sidecar_path.is_file():
+        import yaml
+
+        try:
+            data = yaml.safe_load(sidecar_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            data = {}
+        url = str((data or {}).get("source_url") or "").strip()
+        if url:
+            raw_at = data.get("fetched_at")
+            # PyYAML coerces an unquoted ISO timestamp to a datetime; keep the `T`-form.
+            saved_at = (
+                raw_at.isoformat()
+                if hasattr(raw_at, "isoformat")
+                else str(raw_at or "").strip()
+            ) or touches.now_iso()
+            return FromSaveProvenance(url=url, saved_at=saved_at, source="sidecar")
+
+    raise CaptureError(
+        f"from-save: {src.name} carries no SingleFile banner and no "
+        f"'{src.name}.capture.yaml' sidecar with a source_url — cannot determine the "
+        f"saved page's URL. A from-save capture needs the origin URL; a SingleFile save "
+        f"supplies it automatically in its banner comment."
+    )
+
+
+def capture_from_save(
+    path: Path, *, corpus_root: Path, opts: CaptureOptions | None = None
+) -> CaptureResult:
+    """Stage a from-save capture (no ingest). Replays the saved DOM through the browser
+    (see `_capture_from_save`) and returns a `CaptureResult` under `capture/`."""
+    opts = opts or CaptureOptions()
+    src = Path(path).resolve()
+    prov = resolve_from_save_provenance(src)
+    canonical = _canonicalize(prov.url)
+    capture_dir = corpus_root / "capture"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    from .recipes import capture_recipe_for_url
+
+    recipe = capture_recipe_for_url(corpus_root, canonical)
+    cap_path, issues = _capture_from_save(
+        src,
+        url=canonical,
+        saved_at=prov.saved_at,
+        capture_dir=capture_dir,
+        opts=opts,
+        recipe=recipe,
+    )
+    return CaptureResult(capture_path=cap_path, used_video=False, issues=issues)
+
+
+def capture_from_save_and_ingest(
+    path: Path, *, corpus_root: Path, opts: CaptureOptions | None = None
+) -> Path | None:
+    """From-save capture → ingest. Replay a manual SingleFile save through the browser to
+    run the host overlay's `capture.interactions` against the saved DOM, re-snapshot, and
+    ingest — so the record's first origin is `uri:` = the banner URL, `snapshot:` = the
+    saved date (the fetch happened when the human saved it, not now).
+
+    Mirrors `capture_and_ingest`'s already-captured short-circuit (`--force` skips it).
+    The source file is **retained** — a manual save can be irreplaceable, so from-save
+    never unlinks it (only the re-snapshot staging file is consumed by ingest)."""
+    opts = opts or CaptureOptions()
+    src = Path(path).resolve()
+    prov = resolve_from_save_provenance(src)
+    canonical = _canonicalize(prov.url)
+
+    if not opts.force:
+        existing = records.find_by_uri(canonical, corpus_root=corpus_root)
+        if existing:
+            log.info("already captured: %s -> %s", canonical, existing)
+            return paths.record_path(corpus_root, existing)
+
+    capture_dir = corpus_root / "capture"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    from .recipes import capture_recipe_for_url
+
+    recipe = capture_recipe_for_url(corpus_root, canonical)
+    log.info(
+        "from-save: %s -> %s (saved %s, provenance=%s)",
+        src.name,
+        canonical,
+        prov.saved_at,
+        prov.source,
+    )
+    cap_path, issues = _capture_from_save(
+        src,
+        url=canonical,
+        saved_at=prov.saved_at,
+        capture_dir=capture_dir,
+        opts=opts,
+        recipe=recipe,
+    )
+    result = CaptureResult(capture_path=cap_path, used_video=False, issues=issues)
+    return _ingest_capture(
+        result, original_url=canonical, corpus_root=corpus_root, fetched_at=prov.saved_at
+    )
+
+
+def _capture_from_save(
+    src: Path,
+    *,
+    url: str,
+    saved_at: str,
+    capture_dir: Path,
+    opts: CaptureOptions,
+    recipe: dict[str, Any] | None,
+) -> tuple[Path, list[dict]]:
+    """Replay a manual SingleFile save through a headless browser and re-snapshot it.
+
+    The saved bytes are self-contained (SingleFile inlined every asset as `data:` URIs),
+    so the save IS the honest state — nothing may be fetched live. We load it via
+    `file://` with CSP bypassed (a save can carry a CSP `<meta>`) and **every http/https
+    route aborted**, run the host overlay's `capture.interactions` (DEFAULT_STEPS when the
+    recipe declares none — the same pass live capture runs; steps are best-effort so a
+    click/lazy-load step degrades to a no-op on a dead-script DOM), then re-snapshot with
+    the same SingleFile fidelity machinery. The corpus-* metas record the BANNER url and
+    saved date, never the `file://` path or the re-snapshot moment.
+
+    Returns `(capture_path, issues)`. No capture-stage detectors run: there was no live
+    navigation to drift, and a save's inlined images are neither re-fetched nor scored.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        raise CaptureError(
+            "from-save capture requires the `[capture]` extra. Install with: "
+            "uv pip install 'athenaeum[capture]' && playwright install chromium"
+        ) from e
+
+    from . import interactions
+
+    timeout_ms = opts.timeout_s * 1000
+    recipe = recipe or {}
+    fidelity = _resolve_fidelity(opts.fidelity, recipe)
+    interaction_steps = recipe.get("interactions")
+    viewport = _recipe_viewport(recipe) or opts.viewport
+    user_agent = str(recipe.get("user_agent") or "") or opts.user_agent
+    bundle = _resolve_singlefile_bundle()
+    base = _sanitize_filename(url)
+    file_uri = src.as_uri()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = None
+        try:
+            ctx = browser.new_context(
+                viewport={"width": viewport[0], "height": viewport[1]},
+                user_agent=user_agent,
+                bypass_csp=True,
+            )
+            # Abort every live http/https fetch — a dead-script DOM must never reach the
+            # network; file:/data:/about: (the save itself + its inlined assets) pass.
+            ctx.route(
+                "**/*",
+                lambda route: route.abort()
+                if route.request.url.startswith(("http://", "https://"))
+                else route.continue_(),
+            )
+            page = ctx.new_page()
+            log.info("from-save: loading %s (headless, network aborted)", src.name)
+            page.goto(file_uri, wait_until="domcontentloaded", timeout=timeout_ms)
+            interactions.run(page, interaction_steps)
+            snapshot = _snapshot_html(
+                page=page,
+                fetched_at=saved_at,
+                bundle=bundle,
+                fidelity=fidelity,
+                capture_url=url,
+            )
+            capture_path = capture_dir / f"{base}.html"
+            capture_path.write_text(snapshot, encoding="utf-8")
+            log.info(
+                "from-save: re-snapshot %d bytes (fidelity=%s) -> %s",
+                len(snapshot.encode()),
+                fidelity,
+                capture_path.name,
+            )
+            return capture_path, []
+        finally:
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    page.close()
+            browser.close()
+
+
 def _redirect_dedup(canonical: str, *, corpus_root: Path) -> Path | None:
     """Second-stage capture dedup: follow `canonical`'s redirects (only when it looks like
     an opaque short link) and re-check `find_by_uri` against the resolved final URL — so a
@@ -1196,7 +1407,12 @@ def _walk_carousel(*, page: Any, request_api: Any, arg: Any) -> None:
 
 
 def _snapshot_html(
-    *, page: Any, fetched_at: str, bundle: Path | None, fidelity: str = DEFAULT_FIDELITY
+    *,
+    page: Any,
+    fetched_at: str,
+    bundle: Path | None,
+    fidelity: str = DEFAULT_FIDELITY,
+    capture_url: str | None = None,
 ) -> str:
     """Produce the HTML snapshot string with corpus-* meta tags injected.
 
@@ -1207,8 +1423,12 @@ def _snapshot_html(
     are preserved, only CSS / fonts are left external. The resolved `fidelity` is
     stamped into a `corpus-fidelity` meta tag regardless, so the artifact records
     how it was captured.
+
+    `capture_url` overrides the recorded `corpus-capture-url` meta — used by from-save
+    capture, where the navigation target is a `file://` path but the provenance URL is
+    the SingleFile banner's; absent it, `page.url` (the live final URL) is recorded.
     """
-    final_url = page.url
+    final_url = capture_url or page.url
     if bundle is not None:
         log.info("snapshotting via SingleFile bundle: %s (fidelity=%s)", bundle, fidelity)
         page.add_script_tag(content=bundle.read_text())
@@ -1558,10 +1778,20 @@ def _attr_escape(s: str) -> str:
 # ---------- ingest seam ---------- #
 
 
-def _ingest_capture(result: CaptureResult, *, original_url: str, corpus_root: Path) -> Path | None:
+def _ingest_capture(
+    result: CaptureResult,
+    *,
+    original_url: str,
+    corpus_root: Path,
+    fetched_at: str | None = None,
+) -> Path | None:
     """Write the `.capture.yaml` sidecar (source_url / fetched_at / issues) and
     dispatch `ingest` in-process. Returns the resulting record path, or None on a
     non-zero ingest exit.
+
+    `fetched_at` overrides the recorded snapshot timestamp — used by from-save capture
+    to seed the origin `snapshot:` with the SingleFile saved date (when the human saved
+    the page), not the moment we re-snapshotted it; absent it, capture time (now).
 
     A yt-dlp `.info.json` companion (enrichment metadata) is left in `capture/` and
     renamed to `<hash>.info.json` by `ingest` itself — it stays in staging, is read at
@@ -1575,7 +1805,10 @@ def _ingest_capture(result: CaptureResult, *, original_url: str, corpus_root: Pa
     record_id = hashing.hash_file(capture_path, also=())["blake3"]
 
     sidecar = capture_path.with_suffix(capture_path.suffix + ".capture.yaml")
-    payload: dict[str, Any] = {"source_url": original_url, "fetched_at": touches.now_iso()}
+    payload: dict[str, Any] = {
+        "source_url": original_url,
+        "fetched_at": fetched_at or touches.now_iso(),
+    }
     if result.issues:
         payload["capture_issues"] = result.issues
     sidecar.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
