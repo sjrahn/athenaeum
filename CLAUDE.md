@@ -22,7 +22,7 @@ athenaeum/                    ← this repo's working tree (the workspace root)
 ├── docs/                     ← the system's runbooks — members carry no docs/ of their own
 │                                (capture-operations · imessage-workflow · export-sources · normalize-drain-loop;
 │                                 tooling operating modes ship IN the package: `corpus workflow <name>`)
-├── .claude/agents/           ← dispatchable workers: normalizer (sonnet 1M) · ledger-scribe (opus 1M)
+├── .claude/agents/           ← dispatchable workers: normalizer (sonnet 1M) · ledger-scribe (opus 1M) · overlay-author (opus)
 ├── .claude/skills/orchestrator/  ← the persona + state/logbook/gotchas
 ├── corpora/                  ← UNTRACKED member clones — the two tenant-isolated hubs
 │   ├── corpus/               ←   public/world captures
