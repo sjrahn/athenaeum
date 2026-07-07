@@ -4,6 +4,11 @@ Selectors are additive: `types` includes every fact of the listed types;
 `roots` includes the listed concepts and their subgraph traversed in both
 directions within the traversal type bound; `exclude` carves out visibly.
 Interpretations ride along when their `about` intersects the scope.
+
+Traversal follows claim `object`s, edge `subject`/`participants`, and the
+structured-value entity references of `facts/SCHEMA.md` conv. 7 —
+`{"entity": <id>}` elements inside a claim's `value` (an event's attendance,
+a group's members, a lineup) — treating each entity like a claim object.
 """
 
 from __future__ import annotations
@@ -12,6 +17,41 @@ from pathlib import Path
 
 from codex.manifest import CodexManifest
 from ledger.model import is_edge, is_redirect, load_json_dir
+
+
+def _value_entities(value: object) -> list[str]:
+    """Every `entity` reference inside a claim `value` (conv. 7 roster shape).
+
+    Walks lists and tolerates nested dicts; collects each string `"entity"`.
+    Parse tolerantly — a malformed element contributes nothing, never raises.
+    """
+    out: list[str] = []
+
+    def walk(v: object) -> None:
+        if isinstance(v, dict):
+            ent = v.get("entity")
+            if isinstance(ent, str):
+                out.append(ent)
+            for sub in v.values():
+                walk(sub)
+        elif isinstance(v, list):
+            for item in v:
+                walk(item)
+
+    walk(value)
+    return out
+
+
+def _claim_refs(o: dict) -> list[object]:
+    """A fact's outgoing/incoming claim references: each claim's `object` plus
+    the entity references buried in its structured `value`."""
+    refs: list[object] = []
+    for c in o.get("claims") or []:
+        if not isinstance(c, dict):
+            continue
+        refs.append(c.get("object"))
+        refs.extend(_value_entities(c.get("value")))
+    return refs
 
 
 def materialize(ledger_root: Path, manifest: CodexManifest) -> tuple[
@@ -59,9 +99,8 @@ def materialize(ledger_root: Path, manifest: CodexManifest) -> tuple[
         changed = False
         for fid, o in by_id.items():
             if fid in selected:
-                # outgoing: claim objects; edge members
-                targets = [c.get("object") for c in o.get("claims") or []
-                           if isinstance(c, dict)]
+                # outgoing: claim objects + structured-value entities; edge members
+                targets = _claim_refs(o)
                 targets.append(o.get("subject"))
                 targets.extend(o.get("participants") or [])
                 for t in targets:
@@ -74,10 +113,9 @@ def materialize(ledger_root: Path, manifest: CodexManifest) -> tuple[
                 continue
             if not admissible(fid):
                 continue
-            # incoming: this fact's claims target the scope (spoke → hub), or
-            # this edge spans it
-            refs = [c.get("object") for c in o.get("claims") or []
-                    if isinstance(c, dict)]
+            # incoming: this fact's claims (object or structured-value entity)
+            # target the scope (spoke → hub), or this edge spans it
+            refs = _claim_refs(o)
             if is_edge(o):
                 refs.append(o.get("subject"))
                 refs.extend(o.get("participants") or [])

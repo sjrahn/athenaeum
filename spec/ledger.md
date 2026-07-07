@@ -121,6 +121,7 @@ A materialized real-world thing and the claims intrinsic to it:
   "aliases": [],                   // optional
   "meta": "…",                     // optional authoring commentary — never a claim, needs no evidence
   "sensitivity": "private",        // optional asserted override, upward only (§6.4)
+  "period": "2026-07-08/2026-07-09",  // optional — the fact's own timebox (§5.2); mirrors an evidenced claim
   "artifacts": [                   // the roster — records that are artifacts OF this thing (optional)
     { "uri": "corpus://826482aa…", "role": "documents", "note": "Metal Archives band page" },
     { "uri": "corpus://3fc0d1b2…", "role": "interview" }
@@ -130,6 +131,8 @@ A materialized real-world thing and the claims intrinsic to it:
 ```
 
 **The artifact roster** is the concept→record arrow that replaced 1.0 record classification (ATH-CORPUS 2.0): the corpus stopped declaring "this record is an instance of class X"; the concept now declares "these records are artifacts of me" — many records, one node, nothing dangling. A `role` is registered vocabulary (§8) naming a real relationship to the thing (`documents`, `performance-of`, `tablature-of`, `interview`); a role that cannot be phrased *of/about the concept* is a bucket, not a relationship, and does not belong. Roster entries carry harvest (`auto`) or asserted provenance under the §10 semantics; rostered URIs must resolve (§13).
+
+**The timebox.** A concept MAY carry a top-level `period` — the fact's own timebox (§5.2): the calendar span of a bounded occurrence, the duration of an episode. It is a structural *summary* — what the schema's `period` expectation (§4.4), temporal invariants (§11), and timeline tooling read cheaply — while the *evidence* for that span rides a normal claim (for an `event`, the `occurs` claim). The two are bound by convention: the top-level value **mirrors** the evidenced timebox claim's `period`, so the summary never states a span the graph cannot back. Edges carry `period` the same way (§4.3); it stays optional on both, and its format is the §5.2 grammar.
 
 A bare `{id, type, name}` **stub is valid** — every fact file is independently valid; there is no "incomplete" state. A stub is a signal: it marks the capture frontier and surfaces in the generated work-list. Any concept referenced as a claim `object` or an interpretation's `about` MUST have at least a stub — no dangling references.
 

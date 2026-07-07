@@ -35,7 +35,8 @@ PERIOD_RE = re.compile(
 ASOF_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 
 CONCEPT_KEYS = {
-    "id", "type", "name", "aliases", "meta", "sensitivity", "provenance", "artifacts", "claims"
+    "id", "type", "name", "aliases", "meta", "sensitivity", "period", "provenance",
+    "artifacts", "claims",
 }
 EDGE_KEYS = {
     "id", "type", "subject", "participants", "title", "period", "meta", "sensitivity",

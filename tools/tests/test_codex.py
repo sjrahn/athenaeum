@@ -117,6 +117,100 @@ def test_scope_traversal_is_bounded(system: Path) -> None:
     assert problems == []
 
 
+# ------------------------------ structured-value entity traversal (conv. 7)
+# The roster shape `{"entity": <id>}` inside a claim `value` — an event's
+# attendance, a group's members — is a traversal link like a claim object,
+# in both directions, still within the type bound (spec/codex.md §3).
+
+
+def _entity_scope(tmp_path: Path, facts: list[tuple[str, dict]], scope_yaml: str):
+    """A minimal ledger + codex for exercising conv. 7 entity traversal."""
+    ledger = tmp_path / "ledger"
+    for type_, obj in facts:
+        p = ledger / "facts" / type_ / f"{obj['id']}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(obj))
+    (ledger / "ledger.yaml").write_text("name: ledger\ncorpora: []\n")
+    codex = tmp_path / "codices" / "codex-x"
+    codex.mkdir(parents=True)
+    (codex / "codex.yaml").write_text("name: codex-x\nscope:\n" + scope_yaml)
+    return materialize(ledger, load_codex(codex))
+
+
+def _person(pid: str) -> tuple[str, dict]:
+    return ("person", {"id": pid, "type": "person", "name": pid.title()})
+
+
+def _event_attendance(eid: str, value: object) -> tuple[str, dict]:
+    return ("event", {"id": eid, "type": "event", "name": eid,
+                      "claims": [{"id": f"{eid}:att", "predicate": "attendance",
+                                  "value": value}]})
+
+
+def test_scope_attendance_entity_pulls_person_outgoing(tmp_path: Path) -> None:
+    """(i) outgoing: a scoped event's `attendance` entity pulls the person in."""
+    scoped, _, problems = _entity_scope(
+        tmp_path,
+        [_event_attendance("fest", [{"entity": "steven", "role": "worked"}]),
+         _person("steven")],
+        "  roots: [fest]\n  traverse_types: [event, person]\n",
+    )
+    assert problems == []
+    assert set(scoped) == {"fest", "steven"}
+
+
+def test_scope_person_root_pulls_event_incoming(tmp_path: Path) -> None:
+    """(ii) incoming: a person root pulls in an event whose attendance names them."""
+    scoped, _, _ = _entity_scope(
+        tmp_path,
+        [_person("steven"),
+         _event_attendance("fest", [{"entity": "steven", "role": "worked"}])],
+        "  roots: [steven]\n  traverse_types: [person, event]\n",
+    )
+    assert set(scoped) == {"steven", "fest"}
+
+
+def test_scope_entity_traversal_respects_bound(tmp_path: Path) -> None:
+    """(iii) the type bound still blocks the entity hop — a person root does NOT
+    pull an event whose type is outside `traverse_types`."""
+    scoped, _, _ = _entity_scope(
+        tmp_path,
+        [_person("steven"),
+         _event_attendance("fest", [{"entity": "steven", "role": "worked"}])],
+        "  roots: [steven]\n  traverse_types: [person]\n",   # event unlisted
+    )
+    assert set(scoped) == {"steven"}
+
+
+def test_scope_group_members_entity_traverses(tmp_path: Path) -> None:
+    """(iv) the same roster shape on a group's `members` traverses; an
+    unresolved-handle element (no `entity`) is simply not a link."""
+    group = ("group", {"id": "crew", "type": "group", "name": "Crew",
+                       "claims": [{"id": "crew:members", "predicate": "members",
+                                   "value": [{"entity": "steven"},
+                                             {"handle": "+15550001111",
+                                              "name": "Mystery"}]}]})
+    scoped, _, _ = _entity_scope(
+        tmp_path, [group, _person("steven")],
+        "  roots: [crew]\n  traverse_types: [group, person]\n",
+    )
+    assert set(scoped) == {"crew", "steven"}
+
+
+def test_scope_entity_walk_tolerates_malformed(tmp_path: Path) -> None:
+    """(v) malformed array elements never crash the walk; a well-formed
+    `{"entity": …}` beside them still links, including one nested a dict deep."""
+    messy = ["garbage", 42, None, {"role": "worked"},
+             {"entity": "steven"}, {"outer": {"entity": "greg"}}]
+    scoped, _, problems = _entity_scope(
+        tmp_path,
+        [_event_attendance("fest", messy), _person("steven"), _person("greg")],
+        "  roots: [fest]\n  traverse_types: [event, person]\n",
+    )
+    assert problems == []
+    assert set(scoped) == {"fest", "steven", "greg"}
+
+
 def test_notes_profiles(system: Path) -> None:
     manifest = load_codex(system / "codices" / "codex-demo")
     scoped, riding, _ = materialize(system / "ledger", manifest)

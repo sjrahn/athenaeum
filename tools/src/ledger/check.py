@@ -194,6 +194,10 @@ def run_check(
         if o.get("provenance") not in (None, "auto"):
             rep.err(where, f"file provenance must be 'auto' when present "
                            f"(got {o.get('provenance')!r})")
+        # the fact's own timebox (§4.2/§4.3) — concept or edge — same grammar as
+        # a claim period; mirrors an evidenced timebox claim by convention
+        if "period" in o and not PERIOD_RE.match(str(o["period"])):
+            rep.warn(where, f"odd period format {o['period']!r}")
         if edge:
             subj = o.get("subject")
             if subj is not None and resolve_id(str(subj)) is None:

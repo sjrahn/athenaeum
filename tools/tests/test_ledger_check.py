@@ -601,6 +601,45 @@ def test_timeboxed_fields_frontier(system: Path) -> None:
     assert any("timeboxed must be a bool" in e for e in errs)
 
 
+def test_concept_carries_own_period(system: Path) -> None:
+    """A concept MAY carry a top-level `period` (§4.2): admitted (not an unknown
+    key), format-warned like a claim period, and it satisfies a `period`
+    expectation the way an edge's own timebox does."""
+    from ledger.model import load_json_dir
+    from ledger.schemas import load_schemas
+    from ledger.views import render_worklist
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "event.yaml").write_text(
+        "type: event\ndescription: an occurrence\n"
+        "expectations:\n"
+        "  - description: every event is timeboxed\n"
+        "    expect: [period]\n"
+    )
+    _fact(system, "event", {
+        "id": "fest", "type": "event", "name": "Fest",
+        "period": "2026-07-08/2026-07-09",
+        "claims": [_claim("fest", "kind", value="festival",
+                          period="2026-07-08/2026-07-09")],
+    })
+    rep = _check(system)
+    assert not any("unknown concept keys" in e for e in rep.errors)
+    assert not any("odd period format" in w for w in rep.warnings)  # well-formed
+    # the top-level timebox satisfies the `expect: [period]` frontier line
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    schemas, _ = load_schemas(system / "ledger")
+    assert "event.period" not in render_worklist(facts, {}, schemas)
+
+    # an odd top-level period format warns, exactly like a claim period
+    _fact(system, "event", {
+        "id": "fest2", "type": "event", "name": "Fest2",
+        "period": "July 2026",
+        "claims": [_claim("fest2", "kind", value="festival")],
+    })
+    rep = _check(system)
+    assert not any("unknown concept keys" in e for e in rep.errors)
+    assert any("odd period format" in w and "fest2" in w for w in rep.warnings)
+
+
 # ------------------------------------------------------------------ invariants
 
 
