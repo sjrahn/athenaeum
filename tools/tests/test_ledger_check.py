@@ -640,6 +640,80 @@ def test_concept_carries_own_period(system: Path) -> None:
     assert any("odd period format" in w and "fest2" in w for w in rep.warnings)
 
 
+def test_schema_elements_and_entity_refs(system: Path) -> None:
+    """Declared `elements` (§4.4) validate the objects inside a structured array
+    claim value — enum `values` and typed `entity` `target`s — while undeclared
+    keys, {"name"}/{"handle"} elements, and non-dict elements validate nothing.
+    And, independent of any declaration, every {"entity": <id>} in a claim value
+    MUST resolve (through redirect tombstones) — the no-dangling rule extended to
+    the roster shape."""
+    from ledger.schemas import load_schemas
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "event.yaml").write_text(
+        "type: event\ndescription: an occurrence\n"
+        "fields:\n"
+        "  attendance:\n"
+        "    elements:\n"
+        "      entity: { target: person }\n"
+        "      role: { values: [worked, attended, performed] }\n"
+        "  lineup:\n"
+        "    elements:\n"
+        "      entity: { target: organization }\n"
+    )
+    for pid in ("steven", "kat"):
+        _fact(system, "person", {"id": pid, "type": "person", "name": pid.title(),
+                                 "claims": [_claim(pid, "email", predicate="email")]})
+    _fact(system, "person", {"id": "renamed", "type": "person", "merged_into": "steven"})
+    _fact(system, "organization", {"id": "acme", "type": "organization", "name": "Acme",
+                                   "claims": [_claim("acme", "d", predicate="description")]})
+
+    # clean: entity → person, role in vocab, undeclared `capacity` tolerated; a
+    # renamed entity resolves through its redirect tombstone; {"name"}/{"handle"}
+    # and a bare-string element validate nothing; lineup entity → organization
+    # with an undeclared free-text `role`.
+    _fact(system, "event", {
+        "id": "ok", "type": "event", "name": "OK", "period": "2026-07",
+        "claims": [
+            _claim("ok", "att", predicate="attendance", period="2026-07", value=[
+                {"entity": "steven", "role": "worked", "capacity": "Volunteer Manager"},
+                {"entity": "renamed", "role": "attended"},
+                {"name": "Unminted Person"},
+                {"handle": "+15551234"},
+                "not-a-dict",
+            ]),
+            _claim("ok", "lineup", predicate="lineup", period="2026-07", value=[
+                {"name": "Some Band"},
+                {"entity": "acme", "role": "headliner"},
+            ]),
+        ]})
+    rep = _check(system)
+    assert not any("ok.json" in e for e in rep.errors)
+
+    # role outside its vocabulary; entity a wrong type; entity dangling
+    _fact(system, "event", {
+        "id": "bad", "type": "event", "name": "Bad", "period": "2026-07",
+        "claims": [_claim("bad", "att", predicate="attendance", period="2026-07", value=[
+            {"entity": "steven", "role": "vibed"},
+            {"entity": "acme", "role": "worked"},
+            {"entity": "ghost", "role": "attended"},
+        ])]})
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "element 'role' value 'vibed' not among declared values" in msgs
+    assert "element 'entity' 'acme' is a 'organization', declared target 'person'" in msgs
+    assert "dangling entity reference 'ghost' in claim value" in msgs
+    # a wrong-type entity resolves, so it is NOT also reported as dangling
+    assert "dangling entity reference 'acme'" not in msgs
+
+    # a malformed element declaration is a schema error
+    (system / "ledger" / "schemas" / "event.yaml").write_text(
+        "type: event\ndescription: an occurrence\n"
+        "fields:\n  attendance:\n    elements:\n      entity: { target: 7 }\n"
+    )
+    _, errs = load_schemas(system / "ledger")
+    assert any("element 'entity' target must be a type or a list" in e for e in errs)
+
+
 # ------------------------------------------------------------------ invariants
 
 

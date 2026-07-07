@@ -15,7 +15,8 @@ import yaml
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
                "expectations"}
 FIELD_KEYS = {"target", "description", "expected", "values", "participant",
-              "timeboxed"}
+              "timeboxed", "elements"}
+ELEMENT_KEYS = {"target", "values", "description"}
 EXPECTATION_KEYS = {"when", "expect", "description"}
 
 
@@ -73,6 +74,34 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
                 errors.append(f"{where}: field {fname!r} participant must be a bool")
             if not isinstance(fspec.get("timeboxed", False), bool):
                 errors.append(f"{where}: field {fname!r} timeboxed must be a bool")
+            elements = fspec.get("elements")
+            if elements is not None:
+                if not isinstance(elements, dict):
+                    errors.append(f"{where}: field {fname!r} elements must be a mapping "
+                                  "of element-key to a declaration")
+                else:
+                    for ekey, edecl in elements.items():
+                        ew = f"{where}: field {fname!r} element {ekey!r}"
+                        if not isinstance(edecl, dict):
+                            errors.append(f"{ew} must be a mapping (values and/or target)")
+                            continue
+                        bad = set(edecl) - ELEMENT_KEYS
+                        if bad:
+                            errors.append(f"{ew} unknown keys {sorted(bad)}")
+                        etarget = edecl.get("target")
+                        if etarget is not None and not (
+                            isinstance(etarget, str)
+                            or (isinstance(etarget, list)
+                                and all(isinstance(t, str) for t in etarget))
+                        ):
+                            errors.append(f"{ew} target must be a type or a list of "
+                                          "admissible types")
+                        evalues = edecl.get("values")
+                        if evalues is not None and not (
+                            isinstance(evalues, list)
+                            and all(isinstance(v, str) for v in evalues)
+                        ):
+                            errors.append(f"{ew} values must be a list of strings")
         roles = data.get("roster_roles")
         if roles is not None and not (
             isinstance(roles, list) and all(isinstance(r, str) for r in roles)

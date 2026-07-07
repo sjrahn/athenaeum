@@ -182,6 +182,24 @@ fields:
   interaction: {}
 ```
 
+A field whose value is a **structured array** — a roster of objects, one checkable element each (§5.1) — may declare **`elements:`**, a mapping of element-key to a declaration reusing the per-field grammar above (`values` for an enumerated vocabulary, `target` for a typed fact reference). It validates the objects *inside* the array the way `values`/`target` validate a scalar field:
+
+```yaml
+type: event
+fields:
+  attendance:                      # a structured array — one person per element
+    elements:
+      entity: { target: person }             # each element's `entity` is a person
+      role:   { values: [worked, attended, performed] }
+  lineup:
+    elements:
+      entity: { target: organization }        # each element's `entity` is an act (an org)
+```
+
+Undeclared element keys are admissible — they register nothing and validate nothing, exactly as unmarked fields do; an element carrying `{"handle": …}` or `{"name": …}` in place of `entity` is fine.
+
+**Entity references resolve — always.** Independent of any `elements` declaration, every `{"entity": <id>}` object inside a claim value MUST resolve to an existing fact (through redirect tombstones, §4.1): the no-dangling-references rule (§4.2) extended to the roster shape structured-array claims carry (§5.1). Codex scope traversal follows these references (`spec/codex.md`), so a dangling one would silently truncate a compilation — validation makes it an error at its source.
+
 Any type's schema may declare **expectations** — conditional owed-ness, the declared half of gap-finding (§7.4):
 
 ```yaml
@@ -198,7 +216,7 @@ expectations:
 
 Semantics:
 
-- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
+- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, a declared **element** value outside its `values` or an element `entity` resolving outside its `target` type(s), an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
 - **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Timeboxed fields.** A field may declare `timeboxed: true` — e.g. `residence: { target: place, timeboxed: true }` — meaning every claim under that predicate owes a `period`: an attested residence or employment episode without a timespan is half a fact, and `asof` alone records observation, never duration. Like owed fields, a missing timebox is *frontier* (a labeled chase on the work-list, §7.4), never an error — the gap says "find the start/end", which is exactly how new evidence that widens a period announces where it belongs.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
@@ -453,7 +471,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Sensitivity** — derived sensitivity (§6.4) computes for every claim (all evidence resolves against registered corpora or datasets, so the private/public determination is total); asserted `sensitivity` overrides are upward only.
 
-**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, or wikilinks; no relation stored with its inverse; redirect tombstones (§4.1) satisfy references and resolve in one hop (the `merged_into` target exists and is not itself a redirect; a redirect carries no claims).
+**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; redirect tombstones (§4.1) satisfy references and resolve in one hop (the `merged_into` target exists and is not itself a redirect; a redirect carries no claims).
 
 **Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
@@ -461,7 +479,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
-**Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields, unmet expectations, and missing timeboxes alike — land on the work-list as frontier, never as stub errors.
+**Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; declared **element** values stay within their `values` and element `entity`s resolve within their `target` type(s); `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields, unmet expectations, and missing timeboxes alike — land on the work-list as frontier, never as stub errors.
 
 **Invariants** — every declared invariant (§11) holds; violations name the claims; an amended invariant emits its migration worklist.
 

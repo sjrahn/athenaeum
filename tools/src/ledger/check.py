@@ -341,6 +341,41 @@ def run_check(
             for link in WIKILINK_RE.findall(s):
                 if resolve_id(link) is None:
                     rep.err(where, f"wikilink [[{link}]] doesn't match a fact id")
+        # universal (§4.4): every {"entity": <id>} inside a claim value resolves —
+        # the no-dangling rule extended to the roster shape structured-array
+        # claims carry. Codex scope traversal follows these refs, so a dangle
+        # would silently truncate a compilation; validation errors on it here.
+        for eid in _iter_entity_refs(c.get("value")):
+            if resolve_id(eid) is None:
+                rep.err(where, f"dangling entity reference {eid!r} in claim value")
+        # declared elements (§4.4): validate the objects inside a structured
+        # array claim value against the field's element declarations — enum
+        # `values` and typed `entity` `target`s; undeclared keys, missing keys,
+        # and non-dict elements validate nothing (parse tolerantly).
+        elements = fspec.get("elements")
+        if isinstance(elements, dict) and isinstance(c.get("value"), list):
+            for el in c["value"]:
+                if not isinstance(el, dict):
+                    continue
+                for ekey, edecl in elements.items():
+                    if not isinstance(edecl, dict) or ekey not in el:
+                        continue
+                    ev = el[ekey]
+                    evalues = edecl.get("values")
+                    if evalues is not None and str(ev) not in evalues:
+                        rep.err(where, f"schema: {o.get('type')}.{pred} element {ekey!r} "
+                                       f"value {ev!r} not among declared values {evalues}")
+                    etarget = edecl.get("target")
+                    if etarget is not None and isinstance(ev, str):
+                        resolved = resolve_id(ev)
+                        if resolved is not None:  # dangle owned by the universal rule
+                            got = live_facts.get(resolved, {}).get("type")
+                            admissible = (etarget if isinstance(etarget, list)
+                                          else [etarget])
+                            if got not in admissible:
+                                rep.err(where, f"schema: {o.get('type')}.{pred} element "
+                                               f"{ekey!r} {ev!r} is a {got!r}, declared "
+                                               f"target {etarget!r}")
 
         evs = c.get("evidence") or []
         if not evs:
@@ -630,3 +665,20 @@ def _iter_strings(v: object):
     elif isinstance(v, dict):
         for x in v.values():
             yield from _iter_strings(x)
+
+
+def _iter_entity_refs(v: object):
+    """Ids from every {"entity": <str>} object inside a claim value (§4.4).
+
+    The roster shape (conv. 7): an act's or member's id rides an `entity` key.
+    A non-string `entity` is ignored — parse tolerantly, validate nothing.
+    """
+    if isinstance(v, dict):
+        e = v.get("entity")
+        if isinstance(e, str):
+            yield e
+        for x in v.values():
+            yield from _iter_entity_refs(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _iter_entity_refs(x)
