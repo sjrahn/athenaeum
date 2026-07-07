@@ -53,6 +53,8 @@ ath corpus <cmd>                    # delegation shim — identical to `corpus <
 corpus --help                       # works anywhere; auto-discovers the corpus root by cwd
 corpus health --summary             # run from corpora/corpus or corpora/corpus-private
 corpus lint <hash-prefix>
+corpus session capture <id>         # bundle a Claude Code session → ingest → draft (corpus-private; --from host for ssh)
+corpus continuity <A> <B>           # prove B preserves A's content (supersession safety check)
 
 # Tooling test suite + lint (from tools/; gotcha #2 for the pytest invocation):
 cd tools && uv sync --extra capture --extra media --extra office --extra fingerprint --extra tokens
@@ -63,6 +65,7 @@ uv run --no-sync ruff check src tests     # expect clean
 ath ledger check                    # the validation contract — must pass
 ath ledger verify                   # evidence verification: anchors + verbatim quotes (--stamp binds snapshots)
 ath ledger harvest                  # mechanical minting rules; also: promote | stamp | worklist | regen
+ath ledger supersede <old> <new>    # rewrite corpus citations old→new on re-capture (continuity-gated; --retire)
 
 # The codex layer (spec/codex.md):
 ath codex <name> check              # manifest sanity + vault currency

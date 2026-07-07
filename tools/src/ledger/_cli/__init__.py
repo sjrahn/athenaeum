@@ -31,6 +31,8 @@ Commands:
                 strip auto output, sweep the corpora, re-mint
   promote ID    move a hypothesis's proposed claim into its fact (§7.2)
   stamp ID      (re-)pin a correction's challenge to the claim state (§7.3)
+  supersede OLD NEW  rewrite corpus citations old→new on re-capture, gated by
+                content continuity; --retire reclaims the old bytes (§13.3)
   worklist REF  dependents to revisit — REF is a fact id, a corpus hash,
                 or an invariant id
   regen         rewrite the generated views (VOCAB.md, the open-questions
@@ -229,6 +231,38 @@ def _cmd_worklist(argv: Sequence[str]) -> int:
     return 0
 
 
+def _cmd_supersede(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger supersede",
+                      "Rewrite corpus citations old→new when a record is re-captured (§13.3).")
+    ap.add_argument("old", help="the superseded record hash")
+    ap.add_argument("new", help="the replacement record hash")
+    ap.add_argument("--retire", action="store_true",
+                    help="reclaim the old record's bytes (corpus rm) once no diverged "
+                         "citation still references it")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, _ = _system(ns.root)
+    from ledger.supersede import supersede
+
+    res = supersede(ledger_root, ns.old, ns.new, join, retire=ns.retire)
+    if not res.ok:
+        print(f"ath ledger supersede: {res.note}", file=sys.stderr)
+        return 2
+    for rw in res.rewrites:
+        print(f"rewrote  {rw.fact}: {rw.old_uri[:20]}… → corpus://{res.new[:12]}…")
+    for dv in res.divergences:
+        print(f"DIVERGED {dv.fact}: {dv.uri[:20]}… [{dv.address}] — left as-is, re-anchor it")
+    if res.retired:
+        print(f"retired old record {res.old[:12]}… (bytes reclaimed)")
+    if res.note:
+        print(f"note: {res.note}")
+    print(
+        f"\n{len(res.rewrites)} citation(s) rewritten across {len(res.facts_touched)} fact(s), "
+        f"{len(res.divergences)} diverged"
+    )
+    # A leftover divergence is a real problem to resolve; signal it non-zero.
+    return 1 if res.divergences else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
@@ -243,6 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "promote": _cmd_promote,
         "stamp": _cmd_stamp,
         "worklist": _cmd_worklist,
+        "supersede": _cmd_supersede,
     }
     try:
         if cmd in handlers:

@@ -22,6 +22,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "init":            ("Scaffolding",            "Scaffold a new corpus tree (records/ + schema/)"),
     # Capture & ingest (P2; capture added P4)
     "capture":         ("Capture & ingest",       "Capture a URL into capture/, then ingest to a record stub"),
+    "session":         ("Capture & ingest",       "Capture a Claude Code session (bundle → ingest → draft); list sessions"),
     "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "promote":         ("Capture & ingest",       "Mint a record for a container member (corpus://<id>?<member-address>)"),
@@ -60,6 +61,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
+    "continuity":      ("Maintenance",            "Prove whether one record's content is preserved in another (supersession check)"),
     # Query (P1)
     "find":            ("Query",                  "List records matching status / mime / origin"),
     "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
