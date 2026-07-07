@@ -24,6 +24,10 @@ mimetypes.add_type("application/x-ndjson", ".ndjson")
 # A single RFC822 email message. Detected by header shape (below); the `.eml` suffix names
 # it for the extension fallback (not registered by default on every platform).
 mimetypes.add_type("message/rfc822", ".eml")
+# vCard address-book export. Some platforms' mimetypes map `.vcf` to the legacy
+# `text/x-vcard`; pin it to the RFC 6350 canonical so ingest + the zip member index agree.
+mimetypes.add_type("text/vcard", ".vcf")
+mimetypes.add_type("text/vcard", ".vcard")
 
 # Magic-byte signatures: (offset, prefix_bytes, mime).
 _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
@@ -63,6 +67,9 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     # with one. Its messages are declared + promotable per `msg=<N>` (spec §12.11); a message
     # promoted out of it is `message/rfc822` (detected by header shape below).
     (0, b"From ", "application/mbox"),
+    # vCard address book: every file opens with the `BEGIN:VCARD` delimiter. Confirms the type
+    # for an extension-less drop; a BOM-prefixed file falls through to the `.vcf` extension.
+    (0, b"BEGIN:VCARD", "text/vcard"),
 )
 
 
