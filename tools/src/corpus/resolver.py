@@ -186,6 +186,10 @@ def resolve(
     pdf_doc: pdfium.PdfDocument | None = None
     if initial_kind == "pdf":
         pdf_doc = pdfium.PdfDocument(str(artifact_binary))
+        # Without init_forms(), AcroForm widget values (form-fill text without baked
+        # appearance streams) silently never paint in page renders — the page looks
+        # blank exactly where the filled content is.
+        pdf_doc.init_forms()
         working = pdf_doc
     elif initial_kind == "html":
         from bs4 import BeautifulSoup

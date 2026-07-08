@@ -74,6 +74,23 @@ def test_pdf_page_renders_to_cached_png(tmp_path):
     assert out2 == out
 
 
+def test_pdf_page_render_paints_acroform_field_values(tmp_path):
+    """AcroForm field values without appearance streams (NeedAppearances form-fill) must
+    paint in page renders — requires init_forms() on the resolver's document, without
+    which the page renders blank exactly where the filled content is."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "formfield.pdf", mime="application/pdf", ext="pdf")
+    out = resolver.resolve(f"corpus://{rid}?page=1", root)
+    from PIL import Image
+
+    with Image.open(out) as im:
+        histogram = im.convert("L").histogram()
+    dark_pixels = sum(histogram[:128])
+    # The fixture's only content is the field value "FILLED"; a blank render means the
+    # form layer was never initialized.
+    assert dark_pixels > 100
+
+
 def test_image_bbox_resize_grayscale_chain(tmp_path):
     root = _make_corpus(tmp_path)
     rid = _ingest_fixture(root, "sample.png", mime="image/png", ext="png")
