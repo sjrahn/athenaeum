@@ -316,6 +316,44 @@ def test_unresolvable_evidence_fails_closed(system: Path) -> None:
     assert "album/obscura.md" not in vault  # sole claim fails closed → fully private
 
 
+def test_public_build_rasters_without_false_leak(system: Path) -> None:
+    """A rastered asset's filename must never trip the leak check: assets are
+    named by a 32-hex urihash prefix, deliberately shorter than a corpus hash,
+    so a public build whose visual evidence is public-backed is clean."""
+    import frontmatter
+
+    from corpus import hashing, paths, records
+    from corpus.store import LocalArtifactStore
+
+    # stage a real public image record so the raster path genuinely runs
+    src = Path(__file__).parent / "data" / "sample.png"
+    h_img = hashing.hash_file(src)["blake3"]
+    pub_root = system / "corpora" / "corpus"
+    LocalArtifactStore(pub_root).put(h_img, "png", src)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": h_img, "title": "Public image",
+                          "status": "normalized",
+                          "touch": ["corpus.compile@0.1.0"]})
+    records.set_artifact_block(post, mime="image/png",
+                               fields={"title": "sample.png"})
+    records.dump(post, paths.record_path(pub_root, h_img))
+
+    p = system / "ledger" / "facts" / "album" / "obscura.json"
+    o = json.loads(p.read_text())
+    o["claims"][0]["evidence"] = [
+        {"uri": f"corpus://{h_img}?bbox=0.0,0.0,0.5,0.5", "kind": "direct"}]
+    p.write_text(json.dumps(o))
+
+    manifest = load_codex(system / "codices" / "codex-demo")
+    res = build(manifest, system / "ledger", _join(system), profile="public",
+                today="2026-07-08")
+    assert res.rastered == 1
+    assert res.ok, res.problems
+    note = (manifest.root / "build" / "public" / "content" / "album" /
+            "obscura.md").read_text()
+    assert "](assets/" in note
+
+
 def test_interp_claim_id_basis_inherits_privacy(system: Path) -> None:
     """based_on may cite claim ids (§7.2): the interpretation inherits the
     claim's privacy; an unresolvable basis fails closed."""

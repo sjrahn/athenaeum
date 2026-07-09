@@ -120,8 +120,10 @@ def build(
             res.problems.append(f"embed corpus://{h[:12]}…: raster failed — {e}")
             return match.group(0)
         cited[h] = join.touch(h)
+        # 32 hex chars — deliberately shorter than a corpus hash so an asset
+        # filename can never match the leak check's 64-hex scan (§6)
         name = functional_uri.urihash(functional_uri.canonical(
-            functional_uri.parse(uri))) + src.suffix
+            functional_uri.parse(uri)))[:32] + src.suffix
         shutil.copyfile(src, content / "assets" / name)
         res.rastered += 1
         return f"![{alt}](assets/{name})"
