@@ -304,7 +304,7 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
 
 - **Source keys** match `^[a-z][a-z0-9-]{0,31}$`, are local to their fact, and carry no meaning — renames are free (challenge pins canonicalize on the derived citation, §7.3).
 - A sources entry carries exactly one of **`record`** (a full 64-hex blake3) or **`ref`** (`{dataset}/{id}`, §6.5). Two entries in one fact naming the same target is a validation error — the table exists so each artifact appears once. Every entry must be referenced by at least one evidence entry (unreferenced = warning); every `evidence.source` must resolve in its own fact's table (unresolved = error).
-- The **derived citation** is `corpus://{record}` — plus `?` and the `anchor` verbatim when present — or `ref://{ref}`. All §6.2 discipline applies to the derived form.
+- The **derived citation** is `corpus://{record}` — plus, when an `anchor` is present, `?` and the anchor verbatim (or the anchor alone when it begins with `#`, the fragment form) — or `ref://{ref}`. All §6.2 discipline applies to the derived form.
 - Rosters (`artifacts[].uri`) and interpretation `based_on` lists (§7.2) are references, not evidence: they keep the direct URI form. A draft claim inside `proposes` likewise cites inline (`uri:`) — it has no fact table to reference; `ledger promote` materializes its citations into the target fact's sources table.
 
 **`kind` grades the artifact so trust is computed, not vibed:**
@@ -315,7 +315,7 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
 
 ### 6.2 Citation discipline
 
-- The derived citation MUST resolve: **`corpus://{hash}`** with the full 64-hex blake3 — anchor span parameters (`el=`, `page=`, `time_range=`, `frame=`, `page=N&bbox=`, `path=`) per the corpus functional-URI grammar (`spec/corpus.md` §6) — or **`ref://{dataset}/{id}`** into a registered reference dataset (§6.5). (Rosters and `based_on` references, which carry direct URIs, obey the same grammar.)
+- The derived citation MUST resolve: **`corpus://{hash}`** with the full 64-hex blake3 — anchor span parameters (`el=`, `page=`, `time_range=`, `frame=`, `page=N&bbox=`, `path=`, or a `#fragment`) per the corpus functional-URI grammar (`spec/corpus.md` §6) — or **`ref://{dataset}/{id}`** into a registered reference dataset (§6.5). (Rosters and `based_on` references, which carry direct URIs, obey the same grammar.)
 - **Resolution is content-addressed, never scoped.** A hash resolves by blake3 across every corpus in `ledger.yaml` `corpora:` — some corpus satisfies it or none does; there is no per-corpus URI form. Which corpus holds the bytes (and hence the evidence's sensitivity, §6.4) is a derived property, not URI syntax. A hash resolving in no registered corpus is a validation error.
 - **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
 - **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§13.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
