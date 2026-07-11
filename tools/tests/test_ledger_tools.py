@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from ledger.corpora import CorpusJoin, RegisteredCorpus
-from ledger.coverage import render_coverage
+from ledger.coverage import render_coverage, represented_hashes
 from ledger.harvest import HarvestError, load_rules, run_harvest
-from ledger.model import canonical_claim_state
+from ledger.model import canonical_claim_state, derived_uri
 from ledger.promote import PromoteError, promote, stamp
 from ledger.verify import verify_ledger
 from ledger.worklist import worklist
@@ -92,7 +92,14 @@ def test_harvest_converges_by_origin_native_key(system: Path) -> None:
     windows = {c["value"] for c in concept["claims"] if c["predicate"] == "window"}
     assert windows == {"2023-03", "2023-04"}
     assert all(c["status"] == "provisional" for c in concept["claims"])
-    # idempotent: strip + re-mint converges
+    # claim evidence cites the sources table — one entry per distinct record,
+    # deduplicated (the table's whole point) rather than one per claim
+    sources = concept["sources"]
+    assert {entry["record"] for entry in sources.values()} == {H1, H2}
+    cited = {derived_uri(sources, e["source"], e.get("anchor"))
+             for c in concept["claims"] for e in c["evidence"]}
+    assert cited == {f"corpus://{H1}", f"corpus://{H2}"}
+    # idempotent: strip + re-mint converges (sources table included, byte-for-byte)
     again = run_harvest(system / "ledger", _corpora(system))
     assert again.stripped_files == 1 and again.minted == 1
     assert json.loads(
@@ -114,6 +121,10 @@ def test_harvest_asserted_wins(system: Path) -> None:
     after = json.loads(p.read_text())
     assert after["name"] == "Texts with Mom"  # harvest never touches asserted content
     assert {c["value"] for c in after["claims"]} == {"2023-03", "2023-04"}  # re-converged
+    # both claims were still individually auto-marked, so BOTH got stripped and
+    # re-minted — the sources table converges the same way, never left orphaned
+    hashes = {entry["record"] for entry in after["sources"].values()}
+    assert hashes == {H1, H2}
 
 
 def test_hash_only_rules_may_not_mint(tmp_path: Path) -> None:
@@ -131,18 +142,23 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
     (ledger / "facts" / "person").mkdir()
     (ledger / "facts" / "person" / "mom.json").write_text(json.dumps({
         "id": "mom", "type": "person", "name": "Mom",
+        # each citation gets its OWN source key here (not the sources-table
+        # dedup a real fact would use) so this test can probe per-entry
+        # verification independent of the shared-source stamping rule —
+        # that rule gets its own dedicated test below
+        "sources": {"s1": {"record": H1}, "s2": {"record": H1}, "s3": {"record": H1}},
         "claims": [
             {"id": "mom:greeting", "predicate": "greeting", "value": "x",
              "status": "confirmed", "asof": "2023-03-01",
-             "evidence": [{"uri": f"corpus://{H1}?el=1",
+             "evidence": [{"source": "s1", "anchor": "el=1",
                            "quote": "hello from   the fixture", "kind": "authoritative"}]},
             {"id": "mom:bogus-quote", "predicate": "bogus", "value": "x",
              "status": "confirmed", "asof": "2023-03-01",
-             "evidence": [{"uri": f"corpus://{H1}?el=1",
+             "evidence": [{"source": "s2", "anchor": "el=1",
                            "quote": "never said this", "kind": "authoritative"}]},
             {"id": "mom:bad-anchor", "predicate": "bogus2", "value": "x",
              "status": "provisional", "asof": "2023-03-01",
-             "evidence": [{"uri": f"corpus://{H1}?el=99", "kind": "direct"}]},
+             "evidence": [{"source": "s3", "anchor": "el=99", "kind": "direct"}]},
         ],
     }))
     join = CorpusJoin(_corpora(system))
@@ -151,17 +167,48 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
     assert any("quote not found" in e for e in res.errors)          # confirmed → error
     assert any("anchor does not resolve" in w for w in res.warnings)  # provisional → warn
     fact = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
-    stamped = fact["claims"][0]["evidence"][0]["verified"]
+    stamped = fact["sources"]["s1"]["verified"]
     assert stamped == {"touch": "corpus.compile@0.1.0", "at": "2026-07-02"}
-    # drift: the pin excludes verified stamps, so stamping didn't change the state
-    assert canonical_claim_state(fact["claims"][0]) == canonical_claim_state(
-        {k: v for k, v in fact["claims"][0].items()})
+    # drift: the pin excludes sources-entry `verified` stamps, so stamping
+    # didn't move the canonical state
+    unstamped = {k: {kk: vv for kk, vv in v.items() if kk != "verified"}
+                 for k, v in fact["sources"].items()}
+    assert canonical_claim_state(fact["claims"][0], fact["sources"]) == \
+        canonical_claim_state(fact["claims"][0], unstamped)
     # a later-day re-run must NOT re-stamp: only a moved touch identity may
     # rewrite fact files (else every verify run churns the whole tree)
     res2 = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-03")
     assert res2.verified == 1 and res2.stamped == 0
     fact2 = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
-    assert fact2["claims"][0]["evidence"][0]["verified"]["at"] == "2026-07-02"
+    assert fact2["sources"]["s1"]["verified"]["at"] == "2026-07-02"
+
+
+def test_verify_shared_source_stamps_only_if_all_citations_pass(system: Path) -> None:
+    """A source is stamped ONLY when every evidence entry citing it this run
+    reached the verified tail — a genuine failure on one citation must not
+    certify the shared record as freshly checked for the others."""
+    ledger = system / "ledger"
+    (ledger / "facts" / "person").mkdir()
+    (ledger / "facts" / "person" / "dad.json").write_text(json.dumps({
+        "id": "dad", "type": "person", "name": "Dad",
+        "sources": {"s1": {"record": H1}},
+        "claims": [
+            {"id": "dad:good", "predicate": "greeting", "value": "x",
+             "status": "provisional", "asof": "2023-03-01",
+             "evidence": [{"source": "s1", "anchor": "el=1",
+                           "quote": "hello from   the fixture", "kind": "direct"}]},
+            {"id": "dad:bad", "predicate": "bogus", "value": "x",
+             "status": "provisional", "asof": "2023-03-01",
+             "evidence": [{"source": "s1", "anchor": "el=1",
+                           "quote": "never said this", "kind": "direct"}]},
+        ],
+    }))
+    join = CorpusJoin(_corpora(system))
+    res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-02")
+    assert res.verified == 1  # dad:good's citation
+    assert res.stamped == 0   # s1 is shared with dad:bad's failing citation
+    fact = json.loads((ledger / "facts" / "person" / "dad.json").read_text())
+    assert "verified" not in fact["sources"]["s1"]
 
 
 def test_verify_embed_descriptions_and_inline_markup(system: Path) -> None:
@@ -189,14 +236,15 @@ def test_verify_embed_descriptions_and_inline_markup(system: Path) -> None:
     (ledger / "facts" / "person").mkdir()
     (ledger / "facts" / "person" / "kat.json").write_text(json.dumps({
         "id": "kat", "type": "person", "name": "Kat",
+        "sources": {"s1": {"record": h4}},
         "claims": [
             {"id": "kat:cat", "predicate": "possession", "value": "a cat",
              "status": "provisional", "asof": "2025-05-31",
-             "evidence": [{"uri": f"corpus://{h4}?el=2",
+             "evidence": [{"source": "s1", "anchor": "el=2",
                            "quote": "a cat with pricked ears", "kind": "incidental"}]},
             {"id": "kat:wedding", "predicate": "description", "value": "x",
              "status": "provisional", "asof": "2025-05-31",
-             "evidence": [{"uri": f"corpus://{h4}?el=1",
+             "evidence": [{"source": "s1", "anchor": "el=1",
                            "quote": "the wedding is Oct 26th in revy",
                            "kind": "direct"}]},
         ],
@@ -212,14 +260,17 @@ def test_promote_and_stamp(system: Path) -> None:
     (ledger / "facts" / "person").mkdir()
     (ledger / "facts" / "person" / "mom.json").write_text(json.dumps({
         "id": "mom", "type": "person", "name": "Mom",
+        "sources": {"s1": {"record": H1}},
         "claims": [{"id": "mom:phone", "predicate": "phone", "value": "+1403",
                     "status": "provisional", "asof": "2023-03-01",
-                    "evidence": [{"uri": f"corpus://{H1}", "kind": "direct"}]}],
+                    "evidence": [{"source": "s1", "kind": "direct"}]}],
     }))
     (ledger / "interpretations" / "mom-birthday.json").write_text(json.dumps({
         "id": "mom-birthday", "kind": "hypothesis", "about": ["mom"],
         "statement": "Mom's birthday is in June.", "confidence": "likely",
         "reasoning": "r", "based_on": [f"corpus://{H1}"],
+        # `proposes` predates the fact it targets, so it stays inline-uri
+        # shaped — `promote` hoists it into the target's sources table
         "proposes": {"id": "mom:birthday", "predicate": "birthday", "value": "June",
                      "evidence": [{"uri": f"corpus://{H1}", "kind": "authoritative"}]},
         "status": "open", "asof": "2026-07-02",
@@ -227,9 +278,16 @@ def test_promote_and_stamp(system: Path) -> None:
     landed = promote(ledger, "mom-birthday")
     assert landed == "mom:birthday (confirmed)"  # authoritative evidence passes the bar
     fact = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
-    assert any(c["id"] == "mom:birthday" for c in fact["claims"])
+    birthday = next(c for c in fact["claims"] if c["id"] == "mom:birthday")
+    assert "uri" not in birthday["evidence"][0]  # landed source-keyed, not inline
+    skey = birthday["evidence"][0]["source"]
+    # the pre-existing sources entry for H1 (from mom:phone) is REUSED, not duplicated
+    assert skey == "s1"
+    assert fact["sources"] == {"s1": {"record": H1}}
     interp = json.loads((ledger / "interpretations" / "mom-birthday.json").read_text())
     assert interp["status"] == "promoted" and interp["resolution"] == "mom:birthday"
+    # the interpretation's own proposes stays inline-uri shaped — untouched
+    assert interp["proposes"]["evidence"][0]["uri"] == f"corpus://{H1}"
     with pytest.raises(PromoteError, match="not open"):
         promote(ledger, "mom-birthday")
 
@@ -242,7 +300,30 @@ def test_promote_and_stamp(system: Path) -> None:
     }))
     state = stamp(ledger, "phone-wrong")
     claim = next(c for c in fact["claims"] if c["id"] == "mom:phone")
-    assert state == canonical_claim_state(claim)
+    assert state == canonical_claim_state(claim, fact["sources"])
+
+
+def test_promote_mints_a_fresh_source_when_no_reusable_entry_exists(system: Path) -> None:
+    """A hypothesis targeting a fact with no matching sources entry mints one."""
+    ledger = system / "ledger"
+    (ledger / "facts" / "person").mkdir()
+    (ledger / "facts" / "person" / "mom.json").write_text(json.dumps({
+        "id": "mom", "type": "person", "name": "Mom", "claims": [],
+    }))
+    (ledger / "interpretations" / "mom-birthday.json").write_text(json.dumps({
+        "id": "mom-birthday", "kind": "hypothesis", "about": ["mom"],
+        "statement": "Mom's birthday is in June.", "confidence": "likely",
+        "reasoning": "r", "based_on": [f"corpus://{H1}"],
+        "proposes": {"id": "mom:birthday", "predicate": "birthday", "value": "June",
+                     "evidence": [{"uri": f"corpus://{H1}?el=2", "kind": "authoritative"}]},
+        "status": "open", "asof": "2026-07-02",
+    }))
+    promote(ledger, "mom-birthday")
+    fact = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
+    birthday = fact["claims"][0]
+    skey = birthday["evidence"][0]["source"]
+    assert fact["sources"][skey] == {"record": H1}
+    assert birthday["evidence"][0]["anchor"] == "el=2"
 
 
 def test_worklist_directions(system: Path) -> None:
@@ -253,10 +334,11 @@ def test_worklist_directions(system: Path) -> None:
     (system / "ledger" / "facts" / "person").mkdir()
     (system / "ledger" / "facts" / "person" / "mom.json").write_text(json.dumps({
         "id": "mom", "type": "person", "name": "Mom",
+        "sources": {"s1": {"record": H1}},
         "claims": [{"id": "mom:chat", "predicate": "chats_via",
                     "object": "chat-14035551234", "status": "provisional",
                     "asof": "2023-03-01",
-                    "evidence": [{"uri": f"corpus://{H1}", "kind": "direct"}]}],
+                    "evidence": [{"source": "s1", "kind": "direct"}]}],
     }))
     rows = worklist(system / "ledger", "chat-14035551234")
     assert any("mom:chat" in r for r in rows)
@@ -268,6 +350,21 @@ def test_coverage_counts(system: Path) -> None:
     assert "## corpus-private" in text
     assert "2 of 3 records represented" in text  # the group record is backlog
     assert "| `imessage-export` | 3 | 2 |" in text
+
+
+def test_coverage_counts_claim_evidence_only(system: Path) -> None:
+    """A record cited ONLY via claim evidence (no roster entry) still counts
+    as represented — a raw-text scan alone would miss it now, since the hash
+    is bare under `sources[].record`, never a `corpus://` substring."""
+    (system / "ledger" / "facts" / "person").mkdir()
+    (system / "ledger" / "facts" / "person" / "mom.json").write_text(json.dumps({
+        "id": "mom", "type": "person", "name": "Mom",
+        "sources": {"s1": {"record": H1}},
+        "claims": [{"id": "mom:greeting", "predicate": "greeting", "value": "x",
+                    "status": "provisional", "asof": "2023-03-01",
+                    "evidence": [{"source": "s1", "kind": "direct"}]}],
+    }))
+    assert H1 in represented_hashes(system / "ledger")
 
 
 def test_quote_found_requires_document_order() -> None:
@@ -290,9 +387,10 @@ def test_unchecked_anchor_quote_counts_record_scoped(system: Path) -> None:
     (ledger / "facts" / "person").mkdir(parents=True, exist_ok=True)
     (ledger / "facts" / "person" / "zip.json").write_text(json.dumps({
         "id": "zip", "type": "person", "name": "Zip",
+        "sources": {"s1": {"record": H1}},
         "claims": [{"id": "zip:x", "predicate": "greeting", "value": "x",
                     "status": "provisional", "asof": "2023-03-01",
-                    "evidence": [{"uri": f"corpus://{H1}?path=member.txt",
+                    "evidence": [{"source": "s1", "anchor": "path=member.txt",
                                   "quote": "hello from   the fixture",
                                   "kind": "direct"}]}],
     }))

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ledger.corpora import CorpusJoin
-from ledger.model import CORPUS_URI_RE, REF_URI_RE
+from ledger.model import derived_uri
 
 _SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 _UNCHECKED_PARAMS = {"time_range", "frame", "bbox", "path", "region", "rotate"}
@@ -256,7 +256,26 @@ def verify_ledger(
             continue
         if only_ids and fact.get("id") not in only_ids:
             continue
+        sources = fact.get("sources")
+        if not isinstance(sources, dict):
+            sources = {}
         dirty = False
+        # verification stays per EVIDENCE entry (an anchor/quote is checked
+        # against its own citation); the touch stamp lives per SOURCE (§13.2 —
+        # one per fact/source, not one per citing evidence entry). A source is
+        # only stamped when every evidence entry that cited it this run
+        # reached the verified tail — a genuine failure on one citation must
+        # not certify the record as freshly checked for the others.
+        source_ok: dict[str, bool] = {}
+        source_touch: dict[str, str] = {}
+        referenced: set[str] = set()
+
+        def bad(skey: str, _map: dict[str, bool] = source_ok) -> None:
+            _map[skey] = False
+
+        def ok(skey: str, _map: dict[str, bool] = source_ok) -> None:
+            _map.setdefault(skey, True)
+
         for claim in fact.get("claims") or []:
             if not isinstance(claim, dict):
                 continue
@@ -265,23 +284,31 @@ def verify_ledger(
             for e in claim.get("evidence") or []:
                 if not isinstance(e, dict):
                     continue
-                uri = str(e.get("uri", ""))
-                rm = REF_URI_RE.match(uri)
-                if rm:
+                skey = e.get("source")
+                if not isinstance(skey, str):
+                    continue  # grammar errors are check's findings, not verify's
+                entry = sources.get(skey)
+                if not isinstance(entry, dict):
+                    continue
+                if "ref" in entry:
                     res.unverifiable += 1
-                    res.notes.append(f"{where}: ref://{rm.group(1)}/… unverifiable "
+                    res.notes.append(f"{where}: ref://{entry['ref']} unverifiable "
                                      "(mirror resolver lands post-reforge)")
                     continue
-                cm = CORPUS_URI_RE.match(uri)
-                if not cm:
-                    continue  # grammar errors are check's findings, not verify's
-                h = cm.group(1)
+                h = str(entry.get("record", ""))
+                if not h:
+                    continue
+                referenced.add(skey)
                 content = content_for(h)
                 if content is None:
                     res.unverifiable += 1
                     res.notes.append(f"{where}: corpus://{h[:12]}… has no parseable "
                                      "record content")
+                    bad(skey)
                     continue
+                source_touch[skey] = content.touch
+                anchor = e.get("anchor")
+                uri = derived_uri(sources, skey, anchor) or f"corpus://{h}"
                 from corpus import functional_uri
 
                 try:
@@ -291,9 +318,9 @@ def verify_ledger(
                     params = []
                 text, status = scoped_text(content, params)
                 if status == "bad-anchor":
-                    sev.append(f"{where}: anchor does not resolve — "
-                               f"{uri.split('?', 1)[1] if '?' in uri else uri} "
+                    sev.append(f"{where}: anchor does not resolve — {anchor} "
                                f"matches no segment of corpus://{h[:12]}…")
+                    bad(skey)
                     continue
                 quote = e.get("quote")
                 if quote:
@@ -305,6 +332,7 @@ def verify_ledger(
                         res.unverifiable += 1
                         res.notes.append(f"{where}: corpus://{h[:12]}… carries no "
                                          "segment text — quote unverifiable")
+                        bad(skey)
                         continue
                     if status == "unchecked" and not _quote_found(str(quote),
                                                                   content.full_text):
@@ -315,6 +343,7 @@ def verify_ledger(
                         res.notes.append(f"{where}: quote lives behind an anchor the "
                                          f"record markdown cannot resolve "
                                          f"(corpus://{h[:12]}…) — unverifiable")
+                        bad(skey)
                         continue
                     if not _quote_found(str(quote), haystack):
                         if status == "ok" and text is not None and \
@@ -324,25 +353,33 @@ def verify_ledger(
                         else:
                             sev.append(f"{where}: quote not found verbatim in "
                                        f"corpus://{h[:12]}… — «{str(quote)[:60]}…»")
+                        bad(skey)
                         continue
                 if status == "unchecked" and not quote:
                     res.unverifiable += 1
+                    bad(skey)
                     continue
                 res.verified += 1
                 if status == "unchecked" and quote:
                     res.record_scoped += 1
-                if stamp:
-                    prev = e.get("verified")
-                    # re-stamp only when the snapshot identity moved — the
-                    # `at` date alone must not rewrite the tree on every run
-                    if not (isinstance(prev, dict)
-                            and prev.get("touch") == content.touch):
-                        stamped: dict[str, str] = {"touch": content.touch}
-                        if today:
-                            stamped["at"] = today
-                        e["verified"] = stamped
-                        res.stamped += 1
-                        dirty = True
+                ok(skey)
+        if stamp:
+            for skey in referenced:
+                if not source_ok.get(skey, False):
+                    continue
+                entry = sources[skey]
+                touch = source_touch.get(skey, "")
+                prev = entry.get("verified")
+                # re-stamp only when the snapshot identity moved — the `at`
+                # date alone must not rewrite the tree on every run
+                if isinstance(prev, dict) and prev.get("touch") == touch:
+                    continue
+                stamped: dict[str, str] = {"touch": touch}
+                if today:
+                    stamped["at"] = today
+                entry["verified"] = stamped
+                res.stamped += 1
+                dirty = True
         if dirty:
             f.write_text(json.dumps(fact, indent=2, ensure_ascii=False) + "\n",
                          encoding="utf-8")

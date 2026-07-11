@@ -30,17 +30,22 @@ from ledger.model import (
     EDGE_KEYS,
     EVIDENCE_KEYS,
     EVIDENCE_KINDS,
+    FULL_HASH_RE,
     HYPOTHESIS_STATUSES,
     INTERP_KEYS,
     INTERP_KINDS,
     NEED_ACTIONS,
     NEED_KEYS,
     PERIOD_RE,
+    PROPOSES_EVIDENCE_KEYS,
     QUALIFIED_URI_RE,
     REDIRECT_KEYS,
     REF_URI_RE,
     ROSTER_KEYS,
     SLUG_RE,
+    SOURCE_KEY_RE,
+    SOURCE_REF_RE,
+    SOURCES_ENTRY_KEYS,
     STANDING_STATUSES,
     STATE_RE,
     WIKILINK_RE,
@@ -157,6 +162,12 @@ def run_check(
             return target if target in live_facts else None
         return None
 
+    # needed inside the fact loop below (per-source resolution/status checks),
+    # so computed ahead of the claims pass that used to compute them
+    retired = views.retired_terms(ledger_root)
+    need_hashes = _declared_need_hashes(interps)
+    used_sources: dict[Path, set[str]] = {}
+
     # ------------------------------------------------------------- fact files
     all_claims: list[tuple[Path, dict, dict]] = []
     for f, o in facts.items():
@@ -252,6 +263,82 @@ def run_check(
                 rep.err(where, f"roster role {role!r} not among the {o.get('type')!r} "
                                f"schema's roster_roles {declared_roles}")
 
+        # the per-fact sources table: claim evidence cites a `source` key
+        # (validated in the claims pass below) that resolves here to exactly
+        # one record|ref target — resolution/status/re-normalization is
+        # checked ONCE per source, not once per citing evidence entry
+        sources = o.get("sources")
+        if sources is not None and not isinstance(sources, dict):
+            rep.err(where, "sources must be a mapping of source-key to {record|ref, "
+                           "verified?}")
+            sources = None
+        if isinstance(sources, dict):
+            targets_seen: dict[tuple[str, str], str] = {}
+            for skey, sentry in sources.items():
+                swhere = f"{where} :: sources.{skey}"
+                if not isinstance(skey, str) or not SOURCE_KEY_RE.match(skey):
+                    rep.err(where, f"source key {skey!r} is not local-slug shaped "
+                                   "(^[a-z][a-z0-9-]{0,31}$)")
+                if not isinstance(sentry, dict):
+                    rep.err(swhere, "sources entry must be an object")
+                    continue
+                unknown = set(sentry) - SOURCES_ENTRY_KEYS
+                if unknown:
+                    rep.err(swhere, f"unknown sources-entry keys {sorted(unknown)}")
+                has_record, has_ref = "record" in sentry, "ref" in sentry
+                if has_record == has_ref:
+                    rep.err(swhere, "a sources entry must carry exactly one of "
+                                   "record|ref")
+                    continue
+                v = sentry.get("verified")
+                if v is not None and not isinstance(v, dict):
+                    rep.err(swhere, "verified must be an object")
+                if has_record:
+                    h = str(sentry["record"])
+                    if not FULL_HASH_RE.match(h):
+                        rep.err(swhere, f"record {h!r} is not a full 64-hex blake3 hash")
+                    dup = targets_seen.get(("record", h))
+                    if dup is not None:
+                        rep.err(swhere, f"duplicate source for record {h[:12]}… (also "
+                                       f"{dup!r}) — one sources entry per target")
+                    else:
+                        targets_seen[("record", h)] = skey
+                    if resolve_live and FULL_HASH_RE.match(h):
+                        if not join.resolves(h):
+                            rep.err(swhere, f"cites corpus://{h[:12]}… which resolves "
+                                           "in no registered corpus")
+                        else:
+                            status = join.status(h)
+                            if status != "normalized":
+                                if h in need_hashes:
+                                    rep.warn(swhere, f"cites corpus://{h[:12]}… still "
+                                                    f"status={status} (a declared "
+                                                    "enqueue need covers it)")
+                                else:
+                                    rep.err(swhere, f"cites corpus://{h[:12]}… still "
+                                                   f"status={status} — request "
+                                                   "normalization (corpus enqueue) and "
+                                                   "declare the need")
+                            if isinstance(v, dict) and v.get("touch") and join.touch(h) \
+                                    and v["touch"] != join.touch(h):
+                                rep.warn(swhere, f"corpus://{h[:12]}… re-normalized "
+                                                "since this source was verified — "
+                                                "re-run `ath ledger verify`")
+                else:
+                    r = str(sentry["ref"])
+                    rm = SOURCE_REF_RE.match(r)
+                    if not rm:
+                        rep.err(swhere, f"ref {r!r} is not a {{dataset}}/{{id}} citation")
+                    elif rm.group(1) not in datasets:
+                        rep.err(swhere, f"ref:// dataset {rm.group(1)!r} is not "
+                                       "registered in the manifest's references:")
+                    dup = targets_seen.get(("ref", r))
+                    if dup is not None:
+                        rep.err(swhere, f"duplicate source for ref {r!r} (also {dup!r}) "
+                                       "— one sources entry per target")
+                    else:
+                        targets_seen[("ref", r)] = skey
+
         for c in o.get("claims") or []:
             if not isinstance(c, dict):
                 rep.err(where, "claims must be objects")
@@ -265,8 +352,6 @@ def run_check(
                 claims_by_id[cid] = (f, o, c)
 
     # ------------------------------------------------------------------ claims
-    retired = views.retired_terms(ledger_root)
-    need_hashes = _declared_need_hashes(interps)
     private_claims = 0
     private_files = 0
 
@@ -377,6 +462,7 @@ def run_check(
                                                f"{ekey!r} {ev!r} is a {got!r}, declared "
                                                f"target {etarget!r}")
 
+        fact_sources = o.get("sources") if isinstance(o.get("sources"), dict) else {}
         evs = c.get("evidence") or []
         if not evs:
             rep.err(where, "no evidence")
@@ -388,6 +474,11 @@ def run_check(
                 rep.err(where, "evidence entries must be objects")
                 continue
             unknown = set(e) - EVIDENCE_KEYS
+            if "uri" in unknown:
+                rep.err(where, "evidence entry carries the retired inline `uri` field "
+                               "— migrate to the sources-table shape (source + "
+                               "optional anchor)")
+                unknown = unknown - {"uri"}
             if unknown:
                 rep.err(where, f"unknown evidence keys {sorted(unknown)}")
             kind = e.get("kind")
@@ -395,52 +486,47 @@ def run_check(
                 rep.err(where, f"evidence kind {kind!r} missing/invalid "
                                f"(authoritative|direct|incidental)")
             has_auth = has_auth or kind == "authoritative"
-            uri = str(e.get("uri", ""))
-            cm = CORPUS_URI_RE.match(uri)
-            rm = REF_URI_RE.match(uri)
-            if cm:
-                h = cm.group(1)
-                hashes.add(h)
-                if resolve_live:
-                    if not join.resolves(h):
-                        rep.err(where, f"cites corpus://{h[:12]}… which resolves in no "
-                                       "registered corpus")
-                    else:
-                        if join.is_private(h):
-                            priv = True
-                        status = join.status(h)
-                        if status != "normalized":
-                            if h in need_hashes:
-                                rep.warn(where, f"cites corpus://{h[:12]}… still "
-                                                f"status={status} (a declared enqueue need "
-                                                "covers it)")
-                            else:
-                                rep.err(where, f"cites corpus://{h[:12]}… still "
-                                               f"status={status} — request normalization "
-                                               "(corpus enqueue) and declare the need")
-                        # snapshot binding (§13.2): a stamped verification whose
-                        # record has since been re-normalized flags for re-verify
-                        v = e.get("verified")
-                        if isinstance(v, dict) and v.get("touch") and \
-                                join.touch(h) and v["touch"] != join.touch(h):
-                            rep.warn(where, f"corpus://{h[:12]}… re-normalized since this "
-                                            "evidence was verified — re-run "
-                                            "`ath ledger verify`")
-            elif rm:
-                if rm.group(1) not in datasets:
-                    rep.err(where, f"ref:// dataset {rm.group(1)!r} is not registered in "
-                                   "the manifest's references:")
-            elif QUALIFIED_URI_RE.match(uri):
-                rep.err(where, f"evidence uri {uri!r} uses the retired qualified form — "
-                               "cite bare corpus://{hash}")
+            anchor = e.get("anchor")
+            if isinstance(anchor, str) and anchor.startswith("?"):
+                rep.err(where, f"anchor {anchor!r} must not carry a leading '?'")
+            skey = e.get("source")
+            if not skey or not isinstance(skey, str):
+                rep.err(where, "evidence entry has no source")
+            elif skey not in fact_sources:
+                rep.err(where, f"evidence.source {skey!r} does not resolve in this "
+                               "fact's sources")
             else:
-                rep.err(where, f"evidence uri {uri!r} is not a corpus:// or ref:// citation")
+                used_sources.setdefault(f, set()).add(skey)
+                # resolution/status/re-normalization already checked once, at
+                # the sources-table pass above — here only the authentication
+                # bar (distinct records) and per-claim privacy are derived
+                entry = fact_sources[skey]
+                if isinstance(entry, dict) and "record" in entry:
+                    h = str(entry["record"])
+                    if FULL_HASH_RE.match(h):
+                        hashes.add(h)
+                        if resolve_live and join.resolves(h) and join.is_private(h):
+                            priv = True
         if st == "confirmed" and evs and not (has_auth or len(hashes) >= 2):
             rep.err(where, "fails the authentication bar for `confirmed` (needs an "
                            "authoritative artifact or ≥2 independent records)")
         if priv:
             private_claims += 1
         c["_private"] = priv  # consumed by the file-level pass below, then dropped
+
+    # sources entries no evidence references — a warning, never an error
+    # (the table may legitimately hold a source ahead of the claim that uses it)
+    for f, o in facts.items():
+        if is_redirect(o):
+            continue
+        sources = o.get("sources")
+        if not isinstance(sources, dict):
+            continue
+        used = used_sources.get(f, set())
+        for skey in sources:
+            if isinstance(skey, str) and skey not in used:
+                rep.warn(rel(f), f"sources entry {skey!r} is not referenced by any "
+                                 "evidence")
 
     # file-level derived sensitivity (§6.4)
     if resolve_live:
@@ -538,8 +624,50 @@ def run_check(
                     rep.err(where, f"proposes targets unknown fact {pm.group(1)!r}")
                 if not proposes.get("predicate"):
                     rep.err(where, "proposes has no predicate")
-                if not proposes.get("evidence"):
+                pevs = proposes.get("evidence")
+                if not pevs:
                     rep.warn(where, "proposes carries no evidence — promotion will need it")
+                elif isinstance(pevs, list):
+                    # proposes predates the fact it targets, so its evidence
+                    # stays in the pre-reforge inline-`uri` shape (design
+                    # corner: interpretations are unchanged) — `promote` hoists
+                    # it into the target fact's sources table at landing time
+                    for pe in pevs:
+                        if not isinstance(pe, dict):
+                            rep.err(where, "proposes evidence entries must be objects")
+                            continue
+                        pbad = set(pe) - PROPOSES_EVIDENCE_KEYS
+                        if "source" in pbad or "anchor" in pbad:
+                            rep.err(where, "proposes evidence carries a sources-table "
+                                           "`source`/`anchor` key — proposes has no fact "
+                                           "of its own to reference; keep the inline `uri` "
+                                           "form until promotion")
+                            pbad = pbad - {"source", "anchor"}
+                        if pbad:
+                            rep.err(where, f"proposes evidence unknown keys {sorted(pbad)}")
+                        pkind = pe.get("kind")
+                        if pkind not in EVIDENCE_KINDS:
+                            rep.err(where, f"proposes evidence kind {pkind!r} "
+                                           "missing/invalid (authoritative|direct|incidental)")
+                        puri = str(pe.get("uri", ""))
+                        pcm = CORPUS_URI_RE.match(puri)
+                        prm = REF_URI_RE.match(puri)
+                        if pcm:
+                            if resolve_live and not join.resolves(pcm.group(1)):
+                                rep.err(where, f"proposes evidence cites "
+                                               f"corpus://{pcm.group(1)[:12]}… which "
+                                               "resolves in no registered corpus")
+                        elif prm:
+                            if prm.group(1) not in datasets:
+                                rep.err(where, f"proposes evidence ref:// dataset "
+                                               f"{prm.group(1)!r} is not registered")
+                        elif QUALIFIED_URI_RE.match(puri):
+                            rep.err(where, f"proposes evidence uri {puri!r} uses the "
+                                           "retired qualified form — cite bare "
+                                           "corpus://{hash}")
+                        else:
+                            rep.err(where, f"proposes evidence uri {puri!r} is not a "
+                                           "corpus:// or ref:// citation")
                 bad = set(proposes) - (CLAIM_KEYS - {"status"})
                 if bad:
                     rep.err(where, f"proposes unknown keys {sorted(bad)} (status is "
@@ -566,8 +694,10 @@ def run_check(
                     elif not STATE_RE.match(str(state)):
                         rep.err(where, f"challenge state {state!r} is not blake3:<64hex>")
                     else:
-                        _, _, claim = claims_by_id[target]
-                        current = canonical_claim_state(claim)
+                        _, claim_fact, claim = claims_by_id[target]
+                        claim_sources = claim_fact.get("sources") \
+                            if isinstance(claim_fact.get("sources"), dict) else {}
+                        current = canonical_claim_state(claim, claim_sources)
                         if current != state:
                             rep.warn(where, f"claim {target!r} edited since this challenge "
                                             "was filed — correction needs re-review "

@@ -12,7 +12,7 @@ from ath._cli import main as ath_main
 from ledger._cli import main as ledger_main
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin, RegisteredCorpus
-from ledger.model import canonical_claim_state, intervals_overlap, period_interval
+from ledger.model import canonical_claim_state, ensure_source, intervals_overlap, period_interval
 
 H_PUB = "a" * 64      # resolves in the public corpus
 H_PRIV = "b" * 64     # resolves only in the private corpus
@@ -67,7 +67,38 @@ def system(tmp_path: Path) -> Path:
     return root
 
 
+def _resolve_sources(obj: dict) -> dict:
+    """Test-authoring sugar, mirroring pre-migration `uri` ergonomics: an
+    evidence entry carrying `_record`/`_ref` (this suite's shorthand for "cite
+    this hash/dataset-id") resolves through `ensure_source` into the fact's own
+    `sources` table, deduplicating repeats within one fact exactly as
+    production authoring would. An entry already carrying `source` (exercising
+    the raw shape directly) or the retired `uri` key (exercising the
+    migration-error path) passes through untouched. Mutates *obj* (and its
+    nested claim dicts) in place, and returns it."""
+    sources = obj.setdefault("sources", {})
+    for c in obj.get("claims") or []:
+        if not isinstance(c, dict):
+            continue
+        evs = c.get("evidence")
+        if not isinstance(evs, list):
+            continue
+        for e in evs:
+            if not isinstance(e, dict) or "source" in e or "uri" in e:
+                continue
+            record = e.pop("_record", None)
+            ref = e.pop("_ref", None)
+            if record is not None:
+                e["source"] = ensure_source(obj, record=record)
+            elif ref is not None:
+                e["source"] = ensure_source(obj, ref=ref)
+    if not sources:
+        del obj["sources"]
+    return obj
+
+
 def _fact(root: Path, type_: str, obj: dict) -> Path:
+    obj = _resolve_sources(dict(obj))
     p = root / "ledger" / "facts" / type_ / f"{obj['id']}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
@@ -102,7 +133,7 @@ def _claim(fact_id: str, short: str, **over) -> dict:
         "value": "x",
         "status": "provisional",
         "asof": "2026-07-02",
-        "evidence": [{"uri": f"corpus://{H_PUB}", "kind": "direct"}],
+        "evidence": [{"_record": H_PUB, "kind": "direct"}],
     }
     c.update(over)
     return c
@@ -116,7 +147,8 @@ def test_clean_ledger_is_green(system: Path) -> None:
         "id": "gorguts", "type": "artist", "name": "Gorguts",
         "artifacts": [{"uri": f"corpus://{H_PUB}", "role": "documents"}],
         "claims": [_claim("gorguts", "formed", value="1989", period="1989",
-                          evidence=[{"uri": f"corpus://{H_PUB}?el=2", "kind": "authoritative"}],
+                          evidence=[{"_record": H_PUB, "anchor": "el=2",
+                                    "kind": "authoritative"}],
                           status="confirmed")],
     })
     _fact(system, "album", {"id": "obscura", "type": "album", "name": "Obscura",
@@ -175,34 +207,85 @@ def test_concept_needs_name_and_stub_is_valid(system: Path) -> None:
 # ------------------------------------------------------------------- evidence
 
 
-def test_uri_discipline(system: Path) -> None:
+def test_evidence_source_discipline(system: Path) -> None:
+    """The sources-table amendment's error surface: a resolving `record`/`ref`
+    target, a bad hash shape, an unregistered `ref` dataset, both/neither of
+    record|ref, a missing `source`, a dangling `source`, the retired inline
+    `uri` field, and a leading `?` on `anchor`."""
+    sources = {
+        "s1": {"record": H_GONE},
+        "s2": {"record": "not-a-hash"},
+        "s3": {"ref": f"musicbrainz/{'1' * 8}"},
+        "s4": {"ref": "wikipedia/Gorguts"},
+        "s5": {"record": H_PUB, "ref": "wikipedia/x"},
+    }
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
+        "sources": sources,
         "claims": [
-            _claim("x", "a", evidence=[{"uri": f"corpus://corpus-private/{H_PRIV}",
-                                        "kind": "direct"}]),
-            _claim("x", "b", evidence=[{"uri": f"corpus://{H_GONE}", "kind": "direct"}]),
-            _claim("x", "c", evidence=[{"uri": "https://example.com", "kind": "direct"}]),
-            _claim("x", "d", evidence=[{"uri": f"ref://musicbrainz/{'1'*8}",
-                                        "kind": "authoritative"}]),
-            _claim("x", "e", evidence=[{"uri": "ref://wikipedia/Gorguts",
-                                        "kind": "direct"}]),
+            _claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"source": "s2", "kind": "direct"}]),
+            _claim("x", "c", evidence=[{"source": "s3", "kind": "authoritative"}]),
+            _claim("x", "d", evidence=[{"source": "s4", "kind": "direct"}]),
+            _claim("x", "e", evidence=[{"source": "s5", "kind": "direct"}]),
+            _claim("x", "f", evidence=[{"kind": "direct"}]),
+            _claim("x", "g", evidence=[{"source": "ghost", "kind": "direct"}]),
+            _claim("x", "h", evidence=[{"uri": f"corpus://{H_PUB}", "kind": "direct"}]),
+            _claim("x", "i", evidence=[{"source": "s4", "anchor": "?el=2", "kind": "direct"}]),
         ],
     })
     rep = _check(system)
     msgs = "\n".join(rep.errors)
-    assert "retired qualified form" in msgs
-    assert "resolves in no registered corpus" in msgs
-    assert "not a corpus:// or ref:// citation" in msgs
-    assert "'musicbrainz' is not registered" in msgs
-    assert "wikipedia" not in msgs
+    assert "resolves in no registered corpus" in msgs           # s1 (H_GONE)
+    assert "not a full 64-hex blake3 hash" in msgs               # s2
+    assert "'musicbrainz' is not registered" in msgs             # s3
+    assert "exactly one of" in msgs                              # s5
+    assert "evidence entry has no source" in msgs                # f
+    assert "does not resolve in this fact's sources" in msgs     # g (ghost)
+    assert "retired inline `uri` field" in msgs                  # h
+    assert "must not carry a leading '?'" in msgs                # i
+
+
+def test_sources_duplicate_target(system: Path) -> None:
+    sources = {"s1": {"record": H_PUB}, "s2": {"record": H_PUB}}
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "sources": sources,
+        "claims": [_claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}])],
+    })
+    rep = _check(system)
+    assert any("duplicate source for record" in e for e in rep.errors)
+
+
+def test_sources_unused_warns(system: Path) -> None:
+    sources = {"s1": {"record": H_PUB}}
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X", "sources": sources})
+    rep = _check(system)
+    assert any("not referenced by any evidence" in w for w in rep.warnings)
+
+
+def test_source_status_checked_once_not_per_evidence(system: Path) -> None:
+    """Resolution/status/re-normalization checks fire ONCE per sources entry —
+    two claims sharing one source must not double the message."""
+    sources = {"s1": {"record": H_DRAFT}}
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "sources": sources,
+        "claims": [
+            _claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"source": "s1", "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    assert sum("still status=draft" in e for e in rep.errors) == 1
 
 
 def test_draft_citation_error_downgraded_by_need(system: Path) -> None:
+    sources = {"s1": {"record": H_DRAFT}}
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
-        "claims": [_claim("x", "a", evidence=[{"uri": f"corpus://{H_DRAFT}",
-                                               "kind": "direct"}])],
+        "sources": sources,
+        "claims": [_claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}])],
     })
     rep = _check(system)
     assert any("still status=draft" in e for e in rep.errors)
@@ -218,10 +301,11 @@ def test_draft_citation_error_downgraded_by_need(system: Path) -> None:
 
 
 def test_no_corpus_skips_resolution(system: Path) -> None:
+    sources = {"s1": {"record": H_GONE}}
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
-        "claims": [_claim("x", "a", evidence=[{"uri": f"corpus://{H_GONE}",
-                                               "kind": "direct"}])],
+        "sources": sources,
+        "claims": [_claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}])],
     })
     rep = _check(system, no_corpus=True)
     assert not any("resolves in no registered corpus" in e for e in rep.errors)
@@ -235,8 +319,8 @@ def test_sensitivity_is_derived(system: Path) -> None:
     _fact(system, "person", {
         "id": "p", "type": "person", "name": "P",
         "claims": [
-            _claim("p", "a", evidence=[{"uri": f"corpus://{H_PRIV}", "kind": "direct"}]),
-            _claim("p", "b", evidence=[{"uri": f"corpus://{H_BOTH}", "kind": "direct"}]),
+            _claim("p", "a", evidence=[{"_record": H_PRIV, "kind": "direct"}]),
+            _claim("p", "b", evidence=[{"_record": H_BOTH, "kind": "direct"}]),
         ],
     })
     _fact(system, "place", {
@@ -267,10 +351,10 @@ def test_authentication_bar(system: Path) -> None:
         "id": "x", "type": "artist", "name": "X",
         "claims": [
             _claim("x", "weak", status="confirmed",
-                   evidence=[{"uri": f"corpus://{H_PUB}", "kind": "direct"}]),
+                   evidence=[{"_record": H_PUB, "kind": "direct"}]),
             _claim("x", "strong", status="confirmed",
-                   evidence=[{"uri": f"corpus://{H_PUB}", "kind": "direct"},
-                             {"uri": f"corpus://{H_PUB2}", "kind": "direct"}]),
+                   evidence=[{"_record": H_PUB, "kind": "direct"},
+                             {"_record": H_PUB2, "kind": "direct"}]),
         ],
     })
     rep = _check(system)
@@ -290,7 +374,7 @@ def test_harvest_provenance_capped_provisional(system: Path) -> None:
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
         "claims": [_claim("x", "a", provenance="auto", status="confirmed",
-                          evidence=[{"uri": f"corpus://{H_PUB}", "kind": "authoritative"}])],
+                          evidence=[{"_record": H_PUB, "kind": "authoritative"}])],
     })
     rep = _check(system)
     assert any("capped at provisional" in e for e in rep.errors)
@@ -298,13 +382,15 @@ def test_harvest_provenance_capped_provisional(system: Path) -> None:
 
 def test_challenge_pin_lifecycle(system: Path) -> None:
     claim = _claim("x", "wrong", status="disputed")
-    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    obj = _resolve_sources({"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    _fact(system, "artist", obj)
     interp = {
         "id": "x-wrong-challenge", "kind": "correction", "about": ["x"],
         "statement": "claim x:wrong misreads the source.",
         "reasoning": "the quote is about a different model year",
         "based_on": [f"corpus://{H_PUB}"],
-        "challenges": {"claim": "x:wrong", "state": canonical_claim_state(claim)},
+        "challenges": {"claim": "x:wrong",
+                       "state": canonical_claim_state(claim, obj.get("sources") or {})},
         "status": "standing", "asof": "2026-07-02",
     }
     _interp(system, interp)
@@ -313,9 +399,71 @@ def test_challenge_pin_lifecycle(system: Path) -> None:
     assert not any("disputed claim has no standing correction" in e for e in rep.errors)
     # edit the claim's content → the pin flags re-review
     claim["value"] = "y"
-    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    _fact(system, "artist", obj)
     rep = _check(system)
     assert any("needs re-review" in w for w in rep.warnings)
+
+
+def test_challenge_pin_survives_source_key_rename(system: Path) -> None:
+    """The pin canonicalizes through the DERIVED uri (§7.3 amendment): a
+    source-key rename over the SAME record must not move it, but a genuine
+    record swap under the same key must."""
+    claim = _claim("x", "wrong", status="disputed")
+    obj = _resolve_sources({"id": "x", "type": "artist", "name": "X", "claims": [claim]})
+    _fact(system, "artist", obj)
+    state = canonical_claim_state(claim, obj["sources"])
+    _interp(system, {
+        "id": "x-wrong-challenge", "kind": "correction", "about": ["x"],
+        "statement": "claim x:wrong misreads the source.",
+        "reasoning": "r", "based_on": [f"corpus://{H_PUB}"],
+        "challenges": {"claim": "x:wrong", "state": state},
+        "status": "standing", "asof": "2026-07-02",
+    })
+
+    # rename the source key (same underlying record) — the derived uri, and
+    # hence the pin, must not move
+    old_key = next(iter(obj["sources"]))
+    entry = obj["sources"].pop(old_key)
+    obj["sources"]["renamed"] = entry
+    claim["evidence"][0]["source"] = "renamed"
+    _fact(system, "artist", obj)
+    rep = _check(system)
+    assert not any("re-review" in w for w in rep.warnings)
+
+    # a genuine record swap under the SAME key must still flag re-review
+    obj["sources"]["renamed"] = {"record": H_PUB2}
+    _fact(system, "artist", obj)
+    rep = _check(system)
+    assert any("needs re-review" in w for w in rep.warnings)
+
+
+def test_proposes_evidence_shape(system: Path) -> None:
+    """`proposes` predates the fact it targets, so its evidence stays inline-
+    `uri`-shaped pre-promotion: a `source`/`anchor` key is an error (there is
+    no sources table to reference yet), as is an unknown key or a malformed/
+    unregistered `uri` — the same grammar claim evidence used to carry."""
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "x-guess", "kind": "hypothesis", "about": ["x"],
+        "statement": "s", "confidence": "plausible", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"],
+        "proposes": {
+            "id": "x:guess", "predicate": "guess", "value": "v",
+            "evidence": [
+                {"source": "s1", "kind": "direct"},
+                {"uri": f"corpus://{H_PUB}", "kind": "direct", "bogus": True},
+                {"uri": "not-a-citation", "kind": "direct"},
+                {"uri": f"ref://musicbrainz/{'1' * 8}", "kind": "direct"},
+            ],
+        },
+        "status": "open", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "sources-table `source`/`anchor` key" in msgs
+    assert "proposes evidence unknown keys ['bogus']" in msgs
+    assert "proposes evidence uri 'not-a-citation' is not a corpus:// or ref:// citation" in msgs
+    assert "proposes evidence ref:// dataset 'musicbrainz' is not registered" in msgs
 
 
 def test_disputed_requires_standing_correction(system: Path) -> None:

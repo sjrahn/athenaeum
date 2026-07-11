@@ -29,7 +29,7 @@ from pathlib import Path
 from corpus import continuity as continuity_lib
 
 from .corpora import CorpusJoin
-from .model import CORPUS_URI_RE
+from .model import CORPUS_URI_RE, next_source_key
 
 # Continuity verdicts that mean "the cited content survived into the new record".
 _PRESERVED = (continuity_lib.IDENTICAL, continuity_lib.CONTAINED)
@@ -70,10 +70,17 @@ class SupersedeError(RuntimeError):
 
 def _address_of(tail: str) -> str:
     """The continuity address a citation tail refers to — a `path=<member>` when the tail
-    carries one, else `""` (a bare citation of the whole record)."""
-    if not tail or tail[0] != "?":
-        return ""  # a bare citation, or a `#fragment` only — treat as whole-record
-    for chunk in tail[1:].split("&"):
+    carries one, else `""` (a bare citation of the whole record). Accepts either a full
+    URI tail (`?path=…`, from a roster/based_on string citation) or a bare sources-table
+    `anchor` (`path=…`, no leading `?`, per §6.2's anchor grammar) — both address the
+    same grammar, one just predates the `?`."""
+    if not tail:
+        return ""
+    if tail[0] == "#":
+        return ""  # a #fragment only — treat as whole-record
+    if tail[0] == "?":
+        tail = tail[1:]
+    for chunk in tail.split("&"):
         key, _, value = chunk.partition("=")
         if key == "path" and value:
             return f"path={value}"
@@ -126,9 +133,17 @@ def supersede(
         except (json.JSONDecodeError, OSError):
             continue
         rel = f"{fact_file.parent.name}/{fact_file.name}"
-        changed, rewrites, divs = _rewrite_tree(fact, old, new, cont, rel)
-        result.rewrites.extend(rewrites)
-        result.divergences.extend(divs)
+        # sources-table citations (claim evidence, §13.3 sources-table amendment):
+        # judged per referencing evidence entry's `anchor`, since one sources
+        # entry may be shared by several evidence entries with different
+        # anchors. Then the generic string walk, unchanged, for the citation
+        # forms that stayed flat (roster `artifacts[].uri`) — it never matches
+        # inside `sources`, whose values are bare hashes, not `corpus://` strings.
+        changed_a, rewrites_a, divs_a = _rewrite_sources(fact, old, new, cont, rel)
+        changed_b, rewrites_b, divs_b = _rewrite_tree(fact, old, new, cont, rel)
+        changed = changed_a or changed_b
+        result.rewrites.extend(rewrites_a + rewrites_b)
+        result.divergences.extend(divs_a + divs_b)
         if changed:
             fact_file.write_text(
                 json.dumps(fact, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -148,6 +163,83 @@ def supersede(
             result.retired = True
 
     return result
+
+
+def _rewrite_sources(fact: dict, old: str, new: str, cont, fact_rel: str):
+    """Rewrite/split this fact's `sources` entries whose `record == old`, judged
+    PER REFERENCING EVIDENCE ENTRY'S `anchor` — a sources entry may be shared
+    by several evidence entries addressing different (or no) spans, so one
+    entry's citations can diverge while another's are preserved:
+
+    - every referencing entry preserved → the sources entry rewrites in place
+      (one shared record change, no evidence entries need touching);
+    - none preserved → left alone, all reported;
+    - a mix → SPLIT: a fresh sources entry lands on `new`, the preserved
+      entries repoint their `source` to it, the diverged entries stay on the
+      old key (still citing `old`) and are reported.
+
+    Returns `(changed, rewrites, divergences)`, mutating `fact` in place."""
+    rewrites: list[Rewrite] = []
+    divs: list[Divergence] = []
+    changed = False
+    sources = fact.get("sources")
+    if not isinstance(sources, dict):
+        return changed, rewrites, divs
+
+    claims = [c for c in fact.get("claims") or [] if isinstance(c, dict)]
+
+    for skey, entry in list(sources.items()):
+        if not isinstance(entry, dict) or entry.get("record") != old:
+            continue
+        referrers = [
+            e for c in claims for e in (c.get("evidence") or [])
+            if isinstance(e, dict) and e.get("source") == skey
+        ]
+
+        def tail_of(e: dict) -> str:
+            a = e.get("anchor")
+            if not a:
+                return ""
+            return str(a) if str(a).startswith("#") else f"?{a}"
+
+        if not referrers:
+            # nothing addresses it specifically — judge by whole-record containment
+            preserved, address = cont.contains_a, "(whole record)"
+            if preserved:
+                entry["record"] = new
+                rewrites.append(Rewrite(fact=fact_rel, old_uri=f"corpus://{old}",
+                                        new_uri=f"corpus://{new}"))
+                changed = True
+            else:
+                divs.append(Divergence(fact=fact_rel, uri=f"corpus://{old}", address=address))
+            continue
+
+        verdicts = [(_preserved(cont, str(e.get("anchor") or "")), e) for e in referrers]
+        if all(ok for (ok, _addr), _e in verdicts):
+            entry["record"] = new
+            for (_ok, _addr), e in verdicts:
+                t = tail_of(e)
+                rewrites.append(Rewrite(fact=fact_rel, old_uri=f"corpus://{old}{t}",
+                                        new_uri=f"corpus://{new}{t}"))
+            changed = True
+        elif not any(ok for (ok, _addr), _e in verdicts):
+            for (_ok, addr), e in verdicts:
+                divs.append(Divergence(fact=fact_rel, uri=f"corpus://{old}{tail_of(e)}",
+                                       address=addr))
+        else:
+            new_key = next_source_key(sources)
+            sources[new_key] = {"record": new}
+            for (ok, addr), e in verdicts:
+                t = tail_of(e)
+                if ok:
+                    e["source"] = new_key
+                    rewrites.append(Rewrite(fact=fact_rel, old_uri=f"corpus://{old}{t}",
+                                            new_uri=f"corpus://{new}{t}"))
+                else:
+                    divs.append(Divergence(fact=fact_rel, uri=f"corpus://{old}{t}",
+                                           address=addr))
+            changed = True
+    return changed, rewrites, divs
 
 
 def _rewrite_tree(obj, old: str, new: str, cont, fact_rel: str):

@@ -13,7 +13,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ledger.model import CLAIM_ID_RE, canonical_claim_state
+from ledger.model import (
+    CLAIM_ID_RE,
+    CORPUS_URI_RE,
+    REF_URI_RE,
+    canonical_claim_state,
+    ensure_source,
+)
 
 
 class PromoteError(RuntimeError):
@@ -67,7 +73,13 @@ def promote(ledger_root: Path, interp_id: str) -> str:
     if not proposes.get("evidence"):
         raise PromoteError("proposes carries no evidence — a claim cannot land bare")
     claim = dict(proposes)
-    claim["status"] = bar_status(claim)
+    claim["status"] = bar_status(claim)  # computed on the pre-landing uri shape, below
+    # `proposes` predates the fact it targets, so it has no sources table of
+    # its own — it still carries the pre-reforge inline `uri` (design corner:
+    # interpretations are unchanged, so this shape stays until landing);
+    # promotion is where it hoists into the target fact's sources table,
+    # reusing an entry already targeting the same record/ref.
+    claim["evidence"] = _land_evidence(fact, claim.get("evidence") or [])
     if "asof" not in claim and interp.get("asof"):
         claim["asof"] = interp["asof"]
     fact.setdefault("claims", []).append(claim)
@@ -76,6 +88,32 @@ def promote(ledger_root: Path, interp_id: str) -> str:
     interp["resolution"] = claim["id"]
     _save(ipath, interp)
     return f"{claim['id']} ({claim['status']})"
+
+
+def _land_evidence(fact: dict, evidence: list) -> list:
+    """Translate `proposes`-shaped (inline `uri`) evidence into the sources-table
+    shape as it lands on *fact*, minting/reusing sources entries as needed."""
+    landed = []
+    for e in evidence:
+        if not isinstance(e, dict):
+            landed.append(e)
+            continue
+        uri = str(e.get("uri", ""))
+        cm = CORPUS_URI_RE.match(uri)
+        rm = REF_URI_RE.match(uri)
+        e2 = {k: v for k, v in e.items() if k != "uri"}
+        if cm:
+            tail = cm.group(2) or ""
+            # strip a leading '?' (query-param anchor); a '#fragment' anchor
+            # keeps its '#' — it's a different addressing form, not a query
+            anchor = tail[1:] if tail[:1] == "?" else tail
+            e2["source"] = ensure_source(fact, record=cm.group(1))
+            if anchor:
+                e2["anchor"] = anchor
+        elif rm:
+            e2["source"] = ensure_source(fact, ref=f"{rm.group(1)}/{rm.group(2)}")
+        landed.append(e2)
+    return landed
 
 
 def stamp(ledger_root: Path, interp_id: str) -> str:
@@ -95,6 +133,7 @@ def stamp(ledger_root: Path, interp_id: str) -> str:
     claim = next((c for c in fact.get("claims") or [] if c.get("id") == target), None)
     if claim is None:
         raise PromoteError(f"claim {target!r} not found on {m.group(1)!r}")
-    challenges["state"] = canonical_claim_state(claim)
+    sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
+    challenges["state"] = canonical_claim_state(claim, sources)
     _save(ipath, interp)
     return challenges["state"]

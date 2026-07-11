@@ -10,21 +10,38 @@ generated file stays readable. Regeneration sweeps every record, so it rides
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 
 from ledger.corpora import RegisteredCorpus
-from ledger.model import CORPUS_REF_RE
+from ledger.model import CORPUS_REF_RE, FULL_HASH_RE
 
 COVERAGE_PATH = "coverage.md"
 
 
 def represented_hashes(ledger_root: Path) -> set[str]:
-    """Every corpus hash the ledger cites or rosters, anywhere."""
+    """Every corpus hash the ledger cites or rosters, anywhere: roster
+    `artifacts[].uri` and interpretation `based_on`/`needs[].record` are still
+    raw `corpus://` strings (a plain text scan finds them), but claim evidence
+    now cites a bare hash under a fact's `sources[].record` — parsed from each
+    fact's JSON, since no `corpus://` substring appears in the file for it."""
     out: set[str] = set()
     for pattern in ("facts/*/*.json", "interpretations/*.json"):
         for f in ledger_root.glob(pattern):
-            out.update(CORPUS_REF_RE.findall(f.read_text(encoding="utf-8")))
+            text = f.read_text(encoding="utf-8")
+            out.update(CORPUS_REF_RE.findall(text))
+            if not pattern.startswith("facts"):
+                continue
+            try:
+                fact = json.loads(text)
+            except (json.JSONDecodeError, OSError):
+                continue
+            for entry in (fact.get("sources") or {}).values():
+                if isinstance(entry, dict):
+                    h = entry.get("record")
+                    if isinstance(h, str) and FULL_HASH_RE.match(h):
+                        out.add(h)
     return out
 
 

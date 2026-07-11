@@ -1,10 +1,13 @@
 """`ath ledger supersede` — rewriting corpus citations when a record is re-captured.
 
 Builds two real session records (an old capture and a grown / rewritten re-capture) in a
-temp private corpus, a ledger fact that cites a session member, and asserts:
-  - a citation whose content is PRESERVED (contained) rewrites old→new, tail intact, and
-    `--retire` reclaims the old bytes;
-  - a citation whose content DIVERGED is left untouched, reported, and `--retire` refused.
+temp private corpus, a ledger fact whose claim evidence cites a session member (via the
+sources-table shape), and asserts:
+  - a citation whose content is PRESERVED (contained) rewrites the sources entry's `record`
+    in place, tail intact, and `--retire` reclaims the old bytes;
+  - a citation whose content DIVERGED is left untouched, reported, and `--retire` refused;
+  - a sources entry shared by two evidence entries with mixed verdicts SPLITS: the preserved
+    entry repoints to a fresh sources entry on `new`, the diverged entry stays on the old key.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from pathlib import Path
 from corpus import ccsession, hashing, paths
 from corpus._cli import dispatch
 from ledger.corpora import CorpusJoin, RegisteredCorpus
+from ledger.model import CORPUS_URI_RE
 from ledger.supersede import supersede
 
 
@@ -41,6 +45,17 @@ def _session_record(priv: Path, projects: Path, sid: str, lines) -> str:
 
 
 def _fact(ledger: Path, fact_id: str, cite_uri: str) -> Path:
+    """A fact with one claim whose evidence cites `cite_uri` — through the
+    sources table, per the amendment: the hash lands on a `sources` entry, the
+    evidence carries `source` + (bare) `anchor`."""
+    m = CORPUS_URI_RE.match(cite_uri)
+    assert m, cite_uri
+    h = m.group(1)
+    tail = m.group(2) or ""
+    anchor = tail[1:] if tail[:1] in ("?", "#") else tail
+    ev = {"source": "s1", "quote": "q", "kind": "direct"}
+    if anchor:
+        ev["anchor"] = anchor
     fp = ledger / "facts" / "place" / f"{fact_id}.json"
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(
@@ -49,13 +64,14 @@ def _fact(ledger: Path, fact_id: str, cite_uri: str) -> Path:
                 "id": fact_id,
                 "type": "place",
                 "name": "X",
+                "sources": {"s1": {"record": h}},
                 "claims": [
                     {
                         "id": f"{fact_id}:c",
                         "predicate": "p",
                         "value": "v",
                         "status": "provisional",
-                        "evidence": [{"uri": cite_uri, "quote": "q", "kind": "direct"}],
+                        "evidence": [ev],
                     }
                 ],
             },
@@ -98,9 +114,13 @@ def test_supersede_rewrites_preserved_citation_and_retires(tmp_path):
     assert len(res.rewrites) == 1
     assert res.divergences == []
     assert res.retired
-    # the fact now cites the new record, tail preserved
+    # the sources entry now targets the new record; the evidence's `source`
+    # key and `anchor` are untouched — the record it resolves through moved
     fact = json.loads(fp.read_text())
-    assert fact["claims"][0]["evidence"][0]["uri"] == f"corpus://{new}?path=s.jsonl"
+    assert fact["sources"]["s1"]["record"] == new
+    ev = fact["claims"][0]["evidence"][0]
+    assert ev["source"] == "s1"
+    assert ev["anchor"] == "path=s.jsonl"
     # old bytes reclaimed
     assert not paths.record_path(priv, old).is_file()
     assert paths.record_path(priv, new).is_file()
@@ -125,7 +145,8 @@ def test_supersede_leaves_diverged_and_refuses_retire(tmp_path):
     assert not res.retired  # refused: a diverged citation still points at old
     # the citation is untouched, and old is still present
     fact = json.loads(fp.read_text())
-    assert fact["claims"][0]["evidence"][0]["uri"] == f"corpus://{old}?path=s.jsonl"
+    assert fact["sources"]["s1"]["record"] == old
+    assert fact["claims"][0]["evidence"][0]["source"] == "s1"
     assert paths.record_path(priv, old).is_file()
 
 
@@ -141,7 +162,51 @@ def test_supersede_bare_whole_record_citation(tmp_path):
 
     assert len(res.rewrites) == 1
     fact = json.loads(fp.read_text())
-    assert fact["claims"][0]["evidence"][0]["uri"] == f"corpus://{new}"
+    assert fact["sources"]["s1"]["record"] == new
+    assert "anchor" not in fact["claims"][0]["evidence"][0]
+
+
+def test_supersede_splits_shared_source_on_mixed_verdicts(tmp_path):
+    """One sources entry cited by two evidence entries with different
+    addresses — a bare (whole-record) citation that's preserved, and a
+    path-scoped citation of a member the new capture never carried (so its
+    verdict is ABSENT, i.e. diverged): the preserved entry repoints to a
+    FRESH sources entry targeting `new`; the diverged entry stays on the old
+    key, which keeps citing `old`."""
+    priv, ledger, join = _system(tmp_path)
+    projects = tmp_path / "projects"
+    old = _session_record(priv, projects, "s", BASE)
+    grown = [*BASE, {"type": "user", "sessionId": "s", "timestamp": "2026-07-01T00:10:00.000Z"}]
+    new = _session_record(priv, projects, "s", grown)
+
+    fp = ledger / "facts" / "place" / "x.json"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps({
+        "id": "x", "type": "place", "name": "X",
+        "sources": {"s1": {"record": old}},
+        "claims": [
+            {"id": "x:whole", "predicate": "p", "value": "v", "status": "provisional",
+             "evidence": [{"source": "s1", "quote": "q", "kind": "direct"}]},
+            {"id": "x:member", "predicate": "p2", "value": "v2", "status": "provisional",
+             "evidence": [{"source": "s1", "anchor": "path=does-not-exist.txt",
+                           "quote": "q2", "kind": "direct"}]},
+        ],
+    }, indent=2) + "\n", encoding="utf-8")
+
+    res = supersede(ledger, old, new, join, retire=True)
+
+    fact = json.loads(fp.read_text())
+    whole = next(c for c in fact["claims"] if c["id"] == "x:whole")["evidence"][0]
+    member = next(c for c in fact["claims"] if c["id"] == "x:member")["evidence"][0]
+    new_key = whole["source"]
+    assert new_key != "s1"
+    assert fact["sources"][new_key] == {"record": new}
+    assert member["source"] == "s1"
+    assert fact["sources"]["s1"] == {"record": old}
+    assert len(res.rewrites) == 1
+    assert len(res.divergences) == 1
+    assert not res.retired  # a diverged citation still references `old`
+    assert paths.record_path(priv, old).is_file()
 
 
 def test_supersede_errors_when_new_unresolved(tmp_path):

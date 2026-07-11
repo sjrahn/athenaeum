@@ -28,6 +28,16 @@ CORPUS_REF_RE = re.compile(r"corpus://([0-9a-f]{64})")
 REF_URI_RE = re.compile(r"^ref://([a-z0-9][a-z0-9._-]*)/(.+)$")
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 
+# The per-fact sources table: a claim evidence entry cites a `source` key
+# instead of an inline `uri`; the fact-level `sources` mapping resolves each
+# key to exactly one `record` (a full 64-hex blake3) or `ref` (a bare
+# `{dataset}/{id}`, the same grammar REF_URI_RE carries past its `ref://`
+# prefix). The derived citation URI is reconstructed at every point that used
+# to read an inline `uri` (see `derived_uri`).
+SOURCE_KEY_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+FULL_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_REF_RE = re.compile(r"^([a-z0-9][a-z0-9._-]*)/(.+)$")
+
 PERIOD_RE = re.compile(
     r"^~?\d{4}(-\d{2}(-\d{2})?)?(T\d{2}:\d{2})?"
     r"(/(\.\.|~?\d{4}(-\d{2}(-\d{2})?)?(T\d{2}:\d{2})?))?$"
@@ -36,19 +46,32 @@ ASOF_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 
 CONCEPT_KEYS = {
     "id", "type", "name", "aliases", "meta", "sensitivity", "period", "provenance",
-    "artifacts", "claims",
+    "artifacts", "claims", "sources",
 }
 EDGE_KEYS = {
     "id", "type", "subject", "participants", "title", "period", "meta", "sensitivity",
-    "provenance", "claims",
+    "provenance", "claims", "sources",
 }
 REDIRECT_KEYS = {"id", "type", "merged_into"}
 CLAIM_KEYS = {
     "id", "predicate", "value", "object", "qualifiers", "period", "status",
     "asof", "reasoning", "sensitivity", "provenance", "evidence",
 }
-EVIDENCE_KEYS = {"uri", "quote", "note", "kind", "verified"}
+# Claim evidence cites a `source` key (+ optional `anchor`) into the fact's own
+# `sources` table (sibling of `claims`) rather than an inline `uri` — the
+# per-fact sources table, replacing the old {uri, quote, note, kind, verified}
+# shape. `verified` moves to the sources entry (one stamp per fact/source,
+# not per evidence entry).
+EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind"}
+SOURCES_ENTRY_KEYS = {"record", "ref", "verified"}
 ROSTER_KEYS = {"uri", "role", "note", "provenance"}
+# A hypothesis's `proposes` draft claim (§7.2) predates the fact it targets, so
+# it has no sources table of its own to reference — its evidence stays in the
+# pre-reforge inline-`uri` shape until `ath ledger promote` lands it on the
+# target fact (hoisting into that fact's `sources`, minting/reusing entries).
+# `source`/`anchor` don't belong here; neither does `verified` (nothing to
+# stamp before the citation resolves against a real fact).
+PROPOSES_EVIDENCE_KEYS = {"uri", "quote", "note", "kind"}
 
 CLAIM_STATUSES = {"confirmed", "provisional", "inferred", "reported", "disputed", "conflicting"}
 EVIDENCE_KINDS = {"authoritative", "direct", "incidental"}
@@ -92,20 +115,89 @@ def is_edge(fact: dict) -> bool:
     return "subject" in fact or "participants" in fact
 
 
-def canonical_claim_state(claim: dict) -> str:
+def source_target(entry: object) -> tuple[str, str] | None:
+    """A sources-entry dict → ('record'|'ref', value), or None if malformed
+    (neither or both of `record`/`ref` present)."""
+    if not isinstance(entry, dict):
+        return None
+    has_record, has_ref = "record" in entry, "ref" in entry
+    if has_record == has_ref:
+        return None
+    return ("record", str(entry["record"])) if has_record else ("ref", str(entry["ref"]))
+
+
+def derived_uri(sources: dict, source_key: object, anchor: object = None) -> str | None:
+    """The §6.2 citation a claim evidence entry resolves to: `corpus://{record}`
+    (+ `?{anchor}` when present) or `ref://{ref}` — reconstructed from the
+    fact's `sources` table, never stored inline. None when `source_key` doesn't
+    resolve in `sources` or the entry is malformed."""
+    if not isinstance(sources, dict) or not source_key:
+        return None
+    target = source_target(sources.get(str(source_key)))
+    if target is None:
+        return None
+    kind, value = target
+    if kind == "ref":
+        return f"ref://{value}"
+    if not anchor:
+        tail = ""
+    elif str(anchor).startswith("#"):
+        tail = str(anchor)  # a body-anchor fragment — the '#' IS the separator
+    else:
+        tail = f"?{anchor}"
+    return f"corpus://{value}{tail}"
+
+
+def next_source_key(sources: dict) -> str:
+    """The next free `s{n}` key, local to one fact's sources table."""
+    i = 1
+    while f"s{i}" in sources:
+        i += 1
+    return f"s{i}"
+
+
+def ensure_source(fact: dict, *, record: str | None = None, ref: str | None = None) -> str:
+    """Find an existing sources entry on *fact* targeting *record*/*ref*, or
+    mint a fresh key — used wherever a citation lands on a fact for the first
+    time (harvest minting, hypothesis promotion, migration). Mutates *fact*
+    in place. Exactly one of record/ref must be given."""
+    if (record is None) == (ref is None):
+        raise ValueError("ensure_source: exactly one of record/ref is required")
+    sources = fact.setdefault("sources", {})
+    for key, entry in sources.items():
+        target = source_target(entry)
+        if target == ("record", record) or target == ("ref", ref):
+            return key
+    key = next_source_key(sources)
+    sources[key] = {"record": record} if record is not None else {"ref": ref}
+    return key
+
+
+def canonical_claim_state(claim: dict, sources: dict | None = None) -> str:
     """The §7.3 challenge pin: blake3 of the claim's canonical JSON minus `status`.
 
     `status` is excluded because the dispute mechanism itself moves it — filing
     a challenge flips the claim to `disputed`, which must not read as an edit.
-    Evidence `verified` stamps (§13.2 snapshot binding) are tooling writes, not
-    content edits, and are excluded for the same reason.
+    Evidence entries canonicalize to their DERIVED uri (resolved through the
+    fact's `sources` table, given by the caller) rather than their raw
+    `source`/`anchor` keys — a source-key rename changes nothing citation-wise,
+    so it must not move the pin. Evidence `verified` (now a sources-entry
+    stamp, never carried on the entry itself) and any residual `verified` are
+    tooling writes, not content edits, and are excluded for the same reason.
     """
     content = {k: v for k, v in claim.items() if k != "status"}
     if isinstance(content.get("evidence"), list):
-        content["evidence"] = [
-            {k: v for k, v in e.items() if k != "verified"} if isinstance(e, dict) else e
-            for e in content["evidence"]
-        ]
+        resolved = []
+        for e in content["evidence"]:
+            if not isinstance(e, dict):
+                resolved.append(e)
+                continue
+            e2 = {k: v for k, v in e.items() if k not in ("source", "anchor", "verified")}
+            uri = derived_uri(sources or {}, e.get("source"), e.get("anchor"))
+            if uri is not None:
+                e2["uri"] = uri
+            resolved.append(e2)
+        content["evidence"] = resolved
     payload = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "blake3:" + blake3.blake3(payload.encode("utf-8")).hexdigest()
 

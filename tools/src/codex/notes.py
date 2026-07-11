@@ -14,7 +14,7 @@ stubbed) id-and-all, and links to private facts redact.
 from __future__ import annotations
 
 from ledger.corpora import CorpusJoin
-from ledger.model import CLAIM_ID_RE, CORPUS_URI_RE, is_edge
+from ledger.model import CLAIM_ID_RE, CORPUS_URI_RE, derived_uri, is_edge
 
 PRIVATE_MARK = "*(private evidence)*"
 
@@ -29,11 +29,11 @@ def _evidence_private(uri: str, join: CorpusJoin) -> bool:
     return True if private is None else bool(private)
 
 
-def claim_private(claim: dict, join: CorpusJoin) -> bool:
+def claim_private(claim: dict, join: CorpusJoin, sources: dict) -> bool:
     if claim.get("sensitivity") == "private":
         return True
     return any(
-        _evidence_private(str(e.get("uri", "")), join)
+        _evidence_private(derived_uri(sources, e.get("source"), e.get("anchor")) or "", join)
         for e in claim.get("evidence") or [] if isinstance(e, dict)
     )
 
@@ -45,18 +45,20 @@ def roster_private(entry: dict, join: CorpusJoin) -> bool:
 def fact_private(fact: dict, join: CorpusJoin) -> bool:
     if fact.get("sensitivity") == "private":
         return True
-    carried = [claim_private(c, join) for c in fact.get("claims") or []
+    sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
+    carried = [claim_private(c, join, sources) for c in fact.get("claims") or []
                if isinstance(c, dict)]
     carried += [roster_private(e, join) for e in fact.get("artifacts") or []
                 if isinstance(e, dict)]
     return bool(carried) and all(carried)
 
 
-def interp_private(interp: dict, join: CorpusJoin,
-                   claims_by_id: dict[str, dict]) -> bool:
+def interp_private(interp: dict, join: CorpusJoin, claims_by_id: dict[str, dict],
+                   scoped: dict[str, dict]) -> bool:
     """`based_on` may cite corpus URIs, ref:// entries, or claim ids (§7.2) —
-    a claim-id basis inherits that claim's privacy; anything unresolvable
-    fails closed."""
+    a claim-id basis inherits that claim's privacy (resolved through the
+    claim's OWNING fact's sources table, via the `{fact-id}:{short}` prefix);
+    anything unresolvable fails closed."""
     for b in interp.get("based_on") or []:
         s = str(b)
         if CORPUS_URI_RE.match(s):
@@ -64,12 +66,14 @@ def interp_private(interp: dict, join: CorpusJoin,
                 return True
         elif s.startswith("ref://"):
             continue  # reference datasets are public mirrors
-        elif CLAIM_ID_RE.match(s):
-            c = claims_by_id.get(s)
-            if c is None or claim_private(c, join):
-                return True
         else:
-            return True  # unrecognized basis — underivable, fail closed
+            m = CLAIM_ID_RE.match(s)
+            c = claims_by_id.get(s) if m else None
+            if c is None:
+                return True  # unrecognized or dangling basis — underivable, fail closed
+            sources = scoped.get(m.group(1), {}).get("sources") or {}
+            if claim_private(c, join, sources):
+                return True
     return False
 
 
@@ -124,11 +128,12 @@ def generate(
             )
             continue
 
-        sources = [f"ledger/facts/{fact.get('type')}/{fid}.json"]
+        fact_sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
+        gen_from = [f"ledger/facts/{fact.get('type')}/{fid}.json"]
         mine = [o for o in riding.values() if fid in (o.get("about") or [])]
         if public:
-            mine = [o for o in mine if not interp_private(o, join, claims_by_id)]
-        sources += [f"ledger/interpretations/{o.get('id')}.json"
+            mine = [o for o in mine if not interp_private(o, join, claims_by_id, scoped)]
+        gen_from += [f"ledger/interpretations/{o.get('id')}.json"
                     for o in sorted(mine, key=lambda o: str(o.get("id")))]
 
         title = fact.get("name") or fact.get("title") or fid
@@ -136,7 +141,7 @@ def generate(
             "---",
             f"concept: {fid}",
             "generated_from:",
-            *[f"  - {s}" for s in sources],
+            *[f"  - {s}" for s in gen_from],
             f"updated: {today}",
             "---",
             "",
@@ -161,7 +166,7 @@ def generate(
         embeds: list[str] = []
 
         def cite(evidence: list, notes: list[str] = footnotes,
-                 gallery: list[str] = embeds) -> str:
+                 gallery: list[str] = embeds, sources: dict = fact_sources) -> str:
             nonlocal notes_idx
             marks = []
             for e in evidence or []:
@@ -170,7 +175,7 @@ def generate(
                 notes_idx += 1
                 marks.append(f"[^{notes_idx}]")
                 quote = f' — "{e["quote"]}"' if e.get("quote") else ""
-                uri = str(e.get("uri", ""))
+                uri = derived_uri(sources, e.get("source"), e.get("anchor")) or ""
                 notes.append(f"[^{notes_idx}]: `{uri}` "
                              f"({e.get('kind', '?')}){quote}")
                 # a visual anchor (a PDF page, a video frame, a region) embeds —
@@ -182,7 +187,7 @@ def generate(
         claims = [c for c in fact.get("claims") or [] if isinstance(c, dict)]
         rendered_claims = []
         for c in claims:
-            if public and claim_private(c, join):
+            if public and claim_private(c, join, fact_sources):
                 if redact == "stub":
                     rendered_claims.append(
                         f"- **{c.get('predicate')}** — {PRIVATE_MARK}")

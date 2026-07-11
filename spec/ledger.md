@@ -236,7 +236,7 @@ Semantics:
   "status": "provisional",         // the ladder (§5.3)
   "asof": "2026-06-22",            // when the fact was OBSERVED
   "reasoning": "…",                // the argument, for anything not stated verbatim by the source
-  "evidence": [ /* Evidence objects, §6 — ≥1 unless the file is a pure stub */ ]
+  "evidence": [ /* evidence entries anchoring this fact's sources, §6 — ≥1 unless the file is a pure stub */ ]
 }
 ```
 
@@ -280,16 +280,32 @@ Validation enforces the bar mechanically. Corroboration is multiple evidence ent
 
 ## 6. Evidence
 
-### 6.1 The Evidence object
+### 6.1 Sources and evidence entries
+
+Citations are two-level: a fact-level **`sources` table** names each cited artifact once, and per-claim **evidence entries** anchor spans of it. One backing record cited by five claims is one sources entry and five span-precise entries — the artifact's hash and its verification binding (§13.2) live at the altitude they are true at: per *(fact, source)*, never per entry.
 
 ```jsonc
+// fact-level, sibling of "claims":
+"sources": {
+  "s1": { "record": "826482aa…<full 64-hex blake3>",           // a corpus record,
+          "verified": { "touch": "…", "at": "2026-07-11" } },   //   stamped by verify (§13.2)
+  "s2": { "ref": "musicbrainz/artist/{mbid}" }                  // or a reference-dataset entry (§6.5)
+},
+
+// each claim evidence entry:
 {
-  "uri": "corpus://826482aa…?time_range=00:54-00:58",  // the load-bearing field
-  "quote": "…",                    // optional verbatim span from the resolved content
-  "note": "…",                     // optional human hint about the ARTIFACT (what/why)
-  "kind": "direct"                 // authoritative | direct | incidental
+  "source": "s1",                       // the load-bearing field — a key in this fact's sources
+  "anchor": "time_range=00:54-00:58",   // optional span parameters, no leading `?`; omitted = record-level cite
+  "quote": "…",                         // optional verbatim span from the resolved content
+  "note": "…",                          // optional human hint about the ARTIFACT (what/why)
+  "kind": "direct"                      // authoritative | direct | incidental
 }
 ```
+
+- **Source keys** match `^[a-z][a-z0-9-]{0,31}$`, are local to their fact, and carry no meaning — renames are free (challenge pins canonicalize on the derived citation, §7.3).
+- A sources entry carries exactly one of **`record`** (a full 64-hex blake3) or **`ref`** (`{dataset}/{id}`, §6.5). Two entries in one fact naming the same target is a validation error — the table exists so each artifact appears once. Every entry must be referenced by at least one evidence entry (unreferenced = warning); every `evidence.source` must resolve in its own fact's table (unresolved = error).
+- The **derived citation** is `corpus://{record}` — plus `?` and the `anchor` verbatim when present — or `ref://{ref}`. All §6.2 discipline applies to the derived form.
+- Rosters (`artifacts[].uri`) and interpretation `based_on` lists (§7.2) are references, not evidence: they keep the direct URI form. A draft claim inside `proposes` likewise cites inline (`uri:`) — it has no fact table to reference; `ledger promote` materializes its citations into the target fact's sources table.
 
 **`kind` grades the artifact so trust is computed, not vibed:**
 
@@ -297,9 +313,9 @@ Validation enforces the bar mechanically. Corroboration is multiple evidence ent
 - `direct` — a first-party statement in informal media.
 - `incidental` — a passing mention or background detail; the weakest grade.
 
-### 6.2 URI discipline
+### 6.2 Citation discipline
 
-- `uri` MUST be a resolvable citation: **`corpus://{hash}`** with the full 64-hex blake3 — span parameters (`?el=`, `?page=`, `?time_range=`, `?frame=`, `?page=N&bbox=`, `?path=`, `#anchor`) per the corpus functional-URI grammar (`spec/corpus.md` §6) — or **`ref://{dataset}/{id}`** into a registered reference dataset (§6.5).
+- The derived citation MUST resolve: **`corpus://{hash}`** with the full 64-hex blake3 — anchor span parameters (`el=`, `page=`, `time_range=`, `frame=`, `page=N&bbox=`, `path=`) per the corpus functional-URI grammar (`spec/corpus.md` §6) — or **`ref://{dataset}/{id}`** into a registered reference dataset (§6.5). (Rosters and `based_on` references, which carry direct URIs, obey the same grammar.)
 - **Resolution is content-addressed, never scoped.** A hash resolves by blake3 across every corpus in `ledger.yaml` `corpora:` — some corpus satisfies it or none does; there is no per-corpus URI form. Which corpus holds the bytes (and hence the evidence's sensitivity, §6.4) is a derived property, not URI syntax. A hash resolving in no registered corpus is a validation error.
 - **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
 - **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§13.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
@@ -374,7 +390,7 @@ hypothesis ──┤   (open)
 assessment / correction:  standing ──→ retired (superseded / no longer relevant)
 ```
 
-A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a blake3 hash of the claim object's canonical JSON — keys sorted, minimal separators — **excluding `status` and evidence `verified` stamps**, since the dispute mechanism moves the former and verification tooling writes the latter; stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§13.2), extended to the claim the dispute is about.
+A `correction` challenging an existing claim names it in **`challenges`** — the typed edge for corrections, as `proposes` is for hypotheses — which pins the claim's content identity as it stood at filing (`state`: a blake3 hash of the claim object's canonical JSON — keys sorted, minimal separators — **excluding `status`**, since the dispute mechanism moves it, and with **each evidence entry canonicalized to its derived citation** (§6.1) so the pin is invariant under source-key renames; verification bindings live on the sources table (§13.2), outside the claim object, so they never enter the hash; stamped and checked by tooling); the challenged claim carries `status: disputed` until resolved, and validation cross-checks the pair. The pin is a guard, not decoration: a claim edited after the challenge flags its correction for **re-review** rather than letting the dispute silently apply to content it never examined — the same drift detection snapshot binding gives evidence (§13.2), extended to the claim the dispute is about.
 
 ### 7.4 Generated work-lists
 
@@ -491,7 +507,7 @@ Beyond record existence, validation MUST — once per claim edit, and on demand 
 
 1. **Anchor resolution**: every span parameter resolves against the cited record (the segment address exists; the page/region/time-range is within bounds).
 2. **Quote verification**: every `quote` is found verbatim (modulo whitespace and presentational-markup normalization — inline markers such as `<u>…</u>` vanish before matching, so a quote cites the *rendered* text and never truncates around markup) within the content the URI resolves to. The citable content includes normalizer-written prose the record carries beside segment bodies — embed descriptions, section entries, title/description frontmatter — with the evidence discipline that a quote of *derived* prose (an image's description is the normalizer's reading, not the artifact's bytes) rides `kind: incidental`, never `direct` or `authoritative`.
-3. **Snapshot binding**: an evidence entry records the cited record's normalization state (its latest `touch` identity) at verification time — for `ref://` evidence, the dataset's mirror snapshot version (§6.5) — so a later re-normalization or mirror update flags the evidence for re-verification instead of silently rotting.
+3. **Snapshot binding**: verification records the cited record's normalization state (its latest `touch` identity) — for `ref://` evidence, the dataset's mirror snapshot version (§6.5) — on the fact's **sources entry**: one binding per *(fact, source)*, shared by every evidence entry anchored to it, so a later re-normalization or mirror update flags the evidence for re-verification instead of silently rotting. Re-stamping is touch-keyed: an unchanged touch never rewrites the binding.
 
 A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.
 
@@ -499,7 +515,7 @@ A claim whose evidence fails verification is flagged at the severity of its stat
 
 ### 13.3 Supersession — following a re-captured record
 
-A corpus record's identity is the blake3 of its bytes (`spec/corpus.md` §2), so a source re-captured with more content lands as a **new** record — a Claude Code session that grew by a few turns (`corpus session capture`, `spec/corpus.md` §12.8) is the motivating case. Citations must follow the content without a human re-checking each one, and without a synthetic stable id papering over the change. **`ath ledger supersede <old> <new>`** does this, gated by **content continuity** (`corpus continuity`, `spec/corpus.md` §12.8): for every ledger citation of `<old>` — evidence `uri`s and roster `artifacts[].uri`s — it rewrites `corpus://<old>?<addr>` → `corpus://<new>?<addr>` (the tail verbatim) **only** where the addressed content is preserved in `<new>` (byte-identical, or contained as a prefix the new capture extends). A citation whose content **diverged** (a compacted or rewritten source) is left untouched and reported for re-anchoring — no quote is silently moved onto content it was never checked against, so no separate "dirty" flag is required: a genuine break stays visibly on the old id, which `check` (§13.1, dangling citation) and `verify` (§13.2, broken anchor/quote) already surface. `--retire` then reclaims the old record's bytes (`corpus rm`), refused while any diverged citation still references it. This is the corpus-citation analogue of the concept-level `merged_into` redirect (§4.1): lineage followed forward, one content-address to the next, only where the evidence still holds.
+A corpus record's identity is the blake3 of its bytes (`spec/corpus.md` §2), so a source re-captured with more content lands as a **new** record — a Claude Code session that grew by a few turns (`corpus session capture`, `spec/corpus.md` §12.8) is the motivating case. Citations must follow the content without a human re-checking each one, and without a synthetic stable id papering over the change. **`ath ledger supersede <old> <new>`** does this, gated by **content continuity** (`corpus continuity`, `spec/corpus.md` §12.8): for every ledger citation of `<old>` — fact `sources` entries (judged per referencing evidence entry, anchor by anchor) and roster `artifacts[].uri`s — it re-points the citation to `<new>` (anchors verbatim) **only** where the addressed content is preserved in `<new>` (byte-identical, or contained as a prefix the new capture extends). When every entry riding a sources key is preserved, the key's `record` is rewritten in place; when only some are, the entry **splits** — preserved evidence entries move to a fresh sources key for `<new>`, diverged ones stay behind on `<old>` (the same-target uniqueness rule is satisfied: old and new are distinct records). A citation whose content **diverged** (a compacted or rewritten source) is left untouched and reported for re-anchoring — no quote is silently moved onto content it was never checked against, so no separate "dirty" flag is required: a genuine break stays visibly on the old id, which `check` (§13.1, dangling citation) and `verify` (§13.2, broken anchor/quote) already surface. `--retire` then reclaims the old record's bytes (`corpus rm`), refused while any diverged citation still references it. This is the corpus-citation analogue of the concept-level `merged_into` redirect (§4.1): lineage followed forward, one content-address to the next, only where the evidence still holds.
 
 ---
 
@@ -512,14 +528,19 @@ One concept carrying a public claim and a private-backed claim (one file — sen
 {
   "id": "pontiac-g8", "type": "vehicle", "name": "Pontiac G8",
   "artifacts": [
-    { "uri": "corpus://3a71…", "role": "documents", "note": "service manual" }
+    { "uri": "corpus://3a71…", "role": "documents", "note": "service manual" }   // rosters keep direct URIs (§6.1)
   ],
+  "sources": {
+    "s1": { "record": "3a71…<64hex>", "verified": { "touch": "corpus.compile@0.1.0+claude-sonnet-5", "at": "2026-07-11" } },
+    "s2": { "record": "9c02…<64hex>" },
+    "s3": { "record": "55ab…<64hex>" }
+  },
   "claims": [{
     "id": "pontiac-g8:platform", "predicate": "platform", "object": "gm-zeta",
     "status": "confirmed", "asof": "2026-06-30",
     "evidence": [
-      { "uri": "corpus://3a71…?el=42", "quote": "…built on GM's Zeta platform…", "kind": "authoritative" },
-      { "uri": "corpus://9c02…?page=3", "kind": "direct" }
+      { "source": "s1", "anchor": "el=42", "quote": "…built on GM's Zeta platform…", "kind": "authoritative" },
+      { "source": "s2", "anchor": "page=3", "kind": "direct" }
     ]
   },
   {
@@ -527,7 +548,7 @@ One concept carrying a public claim and a private-backed claim (one file — sen
     // public codex profiles filter it, and the leak check enforces that (spec/codex.md §6)
     "id": "pontiac-g8:owned-by", "predicate": "owned_by", "object": "steven-rahn",
     "status": "confirmed", "asof": "2026-05-12",
-    "evidence": [{ "uri": "corpus://55ab…?page=1", "quote": "…", "kind": "authoritative", "note": "bill of sale" }]
+    "evidence": [{ "source": "s3", "anchor": "page=1", "quote": "…", "kind": "authoritative", "note": "bill of sale" }]
   }]
 }
 ```

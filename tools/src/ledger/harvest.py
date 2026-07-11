@@ -29,6 +29,7 @@ from urllib.parse import parse_qsl, urlsplit
 import yaml
 
 from ledger.corpora import RegisteredCorpus
+from ledger.model import ensure_source
 
 RULE_KEYS = {"id", "description", "match", "mint"}
 MINT_KEYS = {"concept", "roster", "claims"}
@@ -252,6 +253,7 @@ def run_harvest(ledger_root: Path, corpora: list[RegisteredCorpus]) -> HarvestRu
                     del fact["artifacts"]
                 dirty = True
         claims = fact.get("claims")
+        stripped_claims = False
         if isinstance(claims, list):
             kept = [c for c in claims
                     if not (isinstance(c, dict) and c.get("provenance") == "auto")]
@@ -260,6 +262,21 @@ def run_harvest(ledger_root: Path, corpora: list[RegisteredCorpus]) -> HarvestRu
                 fact["claims"] = kept
                 if not kept:
                     del fact["claims"]
+                dirty = stripped_claims = True
+        # an auto claim's evidence was the only thing keeping its sources-table
+        # entry alive — prune what stripping just orphaned (re-minted below,
+        # possibly under a fresh key: keys are local and meaningless, §amendment)
+        if stripped_claims and isinstance(fact.get("sources"), dict):
+            still_used = {
+                e.get("source") for c in fact.get("claims") or [] if isinstance(c, dict)
+                for e in c.get("evidence") or [] if isinstance(e, dict)
+            }
+            pruned = {k: v for k, v in fact["sources"].items() if k in still_used}
+            if len(pruned) != len(fact["sources"]):
+                if pruned:
+                    fact["sources"] = pruned
+                else:
+                    del fact["sources"]
                 dirty = True
         if dirty:
             f.write_text(json.dumps(fact, indent=2, ensure_ascii=False) + "\n",
@@ -348,12 +365,20 @@ def run_harvest(ledger_root: Path, corpora: list[RegisteredCorpus]) -> HarvestRu
                     existing = next(
                         (c for c in claims if isinstance(c, dict)
                          and c.get("predicate") == pred and c.get("value") == value), None)
-                    ev = {"uri": uri, "kind": str(cs.get("evidence_kind", "direct"))}
                     if existing is not None:
-                        if existing.get("provenance") == "auto" and not any(
-                                e.get("uri") == uri for e in existing.get("evidence", [])):
-                            existing["evidence"].append(ev)
+                        # only mint/reuse a sources entry when it will actually
+                        # be referenced — an asserted claim discards `ev`
+                        # entirely, and must not leave an orphaned source behind
+                        if existing.get("provenance") == "auto":
+                            skey = ensure_source(target, record=hash_)
+                            if not any(e.get("source") == skey
+                                       for e in existing.get("evidence", [])):
+                                existing["evidence"].append(
+                                    {"source": skey,
+                                     "kind": str(cs.get("evidence_kind", "direct"))})
                         continue  # asserted claim wins; auto converges as evidence
+                    skey = ensure_source(target, record=hash_)
+                    ev = {"source": skey, "kind": str(cs.get("evidence_kind", "direct"))}
                     short = _slug(pred)
                     if any(isinstance(c, dict) and c.get("id") == f"{cid}:{short}"
                            for c in claims):

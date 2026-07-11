@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ledger import invariants as invariants_mod
-from ledger.model import load_json_dir
+from ledger.model import derived_uri, load_json_dir
 
 
 def worklist(ledger_root: Path, ref: str) -> list[str]:
@@ -32,10 +32,13 @@ def worklist(ledger_root: Path, ref: str) -> list[str]:
             if hash_ not in text:
                 continue
             where = str(path.relative_to(ledger_root))
+            sources = o.get("sources") if isinstance(o.get("sources"), dict) else {}
             for c in o.get("claims") or []:
-                if hash_ in str(c.get("evidence", "")) or any(
-                        hash_ in str(e) for e in c.get("evidence") or []):
-                    out.append(f"claim   {c.get('id')} ({where})")
+                for e in c.get("evidence") or []:
+                    if isinstance(e, dict) and hash_ in (
+                            derived_uri(sources, e.get("source"), e.get("anchor")) or ""):
+                        out.append(f"claim   {c.get('id')} ({where})")
+                        break
             for e in o.get("artifacts") or []:
                 if isinstance(e, dict) and hash_ in str(e.get("uri", "")):
                     out.append(f"roster  {o.get('id')} role={e.get('role')} ({where})")

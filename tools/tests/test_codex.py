@@ -52,33 +52,37 @@ def system(tmp_path: Path) -> Path:
 
     fact("band", {
         "id": "gorguts", "type": "band", "name": "Gorguts",
+        "sources": {"s1": {"record": H_PUB}, "s2": {"record": H_PRIV}},
         "claims": [
             {"id": "gorguts:formed", "predicate": "formed", "value": "1989",
              "status": "confirmed", "asof": "2026-01-01",
-             "evidence": [{"uri": f"corpus://{H_PUB}?el=1", "quote": "body text",
+             "evidence": [{"source": "s1", "anchor": "el=1", "quote": "body text",
                            "kind": "authoritative"}]},
             {"id": "gorguts:seen-live", "predicate": "seen_live", "value": "2019 tour",
              "status": "provisional", "asof": "2026-01-01",
-             "evidence": [{"uri": f"corpus://{H_PRIV}", "kind": "direct"}]},
+             "evidence": [{"source": "s2", "kind": "direct"}]},
         ],
     })
     fact("album", {
         "id": "obscura", "type": "album", "name": "Obscura",
+        "sources": {"s1": {"record": H_PUB}},
         "claims": [{"id": "obscura:by", "predicate": "released_by", "object": "gorguts",
                     "status": "confirmed", "asof": "2026-01-01",
-                    "evidence": [{"uri": f"corpus://{H_PUB}", "kind": "authoritative"}]}],
+                    "evidence": [{"source": "s1", "kind": "authoritative"}]}],
     })
     fact("ticket", {  # fully private-backed concept
         "id": "gorguts-stub", "type": "ticket", "name": "Ticket stub",
+        "sources": {"s1": {"record": H_PRIV}},
         "claims": [{"id": "gorguts-stub:show", "predicate": "admits_to",
                     "object": "gorguts", "status": "provisional", "asof": "2026-01-01",
-                    "evidence": [{"uri": f"corpus://{H_PRIV}", "kind": "direct"}]}],
+                    "evidence": [{"source": "s1", "kind": "direct"}]}],
     })
     fact("person", {"id": "luc-lemay", "type": "person", "name": "Luc Lemay",
+                    "sources": {"s1": {"record": H_PUB}},
                     "claims": [{"id": "luc-lemay:in", "predicate": "member_of",
                                 "object": "gorguts", "status": "confirmed",
                                 "asof": "2026-01-01",
-                                "evidence": [{"uri": f"corpus://{H_PUB}",
+                                "evidence": [{"source": "s1",
                                               "kind": "authoritative"}]}]})
     (ledger / "interpretations" / "second-guitarist.json").write_text(json.dumps({
         "id": "second-guitarist", "kind": "hypothesis", "about": ["gorguts"],
@@ -307,7 +311,8 @@ def test_unresolvable_evidence_fails_closed(system: Path) -> None:
     dangling = "c" * 64
     p = system / "ledger" / "facts" / "album" / "obscura.json"
     o = json.loads(p.read_text())
-    o["claims"][0]["evidence"] = [{"uri": f"corpus://{dangling}", "kind": "direct"}]
+    o["sources"] = {"s1": {"record": dangling}}
+    o["claims"][0]["evidence"] = [{"source": "s1", "kind": "direct"}]
     p.write_text(json.dumps(o))
     manifest = load_codex(system / "codices" / "codex-demo")
     scoped, riding, _ = materialize(system / "ledger", manifest)
@@ -340,8 +345,9 @@ def test_public_build_rasters_without_false_leak(system: Path) -> None:
 
     p = system / "ledger" / "facts" / "album" / "obscura.json"
     o = json.loads(p.read_text())
+    o["sources"] = {"s1": {"record": h_img}}
     o["claims"][0]["evidence"] = [
-        {"uri": f"corpus://{h_img}?bbox=0.0,0.0,0.5,0.5", "kind": "direct"}]
+        {"source": "s1", "anchor": "bbox=0.0,0.0,0.5,0.5", "kind": "direct"}]
     p.write_text(json.dumps(o))
 
     manifest = load_codex(system / "codices" / "codex-demo")
