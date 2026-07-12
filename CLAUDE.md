@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 
 **Invoke `/orchestrator` before doing anything else.** It boots the system's principal-developer persona, loads state / logbook / gotchas from `.claude/skills/orchestrator/`, and runs a member sweep so you pick up exactly where the last session left off. The skill files are the source of truth for system state and history — don't rely on auto-memory.
 
-While `REFORGE.md` exists at the root, it is the active restructuring plan — read it second.
-
 ## What this repo is
 
 **`athenaeum/athenaeum`** — the orchestrator repo of the Athenaeum system: the system's definition (specs), its shared tooling (the corpus library/CLI, the `ath` umbrella, and the ledger + codex packages), and its driver (the orchestrator persona). Every other part of the system is an independent member repo in the same Forgejo org (`code.example.org/athenaeum`), cloned beneath this working tree at gitignored paths.
@@ -15,7 +13,6 @@ While `REFORGE.md` exists at the root, it is the active restructuring plan — r
 ```
 athenaeum/                    ← this repo's working tree (the workspace root)
 ├── CLAUDE.md                 ← you are here
-├── REFORGE.md                ← active restructuring plan (self-deletes when it graduates)
 ├── athenaeum.yaml            ← the member manifest — the registry `ath` reads
 ├── spec/                     ← the specs: athenaeum.md (ATH-ARCH) · corpus.md (ATH-CORPUS) · ledger.md (ATH-LEDGER) · codex.md (ATH-CODEX)
 ├── tools/                    ← the `athenaeum` distribution: `ath` + `corpus` CLIs (Python 3.12, uv)

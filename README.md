@@ -30,4 +30,4 @@ The member repos live in the same Forgejo org and are cloned beneath this tree (
 
 The three data layers: a **corpus** is a content-addressed archive of immutable artifacts with faithful markdown proxies (the bytes); the **ledger** is the single fact substrate — concepts carrying evidence-backed claims, privacy as derived sensitivity (the knowledge); a **codex** is a targeting of ledger facts that compiles to prose (the expertise). Tenant isolation is a repo boundary where sharing lives — public and private corpora never mix, and the codex build's leak check walls what publishes.
 
-`REFORGE.md`, while present, tracks the 2026-07 restructuring that gave the system this shape.
+The 2026-07 restructuring that gave the system this shape files away at each repo's `pre-reforge` git tag.

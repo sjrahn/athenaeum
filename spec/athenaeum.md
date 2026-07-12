@@ -5,7 +5,7 @@ version: 13
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-07-02
+date_modified: 2026-07-12
 ---
 
 # Athenaeum — Architecture Specification
@@ -55,9 +55,8 @@ The system has three data layers and one driver:
 | **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id + snapshot version via `ref://` (`spec/ledger.md` §6.5). |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 across the registered corpora. Grammar: `spec/corpus.md` §6. |
 | **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
-| **Curator** | The corpus-resident operating persona (public hub): assess → prioritize → propose → execute → report, with capture and commits owner-gated. |
 | **Normalizer** | The interpretive agent pass that takes a record from mechanical `draft` to faithful `normalized`. |
-| **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope. |
+| **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope — the system's one persona; member repos carry none. |
 
 ## 2. Topology
 
@@ -140,7 +139,7 @@ Everything in that paragraph — the record grammar, schema system, lifecycle, f
 
 - **Two hubs, mutually exclusive content** (the reference deployment): `corpus` for world artifacts, `corpus-private` for personal artifacts. Which hub an artifact belongs to is decided by its subject's tenancy, before capture.
 - **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private drafter, a vendor schema) lives in the corpus that needs it, loaded through the tooling's corpus-local extension seams. The universal package carries no tenant- or vendor-specific knowledge.
-- **A corpus carries its own operating discipline.** The public hub embeds the Curator persona; the private hub deliberately carries none (its owner drives the CLI directly). This is per-corpus policy, not architecture.
+- **A corpus carries no resident persona.** The orchestrator persona (§6.2) drives content work in every corpus through that corpus's own gates; host- and source-specific operational knowledge lives in the orchestrator repo's runbooks (`docs/`). How many personas a deployment stations is deployment policy, not architecture — the reference deployment runs exactly one.
 
 ## 4. The ledger layer
 
@@ -180,8 +179,7 @@ If the operation could produce different valid outputs depending on judgment, it
 
 ### 6.2 Personas
 
-- **The orchestrator persona** (orchestrator repo) — principal developer for the system: specs, tooling, cross-member coherence, member health. Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory.
-- **The Curator** (public corpus) — the corpus operating loop: assess → prioritize → propose → execute → report. External captures, deletions, and commits are owner-gated.
+- **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory. Member repos carry no personas.
 - **The Normalizer** (corpus agent) — one record (or small batch) per invocation, draft → normalized, through the decompose/edit/compile substrate; never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
 - **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (`spec/ledger.md` §4).
 - **Codex compilers** — the synthesis passes that render scoped facts into a codex's voice; scope materialization and the build are deterministic tooling.
@@ -203,8 +201,10 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 
 - **The specs are law.** Code conforms to `spec/`; when code needs something a spec doesn't cover, the spec changes first — and a change to `spec/corpus.md`'s data contract additionally requires a migration story for every existing record.
 - **History files away under tags** (`pre-reforge` marks the 2026-07 restructuring); the working tree carries only the system's current form.
-- **Institutional memory is layered like the system**: the orchestrator persona's references for system-level memory; the Curator's references for corpus-level memory; codex docs for codex-level process. Auto-memory is never the source of truth.
+- **Institutional memory is layered like the system**: the orchestrator persona's references for system-level memory and history; the system runbooks (`docs/`) for operational knowledge. Auto-memory is never the source of truth.
 
 ---
 
 *Version 13 (2026-07) supersedes v12's two-layer draft: the orchestrator becomes a specified component (eponymous repo + manifest + `ath`); the fact model born inside the first codices graduates into its own layer — the single ledger (ATH-LEDGER), where concepts materialize real-world things and privacy is derived sensitivity — leaving codices as targeted compilations (ATH-CODEX); and the retired viewer/server stack is descoped from the architecture. The corpus contract moved to 2.0 (classification to the ledger) in the same revision.*
+
+*Amended in place 2026-07-12: the Curator persona (public corpus) was absorbed into the orchestrator (2026-07-06) — one persona system-wide; its operational knowledge lives in the system runbooks (`docs/capture-operations.md`), its pre-reforge references at the corpus repo's `pre-reforge` tag.*
