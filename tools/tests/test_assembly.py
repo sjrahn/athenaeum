@@ -695,3 +695,19 @@ def test_cli_directory_source_member_head_derivation(tmp_path):
     origins = list(records.iter_origin_blocks(post))
     fields = next(o for o in origins if o.get("id") == "test-discord").get("fields") or {}
     assert fields.get("guild") == "Test Guild"
+
+
+def test_resolve_member_with_query_reserved_name(tmp_path):
+    """A member whose NAME contains `&` (user-controlled discord thread names) resolves via
+    the percent-encoded URI form — the parse-side of the quote_value contract."""
+    root = _corpus(tmp_path)
+    payload = b'{"guild": "dnd"}'
+    tree = _tree(tmp_path / "export", {"Direct Messages - D&D 5e [673].json": payload})
+    out = tmp_path / "bundle.zip"
+    assembly.assemble([_part(tree)], [], out)
+    cid = _ingest(root, out)
+    _draft(root, cid)
+    resolved = resolver.resolve(
+        f"corpus://{cid}?path=Direct Messages - D%26D 5e [673].json", root
+    )
+    assert resolved.read_bytes() == payload

@@ -11,6 +11,10 @@ Where:
 - `<hash>` is a 64-char lowercase hex blake3 hash.
 - `<params>` is an `&`-separated list of `key=value` pairs and flag-style keys (no
   `=`). Order is significant — transforms compose left-to-right.
+- A param VALUE percent-encodes the query-reserved characters `%`/`&`/`#` as
+  `%25`/`%26`/`%23` (`quote_value`); the parser decodes (`unquote_value`) and the
+  canonical renderer re-encodes, so values may carry any character — member names are
+  user-controlled (`?path=…D%26D 5e….json` addresses `…D&D 5e….json`).
 - `<fragment>` is a body-anchor name (e.g. `page-4`).
 """
 
@@ -66,6 +70,10 @@ def parse(uri: str) -> ParsedURI:
 
 
 def _parse_query(query: str) -> tuple[tuple[str, str | None], ...]:
+    """Split the query on `&`/first-`=`, then percent-DECODE each value (`unquote_value`) —
+    the read side of the `_VALUE_ESCAPES` contract, so a member name carrying a
+    query-reserved character (`Direct Messages - D&D 5e […].json`) is addressable as
+    `?path=…D%26D 5e….json`. Keys are grammar-controlled names, never decoded."""
     if not query:
         return ()
     out: list[tuple[str, str | None]] = []
@@ -74,7 +82,7 @@ def _parse_query(query: str) -> tuple[tuple[str, str | None], ...]:
             continue
         if "=" in chunk:
             key, _, value = chunk.partition("=")
-            out.append((key, value))
+            out.append((key, unquote_value(value)))
         else:
             out.append((chunk, None))
     return tuple(out)
@@ -96,7 +104,9 @@ def canonical(parsed: ParsedURI) -> str:
 
 
 def _render_param(key: str, value: str | None) -> str:
-    return key if value is None else f"{key}={value}"
+    # Values re-encode on render (parse stores them DECODED), so parse ∘ canonical is a
+    # stable round-trip and the canonical string is always re-parseable.
+    return key if value is None else f"{key}={quote_value(value)}"
 
 
 # Characters that are structural in the query/fragment grammar and so must be

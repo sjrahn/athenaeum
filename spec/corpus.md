@@ -589,7 +589,7 @@ corpus://<hash>[?<params>]
 ```
 
 - `<hash>` — blake3 hash of the source artifact, 64-char lowercase hex.
-- `<params>` — `&`-separated key/value pairs and flag-style keys. Order is significant — parameters compose left-to-right, each operating on the previous step's output.
+- `<params>` — `&`-separated key/value pairs and flag-style keys. Order is significant — parameters compose left-to-right, each operating on the previous step's output. A param **value** percent-encodes the query-reserved characters `%`/`&`/`#` as `%25`/`%26`/`%23`; the parser decodes, and canonicalization re-encodes. Values may therefore carry any character — archive member names are producer-controlled (`?path=…D%26D 5e….json` addresses a member literally named `…D&D 5e….json`). *(2.1: the encode contract existed from the start; the decode side is normative as of 2026-07-12.)*
 
 Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>?<params>` resolves to a derived view per §6.2.
 

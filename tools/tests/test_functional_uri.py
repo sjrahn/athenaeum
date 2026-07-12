@@ -85,3 +85,27 @@ def test_fragment_preserved():
     p = fu.parse("corpus://" + "a" * 64 + "?page=1#anchor-name")
     assert p.fragment == "anchor-name"
     assert fu.canonical(p).endswith("#anchor-name")
+
+
+def test_parse_decodes_percent_escaped_values():
+    """A query-reserved character in a param VALUE rides percent-encoded and parses back
+    decoded — a zip member named `…D&D 5e….json` is addressable as `?path=…D%26D 5e….json`."""
+    p = fu.parse("corpus://" + "a" * 64 + "?path=Direct Messages - D%26D 5e [673].json")
+    assert p.params == (("path", "Direct Messages - D&D 5e [673].json"),)
+
+
+def test_canonical_reencodes_decoded_values():
+    """parse ∘ canonical round-trips: the canonical form re-encodes reserved characters, so
+    it is always re-parseable to the same params."""
+    uri = "corpus://" + "a" * 64 + "?path=a %26 b %2523.json"
+    p = fu.parse(uri)
+    assert p.params == (("path", "a & b %23.json"),)
+    assert fu.canonical(p) == uri
+    assert fu.parse(fu.canonical(p)) == p
+
+
+def test_clean_values_unchanged_by_encoding_round_trip():
+    """Values without reserved characters are byte-identical through parse/canonical — no
+    cache-key drift for every existing URI in the wild."""
+    uri = "corpus://" + "a" * 64 + "?path=Takeout/Mail/a.txt&page=3"
+    assert fu.canonical(fu.parse(uri)) == uri
