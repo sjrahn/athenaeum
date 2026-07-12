@@ -1,0 +1,52 @@
+description: |
+  Generic JSON document artifacts (`application/json`) — a producer's structured export,
+  a saved API response, a settings dump. The artifact's own text IS the faithful
+  representation: the deterministic drafter decodes the bytes and renders them VERBATIM
+  into one `text/code` segment (language `json`) spanning the whole document — a
+  passthrough, not a transformation. No element explosion, no reshaping, no key
+  extraction: JSON is a carrier syntax, and what any given JSON *means* is the origin
+  overlay's normalization guidance plus ledger knowledge (ATH-CORPUS 2.0), never this
+  schema's.
+applies_to:
+  content_types:
+  - application/json
+mode: body-draft
+artifact_kind: self_contained
+address_scheme:
+- param: line
+  type: integer
+  description: |-
+    1-indexed line (`line=N`) or line range (`line=A-B`) in the decoded artifact text.
+    The draft's single wrapping segment spans `line=1-<last>`.
+normalization:
+  method: refinement
+  guidance: |
+    A JSON record is a PASSTHROUGH: the draft body is the artifact's decoded text,
+    verbatim, in one `text/code` segment addressed `line=1-<N>`. The normalizer's
+    licence is annotation, never transformation:
+
+    - Author frontmatter `title` and `description`. The record's origin overlay
+      governs their shape — it knows what this JSON is; this schema does not.
+    - The JSON body stays byte-identical to the draft. Do not pretty-print,
+      re-indent, re-order keys, normalize quoting, or fold whitespace.
+    - When the top level is a long array and navigation earns it, the one permitted
+      structural move is splitting the wrapping segment into CONTIGUOUS
+      line-addressed `text/code` sub-segments (same bytes, same order, with `entry:`
+      labels). Never reorder, and never let a split boundary fall mid-element.
+    - A draft-time parse failure rides as a `malformed-json` warning issue; the text
+      still passes through. Annotate or escalate — never repair the bytes.
+extended_fields:
+  json_root:
+    type: string
+    required: false
+    source: derived
+    description: |-
+      The top-level JSON value kind — `object` | `array` | `string` | `number` |
+      `boolean` | `null`. Absent when the artifact fails to parse.
+  json_top_count:
+    type: number
+    required: false
+    source: derived
+    description: |-
+      Size of the top level — element count for an array, key count for an object.
+      Absent for scalar roots and on parse failure.

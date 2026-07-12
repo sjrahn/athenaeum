@@ -128,6 +128,7 @@ from . import eml as _eml  # noqa: E402, F401
 from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
+from . import jsonfile as _jsonfile  # noqa: E402, F401
 from . import mbox_manifest as _mbox_manifest  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import tar_manifest as _tar_manifest  # noqa: E402, F401
