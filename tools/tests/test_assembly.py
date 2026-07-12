@@ -517,3 +517,181 @@ def test_cli_ingest_draft_yields_manifest(tmp_path):
     fields = next(o for o in origins if o.get("id") == "test-export").get("fields") or {}
     assert fields.get("account") == "Sample@Example.com"
     assert fields.get("job") == "64de2346-c979-4236-8e8b-e05c56c934be"
+
+
+# ---------- directory sources + excludes (2.1: envelope-less deliveries) ---------- #
+
+
+def _tree(root: Path, members: dict[str, bytes], *, mtime: int = _MTIME) -> Path:
+    """A loose export tree on disk (a DiscordChatExporter-style delivery — no envelope)."""
+    import os
+
+    for rel, data in members.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        os.utime(p, (mtime, mtime))
+    return root
+
+
+def test_directory_source_members_verbatim(tmp_path):
+    """A directory source's files become members at their tree relpaths, mtimes from disk,
+    stored/zstd routing by extension — and NO source_parts tombstone (no envelope)."""
+    src = _tree(
+        tmp_path / "export",
+        {
+            "channel.json": b'{"a": 1}' * 64,
+            "assets/pic.png": b"\x89PNG fake",
+            "assets/clip.mp4": b"mp4",
+        },
+    )
+    out = tmp_path / "bundle.zip"
+    result = assembly.assemble([_part(src)], [], out)
+
+    members = _members(out)
+    assert set(members) == {"channel.json", "assets/pic.png", "assets/clip.mp4"}
+    assert members["channel.json"].date_time == _MTIME_TUPLE
+    assert members["channel.json"].compress_type == zipfile.ZIP_ZSTANDARD
+    assert members["assets/pic.png"].compress_type == zipfile.ZIP_STORED
+    assert members["assets/clip.mp4"].compress_type == zipfile.ZIP_STORED
+    assert result.source_parts == []  # a directory delivery has no envelope to tombstone
+    assert result.excluded == []
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("channel.json") == b'{"a": 1}' * 64
+
+
+def test_directory_source_deterministic(tmp_path):
+    src = _tree(tmp_path / "export", {"a.json": b"x" * 2000, "assets/b.png": b"png"})
+    out1, out2 = tmp_path / "b1.zip", tmp_path / "b2.zip"
+    assembly.assemble([_part(src)], [], out1)
+    assembly.assemble([_part(src)], [], out2)
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_excludes_basename_and_relpath_patterns(tmp_path):
+    """A slash-less exclude pattern claims its basename at ANY depth; a slashed pattern
+    fnmatches the full relpath. Exclusions are reported, never silent."""
+    src = _tree(
+        tmp_path / "export",
+        {
+            "a.json": b"{}",
+            ".DS_Store": b"cruft",
+            "assets/.DS_Store": b"cruft",
+            "assets/pic.png": b"png",
+            "tmp/scratch.txt": b"scratch",
+        },
+    )
+    out = tmp_path / "bundle.zip"
+    result = assembly.assemble([_part(src)], [], out, excludes=[".DS_Store", "tmp/*"])
+    assert set(_members(out)) == {"a.json", "assets/pic.png"}
+    assert result.excluded == [".DS_Store", "assets/.DS_Store", "tmp/scratch.txt"]
+    assert result.member_count == 2
+
+
+def test_directory_and_archive_parts_union(tmp_path):
+    """A directory part and an archive part union like any multi-part delivery."""
+    tree = _tree(tmp_path / "export", {"a.json": b"{}"})
+    arch = _zip(tmp_path / "extra.zip", {"assets/b.png": b"png"})
+    out = tmp_path / "bundle.zip"
+    result = assembly.assemble([_part(tree), _part(arch)], [], out)
+    assert set(_members(out)) == {"a.json", "assets/b.png"}
+    # Only the archive part leaves a tombstone.
+    assert [label for label, _ in result.source_parts] == ["extra.zip"]
+
+
+# ---------- the CLI: directory delivery + member-head derivation (discord-shaped) ---------- #
+
+_DISCORD_OVERLAY = """\
+description: test discord-flavoured export overlay
+extended_fields:
+  account: {type: string}
+  exported_at: {type: string}
+  guild: {type: string}
+  guild_id: {type: string, semantic_type: identifier}
+capture:
+  assembly:
+    merge_parts: true
+    conflict: error
+    additions: []
+    rewrites: []
+    excludes: ['.DS_Store']
+    level: 12
+    seed_fields: [guild, guild_id]
+    name_fields: [guild]
+    derive:
+      from_member_head:
+        glob: '*.json'
+        bytes: 4096
+        fields:
+          guild: '"name":\\s*"([^"]+)"'
+          guild_id: '"guild":\\s*\\{\\s*"id":\\s*"(\\d+)"'
+          exported_at: '"exportedAt":\\s*"([^"]+)"'
+"""
+
+_CHANNEL_A = (
+    b'{"guild": {"id": "42", "name": "Test Guild"}, "channel": {"id": "1"},'
+    b' "exportedAt": "2026-07-12T15:50:01Z", "messages": []}'
+)
+_CHANNEL_B = (
+    b'{"guild": {"id": "42", "name": "Test Guild"}, "channel": {"id": "2"},'
+    b' "exportedAt": "2026-07-12T15:50:09Z", "messages": []}'
+)
+
+
+def _corpus_with_discord_overlay(tmp_path: Path) -> Path:
+    root = _corpus(tmp_path)
+    (root / "schema" / "origin").mkdir(parents=True)
+    (root / "schema" / "origin" / "test-discord.yaml").write_text(
+        _DISCORD_OVERLAY, encoding="utf-8"
+    )
+    schemas.cache_clear()
+    return root
+
+
+def test_cli_directory_source_member_head_derivation(tmp_path):
+    """The whole discord shape: a loose tree assembles via overlay config — member-head
+    derivation (guild verbatim, exported_at = the max stamp across members), seed_fields into
+    the sidecar, name_fields into the bundle filename, excludes honored, and neither
+    `services` (undeclared) nor `source_parts` (no envelope) in the sidecar."""
+    root = _corpus_with_discord_overlay(tmp_path)
+    src = _tree(
+        root / "capture" / "test-guild",
+        {"chan-a.json": _CHANNEL_A, "chan-b.json": _CHANNEL_B, ".DS_Store": b"cruft",
+         "assets/pic.png": b"png"},
+    )
+    ns = argparse.Namespace(
+        origin="test-discord", sources=[src], additions=[], account=None, job=None,
+        exported_at=None, source_name=None, level=None, out=None, json=False,
+        corpus_root=str(root),
+    )
+    assert assemble_cli.run(ns) == 0
+
+    out = root / "capture" / "test-discord-Test-Guild-20260712T155009Z.zip"
+    assert out.is_file(), sorted(p.name for p in (root / "capture").iterdir())
+    assert set(_members(out)) == {"chan-a.json", "chan-b.json", "assets/pic.png"}
+
+    import yaml
+
+    sidecar = yaml.safe_load((out.with_name(out.name + ".capture.yaml")).read_text())
+    fields = sidecar["origin_fields"]
+    assert fields["guild"] == "Test Guild"
+    assert fields["guild_id"] == "42"
+    assert fields["exported_at"] == "2026-07-12T15:50:09Z"  # max across members
+    assert "services" not in fields
+    assert "source_parts" not in fields
+    assert "account" not in fields
+
+    # The archive comment carries the name_fields value verbatim.
+    with zipfile.ZipFile(out) as zf:
+        comment = zf.comment.decode("utf-8")
+    assert "Test Guild" in comment and "2026-07-12T15:50:09Z" in comment
+
+    # And the bundle ingests + drafts as an ordinary manifest whose members carry transports.
+    cid = _ingest(root, out)
+    _draft(root, cid)
+    post = records.load(paths.record_path(root, cid))
+    embeds = {e.get("address"): e.get("transport") for e in records.iter_embed_blocks(post)}
+    assert embeds["path=chan-a.json"] == records.format_hash("blake3", _b3(_CHANNEL_A))
+    origins = list(records.iter_origin_blocks(post))
+    fields = next(o for o in origins if o.get("id") == "test-discord").get("fields") or {}
+    assert fields.get("guild") == "Test Guild"

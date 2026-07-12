@@ -46,6 +46,23 @@ solid tgz is not random-access, so its members are staged to a temp dir once (st
 hashed in the same pass) and read back in sorted order; a zip source is central-directory
 random-access, so its members stream straight through with no staging.
 
+**Directory sources** (2.1): a source part may be a loose TREE instead of an archive — an
+export tool that writes files straight to disk (DiscordChatExporter's per-channel JSONs +
+shared media dir) delivers no envelope at all. Members are the tree's files, relpaths taken
+verbatim from the tree root, mtimes from disk, streamed in place with no staging. Having no
+envelope, a directory source gets NO `source_parts` tombstone — member byte-identity is
+carried per-member (each member's blake3 on its embed), which is the whole of what the tree
+asserts. Determinism holds under the same contract as archives: same tree bytes + same
+mtimes → same bundle.
+
+**Excludes** (2.1): the overlay may declare `excludes` — fnmatch patterns for filesystem
+cruft (`.DS_Store`, `Thumbs.db`) that must never ride into a bundle. A pattern without `/`
+matches the member's basename at any depth; a pattern with `/` matches the full relpath.
+Excluded members are counted and reported (`AssemblyResult.excluded`), never silent — this
+is a *declared* subtraction, the same contract as `rewrites`, so the complete-or-absent
+rule below is not weakened: every member the config admits is present or the assembly
+aborts.
+
 **Deliberate exception to the tolerant-parse principle (spec §1.5).** Everywhere else the
 pipeline logs and skips an unreadable record; assembly does NOT. A bundle must be complete or
 absent — a silently-dropped member would make the retired originals the only copy of bytes
@@ -126,8 +143,10 @@ class AssemblyResult:
     bundle_bytes: int
     member_count: int  # original members + additions written to the bundle
     services: list[str]  # top-level dirs under the original members' common root
-    source_parts: list[tuple[str, str]]  # (label, blake3-hex) tombstone per source archive
+    source_parts: list[tuple[str, str]]  # (label, blake3-hex) tombstone per source ARCHIVE
+    #   (a directory source has no delivery envelope, so it contributes no tombstone)
     rewrites_applied: list[tuple[str, str]] = field(default_factory=list)  # (from, to)
+    excluded: list[str] = field(default_factory=list)  # relpaths dropped by declared excludes
     member_addresses: list[str] = field(default_factory=list)  # sorted path= member paths
 
 
@@ -187,18 +206,22 @@ def assemble(
     merge_parts: bool = True,
     conflict: str = "error",
     rewrites: list[dict] | None = None,
+    excludes: list[str] | None = None,
     comment: str = "",
     staging_dir: Path | None = None,
 ) -> AssemblyResult:
     """Assemble `sources` (+ root-level `additions`) into one deterministic zip at `out_path`.
 
-    `merge_parts` unions a multi-part delivery into one tree (the split is delivery, not
-    structure); with it false, more than one source is a hard error. `conflict` governs a
-    same-path collision across parts: `error` (the default and only declared value) raises on
-    differing bytes; identical bytes always dedup silently. `rewrites` is the declared
-    `[{from, to}]` restructure mapping (empty is the norm — verbatim preservation). `comment`
-    is the job-identity string stamped on the zip. Raises `AssemblyError` on any unreadable
-    member or fired conflict, leaving no partial bundle."""
+    A source part is an archive (tar/tgz/zip) or a loose DIRECTORY tree (module docstring —
+    an envelope-less delivery; contributes no `source_parts` tombstone). `merge_parts` unions
+    a multi-part delivery into one tree (the split is delivery, not structure); with it
+    false, more than one source is a hard error. `conflict` governs a same-path collision
+    across parts: `error` (the default and only declared value) raises on differing bytes;
+    identical bytes always dedup silently. `rewrites` is the declared `[{from, to}]`
+    restructure mapping (empty is the norm — verbatim preservation). `excludes` is the
+    declared cruft-subtraction pattern list (module docstring; matched pre-rewrite, reported
+    in the result). `comment` is the job-identity string stamped on the zip. Raises
+    `AssemblyError` on any unreadable member or fired conflict, leaving no partial bundle."""
     if not sources:
         raise AssemblyError("no source archives given")
     if len(sources) > 1 and not merge_parts:
@@ -207,6 +230,7 @@ def assemble(
             f"guess whether the split is structural (declare merge_parts: true to union them)."
         )
     rules = list(rewrites or [])
+    exclude_pats = [str(p) for p in (excludes or []) if p]
 
     staging_root = staging_dir or out_path.parent
     staging_root.mkdir(parents=True, exist_ok=True)
@@ -216,12 +240,17 @@ def assemble(
         rewrites_applied: list[tuple[str, str]] = []
         original_relpaths: list[str] = []
         source_parts: list[tuple[str, str]] = []
+        excluded: list[str] = []
 
         for part in sources:
-            source_parts.append((part.label, _hash_file(part.path)))
+            if not part.path.is_dir():  # a directory delivery has no envelope to tombstone
+                source_parts.append((part.label, _hash_file(part.path)))
             for relpath, date_time, size, digest, byte_src in _iter_source_members(
                 part.path, tmpdir
             ):
+                if _is_excluded(relpath, exclude_pats):
+                    excluded.append(relpath)
+                    continue
                 original_relpaths.append(relpath)
                 out_rel, applied = _apply_rewrites(relpath, rules)
                 if applied:
@@ -263,6 +292,7 @@ def assemble(
         services=_derive_services(original_relpaths),
         source_parts=source_parts,
         rewrites_applied=rewrites_applied,
+        excluded=sorted(excluded),
         member_addresses=[f"path={p.out_path}" for p in planned],
     )
 
@@ -274,13 +304,40 @@ def _iter_source_members(
     path: Path, tmpdir: Path
 ) -> Iterator[tuple[str, tuple[int, int, int, int, int, int], int, str, _ByteSource]]:
     """Yield `(relpath, date_time, size, blake3-hex, byte_source)` for each FILE member of a
-    source archive. A tar/tgz is a solid stream, so each member is staged to `tmpdir` once
+    source part. A tar/tgz is a solid stream, so each member is staged to `tmpdir` once
     (streamed + hashed in the same pass) and read back later; a zip is random-access, so its
-    members stream straight through with no staging. An unreadable member aborts (raises)."""
-    if _is_zip(path):
+    members stream straight through with no staging; a DIRECTORY tree's files stream in place
+    (relpaths from the tree root, mtimes from disk). An unreadable member aborts (raises)."""
+    if path.is_dir():
+        yield from _iter_dir_members(path)
+    elif _is_zip(path):
         yield from _iter_zip_members(path)
     else:
         yield from _iter_tar_members(path, tmpdir)
+
+
+def _iter_dir_members(root: Path):
+    try:
+        entries = sorted(p for p in root.rglob("*") if p.is_file())
+    except OSError as e:
+        raise AssemblyError(f"unreadable source directory {root.name}: {e}") from e
+    for p in entries:
+        rel = p.relative_to(root).as_posix()
+        try:
+            with p.open("rb") as fp:
+                digest, size = _stream_digest(fp)
+            mtime = p.stat().st_mtime
+        except OSError as e:
+            raise AssemblyError(f"unreadable member {rel!r} in {root.name}: {e}") from e
+        yield (rel, epoch_to_dostuple(mtime), size, digest, _FileSource(p))
+
+
+def _is_excluded(relpath: str, patterns: list[str]) -> bool:
+    """Whether a declared exclude pattern claims this member: a pattern containing `/` is
+    matched against the full relpath, one without against the basename at any depth (so a
+    bare `.DS_Store` covers the whole tree)."""
+    base = relpath.rsplit("/", 1)[-1]
+    return any(fnmatch(relpath if "/" in pat else base, pat) for pat in patterns)
 
 
 def _iter_zip_members(path: Path):
