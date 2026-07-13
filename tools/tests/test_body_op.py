@@ -10,7 +10,7 @@ from pathlib import Path
 
 import frontmatter
 
-from corpus import derive, hashing, paths, records, resolver, schemas
+from corpus import derive, hashing, paths, recordbuild, records, resolver, schemas
 from corpus._cli import draft as draft_cli
 from corpus.store import LocalArtifactStore
 
@@ -69,6 +69,64 @@ def test_resolver_body_op(tmp_path):
     assert "<!--segment text/code" in text
     # Cache hit on a second resolve.
     assert resolver.resolve(f"corpus://{rid}?body", root) == out
+
+
+def test_stub_decompose_derives_the_body(tmp_path):
+    """`corpus decompose` on a 3.0 stub (empty content zone) derives the body into the working
+    dir — so the normalize substrate has content to edit — and marks it derived-at-decompose.
+    stub-decompose ≡ the `body` op's output (compile round-trips it)."""
+    from corpus._cli import decompose as decompose_cli
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_json(root, json.dumps([{"a": 1}, {"b": 2}], indent=2) + "\n")
+    work = tmp_path / "w"
+
+    class _Args:
+        target = rid
+        into = work
+        corpus_root = str(root)
+
+    assert decompose_cli.run(_Args()) == 0
+
+    # The lock records the provenance: the body was DERIVED, with the op id.
+    lock = json.loads((work / ".corpus-decompose.json").read_text("utf-8"))
+    assert lock["body_source"] == "derived"
+    assert lock["body_op"].startswith("corpus.body@")
+    # The manifest header flags it so a compile is understood as authoring.
+    manifest = (work / "manifest.corpus").read_text("utf-8")
+    assert "BODY DERIVED at decompose time" in manifest
+
+    # stub-decompose ≡ body-op output: compiling the working dir reproduces derive_body().
+    stub = records.load(paths.record_path(root, rid))
+    compiled = recordbuild.read_workdir(work, root)
+    assert (compiled.content or "").strip() == derive.derive_body(stub, root).strip()
+
+
+def test_normalized_decompose_uses_stored_body(tmp_path):
+    """A record with a stored content zone decomposes it verbatim (body_source: stored)."""
+    from corpus import segments
+    from corpus._cli import decompose as decompose_cli
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_json(root, json.dumps({"x": 1}, indent=2) + "\n")
+    rf = paths.record_path(root, rid)
+    post = records.load(rf)
+    post.metadata["status"] = "normalized"
+    post.content = segments.emit([segments.Segment(atom="text", address="line=1", body="authored")])
+    records.dump(post, rf)
+    work = tmp_path / "w2"
+
+    class _Args:
+        target = rid
+        into = work
+        corpus_root = str(root)
+
+    assert decompose_cli.run(_Args()) == 0
+    lock = json.loads((work / ".corpus-decompose.json").read_text("utf-8"))
+    assert lock["body_source"] == "stored"
+    assert "authored" in (work / "manifest.corpus").read_text("utf-8") or any(
+        "authored" in p.read_text("utf-8") for p in (work / "bodies").glob("*")
+    )
 
 
 def test_corpus_body_cli_derives_for_empty_stub(tmp_path, capsys):

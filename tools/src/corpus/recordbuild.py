@@ -462,11 +462,18 @@ def write_workdir(
     *,
     source: str,
     orig_sha256: str,
+    derived_body: str | None = None,
 ) -> None:
     """Serialize `post` + content-zone `blocks` into a working dir.
 
     Reads embeds from `post.metadata["_embeds"]` (metadata zone, reconciliation #1).
     `blocks` is the content-zone Section/Segment list from `segments.iter_blocks`.
+
+    `derived_body` — when set (to the `body` op's touch id), the content zone was DERIVED at
+    decompose time (a 3.0 stub has no stored body, §6.2), not read from the record. It is
+    recorded in the lock (`body_source: derived`, `body_op`) and flagged in the manifest header
+    so a compile from this working dir is understood as an authoring act, never a round-trip of
+    stored bytes.
     """
     out = Path(out_dir)
     (out / "bodies").mkdir(parents=True, exist_ok=True)
@@ -506,8 +513,18 @@ def write_workdir(
         (out / "desc" / fn).write_text(text, encoding="utf-8")
         return f"@desc/{fn}"
 
+    derived_header = (
+        [
+            f"# BODY DERIVED at decompose time by the `{derived_body}` op (§6.2) — this stub",
+            "#   stores no body. Editing + `corpus compile` here is AUTHORING the record's form,",
+            "#   NOT round-tripping stored bytes. The compiled record's status/touch are yours to set.",
+        ]
+        if derived_body
+        else []
+    )
     lines: list[str] = [
         *_MANIFEST_HEADER,
+        *derived_header,
         f"record id={post.metadata.get('id', '')} status={post.metadata.get('status', '')}",
         "",
     ]
@@ -607,18 +624,16 @@ def write_workdir(
             lines.append(" ".join(parts))
 
     (out / MANIFEST_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (out / LOCK_NAME).write_text(
-        json.dumps(
-            {
-                "record_id": post.metadata.get("id", ""),
-                "source": source,
-                "orig_sha256": orig_sha256,
-                "version": VERSION,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    lock: dict[str, Any] = {
+        "record_id": post.metadata.get("id", ""),
+        "source": source,
+        "orig_sha256": orig_sha256,
+        "version": VERSION,
+        "body_source": "derived" if derived_body else "stored",
+    }
+    if derived_body:
+        lock["body_op"] = derived_body
+    (out / LOCK_NAME).write_text(json.dumps(lock, indent=2), encoding="utf-8")
 
 
 # ====================================================================== #
