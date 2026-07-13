@@ -5,7 +5,6 @@ parse-tolerance (skip a malformed card, never fail the file). Fixtures are built
 
 from __future__ import annotations
 
-import argparse
 import base64
 import shutil
 from pathlib import Path
@@ -13,7 +12,6 @@ from pathlib import Path
 import blake3
 
 from corpus import hashing, lint, mime, paths, records, schemas, segments
-from corpus._cli import draft as draft_cli
 from corpus._cli import ingest as ingest_cli
 from corpus.draft import vcard
 
@@ -56,9 +54,9 @@ def _ingest_vcf(tmp_path: Path, root: Path, raw: bytes, name: str = "contacts.vc
 
 
 def _draft(root: Path, target: str) -> int:
-    return draft_cli.run(
-        argparse.Namespace(target=target, messages=None, fingerprint=None, corpus_root=str(root))
-    )
+    from tests._draftlib import draft_for_test
+
+    return draft_for_test(root, target)
 
 
 def _record(root: Path, rid: str):

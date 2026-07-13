@@ -38,7 +38,9 @@ def _setup(tmp_path: Path, rid: str, ext: str, mime: str, src: Path) -> Path:
 
 
 def _draft_then_lint(root: Path, rid: str) -> tuple[int, int]:
-    draft_rc = dispatch(["draft", rid, "--corpus-root", str(root)])
+    from tests._draftlib import draft_for_test
+
+    draft_rc = draft_for_test(root, rid)
     lint_rc = dispatch(["lint", rid, "--corpus-root", str(root)])
     return draft_rc, lint_rc
 

@@ -25,74 +25,31 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from corpus import records, touches
+from corpus import derive, records, touches
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
-from corpus.derive import DeriveError, build_content_zone
+from corpus.derive import DeriveError
+from corpus.draft import mbox_manifest
 from corpus.store import ArtifactMissing
 
 
-def _is_drafter_issue(ctx: dict) -> bool:
-    """A mechanical drafter-emitted issue — the attested layer's issue half. Identified by
-    the `corpus.draft.*` detector family (a capturer's issue detector is preserved)."""
-    if (ctx.get("namespace") or "") != "issue":
-        return False
-    detector = str((ctx.get("fields") or {}).get("detector") or "")
-    return detector.startswith("corpus.draft.")
-
-
-def _reattest_in_place(post, corpus_root: Path, *, fingerprint_cli: bool | None = None) -> str:
-    """Strip + re-derive the attested layer of `post` in place; return the mime schema id.
-    Preserves the authored layer: the content zone (never `finish`-ed here), embed
-    descriptions (carried forward by transport), editorial fields, and non-drafter issues."""
-    from corpus._cli.draft import _apply_drafter_result
-    from corpus.draft import mbox_manifest
-
-    # The mbox manifest's declared ordinals are operator intent, not derivable from the bytes;
-    # capture them before the strip and re-declare them (spec §12.11).
-    messages = mbox_manifest.declared_ordinals(post) or None
-
-    # Carry-forward authored embed descriptions (authored — normalize owns them, §4.4.7),
-    # keyed by the embed's transport hash so they re-attach to the re-derived embeds.
-    authored_desc: dict[str, str] = {}
-    for e in records.iter_embed_blocks(post):
-        d = (e.get("fields") or {}).get("description")
-        if d:
-            authored_desc[str(e.get("transport"))] = str(d)
-
-    # Strip the attested layer: embeds, drafter issues, and the artifact block's extended
-    # fields (the opener MIME stays — it is byte-intrinsic).
-    post.metadata["_embeds"] = []
-    post.metadata["_contexts"] = [
-        c for c in (post.metadata.get("_contexts") or []) if not _is_drafter_issue(c)
-    ]
-    art = records.artifact_block(post) or {}
-    records.set_artifact_block(post, mime=str(art.get("mime") or ""), fields={})
-
-    # Re-derive the attestation from the artifact. The Build's content zone (the body) is
-    # DISCARDED — `body` is a derivation op now (§6.2); we never `finish` it into the record.
-    _build, result, _mt, _bin, mime_schema_id = build_content_zone(
-        post, corpus_root, fingerprint_cli=fingerprint_cli, messages=messages
-    )
-    _apply_drafter_result(post, result, mime_schema_id, corpus_root)
-
-    # Re-attach authored descriptions to the re-derived embeds.
-    for e in post.metadata.get("_embeds") or []:
-        d = authored_desc.get(str(e.get("transport")))
-        if d and "description" not in (e.get("fields") or {}):
-            e.setdefault("fields", {})["description"] = d
-    return mime_schema_id or ""
-
-
 def reattest_record(
-    record_file: Path, corpus_root: Path, *, fingerprint_cli: bool | None = None
+    record_file: Path,
+    corpus_root: Path,
+    *,
+    fingerprint_cli: bool | None = None,
+    messages: list[int] | None = None,
 ) -> str:
     """Re-derive the attested layer of the record at `record_file`, **in memory**; return
-    the serialized record (NOT written). Idempotent: when the attested facts re-derive
-    identically the original text is returned unchanged — no touch appended, no rewrite.
-    Raises `DeriveError` / `ArtifactMissing`."""
+    the serialized record (NOT written). Strips + re-derives the attested layer while
+    preserving the authored layer (`derive.attest(strip=True)`). `messages` is the mbox
+    selective declaration (§12.11, the re-homed `--messages`). Idempotent: when the attested
+    facts re-derive identically the original text is returned unchanged — no touch appended,
+    no rewrite. Raises `DeriveError` / `ArtifactMissing`."""
     post = records.load(record_file)
     before = records.dumps(post)
-    mime_schema_id = _reattest_in_place(post, corpus_root, fingerprint_cli=fingerprint_cli)
+    mime_schema_id = derive.attest(
+        post, corpus_root, fingerprint_cli=fingerprint_cli, strip=True, messages=messages
+    )
     after = records.dumps(post)
     if after == before:
         return before  # attested layer unchanged — the pass records nothing
@@ -128,6 +85,17 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="force perceptual fingerprinting on/off for every re-attested record (else the schema decides).",
     )
+    parser.add_argument(
+        "--messages",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "mbox only (single target): declare the 1-indexed messages to manifest as "
+            "`message/rfc822` embeds — a comma list of ordinals and `lo-hi` ranges "
+            "(e.g. `5,12,90-95`). Cumulative: unions with the already-declared set (§12.11). "
+            "The re-homed successor of the 2.x `corpus draft --messages`."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
@@ -150,6 +118,22 @@ def run(args: argparse.Namespace) -> int:
 
     corpus_root = resolved_corpus_root(args)
 
+    messages_spec = getattr(args, "messages", None)
+    if messages_spec is not None and not args.target:
+        sys.exit("--messages requires a single target record (an mbox).")
+    ordinals: list[int] | None = None
+    if messages_spec:
+        from corpus import schemas
+
+        try:
+            ordinals = mbox_manifest.parse_message_spec(messages_spec)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        _, rf = paths.resolve_record(corpus_root, args.target)
+        mt = schemas.load_mime_schema(corpus_root, records.media_type_for(records.load(rf))) or {}
+        if str((mt.get("draft") or {}).get("strategy") or "") != "mbox-manifest":
+            sys.exit("--messages is only valid for an mbox record.")
+
     if args.target:
         _, rf = paths.resolve_record(corpus_root, args.target)
         candidates = [rf]
@@ -171,7 +155,9 @@ def run(args: argparse.Namespace) -> int:
 
         rid = str(post.metadata.get("id") or "")[:12]
         try:
-            new_text = reattest_record(rf, corpus_root, fingerprint_cli=fp)
+            new_text = reattest_record(rf, corpus_root, fingerprint_cli=fp, messages=ordinals)
+        except mbox_manifest.MessageHashConflict as exc:
+            sys.exit(str(exc))  # stale declaration — a hard error (§12.11), never papered over
         except (DeriveError, ArtifactMissing) as exc:
             print(f"  skip {rid}: {exc}", file=sys.stderr)
             failed += 1

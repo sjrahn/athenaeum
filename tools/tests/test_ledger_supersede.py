@@ -40,7 +40,8 @@ def _session_record(priv: Path, projects: Path, sid: str, lines) -> str:
         snapshot=stats.activity_end or "2026-01-01T00:00:00Z",
     )
     dispatch(["ingest", str(zip_path), "--corpus-root", str(priv)])
-    dispatch(["draft", rid, "--corpus-root", str(priv)])
+    from tests._draftlib import draft_for_test
+    draft_for_test(priv, rid)
     return rid
 
 

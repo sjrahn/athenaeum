@@ -311,7 +311,12 @@ def test_reconcile_single_page_byte_identical(tmp_path, monkeypatch):
 
     post = records.load(rec)
     assert "pagination" not in list(records.iter_origin_blocks(post))[-1]["fields"]
-    assert not list(records.iter_issue_blocks(post))
+    # A single page reconciles with no pagination folding — so no pagination issue. (3.0:
+    # ingest attests, so the record may carry ordinary drafter attestation issues like a
+    # `generic-title`; the pagination concern is what this asserts.)
+    assert not [
+        i for i in records.iter_issue_blocks(post) if "pagination" in str(i.get("id") or "")
+    ]
 
 
 # ---------- crawl frontier exclusion ---------- #

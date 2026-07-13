@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from corpus import draft, lint, paths, records, resolver, schemas, segments
-from corpus._cli import draft as draft_cli
 from corpus.draft import html as draft_html
 from corpus.store import LocalArtifactStore
 from corpus.transforms import html as transforms_html
@@ -126,8 +125,10 @@ def test_draft_does_not_merge_same_content_canonical_disabled(tmp_path):
         target = rid_b
         corpus_root = str(root)
 
-    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]
-    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  no longer merges into A
+    from tests._draftlib import draft_for_test
+
+    assert draft_for_test(root, rid_a) == 0
+    assert draft_for_test(root, rid_b) == 0  # no longer merges into A
 
     # No canonical persisted → no fold: BOTH records survive, each with only its own url.
     a = records.load(paths.record_path(root, rid_a))
@@ -266,7 +267,9 @@ def test_draft_cli_pipeline_against_image(tmp_path):
         target = rid
         corpus_root = str(root)
 
-    rc = draft_cli.run(Args())  # type: ignore[arg-type]
+    from tests._draftlib import draft_for_test
+
+    rc = draft_for_test(root, rid)
     assert rc == 0
 
     post = records.load(paths.record_path(root, rid))
@@ -283,19 +286,21 @@ def test_draft_cli_pipeline_against_image(tmp_path):
     assert blocks[0].atom == "image"
 
 
-def test_draft_cli_refuses_non_stub(tmp_path):
-    """Re-running `draft` on an already-drafted record is refused (it would otherwise
-    append duplicate embed/issue blocks); the clean re-run path is `re-stub` then `draft`."""
+def test_draft_is_idempotent_on_rerun(tmp_path):
+    """3.0: `derive_record` (the transitional draft core) is idempotent — re-running it strips
+    the attested layer before re-applying, so it never doubles embeds/issues (the 2.x
+    non-stub refusal is replaced by idempotence)."""
+    from tests._draftlib import draft_for_test
+
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "sample.png", "image/png", "png")
 
-    class Args:
-        target = rid
-        corpus_root = str(root)
-
-    assert draft_cli.run(Args()) == 0  # stub → draft
-    with pytest.raises(SystemExit):
-        draft_cli.run(Args())  # status is now 'draft' → refused
+    assert draft_for_test(root, rid) == 0
+    first = records.load(paths.record_path(root, rid))
+    n1 = len(list(records.iter_embed_blocks(first)))
+    assert draft_for_test(root, rid) == 0  # re-run: no duplication
+    second = records.load(paths.record_path(root, rid))
+    assert len(list(records.iter_embed_blocks(second))) == n1
 
 
 # ---------- HTML drafter ---------- #
@@ -573,7 +578,8 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
         target = rid
         corpus_root = str(root)
 
-    assert draft_cli.run(Args()) == 0  # type: ignore[arg-type]
+    from tests._draftlib import draft_for_test
+    assert draft_for_test(root, rid) == 0
 
     post = records.load(paths.record_path(root, rid))
     assert post.metadata["status"] == "draft"
@@ -614,7 +620,8 @@ def test_html_el_addressing_round_trips(tmp_path):
         target = rid
         corpus_root = str(root)
 
-    assert draft_cli.run(Args()) == 0  # type: ignore[arg-type]
+    from tests._draftlib import draft_for_test
+    assert draft_for_test(root, rid) == 0
 
     # el=4 is the first PNG occurrence (8x6); el=9 is the GIF (4x4).
     png_path = resolver.resolve(f"corpus://{rid}?el=4", root)
@@ -856,8 +863,9 @@ def test_draft_canonical_selector_inert_when_canonical_disabled(tmp_path):
         target = rid_b
         corpus_root = str(root)
 
-    assert draft_cli.run(ArgsA()) == 0  # type: ignore[arg-type]
-    assert draft_cli.run(ArgsB()) == 0  # type: ignore[arg-type]  no longer merges (canonical off)
+    from tests._draftlib import draft_for_test
+    assert draft_for_test(root, rid_a) == 0
+    assert draft_for_test(root, rid_b) == 0  # no longer merges (canonical off)
 
     # canonical disabled → scoped recompute never runs → no merge: both records persist.
     assert paths.record_path(root, rid_b).exists()

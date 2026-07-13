@@ -100,18 +100,16 @@ def _capture(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
 
-    # 3. Ingest + draft through the real commands (dedup, grammar validation, dump).
+    # 3. Ingest through the real command (dedup, grammar validation, dump). 3.0: ingest
+    # attests the session bundle's byte-facts (its members as `path=` embeds) at stub time —
+    # there is no separate draft stage; the transcript body is a derivation op (§6.2). The
+    # `--no-draft` flag is retained as a no-op for caller compatibility.
     from corpus._cli import dispatch
 
     rc = dispatch(["ingest", str(zip_path), "--corpus-root", str(corpus_root)])
     if rc != 0:
         _cleanup_staging(staging)
         sys.exit("session capture: ingest failed")
-    if not already and not args.no_draft:
-        rc = dispatch(["draft", record_id, "--corpus-root", str(corpus_root)])
-        if rc != 0:
-            _cleanup_staging(staging)
-            sys.exit("session capture: draft failed")
 
     _cleanup_staging(staging)
 

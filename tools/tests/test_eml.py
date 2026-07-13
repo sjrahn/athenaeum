@@ -84,10 +84,10 @@ def _ingest(root: Path, artifact: Path) -> str:
     return hashing.hash_file(artifact)["blake3"]
 
 
-def _draft(root: Path, target: str) -> int:
-    return draft_cli.run(
-        argparse.Namespace(target=target, messages=None, fingerprint=None, corpus_root=str(root))
-    )
+def _draft(root: Path, target: str, messages: str | None = None) -> int:
+    from tests._draftlib import draft_for_test
+
+    return draft_for_test(root, target, messages=messages)
 
 
 def _promote(root: Path, uri: str) -> int:
@@ -376,9 +376,7 @@ def test_three_hop_promote_and_resolve(tmp_path):
     mbox_id = _b3(mbox)
 
     _promote(root, f"corpus://{zid}?path=Takeout/Mail/all.mbox")
-    draft_cli.run(
-        argparse.Namespace(target=mbox_id, messages="1", fingerprint=None, corpus_root=str(root))
-    )
+    _draft(root, mbox_id, messages="1")
     eml_id = _b3(m)  # message 1's un-stuffed bytes == the eml bytes (no stuffing here)
 
     _promote(root, f"corpus://{mbox_id}?msg=1")

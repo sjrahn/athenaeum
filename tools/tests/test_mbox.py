@@ -122,11 +122,9 @@ def _ingest(root: Path, artifact: Path) -> str:
 
 
 def _draft_cli(root: Path, target: str, messages: str | None = None) -> int:
-    return draft_cli.run(
-        argparse.Namespace(
-            target=target, messages=messages, fingerprint=None, corpus_root=str(root)
-        )
-    )
+    from tests._draftlib import draft_for_test
+
+    return draft_for_test(root, target, messages=messages)
 
 
 def _promote(root: Path, uri: str) -> int:
@@ -252,7 +250,11 @@ def test_draft_is_cumulative_and_folds_identical(tmp_path):
     assert addrs == ["msg=1", "msg=2"]  # no duplicate msg=1
 
 
-def test_draft_changed_hash_is_a_hard_error(tmp_path):
+def test_reattest_changed_hash_is_a_hard_error(tmp_path):
+    """A changed hash for an already-declared mbox ordinal is a hard error (§12.11) — surfaced
+    by `corpus reattest --messages` (the 3.0 home of the mbox declaration)."""
+    from corpus._cli import reattest as reattest_cli
+
     root = _corpus(tmp_path)
     p, _ = _write_mbox(tmp_path)
     mbox_id = _ingest(root, p)
@@ -266,7 +268,12 @@ def test_draft_changed_hash_is_a_hard_error(tmp_path):
     records.dump(post, paths.record_path(root, mbox_id))
 
     with pytest.raises(SystemExit, match="stale"):
-        _draft_cli(root, mbox_id, messages="2")
+        reattest_cli.run(
+            argparse.Namespace(
+                target=mbox_id, mime=None, host=None, status="any", dry_run=False,
+                fingerprint=None, messages="2", corpus_root=str(root),
+            )
+        )
 
 
 def test_plain_draft_is_empty_manifest(tmp_path):
@@ -281,13 +288,22 @@ def test_plain_draft_is_empty_manifest(tmp_path):
 
 
 def test_messages_flag_rejected_on_non_mbox(tmp_path):
+    """3.0: the mbox `--messages` declaration re-homed to `corpus reattest --messages`, which
+    rejects it on a non-mbox record (§12.4.1)."""
+    from corpus._cli import reattest as reattest_cli
+
     root = _corpus(tmp_path)
     z = tmp_path / "plain.zip"
     with zipfile.ZipFile(z, "w") as zf:
         zf.writestr("a.txt", b"hello world\n")
     zid = _ingest(root, z)
     with pytest.raises(SystemExit, match="only valid for an mbox"):
-        _draft_cli(root, zid, messages="1")
+        reattest_cli.run(
+            argparse.Namespace(
+                target=zid, mime=None, host=None, status="any", dry_run=False,
+                fingerprint=None, messages="1", corpus_root=str(root),
+            )
+        )
 
 
 # ---------- D+B+E. declare → promote → resolve round trip ---------- #

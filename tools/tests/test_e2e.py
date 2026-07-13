@@ -26,6 +26,7 @@ import pytest
 
 from corpus import hashing
 from corpus._cli import dispatch
+from tests._draftlib import draft_for_test
 
 _DATA = Path(__file__).parent / "data"
 _HAVE_FFMPEG = shutil.which("ffmpeg") is not None
@@ -60,7 +61,7 @@ def test_e2e_pdf_lifecycle(tmp_path, capsys):
 
     # Stub lints clean; draft; draft lints clean.
     assert dispatch(["lint", pdf, "--corpus-root", str(root)]) == 0
-    assert dispatch(["draft", pdf, "--corpus-root", str(root)]) == 0
+    assert draft_for_test(root, pdf) == 0
     assert dispatch(["lint", pdf, "--corpus-root", str(root)]) == 0
     capsys.readouterr()
 
@@ -106,7 +107,7 @@ def test_e2e_png_and_packaged_fallback(tmp_path, capsys):
     png = _ingest(root, _DATA / "sample.png")
     capsys.readouterr()
 
-    assert dispatch(["draft", png, "--corpus-root", str(root)]) == 0
+    assert draft_for_test(root, png) == 0
     assert dispatch(["lint", png, "--corpus-root", str(root)]) == 0
     capsys.readouterr()
 
@@ -141,7 +142,7 @@ def test_e2e_video_noop_transcription(tmp_path, capsys):
     vid = _ingest(root, clip)
     capsys.readouterr()
 
-    assert dispatch(["draft", vid, "--corpus-root", str(root)]) == 0
+    assert draft_for_test(root, vid) == 0
     assert dispatch(["lint", vid, "--corpus-root", str(root)]) == 0
 
     post = records.load(paths.record_path(root, vid))

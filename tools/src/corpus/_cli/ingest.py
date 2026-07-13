@@ -132,16 +132,53 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         fields=origin_fields or None,
     )
     _emit_sidecar_issues(post, sidecar)
+
+    # Stage an enrichment sidecar (a yt-dlp `.info.json`) as `capture/<hash>.info.json` BEFORE
+    # attestation so the sidecar-lift can consume it (spec §7.2, §8.1).
+    _relocate_info_sidecar(src, record_id)
+    # 3.0: attest the byte-facts at stub time (§8.1) — artifact-block fields, manifest/
+    # exposable embeds, sidecar-lifted origin fields, drafter issues. The body is NOT stored
+    # (the `body` op derives it on demand). Best-effort: a type with no drafter or unreadable
+    # bytes stays a bare stub, attestable later via `corpus reattest`.
+    _attest_stub(post, corpus_root, record_id)
     records.dump(post, record_file)
 
     _cleanup_sidecar(src)
-    _relocate_info_sidecar(src, record_id)
+    _cleanup_enrichment(corpus_root, record_id)
 
     print(f"new stub: {record_file.relative_to(corpus_root)}")
     print(f"  hash:       {record_id}")
     print(f"  media_type: {media_type}")
     print(f"  binary:     {store.local_path(record_id, extension).relative_to(corpus_root)}")
     return 0
+
+
+def _attest_stub(post: frontmatter.Post, corpus_root: Path, record_id: str) -> None:
+    """Attest byte-facts onto a fresh stub at ingest (§8.1) via the shared `derive.attest`.
+    Best-effort — a type with no registered drafter or unreadable bytes leaves a bare stub
+    (attestable later with `corpus reattest`). The stub's `stub` status and empty content
+    zone are unchanged (the body is derived on demand, §6.2)."""
+    import logging
+
+    from corpus import derive
+
+    try:
+        derive.attest(post, corpus_root, strip=False)
+    except Exception as exc:  # attest is best-effort at ingest (no drafter / unreadable bytes)
+        logging.getLogger("corpus.ingest").debug(
+            "no attestation for %s: %s", record_id[:12], exc
+        )
+
+
+def _cleanup_enrichment(corpus_root: Path, record_id: str) -> None:
+    """Delete the record's enrichment sidecars from `capture/` once attestation consumed them
+    (a yt-dlp `.info.json`, and any `<hash>.*` a capturer staged). One-shot — the lifted
+    fields already persist on the record. Best-effort; `capture/` is staging-only."""
+    capture_dir = corpus_root / "capture"
+    if not capture_dir.is_dir():
+        return
+    for p in capture_dir.glob(f"{record_id}.*"):
+        p.unlink(missing_ok=True)
 
 
 def _append_origin_if_new(

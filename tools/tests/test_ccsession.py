@@ -86,7 +86,8 @@ def _capture(root: Path, transcript: Path) -> str:
     if not paths.record_path(root, rid).is_file():
         raise AssertionError("ingest did not create the record")
     if not already:  # a re-encounter stays `draft`; `corpus draft` only runs on a stub
-        dispatch(["draft", rid, "--corpus-root", str(root)])
+        from tests._draftlib import draft_for_test
+        draft_for_test(root, rid)
     return rid
 
 
