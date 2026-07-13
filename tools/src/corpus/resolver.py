@@ -120,6 +120,14 @@ def resolve(
             corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
         )
 
+    # `body` (§6.2): the record's faithful mechanical body markdown — what the 2.x draft
+    # stage stored — derived on demand from the artifact via the shared drafter-run core.
+    # A pure function of (artifact x schemas x op version); empty for a manifest record.
+    if len(parsed.params) == 1 and parsed.params[0] == ("body", None):
+        return _resolve_body(
+            corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
+        )
+
     if store is None:
         store = get_store(corpus_root)
     if transcriber is None:
@@ -314,6 +322,30 @@ def _resolve_members(
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+    return cache_p.resolve()
+
+
+def _resolve_body(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_record: Any,
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize the `body` derivation op (§6.2): the record's faithful mechanical body
+    markdown, derived from the artifact via the shared drafter-run core (`corpus.derive`).
+    Cached like any resolver result. Requires the artifact bytes (the drafter reads them)."""
+    from . import derive
+
+    urihash_value = furi.urihash(canonical_uri)
+    cache_p = furi.cache_path(corpus_root, urihash_value, "txt")
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+    body = derive.derive_body(artifact_record, corpus_root)
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    cache_p.write_text(body if body.endswith("\n") or not body else body + "\n", encoding="utf-8")
+    _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "text")
     return cache_p.resolve()
 
 

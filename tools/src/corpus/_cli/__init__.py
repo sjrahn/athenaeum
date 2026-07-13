@@ -49,7 +49,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "overlay":         ("Inspect",                "Show an origin overlay's declarations + normalization tactics"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
-    "body":            ("Inspect",                "Stream the content-zone body to stdout"),
+    "body":            ("Inspect",                "Stream a record's body (stored, else the derived `body` op)"),
     "lint":            ("Inspect",                "Conformance check (the verification gate)"),
     "health":          ("Inspect",                "Offline corpus-wide health signals (JSON or --summary)"),
     # Edit (P1)

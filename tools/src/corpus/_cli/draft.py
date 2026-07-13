@@ -20,9 +20,7 @@ import sys
 from typing import Any
 
 from corpus import (
-    containment,
     content_hash,
-    local_code,
     mime,
     paths,
     recordbuild,
@@ -30,9 +28,16 @@ from corpus import (
     schemas,
     touches,
 )
-from corpus import draft as draft_pkg
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus.derive import DeriveError, build_content_zone
 from corpus.store import ArtifactMissing
+
+# `corpus draft` is the transitional (2.x-shape) verb: it applies the drafter's attested
+# facts AND stores the derived body, flipping to `status: draft`. In 3.0 those split — ingest
+# attests, the `body` op derives, normalize authors — but the stage is retired lazily (the
+# grandfathered-body path, §12.18 step 3). The shared drafter-run core lives in `corpus.derive`;
+# `DraftError` is kept as the historical alias of `DeriveError` for existing callers/tests.
+DraftError = DeriveError
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -62,10 +67,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
     add_corpus_root_arg(parser)
 
 
-class DraftError(RuntimeError):
-    """A record cannot be drafted (no mime schema / no drafter)."""
-
-
 def derive_record(
     post,
     corpus_root,
@@ -73,89 +74,26 @@ def derive_record(
     fingerprint_cli: bool | None = None,
     messages: list[int] | None = None,
 ) -> None:
-    """Re-derive `post`'s draft content from its retained artifact, **in place**: resolve
-    the mime schema + drafter, build the content zone through the recordbuild ops, apply
-    the metadata-zone result, emit + grammar-validate, apply the per-host canonical
-    content-scoping override, append the draft touch, and flip status to `draft`. No
-    dedup and no write — the caller owns those. `post` must be a stub. The shared draft
-    core of `corpus draft` and `corpus redraft`. Raises `DraftError` (missing schema /
+    """Re-derive `post`'s draft content from its retained artifact, **in place**: run the
+    matching drafter (via the shared `corpus.derive.build_content_zone` core), apply the
+    metadata-zone result, emit + grammar-validate the content zone, apply the per-host
+    canonical content-scoping override, append the draft touch, and flip status to `draft`.
+    No dedup and no write — the caller owns those. `post` must be a stub. The transitional
+    core shared by `corpus draft` and `corpus redraft`. Raises `DraftError` (missing schema /
     drafter) or `ArtifactMissing` (artifact not local)."""
-    record_id = str(post.metadata.get("id") or "")
+    from corpus.derive import produces_body
+
+    build, result, mt_schema, binary_file, mime_schema_id = build_content_zone(
+        post, corpus_root, fingerprint_cli=fingerprint_cli, messages=messages
+    )
     media_type = records.media_type_for(post)
-    if not media_type:
-        raise DraftError("record has no `<!--artifact <mime>-->` block (re-stub first?).")
-    mt_schema = schemas.load_mime_schema(corpus_root, media_type)
-    if not mt_schema:
-        raise DraftError(f"no mime schema for {media_type!r}.")
-    mime_schema_id = schemas.mime_schema_id_for(corpus_root, media_type)
-    if not mime_schema_id:
-        raise DraftError(f"could not resolve mime schema id for {media_type!r}.")
-    # Import the corpus's own local drafter modules (`<corpus_root>/drafters/*.py`) so they
-    # self-register before any dispatch — a corpus specializes drafting of its own content
-    # (e.g. an origin-keyed HTML sub-drafter) without editing this package. Idempotent.
-    local_code.load_corpus_modules(corpus_root, "drafters")
-
-    # Drafter selection: a mime schema MAY name a general draft `strategy` (overlay-driven
-    # drafting — e.g. `zip-manifest` for self_contained archives), which decouples drafter
-    # choice from the schema id so one general drafter serves many types tuned by config.
-    # Absent a strategy, dispatch by schema id as before.
-    strategy = str((mt_schema.get("draft") or {}).get("strategy") or "").strip()
-    if strategy:
-        drafter = draft_pkg.get_strategy_drafter(strategy)
-        if drafter is None:
-            raise DraftError(
-                f"mime schema {mime_schema_id!r} declares draft strategy {strategy!r}, "
-                f"but no drafter is registered for it."
-            )
-    else:
-        drafter = draft_pkg.get_drafter(mime_schema_id)
-        if drafter is None:
-            raise DraftError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
-
-    # Containment-aware byte access (spec §2/§12.9): a promoted member record drafts from the
-    # bytes streamed out of its container just as a standalone record drafts from `artifacts/`.
-    binary_file = containment.ensure_local_bytes(
-        corpus_root, record_id, mime.extension_for(media_type)
-    )
-
-    # The mime schema owns the canonical-hash strategy; pass its algo to the drafter so a
-    # corpus that overrides `canonical_strategy.algo` is honoured (drafters fall back to
-    # their built-in default when this is None).
     canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
-    # One construction path: the drafter populates a `Build` (content zone via the
-    # recordbuild ops — the same path `compile` replays from a manifest), and we apply
-    # the metadata-zone result + `finish` emits/validates.
-    build = recordbuild.begin_from_post(post, corpus_root)
-    # Whether (and with which algorithm) to compute perceptual fingerprints: CLI
-    # override > origin overlay > mime schema > off (spec §7.7). The drafter
-    # resolves the per-atom algorithms from this knob via `fingerprint.algos_for_atom`.
-    fingerprint = schemas.resolve_fingerprint(corpus_root, media_type, post, fingerprint_cli)
-    drafter_kwargs: dict[str, Any] = dict(
-        build=build,
-        corpus_root=corpus_root,
-        record_id=record_id,
-        record_metadata=post.metadata,
-        canonical_algo=canonical_algo,
-        fingerprint=fingerprint,
-    )
-    # A strategy drafter is general (not type-specific), so it receives the resolved mime
-    # schema to read its own `draft.*` config — instead of re-detecting + re-loading it
-    # (which would re-sniff the artifact and risk diverging from this dispatch). Id-keyed
-    # drafters don't take it, so it's passed only on the strategy path.
-    if strategy:
-        drafter_kwargs["mime_schema"] = mt_schema
-        # The mbox manifest is selective + cumulative: it takes the CLI's `--messages`
-        # ordinals to declare (unioned with the record's already-declared set). Other
-        # strategy drafters don't accept it, so it's passed only for this one.
-        if strategy == "mbox-manifest":
-            drafter_kwargs["messages"] = messages
-    result = drafter(binary_file, **drafter_kwargs)
 
     _apply_drafter_result(post, result, mime_schema_id, corpus_root)
 
     # Emit the content zone the drafter built on the Build — body-draft schemas only
     # (spec §7.1). `finish` re-parses to surface grammar errors before any write.
-    if str(mt_schema.get("mode", "body-draft")).lower() == "body-draft":
+    if produces_body(mt_schema):
         recordbuild.finish(build)
 
     # Opt-in per-host canonical content-scoping: if the record's origin host declares a
