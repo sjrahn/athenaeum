@@ -79,7 +79,7 @@ class TranscriptionAdapter(Protocol):
 # Imported here so `corpus.transcription.NoOpTranscriber` / `HTTPWhisperTranscriber`
 # remain the public surface, while their definitions live in submodules.
 from .http_whisper import HTTPWhisperTranscriber  # noqa: E402
-from .noop import NoOpTranscriber  # noqa: E402
+from .noop import DisabledTranscriber, NoOpTranscriber  # noqa: E402, F401  (re-exported)
 
 
 def get_transcriber(
@@ -111,5 +111,5 @@ def get_transcriber(
                 "(set [corpus.transcription] base_url in corpus.toml or "
                 "export WHISPER_BASE_URL=…)"
             )
-        return HTTPWhisperTranscriber(base_url=str(base_url))
+        return HTTPWhisperTranscriber(base_url=str(base_url), model=cfg.get("model"))
     raise ValueError(f"unknown transcription adapter: {adapter!r}")

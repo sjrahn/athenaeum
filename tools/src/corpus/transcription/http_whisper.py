@@ -45,10 +45,15 @@ class HTTPWhisperTranscriber:
     bounds the POST/GET request timeouts.
     """
 
+    #: Adapter-contract version — bumped when the request/response handling or canonical
+    #: text rendering changes, so an upgrade invalidates the version-labeled cache (§6.4).
+    ADAPTER_VERSION = "1"
+
     def __init__(
         self,
         *,
         base_url: str,
+        model: str | None = None,
         submit_timeout_s: float = 30.0,
         poll_interval_s: float = 5.0,
         poll_max_s: float = 60 * 60 * 2,  # 2h ceiling
@@ -56,6 +61,7 @@ class HTTPWhisperTranscriber:
         if not base_url:
             raise ValueError("HTTPWhisperTranscriber requires a base_url")
         self._base_url = base_url.rstrip("/")
+        self._model = str(model).strip() if model else None
         self._timeout = submit_timeout_s
         self._poll_interval = poll_interval_s
         self._poll_max = poll_max_s
@@ -66,13 +72,13 @@ class HTTPWhisperTranscriber:
 
     @property
     def engine(self) -> str:
-        """Engine id for §6.4 version-labeling of the `transcribe` op's cache. The remote
-        whisper backend does not report its model version, so the label is engine-scoped
-        (host-qualified); a model-version granularity awaits the backend surfacing it."""
-        from urllib.parse import urlsplit
-
-        host = urlsplit(self._base_url).hostname or "backend"
-        return f"http-whisper:{host}"
+        """Engine id for §6.4 version-labeling of the `transcribe` op's cache:
+        `http-whisper/<model>@<version>` when the corpus declares a `transcription.model`, else
+        `http-whisper@<version>`. The version is the adapter contract's; a model-version
+        component appears only where the operator names the model (the remote backend does not
+        report it — the stated model-version-granularity deferral)."""
+        stem = f"http-whisper/{self._model}" if self._model else "http-whisper"
+        return f"{stem}@{self.ADAPTER_VERSION}"
 
     # ---- TranscriptionAdapter surface ---- #
 

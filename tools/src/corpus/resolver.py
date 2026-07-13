@@ -147,9 +147,15 @@ def resolve(
         # transcriber even when the corpus default is NoOp. `resolve_transcription` returns an
         # override adapter when the host declares one, else None (the global default applies).
         from corpus.draft._hostcfg import resolve_transcription
+        from corpus.transcription import DisabledTranscriber
 
-        _mode, per_host = resolve_transcription(corpus_root, artifact_record.metadata)
-        transcriber = per_host if per_host is not None else get_transcriber(corpus_root)
+        mode, per_host = resolve_transcription(corpus_root, artifact_record.metadata)
+        if mode == "disabled":  # transcription.enabled: false — the op skips (§7.2)
+            transcriber = DisabledTranscriber()
+        elif per_host is not None:
+            transcriber = per_host
+        else:
+            transcriber = get_transcriber(corpus_root)
     # Containment-aware (spec §2/§12.9): a standalone artifact when present, else the bytes
     # streamed out of the promoted record's container via the member index.
     artifact_binary = containment.ensure_local_bytes(

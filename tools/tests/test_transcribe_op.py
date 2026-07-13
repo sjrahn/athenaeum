@@ -86,7 +86,7 @@ def test_transcribe_op_honors_per_host_config(tmp_path):
     error), not the NoOp default (`no transcription adapter configured`)."""
     overlay = (
         "applies_to:\n  host_pattern: x.test\n"
-        "transcription:\n  adapter: http-whisper\n  base_url: http://127.0.0.1:1\n"
+        "transcription:\n  adapter: http-whisper\n  base_url: http://127.0.0.1:1\n  model: base\n"
     )
     root = _corpus(tmp_path, overlay=overlay)
     rid = _ingest_audio(root, uri="https://x.test/clip.mp3")
@@ -94,3 +94,26 @@ def test_transcribe_op_honors_per_host_config(tmp_path):
     # which fails to reach 127.0.0.1:1 — proving it was selected over the global NoOp default.
     with pytest.raises(TranscriptionUnavailable, match="whisper backend unreachable"):
         resolver.resolve(f"corpus://{rid}?transcribe", root)
+
+
+def test_transcribe_op_skips_when_disabled(tmp_path):
+    """§7.2: `transcription.enabled: false` on the host overlay skips the op — a clear disabled
+    signal, not a fall-through to the global backend."""
+    overlay = "applies_to:\n  host_pattern: x.test\ntranscription:\n  enabled: false\n"
+    root = _corpus(tmp_path, overlay=overlay)
+    rid = _ingest_audio(root, uri="https://x.test/clip.mp3")
+    with pytest.raises(TranscriptionUnavailable, match="transcription disabled"):
+        resolver.resolve(f"corpus://{rid}?transcribe", root)
+
+
+def test_engine_ids_carry_version(tmp_path):
+    """The adapters' engine identity carries a version component (§6.4), not just a class
+    name: `noop@1`, `http-whisper[/<model>]@<version>`."""
+    from corpus.transcription import HTTPWhisperTranscriber, NoOpTranscriber
+
+    assert NoOpTranscriber().engine == "noop@1"
+    assert HTTPWhisperTranscriber(base_url="http://x").engine == "http-whisper@1"
+    assert (
+        HTTPWhisperTranscriber(base_url="http://x", model="large-v3").engine
+        == "http-whisper/large-v3@1"
+    )
