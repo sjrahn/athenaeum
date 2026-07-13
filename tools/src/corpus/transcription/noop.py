@@ -14,6 +14,9 @@ from . import TranscriptionResult, TranscriptionUnavailable
 
 
 class NoOpTranscriber:
+    #: Engine id for §6.4 version-labeling of the `transcribe` op's cache.
+    engine = "noop"
+
     def transcribe(self, audio_path: Path) -> TranscriptionResult:
         raise TranscriptionUnavailable(
             "no transcription adapter configured — set [corpus.transcription] "

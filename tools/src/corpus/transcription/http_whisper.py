@@ -64,6 +64,16 @@ class HTTPWhisperTranscriber:
     def base_url(self) -> str:
         return self._base_url
 
+    @property
+    def engine(self) -> str:
+        """Engine id for §6.4 version-labeling of the `transcribe` op's cache. The remote
+        whisper backend does not report its model version, so the label is engine-scoped
+        (host-qualified); a model-version granularity awaits the backend surfacing it."""
+        from urllib.parse import urlsplit
+
+        host = urlsplit(self._base_url).hostname or "backend"
+        return f"http-whisper:{host}"
+
     # ---- TranscriptionAdapter surface ---- #
 
     def transcribe(self, audio_path: Path) -> TranscriptionResult:

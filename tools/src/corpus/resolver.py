@@ -142,7 +142,14 @@ def resolve(
     if store is None:
         store = get_store(corpus_root)
     if transcriber is None:
-        transcriber = get_transcriber(corpus_root)
+        # Per-host transcription config (§7.2): the record's origin-overlay `transcription:`
+        # section (`adapter`/`base_url`) overrides the global backend, so a host selects its own
+        # transcriber even when the corpus default is NoOp. `resolve_transcription` returns an
+        # override adapter when the host declares one, else None (the global default applies).
+        from corpus.draft._hostcfg import resolve_transcription
+
+        _mode, per_host = resolve_transcription(corpus_root, artifact_record.metadata)
+        transcriber = per_host if per_host is not None else get_transcriber(corpus_root)
     # Containment-aware (spec §2/§12.9): a standalone artifact when present, else the bytes
     # streamed out of the promoted record's container via the member index.
     artifact_binary = containment.ensure_local_bytes(
@@ -166,7 +173,15 @@ def resolve(
             f"(declare `working_kind:` on its mime schema, or add it to the resolver table)"
         )
     final_kind = _predict_final_kind(parsed, initial_kind)
-    urihash_value = furi.urihash(canonical_uri)
+    # Version-labeled ops (§6.3, §6.4): `transcribe` output drifts across engines, so its cache
+    # key includes the engine id and the sidecar records it — determinism holds per engine.
+    version_label = (
+        getattr(transcriber, "engine", None)
+        if any(k == "transcribe" for k, _ in parsed.params)
+        else None
+    )
+    key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
+    urihash_value = furi.urihash(key_uri)
     # A terminal `el=N` on HTML is polymorphic: an `<img>` materializes to a PNG image,
     # a `<video>`/`<audio>`/`<a href="data:…">` carrier to raw bytes. The concrete output
     # kind — hence the cache extension — isn't known until the element is selected, so the
@@ -289,7 +304,8 @@ def resolve(
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     _write_to_cache(working, current_kind, cache_p)
     _write_sidecar(
-        corpus_root, canonical_uri, parsed.hash, cache_p, current_kind, mime_override=terminal_mime
+        corpus_root, canonical_uri, parsed.hash, cache_p, current_kind,
+        mime_override=terminal_mime, version_label=version_label,
     )
     log.debug("cached: %s", cache_p)
     return cache_p.resolve()
@@ -595,20 +611,17 @@ def _write_sidecar(
     cache_p: Path,
     kind: str,
     mime_override: str | None = None,
+    version_label: str | None = None,
 ) -> None:
+    sidecar_data: dict[str, Any] = {
+        "uri": canonical_uri,
+        "source_hash": source_hash,
+        "mime": mime_override or KIND_TO_MIME.get(kind, "application/octet-stream"),
+        "generated_at": (
+            datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        ),
+    }
+    if version_label:  # a version-labeled op (§6.4) — the engine that produced this result
+        sidecar_data["engine"] = version_label
     sidecar = furi.cache_sidecar_path(cache_p)
-    sidecar.write_text(
-        json.dumps(
-            {
-                "uri": canonical_uri,
-                "source_hash": source_hash,
-                "mime": mime_override or KIND_TO_MIME.get(kind, "application/octet-stream"),
-                "generated_at": (
-                    datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-                ),
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    sidecar.write_text(json.dumps(sidecar_data, indent=2) + "\n", encoding="utf-8")

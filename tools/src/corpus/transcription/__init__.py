@@ -57,6 +57,11 @@ class TranscriptionResult:
 
 @runtime_checkable
 class TranscriptionAdapter(Protocol):
+    #: A stable engine id (`noop`, `http-whisper:<host>`) — folded into the `transcribe`
+    #: op's cache key and recorded in its sidecar so the version-labeled op (§6.3, §6.4) is
+    #: deterministic per engine and a re-render/upgrade is disclosed.
+    engine: str
+
     def transcribe(self, audio_path: Path) -> TranscriptionResult:
         """Synchronous transcribe. Raises `TranscriptionUnavailable` on failure."""
         ...
