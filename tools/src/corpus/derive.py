@@ -178,7 +178,7 @@ def attest(
     from corpus.draft import mbox_manifest
 
     media_type = records.media_type_for(post)
-    mt = schemas.load_mime_schema(corpus_root, media_type) or {}
+    mt = schemas.normalize_pipeline_keys(schemas.load_mime_schema(corpus_root, media_type) or {})
     is_mbox = str((mt.get("draft") or {}).get("strategy") or "") == "mbox-manifest"
     eff_messages = (
         messages if messages is not None else (mbox_manifest.declared_ordinals(post) or None)
@@ -207,6 +207,9 @@ def resolve_drafter(corpus_root: Path, media_type: str):
     mime_schema_id = schemas.mime_schema_id_for(corpus_root, media_type)
     if not mime_schema_id:
         raise DeriveError(f"could not resolve mime schema id for {media_type!r}.")
+    # 3.0 pipeline-key aliasing: back-fill the legacy `mode`/`draft.*` view from the documented
+    # `disposition`/`derive.*` keys, so a schema declaring either form dispatches identically.
+    mt_schema = schemas.normalize_pipeline_keys(mt_schema)
     # Import the corpus's own local drafter modules so they self-register before dispatch.
     local_code.load_corpus_modules(corpus_root, "drafters")
     strategy = str((mt_schema.get("draft") or {}).get("strategy") or "").strip()

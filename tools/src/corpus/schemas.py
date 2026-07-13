@@ -429,6 +429,57 @@ def list_atomic_overlays(
     return out
 
 
+# ---------- 3.0 pipeline-key aliasing (mode/draft.* → disposition/attest/derive) ---------- #
+#
+# The 3.0 documented mime-schema keys are `disposition:` (manifest|work — the container-vs-
+# transport judgment, §7.1), `attest:` (the ingest attestations), and `derive:` (the derivation
+# ops + their config). The 2.x keys `mode:`/`draft.*` KEEP WORKING via the aliasing below, so
+# every existing member schema drafts UNMODIFIED (the record sweep to the new keys is a later
+# migration phase). `normalize_pipeline_keys` back-fills the legacy view a schema doesn't carry,
+# so downstream code (drafter dispatch, `produces_body`) reads one shape regardless of which
+# keys a schema declares.
+
+
+def pipeline_disposition(schema: dict[str, Any]) -> str:
+    """The resolved `disposition` (§7.1): explicit `disposition:` wins; else a `derive`/`draft`
+    strategy ending in `-manifest` implies `manifest`; else `work` (the default)."""
+    explicit = str(schema.get("disposition") or "").strip().lower()
+    if explicit in ("manifest", "work"):
+        return explicit
+    strategy = str(
+        (schema.get("derive") or {}).get("strategy")
+        or (schema.get("draft") or {}).get("strategy")
+        or ""
+    )
+    return "manifest" if strategy.endswith("-manifest") else "work"
+
+
+def normalize_pipeline_keys(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return `schema` with the legacy `mode`/`draft.*` view back-filled from the 3.0
+    `disposition`/`derive.*` keys when a schema declares only the new form — so the drafter
+    dispatch and `produces_body`, which read the legacy shape, work for a new-key schema with
+    ZERO other changes. A schema already carrying the legacy keys is returned unchanged. The
+    `attest:` key is declarative (the drafters emit the attestations) and needs no back-fill."""
+    derive = schema.get("derive")
+    disposition = schema.get("disposition")
+    if not isinstance(derive, dict) and not disposition:
+        return schema  # pure legacy schema — nothing to alias
+    out = dict(schema)
+    # `derive.strategy` → `draft.strategy`; `derive.members` (op config) → `draft.manifest`.
+    if isinstance(derive, dict):
+        legacy_draft = dict(out.get("draft") or {})
+        if "strategy" in derive and "strategy" not in legacy_draft:
+            legacy_draft["strategy"] = derive["strategy"]
+        if isinstance(derive.get("members"), dict) and "manifest" not in legacy_draft:
+            legacy_draft["manifest"] = derive["members"]
+        if legacy_draft:
+            out["draft"] = legacy_draft
+    # `disposition` → `mode`: a `manifest` has no body-draft; a `work` builds a body.
+    if disposition and "mode" not in out:
+        out["mode"] = "manifest" if pipeline_disposition(schema) == "manifest" else "body-draft"
+    return out
+
+
 # ---------- form (section-scope) schemas ---------- #
 #
 # The `form` namespace (3.0, spec §7.8) declares record-scope structural-shape overlays bound

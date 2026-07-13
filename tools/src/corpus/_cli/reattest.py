@@ -130,7 +130,9 @@ def run(args: argparse.Namespace) -> int:
         except ValueError as exc:
             sys.exit(str(exc))
         _, rf = paths.resolve_record(corpus_root, args.target)
-        mt = schemas.load_mime_schema(corpus_root, records.media_type_for(records.load(rf))) or {}
+        mt = schemas.normalize_pipeline_keys(
+            schemas.load_mime_schema(corpus_root, records.media_type_for(records.load(rf))) or {}
+        )
         if str((mt.get("draft") or {}).get("strategy") or "") != "mbox-manifest":
             sys.exit("--messages is only valid for an mbox record.")
 
