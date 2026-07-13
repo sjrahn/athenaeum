@@ -907,7 +907,9 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
 
 def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
     """An image segment (or body wikilink) at an address that no embed in this record carries.
-    Artifact-self-slices (`frame=`/`page=`/`bbox=` rendered from the artifact) need no embed."""
+    Artifact-self-slices (`frame=`/`page=`/`bbox=` rendered from the artifact) and
+    lineage-chained references (`turn=N&att=M`, §4.3.1.4) need no embed — the resolver
+    materializes them on demand."""
     from corpus import embeds as _embeds
     from corpus import functional_uri as _furi
 
@@ -916,6 +918,10 @@ def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
     known = _embed_address_set(post)
 
     def _self_slice(addr: str) -> bool:
+        # A lineage-chained reference (a unit's declared attachment, `…&att=<M>`) is
+        # resolver-materializable through containment lineage — no embed required (§4.3.1.4).
+        if "att=" in addr:
+            return True
         if artifact_mime.startswith("video/"):
             return addr.startswith(("frame=", "time=", "time_range="))
         if artifact_mime == "application/pdf":
