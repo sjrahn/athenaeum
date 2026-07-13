@@ -273,7 +273,7 @@ def test_draft_cli_pipeline_against_image(tmp_path):
     assert rc == 0
 
     post = records.load(paths.record_path(root, rid))
-    assert post.metadata["status"] == "draft"
+    assert post.metadata["status"] == "stub"
     assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]
@@ -582,7 +582,7 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
     assert draft_for_test(root, rid) == 0
 
     post = records.load(paths.record_path(root, rid))
-    assert post.metadata["status"] == "draft"
+    assert post.metadata["status"] == "stub"
     assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]

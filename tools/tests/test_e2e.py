@@ -71,7 +71,7 @@ def test_e2e_pdf_lifecycle(tmp_path, capsys):
     from corpus import paths, records, segments
 
     post = records.load(paths.record_path(root, pdf))
-    assert post.metadata["status"] == "draft"
+    assert post.metadata["status"] == "stub"
     assert "page_count" in post.metadata["_artifact"]["fields"]
     blocks = list(segments.iter_blocks(post.content or ""))
     assert [getattr(b, "atom", None) for b in blocks] == ["image", "image"]

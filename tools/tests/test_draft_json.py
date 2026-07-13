@@ -60,7 +60,7 @@ def test_json_array_drafts_to_one_verbatim_code_segment(tmp_path: Path) -> None:
     rid = _ingest_json(root, text)
     post = _draft(root, rid)
 
-    assert post.metadata["status"] == "draft"
+    assert post.metadata["status"] == "stub"
     art = records.artifact_block(post)
     assert art["fields"]["json_root"] == "array"
     assert art["fields"]["json_top_count"] == 2

@@ -80,7 +80,8 @@ _VALID_ATOMS = {"text", "image", "audio", "video"}
 # 3.0 two-status lifecycle (§4.1): the canonical statuses are `stub` and `normalized`.
 # A 2.x `status: draft` is TOLERATED — it reads as a stub carrying a grandfathered
 # materialized derivation (§12.18 step 3, the lazy path), superseded by the record's next
-# pass — so lint does not flag it while ~3,300 draft records await their sweep.
+# pass. The fleet swept draft→stub on 2026-07-13 (status-sweep-30); the tolerance stays
+# normative per the §8.1 tombstone for any stray 2.x `draft` still encountered.
 _VALID_STATUSES = {"stub", "normalized"}
 _TOLERATED_STATUSES = {"draft"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}

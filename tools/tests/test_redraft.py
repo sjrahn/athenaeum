@@ -56,7 +56,9 @@ class _Args:
         self.target = None
         self.mime = None
         self.host = None
-        self.status = "draft"
+        # 3.0: a re-derived mechanical body leaves the record a `stub` (§12.18 step 3), so the
+        # transitional redraft tests target every status — the old `draft` default matched none.
+        self.status = "any"
         self.force = False
         self.dry_run = False
         self.fingerprint = None
@@ -106,6 +108,6 @@ def test_redraft_protects_normalized_without_force(tmp_path):
     redraft_cli.run(_Args(root, status="any", fingerprint=True))
     assert rf.read_text(encoding="utf-8") == before
 
-    # --force re-derives it (status returns to draft; normalization discarded).
+    # --force re-derives it (status returns to stub; normalization discarded).
     redraft_cli.run(_Args(root, status="any", force=True, fingerprint=True))
-    assert records.load(rf).metadata["status"] == "draft"
+    assert records.load(rf).metadata["status"] == "stub"

@@ -3,13 +3,15 @@
 Re-derives records from their retained `artifacts/<hash>` bytes (the per-record draft
 core, `_cli.draft.derive_record`, applied across the corpus). The deterministic
 recompile that surfaces — via `git diff records/` — exactly which records a schema /
-overlay / tooling change affects. **Idempotent**: a clean re-stub (touch collapsed to
-the original ingest entry, no re-stub touch) means an unchanged record re-derives
-byte-for-byte, so it isn't rewritten and produces no git churn; only records whose
-drafted content actually changed are touched. `--dry-run` reports the set without
-writing.
+overlay / tooling change affects. In 3.0 the re-derived mechanical body leaves the record
+at `status: stub` — a stub carrying a grandfathered materialized derivation (§12.18 step 3),
+superseded by its next pass; nothing writes `status: draft` after the 2026-07-13 fleet sweep.
+**Idempotent**: a clean re-stub (touch collapsed to the original ingest entry, no re-stub
+touch) means an unchanged record re-derives byte-for-byte, so it isn't rewritten and produces
+no git churn; only records whose drafted content actually changed are touched. `--dry-run`
+reports the set without writing.
 
-Leaves `draft` (single stub→draft), `re-stub` (single reset), and `compile` unchanged.
+Leaves `draft` (single-record re-derive), `re-stub` (single reset), and `compile` unchanged.
 `compile` reassembles a record from a decomposed *manifest* (the normalization edit
 substrate); `redraft` re-derives from the source *artifact* via the mime drafter —
 different inputs, different jobs. redraft **refuses `normalized` records unless

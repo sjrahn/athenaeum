@@ -85,7 +85,7 @@ def _capture(root: Path, transcript: Path) -> str:
     assert dispatch(["ingest", str(zip_path), "--corpus-root", str(root)]) == 0
     if not paths.record_path(root, rid).is_file():
         raise AssertionError("ingest did not create the record")
-    if not already:  # a re-encounter stays `draft`; `corpus draft` only runs on a stub
+    if not already:  # re-derive only a fresh capture; the mechanical body leaves it a stub
         from tests._draftlib import draft_for_test
         draft_for_test(root, rid)
     return rid
@@ -199,7 +199,7 @@ def test_capture_creates_clean_record_and_reencounters(tmp_path):
     tr = _write_session(projects, "sid-x", subagents={"agent-a1": [{"k": 1}]})
     rid = _capture(root, tr)
     post = records.load(paths.record_path(root, rid))
-    assert str(post.metadata.get("status")) == "draft"
+    assert str(post.metadata.get("status")) == "stub"
     # origin bound to the producer overlay, uri-less
     origins = list(records.iter_origin_blocks(post))
     assert origins and origins[0]["id"] == "claude-code-session"
