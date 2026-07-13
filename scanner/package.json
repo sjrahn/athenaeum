@@ -1,0 +1,23 @@
+{
+  "name": "ath-scan",
+  "version": "0.1.0",
+  "description": "Residence scanner: maintains an on-share blake3 presented manifest for the Athenaeum corpus tooling.",
+  "type": "module",
+  "bin": {
+    "ath-scan": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test",
+    "build": "bun build --compile --target=bun-linux-x64 ./src/cli.ts --outfile dist/ath-scan",
+    "build:arm64": "bun build --compile --target=bun-linux-arm64 ./src/cli.ts --outfile dist/ath-scan-arm64",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}
