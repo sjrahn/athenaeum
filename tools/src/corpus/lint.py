@@ -77,7 +77,12 @@ _HASH_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{32,128}$", re.IGNORECASE)
 _PERCEPTUAL_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{16,128}$", re.IGNORECASE)
 _BLAKE3_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_ATOMS = {"text", "image", "audio", "video"}
-_VALID_STATUSES = {"stub", "draft", "normalized"}
+# 3.0 two-status lifecycle (§4.1): the canonical statuses are `stub` and `normalized`.
+# A 2.x `status: draft` is TOLERATED — it reads as a stub carrying a grandfathered
+# materialized derivation (§12.18 step 3, the lazy path), superseded by the record's next
+# pass — so lint does not flag it while ~3,300 draft records await their sweep.
+_VALID_STATUSES = {"stub", "normalized"}
+_TOLERATED_STATUSES = {"draft"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}
 # Universal FALLBACK vocab for issue severity/resolution. The authoritative set is the
 # `enum:` declared on the layered `context/issue` schema (a corpus may extend it); these
@@ -109,15 +114,17 @@ def _rule_id_format(post, blocks, root) -> Iterator[Finding]:
 
 def _rule_status_invalid(post, blocks, root) -> Iterator[Finding]:
     s = post.metadata.get("status", "")
-    if s not in _VALID_STATUSES:
-        yield Finding(
-            rule_id="status-invalid",
-            severity="error",
-            message=(
-                f"`status` is {s!r}; must be one of {sorted(_VALID_STATUSES)} "
-                f"(spec §4.2)."
-            ),
-        )
+    # `draft` is tolerated (grandfathered stub, §12.18 step 3) — not a finding.
+    if s in _VALID_STATUSES or s in _TOLERATED_STATUSES:
+        return
+    yield Finding(
+        rule_id="status-invalid",
+        severity="error",
+        message=(
+            f"`status` is {s!r}; must be one of {sorted(_VALID_STATUSES)} "
+            f"(spec §4.1; a 2.x `draft` is tolerated as a grandfathered stub)."
+        ),
+    )
 
 
 def _rule_description_format(post, blocks, root) -> Iterator[Finding]:
@@ -1048,27 +1055,141 @@ def _rule_body_unknown_comment(post, blocks, root) -> Iterator[Finding]:
         )
 
 
-def _rule_issue_on_draft(post, blocks, root) -> Iterator[Finding]:
-    """A model-detected (`detector` not `corpus.*`) issue on a draft record — interpretive
-    issues belong only on normalized records; a draft's problems are surfaced live by lint."""
-    if post.metadata.get("status") != "draft":
-        return
-    for issue in _records.iter_issue_blocks(post):
-        detector = (issue.get("fields") or {}).get("detector")
-        if not isinstance(detector, str) or not detector or detector.startswith("corpus."):
+# ---------- 3.0 byte-mark + form-coherence rules (§4.3.2.1, §4.3.2.3, §7.8) ---------- #
+
+
+def _iter_all_segments(blocks):
+    """Yield every segment (top-level and in-section), in reading order."""
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            yield from blk.segments
+        elif isinstance(blk, _segments.Segment):
+            yield blk
+
+
+def _rule_structural_byte_mark(post, blocks, root) -> Iterator[Finding]:
+    """A structural byte-mark (§4.3.2.3) carries a positive `level` and no body. The parser
+    normalizes most of the shape (address required, level cast to int, body dropped); this
+    guards the residue the grammar admits — a non-positive level."""
+    for seg in _iter_all_segments(blocks):
+        if not seg.is_structural:
             continue
-        qualified = issue.get("id", "")
-        if issue.get("subtype"):
-            qualified = f"{qualified}/{issue['subtype']}"
-        yield Finding(
-            rule_id="issue-on-draft",
-            severity="warning",
-            message=(
-                f"interpretive issue block `{qualified}` (detector {detector!r}) on a draft "
-                f"record — model-written issues belong only on normalized records."
-            ),
-            fields={"id": qualified, "detector": detector},
-        )
+        if not isinstance(seg.level, int) or seg.level < 1:
+            yield Finding(
+                rule_id="structural-level-invalid",
+                severity="error",
+                message=(
+                    f"structural byte-mark `level` is {seg.level!r}; must be a positive "
+                    f"integer (the source's own hierarchy depth, else 1) (spec §4.3.2.3)."
+                ),
+                address=_addr_str(seg.address),
+            )
+
+
+def _leading_axis(addr: Any) -> tuple[str, str]:
+    """`(param, value)` of an address's leading `<param>=<value>` (`page=5&bbox=…` →
+    `("page","5")`). For a list address, the first element's leading param."""
+    if isinstance(addr, list):
+        addr = addr[0] if addr else ""
+    head = str(addr).split("&", 1)[0]
+    param, _eq, value = head.partition("=")
+    return param.strip(), value.strip()
+
+
+def _axis_low(value: str) -> int | None:
+    """The low integer of an axis value (`3` → 3, `2-6` → 2), or None when non-numeric."""
+    try:
+        return int(str(value).split("-", 1)[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
+    """Form-coherence (§4.3.2.1, §7.8): a record carrying `<!--section <form-id>-->` MUST
+    satisfy the form overlay's declared `checks` — required envelope fields present, codebook
+    indexes in range, addresses on the declared axes and monotonic. There is no half-asserted
+    form. An unknown form id (no overlay) is a warning (an asserted form may precede its
+    overlay); a missing/out-of-range codebook or envelope field is an error."""
+    for top_i, blk in enumerate(blocks, 1):
+        if not isinstance(blk, _segments.Section) or not blk.form:
+            continue
+        overlay = _schemas.load_form_overlay(root, blk.form)
+        if not overlay:
+            yield Finding(
+                rule_id="form-overlay-unknown",
+                severity="warning",
+                message=(
+                    f"section {top_i} declares form `{blk.form}` but no `form/{blk.form}` "
+                    f"overlay resolves — coherence cannot be checked (spec §7.8)."
+                ),
+                address=_addr_str(blk.address),
+            )
+            continue
+        checks = overlay.get("checks") or {}
+        header = dict(blk.extra or {})
+
+        for field_name in checks.get("envelope_required") or []:
+            if field_name not in header:
+                yield Finding(
+                    rule_id="form-envelope-missing",
+                    severity="error",
+                    message=(
+                        f"section {top_i} (form `{blk.form}`) is missing required envelope "
+                        f"field `{field_name}` (spec §4.3.2.1)."
+                    ),
+                    address=_addr_str(blk.address),
+                )
+
+        for rule in checks.get("codebook") or []:
+            seg_field = rule.get("segment_field")
+            book_field = rule.get("codebook_field")
+            codebook = header.get(book_field)
+            book_len = len(codebook) if isinstance(codebook, list) else None
+            for seg in blk.segments:
+                if seg_field not in (seg.extra or {}):
+                    continue
+                idx = (seg.extra or {}).get(seg_field)
+                if not isinstance(idx, int) or book_len is None or idx < 0 or idx >= book_len:
+                    yield Finding(
+                        rule_id="form-codebook-index-out-of-range",
+                        severity="error",
+                        message=(
+                            f"section {top_i} (form `{blk.form}`): `{seg_field}: {idx!r}` does "
+                            f"not index the `{book_field}` codebook "
+                            f"(size {book_len if book_len is not None else 'absent'})."
+                        ),
+                        address=_addr_str(seg.address),
+                    )
+
+        axes = set(checks.get("address_axes") or [])
+        monotonic = bool(checks.get("monotonic"))
+        prev_low: int | None = None
+        for seg in blk.segments:
+            param, value = _leading_axis(seg.address)
+            if axes and param and param not in axes:
+                yield Finding(
+                    rule_id="form-address-axis",
+                    severity="warning",
+                    message=(
+                        f"section {top_i} (form `{blk.form}`): child address axis `{param}=` "
+                        f"is not among the form's declared axes {sorted(axes)}."
+                    ),
+                    address=_addr_str(seg.address),
+                )
+            if monotonic:
+                low = _axis_low(value)
+                if low is not None and prev_low is not None and low < prev_low:
+                    yield Finding(
+                        rule_id="form-address-nonmonotonic",
+                        severity="warning",
+                        message=(
+                            f"section {top_i} (form `{blk.form}`): child addresses are not "
+                            f"monotonic (`{param}={value}` follows a higher position)."
+                        ),
+                        address=_addr_str(seg.address),
+                    )
+                if low is not None:
+                    prev_low = low
 
 
 # ---------- rule registry + entry point ---------- #
@@ -1113,7 +1234,13 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("body-wikilink-malformed", _rule_body_wikilink_malformed),
     ("body-codefence-unbalanced", _rule_body_codefence_unbalanced),
     ("body-unknown-comment", _rule_body_unknown_comment),
-    ("issue-on-draft", _rule_issue_on_draft),
+    # 3.0 byte-mark + form-coherence (§4.3.2.1, §4.3.2.3, §7.8).
+    ("structural-level-invalid", _rule_structural_byte_mark),
+    ("form-overlay-unknown", _rule_form_coherence),
+    ("form-envelope-missing", _rule_form_coherence),
+    ("form-codebook-index-out-of-range", _rule_form_coherence),
+    ("form-address-axis", _rule_form_coherence),
+    ("form-address-nonmonotonic", _rule_form_coherence),
 )
 
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal

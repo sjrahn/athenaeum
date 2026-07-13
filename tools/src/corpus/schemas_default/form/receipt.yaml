@@ -1,0 +1,35 @@
+form_id: receipt
+kind: form
+description: |
+  An itemized-commerce document (spec §7.8) — a purchase receipt's span: merchant framing,
+  line items, a payment/tender block. Names a SHAPE, not a merchant: `form/receipt` never
+  names the store (the origin block and the bytes do). WHICH merchant, WHICH card, WHICH
+  membership are origin-block and ledger concerns, never this overlay's.
+extended_fields:
+  merchant:
+    type: string
+    required: true
+    description: |
+      The merchant as the receipt prints it, verbatim (the storefront/banner name).
+      Mechanically derivable from the span's own bytes.
+  receipt_date:
+    type: string
+    required: false
+    semantic_type: timestamp
+    description: The transaction date the receipt prints, verbatim, where present.
+decomposition: |
+  The span carries the receipt's rendered content — the itemized lines and the payment/tender
+  block, transcribed faithfully (a `text/data-table` where the line items are tabular; the
+  verbatim tender block as text). The envelope fact (`merchant`) rides the section header. A
+  raster register tape with no text layer is a render-extraction (`page=`/`bbox=` image
+  segments with descriptions), never fabricated text.
+checks:
+  envelope_required: [merchant]
+  address_axes: [pages, page, el, block]
+  monotonic: false
+normalization:
+  guidance: |
+    Carry the merchant name verbatim on the section header. Transcribe line items and the
+    payment/tender block faithfully — the tender block is the load-bearing matching hook, so
+    keep it verbatim (card tail, amount, auth). Never fabricate text for a raster tape; render
+    and describe instead.

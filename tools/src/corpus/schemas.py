@@ -57,9 +57,11 @@ from . import urls as urlcanon
 
 log = logging.getLogger(__name__)
 
-# Namespaces reserved by the spec — the four top-level directories under `schema/`
-# (spec §3).
-_RESERVED_NAMESPACES = {"mime", "origin", "atom", "composite", "context"}
+# Namespaces reserved by the spec — the top-level directories under `schema/`
+# (spec §3). `form` (3.0, §7.8) declares record-scope structural-shape overlays bound on
+# section openers; `composite` stays reserved-but-removed (2.0) so the 1.0 layout is never
+# repurposed.
+_RESERVED_NAMESPACES = {"mime", "origin", "atom", "form", "composite", "context"}
 
 VALID_ATOMS = ("text", "image", "audio", "video")
 
@@ -184,6 +186,7 @@ def cache_clear() -> None:
     mime_schema_id_for.cache_clear()
     load_origin_overlay_by_id.cache_clear()
     load_context_schema.cache_clear()
+    load_form_overlay.cache_clear()
 
 
 # ---------- composition primitives ---------- #
@@ -424,6 +427,48 @@ def list_atomic_overlays(
                 seen.add(slash_id)
                 out.append(slash_id)
     return out
+
+
+# ---------- form (section-scope) schemas ---------- #
+#
+# The `form` namespace (3.0, spec §7.8) declares record-scope structural-shape overlays bound
+# on a qualified section opener (`<!--section conversation-->`). Layout is flat —
+# `form/<id>.yaml` — with an optional universal `form/form.yaml` layering in first, exactly as
+# `atom/<atom>/<atom>.yaml` layers under an atom overlay. The bundled forms (conversation,
+# statement, receipt) ship in the package; a corpus may add its own or override.
+
+
+@lru_cache(maxsize=256)
+def load_form_overlay(corpus_root: Path, form_id: str) -> dict[str, Any] | None:
+    """Return the layered form overlay for `form_id` (e.g. `conversation`), or None.
+
+    Chain: universal `form/form.yaml` (optional) → `form/<id>.yaml`. Each rung
+    independently source-resolved (corpus-local first, packaged second)."""
+    form_id = (form_id or "").strip()
+    if not form_id or "/" in form_id:
+        return None
+    sources = _sources(corpus_root)
+    per_id_rel = f"form/{form_id}.yaml"
+    if not any(s.exists(per_id_rel) for s in sources):
+        return None
+    universal_rel = "form/form.yaml"
+    rungs = [universal_rel, per_id_rel] if any(
+        s.exists(universal_rel) for s in sources
+    ) else [per_id_rel]
+    return _read_yaml_layered(sources, *rungs)
+
+
+def list_form_overlays(corpus_root: Path) -> list[str]:
+    """Return every form id declared under `form/` across both sources (the universal
+    `form/form.yaml` excluded), sorted."""
+    sources = _sources(corpus_root)
+    out: list[str] = []
+    for relpath in _discover_yaml(sources, "form"):
+        stem = relpath.removeprefix("form/").removesuffix(".yaml")
+        if "/" in stem or stem == "form":
+            continue
+        out.append(stem)
+    return sorted(dict.fromkeys(out))
 
 
 # ---------- fingerprint resolution ---------- #

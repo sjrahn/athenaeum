@@ -1,0 +1,43 @@
+form_id: conversation
+kind: form
+description: |
+  A time-ordered, participant-attributed message sequence (spec §7.8). The form is
+  MODALITY-BLIND: it covers a chat export addressed at `turn=` and a recorded meeting
+  addressed at `time_range=` with the same envelope. What it names is a SHAPE, never a
+  subject — which people, which platform, what the conversation is about are the origin
+  block's, the bytes', and the ledger's concerns, never this overlay's (§7.8, the
+  forms-name-shapes-never-subjects line).
+extended_fields:
+  participants:
+    type: list
+    required: true
+    description: |
+      The authorship-ordered codebook — first-appearance order, entry grammar
+      "<display> <durable-id>". A `text/message` segment's `participant:` integer indexes
+      this list (§7.3). Mechanically derivable from the span's own bytes (the distinct
+      authors, in first-appearance order), always.
+decomposition: |
+  The span decomposes into one `text/message` segment per message at the addressing axis
+  (`turn=<N>` for a chat export, `time_range=<s>-<e>` for a recorded meeting), each carrying
+  its author (the `participant:` codebook index or a verbatim `sender:`), timestamp, and a
+  `reply_to` where the platform's own reference resolves in-record. Platform-generated event
+  lines (join/leave/call) are `text/metadata` segments. An attachment declared by a message
+  rides a sibling `image`/`video`/`audio` marker at the composed address `turn=<N>&att=<M>`
+  (no embed — lineage-resolvable, §4.3.1.4). A platform's own topic boundary is a
+  `<!--segment structural-->` byte-mark; a per-day grouping is NOT (whose midnight?) — it is
+  the `corpus toc` read-time rendering (§4.3.2.3).
+checks:
+  envelope_required: [participants]
+  codebook:
+    - segment_field: participant
+      codebook_field: participants
+  address_axes: [turn, time_range]
+  monotonic: true
+normalization:
+  guidance: |
+    Author one `text/message` per message in reading order, body = the verbatim message
+    text (empty when the message is attachment-only). Derive the `participants:` codebook
+    mechanically as the distinct authors in first-appearance order; index each message's
+    author into it via `participant:` (or carry a verbatim `sender:` when the source's
+    records use that form). Timestamps stay in the source-stated zone. Never invent a
+    day-break section — that is a read-time rendering (§4.3.2.3).

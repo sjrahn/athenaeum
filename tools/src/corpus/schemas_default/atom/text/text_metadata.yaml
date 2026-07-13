@@ -1,0 +1,30 @@
+class_id: text/metadata
+kind: atomic
+description: |
+  A platform-generated event line within a conversation — a join/leave notice, a call
+  record, a pin, a channel-name change — that the exporter emits as a message-shaped entry
+  but which is NOT participant-authored content (spec §12.18 step 4, the DCE event case).
+  The segment body is the event's verbatim text (lossless); it carries no `participant:`
+  codebook index because no participant authored it. Kept as its own atom so a composition
+  view (or a harvest rule) can distinguish authored messages from system events without
+  parsing prose.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  timestamp:
+    type: string
+    semantic_type: timestamp
+    required: false
+    description: The event's time, in the source-stated zone, where the export states one.
+  event:
+    type: string
+    required: false
+    description: |
+      A short event-kind label where the source distinguishes them (join, leave, call,
+      pin, rename), verbatim from the export. Omitted when the source states none.
+normalization:
+  guidance: |
+    Transcribe the event line verbatim. Do not attribute it to a participant — it is a
+    platform event, not authored content. Where the exporter states an event kind, carry it
+    on `event:`; otherwise leave it off.

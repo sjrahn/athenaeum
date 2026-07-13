@@ -1,0 +1,36 @@
+form_id: statement
+kind: form
+description: |
+  A period envelope with transaction line items (spec §7.8) — a bank or card statement's
+  proper span. Names a SHAPE, not an issuer: WHICH bank, WHICH account holder are the origin
+  block's and the ledger's concerns, never this overlay's. The span is the statement proper;
+  a cover letter or mixed front matter stays formless before the section (§4.3.2.1, the mixed
+  statement PDF worked example).
+extended_fields:
+  account:
+    type: string
+    required: true
+    description: |
+      The account identifier as the statement prints it (typically masked, e.g. "…7841").
+      Mechanically derivable from the span's own bytes.
+  period:
+    type: string
+    required: true
+    semantic_type: timestamp
+    description: The statement period (e.g. "2026-03" or a start–end range), verbatim.
+decomposition: |
+  The span carries the statement's rendered content — page text / OCR segments over the
+  statement pages, with the transaction table transcribed as `text/data-table` where the
+  layout is genuinely tabular. The envelope facts (`account`, `period`) ride the section
+  header. A cover letter or non-statement front matter is formless content BEFORE the
+  section opener, not part of the form.
+checks:
+  envelope_required: [account, period]
+  address_axes: [pages, page]
+  monotonic: true
+normalization:
+  guidance: |
+    Open the form section over the statement pages only (leave a cover letter formless
+    before it). Carry the account identifier and period verbatim on the section header. The
+    transaction rows are a `text/data-table` transcription — cells verbatim, never
+    summarized.

@@ -1,0 +1,59 @@
+class_id: text/message
+kind: atomic
+description: |
+  One message of a conversation — the envelope-bearing text atom (spec §7.3, 3.0).
+  The segment body is the message's verbatim text (lossless); its header carries the
+  structural envelope: who sent it, when, and (where the platform states one) what it
+  replies to. A message with no text (an attachment-only turn) carries an empty body and
+  the attachment rides a sibling `image`/`video`/`audio` marker at the composed address
+  (`turn=N&att=M`, §4.3.1.4).
+
+  Authorship is declared in ONE of two licensed forms (the overlay's records carry one):
+  a **codebook index** (`participant:`, an integer indexing the enclosing
+  `<!--section conversation-->`'s `participants:` list — first-appearance authorship order)
+  or a **verbatim identity string** (`sender:`). The codebook form exists to avoid repeating
+  a full identity string across a 70,000-message span; the verbatim form suits a small or
+  single-record thread (the iMessage fleet's shape). Both resolve through the record alone.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  participant:
+    type: integer
+    codebook: participants
+    required: false
+    description: |
+      Codebook index — the 0-based position of this message's author in the enclosing
+      form section's `participants:` list (§7.3). Mutually exclusive with `sender:`.
+  sender:
+    type: string
+    semantic_type: person
+    required: false
+    description: |
+      Verbatim author identity string, when the overlay's records carry the identity
+      inline rather than via the participants codebook. Mutually exclusive with `participant:`.
+  timestamp:
+    type: string
+    semantic_type: timestamp
+    required: false
+    description: |
+      The message's send time, in the source-stated zone (locale strings normalize to a
+      recorded zone; zone-less sources stay zone-less). ISO-8601 where determinable.
+  reply_to:
+    type: string
+    required: false
+    description: |
+      The address of the message this one replies to (`turn=N`), where the platform
+      declares an in-thread reference that resolves within the record.
+  edited:
+    type: boolean
+    required: false
+    description: Whether the source marks this message as edited.
+normalization:
+  guidance: |
+    Transcribe the message text verbatim into the body — no paraphrase, no summary. Keep
+    the envelope faithful to the source: the author (codebook index or verbatim string as
+    the overlay's records carry), the send time in the source-stated zone, and a `reply_to`
+    only where the platform's own reference resolves to an in-record turn. An attachment
+    with no accompanying text is an empty-bodied message whose asset rides a sibling marker
+    at `turn=N&att=M`; never inline a description into the body (§1.5 principle 3).

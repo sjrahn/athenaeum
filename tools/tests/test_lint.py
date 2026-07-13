@@ -374,8 +374,14 @@ def test_qualified_section_is_form_not_retired(tmp_path):
     to the derived classifications view (§9.1)."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    sec = segments.Section(address="turn=1", form="conversation", segments=[seg])
+    seg = segments.Segment(
+        atom="text", overlay="text/message", address="turn=1", body="hi",
+        extra={"participant": 0},
+    )
+    sec = segments.Section(
+        address="turn=1", form="conversation", segments=[seg],
+        extra={"participants": ["Andy <a@x>"]},
+    )
     fired = {f.rule_id for f in lint.lint(post, [sec], root)}
     assert "section-composite-retired" not in fired
     assert not any(f.severity == "error" for f in lint.lint(post, [sec], root))
@@ -456,20 +462,13 @@ def test_embed_description_empty_on_normalized(tmp_path):
     assert "embed-description-empty-on-normalized" in _fired(post, root)
 
 
-def test_issue_on_draft(tmp_path):
+def test_issue_on_draft_rule_dropped(tmp_path):
+    """3.0: the `issue-on-draft` draft-status rule is dropped (§12.18 step 1 — lint drops
+    draft-status rules). A `draft` record is a grandfathered stub; an interpretive issue on
+    it yields no `issue-on-draft` finding."""
     root = _make_corpus(tmp_path)
-    post = _clean_post()  # status draft
+    post = _clean_post()  # status draft (grandfathered)
     records.append_issue_block(
         post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
     )
-    assert "issue-on-draft" in _fired(post, root)
-    # a mechanical drafter issue (detector corpus.*) is legitimate on a draft
-    post2 = _clean_post()
-    records.append_issue_block(
-        post2,
-        id="paywall",
-        severity="warning",
-        resolution="open",
-        detector="corpus.draft.html@0.1.0",
-    )
-    assert "issue-on-draft" not in _fired(post2, root)
+    assert "issue-on-draft" not in _fired(post, root)
