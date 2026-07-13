@@ -1,0 +1,126 @@
+"""`corpus reattest` (spec §12.4.6, §8.3) — re-derives the attested layer (artifact fields,
+embeds, drafter issues) from the artifact, never touching the authored layer (content zone,
+embed descriptions, editorial fields). Idempotent: an unchanged record re-derives byte-for-
+byte and appends no touch."""
+
+from __future__ import annotations
+
+import zipfile
+from pathlib import Path
+
+import frontmatter
+
+from corpus import hashing, paths, records, schemas
+from corpus._cli import reattest as reattest_cli
+from corpus.store import LocalArtifactStore
+
+
+def _make_corpus(tmp_path: Path) -> Path:
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    (root / "schema").mkdir()
+    schemas.cache_clear()
+    return root
+
+
+def _ingest_zip(root: Path) -> str:
+    src = root / "bundle.zip"
+    with zipfile.ZipFile(src, "w") as zf:
+        zf.writestr("a/one.txt", "hello one")
+        zf.writestr("b/two.txt", "hello two")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(root).put(rid, "zip", src)
+    src.unlink()
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": rid, "title": "", "description": "", "status": "stub",
+         "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"}
+    )
+    records.set_artifact_block(post, mime="application/zip", fields={})
+    records.append_origin_block(post, uri=None, snapshot="2026-01-01T00:00:00Z",
+                                fields={"filename": "bundle.zip"})
+    records.dump(post, paths.record_path(root, rid))
+    return rid
+
+
+def test_reattest_derives_embeds_on_a_stub(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+
+    # A freshly-ingested stub has no embeds yet.
+    assert list(records.iter_embed_blocks(records.load(rf))) == []
+
+    new_text = reattest_cli.reattest_record(rf, root)
+    rf.write_text(new_text, encoding="utf-8")
+    post = records.load(rf)
+
+    embeds = list(records.iter_embed_blocks(post))
+    assert len(embeds) == 2  # the zip's two members, attested
+    assert {e["address"] for e in embeds} == {"path=a/one.txt", "path=b/two.txt"}
+    assert post.metadata["status"] == "stub"  # attestation never flips status
+    assert (post.content or "") == ""          # a manifest has no body
+    # a touch was appended for the real change
+    touch = post.metadata["touch"]
+    chain = touch if isinstance(touch, list) else [touch]
+    assert any("attest" in t for t in chain)
+
+
+def test_reattest_is_idempotent(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+
+    first = reattest_cli.reattest_record(rf, root)
+    rf.write_text(first, encoding="utf-8")
+    # A second re-attest re-derives byte-for-byte → no change, no new touch.
+    second = reattest_cli.reattest_record(rf, root)
+    assert second == first
+
+
+def test_reattest_preserves_authored_layer(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+    # Attest, then simulate normalize: author an embed description + editorial fields + body.
+    rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
+    post = records.load(rf)
+    post.metadata["status"] = "normalized"
+    post.metadata["title"] = "My Bundle"
+    post.metadata["description"] = "An authored summary."
+    post.metadata["_embeds"][0]["fields"]["description"] = "the first member, described"
+    post.content = "<!--segment text\naddress: path=a/one.txt\n-->\n\nauthored body\n"
+    records.dump(post, rf)
+
+    # Re-attest must NOT clobber the authored layer.
+    new_text = reattest_cli.reattest_record(rf, root)
+    rf.write_text(new_text, encoding="utf-8")
+    after = records.load(rf)
+    assert after.metadata["title"] == "My Bundle"
+    assert after.metadata["description"] == "An authored summary."
+    assert "authored body" in (after.content or "")
+    descs = {e["address"] if isinstance(e["address"], str) else e["address"][0]:
+             (e.get("fields") or {}).get("description")
+             for e in records.iter_embed_blocks(after)}
+    assert descs.get("path=a/one.txt") == "the first member, described"
+
+
+def test_reattest_cli_dry_run_writes_nothing(tmp_path):
+    root = _make_corpus(tmp_path)
+    _ingest_zip(root)
+
+    class _Args:
+        target = None
+        mime = None
+        host = None
+        status = "any"
+        dry_run = True
+        fingerprint = None
+        corpus_root = str(root)
+
+    before = {p: p.read_text() for p in records.iter_record_paths(root)}
+    rc = reattest_cli.run(_Args())
+    assert rc == 0
+    after = {p: p.read_text() for p in records.iter_record_paths(root)}
+    assert before == after  # dry run mutated nothing

@@ -30,7 +30,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "draft":           ("Capture & ingest",       "Run the deterministic drafter (stub → draft)"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to status: stub, preserving byte + provenance"),
-    "redraft":         ("Capture & ingest",       "Bulk re-derive records from their artifacts (deterministic recompile)"),
+    "reattest":        ("Capture & ingest",       "Bulk re-derive the attested layer from artifacts (never touches the authored layer)"),
+    "redraft":         ("Capture & ingest",       "Bulk re-derive whole records (2.x; superseded by reattest for the attested layer)"),
     # Normalization queue (P6) — request/claim contract for the interpretive normalize stage (spec §8.5)
     "enqueue":         ("Normalize",              "Request a (re-)normalization pass for a record"),
     "drain":           ("Normalize",              "Claim the next queued record (prints its id; empty queue → exit 1)"),
