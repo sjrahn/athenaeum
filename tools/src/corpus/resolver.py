@@ -109,6 +109,17 @@ def resolve(
     canonical_uri = furi.canonical(parsed)
     artifact_record = _load_record(corpus_root, parsed.hash)
     media_type = records.media_type_for(artifact_record)
+
+    # Record-level derivation ops (§6.2) — computed from the RECORD (its attested manifest),
+    # not from a working-value transform over the artifact bytes, so they need no materialized
+    # container. `members` is the container manifest, derived: the member enumeration
+    # (`path=`/`msg=`/`part=`/`stream_id=`/… axes, each with its transport hash, size, sniffed
+    # type). Single-param only.
+    if len(parsed.params) == 1 and parsed.params[0] == ("members", None):
+        return _resolve_members(
+            corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
+        )
+
     if store is None:
         store = get_store(corpus_root)
     if transcriber is None:
@@ -262,6 +273,47 @@ def resolve(
         corpus_root, canonical_uri, parsed.hash, cache_p, current_kind, mime_override=terminal_mime
     )
     log.debug("cached: %s", cache_p)
+    return cache_p.resolve()
+
+
+# ---------- record-level derivation ops (§6.2) ---------- #
+
+
+def _resolve_members(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_record: Any,
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize the `members` derivation op (§6.2): the container's member manifest as
+    JSON, derived from the record's attested embed blocks (each a member transport — its
+    address in the container's own axis, its blake3 `transport`, size, and sniffed MIME).
+    Cached like any resolver result."""
+    urihash_value = furi.urihash(canonical_uri)
+    cache_p = furi.cache_path(corpus_root, urihash_value, "json")
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+
+    members: list[dict[str, Any]] = []
+    for embed in records.iter_embed_blocks(artifact_record):
+        addr = embed.get("address")
+        fields = embed.get("fields") or {}
+        for one in addr if isinstance(addr, list) else [addr]:
+            members.append(
+                {
+                    "address": one,
+                    "transport": embed.get("transport"),
+                    "media_type": embed.get("media_type"),
+                    "bytes": fields.get("bytes"),
+                }
+            )
+    payload = {"count": len(members), "members": members}
+
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
     return cache_p.resolve()
 
 
