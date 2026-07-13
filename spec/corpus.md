@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-CORPUS
 title: "Corpus Specification"
-version: 2.1
+version: 3.0
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
-date_modified: 2026-07-04
+date_modified: 2026-07-13
 ---
 
 # Corpus Specification
@@ -17,6 +17,8 @@ The corpus sits beneath the ledger layer, which interprets it through `corpus://
 **Version 2.0** removed the corpus's interpretive classification system — the `composite` umbrella, the classify block, section-scope composites, the `concept` context namespace, and the interpretive `reference` emission path — in favor of the ledger layer: a record describes its bytes, retrieval, and faithful form; what its content *means* is asserted one layer up, with evidence pointing back down. Removed sections are **tombstoned in place** (numbering preserved, successor named) rather than renumbered, so 1.0-era citations of this spec still land somewhere true.
 
 **Version 2.1** — the **containment amendment** — decoupled records from standalone artifact files. Every transport is now self-contained (the `decomposable` disposition and the `artifact_kind` declaration retire): a raw archive drafts as an embed manifest, and any declared member may be **promoted** to a first-class record whose bytes remain inside the container, resolved by streaming (§2, §1.2, §8.1). No existing record changes shape (§12.17).
+
+**Version 3.0** — the **derivation revision** — completes the movement 2.1 began: a record stores only what is **authored** (the normalize pass's faithful form) or **attested** (ingest-stamped byte-facts), and everything mechanical is **derived, addressable, and reproducible**. The `draft` stage retires: its fact-stamping becomes ingest **attestation**, its content extraction becomes resolver **derivation ops** (§6.2), and its body-writing becomes the normalize pass's job — mechanical (a *shaper*) where a declared form mapping makes the shape deterministic, interpretive where it does not. The stored table of contents retires with it: TOC grouping becomes a derived rendering over **structural segments** (byte-marks only, §4.3.2.3), and the freed **section block** becomes the surface of the new **form axis** (§4.4.1, §7.8) — record- and span-scope structural form, the fourth classification axis. Embeds close to *"this asset is part of this record's capture"* (§4.3.1.4); referenced-but-not-contained content materializes through lineage-chained resolution (§6.2), derived and never stored. Media containers are attested as track manifests (§1.2). Removed and reshaped sections are tombstoned in place exactly as 2.0 did; the 2.0 tombstones themselves are untouched — the form axis is *not* the classify block returning (§7.8).
 
 ---
 
@@ -35,39 +37,43 @@ A record is a single markdown file. The YAML frontmatter at its head carries a s
 Every captured file is a **transport** — a media-type-shaped container — that carries **content**.
 
 - A transport's **intrinsic information** surfaces in the record's metadata zone — primarily in the artifact block for transport-intrinsic fields.
-- A transport's **content** decomposes into a flat sequence of addressable segments in the record's content zone. Each segment carries one of four **content atoms** (text, image, audio, video) and an **address** indicating its location inside the transport.
-- Every transport is **self-contained**: it produces a single record. When it contains a **nested transport**, it lifts that nested transport's intrinsic metadata into the outer record's artifact block (e.g. per-stream fields for a multi-stream media file) and addresses its content per stream / per member, while an asset it merely references is described as an embed in the metadata zone. An ordinary single-content file (a plain HTML page, a PDF) simply has no nested transport to lift. A **raw archive** — a transport whose content is *other transports* — drafts as an **embed manifest**: every member becomes a content-addressed embed (the member's `transport:` byte-hash + its member address) and the content zone stays empty (§12.4). *(2.1: the schema-declared disposition — `artifact_kind`, with its `decomposable` explode-at-ingest alternative — is removed; §7.1.)*
+- A transport's **content** decomposes into a flat sequence of addressable segments in the record's content zone. Each segment carries one of four **content atoms** (text, image, audio, video) — or is a **structural segment**, a body-empty byte-mark carrying no atom (§4.3.2.3) — and an **address** indicating its location inside the transport.
+- Every transport is **self-contained**: it produces a single record. When it contains a **nested transport**, it lifts that nested transport's intrinsic metadata into the outer record's artifact block and addresses its content per stream / per member, while an asset it merely references is described as an embed in the metadata zone. An ordinary single-content file (a plain HTML page, a PDF) simply has no nested transport to lift. A **raw archive** — a transport whose content is *other transports* — is attested as an **embed manifest**: every member becomes a content-addressed embed (the member's `transport:` byte-hash + its member address) and the content zone stays empty (§12.4). *(2.1: the schema-declared disposition — `artifact_kind`, with its `decomposable` explode-at-ingest alternative — is removed; §7.1.)*
 - A declared member is thereby **promotable**: because its embed records byte identity and address, it may later be minted as a first-class record of its own (**promotion**, §8.1) without its bytes ever leaving the container — a lookup of the promoted `id` streams them out through the container's address scheme (§2). Containment nests (a promoted member may itself be a container), and **residence is invisible**: the same bytes may live standalone, inside a container, or both, and no record changes when they move (§2).
+- *(3.0)* **Container-vs-transport is a declared judgment, not a derivable fact.** The bytes cannot say which they are — a `.docx` is *provably* a zip, and reading it as one would be wrong. A mime schema therefore declares a **`disposition:`** (§7.1): **`manifest`** — the members ARE the content (archives, mailboxes, multi-entry text containers, media containers): the content zone holds only the container's own byte-marks, and every member is attested as a **manifest embed**, promotable; or **`work`** — one transport whose content decomposes as units, and whose internal member files surface as **exposable embeds**: addressable and promotable, but *not* the content — a `.docx` is better read as one work; its pasted photo is an exposable embed, its `word/document.xml` is not independently meaningful. The authoring criterion, normatively: **are the members independently meaningful transports?** An MKV audio track is — the transcript lives on it; OOXML internals are not. (EPUB's 2.x `self_contained` judgment — "an EPUB is one work, one record" — is this key's implicit ancestor, now explicit: `disposition: work`.) The mime schema declares the format's default; an origin overlay MAY override it for a producer whose use of the format deviates (§7.2). The disposition is always stamped and auditable, never sniffed per record. *(The 2.1 removal of `artifact_kind` stands — that key routed explode-at-ingest, which stays gone; `disposition:` declares attest/read shape, and nothing explodes.)*
+- *(3.0)* **The member-vs-unit rule.** A **member** is a transport with its own MIME and standalone byte identity — attested as a manifest embed or exposable embed per the disposition, promotable either way. A **unit** is content *within* one transport — a message in a chat transcript, an entry in a log — reached by unit ops (`turn=`, §6.2) under a form mapping (§7.2), never declared as an embed. Unit-structured single transports are **not containers**: an NDJSON/JSONL stream, a location-history JSON, a health-export XML/CSV, a GPX track decompose as units of one work (`form/log` territory, §7.8), not as members.
+- *(3.0)* A **multi-track media container** (MP4/ISOBMFF, Matroska, and kin) is a raw archive in the strict sense — a transport whose content is other transports — and is attested the same way: a **track manifest**. Each elementary stream becomes a content-addressed embed addressed `stream_id=<id>` (video stream, audio stream(s), text-based subtitle track(s)), and an attached picture is an ordinary embed; the artifact block carries the container facts (duration, per-stream codecs, dimensions). The content zone carries exactly one thing: the container's **chapter marks** as structural segments (§4.3.2.3) — chapters are byte-marks of the *container* (an MKV `Chapters` element, an MP4 chapter track; both encodings project to the same marks, the mime schema pinning which encoding wins), marking the shared timeline no single track owns. Tracks are **promotable on demand, never exploded**: a promoted track record's bytes materialize through the container (`stream_id=` transform — the `part=<N>` precedent), no bytes copied; extraction semantics are pinned by the mime schema (the mbox `msg=<N>` precedent) so member bytes are deterministic (§11 flags the demuxer-determinism engineering risk). The audio-track record owns the transcript (`?transcribe`, §6.2); the video-track record owns frame work (on-screen text as `text/ocr` is faithful; what-a-frame-*shows* stays `description:`); a text-based subtitle track projects faithfully as (time_range, text) segments. Tracks inherit the container's chapter marks at **read time through lineage** (§6.2) — never copied, because the track's own bytes do not carry them (§4.3.2.3, the byte-mark rule). A **single-stream artifact** (a bare MP3, a JPEG) has no member transports to declare and stays a single `work`; a single-*track* media container nonetheless stays `disposition: manifest` — **default-member resolution** (§6.2) makes the bare op transparent (`?transcribe` on a single-audio MKV needs no `stream_id=`), so the disposition never flips per record. The same-video composition — tracks threaded over the shared timeline — is a read-time derived view joining on (lineage, time), exactly as a cross-platform conversation view joins on (ledger identity, time): same tuple, same composition layer, no media-specific logic stored anywhere.
+- *(3.0)* The manifest family extends along two more axes, no new machinery. **Multi-entry text containers** are the mbox precedent generalized: a multi-card VCF is a manifest of `text/vcard` members at `card=<N>` (`BEGIN:VCARD`/`END:VCARD` delimiter-pinned extraction, so member bytes are deterministic and promotable — §12.11), an ICS calendar of `VEVENT` entries at `entry=<N>` likewise. **HEIF/HEIC** is the media container on the image axis: image items attested at `item=<id>`, and an Apple **Live Photo** is the container's *declared primary* still (the `pitm` primary-item box — a byte-fact) plus its paired video track, both reachable bare through default-member resolution (§6.2): `bbox=` acts on the declared-primary still, `time_range=` reaches the motion component. A **motion photo** (an MP4 appended inside a JPEG's bytes) is the nested-transport lift above — the inner video attests as an embedded transport of the JPEG work — not a new mechanism. Formats that arrive later slot into the same strategies: 7z/rar/dmg join the zip-manifest family, PST/OST and WARC join the mbox precedent, when a real capture wants them.
 
 ### 1.3 The atom / segment model
 
-A record body's content zone is a sequence of **sections** and **segments** (the read-order rendering). Each segment carries:
+A record body's content zone is a sequence of **sections** (form spans, §4.3.2.1 — rare; present only where a form is declared) and **segments** (the read-order rendering). Each content segment carries:
 
-- One **content atom**: `text`, `image`, `audio`, or `video`. Only `text` segments carry a segment body. Segments of the other three atoms are positioning markers — they declare where in the reading order an asset appears, and link to a matching embed (by address membership) for the asset's metadata and description. Their segment body is empty.
+- One **content atom**: `text`, `image`, `audio`, or `video`. Only `text` segments carry a segment body. Segments of the other three atoms are positioning markers — they declare where in the reading order an asset appears, and link to a matching embed (by address membership, §4.3.1.4) or materialize through the resolver — and their segment body is empty.
 - An **address** specifying the segment's location inside the transport, in a scheme determined by the media-type schema. Addresses compose, so that chains can form from transport to atom to region (a region within a frame within a video).
-- Exactly one **atomic classification**, declared on the opener line in the form `<!--segment <atom>/<id>-->` (or bare `<!--segment <atom>-->` for unclassified-but-typed segments). Text-atom overlays may declare lossless-shaping behavior — those overlays shape the segment body into a specific lossless form (a markdown table, a transcript, OCR text). When multiple representations apply to the same source region, each becomes its own segment.
+- Exactly one **atomic classification**, declared on the opener line in the form `<!--segment <atom>/<id>-->` (or bare `<!--segment <atom>-->` for unclassified-but-typed segments). Text-atom overlays may declare lossless-shaping behavior — those overlays shape the segment body into a specific lossless form (a markdown table, a transcript, a chat message). When multiple representations apply to the same source region, each becomes its own segment.
 
-Two segments may share an address as long as their opener-id differs — same-region stacking is how a record represents multiple valid lossless representations of one source region. Segments are addressable from outside the record via functional URIs that carry the segment's address in their query string (§5).
+*(3.0)* A fifth segment kind — the **structural segment**, `<!--segment structural-->` (§4.3.2.3) — carries no content atom and no body: it is a **byte-mark**, the faithful record that the source itself declares a structural boundary at an address (a heading, an outline entry, a chapter mark, a topic boundary), with a `level:` and an optional `entry:`. The table of contents is a **derived rendering** over these marks — arbitrary depth, zero nesting grammar — never a stored grouping. *(The 1.0–2.x stored TOC — sections as grouping blocks — retires; §4.3.2.1.)*
+
+Two segments may share an address as long as their opener-id differs — same-region stacking is how a record represents multiple valid lossless representations of one source region (a structural mark stacks with the content segment at its address the same way). Segments are addressable from outside the record via functional URIs that carry the segment's address in their query string (§5).
 
 ### 1.4 Lifecycle
 
 ```
 captured bytes              (no identity yet — staging only)
        │
-       │ ingest             deterministic: hashes, MIME detection; stub record written
-       ▼
-   stub record              identity established; bytes persisted in the corpus's binary store
-       │
-       │ draft              deterministic: media-type schema runs; overlay-declared emissions follow
-       ▼
-   draft record             faithful first-pass body, segment layout established, mechanical metadata-zone blocks emitted
-       │
-       │ normalize          LLM-guided faithful-form pass: description authored, body re-segmented / shaped where judged
-       ▼
- normalized record          faithful form finalized — ready to cite
+       │ ingest             deterministic: hashes, MIME detection, byte-fact ATTESTATION
+       ▼                    (artifact fields, manifest embeds, structural byte-marks, sidecar lift)
+   stub record              identity + attested facts; bytes persisted; readable through the
+       │                    resolver's derivation ops (§6.2) — a derived body, never stored
+       │ normalize          the ONE authoring pass: a mechanical shaper where a declared form
+       ▼                    mapping makes the shape deterministic; an interpretive agent where not
+ normalized record          faithful form authored — the citable state (ledger.md §6.3)
 ```
 
 Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. **Promotion** (§8.1) is a second entry point to `stub`: it mints a record for a container member's bytes, which are already retrievable by id through the container (§2) and are not copied. Re-running any stage is an expected refinement pattern, not a fallback; every stage from ingest onward appends a `touch[]` entry to the record's provenance chain (which `re-stub` may reset, §8.4).
+
+*(3.0: the `draft` stage and status retire — tombstoned at §8.1. Its three duties split cleanly: fact-stamping → ingest **attestation**; content extraction → resolver **derivation ops** (§6.2), computed on demand and cached, so a stub is fully readable without storing a mechanical body; body-writing → the normalize pass. What 2.x called "the drafted body" was always a pure derivation of (artifact × schemas × tooling) — 3.0 stops storing it and derives it instead, which is the same move 2.1 made for archive members and the tree view.)*
 
 ### 1.5 Design principles
 
@@ -75,23 +81,23 @@ Once ingested, the artifact's bytes must remain retrievable by id. Where and how
 
 2. **Content addressing.** Every artifact's identity is the blake3 hash of its bytes. Bytes don't change; if they did, the hash would change and the record would be a different record.
 
-3. **Faithfulness.** A record body is a faithful, lossless rendering of the transport's content. Normalization may resolve ambiguity (encoding, broken layout, OCR for scans) but never adds information not present in the source. Descriptive content (a summary of what an image shows, a paraphrase of what was said) is lossy by definition and lives on the matching embed's description field — or, when no embed exists, on the addressing segment's or section's `description:` — **not** in a segment body. Re-segmentation is structural, never editorial.
+3. **Faithfulness.** A record body is a faithful, lossless rendering of the transport's content. Normalization may resolve ambiguity (encoding, broken layout, OCR for scans) but never adds information not present in the source. Descriptive content (a summary of what an image shows, a paraphrase of what was said) is lossy by definition and lives on the matching embed's description field — or, when no embed exists, on the addressing segment's or section's `description:` — **not** in a segment body. Re-segmentation is structural, never editorial. *(3.0)* The same principle governs structure: a **structural segment exists only where the source carries the mark** (§4.3.2.3, the byte-mark rule). A grouping the bytes do not declare — a conversation's per-day break: whose midnight? — is a *read-time rendering* with explicit parameters, never a stored block.
 
 4. **The record body as universal representation.** Every artifact carries a markdown body composed of segments. This projects every modality — text, image, audio, video — into a common representational space. Search, similarity, and embeddings all operate on the body.
 
-5. **Transports declare, content fills.** Format-specific machinery (address scheme, extraction strategy, body shape) lives on the media-type schema. Content-shaping tactics live on origin overlays (per source) and atom overlays (per form). The layers don't bleed.
+5. **Transports declare, content fills.** Format-specific machinery (address scheme, attestation set, derivation ops) lives on the media-type schema. Content-shaping tactics live on origin overlays (per source), **form overlays (per record-scope shape, §7.8)**, and atom overlays (per segment-scope form). The layers don't bleed: an origin overlay that specifies segment decomposition is a category error — it names *where bytes came from* and maps the producer's format onto a form; the form overlay owns the normal form.
 
-6. **Deterministic before LLM.** Capture, ingest, and draft are scripts; the normalize pass is LLM-guided **faithful-form** work whose every output is checkable against the bytes in the same file. Interpretation — what content means — is not a corpus stage at all: it happens in the ledger, with evidence citing back into the record.
+6. **Deterministic before LLM.** Capture and ingest are scripts; every mechanical extraction is a **resolver derivation op** — a pure (or version-labeled, §6.4) function of the artifact; and the normalize pass is authored by a mechanical **shaper** wherever a declared form mapping makes the shape deterministic, by an LLM only where judgment is genuinely required. The boundary survives as *who executes*, recorded pass-by-pass in the touch chain (§4.2.2) — not as a lifecycle stage. Interpretation — what content means — is not a corpus stage at all: it happens in the ledger, with evidence citing back into the record.
 
 7. **On-demand derived views.** Cross-cutting aggregates and richer modal projections are computed by walking body blocks and semantic-tagged fields, or by resolving functional URIs — never persisted alongside the record.
 
-8. **Stable identity, mutable metadata, faithful body.** A record's `id` is fixed at capture. Body blocks evolve as drafting and normalization improve; the body content remains faithful.
+8. **Stable identity, mutable metadata, faithful body.** A record's `id` is fixed at capture. Body blocks evolve as attestation and normalization improve; the body content remains faithful.
 
-9. **Offline-first.** Only `capture` requires network access. Ingest, draft, normalize, and URI resolution all operate on local data.
+9. **Offline-first.** Only `capture` requires network access. Ingest, normalize, and URI resolution — including every derivation op — all operate on local data.
 
 10. **Frontmatter is bytes-identity only.** What the bytes ARE (their hashes), how visible they are to authoring tools, how to navigate the provenance chain, the editorial display title + summary the normalizer authors. Everything else — the title *candidates*, media-type, origins, issues, extended fields — lives in body blocks because everything else came from a schema decision, and schema decisions are auditable per-block. A field is named **bare** when its block opener already identifies its provenance: an artifact block names the format (its MIME), a context block names its namespace (`<namespace>/<id>`), so their fields are `title`/`author`/`severity`, never `pdf_title`/`issue_severity`. A provenance prefix survives only where the opener does *not* carry it — an origin block's `ytdlp_title` (the opener names the source record, not the extraction tool), or a metadata sub-standard the format embeds (`exif_*`, `og_*`). (Prefixing every field was a holdover from when these all shared the frontmatter's flat namespace; once each rides its own self-identifying block, the prefix only echoes the block.)
 
-11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its metadata-zone blocks — the artifact block yields `mime/*`, qualified origin blocks yield `origin/*`. The body IS the classification declaration. The same principle applies to issues (walks annotations-zone blocks) and to the aggregated URI, timeline, and identifier views (which walk semantic-tagged schema fields together with the universal origin `uri:`/`snapshot:` fields and, for identifiers, the record's own `id` — §9).
+11. **Classifications are derived, not declared.** A record's classifications list is computed by walking its body — the artifact block yields `mime/*`, qualified origin blocks yield `origin/*`, **qualified section openers yield `form/*`**. The body IS the classification declaration. The same principle applies to issues and to the aggregated URI, timeline, and identifier views (§9).
 
 ---
 
@@ -107,16 +113,17 @@ The `id` field is bare hex with no algorithm prefix because the algorithm is inv
 
 ## 3. Schema namespaces
 
-A corpus's schemas are organized into four spec-reserved **namespaces**. Three are primitive **axes** — each bound to a single block-keyword role in the record body — and one is an umbrella: `context` for annotations:
+A corpus's schemas are organized into five spec-reserved **namespaces**. Four are primitive **axes** — each bound to a single block-keyword role in the record body — and one is an umbrella: `context` for annotations:
 
 | Namespace | Role | What it declares |
 |---|---|---|
-| `mime` | Declares the **artifact block**. | Per-media-type fields, address scheme, body-draft behavior. |
-| `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes, how to capture and draft it. |
+| `mime` | Declares the **artifact block**. | Per-media-type fields, address scheme, ingest attestations, derivation ops. |
+| `origin` | Declares the **origin block**. | Per-source-of-retrieval overlays: how to recognize an origin, what additional fields it contributes, how to capture it, **which form its records carry and how the producer's format maps onto it**. |
+| `form` *(3.0)* | Declares the **form id on a section-block opener**. | Per-record-scope-shape overlays: the normal form a span of content decomposes into — envelope contract, codebook fields, conformance checks (§7.8). |
 | `atom` | Declares the **atomic classification** on a **segment block**. | Per-atom-and-subtype overlays: what *form* of content a segment carries, and (for text-atom overlays) whether it licenses a shaped lossless body. |
 | `context` | The umbrella for every **annotation** namespace — observations *about* a record. | Per-namespace overlays declared via the **context block** (`context/<namespace>/<id>`): `issue` (problems), `reference` (declared dependent links), `relation` (declared cross-links), … |
 
-*(2.0)* The 1.0 model had a fifth namespace — `composite`, the umbrella for user-defined classification namespaces asserted on records via classify blocks. It was removed: what content means is knowledge, and knowledge lives in the ledger, minted mechanically by harvest rules where membership is deterministic and authored as claims where it is not (`ledger.md` §8, §10). See the §7.4 tombstone for where each of its parts went.
+*(2.0)* The 1.0 model had a `composite` umbrella, asserted on records via classify blocks. It was removed and **stays removed**: what content means is knowledge, and knowledge lives in the ledger (§7.4). The 3.0 `form` namespace is not its return — it declares structural *shape*, checkable against the bytes, never subject or meaning (§7.8).
 
 A record references a schema by the qualified id encoded on a block opener — for example, `<!--context <namespace>/<id>-->`. The schema loader resolves the id by walking a chain of declarations from most-specific to least-specific:
 
@@ -137,13 +144,14 @@ The on-disk organization of these schemas is implementation-discretionary; a ref
 
 A markdown file with YAML frontmatter. The frontmatter carries the bytes-identity header; the record body carries the schema-derived metadata blocks AND the segmented rendering of the transport's content AND any annotations.
 
-A record is always at one of three statuses:
+A record is always at one of two statuses:
 
 | Status | Meaning | Stage that produced it |
 |---|---|---|
-| `stub` | Identity established; bytes retrievable by id (§2 — persisted to the binary store at ingest, or resident in a containing artifact for a promoted record); artifact block emitted; first origin block populated from capture / containment context; content zone empty. | ingest / promote |
-| `draft` | Media-type schema applied; record body's content zone segmented per the media-type schema; embed blocks and overlay-declared context blocks (references, relations, drafter-detected issues) emitted. | draft |
-| `normalized` | Faithful form finalized: description authored; content zone re-segmented and shaped where the LLM judged appropriate; faithfulness issues surfaced. | normalize |
+| `stub` | Identity established; bytes retrievable by id (§2); artifact block + **attested byte-facts** emitted — the mime schema's declared attestations (artifact fields; manifest embeds for archive/mail/media-container types; structural byte-marks; sidecar lift); first origin block populated from capture / containment context. The stored content zone holds byte-marks only; the record is nonetheless fully *readable* — its mechanical body is a resolver derivation (§6.2), computed on demand, cacheable by a search index (§9), never persisted to the record. | ingest / promote |
+| `normalized` | Faithful form **authored**: the stored content zone (shaper- or agent-written), descriptions, the two editorial fields, faithfulness issues. The citable state — ledger evidence anchors and quotes bind against it (`ledger.md` §6.3, §13.2). | normalize |
+
+*(3.0: the `draft` status is retired — see the §8.1 tombstone. A 2.x record at `status: draft` reads tolerantly as a stub carrying a grandfathered materialized derivation; §12.18.)*
 
 ### 4.2 Frontmatter
 
@@ -154,11 +162,11 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
-| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. Like `description`, the deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (the artifact block's bare `title` field, or an origin block's `ytdlp_title`) or writes its own. |
-| `description` | string | yes | 1–3 sentence summary. The key is always present; its value is empty (`''`) at stub/draft and authored at `normalized`. The primary mechanism for discovery. |
-| `status` | enum | yes | `stub`, `draft`, or `normalized`. |
+| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at `stub` and authored at `normalized`. The deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (the artifact block's bare `title` field, or an origin block's `ytdlp_title`) or writes its own. |
+| `description` | string | yes | 1–3 sentence summary. Empty at `stub`, authored at `normalized`. The primary mechanism for discovery. |
+| `status` | enum | yes | `stub` or `normalized`. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
-| `canonical` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | A canonicalized-content hash, set at draft time by the matching media-type schema's canonicalization strategy. Lets two records be compared for "same content?" even when ever-changing metadata (timestamps, producer strings) differs. Optional. |
+| `canonical` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | A canonicalized-content hash per the mime schema's `canonical_strategy`. Lets two records be compared for "same content?" even when ever-changing metadata (timestamps, producer strings) differs. *(3.0: computed at ingest attestation or as a derivation op when re-enabled — open question §12.18; the 2.x persist-disabled status note of §7.1 carries over.)* |
 | `perceptual` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Record-scope perceptual fingerprint — present only for single-atom records (e.g. an image artifact carries a perceptual hash). Multi-atom records carry per-segment perceptual fingerprints in segment headers instead. |
 | `touch` | string \| list[string] | yes (≥1) | Ordered list of touch identifiers, one per processing pass. Singular (bare string) when one entry; list when 2+. `touch[0]` is the original ingest. |
 | `visibility` | enum | no | `visible` (default), `deranked`, `hidden`. Editorial curation, orthogonal to status. |
@@ -167,7 +175,7 @@ The frontmatter (`---...---` at the top of the file) holds **only the bytes-iden
 
 A touch identifier is a short bare string distinguishing a processing pass. The sequence is `touch[]` — a bare string when the chain has one entry, a list otherwise; the chain records the record's **current-shape provenance** (which passes produced the shape it has now). It is not an immutable history: `re-stub` resets it (§8.4), so a re-stubbed record's chain reflects its post-reset lineage, not every pass it ever saw.
 
-- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>`, where `<module>` may be a dotted path (e.g. `draft.<mime-type-id>`). The `<package>.<module>` identifies the code path; `<version>` is its installed version.
+- **Pipeline tooling** uses a stable identifier of the form `<package>.<module>@<version>` (e.g. `corpus.ingest@0.2.0`, `corpus.shape.conversation@0.2.0` — a **shaper** pass names the form or strategy it shaped). The `<package>.<module>` identifies the code path; `<version>` is its installed version.
 - **LLM models** use the canonical model identifier with any context modifier in brackets — e.g. `<model-id>[<modifier>]`.
 - **Combined tooling + model** — a single pass that is both a deterministic re-assembly and the LLM pass it carries joins the two with `+`: `<package>.<module>@<version>+<model-id>`.
 
@@ -188,15 +196,16 @@ Every block has the same shape: an HTML comment whose opener line carries a keyw
 <!--embed <mime-type>-->                  # 0..N
 
 ─── content zone ─────────────────────────
-<!--section-->                            # 0..N (each contains 0..N segments)
-or
-<!--segment <atom>-->                     # 0..N (sectionless top-level segments)
+<!--section <form-id>-->                  # 0..N form spans (rare; depth one; never overlap)
+   containing <!--segment ...--> blocks
+<!--segment <atom>[/<id>]-->              # content segments (top-level = formless)
+<!--segment structural-->                 # byte-mark TOC entries (top-level or in-span)
 
 ─── annotations zone ─────────────────────
 <!--context <namespace>/<id>[/<subtype>]--># 0..N (record- or segment-scoped via address:)
 ```
 
-Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant; the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only segment blocks carry inline content** — the segment body holds the actual text.
+Zone order is fixed. A block of a later zone appearing before a block of an earlier zone is a parse error. Within a zone, the relative order of different block *families* is not significant; the diagram's family order is illustrative. **All metadata- and annotation-zone blocks are header-only**: their YAML payload is the entire block; there is no markdown content between blocks within those zones. **Only text-atom segment blocks carry inline content** — the segment body holds the actual text. *(3.0: the section opener is **qualified** — it carries a form id, §4.3.2.1; a bare 2.x TOC section no longer exists in the grammar and reads tolerantly per §12.18.)*
 
 #### 4.3.1 The metadata zone
 
@@ -238,7 +247,7 @@ The opener may be bare (`<!--origin-->`) or qualified (`<!--origin <id>-->` or `
 - **Bare** — generic origin; no schema overlay. Contributes nothing to the classifications view.
 - **Qualified** — matches an `origin/<id>` schema overlay. Contributes `origin/<id>[/<subtype>]` to the derived classifications.
 
-The id is not necessarily a hostname; the host-pattern match (when one is declared on the schema overlay) is a **cue** the drafter uses to decide which origin schema applies. Origin overlays may also key on non-host cues — file-system paths, API endpoint fingerprints, manual hints — declared in the overlay's match predicate.
+The id is not necessarily a hostname; the host-pattern match (when one is declared on the schema overlay) is a **cue** the pipeline uses to decide which origin schema applies. Origin overlays may also key on non-host cues — file-system paths, API endpoint fingerprints, manual hints — declared in the overlay's match predicate.
 
 The origin block subsumes:
 
@@ -253,7 +262,7 @@ The origin block subsumes:
 
 ##### 4.3.1.4 The embed block
 
-Zero or more per record. Header-only blocks describing embedded assets (inline images, video streams, audio clips, nested transports). Carry the asset's identifying metadata; the record body refers to them by position (address-membership).
+Zero or more per record. Header-only blocks describing **embedded assets**. *(3.0)* The embed is a **closed primitive**: it declares an asset whose bytes are **part of this record's capture** — materializable from the record's own artifact (a nested transport, an archive member, an inline `data:` asset, a media track) or from its capture-time enrichment (`also_capture`). A record never embeds content that lives in *another* record's capture; content the record's bytes merely *reference* is reached at read time through the resolver — a lineage-chained reference (§6.2) or a URL-tier context edge (§4.3.3.3) — derived, never stored. The `transport:` hash names the bytes (the dedup key); the address says where the asset appears in this transport.
 
 ```
 <!--embed <mime-type>
@@ -286,7 +295,7 @@ The opener line carries the embed's full MIME type.
 
 Per the matching media-type schema. The asset's descriptors split into two distinct kinds:
 
-- `alt` — verbatim source-side alternate text (the publisher's caption, the image's `alt` attribute, the audio track's title, etc.). Drafter-emitted at capture; **never replaced by the normalizer**. Omitted when the source has none. Provenance-bearing — may be missing, terse, or wrong, but reflects what the publisher wrote.
+- `alt` — verbatim source-side alternate text (the publisher's caption, the image's `alt` attribute, the audio track's title, etc.). Mechanically emitted at capture/ingest; **never replaced by the normalizer**. Omitted when the source has none. Provenance-bearing — may be missing, terse, or wrong, but reflects what the publisher wrote.
 - `description` — normalizer-written description of the asset as a whole. Lossy by definition. Omitted when the asset is purely decorative.
 
 Plus per-mime fields declared by the embed's media-type schema.
@@ -297,64 +306,103 @@ The embed's `description` covers the **whole asset**. A segment derived from tha
 
 ###### Deduplication
 
-Embeds are deduplicated by `transport` — identical content collapses to one embed regardless of how many positions reference it. The drafter walks the transport's assets in order, hashes each, and merges duplicates by appending positions to the existing embed's `address` list.
+Embeds are deduplicated by `transport` — identical content collapses to one embed regardless of how many positions reference it. The attesting pass walks the transport's assets in order, hashes each, and merges duplicates by appending positions to the existing embed's `address` list.
 
 ###### Linking from segments
 
-Segments link to embeds by **address membership**, not by an explicit reference field. A segment whose address appears (scalar or list-member) in an embed's `address` is described by that embed. Orphan embeds — embeds with no segment pointing at them — are tolerated as a record of available imagery; the normalizer may prune them.
+Segments link to embeds by **address membership**, not by an explicit reference field. A segment whose address appears (scalar or list-member) in an embed's `address` is described by that embed. Orphan embeds — embeds with no segment pointing at them — are tolerated as a record of available assets; the normalizer may prune them.
 
-Every image, audio, and video segment's address must appear in some embed's address — **except artifact-self-slices**. When a segment's address is a region of the record's *own* artifact that the resolver can materialize on demand (a `frame=`/`time=`/`time_range=` into a video, a `page=` render of a PDF, a `bbox=` into a single-image record), no embed is required: the bytes already live in the artifact and the functional URI (§6) produces the slice. An embed is needed only for assets the artifact does *not* itself contain — an inline image referenced by an HTML page, a nested transport, an externally-sourced clip. A self-slice carries any description on the addressing segment's (or section's) own `description:`, since there is no embed to host it.
+Every image, audio, and video segment's address must appear in some embed's address — **except resolver-materializable addresses**. When the resolver can materialize the segment's address on demand, no embed is required — the functional URI (§6) produces the bytes, and any description rides the addressing segment's (or section's) own `description:`. Two cases qualify:
+
+- **Artifact self-slices** *(unchanged from 2.x)* — a region of the record's own artifact: a `frame=`/`time=`/`time_range=` into a video, a `page=` render of a PDF, a `bbox=` into a single-image record.
+- **Lineage-chained references** *(3.0)* — an asset the record's bytes declare but do not contain, whose bytes live in the record's own containment-lineage parent (§6.2): a conversation message's attachment (`turn=<N>&att=<M>`), a promoted member's sibling asset. The reference is faithful content (it is *in* the bytes); the resolution chain is derived at read time from the lineage origin block plus the record's own bytes — never stored — and cannot rot, because the parent is content-addressed. A reference whose target member is absent (a dead CDN link the export never localized, a takeout gap) is still a faithful marker; materialization fails loudly at resolve/health time, never papered over by a stale stored pointer.
+
+An embed is needed only for assets that are neither self-slices nor lineage-resolvable — an inline image the capture inlined, a nested transport, a declared track.
 
 #### 4.3.2 The content zone
 
-The content zone carries the record body's rendered content — structural sections containing atomic segments. Two block families.
+The content zone carries the record body's rendered content — segments (content-atom and structural), optionally spanned by form sections. Two block families.
 
-##### 4.3.2.1 The section block
+##### 4.3.2.1 The section block — the form span
 
-A **section** is the universal grouping primitive — a chapter, a heading-delimited block, a sheet, a user turn, a speaker run. It is the table-of-contents unit. A section has a bare opener and a YAML header carrying an address and an optional `entry` (the TOC label). Sections contain segments; they have no body of their own.
+*(3.0)* The section's 1.0–2.x role — the universal TOC grouping unit — is **retired in place**; its successor is the structural segment (§4.3.2.3), and the table of contents is a derived rendering. What remains is the primitive the grammar always had — a positional span over the content zone, with a YAML header — now carrying the one thing that genuinely needs a span with fields: the record's **form** (§4.4.1, §7.8).
+
+A **section** declares that a span of the content zone has a named structural form. The opener is **qualified** — it carries the form id, exactly as a segment opener carries its atom id:
 
 ```
-<!--section
-address: <address>
-entry: <TOC label>
+<!--section conversation
+participants:
+- Andy Sun <andy@example.net>
+- Steven Rahn <steven@example.org>
 -->
 
-<!--segment <atom>
-address: <address>
+<!--segment structural
+address: turn=1
+level: 1
 -->
 
-<segment body>
-
-<!--section
-address: <next-address>
+<!--segment text/message
+address: turn=1
+participant: 0
+timestamp: '2014-03-04T00:09:34Z'
 -->
 
-...
+Yo
+
+<!--segment text/message
+address: turn=2
+participant: 1
+timestamp: '2014-03-04T00:11:02Z'
+reply_to: turn=1
+-->
+
+<!--segment image
+address: turn=2&att=1
+-->
 ```
 
-A section's closer (`-->`) is followed **directly** by its first child segment opener — or, for an empty section (a TOC node with no content of its own), by the next section opener or the end of the body. Markdown prose between a section closer and the next opener is a parse error — sections have no body region.
-
-A section's child segments arrange themselves along the media's natural axis:
-- **Parallel** (temporal media) — segments within a section are simultaneous along time.
-- **Sequential** (linear media) — segments within a section are stacked in reading order.
+(The structural mark is the platform's own topic boundary — a byte-mark; DiscordChatExporter (DCE) exports carry none and go flat. `participant:` indexes the section's authorship-ordered codebook. Turn 2 is an attachment-bearing reply: its `text/message` envelope segment is empty-bodied — the message has no text, and the envelope never rides the marker — and the `image` marker at the composed address carries no embed: the attachment is lineage-resolvable, §4.3.1.4/§6.2.)
 
 ###### Section header fields
 
 | Field | Required? | Description |
 |---|---|---|
-| `address` | Required | Address inside the transport in the scheme defined by the media-type schema. The section's identity. For a discrete-index scheme (`pages=`, `spines=`, `block=`, `sheet=`) it is the **envelope** — the min–max span of the section's child segment addresses — so the section never claims a range wider than the content it holds; a drafter derives it from the children rather than from a structural bound. Temporal sections (`time_range=`) are an exception: their bounds are structural intervals (chapters, speaker runs) that may legitimately differ from their checkpoints' content edges. |
-| `entry` | Optional | The TOC label — written by the drafter when the source has a natural title; by the normalizer otherwise. |
-| `description` | Optional | Scope-specific description of what this section IS — used when the section's address is a self-materializable asset (an artifact-self-slice with no embed, §4.3.1.4) and no child segment carries the description. Normalizer-written. |
+| `address` | Span-scope only | The span's **envelope** — the min–max span of the child segment addresses (`pages=2-6`, `turn=1-74`) — derived from the children, never wider than the content held. **Omitted on a whole-record form section** (one section spanning the entire content zone — the record-scope form); required when the form governs part of the record. |
+| `entry` | Optional | A short label for the span. |
+| `description` | Optional | Scope-specific description of what this span IS. Normalizer-written. |
+| *(form fields)* | Per overlay | The **codebook and envelope fields the form overlay declares** (§7.8) — e.g. `form/conversation`'s `participants:` list, the authorship-ordered codebook that `participant:` segment indexes resolve against. Mechanically derivable from the span's own bytes, always. |
 
-*(2.0)* Section openers are bare. The 1.0 section-scope composite — what a passage IS on its own terms — is expressed, when a domain cares, as a ledger claim whose evidence anchors the section's span (`ledger.md` §6); the record itself makes no such assertion. See the §4.4.3 tombstone.
+###### Rules
 
-###### Section emission
+- **Positional span.** A section's closer is followed directly by its first child block; its span runs to the next section opener or the end of the content zone. Markdown prose between a section closer and the next opener is a parse error — sections have no body region.
+- **Depth one, no overlap, one form per span.** Sections never nest and never overlap (positional by construction). A whole-record section (no `address`) admits no sibling sections. Forms do not nest; a genuinely separable sub-document is a **promotion** candidate, not a nested form.
+- **Rare by design.** A section exists *only* where a form is declared. Most records — the entire public-web document population, containers, single assets — have no section at all: a bare flat content zone is the default, well-formed state. Segments before the first section opener (or in a sectionless record) are **formless** content under mime + atoms alone — the mixed-artifact case: a statement PDF whose page 1 is a cover letter carries page 1's segments bare, then `<!--section statement address: pages=2-6-->` over the statement proper.
+- **Coherence is lint-enforced.** A record carrying `<!--section <form-id>-->` MUST satisfy that form overlay's declared conformance checks (§7.8) — envelope fields present, codebook indexes in range, addresses parse in the span's scheme. There is no half-asserted form and no transitionary state: stamping the form and conforming the span land together.
 
-A drafter emits sections when the source carries natural boundaries (outline entries, headings, sheets, user turns, speaker changes, etc.). When boundaries are absent, the drafter emits top-level segments instead — a **sectionless record**. The specific boundary policy and address shape per media type are declared on the media-type schema.
+*(The 2.0 note on section-scope composites is unchanged and remains at §4.4.3: a passage's meaning is still a ledger claim over the span. The form id on the opener is a structural-shape judgment, not a meaning — §7.8.)*
 
-###### Nesting
+###### Worked example — the mixed statement PDF
 
-Nesting depth is exactly one: sections contain segments; segments contain nothing; sections do not nest.
+```
+<!--segment image
+address: page=1
+description: Cover letter accompanying the March statement.
+-->
+
+<!--section statement
+address: pages=2-6
+account: '…7841'
+period: 2026-03
+-->
+
+<!--segment text/ocr
+address: page=2&bbox=0.06,0.12,0.88,0.30
+-->
+
+... transactions rendered per the statement form's contract ...
+```
+
+Page 1 carries no form (a "letter" fails the §7.8 minting test today); the statement's codebook/envelope fields (`account`, `period`) ride the section header, mechanically derivable from the span's own bytes; lint runs `form/statement`'s checks over pages 2–6 only.
 
 ##### 4.3.2.2 The segment block
 
@@ -367,7 +415,7 @@ address: <address>                       # single string OR a YAML list of strin
 <segment body>                            # text atom only
 ```
 
-The atom (`text`, `image`, `audio`, or `video`) sits on the opener line itself, optionally qualified by an atomic-overlay id (e.g. `<!--segment text/data-table-->`). A segment is **logically contiguous content of one classification**. An interrupting element of a different classification forces a segment boundary.
+The atom (`text`, `image`, `audio`, or `video`) sits on the opener line itself, optionally qualified by an atomic-overlay id (e.g. `<!--segment text/data-table-->`) — or the opener names the fifth, non-atom kind: `<!--segment structural-->` (§4.3.2.3). A content segment is **logically contiguous content of one classification**; an interrupting element of a different classification forces a segment boundary.
 
 A segment's identity is `(opener-id, address)` — the atomic class id on the opener plus the address. Two segments may share an address only when their opener-id differs. This permits **same-region stacking**: a single source region can carry multiple representations — a positioning marker for the asset, a structured transcription, a literal-text transcription — each as its own segment with the same address but a distinct opener-id. Multi-region segments use an ordered list of single-region addresses in reading order.
 
@@ -391,7 +439,7 @@ A segment carries a segment body only when that body is a faithful, lossless ren
 |---|---|
 | `description` | The segment's scope-specific description — what this segment IS at its address and under its overlay. Distinct from the matching embed's `description` (which describes the whole asset). Normalizer-written. |
 | `perceptual` | An atom-canonical content fingerprint (§7.7) using the `<algo>:<hex>` prefix convention. |
-| `entry` | A short identifying label — the TOC line. MULTI-block sectionless records carry `entry:` on each top-level segment; in-section segments don't (the section is the TOC unit); and a record whose content zone is a single top-level block carries none — such a record is its own TOC line, already labelled by the frontmatter `title`. |
+| `entry` | A short identifying label — an **authored leaf label** (normalizer-written) for a top-level content block in a MULTI-block record. Distinct from the structural segment's `entry:`, which is the *source's own* mark text (byte-mark, §4.3.2.3). A record whose content zone is a single top-level block carries none. |
 | `speaker` | An integer diarization index identifying who is speaking in this `audio` segment. |
 
 The atomic classification, if any, lives on the opener line as `<!--segment <atom>/<id>-->`. A segment carries exactly one atomic class id; when multiple representations apply to the same source region, each becomes its own segment with its own opener (and identity is the `(opener-id, address)` pair).
@@ -419,15 +467,77 @@ Segment bodies may carry:
 - **Raw blake3 wikilinks/embeds** — `[[<blake3>|link text]]`, `![[<blake3>]]` — intra-corpus references whose targets are captured artifacts.
 - **Functional URIs for cross-artifact derived views** — `[[corpus://<other-hash>?<params>|<caption>]]`, `![[corpus://<other-hash>?<params>|<alt-text>]]`.
 
-###### Body-draft mode contract
+*(3.0: the 2.x "Body-draft mode contract" paragraph is deleted with the stage; the stored content zone has exactly one author — the normalize pass — and its total-replacement discipline is stated at §4.4.7.)*
 
-The mime schema is the **only** body-drafter — it alone owns the content zone. A pass operating in body-draft mode **completely overwrites** any existing content zone in the record body. No dependency on prior content; no expectation that future content survives; same bytes always produce the same content zone (modulo extractor version). Body-drafting is total replacement. Overlay-declared emissions (§7.2) are metadata/annotations-only and never body-draft.
+##### 4.3.2.3 The structural segment
+
+```
+<!--segment structural
+address: <the MARK's position>
+level: <int>
+entry: <the mark's own text, verbatim>       # optional — omitted when the mark is unlabeled
+-->
+```
+
+A **structural segment** is a body-empty mark recording that **the source itself declares a structural boundary** at an address: a heading (`el=<N>`), an EPUB nav target (`spine=<N>`), a PDF outline entry (`page=<N>`), a media chapter (`time=<tc>`), a chat platform's topic boundary (`turn=<N>`). It carries no content atom, takes no atomic overlay, and never has a body; it contributes nothing to the faithful text rendering (and is excluded from `token_counts.body`, §9.6). Its identity is (`structural`, address), stacking beside content segments at the same address per the standard rule.
+
+###### The byte-mark rule
+
+A structural segment exists **only where the source bytes carry the mark** — or where the capture's producer-declared enrichment carries it (a yt-dlp sidecar's `chapters[]` is the uploader's own declaration, lifted mechanically at ingest; §12.3.7). A pass never invents one. Groupings a reader may want but the bytes do not declare — a conversation's per-day break (whose midnight? which participant's timezone?), a "front matter vs body" split with no nav entry — are **read-time renderings** with explicit parameters (`corpus toc --tz <zone>`, defaulting to UTC and saying so), computed from the envelope timestamps and addresses the segments already carry, never stored. *(This is §1.5 principle 3 applied to structure. It also retires, retroactively, every synthetic section the 2.x pipeline stored — the iMessage per-day sections foremost; §12.18.)*
+
+###### Level and scope
+
+- `level:` is the mark's own hierarchy where the source states one (`h1`–`h6`; outline depth; nav nesting), else `1`. Levels are the *whole* nesting grammar — there is no block nesting.
+- A mark's **scope is derived**: it runs from its address to the next structural segment of the same or shallower level, or to the end of the enclosing form section (or content zone). Content before the first mark is preamble. The TOC tree — arbitrary depth — is a derived rendering over the flat mark sequence, exactly as an archive's directory tree is a derived rendering over `path=` addresses (§12.4): *a tree is a derived rendering, not stored blocks*, now applied to the table of contents itself.
+- The mark's own `address` is a **position**, not an envelope — the 2.x envelope-derivation rule **narrows** to the form-span `address` (§4.3.2.1), where it survives; a consumer that needs a mark's span derives it from scope. *(The 2.x temporal exception — structural-interval bounds for `time_range=` sections — is deliberately dropped: chapter and speaker-run boundaries are byte-marks or read-time renderings now, and a temporal form span takes the derived envelope like any other.)*
+
+###### Emission
+
+Byte-marks are mechanical facts, so structural segments are **attested at ingest** where the mime schema declares them (a media container's chapters, §1.2) and otherwise written by the normalize pass's shaper from the same derivation ops any consumer can run (a PDF's `outline`, an EPUB's nav, an HTML page's headings, a transcript's declared topic ids). Either way the mark is checkable against the bytes — the same auditability as every attested fact. **Ownership is deterministic from the schema**: a structural segment is attested — and stripped + regenerated by re-attest — **iff its address family is declared in the mime schema's `attest:`** (§7.1); every other mark belongs to the authored layer and refreshes with re-normalize (§4.4.7). No per-segment provenance field is needed: schema plus touch chain recover the owner.
+
+###### Worked example — a media container with chapters
+
+```
+<!--artifact video/x-matroska
+duration: '01:42:07'
+streams: [h264 1920x1080, aac 5.1 eng, subrip eng]
+-->
+
+<!--embed video/h264
+address: stream_id=0
+transport: blake3:…
+-->
+
+<!--embed audio/aac
+address: stream_id=1
+transport: blake3:…
+-->
+
+<!--embed text/x-subrip
+address: stream_id=2
+transport: blake3:…
+-->
+
+<!--segment structural
+address: time=00:00:00
+level: 1
+entry: Opening
+-->
+
+<!--segment structural
+address: time=00:12:31
+level: 1
+entry: The heist
+-->
+```
+
+The chapters are the container's byte-marks on the shared timeline; the tracks (promotable, §8.1) inherit them at read time through lineage — a track record never copies marks its own bytes do not carry.
 
 #### 4.3.3 The annotations zone
 
 The annotations zone carries observations *about* the record — problems with it, sources it cites, derived relations. One block family: the **context block**, drawing its overlays from the `context/` umbrella (§3), with one namespace per kind of observation (`issue`, `reference`, …). Context **never** contributes to the faithful content zone or the canonical content hash — it is a side-channel that accretes without disturbing the lossless body.
 
-**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a declared dependent link resolved toward capture (`reference`), an overlay-declared chrome extraction (`aside`), a source-declared cross-link (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`aside`, `reference`, `relation`) auto-populate *only* on real signal and *only* where overlay-gated — each exists **solely** where an origin overlay declares the extraction, and there are none absent that declaration; every block requires a referent actually present in the content (a declared link or structure in the page). `issue` is the one namespace with an asserted path: the normalizer surfaces **faithfulness** problems (garbled OCR, truncated content) beside the drafter's mechanical detections. Absent real signal the annotations zone is **empty** — the normal state for most records.
+**Context is scarce by design.** A record carries a context block only when it records durable, high-value information the faithful body cannot — a detected problem (`issue`), a declared dependent link resolved toward capture (`reference`), an overlay-declared chrome extraction (`aside`), a source-declared cross-link (`relation`). It is emphatically **not** a normalizer scratchpad: a normalizer MUST NOT emit commentary, summaries, running notes, or "what I did" prose as context. The **mechanical** namespaces (`aside`, `reference`, `relation`) auto-populate *only* on real signal and *only* where overlay-gated — each exists **solely** where an origin overlay declares the extraction, and there are none absent that declaration; every block requires a referent actually present in the content (a declared link or structure in the page). `issue` is the one namespace with an asserted path: the normalizer surfaces **faithfulness** problems (garbled OCR, truncated content) beside the pipeline's mechanical detections. Absent real signal the annotations zone is **empty** — the normal state for most records.
 
 *(2.0)* The 1.0 interpretive `reference` path — normalizer-found citations in the content — moved to the ledger: a found citation is a `capture`/`search` need or, where the domain cares, a citation edge with span evidence (`ledger.md` §7). The 1.0 `concept` namespace was removed outright (§4.3.3.4). Content-*meaning* observations of every kind are ledger material; the annotations zone records only what is mechanical or faithfulness-scoped.
 
@@ -445,9 +555,9 @@ provenance: auto                         # optional reserved field (see below)
 -->
 ```
 
-A context block with an `address:` field is **segment-scoped**; without it, **record-scoped**. The optional **`quote:`** (a verbatim span copied from the addressed segment's body) sharpens the anchor to the exact phrase; **`occurrence:`** disambiguates when that span repeats. Because the body is an immutable rendering of the immutable artifact, a verbatim `quote:` survives re-drafts where a character offset would not.
+A context block with an `address:` field is **segment-scoped**; without it, **record-scoped**. The optional **`quote:`** (a verbatim span copied from the addressed segment's body) sharpens the anchor to the exact phrase; **`occurrence:`** disambiguates when that span repeats. Because the body is a faithful rendering of the immutable artifact, a verbatim `quote:` survives re-runs where a character offset would not.
 
-One field name is **reserved**: `provenance` (§4.4.6). `provenance: auto` marks an engine-stamped block (a drafter detection, an overlay-declared emission) that is stripped and regenerated on re-run; its absence (or `provenance: asserted`) marks a human- or normalizer-asserted block that the engine never touches. No namespace may declare `provenance` as an overlay field.
+One field name is **reserved**: `provenance` (§4.4.6). `provenance: auto` marks an engine-stamped block (a detector or overlay-declared emission) that is stripped and regenerated on re-run; its absence (or `provenance: asserted`) marks a human- or normalizer-asserted block that the engine never touches. No namespace may declare `provenance` as an overlay field.
 
 Context blocks **do not** contribute to the derived classifications view (§9.1) — they surface in the derived `context` view, of which the `issues` view (§9.2) is the `issue`-namespace projection. Conceptually, a *classification* says what the content IS; a *context* records something observed about it.
 
@@ -459,13 +569,13 @@ An `issue` context block (`<!--context issue/<id>-->`) is a typed problem with t
 - `resolution` — typically `open | fixed | wontfix | superseded`.
 - `detector` — touch identifier of the pass that emitted the issue.
 
-Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `severity`/`resolution` value sets are corpus-local (schema-declared); cross-corpus tooling should treat unknown values gracefully rather than assuming a fixed vocabulary. Issues come from three sources — the **drafter** (deterministic detections: bot blocks, corrupt encoding, missing inputs), the **normalizer** (content-meaning problems), and **external** health-signal sweeps — each recorded in `detector` and, where engine-owned, `provenance: auto`.
+Per-id overlays (`context/issue/<id>`) extend with id-specific fields. The `severity`/`resolution` value sets are corpus-local (schema-declared); cross-corpus tooling should treat unknown values gracefully rather than assuming a fixed vocabulary. Issues come from three sources — the **deterministic pipeline** (mechanical detections at capture/ingest: bot blocks, corrupt encoding, missing inputs), the **normalizer** (content-meaning problems), and **external** health-signal sweeps — each recorded in `detector` and, where engine-owned, `provenance: auto`.
 
 ##### 4.3.3.3 The `reference` namespace
 
-A `reference` context block (`<!--context reference-->`) records a **declared dependent link** — a product page's manual, a spec sheet — emitted at draft from an origin overlay's `capture.references` declaration (§7.2), carrying `provenance: auto` and a corpus-local **`role`** field (`manual`, `spec-sheet`, …; schema-declared closed set, treated gracefully when unknown). It is pinned to its link's mention via `address:`/`quote:` (the link text) and carries the **citation ladder** (§4.4.5) at tier 1–2: `attribution_text` (the link text) → `source_url` (the resolved href).
+A `reference` context block (`<!--context reference-->`) records a **declared dependent link** — a product page's manual, a spec sheet — emitted mechanically from an origin overlay's `capture.references` declaration (§7.2) by the **normalize pass** — the anchor needs the authored body (§8.1) — carrying `provenance: auto` and a corpus-local **`role`** field (`manual`, `spec-sheet`, …; schema-declared closed set, treated gracefully when unknown). It is pinned to its link's mention via `address:`/`quote:` (the link text) and carries the **citation ladder** (§4.4.5) at tier 1–2: `attribution_text` (the link text) → `source_url` (the resolved href).
 
-**The intra-corpus edge is derived, never stored.** Whether `source_url` is itself a captured record is a **read-time derived edge** — resolved against the URI index by `derived_views.references` (§9.9) / `corpus links --references`, never baked into the record — so `draft` stays a pure function of the artifact (it reads no corpus state) and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded. As an `auto` block it is regenerated on re-draft.
+**The intra-corpus edge is derived, never stored.** Whether `source_url` is itself a captured record is a **read-time derived edge** — resolved against the URI index by `derived_views.references` (§9.9) / `corpus links --references`, never baked into the record — so the emission stays a pure function of the artifact (it reads no corpus state) and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded. As an `auto` block it is regenerated on re-normalize (§8.3), with the pass that owns it (§4.4.6).
 
 *(2.0)* The 1.0 interpretive emission path (normalizer-authored citations found in the body, including the stored tier-3 `source_uri`) moved to the ledger (§4.3.3 note). The reference block is now mechanical-only: capture plumbing, not citation knowledge.
 
@@ -475,25 +585,28 @@ A `reference` context block (`<!--context reference-->`) records a **declared de
 
 ##### 4.3.3.5 The `relation` namespace
 
-A `relation` context block (`<!--context relation[/<predicate>]-->`) records a **source-declared cross-link** from this record toward another resource — navigation structure actually present in the content (a "related information" rail, sibling-page links) — typically lifted from chrome the faithful body drops, making the annotations zone its proper side-channel home. Mechanical: the lift is declared per host on the origin overlay (`capture.relations`, §7.2) and emitted at draft with `provenance: auto`. The target is recorded as `target_text`/`target_url` — **URL-tier only**: at the corpus layer a record never links another record by id; the URL is the edge, resolved to a captured record at read time exactly as references are (§9.9). An optional `predicate` subtype names the relation kind per the corpus-local overlay.
+A `relation` context block (`<!--context relation[/<predicate>]-->`) records a **source-declared cross-link** from this record toward another resource — navigation structure actually present in the content (a "related information" rail, sibling-page links) — typically lifted from chrome the faithful body drops, making the annotations zone its proper side-channel home. Mechanical: the lift is declared per host on the origin overlay (`capture.relations`, §7.2) and emitted by the normalize pass, exactly as references are (§4.3.3.3), with `provenance: auto`. The target is recorded as `target_text`/`target_url` — **URL-tier only**: at the corpus layer a record never links another record by id; the URL is the edge, resolved to a captured record at read time exactly as references are (§9.9). An optional `predicate` subtype names the relation kind per the corpus-local overlay.
 
-*(Migration note, non-normative: relation blocks emitted by 1.0-era normalize passes are asserted-labeled; they relabel to `provenance: auto` as origin-declared lifting lands in the drafter.)*
+*(Migration note, non-normative: relation blocks emitted by 1.0-era normalize passes are asserted-labeled; they relabel to `provenance: auto` as origin-declared lifting lands in the mechanical pipeline.)*
 
 ### 4.4 Classifications: scope and fidelity
 
-Classifications identify what a record (and its segments) IS — **structurally**: its format, its retrieval source, the form of its content. What a record's content *means* is not a classification at this layer; it is ledger knowledge (`ledger.md`). The framework rests on two ideas: what *kind* of classification is being made (three axes) and what structural *scope* it applies at.
+Classifications identify what a record (and its segments) IS — **structurally**: its format, its retrieval source, the form of its content. What a record's content *means* is not a classification at this layer; it is ledger knowledge (`ledger.md`). The framework rests on two ideas: what *kind* of classification is being made (four axes) and what structural *scope* it applies at.
 
-#### 4.4.1 The three classification axes
+#### 4.4.1 The classification axes
 
-Every classification falls along one of three conceptual axes. Each axis has its own block, its own schema namespace, and its own scope rules.
+Every classification falls along one of four conceptual axes. Each axis has its own block surface, its own schema namespace, and its own scope rules.
 
-| Axis | What it identifies | Block | Schema namespace |
+| Axis | What it identifies | Block surface | Schema namespace |
 |---|---|---|---|
 | **media-type** | The format / container / transport of the bytes. | artifact block (exactly 1) | `mime` |
 | **origin** | Where the bytes came from. | origin block (1..N) | `origin` |
+| **form** *(3.0)* | What structural shape a span of content decomposes into. | **section-block opener** (0..N spans) | `form` |
 | **atomic** | What *form* of atomic content a segment carries. | segment-block opener | `atom` |
 
-**media-type** and **origin** are properties of the bytes — they live at record scope only. **atomic** is a **structural-form** judgment — what shape of content a segment carries (a table, a transcript, a chat message, a screenshot), checkable against the bytes like everything else in the faithful zone; it applies at segment scope. *(2.0: the 1.0 model called the atomic axis "interpretive" and had a fourth axis — **composite**, domain meaning at record and section scope. Composite moved to the ledger; atomic was never meaning — see the constitution in §7.3.)*
+**media-type** and **origin** are properties of the bytes — record scope only. **atomic** is a structural-form judgment at segment scope. **form** *(3.0)* is the same structural-form judgment one level up — what shape a *span* of content decomposes into (a conversation, a statement, a receipt) — checkable against the bytes like everything else in the faithful zone, applying at section scope (a whole-record section being the record-scope case). The ladder is uniform: record blocks bind mime/origin; section openers bind form; segment openers bind atom.
+
+The form axis is **not** the 1.0 composite returning (§4.3.1.3, §7.4 — both tombstones intact): composite asserted *meaning* (what content is about — a subject, a domain judgment), which lives in the ledger as claims; form names a *shape* — a decomposition contract with mechanical facts — and can no more assert meaning than a `text/data-table` opener can (§7.8 states the discipline normatively).
 
 Atomic-axis schemas declare two extra keys beyond the universal classification fields:
 
@@ -504,19 +617,20 @@ A segment carries **exactly one** atomic class id, on the opener line. When mult
 
 #### 4.4.2 Scopes
 
-Classifications attach at two structural scopes — record and segment — plus the **embed**, where the media-type axis attaches via each embed's MIME:
+Classifications attach at three structural scopes — record, section (span), and segment — plus the **embed**, where the media-type axis attaches via each embed's MIME:
 
-| Axis | Record | Segment | Embed |
-|---|---|---|---|
-| media-type | ✓ (artifact MIME, via artifact block) | — | ✓ (per-embed MIME on the opener line) |
-| origin | ✓ (capture-time match, via origin block) | — | — |
-| atomic | — | ✓ (on the segment opener) | — |
-
-Sections carry no classification in 2.0 (§4.4.3).
+| Axis | Record | Section (span) | Segment | Embed |
+|---|---|---|---|---|
+| media-type | ✓ (artifact MIME) | — | — | ✓ (per-embed MIME) |
+| origin | ✓ (origin block) | — | — | — |
+| form | ✓ (a whole-record section) | ✓ (a span section) | — | — |
+| atomic | — | — | ✓ (segment opener) | — |
 
 #### 4.4.3 Section scope *(dissolved in 2.0)*
 
 *Retired.* The 1.0 section-scope composite (a passage's identity — "this section is a recipe") and the further-deferred identity+role dual-composite citation model (borrowed material carrying both what it is and what it does in the host) are both expressed as **ledger claims over section spans**: span-precise evidence URIs make "what this passage is" and "what this passage does here" two claims about one anchor, with no record-side mechanism at all. Nothing remains at this layer.
+
+*(3.0 note.)* What returns to section scope in 3.0 is the **form axis** (§4.4.1) — a structural-shape judgment, checkable against the bytes, binding a `form/` overlay on the section opener. What this tombstone retired — a passage's *meaning*, its identity and role as domain knowledge — stays retired: it remains a ledger claim over the span, and no form overlay may carry it (§7.8).
 
 #### 4.4.4 Scope-driven fidelity *(removed in 2.0)*
 
@@ -532,23 +646,31 @@ A declared dependent link progresses from lossy toward lossless:
 | **2** | `source_url` | Resolvable URL. |
 | **3** | *(derived, never stored)* | The captured record the URL resolves to. |
 
-The ladder is carried by the **`reference` context block** (§4.3.3.3), pinned to the exact mention via `address:`/`quote:`. Host records never change shape — enrichment happens at the linked target. Tier 3 is always a **read-time resolution** of `source_url` against the URI index (§9.9): `draft` reads no corpus state and stays a pure function of the artifact, and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded rather than leaving a stored pointer that dangles. *(2.0: the 1.0 asserted tier-3 `source_uri` — a hand-linked citation with no resolvable URL — moved to the ledger with the rest of citation knowledge.)*
+The ladder is carried by the **`reference` context block** (§4.3.3.3), pinned to the exact mention via `address:`/`quote:`. Host records never change shape — enrichment happens at the linked target. Tier 3 is always a **read-time resolution** of `source_url` against the URI index (§9.9): the emitting pass reads no corpus state and stays a pure function of the artifact, and the edge self-heals (`captured ⇄ pending`) as targets are captured, removed, or superseded rather than leaving a stored pointer that dangles. *(2.0: the 1.0 asserted tier-3 `source_uri` — a hand-linked citation with no resolvable URL — moved to the ledger with the rest of citation knowledge.)*
 
 #### 4.4.6 Provenance
 
-A record's metadata and annotations have one of three **provenances** (who put a datum there, and what re-running does to it):
+A record's metadata and annotations have one of four **provenances** (who put a datum there, and what re-running does to it):
 
 | Provenance | How it appears | On re-run |
 |---|---|---|
-| **structural-derived** | `mime/*`, `origin/*` — walked from the artifact / origin blocks (§9.1) | recomputed |
-| **auto** | a context block with `provenance: auto` — a drafter detection or an overlay-declared emission (references §4.3.3.3, relations §4.3.3.5) | stripped + regenerated from the current overlays |
+| **structural-derived** | `mime/*`, `origin/*`, `form/*` — walked from the artifact / origin blocks and section openers (§9.1) | recomputed |
+| **attested** *(3.0)* | ingest-stamped byte-facts: artifact-block fields, manifest embeds, structural byte-marks whose address family the mime schema's `attest:` declares (§4.3.2.3), sidecar-lifted origin fields | re-attested (stripped + regenerated) by re-ingest / re-attest (§8.3) |
+| **auto** | a context block with `provenance: auto` — a detector or overlay-declared emission (emitted at normalize — §4.3.3.3, §4.3.3.5) | stripped + regenerated from the current overlays by a re-run of the owning pass (re-normalize) |
 | **asserted** | a context block with no `provenance` — human / normalizer (faithfulness issues) | never touched |
+
+A **form section** is stamped by one of two paths, both recorded in the touch chain: **declared** — the record's origin overlay declares its form (§7.2), and the shaper stamps + conforms the span mechanically on the normalize pass (regenerated on re-shape); or **asserted** — an interpretive pass recognizes the shape on a record whose origin is generic, and the pass's model identifier is in the chain (§4.2.2). Recognition may come from any layer — a ledger scribe reading cross-corpus is exactly who will spot that some old PDF is really a transcript — but the record mutation always goes through the corpus normalize pass and its lint gate (a worklist entry, then a re-normalize dispatch); scribes author knowledge, normalizers author faithful form. A wrong assertion fails form-coherence lint immediately (§4.3.2.1); a wrong-but-lint-passing one is corrected by a later asserted pass, auditable in the chain.
 
 *(2.0: the 1.0 ladder's classify-block rows — `classify_when` auto-membership and asserted composites — moved to the ledger; deterministic membership is now a harvest rule with the same auto/asserted discipline at the claim level, `ledger.md` §10.)*
 
 #### 4.4.7 Re-run lifetime
 
-Metadata- and annotations-zone blocks persist across re-runs **unless the pass that owns them is itself re-run**. A re-draft of the mime schema refreshes the artifact block and, for a body-draft mime schema, re-runs the body draft (re-segmenting the content zone, re-emitting embeds and overlay-declared `auto` context blocks). A re-normalize refreshes the faithful-form work (descriptions, segmentation, the editorial fields) and asserted faithfulness issues. To deliberately reset all accumulated metadata, use the `re-stub` operation (§8.4).
+Metadata-, content-, and annotations-zone material persists across re-runs **unless the pass that owns it is itself re-run**. 3.0 has exactly two owning passes:
+
+- **Ingest / promote own the attested layer** — the artifact block's fields, manifest embeds, structural byte-marks, sidecar-lifted origin fields, origin stamping. A **re-attest** (§8.3) strips and regenerates them from the current schemas; it never touches the authored layer.
+- **Normalize owns the authored layer** — the stored content zone (total replacement per pass: shaper or agent, same discipline the 2.x body-draft contract stated), embed/segment `description:`s, the editorial fields, asserted faithfulness issues. A re-normalize refreshes it; it never touches attested facts except to *read* them.
+
+`provenance: auto` context blocks belong to whichever pass's overlay declared them and regenerate with it; asserted context blocks are never auto-touched. The 2.x three-way dance — re-draft wiping normalize work, normalize partially surviving re-draft (§4.4.7/2.x) — dissolves with the stage: there is nothing between the attested facts and the authored form. To deliberately reset everything, `re-stub` (§8.4).
 
 ---
 
@@ -595,6 +717,8 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 
 ### 6.2 Transformations
 
+*(3.0.)* The transformation table is also the home of the **derivation ops** — the mechanical extractions the 2.x drafters performed, now exposed as resolver operations: on-demand, cacheable, reproducible, consumed by the normalize pass and by any reader (a stub is fully readable through them). The 2.x rows stand unchanged (`time_range=` amended); 3.0 adds `body`, `members`, `transcribe`, the unit ops (`turn=`, `turn=&att=`), and the muxing-contract params (`cut=`, `format=`).
+
 | Param | Input type | Output type | Description |
 |---|---|---|---|
 | `page=<N>` | PDF | image | Select page N (1-indexed). On its own it renders the page as an image; an image op or `bbox=` after it auto-renders first. |
@@ -604,7 +728,7 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `page=<N>&probe` | PDF page | json | Per-page structural signals: dimensions, rotation, text/image-coverage stats, an invisible-text flag, and an advisory shape hint. |
 | `probe` | PDF | json | Whole-document structural probe: per-page table, `/Info`, outline presence, and a shape summary. |
 | `outline` | PDF | json | The PDF outline / TOC tree (nested `{title, page, children}`). |
-| `time_range=<s>-<e>` | video / audio | media slice | Extract a time range. |
+| `time_range=<s>-<e>[,<s>-<e>…]` | media container / stream | media slice | *(amended, 3.0)* A cut of the **composition** (on a container: the default member of each kind, muxed — the muxing contract, below) or of one stream (after `stream_id=`). A comma-delimited ordered list concatenates cuts in listed order. |
 | `stream_id=<id>` | multi-stream media | stream-isolated | Select a specific stream. |
 | `bbox=<x>,<y>,<w>,<h>` | image / spreadsheet | image / cell-range | Crop a relative region (image: floats in `[0.0, 1.0]`, origin top-left) or narrow a worksheet (spreadsheet: an A1 range, e.g. `bbox=B2:G30`). Polymorphic — see below. |
 | `crop=<x>,<y>,<w>,<h>` | image / spreadsheet | image / cell-range | Alias for `bbox` (inherits its polymorphism). |
@@ -617,48 +741,79 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `contrast=<factor>` | image | image | Scale contrast by a float factor (`1.0` unchanged). |
 | `grayscale` | image | image | Convert to single-channel grayscale. |
 | `dpi=<N>` | (render config) | (config) | Rasterization DPI for `page=<N>`. Position-independent. Default 200. |
+| `body` *(3.0)* | any | markdown | The record's **derived body** — the faithful mechanical rendering the 2.x draft stage stored: DOM→markdown under the overlay's capture-time chrome config (HTML), spine text (EPUB), reply-text trim (eml), verbatim passthrough (JSON, plain text), page markers (PDF). A pure function of (artifact × schemas × op version); what `corpus body` prints for a stub. |
+| `members` *(3.0)* | container | json | Member enumeration (path/msg/part/stream axes with per-member hash, size, sniffed type) — the manifest, derived. |
+| `transcribe` *(3.0)* | audio / audio stream | json/text | Speech-to-text over the addressed audio, with timestamps and speaker-turn indexes where determinable. **Version-labeled** (§6.4): the result carries engine + model version. |
+| `turn=<N>` *(3.0)* | turn-structured record | json/text | The verbatim N-th unit of the record's declared unit array (1-indexed), located by the origin overlay's form mapping (§7.2) — for a chat transcript, the complete message object: reactions, edit history, attachment declarations, platform ids, one hop away from the envelope segments. |
+| `turn=<N>&att=<M>` *(3.0)* | turn-structured record | bytes | The M-th attachment declared by unit N, materialized through **lineage-chained resolution** (below). |
+| `cut=precise\|copy` *(3.0)* | (cut config) | (config) | Cut semantics for `time_range=` (the muxing contract): `precise` (default — frame-accurate, re-encodes) or `copy` (keyframe-snapped stream copy, disclosed). Position-independent, like `dpi=`. |
+| `format=<token>` *(3.0)* | media / image | converted rendering | Output-format conversion, composing **after** selection and cutting (the muxing contract): `time_range=12:04-12:09&format=gif`. Changes encoding only, never the addressed content. |
 
 A parameter applied to an incompatible working type is a hard error.
 
-A PDF `page=<N>` is a **page selector**, not an unconditional render: a per-page op after it (`render`, `text`, `words`, `probe`) reads the *selected page* directly, so `page=<N>&text` returns the page's embedded text layer rather than an OCR of its render. A terminal `page=<N>` (and any image op or `bbox=` after it) renders the page to an image, so an `address: page=<N>` image marker (§4.3.2.2) still resolves to the page bytes. The whole-document ops `probe` and `outline` operate on the PDF itself (no page selected). These introspection ops are how a normalizer determines a PDF's shape and extracts its content — the drafter itself is uniform (§11).
+A PDF `page=<N>` is a **page selector**, not an unconditional render: a per-page op after it (`render`, `text`, `words`, `probe`) reads the *selected page* directly, so `page=<N>&text` returns the page's embedded text layer rather than an OCR of its render. A terminal `page=<N>` (and any image op or `bbox=` after it) renders the page to an image, so an `address: page=<N>` image marker (§4.3.2.2) still resolves to the page bytes. The whole-document ops `probe` and `outline` operate on the PDF itself (no page selected). These introspection ops are how a normalizer determines a PDF's shape and extracts its content — the attestation itself is uniform (§11).
 
 `fit=` presets are **implementation-defined**, not enumerated here: a preset (e.g. `llm`) bounds the result to a consumer's budget — typically a vision model's maximum input dimensions and pixel count — and those limits are model-dependent and drift over time, so freezing them into the spec would rot. The normative contract is only that `fit=` downscales aspect-preserving and never enlarges; the concrete bounds of any named preset live in the resolver implementation.
 
 Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<N>` (a 1-indexed index to *any* addressable element in an HTML artifact — content blocks plus inline-media carriers `<img>`/`<video>`/`<audio>`/`<a href="data:…">`; what it materializes is determined by the element, e.g. an `<img>`'s rendered image, a `<video>`/attachment carrier's raw bytes, or a text element's region), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
 
+**The muxing contract** *(3.0)*. Media cutting, muxing, and conversion are resolver ops with normatively pinned *behavior* and implementation-owned *mechanics* — the contract maps onto ffmpeg's primitives, and exactly as with `fit=` presets, the supported codec/format sets are implementation-defined so the spec doesn't rot; only the behavior below is normative.
+
+- **Composition cut.** `time_range=<s>-<e>` on a media **container** materializes a cut of the *composition*: default-member resolution (below) applied **per kind** — the unique-or-declared-primary video member plus the unique-or-declared-primary audio member — muxed into the source's container family. A kind with **zero** members is omitted from the composition — absence is not ambiguity (a silent video cuts video-only; an audio-only container cuts audio-only). Ambiguity within a *present* kind (two audio tracks, no declared primary) → the bare op fails stating it, never guesses. Subtitle tracks never ride implicitly — opt-in by selection.
+- **Stream selection composes.** `stream_id=<id>&time_range=<s>-<e>` cuts one stream; an explicit subset is a comma list — `stream_id=0,2&time_range=…` (the repeated-`-map` analogue) — cutting exactly the named members, muxed.
+- **Multi-cut.** `time_range=a-b,c-d` — the address grammar's existing ordered-list-for-non-contiguous-spans convention (§12.11), now materialized: the cuts concatenate in listed order. Concatenation is safe by construction — every cut shares the source's codec parameters. This is the composition layer's supercut primitive: one URI names an ordered excerpt reel of one source.
+- **Cut semantics, ffmpeg-honest.** The default is **precise** — frame-accurate, which re-encodes: evidence is the primary consumer, and a cited 5-second clip must contain *exactly* the cited span. `cut=copy` is the disclosed fast path — keyframe-snapped stream copy, whose bounds may widen to the previous keyframe; the URI says so, so nothing silently drifts.
+- **Format conversion.** `format=<token>` converts the working result's encoding, composing after selection and cutting (`time_range=12:04-12:09&format=gif` on an MKV → cut, then convert). Rules: (a) conversion changes **only the encoding, never the addressed content**; (b) targets must be **atom-compatible** — video→`gif` is a video-to-animated-image rendering (audio dropped by the format's nature, not by editorial choice), audio→`wav`/`mp3` is fine, audio→`png` is a hard error; (c) the supported token set is implementation-defined per the resolver's engine (the `fit=` precedent) — the contract is behavioral; (d) `format=` names *explicitly* what existing ops already do implicitly — a terminal `frame=` renders to an image, a terminal `page=` rasterizes, transcription extracts audio to an intermediate wav — one parameterized surface for the same idea.
+- **Canonical application order**, pinned so one URI is deterministic and composable: **select → cut → convert → size** (`stream_id=` → `time_range=` → `format=` → `fit=`). A downscaled gif snippet of one stream is a single composable URI.
+
+Cuts, muxes, and conversions are **version-labeled ops** (§6.4): encoder output drifts across engine versions, so results are cache-keyed by engine version and pure per version. They are ephemeral derived renderings with exactly the standing of a `page=` raster — never new artifacts, never new records.
+
+**Lineage-chained resolution** *(3.0)*. A promoted record's resolver MAY chain through the record's own containment-lineage origin block (`uri: corpus://<container>?…`, §8.1) to materialize content its bytes *declare* but do not *contain*: read the declared reference from the record's own artifact (message N's attachment path), then resolve it as a member of the blake3-pinned parent container. The chain is derived at read time from (lineage block × record bytes) — never stored on any block — so it cannot rot: the parent is content-addressed and immutable, and an absent member (a reference the export never localized) fails loudly at resolve and surfaces in health, exactly the failure mode a stored pointer would have papered over. This is the transcript analogue of an HTML page's captured assets, with the container playing the role of the capture's asset store; it is also how a promoted track record inherits its container's chapter marks (§1.2) — reading up the lineage rather than copying down. *(Note: lineage-chained resolution is a resolver read of corpus state, which resolve has always been — §6.3; the byte-lookup independence rule of §12.9 is untouched: lineage is consulted for declared-reference chasing, never for the record's own byte residence.)*
+
+**Default-member resolution** *(3.0)*. When an op requires a member of a given kind and the container holds **exactly one** of that kind — or the container itself **declares a primary** (HEIF's `pitm` primary-item box: a byte-fact, attested) — the member selector may be omitted and the op routes through transparently: `bbox=` on a Live Photo acts on the declared-primary still; `time_range=` reaches its motion component; `?transcribe` on a single-audio-track MKV needs no `stream_id=`. Zero candidates, or more than one with no declared primary → the bare op **fails stating the ambiguity** — it never guesses. Two properties are pinned. First, it is **read-side sugar only**: attested embeds always carry their explicit `stream_id=`/`item=` addresses, and nothing stored depends on the sugar existing. Second, it is **citation-safe by content-addressing**: the artifact is immutable, so whether a bare anchor is unambiguous is a *permanent fact of the bytes* — a citation that resolved once resolves forever, never invalidated by later state. (This is also why a single-track media container keeps `disposition: manifest` rather than flipping per record — the bare op is already transparent; §1.2.)
+
 ### 6.3 The resolver
 
-A corpus provides a **resolver** that materializes any functional URI to a deterministic, cacheable, ephemeral result. Given the same URI and the same source artifact, a resolver always returns the same result; the URI is the cache key.
+A corpus provides a **resolver** that materializes any functional URI to a deterministic, cacheable, ephemeral result. *(3.0)* Ops fall into two determinism classes:
+
+- **Pure ops** — a pure function of (URI × artifact × op version): same inputs, same bytes, always. All address selectors and the mechanical derivations (`body`, `members`, `text`, renders).
+- **Version-labeled ops** — ops whose engine output may drift across engine versions (`transcribe`; OCR performed through the toolkit; the muxing contract's cuts, muxes, and `format=` conversions — encoder output is engine-versioned, §6.2): the result carries its engine + version, and the cache key includes them. Determinism holds *per version*. All remain ephemeral derived renderings — a precise cut has the same standing as a `page=` raster, never a new artifact.
 
 The resolver's surface (CLI, library, HTTP service, etc.) is implementation-defined; the contract is that the URI scheme of §6.1 and the transformations of §6.2 are honored.
 
 ### 6.4 Caching
 
-Resolver results may be cached. Cache lifetime, eviction policy, and storage location are all implementation-defined; the spec mandates only that the result is deterministic and reproducible from inputs.
+Resolver results may be cached. Cache lifetime, eviction policy, and storage location are all implementation-defined; the spec mandates only that the result is deterministic and reproducible from inputs — for a version-labeled op (§6.3), the cache key includes the engine + version.
+
+**Pinning by authorship.** While a record is a stub, a version-labeled result is cache-transient — it may be regenerated under a newer engine, and nothing depends on which. The moment a normalize pass **consumes** such a result into the stored body, the output is pinned *in the record*, with engine/version provenance on the pass (touch chain) and on the segments where the form carries it (`text/ocr`'s engine/confidence fields — the §11 OCR-provenance philosophy, extended to transcripts): the corpus owns the derivation's provenance rather than laundering a pre-baked layer. A later pass re-derives only deliberately, disclosed by a new touch. This is what makes the retirement of the draft stage *reproducible*: a future normalize pass re-resolves the same surfaces — or knowingly upgrades them — without a stored intermediate rotting in between.
 
 ---
 
 ## 7. Schema declarations
 
-§3 introduced the four namespaces and the schema-loader resolution chain. This section specifies what the three schema-declaration namespaces (`mime`, `origin`, `atom`) declare; the `context` umbrella's overlays are specified alongside the context block in §4.3.3.
+§3 introduced the five namespaces and the schema-loader resolution chain. This section specifies what the four schema-declaration namespaces (`mime`, `origin`, `form`, `atom`) declare; the `context` umbrella's overlays are specified alongside the context block in §4.3.3.
 
 ### 7.1 The mime namespace
 
-A `mime` schema declares everything the matching artifact block needs and everything the drafter needs to process the transport.
+A `mime` schema declares everything the matching artifact block needs and everything ingest attestation and the resolver need to process the transport.
 
 - `description` — prose definition.
 - `applies_to.content_types` — list of canonical MIME types this schema covers.
 - `applies_to.zip_members` / `applies_to.zip_member_patterns` (optional) — shape signature for a zip-shaped type whose telltale members sit under a *variable* wrapper directory (a diagnostics export, a backup bundle), so a fixed internal path can't recognize it. `zip_members` lists exact member paths (ANY present matches); `zip_member_patterns` lists member-path regexes (EACH must match some member). Evaluated by the shared MIME refiner against the corpus's schemas, so vendor/site-specific zip recognition lives in the overlay rather than the package. Universal zip formats (OOXML / EPUB / JAR) keep their fixed-path signatures in the tooling and need no declaration.
-- `mode` — `extract-only` or `body-draft`.
 - `working_kind` (optional) — the resolver's initial working-value kind for the functional-URI transform pipeline (`pdf`, `image`, `audio`, `video`, `html`, `epub`, `zip`, …); falls back to a built-in table for the bundled types when omitted.
-- `draft` (optional) — drafting controls beyond `mode`. `draft.strategy` names a general, *type-agnostic* drafter registered by strategy name rather than schema id (e.g. `zip-manifest`), so one drafter serves many schemas whose representation differs only by config; the strategy's config rides alongside it (e.g. `draft.manifest`). Absent a strategy, the drafter is dispatched by schema id. This is the drafting analogue of the origin overlay's `capture` block — overlay-driven, but keyed by media type (the mime schema) rather than by host.
-- *(2.1: `artifact_kind` removed.)* Every transport is self-contained (§1.2); a raw archive drafts as an embed manifest (`draft.strategy: zip-manifest` or a sibling, §12.4) and its members are reachable by promotion (§8.1). A schema still declaring the field is ignored (tolerant parsing).
+- *(3.0)* `mode` and `draft.*` **retire** — there is no draft stage to configure. In their place a mime schema declares three things:
+  - `disposition:` — `manifest` | `work` (default `work`): the **container-vs-transport judgment** (§1.2), declared per format because it is not derivable from the bytes. `manifest` — the members ARE the content: every member attests as a manifest embed (promotable), the content zone holds only container byte-marks. `work` — one transport whose content decomposes as units; internal member files the schema names attest as **exposable embeds** — addressable and promotable without being the content: a PDF's embedded files / portfolio members (the `attachment=<N>` axis, §12.11), OOXML embedded media and OLE objects. The authoring criterion is normative: *are the members independently meaningful transports?* An MKV audio track is (the transcript lives on it); `word/document.xml` is not. EPUB's 2.x `self_contained` wording is this key's ancestor (`disposition: work`). An origin overlay MAY override for a deviant producer (§7.2); the resolved disposition is always auditable from the record's attested shape, never sniffed per record. *(Distinct from the 2.1-removed `artifact_kind`, whose tombstone stands: nothing explodes at ingest under either value.)*
+  - `attest:` — the **ingest attestations**: which byte-facts ingest stamps at stub time. Artifact-block fields (a PDF's `/Info`, an EPUB's Dublin Core, an eml's headers); **manifest embeds** for `disposition: manifest` types (archive members at `path=`, mail messages at `msg=`, cards at `card=`, calendar entries at `entry=`, MIME parts at `part=`, media tracks at `stream_id=`, image items at `item=`); **exposable embeds** for `work` types that declare them; **structural byte-marks** (a media container's chapters); sidecar lift (§7.2). Attestations are deterministic byte-facts — the theme's "attested" half — and re-attest regenerates them (§8.3).
+  - `derive:` — the **derivation ops** the type exposes (§6.2), with any per-type config (the 2.x `draft.manifest` config becomes the `members` op's config; a strategy-named general implementation may serve many schemas exactly as `zip-manifest` did).
+
+  The concrete YAML key surgery (which 2.x keys alias, which hard-retire) is implementation-guide material (§12.4); a schema still declaring `mode`/`draft.*` is read tolerantly and ignored.
+- *(2.1: `artifact_kind` removed.)* Every transport is self-contained (§1.2); a raw archive is attested as an embed manifest (§12.4) and its members are reachable by promotion (§8.1). A schema still declaring the field is ignored (tolerant parsing).
 - `address_scheme` — the parameters the schema expects in segment `address:` values.
 - `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. The artifact block holds only facts about the **primary-artifact bytes** (e.g. ffprobe codec / dimensions / streams); source metadata from a capturer's enrichment sidecar does NOT live here — see `sidecar`. Vendor/domain identity (what a bundle *is*, beyond its bytes) does NOT live here either — that is knowledge, asserted in the ledger as roster entries and claims citing the record, minted mechanically by a harvest rule keyed on the kept-whole MIME (`ledger.md` §10).
-- `sidecar` (optional) — for an artifact type a capturer enriches with a companion metadata sidecar (e.g. a yt-dlp `.info.json`), declares what is lifted and where. `source` names the sidecar (e.g. `ytdlp-info-json`); `ytdlp_keys` lists the info.json keys copied — each into the **origin block** as a flat `ytdlp_<key>` field (§7.2), the mapping guidance the drafter applies. The sidecar is companion metadata staged in `capture/<hash>.<suffix>`, read at draft, then **deleted** — never persisted to `artifacts/` (only the artifact carries the `<hash>` name there). It is *non-primary-source* metadata, so nothing from it goes to the artifact block, the body, or the frontmatter `description`.
+- `sidecar` (optional) — for an artifact type a capturer enriches with a companion metadata sidecar (e.g. a yt-dlp `.info.json`), declares what is lifted and where. `source` names the sidecar (e.g. `ytdlp-info-json`); `ytdlp_keys` lists the info.json keys copied — each into the **origin block** as a flat `ytdlp_<key>` field (§7.2), the mapping the sidecar-lift attestation applies. The sidecar is companion metadata staged in `capture/<hash>.<suffix>`, consumed at ingest attestation (§8.1), then **deleted** — never persisted to `artifacts/` (only the artifact carries the `<hash>` name there). It is *non-primary-source* metadata, so nothing from it goes to the artifact block, the body, or the frontmatter `description`.
 - `transport_algos` — additional byte-hash algorithms to compute beyond the primary blake3 `id`.
-- `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps the drafter performs before hashing. The canonicalization MAY be scoped to a **content region** — hashing only the article-content text and excluding per-page framing (title, breadcrumb, entry-specific headings) — so two records holding the same content reached by different URLs share a `canonical` and collapse to one record (the duplicate's URL folded into the original). The content-region selector is host-specific and supplied by the origin overlay (not this schema); when it matches nothing the canonicalization falls back to the whole document.
-  - **Status — currently disabled (2026-06-28).** The drafter still computes the value, but it is **not persisted**: no record carries `canonical:`, so the cross-URL content-dedup collapse described above is inert. Reason: `blake3-canonical-pdf` hashes only per-page extracted text, so every text-empty (scanned / image) PDF canonicalizes identically and unrelated scans were being silently merged into one record (the duplicate's bytes discarded). The mechanism is re-enabled — restore the persist in `_apply_drafter_result` — once the strategy distinguishes such artifacts (e.g. a byte / rendered-image hash) and `canonical:` earns its keep.
+- `canonical_strategy` (optional) — procedure for computing the record's `canonical` hash. Names a canonicalization-algorithm id and the canonicalization steps performed before hashing. The canonicalization MAY be scoped to a **content region** — hashing only the article-content text and excluding per-page framing (title, breadcrumb, entry-specific headings) — so two records holding the same content reached by different URLs share a `canonical` and collapse to one record (the duplicate's URL folded into the original). The content-region selector is host-specific and supplied by the origin overlay (not this schema); when it matches nothing the canonicalization falls back to the whole document. *(3.0: whether the value computes at ingest attestation or as a derivation op is an open question — §12.18.)*
+  - **Status — currently disabled (2026-06-28).** The pipeline still computes the value, but it is **not persisted**: no record carries `canonical:`, so the cross-URL content-dedup collapse described above is inert. Reason: `blake3-canonical-pdf` hashes only per-page extracted text, so every text-empty (scanned / image) PDF canonicalizes identically and unrelated scans were being silently merged into one record (the duplicate's bytes discarded). The mechanism is re-enabled once the strategy distinguishes such artifacts (e.g. a byte / rendered-image hash) and `canonical:` earns its keep.
 - `normalization.guidance` (optional) — prose guidance for the normalizer.
 
 ### 7.2 The origin namespace
@@ -667,18 +822,26 @@ An `origin` schema declares an overlay for one source of retrieval.
 
 - `kind: interpretive` — origin overlays are always interpretive (the match cue may be mechanical, but body guidance is consumed by the LLM normalize pass).
 
-An origin overlay's `normalization.guidance` is **body-shaping tactics** — how to render this source's content faithfully — and, with subtypes (`origin/<id>/<subtype>`), it is the home for **per-page-shape** guidance within a host (how a procedure page vs. an index page of the same site normalizes). *(2.0: this guidance role was previously split with composite overlays; the domain-semantic half of composite guidance moved to ledger per-type conventions, the body-shaping half lands here.)*
+An origin overlay's `normalization.guidance` is **body-shaping tactics** — how to render this source's content faithfully — and, with subtypes (`origin/<id>/<subtype>`), it is the home for **per-page-shape** guidance within a host (how a procedure page vs. an index page of the same site normalizes). *(2.0: this guidance role was previously split with composite overlays; the domain-semantic half of composite guidance moved to ledger per-type conventions, the body-shaping half lands here.)* *(3.0: the guidance narrows accordingly — origin-specific tactics and provenance notes only; the decomposition contract lives on the form overlay (§7.8), stated once for every origin that maps onto it.)*
 - `description` — prose framing of the publisher.
-- `applies_to.host_pattern` (string, optional) or `applies_to.host_patterns` (list[string], optional) — host pattern(s) the drafter matches against origin URIs (the `web` family).
+- `applies_to.host_pattern` (string, optional) or `applies_to.host_patterns` (list[string], optional) — host pattern(s) the pipeline matches against origin URIs (the `web` family).
 - `applies_to.include_subdomains` (bool, default false).
 - `applies_to.scheme` (string, optional) or `applies_to.schemes` (list[string], optional) — URI scheme(s) the overlay matches, compared case-insensitively against an origin URI's scheme. This is how a **non-web scheme family** (e.g. `imessage:`, a future `urn:` / `s3:`) binds, since such URIs have no meaningful host. An overlay may declare host pattern(s), scheme(s), or both.
 - `applies_to.cues` (optional) — non-host cues for the matcher.
 - `normalization.guidance` (string) — markdown prose tactics.
-- `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`. A capturer's enrichment sidecar populates these — e.g. a yt-dlp capture's `ytdlp_<key>` fields (title, description, uploader, engagement counts, `ytdlp_comments`), declared by the artifact's mime schema `sidecar` section (§7.1) and merged onto the origin block at draft.
+- `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`. A capturer's enrichment sidecar populates these — e.g. a yt-dlp capture's `ytdlp_<key>` fields (title, description, uploader, engagement counts, `ytdlp_comments`), declared by the artifact's mime schema `sidecar` section (§7.1) and merged onto the origin block at ingest (sidecar lift, §8.1).
 
-The drafter iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), the drafter upgrades that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The qualified opener contributes `origin/<id>[/<subtype>]` to the derived classifications view. (*Promotion* is reserved for the container-member operation of §8.1.)
+*(3.0)* An origin overlay MAY override its records' **disposition**:
 
-An overlay `id` may also be **producer-declared** rather than `uri:`-matched. A capturer/producer that knows what it ingested stamps the id directly — `<!--origin <id>-->` written with the overlay's extended fields — which is the only way a **uri-less** origin (a dropped-in local file, e.g. an `imessage-export`) binds an overlay, since there is no `uri:` to match. Two mechanisms, both yielding the same stamped block: (a) a **capture sidecar** at ingest carries `origin_schema:` (the overlay id) + `origin_fields:` (its extended fields), consumed by the ingestor; (b) the producer injects **`<meta name="corpus-origin-schema">`** + per-field `<meta name="corpus-origin-<field>">` tags into the captured artifact, which the (mechanical) drafter folds onto the origin block (a repeated field meta collects into a list). A stored `id` from any path is equivalent downstream: it contributes `origin/<id>[/<subtype>]` to the derived classifications view, its overlay's `normalization.guidance` surfaces for the normalizer, and it satisfies an `origin.id` predicate in a ledger harvest rule (`ledger.md` §10) — the producer-declared id is not re-derived from a `uri:`, so it works with none.
+- `disposition:` — `manifest` | `work`, overriding the mime schema's format default (§7.1) for this producer's records — an export tool that abuses an archive format as a single-work wrapper, or a format whose members are, for this producer, genuinely independent transports. Stamped and auditable like every overlay decision; never sniffed per record.
+
+*(3.0)* An origin overlay MAY declare its records' **form**:
+
+- `form:` — `{id: <form-id>, mapping: {…}}`. The `id` names the `form/` overlay every record of this origin carries (the **declared** stamping path, §4.4.6). The `mapping` names where the form's units live in *this producer's* format — for a chat transcript: the messages array path, and the per-message paths for author identity, display name, timestamp (+ its parse convention), text, reply reference, attachment declarations. The mapping is consumed mechanically — by the shaper that stamps and conforms the span at normalize, and by the resolver's `turn=` unit op (§6.2) — so a new platform is one origin overlay with a mapping, zero code. Absent the key, records of this origin are formless unless a form is asserted (§4.4.6).
+
+The ingest pipeline iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), it upgrades that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The qualified opener contributes `origin/<id>[/<subtype>]` to the derived classifications view. (*Promotion* is reserved for the container-member operation of §8.1.)
+
+An overlay `id` may also be **producer-declared** rather than `uri:`-matched. A capturer/producer that knows what it ingested stamps the id directly — `<!--origin <id>-->` written with the overlay's extended fields — which is the only way a **uri-less** origin (a dropped-in local file, e.g. an `imessage-export`) binds an overlay, since there is no `uri:` to match. Two mechanisms, both yielding the same stamped block: (a) a **capture sidecar** at ingest carries `origin_schema:` (the overlay id) + `origin_fields:` (its extended fields), consumed by the ingestor; (b) the producer injects **`<meta name="corpus-origin-schema">`** + per-field `<meta name="corpus-origin-<field>">` tags into the captured artifact, which ingest folds onto the origin block mechanically (a repeated field meta collects into a list). A stored `id` from any path is equivalent downstream: it contributes `origin/<id>[/<subtype>]` to the derived classifications view, its overlay's `normalization.guidance` surfaces for the normalizer, and it satisfies an `origin.id` predicate in a ledger harvest rule (`ledger.md` §10) — the producer-declared id is not re-derived from a `uri:`, so it works with none.
 
 Two producer-export origins ride this uri-less, producer-declared path today. **`imessage-export`** binds a self-contained conversation HTML with attachments inlined. **`claude-code-session`** binds a captured Claude Code session — its `<id>.jsonl` transcript plus the sidecar tree of sub-agent transcripts, tool-result payloads, and workflow state — bundled into ONE deterministic zip by `corpus session capture` (§12.8) and carrying the session's identity as structured fields (`session_id`, `host`, `record_count`, …) rather than a synthetic URI. A session's record is a `zip-manifest` whose members are directly-addressed `path=<member>` embeds (the transcript is a transport resolved verbatim, never transcribed), and successive captures of a growing session are distinct records reconciled by continuity-gated supersession (§12.8), not by a stable id.
 
@@ -695,19 +858,19 @@ The universal `origin` overlay declares the fields every origin block carries. `
 - `capture:` — how to retrieve this origin (read at capture time). One overlay serves **both** capture modes: a live URL fetch and a from-save replay of a manual SingleFile save (§12.3.12) resolve the same recipe and run the same `interactions`, so a host's chrome strip and media-surfacing steps are authored once for both.
   - `capturer` — the capturer name: `browser` (Playwright/HTML; the default), `video` (yt-dlp), or a corpus-local capturer. This is the **sole router** for video vs. browser — there is no built-in video-host list. (`corpus capture --video` / `--no-video` override it for a one-off URL.)
   - `transport` — `headless` | `headed` | `cdp` (browser capturer).
-  - `fidelity` — `exact` | `balanced` | `lean` (browser capturer): the self-contained-snapshot completeness tier. `exact` is byte-faithful (presentation *is* content); `balanced` (the default) drops redundant font / image / media alternates inlined for self-containment; `lean` additionally prunes style rules with no matching element. The tiers affect only the snapshot **artifact** size — the drafted record is identical across tiers (the drafter reads DOM text/tables, not fonts/CSS) — so fidelity is purely a per-origin retention/faithfulness choice. The resolved tier is stamped into a `corpus-fidelity` snapshot meta tag for provenance. Precedence: `corpus capture --fidelity` › per-host `capture.fidelity` › `origin/origin.yaml` › tooling default (`balanced`).
+  - `fidelity` — `exact` | `balanced` | `lean` (browser capturer): the self-contained-snapshot completeness tier. `exact` is byte-faithful (presentation *is* content); `balanced` (the default) drops redundant font / image / media alternates inlined for self-containment; `lean` additionally prunes style rules with no matching element. The tiers affect only the snapshot **artifact** size — the record and its derived body are identical across tiers (the body derivation reads DOM text/tables, not fonts/CSS) — so fidelity is purely a per-origin retention/faithfulness choice. The resolved tier is stamped into a `corpus-fidelity` snapshot meta tag for provenance. Precedence: `corpus capture --fidelity` › per-host `capture.fidelity` › `origin/origin.yaml` › tooling default (`balanced`).
   - `url_rewrite` — `[{pattern, replacement}]` regex rules applied to the navigation target before fetch; the original URL stays the recorded origin and the rewritten form becomes an alias.
   - `url_equivalent` — declares which URL spellings denote the **same resource**, so the corpus matches an inbound URL to a record (and keeps one origin URI per resource) even when the spelling differs — query noise (`?nested_view=1`, tracking params), a redundant `/page-1` ≡ the bare form, etc. **Identity-only**: it computes a URL's *identity key* and never changes which bytes are fetched (that is `url_rewrite` / `interactions`). Two URLs are equivalent iff their identity keys are equal. Declared as a list of `[{pattern, replacement}]` rules (same shape as `url_rewrite`), or a map `{query: keep|drop, rules: [...], on_rewritten: bool}`. The identity key = the conservative `normalize` (lowercase scheme+host, sort query, drop a plain anchor, …), then — for `query: drop` (default `keep`) — strip the whole query, then apply the regex `rules` in order, then a final delimiter tidy, then fold a sub-path trailing slash (`…/a/b/` ≡ `…/a/b`); with `on_rewritten: true` the host's `url_rewrite` is applied first so identity is computed from the fetched form rather than the inbound one. The trailing-slash fold is part of the **identity** key only, never of `normalize` — `normalize`'s output is the URL a crawl re-fetches, where the slash can be significant, whereas a comparison key may fold it (so a naive first-page rule like `…/page-1 → \1` need not chase the recorded slashed origin). **Opt-in**: absent the section, identity is exactly `normalize` (string match), so the layer is inert for every host that does not declare it, and host-scoped so a blanket `query: drop` cannot wrongly fold a host where `?page=`/`?id=` matters. Applied at the **capture short-circuit** (re-capturing a known resource is skipped), **crawl frontier dedup** (an equivalent of a visited / captured URL is not re-enqueued), **pagination uri-recording** (an equivalent spelling of an already-recorded constituent page is not appended), and **resolve** of a raw URL to its record. Pairs with — and is independent of — `url_rewrite`.
   - `pagination` — reconcile a work a site splits across `?page=N` / `/page-N` URLs into **one** record (browser capturer only). `true` enables it with auto-detection; a map gives control: `content_selector` (the per-page content region — else a structural page-1-vs-page-2 diff finds it), `next` (`{rel: true}` follows `<link/a rel=next>`, the default; `selector` overrides with a CSS link), `max_pages` (safety cap, default 100), and `expect_count.selector` (an element whose text holds the site-advertised item count, for the completeness check). The capturer walks the pages, captures each via the staging-only path, merges their content regions into page 1's framework — **deduping by element id or a normalized-subtree hash** — and ingests the merged document. **INVARIANT: exactly one artifact and one record result; per-page captures are never content-addressed.** The clean seed is the recorded origin URI; every constituent page URL (bare site form *and* the pinned `url_rewrite` form) is folded in as an origin alias, and a `pagination: {pages, form, posts}` provenance field lands on the origin block (`posts` = the merged content-item count: id-bearing region children when present — forum/CMS posts carry stable ids — else all direct children, so framework nodes don't inflate it). When the merged item count falls short of the advertised count, or `max_pages` is hit, a `pagination-incomplete` `warning` issue is emitted (capture stage) rather than silently shipping a lossy record. Pairs naturally with `url_rewrite` to pin one render form across every page.
   - `ytdlp:` — a mapping merged straight into yt-dlp's options (full passthrough; e.g. `format`, `getcomments`, `impersonate`). Library-owned keys (output path, logger, the resolved cookie file) are forced after the merge and cannot be overridden.
   - `cookies_from_host` — `true` (default) pulls the capture URL's own-origin cookies from a running CDP browser session into yt-dlp; `false` disables; a list adds extra origin scopes. Lets a logged-in session unlock a host's full content.
   - `also_capture:` — `[{role, capturer, …}]` supporting captures run after the primary one; their bytes **enrich the primary record** (e.g. a comments page folded into the record's metadata) rather than forming separate records.
-  - `references:` — `[{match, role, capture, cross_host}]` — declares which of a captured page's outbound links are **dependent reference material** (a PDP's product manual, a spec sheet). Each rule's `match` (`selector` / `href_pattern` / `text_pattern` / `rel`; present keys ANDed, rules ORed) selects `<a>` elements in the drafted DOM. **Emission is a draft-stage concern** (the anchor needs the segmented body): each distinct declared link (resolved + normalized, excluding the record's own origin URIs) emits one `reference` context block (§4.3.3.3) on the primary record, with `provenance: auto`, the rule's `role`, and tier 2 (`source_url`). The mechanical drafter writes **no** tier-3 `source_uri` and reads no corpus state: whether the target is itself a record is a read-time derived edge resolved from `source_url` (`derived_views.references` §9.9 / `corpus links --references`), so `draft` stays a pure function of the artifact and the edge tracks the corpus (`captured ⇄ pending`) instead of a stored pointer that rots under removal/supersession (§4.3.3.3). **Fetching** the target is a separate **capture-side** action: `capture: true` (or `corpus capture --with-references`) fetches it **once, at depth 1**, as its own record (content-hash deduped) right after the primary; `capture: false` (default) is surface-only and the deferred `corpus crawl --references` pass fetches pending targets on demand. `cross_host: allow` (the default for references — manuals are off-host) permits reaching declaration matches on other hosts, but **only** matches — never a general cross-host crawl. Distinct from `also_capture`, whose bytes **enrich the primary record** rather than forming separate, referenced records. Absent the section the feature is inert (no hardcoded link knowledge).
-  - `relations:` — `[{match, predicate}]` — the sibling of `references:` for **source-declared cross-link structure** (a "related information" rail, sibling-page navigation): the same match grammar selects the links, and draft emits one `relation` context block per distinct target (§4.3.3.5) with `provenance: auto`, the rule's `predicate` as the block subtype, and `target_text`/`target_url`. Relations are edges, not fetch demands — there is no `capture:` key; a relation target enters the corpus only through the ordinary crawl/capture paths. Absent the section, inert.
+  - `references:` — `[{match, role, capture, cross_host}]` — declares which of a captured page's outbound links are **dependent reference material** (a PDP's product manual, a spec sheet). Each rule's `match` (`selector` / `href_pattern` / `text_pattern` / `rel`; present keys ANDed, rules ORed) selects `<a>` elements in the captured page's DOM. **Emission is mechanical and rides the normalize pass** — the anchor needs the authored body (§8.1; record-scoped emission today — §12.15) — regenerating on re-normalize (§4.4.6): each distinct declared link (resolved + normalized, excluding the record's own origin URIs) emits one `reference` context block (§4.3.3.3) on the primary record, with `provenance: auto`, the rule's `role`, and tier 2 (`source_url`). The mechanical emission writes **no** tier-3 `source_uri` and reads no corpus state: whether the target is itself a record is a read-time derived edge resolved from `source_url` (`derived_views.references` §9.9 / `corpus links --references`), so the emission stays a pure function of the artifact and the edge tracks the corpus (`captured ⇄ pending`) instead of a stored pointer that rots under removal/supersession (§4.3.3.3). **Fetching** the target is a separate **capture-side** action: `capture: true` (or `corpus capture --with-references`) fetches it **once, at depth 1**, as its own record (content-hash deduped) right after the primary; `capture: false` (default) is surface-only and the deferred `corpus crawl --references` pass fetches pending targets on demand. `cross_host: allow` (the default for references — manuals are off-host) permits reaching declaration matches on other hosts, but **only** matches — never a general cross-host crawl. Distinct from `also_capture`, whose bytes **enrich the primary record** rather than forming separate, referenced records. Absent the section the feature is inert (no hardcoded link knowledge).
+  - `relations:` — `[{match, predicate}]` — the sibling of `references:` for **source-declared cross-link structure** (a "related information" rail, sibling-page navigation): the same match grammar selects the links, and the same mechanical emission writes one `relation` context block per distinct target (§4.3.3.5) with `provenance: auto`, the rule's `predicate` as the block subtype, and `target_text`/`target_url`. Relations are edges, not fetch demands — there is no `capture:` key; a relation target enters the corpus only through the ordinary crawl/capture paths. Absent the section, inert.
   - `assembly:` *(2.1)* — config for **pre-ingest bundle assembly** (`corpus assemble`, §12.3.11): repackaging a source's delivered part(s) into ONE indexed container bundle before ordinary ingest, for delivery formats that are transient (an expiring export job), access-hostile (a solid compressed stream), or envelope-less (a loose directory tree an export tool wrote straight to disk). Keys: `merge_parts` (union a multi-part delivery's member trees — the split is delivery, not structure), `conflict` (`error`: a same-path collision across parts with differing bytes aborts; identical bytes dedup), `additions` (an allowlist of declared NON-original files placed at the bundle root, outside the original tree — e.g. an out-of-band export report), `rewrites` (declarative `{from, to}` restructure rules; **empty is the norm** — the original internal structure is NEVER changed except by a rule asserted here), `excludes` (declared filesystem-cruft subtraction — fnmatch patterns; slash-less patterns claim the basename at any depth, slashed ones the full relpath; exclusions are reported, never silent), `level` (the bundle's compression level), `derive` (mechanical origin-field extraction patterns — filename-convention regexes, addition-content regexes, and `from_member_head` regexes over the leading bytes of glob-matched members of a directory source, greatest match winning across members — so every vendor-shaped fact lives in the overlay, none in the engine), `seed_fields` (which derived fields beyond `account`/`job`/`exported_at` ride into the sidecar), and `name_fields` (derived fields whose values join the bundle's filename and archive comment — the job identity where no job id exists). The assembled bundle is staged with a capture sidecar (`origin_schema:` + the derived/declared fields) and enters the pipeline through ordinary ingest; the consumed part archives are recorded as `source_parts` tombstones (filename + byte hash) on the origin block — a directory source, having no delivery envelope, leaves none (member byte-identity is carried per-member by the manifest's embeds). Absent the section, `corpus assemble` refuses the overlay.
-- `transcription:` — per-host audio transcription (read at draft time). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
+- `transcription:` — per-host audio transcription (read by the `transcribe` derivation op, §6.2). `enabled: false` skips transcription (an `info` issue, not a `warning`); `adapter` / `base_url` override the global `[corpus.transcription]` backend. Absent the section, the global config applies.
 - `canonical:` — `content_selector` scoping the `canonical` hash to the article-content region (§7.1). *(Currently inert — `canonical:` is not persisted; see the §7.1 `canonical_strategy` status note.)*
-- `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the keys lifted from the `.info.json` come from the artifact mime schema's `sidecar.ytdlp_keys` (§7.1). Because the sidecar is *non-primary-source* metadata, every lifted key lands on the **origin block** as a flat `ytdlp_<key>` field (e.g. `ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts) — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a `ytdlp_comments` list field; `webpage_url` / `original_url` fold into the origin `uri:` aliases. The sidecar is **draft-time-only enrichment** — staged in `capture/`, consumed at draft, then deleted; it is one-shot (a re-draft after deletion does not re-apply it; the extracted fields already persist on the record). The only content the media drafters write to the body is the **transcript**, derived from the primary artifact's own audio.
+- `metadata:` — reserved hook to remap/disable how a capturer's enrichment sidecar maps into the record (per host). The mapping itself is **host-agnostic and applied for every yt-dlp capture**, and is **schema-declared**, not hardcoded: the keys lifted from the `.info.json` come from the artifact mime schema's `sidecar.ytdlp_keys` (§7.1). Because the sidecar is *non-primary-source* metadata, every lifted key lands on the **origin block** as a flat `ytdlp_<key>` field (e.g. `ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts) — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when yt-dlp returns it) becomes a `ytdlp_comments` list field; `webpage_url` / `original_url` fold into the origin `uri:` aliases. The sidecar is **ingest-time-only enrichment** (sidecar lift, §8.1) — staged in `capture/`, consumed at ingest attestation, then deleted; it is one-shot (a re-attest after deletion does not re-apply it; the lifted fields already persist on the record). Nothing mechanical writes body content: the **transcript** is the `transcribe` derivation op's output (§6.2), consumed at normalize.
 
 ### 7.3 The atom namespace
 
@@ -721,7 +884,9 @@ An `atom` schema declares an atomic-axis overlay that may attach to a segment.
 - `extended_fields` (optional) — id-specific fields. For lossless-enabling overlays these typically describe address-shape requirements; for envelope-bearing forms (a chat message's `sender`/`timestamp`) they carry the segment's structural envelope, verbatim from the source.
 - `normalization.guidance` (string) — markdown prose tactics for rendering the form faithfully.
 
-A segment carries exactly one atomic class id, on the opener line.
+*(3.0)* An envelope-bearing atom overlay's extended field may be declared as a **codebook index**: an integer field whose value indexes a list field on the *enclosing form section's* header (e.g. `text/message`'s `participant:` indexing `form/conversation`'s `participants:` codebook — first-appearance authorship order, entry grammar `<display> <durable-id>`). The index resolves through the record alone — segment → section header → entry — so a consumer needs no platform knowledge; lint's form-coherence checks (§4.3.2.1) verify indexes are in range. A codebook index and a verbatim envelope string (`sender:`) are both licensed forms of the same envelope — the overlay says which its records carry (repeating a verbatim identity string across a 70,000-message span is what the codebook exists to avoid).
+
+A segment carries exactly one atomic class id, on the opener line. The structural segment is not an atom and takes no atom overlay (§4.3.2.3).
 
 **The atom constitution.** Atom overlays declare **form, never meaning**: the shape of a lossless body, the structural envelope of a segment, extraction tactics for a region's faithful rendering. "This text is a table," "this image is a screenshot," "this segment is one chat bubble with this sender and timestamp" are form statements, checkable against the bytes. A subtype whose payload is domain semantics — what the content is *about* — is wrong at this layer; that is a ledger claim over the segment's span (`ledger.md` §6).
 
@@ -740,7 +905,7 @@ A segment carries exactly one atomic class id, on the opener line.
 | Body-shaping guidance keyed by page type | The origin overlay (subtypes, §7.2) or an atom overlay (§7.3) |
 | `extended_fields` | Claim values and qualifiers |
 
-The fact base and predicate grammar that `classify_when` defined are now specified in the harvest-rule contract (`ledger.md` §10), unchanged in substance: draft-visible facts only (`mime`, `origin.*`, `media.*`), exact-by-default operators, missing-fact-is-false, and body keywords permanently excluded as the canonical false-positive source.
+The fact base and predicate grammar that `classify_when` defined are now specified in the harvest-rule contract (`ledger.md` §10), unchanged in substance: draft-visible facts only (`mime`, `origin.*`, `media.*`) *(3.0: the fact base has since grown `form.*` — `ledger.md` §10 — and "draft-visible" reads "attested-or-derived, never authored prose" under the two-status lifecycle)*, exact-by-default operators, missing-fact-is-false, and body keywords permanently excluded as the canonical false-positive source.
 
 ### 7.5 Semantic-type vocabulary
 
@@ -771,7 +936,7 @@ The `id` field is the exception — always bare blake3 hex (algorithm is invaria
 
 ### 7.7 Atom fingerprint strategies
 
-Perceptual fingerprinting is **opt-in** and **schema-gated**. A segment carries a `perceptual:` only when a `fingerprint` knob resolves on for its record — fingerprints are a near-duplicate / similarity-search signal, not part of a faithful first-pass draft, so the default is **off** and a record with no `perceptual:` is normal. The knob is a top-level field on a **mime schema** (the per-file-type default) and may be overridden on an **origin overlay** (for records from that source). Values: `false` / absent = off; `true` = on with each atom's *default* algorithm; an algorithm name or a list = on with those algorithms (a list yields a list-valued `perceptual:`). Resolution precedence, most-specific first: `corpus draft --fingerprint` / `--no-fingerprint` › origin overlay › mime schema › off.
+Perceptual fingerprinting is **opt-in** and **schema-gated**. A segment carries a `perceptual:` only when a `fingerprint` knob resolves on for its record — fingerprints are a near-duplicate / similarity-search signal, not a mandatory attestation, so the default is **off** and a record with no `perceptual:` is normal. The knob is a top-level field on a **mime schema** (the per-file-type default) and may be overridden on an **origin overlay** (for records from that source). Values: `false` / absent = off; `true` = on with each atom's *default* algorithm; an algorithm name or a list = on with those algorithms (a list yields a list-valued `perceptual:`). Resolution precedence, most-specific first: the ingest/re-attest CLI `--fingerprint` / `--no-fingerprint` override › origin overlay › mime schema › off. *(3.0: fingerprints attest at ingest where the knob resolves on; §12.4.)*
 
 When fingerprinting is on, the algorithm for a segment is determined by its `atom:`, not by the source media-type. Each atom has a default algorithm; the knob may select an alternative where the atom supports more than one:
 
@@ -783,6 +948,23 @@ When fingerprinting is on, the algorithm for a segment is determined by its `ato
 
 The `<algo>:<hex>` value records which algorithm produced it, so a record self-documents how it was fingerprinted.
 
+### 7.8 The form namespace *(3.0)*
+
+A `form` schema declares an overlay for one **record-scope structural shape** — the normal form a span of content decomposes into. It binds on a section-block opener (§4.3.2.1) exactly as an atom overlay binds on a segment opener.
+
+- `kind: form`
+- `description` — prose definition of the shape.
+- `extended_fields` — the section-header fields the form's spans carry: **codebook lists** (e.g. `participants:` — authorship-derived, first-appearance order, entry grammar `<display> <durable-id>` — the join surface a codebook-index envelope field resolves against, §7.3) and span envelope facts. Every field MUST be mechanically derivable from the span's own bytes — a form field that cannot be recomputed from the record is in the wrong layer.
+- `decomposition` — the normal form, normatively: which segment kinds compose the span (the envelope atom overlays and their required header fields), the addressing axis (`turn=`, `time_range=`, `pages=` — the form is **modality-blind**: `form/conversation` covers a chat export at `turn=` and a recorded meeting at `time_range=` with the same envelope), attachment and event conventions.
+- `checks` — the mechanical conformance obligations lint enforces on any span carrying this form (§4.3.2.1): required envelope fields, codebook indexes in range, address monotonicity. *(The check grammar is tooling-defined pending the first three overlays — §12.18 open questions.)*
+- `normalization.guidance` — prose tactics for the authoring pass, stated **once** for every origin that maps onto the form.
+
+**The minting test.** A form is minted when all four hold: (1) its decomposition contract **recurs across ≥2 origins**; (2) it **changes the normal form** — the span decomposes differently than mime + atoms alone would render it; (3) every fact it declares is **checkable against the bytes**; (4) a layer above **consumes it generically** (a composition view, a harvest rule). One origin wanting a shape is origin-overlay guidance; a label that changes nothing about decomposition is not a form.
+
+**Forms name shapes, never subjects.** `conversation`, `statement`, `receipt` are shapes: a time-ordered participant-attributed message sequence; a period envelope with transaction line items; an itemized-commerce document. `product-manual` is **not** a form — a manual decomposes as a generic document (mime + atoms suffice), and manual-*ness* is a role (`reference` block `role:`) or a ledger claim. `episode` vs `film` are legitimate — act structure with title/credit conventions vs scene-and-chapter continuity are decomposition contracts in the bytes — while *which show* an episode belongs to is the ledger rostering the record onto a concept, exactly as `form/receipt` never names the merchant (the origin block and the bytes do). This is the normative line that keeps §4.3.1.3/§7.4 honestly tombstoned: the classify block asserted meaning at record scope and is not returning; the form opener asserts shape at span scope, mechanically checkable, nothing more. Forms minted with this revision: `conversation`, `statement`, `receipt` (each already recurring across origins in the operating corpora); candidates that mint when their consumer arrives, not before: `procedure`, `listing`, `log`, `episode`, `film`.
+
+**Stamping** is §4.4.6's two paths (declared via the origin overlay's `form:` key; asserted by an interpretive pass through the normalize gate). **Coherence** is §4.3.2.1's lint rule. **Downstream**, `form.*` joins the ledger harvest fact base (`ledger.md` §10) — deterministic rosters keyed on shape (`every form/receipt records onto the spending concept`) — and composition views consume *(form, envelope)* tuples with no platform knowledge: the cross-platform conversation thread joins spans on (ledger identity × timestamp); the same-video view joins tracks on (lineage × timeline); one composition layer, two join keys, zero stored view state.
+
 ---
 
 ## 8. Pipeline
@@ -792,51 +974,51 @@ The `<algo>:<hex>` value records which algorithm produced it, so a record self-d
 | Stage | Mechanics | Touch identifier shape |
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
-| `ingest` | blake3 of bytes → `id`; additional algorithms per the mime schema's `transport_algos` → `transport:`; MIME detect → artifact-block opener; emit stub with first origin block from capture context; persist binary in the corpus's binary store. | `<pkg>.ingest@<v>` |
-| `promote` | Mint a record for a container member already in the corpus: locate the member by its embed declaration (container id + member address, §2), stream the bytes and blake3-verify against the embed's recorded `transport:` hash → `id`; MIME detect → artifact-block opener; emit stub whose first origin block records the containment lineage **as history** — `uri: corpus://<container-id>?<member-address>`, plus the universal `filename` / `source_modified` from the member's archive metadata when present. The bytes are NOT copied; they remain resolvable through the container (§2). | `<pkg>.promote@<v>` |
-| `draft` | Run the mime schema first (it segments the content zone, emits embed blocks, and — when it declares a `canonical_strategy` — sets `canonical`), then the origin overlay's declared emissions (`reference`/`relation` context blocks); drafter-detected issue context blocks emitted. | `<pkg>.draft.<mime-type-id>@<v>` |
-| `normalize` | The faithful-form LLM pass: re-segments and shapes the content zone where judged appropriate, authors descriptions and the two editorial fields, surfaces faithfulness issues. | `<model-id>` |
+| `ingest` | blake3 of bytes → `id`; `transport_algos` → `transport:`; MIME detect → artifact-block opener; **byte-fact attestation** per the mime schema's `attest:` and `disposition:` (§7.1) — artifact fields, manifest/exposable embeds (members / messages / cards / entries / parts / tracks / items), structural byte-marks, sidecar lift; emit stub with first origin block from capture context; persist binary. | `<pkg>.ingest@<v>` |
+| `promote` | Mint a record for a container member already in the corpus: locate by embed declaration, stream + blake3-verify → `id`; MIME detect; **attest** per the member's mime schema; emit stub whose first origin block records the containment lineage as history (`uri: corpus://<container-id>?<member-address>` + `filename`/`source_modified` where present). Bytes are NOT copied (§2). | `<pkg>.promote@<v>` |
+| `draft` | *(retired in 3.0.)* The stage's three duties split: fact-stamping → ingest **attestation** (above); content extraction → resolver **derivation ops** (§6.2); body-writing → the normalize pass. A `status: draft` record reads tolerantly as a stub (§12.18). | — |
+| `normalize` | The **one authoring pass**: consumes the derivation ops and authors the stored faithful form — executed by a mechanical **shaper** where the record's declared form mapping (§7.2) or manifest shape makes it deterministic, by an interpretive agent where judgment is required — plus descriptions, the editorial fields, faithfulness issues, and `status: normalized`. | `<pkg>.shape.<id>@<v>` / `<model-id>` / combined (`+`) |
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
 
-An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the **draft** stage emits `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3), and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest. `capture.relations` (§7.2) drives the same draft-stage emission for declared cross-link structure (`relation` blocks, §4.3.3.5), with no capture side.
+An origin overlay's `capture.references` (§7.2) drives two mechanical, deterministic actions (§8.2): the record-side **emission** of `provenance: auto` `reference` context blocks for the page's declared dependent links (at tier 2 `source_url`; the intra-corpus edge is resolved at read time, never stored — §4.3.3.3) — which rides the **normalize pass**: the anchor needs the authored body, and a record-scoped emission (today's only form, §12.15) rides the same pass, regenerating on re-normalize (§4.4.6) — and the **capture** side, for rules marked `capture: true` (or `corpus capture --with-references`), fetches those targets at depth 1 as their own records after the primary ingest. `capture.relations` (§7.2) drives the same emission for declared cross-link structure (`relation` blocks, §4.3.3.5), with no capture side.
 
-A corpus may also specialize the **draft** of its own content with corpus-local drafter code — `<corpus_root>/drafters/*.py`, loaded mechanically before drafting (the draft-stage analogue of the corpus-local capturer in §7.2). Such a drafter claims a record by its origin id (a producer-declared or stamped overlay binding, §7.2) and builds the content zone in place of the generic body draft; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
+A corpus may also specialize the **shaping** of its own content with corpus-local shaper code — `<corpus_root>/shapers/*.py`, loaded mechanically before the normalize pass (the analogue of the corpus-local capturer in §7.2). Such a shaper claims a record by its origin or form id (§7.2) and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
 
 ### 8.2 The deterministic / LLM boundary
 
 | Operation | Type | Why |
 |---|---|---|
-| Hashing, MIME detection, mime schema lookup | deterministic | mechanical |
+| Hashing, MIME detection, schema lookup | deterministic | mechanical |
+| Byte-fact attestation (artifact fields, manifest embeds, byte-marks, sidecar lift) | deterministic | mechanical |
 | Member promotion (byte streaming, hash verify, stub mint) | deterministic | mechanical |
-| Mime schema's body draft, artifact-block field extraction, and `canonical` hashing | deterministic | scriptable |
-| Origin-host matching | deterministic | mechanical |
-| Overlay-declared reference/relation emission (draft) / depth-1 dependent capture (capture) | deterministic | overlay-declared |
-| Functional URI evaluation | deterministic | spec mandates |
+| Derivation ops (`body`, `members`, text layers, renders, unit ops) | deterministic | pure functions (§6.3) |
+| Transcription / OCR ops | deterministic **per engine version** | version-labeled; pinned by authorship (§6.4) |
+| Origin-host matching; overlay-declared reference/relation emission | deterministic | overlay-declared |
+| Form-mapped shaping (a conversation's envelopes from a declared mapping) | deterministic | a shaper — scripts, not judgment |
 | Description authoring | LLM | requires understanding |
-| Body re-segmentation and shaping under overlay guidance | LLM | requires judgment |
-| Issue surfacing | LLM (faithfulness) / drafter (mechanical) | depends on kind |
+| Interpretive shaping and form assertion | LLM | requires judgment |
+| Issue surfacing | LLM (faithfulness) / detector (mechanical) | depends on kind |
 
 ### 8.3 Re-runs
 
 Every stage is independently re-runnable; re-runs are **scoped**.
 
-- **Re-ingest** — re-encounters bytes that match an existing `id`. Appends a touch identifier; may append to origin blocks.
-- **Re-draft (full)** — re-runs the mime schema and the overlay-declared emissions.
-- **Re-draft (scoped)** — re-runs only one schema. Refreshes ONLY the blocks/fields declared by that schema.
-- **Re-normalize** — re-runs the faithful-form pass.
-- **Re-resolve** — bare resolver-cache regeneration.
+- **Re-ingest** — re-encounters bytes matching an existing `id`. Appends a touch; may append origin blocks.
+- **Re-attest** — re-runs the attestation layer (new mime schema, richer attestations): strips + regenerates attested facts (§4.4.6), never the authored layer. *(Succeeds 2.x re-draft-full/scoped.)*
+- **Re-normalize** — re-runs the authoring pass (shaper or agent); total replacement of the authored layer.
+- **Re-resolve** — bare resolver-cache regeneration (`--regenerate`), including deliberate version upgrades of version-labeled ops.
 
-Each re-run appends a new `touch[]` entry.
+Each re-run appends a `touch[]` entry.
 
 ### 8.4 Re-stub
 
-`re-stub` is a deliberate reset operation that returns a record to `status: stub`, ready for a fresh draft pass. Everything **derived from a schema decision** is discarded. Everything **tied to the bytes themselves** is preserved.
+`re-stub` is a deliberate reset operation that returns a record to `status: stub`, ready for fresh attestation. Everything **derived from a schema decision** is discarded. Everything **tied to the bytes themselves** is preserved.
 
 | What survives | What is reset |
 |---|---|
 | `id`, `transport` — byte-intrinsic. | `title` and `description` → empty; `canonical`, `perceptual` (record-scope). |
-| The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's body fields, all embed blocks, all sections/segments, all context blocks. |
+| The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's attested fields, all embed blocks, all sections/segments (authored and byte-mark alike), all context blocks. |
 | `visibility`. | `status` → `stub`; record body's content zone → empty. |
 | `touch[]` collapses to its first entry (the original ingest touch) plus the re-stub touch. | |
 | The persisted bytes. | |
@@ -847,15 +1029,15 @@ Re-stub is invoked deliberately — never automatic. Its uses:
 - Records whose accumulated normalize work was wrong.
 - Migration from a deprecated schema generation.
 
-Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It is also the natural translation point for migrating records from prior schema generations: a re-stub accepts older frontmatter on input and always writes a current-spec-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
+Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It remains the migration translation point: it accepts older frontmatter on input — including 2.x `status: draft` — and always writes a current-spec-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
 
 ### 8.5 The normalization queue
 
-`normalize` (§8.1) is the one stage the corpus tooling does not itself run — it is interpretive, performed by an external **loop session** (a scheduled agent). The tooling provides only the **request/claim contract** that lets any actor ask for a (re-)normalization pass and await its result; it never invokes a normalizer.
+`normalize` (§8.1) is the one stage the corpus tooling does not itself initiate — it is driven by an external **loop session** (a scheduled agent), which runs the mechanical shaper where the record's form mapping licenses one and works interpretively where not (§12.5). The tooling provides only the **request/claim contract** that lets any actor ask for a (re-)normalization pass and await its result; it never invokes a normalizer.
 
-**The queue never writes records.** Record `status`, `touch[]`, and body are authored solely by `ingest`, `draft`, and the normalizer (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns `status`; the queue owns only its own entries.
+**The queue never writes records.** Record `status`, `touch[]`, and body are authored solely by `ingest` and the normalize pass (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns `status`; the queue owns only its own entries.
 
-**Requests are status-independent and repeatable.** A record may be enqueued at any status — `draft` for a first pass, or `normalized` for a *refinement* when a new overlay matches it or its guidance improves (re-normalize, §8.3). `normalized` is not terminal; each completed pass appends a `<model-id>` touch. Enqueue never inspects `status`.
+**Requests are status-independent and repeatable.** A record may be enqueued at any status — `stub` for a first pass, or `normalized` for a *refinement* when a new overlay matches it or its guidance improves (re-normalize, §8.3). `normalized` is not terminal; each completed pass appends a `<model-id>` touch. Enqueue never inspects `status`.
 
 A queue entry moves `idle → requested → claimed → idle`, recording the last pass's outcome:
 
@@ -869,7 +1051,7 @@ A queue entry moves `idle → requested → claimed → idle`, recording the las
 
 **Done** means the normalizer set `status: normalized` *and* the record lints clean — `finalize` enforces both halves.
 
-**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline requires `normalized` records (`ledger.md` §6.3): the ledger contributes by enqueuing, never by supplying a normalizer.
+**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, form §7.8, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline requires `normalized` records (`ledger.md` §6.3): the ledger contributes by enqueuing, never by supplying a normalizer. *(3.0)* The loop session consults the record's declared form: a form-mapped record shapes mechanically — the agent's remaining work is the editorial fields and descriptions — while a formless record is the fully interpretive case. `finalize`'s done-gate — `status: normalized` + lint clean, which now includes form-coherence (§4.3.2.1) — is unchanged.
 
 **Entry lifecycle and pruning.** A request and its claim are transient — each transition supersedes the prior state — but a settled pass records its **outcome** so a requester's `await` can resolve it, and so a *re-normalization* is distinguishable from an earlier pass (which `status` alone cannot tell apart, since a re-normalized record is still `normalized`). An outcome is **coordination state, not history**: the record's own `status` and `touch[]` are the durable trail. Because a requester may `await` after a loop iteration ends, an outcome is **never discarded at loop end** — that would race the awaiter, dropping it to the `status` fallback. Outcomes are instead garbage-collected by **age**: a settled outcome past a grace window (plus any orphaned scratch) is prunable, never a live request or claim — so the queue's footprint stays bounded without dropping an outcome a requester still needs. The grace window and the prune trigger are operational policy, not part of the contract.
 
@@ -881,7 +1063,7 @@ Cross-cutting aggregates over a record's frontmatter and body blocks, computed o
 
 ### 9.1 The `classifications` view
 
-Computed by walking the metadata zone — structural-derived only (§4.4.6):
+Computed by walking the body — structural-derived only (§4.4.6):
 
 ```
 classifications := []
@@ -890,6 +1072,8 @@ on <!--artifact <mime-type>-->:
 on <!--origin <id>[/<subtype>]-->:
   if id present:
     classifications += ["origin/<id>[/<subtype>]"]
+on <!--section <form-id>-->:
+  classifications += ["form/<form-id>"]
 dedupe preserving body order
 ```
 
@@ -946,7 +1130,7 @@ Three **cumulative** estimates of a record's size as model context, for budgetin
 - `blocks` — tokens in the whole record markdown (frontmatter + every metadata/annotation block + the content zone). Always ≥ `body`.
 - `full` — `blocks` plus an image-token estimate summed over image embed blocks and an image artifact, each `≈ min(width·height, cap) / pixels-per-token` from the declared dimensions (`0` when dimensions are absent).
 
-The text tokenizer and the image constants are an implementation choice (§12.13), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Like every §9 view it is computed on demand and never persisted.
+The text tokenizer and the image constants are an implementation choice (§12.13), not part of the contract — what the spec fixes is the **shape**: three cumulative tiers, ordered `body ≤ blocks ≤ full`. Structural segments carry no body and count toward `blocks` only, never `body`. Like every §9 view it is computed on demand and never persisted.
 
 ### 9.7 The `concepts` view *(removed in 2.0)*
 
@@ -988,7 +1172,9 @@ Export is idempotent and untracked. The output layout (filenames, directory stru
 
 Genuinely deferred items for this spec version:
 
-- **Automatic PDF text / OCR extraction.** Every PDF drafts **uniformly** to per-page body-empty `image` segments addressed `page=<N>` — the image-of-document shape (§7.1), sectionless — regardless of whether it is born-digital or scanned. The drafter makes **no** born-digital-vs-scanned determination and extracts **no** text. Deciding a page's shape, pulling its embedded text layer, mapping text to regions, transcribing a scan into `text/ocr` segments (§4.3.2), and outline-driven sectioning are all **normalizer (agent) passes**, supported by the resolver's PDF introspection ops (`page=<N>&text`, `page=<N>&words`, `page=<N>&probe`, `probe`, `outline`; §6.2). What remains deferred is an *automatic* (non-agent) text-or-OCR pass.
+- **Automatic PDF text / OCR extraction.** Every PDF presents **uniformly** — `/Info` fields attested, and a derived body (§6.2) of per-page body-empty `image` segments addressed `page=<N>` — regardless of born-digital or scanned. Deciding a page's shape, pulling its embedded text layer, transcribing a scan into `text/ocr` (with engine/confidence provenance — the corpus owns OCR provenance rather than laundering a pre-baked layer), and outline-driven structural marks are all **normalize-pass** work over the resolver's introspection ops (§6.2). What remains deferred is an *automatic* (non-agent) text-or-OCR pass.
+- **Deterministic stream extraction** *(3.0)*. Track promotion from media containers (§1.2) requires member-byte determinism; the mbox precedent achieves it by pinning extraction semantics on the mime schema, and the same discipline is required here (elementary-stream sample data in decode order per the container's own tables; HEIF `item=` payloads likewise). Pinning a demuxer's output across tool versions is an open engineering item — content-addressing plus continuity-gated supersession (§12.8) is the net if a pinned extraction ever shifts bytes.
+- **SQLite databases** *(3.0)*. An application's SQLite store (`chat.db`, `Photos.sqlite`, a browser's history db) is THE container of raw app data, and rows are deterministically addressable — a row/query axis would be well-defined under the disposition machinery above. Deferred **deliberately**, not overlooked: the corpus philosophy prefers **producer-declared exports** — the app's own export surface, with its declared semantics — over reverse-engineered application internals, and no real capture has yet wanted the database itself. When one does, `disposition: manifest` plus a pinned row-extraction scheme is the landing zone; until then this silence is a decision.
 - **Cross-record content addressing** via `<!--embed--> transport` — the shape leaves room for a corpus-wide `transport → (record_id, address)` index but the index itself is not specified. (Building it requires reconciling the `<algo>:<hex>` embed `transport` encoding with the bare-hex record `id` — strip the prefix and confirm `algo == blake3` before matching.)
 - **Range-aware navigation** for content the resolver doesn't materialize.
 - **`page=<N>-<M>` ranges** and other open transforms beyond §6.2.
@@ -1058,17 +1244,17 @@ A capture takes a target — URL, filesystem path, manual upload — and produce
 - **Filesystem path** — copied from staging, which is unlinked at ingest; the origin block is uri-less and carries `filename` + `source_modified` instead (§7.2).
 - **Manual upload** — the operator supplies the bytes and any origin URI.
 
-Inline media a transport merely *references* (images in an HTML page, etc.) are not separate records: the body drafter emits an embed block per asset (deduped by `transport` byte-hash) plus an `image`/`audio`/`video` positioning segment in the content zone (§4.3.1.4) — never an intra-corpus wikilink (those are reserved for cross-*artifact* references, §4.3.2.2). A raw archive is no exception (2.1): it drafts as an embed manifest, and a member becomes its own record only by deliberate promotion (§8.1). Hyperlinks to *other* resources are reconciled to intra-corpus references during cross-reference resolution (§12.4.7).
+Inline media a transport merely *references* (images in an HTML page, etc.) are not separate records: ingest attests an embed block per asset (deduped by `transport` byte-hash), and the body carries an `image`/`audio`/`video` positioning segment (§4.3.1.4) — never an intra-corpus wikilink (those are reserved for cross-*artifact* references, §4.3.2.2). A raw archive is no exception (2.1): it is attested as an embed manifest, and a member becomes its own record only by deliberate promotion (§8.1). Hyperlinks to *other* resources are reconciled to intra-corpus references during cross-reference resolution (§12.4.7).
 
-**Corpus-local capturers.** A corpus can ship its own capturer code under `<corpus_root>/capturers/*.py`. `corpus.local_code.load_corpus_modules(corpus_root, subdir)` imports these by path (`importlib`, not `sys.path`, so distinct corpora cannot collide on a module name), registering each module in `sys.modules` before exec, idempotently per `(root, subdir)`, with per-file failures logged and skipped. Trust boundary: this executes Python from the corpus root — the corpus owner's own code, which is the point of the tier — but a serving layer never captures or drafts, so merely fronting a corpus never runs it.
+**Corpus-local capturers.** A corpus can ship its own capturer code under `<corpus_root>/capturers/*.py`. `corpus.local_code.load_corpus_modules(corpus_root, subdir)` imports these by path (`importlib`, not `sys.path`, so distinct corpora cannot collide on a module name), registering each module in `sys.modules` before exec, idempotently per `(root, subdir)`, with per-file failures logged and skipped. Trust boundary: this executes Python from the corpus root — the corpus owner's own code, which is the point of the tier — but a serving layer never captures, attests, or shapes, so merely fronting a corpus never runs it.
 
 #### 12.3.2 MIME detection
 
-MIME detection selects the **mime schema** that drives the rest of the pipeline (`transport_algos`, address scheme, drafter):
+MIME detection selects the **mime schema** that drives the rest of the pipeline (`transport_algos`, address scheme, attestations, derivation ops):
 
 1. **Magic-byte sniffing** — the primary path (`mime.detect`). Inspect the leading bytes; refine ambiguous container magic by form-type and extension (a RIFF prefix → webp/wav/avi by its offset-8 form-type; an ISOBMFF `.m4b` → `audio/mp4`, not `video/mp4`, so it routes to transcription rather than the video keyframe path). A `PK\x03\x04` zip is refined by its members (`_refine_zip`): universal formats (OOXML / EPUB / JAR) match fixed internal paths baked into the tooling, while a corpus's *own* zip-shaped types (a diagnostics export, a backup bundle) match their schema-declared shape signatures (`applies_to.zip_members` / `zip_member_patterns`, §7.1) when a `corpus_root` is in scope — vendor-specific recognition lives in the overlay, not the package, and an unrecognized zip stays `application/zip`. An mbox opens with a `From ` separator at offset 0. A single email message (`message/rfc822`, typically a promoted mbox `msg=<N>`) has no magic number, so it is recognized by **header shape** — a distinctively-email header prefix (`Return-Path:` / `Received:` / `X-GM-THRID` / …), or, after the extension hint, two consecutive header-shaped lines — with the mbox `From ` separator always winning first (an mbox opens with the separator, an eml never does).
 2. **Extension hint** — disambiguates where magic is generic, and names the type for extensionless or schema-id-from-filename cases.
-3. **`unknown` sentinel** — when both fail. Record the gap; the artifact is still valid, it just gets no format-specific drafting.
+3. **`unknown` sentinel** — when both fail. Record the gap; the artifact is still valid, it just gets no format-specific attestation or derivation.
 
 The detected MIME becomes the **artifact block's opener argument**, which is authoritative — there is no frontmatter media-type field (§4.3.1.1).
 
@@ -1078,8 +1264,8 @@ The hash families of §2 / §4.2.1 land at different stages (§7.6 encoding):
 
 - **blake3 of the bytes** — always, at ingest. The artifact's `id` (bare hex): identity and filename stem.
 - **`transport_algos`** — additional byte-level algorithms the mime schema declares (e.g. `sha256` for interoperability), computed at ingest into `transport:` as `<algo>:<hex>`. The primary blake3 is on `id` and is not duplicated here.
-- **`canonical`** — a content-canonical hash computed at **draft** by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`). Currently computed but **not persisted** (see the §7.1 status note); without it `records.content_key()` returns `None` and `find_content_duplicate` short-circuits, so the cross-URL content-dedup fold is inert.
-- **`perceptual`** — atom fingerprints (image pHash, text simhash, …), **opt-in and schema-gated**, computed at draft only when the fingerprint knob resolves on (§12.4.4); default off. Per-segment on multi-atom records, record-scope on single-atom ones (§7.7).
+- **`canonical`** — a content-canonical hash computed by the mime schema's `canonical_strategy` (`blake3-canonical-{pdf,html,image,epub}`; at ingest attestation or as a derivation op — §12.18 open question). Currently computed but **not persisted** (see the §7.1 status note); without it `records.content_key()` returns `None` and `find_content_duplicate` short-circuits, so the cross-URL content-dedup fold is inert.
+- **`perceptual`** — atom fingerprints (image pHash, text simhash, …), **opt-in and schema-gated**, attested at ingest only when the fingerprint knob resolves on (§12.4.4); default off. Per-segment on multi-atom records, record-scope on single-atom ones (§7.7).
 
 There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash. A MIME with no canonical strategy and no fingerprint knob is blake3-`id`-only, and that record is normal.
 
@@ -1088,9 +1274,10 @@ There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash
 Ingest emits the stub record (§4.1). The frontmatter carries only the bytes-identity header — `id`, `transport:` (any `transport_algos`), `status: stub`, `touch: [<pkg>.ingest@<v>]`, and the two editorial fields `title: ''` / `description: ''`, empty until the normalizer authors them (§4.2.1). Everything else lands in body blocks:
 
 - The **artifact block**, its body holding the format-intrinsic extended fields the mime schema declares, named bare (`title`/`author`/`page_count`, not `pdf_title`; §4.3.1.1). Sources: PDF info dict, EXIF, ID3, HTML `<meta>`, OPF Dublin Core, ffprobe streams.
+- The mime schema's remaining **attestations** (§7.1): manifest/exposable embeds per the disposition, structural byte-marks, sidecar lift.
 - The first **origin block** from capture context — `uri:` + `snapshot:`, or the uri-less local-file form (§7.2). A **SingleFile save** is a third shape: a manual save carries a self-describing banner comment in its first bytes (`Page saved with SingleFile` + `url:` + `saved date:`), so a save dropped straight into `capture/` and ingested (no capture step) seeds a *retrieval* origin from the banner — `uri:` = the banner URL, `snapshot:` = the saved date parsed to ISO-8601 with its numeric offset **preserved** (not converted to UTC; the parenthesized zone name ignored) — instead of the uri-less local-file form. An explicit capture-sidecar `source_url` still wins; a banner-less or non-HTML file is unchanged. The banner is scanned only within a bounded head.
 
-No `content_type`, `hashes`, `classifications`, `tags`, or `uris`/`capture_dates` frontmatter — none of those exist in this model. The content zone is empty; draft fills it.
+No `content_type`, `hashes`, `classifications`, `tags`, or `uris`/`capture_dates` frontmatter — none of those exist in this model. The content zone holds attested byte-marks only (§4.3.2.3); the stored body is the normalize pass's (§12.5), and the derived body is readable immediately (`corpus body`, §6.2).
 
 #### 12.3.5 Dedup, re-capture, and capture provenance
 
@@ -1112,22 +1299,22 @@ A web capture renders the page in a headless browser, drives it to surface all d
 - `click: {selector, repeat, delay_ms}` — advance carousels / load-more buttons.
 - `wait: {ms}` or `wait: {selector, timeout_ms}` — settle async loads.
 - `hover: {selector}` — trigger hover-reveal media.
-- `remove: ['#header', 'footer', '.ad']` — delete matching elements from the live DOM before the snapshot. **This is where page chrome is removed.** The HTML drafter (§12.4.1) is deliberately mechanical and never guesses what is chrome, so stripping nav/header/footer/ads/cookie-notices is a per-host decision made here, where the site's real structure is known. Removing chrome at capture also keeps its images from being inlined and embedded. (Link-bearing navigation the crawl needs — breadcrumbs, related-item rails — is preserved by *not* listing it here.)
+- `remove: ['#header', 'footer', '.ad']` — delete matching elements from the live DOM before the snapshot. **This is where page chrome is removed.** The HTML `body` derivation (§12.4.1) is deliberately mechanical and never guesses what is chrome, so stripping nav/header/footer/ads/cookie-notices is a per-host decision made here, where the site's real structure is known. Removing chrome at capture also keeps its images from being inlined and embedded. (Link-bearing navigation the crawl needs — breadcrumbs, related-item rails — is preserved by *not* listing it here.)
 - `eval: "<javascript>"` — escape hatch for site-specific DOM surgery (fetch-and-inject an AJAX-on-click tab, promote a `data-*` high-res image URL into `src` so it gets inlined). An async-function string is awaited before the snapshot.
 
-The snapshot's **fidelity** is a per-host tier (`capture.fidelity:` — `exact` | `balanced` | `lean`, default `balanced`; `FIDELITY_PRESETS` in `capture/__init__.py`). On asset-heavy SPAs the self-contained inlining (web/icon fonts in redundant formats, app icon-sprite SVGs) is re-inlined into every page, dwarfs the content, and defeats content-addressed dedup (each page's whole-file hash differs). `balanced` drops redundant font/image/media alternates (≈−76%, no rendering risk); `lean` also prunes unused CSS (≈−91%); `exact` keeps everything for presentation-critical sites. The tiers touch only the gitignored `artifacts/` — the mechanical drafter reads DOM text/tables, so the drafted record is byte-identical across tiers. The resolved tier is stamped into a `corpus-fidelity` meta tag; `corpus capture --fidelity` / `corpus crawl --fidelity` override per run.
+The snapshot's **fidelity** is a per-host tier (`capture.fidelity:` — `exact` | `balanced` | `lean`, default `balanced`; `FIDELITY_PRESETS` in `capture/__init__.py`). On asset-heavy SPAs the self-contained inlining (web/icon fonts in redundant formats, app icon-sprite SVGs) is re-inlined into every page, dwarfs the content, and defeats content-addressed dedup (each page's whole-file hash differs). `balanced` drops redundant font/image/media alternates (≈−76%, no rendering risk); `lean` also prunes unused CSS (≈−91%); `exact` keeps everything for presentation-critical sites. The tiers touch only the gitignored `artifacts/` — the mechanical body derivation reads DOM text/tables, so the record and its derived body are identical across tiers. The resolved tier is stamped into a `corpus-fidelity` meta tag; `corpus capture --fidelity` / `corpus crawl --fidelity` override per run.
 
 Capture config (`capturer`, `transport`, `fidelity`, `interactions`, `viewport`) lives on the per-host origin overlay under its `capture:` section (§7.2); global defaults can sit on the universal `origin.yaml`. `scaffold.py`'s example overlay shows the full annotated shape.
 
 #### 12.3.7 The video (yt-dlp) pathway
 
-The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp:` and merged straight into `YoutubeDL` (full passthrough — `format`, `getcomments`, `impersonate`, …); the library forces `outtmpl` / `logger` / the resolved cookie file after the merge so an overlay can't break output, logging, or auth. `capture.cookies_from_host` (default `true`) pulls the capture URL's own-origin cookies from a running CDP browser (`--remote-debugging-port=9222`) into yt-dlp, so a logged-in session unlocks a host's full content (e.g. the full format ladder rather than a degraded anonymous one). yt-dlp writes a `.info.json` enrichment sidecar (post metadata + comments); ingest renames it to `capture/<hash>.info.json` and leaves it in staging — it is draft-time-only enrichment, never persisted to `artifacts/`.
+The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp:` and merged straight into `YoutubeDL` (full passthrough — `format`, `getcomments`, `impersonate`, …); the library forces `outtmpl` / `logger` / the resolved cookie file after the merge so an overlay can't break output, logging, or auth. `capture.cookies_from_host` (default `true`) pulls the capture URL's own-origin cookies from a running CDP browser (`--remote-debugging-port=9222`) into yt-dlp, so a logged-in session unlocks a host's full content (e.g. the full format ladder rather than a degraded anonymous one). yt-dlp writes a `.info.json` enrichment sidecar (post metadata + comments); ingest renames it to `capture/<hash>.info.json` — it is ingest-time-only enrichment (the sidecar-lift attestation, §7.1), never persisted to `artifacts/`.
 
-**Sidecar → origin block (draft time), then deleted.** The `.info.json` is *non-primary-source* metadata, so `draft/_sidecar.py` lifts every declared key into the **origin block** as a flat `ytdlp_<key>` field (`ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts, …) via `records.merge_origin_fields` — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when returned) becomes a `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:` aliases. The lifted key set is schema-declared — `sidecar.ytdlp_keys` on the video/audio mime schema (§7.1); the drafter is mechanical, not hardcoded. One datum is *structural* rather than flat: **`chapters[]`** (the uploader's outline). A video that ships chapter markers is sectioned by them — each chapter title becomes a section `entry` and the chapter bounds become the section time-ranges, in preference to the default speaker-run sectioning. Chapters are consumed into section structure, never copied to a `ytdlp_*` field; a section's `entry`/address is metadata structure, not body content, so this respects the same primary-artifact boundary. The only body content a media drafter writes is the **transcript**, derived from the primary artifact's own audio.
+**Sidecar → origin block (ingest attestation), then deleted.** The `.info.json` is *non-primary-source* metadata, so the sidecar lift copies every declared key into the **origin block** as a flat `ytdlp_<key>` field (`ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts, …) via `records.merge_origin_fields` — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when returned) becomes a `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:` aliases. The lifted key set is schema-declared — `sidecar.ytdlp_keys` on the video/audio mime schema (§7.1); the lift is mechanical, not hardcoded. One datum is *structural* rather than flat: **`chapters[]`** (the uploader's outline) is consumed into **structural segments** (producer-declared byte-marks, §4.3.2.3) — each chapter title an `entry:`, each bound a `time=` mark address. Chapters are consumed into marks, never copied to a `ytdlp_*` field; a mark's `entry`/address is structure, not body content, so this respects the same primary-artifact boundary. Transcription moves off the pathway entirely: it is the `transcribe` derivation op (§6.2), consumed at normalize.
 
-**Title is normalizer-owned.** The frontmatter `title` (like `description`) stays empty through draft; the normalizer authors it from the block-level candidates — the artifact block's bare `title`, or an origin `ytdlp_title` (the `ytdlp_` prefix survives because the origin opener names the source record, not the tool; §4.2.1). A media drafter's title candidate routes to the origin's `ytdlp_title` (an A/V artifact block carries no `title`); for display, `records.title_for` reads the frontmatter `title`, falling back to the artifact `title`, then `ytdlp_title`. After a successful draft, `_cli/draft._cleanup_enrichment` deletes the sidecar; enrichment is one-shot (re-capture to restore — the extracted fields already persist on the record).
+**Title is normalizer-owned.** The frontmatter `title` (like `description`) stays empty through ingest; the normalizer authors it from the block-level candidates — the artifact block's bare `title`, or an origin `ytdlp_title` (the `ytdlp_` prefix survives because the origin opener names the source record, not the tool; §4.2.1). A media capture's title candidate routes to the origin's `ytdlp_title` (an A/V artifact block carries no `title`); for display, `records.title_for` reads the frontmatter `title`, falling back to the artifact `title`, then `ytdlp_title`. After a successful lift, ingest deletes the sidecar; enrichment is one-shot (re-capture to restore — the lifted fields already persist on the record).
 
-**Per-host transcription (draft time).** The audio/video drafters resolve the record's origin host and read the overlay's `transcription:` section (`draft/_hostcfg.py`): absent → the global `[corpus.transcription]` adapter; `enabled: false` → skip (an `info` issue, not a `warning`); `adapter`/`base_url` → a per-host backend that overrides the global even when the corpus default is `noop`.
+**Per-host transcription (the `transcribe` op).** The op resolves the record's origin host and reads the overlay's `transcription:` section (§7.2): absent → the global `[corpus.transcription]` adapter; `enabled: false` → skip (an `info` issue, not a `warning`); `adapter`/`base_url` → a per-host backend that overrides the global even when the corpus default is `noop`.
 
 #### 12.3.8 Pagination reconciliation
 
@@ -1161,8 +1348,8 @@ A record's origin URI list should hold **one URI per distinct resource**, and an
 A page's most relevant outbound links are part of the capture itself — a product-detail page's manual or spec sheet far more than the other hundred links on the page. The per-host `capture.references` overlay section (§7.2) declares which links those are; the tooling emits a `reference` context block (§4.3.3.3) for each and, opt-in, fetches it depth-1 as its own record. The home is one module, `corpus.references` — *declare, match, emit* — with the *fetch* delegating to the existing capture/crawl machinery. Opt-in throughout: no rules → entirely inert.
 
 - **The rules** (`references.parse_rules` → `ReferenceRule`): a list of `{match, role, capture, cross_host}`. A rule's `match` keys (`selector` CSS, `href_pattern`/`text_pattern` regex on the resolved href / anchor text, `rel` token) are ANDed; rules are ORed. `role` (corpus-local label — `manual`, `spec-sheet`) rides onto the emitted reference; `capture: true` opts the target into the depth-1 grab (default false = annotate only); `cross_host: allow` (the default — manuals are off-host) lets a match reach another host, `same` host-restricts it. Parse-tolerant: a non-mapping entry, a rule with no match key, or a bad `cross_host` is skipped, never fatal.
-- **Matching** (`references.match` / `matches_for_record`): parse the DOM, scope candidate anchors by `selector` (else all `<a href>`), apply the AND filters, resolve relatives against the base URL, normalize, drop non-crawlable hrefs (`urls.is_crawlable_href` — the same filter `links`/`crawl` use), enforce `cross_host: same`, and dedupe by URL (DOM order, first rule wins for role/capture). `matches_for_record` applies the host's rules against the record's primary origin URI and excludes self-links. Shared by draft emission, `corpus links --references`, and the grab.
-- **Emission is draft-stage** (`references.emit_overlay_references`, called from the draft core right after the per-host canonical content-scoping). Each match emits one `<!--context reference-->` with `provenance: auto`, the rule's `role`, tier-1 `attribution_text` (the link text), and tier-2 `source_url` (the resolved href). It stops at tier 2: the mechanical drafter writes **no** tier-3 `source_uri` and reads **no** corpus state, keeping `draft` a pure function of the artifact (§4.3.3.3). Whether `source_url` is itself a record is a read-time derived edge: `derived_views.references` (§9.9) resolves it against the URI index and surfaces `captured`/`resolved_uri`, so the edge self-heals (`captured ⇄ pending`) under capture/removal/supersession. Idempotent for free: `draft` runs only on a clean stub and `redraft` re-stubs first, so emission only ever appends. **Known gap:** emission is HTML-only and *record-scoped* in the current implementation — no segment anchor is written, because the declared link usually sits in un-segmented chrome and a brittle DOM→segment map would mis-pin it. §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing this gap is an open item (§12.15).
+- **Matching** (`references.match` / `matches_for_record`): parse the DOM, scope candidate anchors by `selector` (else all `<a href>`), apply the AND filters, resolve relatives against the base URL, normalize, drop non-crawlable hrefs (`urls.is_crawlable_href` — the same filter `links`/`crawl` use), enforce `cross_host: same`, and dedupe by URL (DOM order, first rule wins for role/capture). `matches_for_record` applies the host's rules against the record's primary origin URI and excludes self-links. Shared by the overlay emission, `corpus links --references`, and the grab.
+- **Emission rides the attestation pass** (`references.emit_overlay_references`; §8.1 — record-scoped, so it attests at ingest). Each match emits one `<!--context reference-->` with `provenance: auto`, the rule's `role`, tier-1 `attribution_text` (the link text), and tier-2 `source_url` (the resolved href). It stops at tier 2: the mechanical emission writes **no** tier-3 `source_uri` and reads **no** corpus state, keeping it a pure function of the artifact (§4.3.3.3). Whether `source_url` is itself a record is a read-time derived edge: `derived_views.references` (§9.9) resolves it against the URI index and surfaces `captured`/`resolved_uri`, so the edge self-heals (`captured ⇄ pending`) under capture/removal/supersession. Idempotent for free: `auto` blocks are stripped + regenerated by re-attest (§4.4.6), so emission never duplicates. **Known gap:** emission is HTML-only and *record-scoped* in the current implementation — no segment anchor is written, because the declared link usually sits in un-segmented chrome and a brittle DOM→segment map would mis-pin it. §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing this gap is an open item (§12.15).
 - **The depth-1 grab** (`references.fetch_references`): `select_for_capture(matches, force=)` picks targets — `force=True` (`--with-references`) all, `force=False` (`--no-references`) none, `force=None` (default) the rules' own `capture: true`. Each selected, not-already-captured target is fetched once via `capture_and_ingest` — depth is fixed at 1 (a grabbed target is ingested as a stub, never expanded; multi-hop stays `crawl`'s job, §11). Best-effort: a per-target failure is recorded, not raised. Surfaces: `corpus capture --with-references` / `--no-references` (the inline grab after the primary ingest), `corpus crawl --references [seed]` (the deferred sweep; `--dry-run` lists pending targets).
 - **Discovery + view.** `corpus links --references <record>` previews the declared subset, each line annotated `[role=…, captured|pending, auto?]`. The `references` derived view (§9.9) is the `reference`-namespace projection; the reverse edge (which records reference *this* one) is a corpus-wide read, not indexed (§9.9 / §11).
 
@@ -1179,53 +1366,66 @@ A manual SingleFile save — a page a human saved from their own browser session
 - **The snapshot is stamped to the saved date.** The re-snapshot injects the same `corpus-*` metas live capture does, but with `corpus-capture-url` = the banner URL and `corpus-fetched-at` = the saved date, and ingest seeds the record's first origin with `snapshot:` = the saved date — the fetch happened when the human saved the page, not when it was re-snapshotted. Fidelity, viewport, and interactions resolve from the overlay exactly as for live capture.
 - **The source is retained.** From-save never unlinks the source file — a manual save can be irreplaceable — consuming only the re-snapshot staging file at ingest. The already-captured short-circuit (§12.3.5) and `--force` behave as for a URL capture, keyed on the resolved banner URL.
 
-### 12.4 Draft
+### 12.4 Attest & derive (the draft stage's successor)
 
-Draft brings a stub to `status: draft`, applying schemas in the §8.1 order: the mime schema first — the sole body-drafter, segmenting the content zone, emitting embeds, filling the artifact block's bare fields — with atom overlays riding segment openers, then the origin overlay's declared emissions (`reference`/`relation` context blocks, `provenance: auto`). A classification is never a frontmatter array and carries no justification field — the `classifications` list is a derived view (§9.1) — and records carry no `tags` field.
+*(3.0)* The 2.x draft stage's per-format drafters split into **attestations** (ingest-time byte-facts) and **derivation ops** (resolver-side content extraction); the body each drafter wrote is now the `body` op's output, stored only when the normalize pass authors it. A classification is never a frontmatter array and carries no justification field — the `classifications` list is a derived view (§9.1) — and records carry no `tags` field.
 
-#### 12.4.1 Per-format drafters
+#### 12.4.1 The per-format split
 
-Conversion produces the artifact's body as well-formed markdown. It is MIME-driven and shells out to deterministic tooling:
+The per-format inventory, restated as the split (each 2.x drafter's mechanics carry over to whichever side of the split owns them):
 
-- **`text/html`, `application/xhtml+xml`** → the mechanical HTML drafter (`draft/html.py`). It removes only non-rendered infrastructure (scripts/styles/comments), assigns `el=N` addressing to every content element of the raw artifact (the shared `transforms.html.is_addressable` predicate — content-bearing blocks and inline-media carriers, not layout-only `div`/`span` wrappers), emits dedup'd embeds, and emits one cleaned-`<body>` text segment. The `el=N` axis is the structural `_ADDRESSABLE_TAGS` set (content blocks + `<img>`) plus inline-media carriers: `<video>`/`<audio>` (materialized from their inline `<source data:…>`) and `<a href="data:…">` attachments (vCards, files). Every carrier becomes a dedup'd embed (`transport` = blake3 of the decoded bytes; `media_type` from the data URI; an attachment keeps its recovered `filename`, an image its `width`/`height`/`alt`), and the carrier's base64 `data:` payload is stripped from the body — the carrier survives as a body-empty `el=N` positioning marker (critical: a single inline video can be hundreds of MB). A bare `<a>`/`<source>` is not addressable — only a `data:`-bearing one — so per-message deep links never consume an index. The carrier→bytes round-trip lives on the resolver side (`transforms/html.py`); drafter and resolver import the same predicate + helpers, so they name the same elements `el=N` by construction (asserted in `test_drafters.py`). The drafter does **not** strip page chrome — a universal tool can't reliably tell chrome from content, and a wrong guess drops content silently; chrome removal is a capture-time, per-host decision (§12.3.6). Structural recovery (headings/tables/lists/equations) is the normalizer's job.
-- **`application/pdf`** → `draft/pdf.py` is uniform and mechanical: every PDF drafts to the same shape — one body-empty `image` segment per page addressed `page=<N>`, sectionless — plus the `/Info` fields on the artifact block (`page_count`, `title`, `author`, `producer`, `creation_date`, `modification_date`). The drafter makes no born-digital-vs-scanned determination and extracts no text; the page raster is the faithful transport unit (§11). Everything an agent needs to determine a page's shape and recover its content is exposed at normalize time through the resolver's introspection ops (§6.2): `page=<N>&text`, `page=<N>&words`, `page=<N>&probe` / `probe`, and `outline`. The normalizer uses these to pull born-digital text into prose segments, OCR a scan into `text/ocr` at `page=<N>&bbox=…` (so the corpus owns OCR provenance — engine/confidence/region — rather than laundering a pre-baked machine-OCR layer), and wrap pages into sections from the outline (`pages=<start>-<end>`). Resolver mechanics: `page=<N>` yields an intermediate `pdfpage` selector so a sub-op reads the page directly rather than OCR'ing a render; a terminal `pdfpage` — or an image op / `bbox=` after it — auto-renders to image, so a `page=` image segment stays a self-slice needing no embed (`lint._self_slice`). `words`/`probe`/`outline` cache as `json`. Canonical: `blake3-canonical-pdf` (per-page extracted text; persist currently disabled — §7.1 note).
-- **`application/epub+zip`** → the EPUB drafter (`draft/epub.py` + the pure `corpus.epub` OPF reader). `self_contained` — an EPUB is one work, one record. Emits one bare `text` segment per spine (reading-order) content document, addressed `spine=<N>`, with a mechanically-cleaned structural-HTML body (same philosophy as the HTML drafter), and groups them into sections by the book's navigation document (EPUB 3 nav → EPUB 2 NCX): top-level TOC entries become sections (`address: spines=<start>-<end>`, `entry:` = the part/chapter title), spine docs before the first TOC target become a synthetic `Front matter` section — the exact analogue of the PDF outline wrap (`pages=`/`page=` ↔ `spines=`/`spine=`). A book with no usable nav drafts sectionless, like an outline-less PDF. Each `<img>` references a separately-stored zip member, so it becomes an **embed** (addressed `spine=<N>&el=<K>`, `transport` = blake3 of the member bytes, deduped across the book; the body keeps a src-stripped `<img data-el="K">` placeholder) — the HTML drafter's embed model, not the PDF's bare-image-segment model. That address materializes through `transforms/epub.py`: `spine=<N>` selects the OPF content document and binds a resolver over the book's zip image members, then `el=<K>` resolves the addressed `<img>` to its member bytes — so a recorded address round-trips to byte-identical content (the resolved bytes' blake3 == the embed's recorded `transport`; el-indexing is shared with the drafter via `corpus.epub.addressable_image_bytes`). Publication metadata (Dublin Core) lands as bare artifact fields (`title`/`creator`/`language`/…; `spine_item_count`/`toc_entry_count` record the shape). Canonical: `blake3-canonical-epub` (concatenated spine text — packaging-invariant).
-- **Raw `application/zip`** (and the tar family — `.tar`, `.tgz`) → drafted by the `zip-manifest` strategy (a tar sibling shares the strategy's representation; a tgz is a solid gzip stream, so member access is a streaming decompress — the resolver cache absorbs it, §12.9): every member an embed, content zone empty, members promotable on demand (§8.1). A corpus that wants a *particular* archive-shaped bundle recognized as its own type still declares its own mime schema for it (recognized by shape via `applies_to.zip_member_patterns`, §12.3.2) and points it at the same strategy. *(2.1: raw zips no longer explode at ingest — `_ingest_decomposable` retires; a member record now exists only where someone deliberately promoted it.)*
-- **`draft.strategy: zip-manifest`** → the general `self_contained`-zip drafter (`draft/zip_manifest.py`), selected by *strategy* rather than schema id (`corpus.draft.STRATEGY_REGISTRY`), so one drafter serves any number of bundle types that differ only by the schema's `draft.manifest` config. It records the archive as an **embed manifest**. The modeling point: a zip member is a *transport* (a file with its own bytes + MIME), not a content atom — and an embed is precisely "an embedded transport". So every member becomes an embed (`transport` = blake3 of the member bytes, `media_type` content-sniffed, addressed `path=<relpath>`, root-stripped per `manifest.root_strip`) that the normalizer describes — and the content zone is **empty**: a pure container has no content atoms of its own, and a member's bytes are verbatim + resolvable, so nothing is transcribed. The folder hierarchy lives in the `path=` addresses (a tree is a derived rendering, not stored blocks). `media_type` is content-sniffed (`_is_text`: UTF-8, no NULs), not extension-guessed, so a `.cfg`/extensionless log is `text/plain`; a precise extension guess (`application/json`, `image/png`) is kept; an opaque binary is `application/octet-stream`. Bytes materialize through `transforms/zip.py`: `corpus://<id>?path=<relpath>` → the member bytes. The artifact block carries generic zip facts only — `member_count`, `uncompressed_bytes`, `compressed_bytes`, `compression`, `encrypted`, `comment`; a single wrapper dir's name is a fallback `title` candidate. The drafter knows nothing about any vendor: recognizing a bundle as, say, an Unraid diagnostics package and surfacing its identity is ledger knowledge — a harvest rule keyed on the kept-whole MIME rosters the record onto its concept mechanically (`ledger.md` §10) — not this drafter's concern, and not the artifact block's. An empty archive yields a blocking `partial-content` issue; because such a record has no content-zone segments, the `embed-unreferenced` lint is relaxed for it (the embeds ARE the content).
-- **`draft.strategy: mbox-manifest`** → the **selective** mailbox drafter (`draft/mbox_manifest.py`). Unlike the archive manifests it does NOT declare every member — a mailbox may hold 10^5 messages — so `corpus draft <mbox-id> --messages 5,12,90-95` declares only the named 1-indexed messages, each recorded as a `message/rfc822` embed addressed `msg=<N>` (blake3 over the un-stuffed member bytes, plus the message's Date / From / Subject and byte length). It is cumulative and idempotent: re-running unions the newly-named ordinals with the already-declared set (an identical re-declaration folds; a changed hash for a declared ordinal is a hard error), and a plain `corpus draft <mbox-id>` records the mailbox summary only (message count, byte size, date span) with no embeds. Extraction is pinned (§12.11): a separator is any line beginning with `From ` (mboxrd), un-stuffing drops one leading `>` from a `^>+From ` line, and line terminators are preserved — so member bytes are deterministic. A declared message is promotable (§8.1); its bytes stream out of the mailbox via `transforms/mbox.py` (`corpus://<mbox-id>?msg=<N>`, streaming to the ordinal and stopping at the next separator, never loading the mailbox whole), and a promoted message is `message/rfc822`, drafted by `draft/eml.py` (next).
-- **`application/json`** (`draft/jsonfile.py`) → the verbatim-**passthrough** drafter. JSON is a carrier syntax, so the faithful representation of a JSON artifact is its own text: the drafter decodes the bytes (UTF-8 per the JSON spec, BOM tolerated) and emits ONE `text/code` segment (`language: json`) spanning every line, addressed `line=1-<N>` — no element explosion, no reshaping, no key extraction. Two cheap shape facts land on the artifact block (`json_root`, `json_top_count`); parsing is validation only — a malformed document still drafts (parse tolerantly) with a `malformed-json` warning issue. What a given JSON *means* is the origin overlay's normalization guidance plus ledger knowledge, never this drafter's — the normalizer's licence is annotation (frontmatter `title`/`description`, optional contiguous line-addressed sub-segmentation), never transformation of the passthrough body.
-- **`message/rfc822`** (`draft/eml.py`) → a promoted (or standalone-ingested) email message. The mechanical drafter (1) lifts the headers onto the **artifact block**, RFC2047-decoded and single-line — `subject` (also the `title` candidate), `from`, `to`, `cc`, `bcc`, `date`, `message_id`, `in_reply_to`, `references` (a list in file order), `thread_id` (Gmail `X-GM-THRID`) — so thread reconstruction is a frontmatter query (`references` / `in_reply_to` ↔ `message_id` joins, grouped by `thread_id`); (2) renders the body as the **reply text only** — the `text/plain` part, else `text/html` reduced to text, with trailing **quoted history** trimmed from the first confidently-matched marker (an `On … wrote:` attribution directly above a `>`-quoted line, `-----Original Message-----`, an Outlook header block or underscore rule, or a `>`-run to EOF), keeping everything when no marker matches (prefer false negatives) and keeping signatures; and (3) records **every non-body MIME part** — attachments, inline images, nested messages — as a `part=<N>` embed (`transport` = blake3 over the **CTE-decoded** payload, plus `filename` / `disposition` / `content_id`), skipping the text alternatives the body consumed. A declared part is promotable (§8.1) — a contract-PDF attachment becomes a first-class `application/pdf` record whose bytes never leave the message, materialized via `transforms/message.py` (`corpus://<eml-id>?part=<N>`). Because the parts are message *members* (not body-flow assets a mechanical pass can position), `embed-unreferenced` is relaxed for a `message/rfc822` record — the normalizer links an inline image into the body where it belongs.
-- **`audio/*`** → speech-to-text transcription (reference: Whisper), with timestamps and speaker turn markers where determinable. `audio/mp4` covers `.m4a`/`.m4b` audiobooks (an `.m4b` magic-sniffs as `video/mp4` on its generic ISOBMFF brand; `mime.detect` refines it by extension so it routes to transcription — embedded chapter markers and cover-art `mjpeg` are not consumed in v1).
-- **`video/*`** → audio transcription + per-keyframe descriptions when the schema asks for them.
-- **`image/*`** → a single body-empty `image` segment addressed `bbox=0,0,1,1` (`draft/image.py`); the image is its own self-artifact — no embed; the bytes are the record's, materialized via the `bbox=` functional URI (§4.3.1.4). Any visual description is normalizer-written on the segment `description:`; an optional `perceptual:` when the fingerprint knob resolves on. No VLM/OCR in the deterministic drafter.
-- **`text/markdown`, `text/plain`** → passthrough with minimal cleanup (one `text` segment, body = the source text).
-- **`unknown`** → best-effort fallback; emit a metadata-only body summarizing what little can be determined.
+| 2.x drafter | Disposition | 3.0 attestations (ingest) | 3.0 derivation ops (§6.2) |
+|---|---|---|---|
+| HTML | work | inline `data:`-asset embeds (hash, type, `el=` address) | `body` (DOM→markdown, overlay chrome config), `el=` |
+| PDF | work | `/Info` fields; **exposable embeds** for embedded files / portfolio members (`attachment=<N>`) | `body` (page markers), `page=` + introspection ops, `attachment=` |
+| EPUB | work | Dublin Core fields; image-member embeds | `body` (spine text), `spine=`/`el=` |
+| OOXML (docx/xlsx) | work | document facts; **exposable embeds** (embedded media, OLE objects) | `body` (document text / sheets), `sheet=`/`bbox=` |
+| zip/tar (+ zip-shaped types) | manifest | member embeds (`path=`), archive facts | `members`, `path=` |
+| mbox | manifest | declared-message embeds (`msg=`, **selective declaration** — below; §12.11 pins the extraction) | `msg=` |
+| multi-card VCF | manifest | card embeds (`card=<N>`, delimiter-pinned — the mbox precedent on the contact axis; each member `text/vcard`, promotable) | `members`, `card=` |
+| ICS calendar | manifest | entry embeds (`entry=<N>`, `VEVENT`-delimited, promotable) | `members`, `entry=` |
+| eml | work | header lift; part embeds (`part=`) | `body` (reply-text trim), `part=` |
+| JSON | work | shape facts (`json_root`, `json_top_count`); `malformed-json` issue | `body` (verbatim passthrough), `turn=`/`att=` where a form mapping declares units |
+| audio / video containers | manifest | container/stream facts; **track embeds (`stream_id=`) + chapter marks** (§1.2) | `transcribe`, `time_range=`, `frame=`, `stream_id=` (default-member sugar, §6.2) |
+| HEIF/HEIC | manifest | image-item embeds (`item=<id>`); the declared primary (`pitm`) attested | `item=`, image ops via default-member resolution |
+| image (single-stream) | work | dimensions/EXIF; a motion photo's nested MP4 as an embedded transport (§1.2) | `bbox=` and the image toolkit |
+| markdown / plain | work | — | `body` (passthrough) |
+| unknown | work | best-effort facts only | — |
+
+Formats that arrive later slot into existing strategies, not new machinery: 7z/rar/dmg join the zip-manifest strategy; PST/OST joins the mbox precedent; WARC likewise (§1.2).
+
+**Mechanics that survive the split, restated on their owners** *(3.0 — the 2.x drafter prose retired; these behaviors, which 10,000+ records conform to, did not)*:
+
+- **Selective mailbox declaration** (mbox attestation). A mailbox may hold 10⁵ messages, so message embeds are declared **selectively**: the ingest/re-attest surface accepts named 1-indexed ordinals (the 2.x `--messages 5,12,90-95` surface, re-homed — §12.18 open question 10), each recorded as a `message/rfc822` embed at `msg=<N>` (blake3 over the un-stuffed member bytes, plus the message's Date / From / Subject and byte length). Declaration is **cumulative and idempotent**: a re-declaration unions the newly-named ordinals with the already-declared set, an identical re-declaration folds, and a changed hash for a declared ordinal is a **hard error**. An undeclared run attests the mailbox summary only (message count, byte size, date span), no embeds.
+- **The eml reply-text trim** (the `body` op for `message/rfc822`). The derived body is the **reply text only** — the `text/plain` part, else `text/html` reduced to text — with trailing quoted history trimmed from the first confidently-matched marker (an `On … wrote:` attribution directly above a `>`-quoted line, `-----Original Message-----`, an Outlook header block or underscore rule, or a `>`-run to EOF), keeping everything when no marker matches (**prefer false negatives**) and keeping signatures. Part embeds skip the text alternatives the body consumed.
+- **HTML addressability** (the `el=` selector). `el=<N>` indexes the page's addressable elements, 1-indexed — content blocks plus the inline-media carriers (`<img>`, `<video>`, `<audio>`, `<a href="data:…">`) — and what an address materializes is determined by the element (§6.2). The addressable-element definition is op-owned, unchanged from 2.x; shapers and the resolver share one implementation (§12.4.3).
+- **Manifest lint conventions.** An empty archive attests a blocking `partial-content` issue. `embed-unreferenced` is relaxed for `manifest`-disposition records (the embeds ARE the content) and for `message/rfc822` records (parts are message *members*, not body-flow assets — the normalizer links an inline image into the body where it belongs).
 
 #### 12.4.2 One construction path (the constituent model)
 
-Every drafter builds the record's content zone through the **`recordbuild.Build` ops** — `add_blocks` → `open_section`/`add_segment` (which enforce body⟺lossless per segment) — and `recordbuild.finish` emits + grammar-validates it. These are the same ops `compile` replays from a decomposed `manifest.corpus`, so draft / redraft / decompose / compile / normalize all construct records identically, and a drafted record decomposes then recompiles byte-for-byte. This is the substrate the LLM normalizer works on: it edits the decomposed **constituent files** (per-segment body / description sidecars + the ops manifest) and recompiles deterministically — never rewriting a monolithic markdown blob — which makes whole classes of structural corruption unrepresentable. (`begin_from_post` seeds the Build for draft/redraft; `begin` seeds it from a `meta.yaml` for compile.)
+`recordbuild.Build` remains the one construction path — `add_blocks` → `open_section`/`add_segment` (which enforce body⟺lossless per segment) — and `recordbuild.finish` emits + grammar-validates it. These are the same ops `compile` replays from a decomposed `manifest.corpus`, so attest / re-attest / decompose / compile / normalize all construct records identically: shapers and agent passes construct the authored layer through it, and a shaped record decomposes then recompiles byte-for-byte. This is the substrate the LLM normalizer works on: it edits the decomposed **constituent files** (per-segment body / description sidecars + the ops manifest) and recompiles deterministically — never rewriting a monolithic markdown blob — which makes whole classes of structural corruption unrepresentable. (`begin_from_post` seeds the Build for re-attest; `begin` seeds it from a `meta.yaml` for compile.)
 
-#### 12.4.3 Corpus-local drafters
+#### 12.4.3 Corpus-local shapers
 
-A corpus can specialize the draft of its *own* content without editing the package — the draft-stage analogue of the corpus-local capturer (§12.3.1). `_cli/draft.derive_record` loads `<corpus_root>/drafters/*.py` (via the same `local_code` loader and trust boundary) before any dispatch. The first hook is HTML: a module calls `@draft.html.register_html_subdrafter("<origin-id>")`, and the mechanical HTML drafter hands the whole content zone to it when the record's origin matches — a producer-declared `corpus-origin-schema` meta or a stamped origin-block id (§7.2) — instead of leaving the single wrapping `el=1-N` segment for the normalizer. The sub-drafter returns the same `(blocks, embeds, issues)` trio the generic path produces and reuses the public `compute_embed_metadata` + `transforms.html.is_addressable`, so its `el=N` addresses and embed transports line up with the resolver by construction. The record envelope (title, origin fields, canonical) stays the generic path's; only the content zone is delegated. Format-specific drafters, atoms, and overlays for private content live in the owning corpus repo, never in the package.
+A corpus can specialize the shaping of its *own* content without editing the package — **corpus-local shapers**, the successor of the 2.x corpus-local drafters (the iMessage sub-drafter foremost), same trust boundary, same registration pattern. `<corpus_root>/shapers/*.py` load via the same `local_code` loader (§12.3.1); a module claims records by origin or form id — a producer-declared `corpus-origin-schema` meta or a stamped origin-block id (§7.2) — and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent. A shaper constructs through `recordbuild` and reuses the public address/embed helpers (`compute_embed_metadata`, `transforms.html.is_addressable`), so its addresses and embed transports line up with the resolver by construction. The record envelope (title, origin fields) stays the generic path's; only the authored content zone is delegated. Format-specific shapers, atoms, and overlays for private content live in the owning corpus repo, never in the package.
 
 #### 12.4.4 Perceptual fingerprinting (opt-in)
 
-A segment gets a `perceptual:` only when `schemas.resolve_fingerprint(corpus_root, media_type, post, cli_override)` resolves on — precedence CLI (`corpus draft --fingerprint` / `--no-fingerprint`) › origin overlay › mime-schema `fingerprint` knob › off (the default; §7.7). The resolved knob (`true` = the atom's default algorithm, an algorithm name, or a list) becomes concrete per-atom algorithms via `fingerprint.algos_for_atom(atom, knob)`, computed by `fingerprint.text_fingerprints` / `image_fingerprints` (a registry keyed by algorithm, mirroring `content_hash._STRATEGIES`). Algorithm selection is schema-only; the CLI flag is on/off.
+Fingerprints attest at ingest where the knob resolves on (§7.7). A segment gets a `perceptual:` only when `schemas.resolve_fingerprint(corpus_root, media_type, post, cli_override)` resolves on — precedence CLI (the ingest/re-attest `--fingerprint` / `--no-fingerprint` override) › origin overlay › mime-schema `fingerprint` knob › off (the default; §7.7). The resolved knob (`true` = the atom's default algorithm, an algorithm name, or a list) becomes concrete per-atom algorithms via `fingerprint.algos_for_atom(atom, knob)`, computed by `fingerprint.text_fingerprints` / `image_fingerprints` (a registry keyed by algorithm, mirroring `content_hash._STRATEGIES`). Algorithm selection is schema-only; the CLI flag is on/off.
 
 #### 12.4.5 Deterministic auto-classification *(removed in 2.0)*
 
 *Retired with the composite namespace (§7.4).* The `classify_when` engine, `corpus classify`, `corpus reclassify`, and lint's `classification-stale` all retire; deterministic membership is now a ledger **harvest rule** over the same fact base (`ledger.md` §10), evaluated ledger-side (`ath ledger harvest`) as a pure function of the corpus's mechanical record facts — so `draft` no longer carries any classification hook at all.
 
-#### 12.4.6 Bulk recompile (`corpus redraft`)
+#### 12.4.6 Bulk re-attest (`corpus reattest`)
 
-A drafted record is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an in-place `.md` rewrite, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. `corpus redraft [target] [--mime/--host/--status] [--dry-run] [--fingerprint]` applies the per-record draft core across the corpus via a clean re-stub (`restub.restub_post` with the touch chain collapsed to the original ingest entry, no re-stub touch) — so an unchanged record re-derives byte-for-byte and is not rewritten (idempotent; `--dry-run` reports the set, writing nothing). It refuses `normalized` records unless `--force`, since re-deriving discards normalization. Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest* (§12.4.2) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to canonical text without writing, so redraft can compare against disk.)
+The attested layer is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an in-place `.md` rewrite, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. **`corpus reattest`** `[target] [--mime/--host/--status] [--dry-run] [--fingerprint]` sweeps the attested layer (§8.3) across the corpus — an unchanged record re-derives byte-for-byte and is not rewritten (idempotent; `--dry-run` reports the set, writing nothing). Unlike the 2.x `corpus redraft` it succeeds, re-attest never touches the authored layer (§4.4.7), so it needs no `normalized`-refusal guard; authored-layer sweeps are **re-normalize** dispatches through the queue (§8.5). The **`corpus draft` verb retires**. Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest* (§12.4.2) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to canonical text without writing, so reattest can compare against disk.)
 
 Pipeline-state provenance is the `touch[]` chain (§4.2.2): each pass appends a `<pkg>.<module>@<version>` (or `<model-id>`) identifier, so the latest touch's tooling version encodes the spec era of the record's current shape and re-run targeting reads it. There is no separate `conversion_method` / `conversion_tool` field.
 
 #### 12.4.7 Cross-reference resolution
 
-After the body exists, scan segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already an embed + segment (§12.4.1). For each hyperlink:
+Cross-reference reconciliation is a read-time/sweep concern. Once a stored body exists (normalize, §12.5), scan segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already an embed + segment (§12.4.1). For each hyperlink:
 
 1. Map the URL → `id` by querying the corpus's URI index (`records.build_uri_index` — every record's origin `uri:` list keyed by identity, §12.3.9).
 2. If matched, rewrite as a raw intra-corpus wikilink `[[<id>|original link text]]` — no URI scheme prefix; these are layer-local cross-artifact references (§4.3.2.2 / §5.1).
@@ -1237,17 +1437,21 @@ This is purely mechanical: the pipeline does not invent links the original conte
 
 ### 12.5 Normalize
 
-Normalization brings a record from `draft` to `normalized` (§8.1). It is interpretive — performed by an external agent session driven through the queue (§8.5, §12.5.6), never by the tooling itself.
+Normalization brings a record from `stub` to `normalized` (§8.1) — the **one authoring pass**. It is executed by a **shaper** (deterministic tooling registered per form or manifest strategy — the successor of the 2.x draft strategies) wherever the record's declared form mapping makes the shape mechanical, and by an interpretive agent session (through the queue, §8.5) wherever judgment is required; most records are a composition — the shaper writes the form, the agent authors what only judgment can (editorial fields, descriptions, faithfulness issues). The agent works over the same derivation ops any reader uses (`corpus body`, the introspection ops, `transcribe`) — nothing it consumes is privileged or unreproducible.
+
+#### 12.5.0 Shapers
+
+A **shaper** is deterministic normalize tooling: it reads the origin overlay's `form:` mapping (§7.2) and the form overlay's decomposition contract (§7.8), consumes derivation ops, and emits the authored content zone through `recordbuild` (§12.4.2) — the form section with its codebook, envelope segments (`turn=` addresses, codebook indexes, timestamps in the form's convention), event segments, attachment markers, structural byte-marks. Its touch is `<pkg>.shape.<form-id>@<v>`; a combined pass appends `+<model-id>` when the agent's editorial work rides the same pass. Shapers live in the package (generic, mapping-driven) or corpus-local under `shapers/` (§12.4.3). A shaper failure on a malformed unit is parse-tolerant per the standing principle — log, mark with an issue, continue.
 
 #### 12.5.1 The interpretive pass
 
-The normalizer refines the record — faithful-form work only:
+The normalizer authors the record's stored faithful form — faithful-form work only:
 
-- Improves formatting fidelity (broken tables, malformed lists); resolves encoding ambiguity where determinable.
+- Authors the stored content zone from the derived body and the introspection ops (where a shaper hasn't already written the form), improving formatting fidelity (broken tables, malformed lists) and resolving encoding ambiguity where determinable.
 - Writes asset descriptions on embeds and on self-slice / non-lossless segments via `description:` (lossy interpretation — never in a faithful segment body); fills embed `alt` only when the source provides it.
 - Surfaces problems as `<!--context issue/<id>-->` blocks in the annotations zone.
 - Authors the frontmatter `title` and `description` (the two editorial fields, empty until now).
-- Re-segments the content zone where judged appropriate (structural only), and sets `status: normalized`.
+- Re-segments where judged appropriate (structural only), and sets `status: normalized`.
 
 The pass MUST preserve faithfulness (§1.5 principle 3): no information that wasn't in the source; descriptive content lives on `description:` / `alt`, never in a segment body.
 
@@ -1266,7 +1470,7 @@ Failures here are pipeline bugs; they should fail loudly.
 
 A context block stores as `{namespace, id, subtype, fields}` in `post.metadata["_contexts"]`. The bundled namespaces are `issue` and `reference` (§4.3.3); a corpus may add its own under `schema/context/<ns>/` (`relation` overlays are corpus-local, per §4.3.3.5). Context is scarce by design (§4.3.3), and there is deliberately no bundled free-text `note` namespace — that would invite scratchpad flooding. The `aside` namespace named in §4.3.3 has no bundled overlay yet; it is deferred.
 
-- **Issue loading and parse tolerance.** `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml`. `records.iter_issue_blocks` / `append_issue_block` are shims over `_contexts` filtered to the `issue` namespace, so drafters/detectors, `health.unresolved_issues`, the §9.2 view, and lint's issue rules share one path. The reader is parse-tolerant: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write.
+- **Issue loading and parse tolerance.** `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml`. `records.iter_issue_blocks` / `append_issue_block` are shims over `_contexts` filtered to the `issue` namespace, so pipeline detectors, `health.unresolved_issues`, the §9.2 view, and lint's issue rules share one path. The reader is parse-tolerant: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write.
 - **Reference lint.** `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay. *(The 1.0 `reference-unresolved` lint retired with the stored tier-3 `source_uri`, §4.4.5.)*
 - **Decompose/compile conventions.** The manifest keeps a dedicated `issue <id> sev= res= detector=` line for the issue namespace and a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`). Two conventions keep the working dir hand-editable: `status` is authored only on the manifest `record … status=` line (not duplicated in `meta.yaml`, where an edit would be a silent no-op), and `meta.yaml` renders a multi-line string as a YAML block literal (`|`) so a multi-line `description` never reads as a truncated stump. An address list in the manifest is bracketed and `|`-separated (`[a|b|…]`), not comma-separated — a single address (e.g. `bbox=x,y,w,h`) already contains commas.
 
@@ -1275,8 +1479,8 @@ A context block stores as `{namespace, id, subtype, fields}` in `post.metadata["
 The LLM normalizer never reads `schema/*.yaml` directly; it works through read-only commands (`_cli/{diagnose,guidance,overlay,preview}.py`, surfacing the §9 derived views and the §6 resolver):
 
 - **`corpus diagnose <hash> [--json]`** — the first call: a one-page brief combining the derived views (classifications / issues / uris) with a quick-lint and the record's context blocks.
-- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / atom overlay for the record.
-- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a mime or atom overlay, so the normalizer works without reading YAML. Given a bare host instead, it falls back to the origin overlay and prints its host match, declared operational sections, and `normalization.guidance`.
+- **`corpus guidance <hash>`** — the merged `normalization.guidance` from every applied mime / origin / form / atom overlay for the record.
+- **`corpus overlay <namespace>/<id>`** — the field-spec table (types, `semantic_type`, required) for a mime, form, or atom overlay, so the normalizer works without reading YAML. Given a bare host instead, it falls back to the origin overlay and prints its host match, declared operational sections, and `normalization.guidance`.
 - **`corpus lint <target> [--json]`** — the conformance gate; `--json` emits a single JSON array of findings (each = the `Finding` fields + `record_id`), across all records when `<target>` is omitted.
 - **`corpus preview <target> [--page N] [--mark x,y,w,h]… [--full] [-o out.png]`** — the cropping loop's *eyes* (§12.5.5). Renders the artifact (an image, or a PDF page via `--page`) with each proposed bbox outlined on the full image so a vision-model normalizer can see where a region sits, judge the fit, and adjust before committing. Read-only — it never writes the record; the agent commits regions separately by editing the record body. Fits the render to the `llm` budget by default; prints the cache path, or copies to `-o`.
 
@@ -1328,19 +1532,19 @@ The 1.0 loop authored composite overlays from observed patterns. The loop surviv
 
 **Where each pattern lands.** A recurring *deterministic membership* pattern becomes a ledger **harvest rule** (`ledger.md` §10 — authored in the ledger, evaluated by `ath ledger harvest`). Recurring *body-shape* guidance becomes origin-overlay guidance (per host / subtype, §7.2) or an atom overlay (per form, §7.3). Recurring *link structure* becomes a `capture.references` / `capture.relations` declaration (§7.2). Domain conventions for authoring claims land in the ledger's `facts/SCHEMA.md` or a concept schema (`ledger.md` §4.4), never in corpus schemas.
 
-**Re-propagation.** Corpus-side overlay changes re-propagate with `corpus redraft` (scoped by `--host`/`--mime`; `git diff records/` is the review surface). Ledger-side rule changes re-propagate with `ath ledger harvest` — records are untouched.
+**Re-propagation.** Corpus-side overlay changes re-propagate with `corpus reattest` (attested layer, scoped by `--host`/`--mime`; `git diff records/` is the review surface) and re-normalize sweeps (authored layer, §8.5). Ledger-side rule changes re-propagate with `ath ledger harvest` — records are untouched.
 
 ### 12.7 Re-run verbs
 
 Every stage is independently re-runnable (§8.3); each re-run appends a `touch[]` entry. Re-processing is how the corpus absorbs improvement: new schemas, a better extractor / transcriber, an upgraded normalization model, or newly-captured artifacts that resolve old cross-references. The CLI mapping:
 
 - **Re-ingest** — automatic on re-encountered bytes matching an existing `id`; folds the capture into origin blocks (§12.3.5), never a new record.
-- **`corpus redraft`** — re-derive from the retained artifact + current schemas/tooling (§12.4.6).
-- **Re-normalize** — enqueue the record again (§12.5.6); refreshes the faithful-form work and faithfulness issues, may re-segment.
-- **`corpus compile`** — reassemble a record from a decomposed manifest (§12.4.2) — a different input than `redraft`'s artifact.
+- **`corpus reattest`** — re-run the attestation layer from the retained artifact + current schemas/tooling (§12.4.6, §8.3).
+- **Re-normalize** — enqueue the record again (§12.5.6); refreshes the authored layer (shaper or agent) and faithfulness issues, may re-segment.
+- **`corpus compile`** — reassemble a record from a decomposed manifest (§12.4.2) — a different input than `reattest`'s artifact.
 - **`re-stub`** — the deliberate reset to `status: stub` (§8.4).
 
-**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (a drafter or mime-schema change), `--classification` (a `mime/*` / `origin/*` class), `--status` (e.g. only `draft`).
+**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (an attestation or mime-schema change), `--classification` (a `mime/*` / `origin/*` / `form/*` class), `--status` (e.g. only `stub`).
 
 ### 12.8 Maintenance: GC and record removal
 
@@ -1349,8 +1553,8 @@ Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a rout
 - **`corpus gc`** prunes, by file mtime, four regenerable categories — never a tracked record, a live queue entry, or an artifact that still has a record: **`cache`** (resolver output; re-warms on the next resolve), **`staging`** (leftover `capture/` debris — sidecars, crawl coordination files, abandoned partials), **`orphans`** (artifacts with no owning record — ingest is the only writer of `artifacts/`, so an orphan is exactly an artifact file whose record is gone: the debris of a `--force` re-capture, a re-stub, or a hand-`rm`), and **`export`** (regenerable bundles). Previews by default (counts + bytes per category); `--yes` deletes. `--older-than DAYS` sets the grace window (default 7; `0` prunes everything now) — generous beyond the brief window in ingest between writing an artifact and its record, so the orphan sweep never races a fresh capture. `--include` restricts the set; `--json` emits the structured result. Idempotent, empty-shard-tidying, safe on a cron tick.
 - **`corpus rm <id>`** removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards. *Dry-run by default*: without `--yes`/`--force` it prints the plan (paths, sizes, inbound referrers) and deletes nothing. *Ref-checked*: `inbound_references` scans every record's `reference` blocks (§4.3.3.3) for one citing the target — a `source_url` that resolves to it — and refuses a cited record (exit 1) unless `--force`, naming the would-be-dangling referrers. (Ledger evidence citing the record is the other inbound-reference class; checking it is a ledger-side concern — `ath ledger worklist` names the citing claims.) *Reproducibility-warned*: the artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes. It deliberately does not touch the resolver cache (cache is keyed by functional-URI hash, so there is no clean per-record slice); `gc` reclaims orphaned cache by age. A fourth guard lands with containment (2.1): removing a **container** whose members have promoted records strands those records' bytes — `rm` names the promoted members and refuses without `--force`; even when forced, the failure mode is loud (health reports the ids unresolvable, §12.17).
 - **`corpus forget-origin <id> <uri>`** handles the many-to-one provenance case: identical bytes accrue multiple origin aliases (§5.2); when one alias is wrong, this drops it without removing the record. Matched by identity key (§12.3.9), so a query-noise spelling still matches. Refuses when it is the record's only origin (that is an `rm`) and is a no-op when the uri isn't among the origins. An origin block whose every uri was forgotten is dropped; the edit appends a `corpus.forget-origin@` touch. It edits the tracked `.md` (git-recoverable), so it acts by default with `--dry-run` to preview — the asymmetry with `rm`'s dry-run default is deliberate (a tracked-text edit vs. irreproducible byte loss).
-- **`corpus pack`** *(planned, 2.1)* — the inverse of promotion: consolidate standalone artifacts into a container (the container captured, ingested, and manifest-drafted; the members' blake3s unchanged), then prune the now-redundant standalone files once each member verifies as container-resolvable. No record changes — residence is invisible (§2). Until it lands, a standalone artifact whose blake3 is *also* container-resolvable is simply a redundant copy, not an orphan.
-- **`corpus session <capture|list>`** bundles a Claude Code session — its `<id>.jsonl` transcript plus the `<id>/` sidecar tree (sub-agent transcripts, tool-result payloads, workflow state) — into ONE deterministic zip via the reusable writer core above (the first shipped consumer of the `pack` engine), then ingests and `zip-manifest`-drafts it so every member is a directly-addressed `path=<member>` embed (the transcript is never transcribed). It binds the `claude-code-session` producer-export origin (§7.2, uri-less, keyed on a `session_id` field); `--from [user@]host` sources a session from another machine over ssh/rsync. Sessions are personal (a transcript embeds every tool result verbatim) — they belong in a private corpus.
+- **`corpus pack`** *(planned, 2.1)* — the inverse of promotion: consolidate standalone artifacts into a container (the container captured, ingested, and manifest-attested; the members' blake3s unchanged), then prune the now-redundant standalone files once each member verifies as container-resolvable. No record changes — residence is invisible (§2). Until it lands, a standalone artifact whose blake3 is *also* container-resolvable is simply a redundant copy, not an orphan.
+- **`corpus session <capture|list>`** bundles a Claude Code session — its `<id>.jsonl` transcript plus the `<id>/` sidecar tree (sub-agent transcripts, tool-result payloads, workflow state) — into ONE deterministic zip via the reusable writer core above (the first shipped consumer of the `pack` engine), then ingests it as a zip manifest so every member is a directly-addressed `path=<member>` embed (the transcript is never transcribed). It binds the `claude-code-session` producer-export origin (§7.2, uri-less, keyed on a `session_id` field); `--from [user@]host` sources a session from another machine over ssh/rsync. Sessions are personal (a transcript embeds every tool result verbatim) — they belong in a private corpus.
 - **`corpus continuity <A> <B>`** proves whether record `A`'s addressable content is preserved in `B`: per `path=<member>` it is byte-identical, *contained* (A is a prefix B extends — the append-only case), *diverged*, or *absent*, and `contains_a` is true iff every unit is preserved. This is the supersession safety check — the *same* test answers "may B replace A?" (keep the more complete version: a re-captured session that grew supersedes its predecessor, while a compacted one must not clobber the fuller copy) and "may a citation of A be rewritten to B?" (`ath ledger supersede`, `ledger.md` §13.3). No synthetic stable id is minted: identity stays the blake3, and continuity carries citations forward only where the content survived.
 - **`corpus capture --force --replace`** is a supersession ergonomic over `rm`: `--replace` (requires `--force`) snapshots the records holding the URL before the capture and, if the new bytes produced a different record id, retires the prior record(s) for that URL, reclaiming the old artifact bytes. When the bytes are identical, the capture folds into the existing record and nothing is retired.
 
@@ -1393,11 +1597,15 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 | page | `page=<N>` | paginated documents |
 | block | `block=<N>` | block-structured documents without fixed pages |
 | sheet | `sheet=<name>` (+ `bbox=<A1-range>`) | spreadsheets |
-| time | `time=<tc>` / `time_range=<s>-<e>` | audio / video |
+| time | `time=<tc>` / `time_range=<s>-<e>[,…]` | audio / video (a comma-delimited ordered list of ranges materializes as concatenated cuts in listed order — the muxing contract, §6.2; on a container the cut is of the composition via per-kind default members) |
 | frame | `frame=<tc>` | video stills |
 | region | `bbox=<x>,<y>,<w>,<h>` | image crops (relative floats) |
-| turn | `turn=<N>` | turn-structured transcripts / sessions |
-| stream | `stream_id=<id>` | multi-stream media (composed onto another axis) |
+| turn | `turn=<N>` | turn-structured transcripts / sessions (1-indexed unit in the record's declared unit array, located by the origin overlay's form mapping — §7.2; `turn=<N>&att=<M>` addresses unit N's M-th declared attachment, materialized by lineage-chained resolution, §6.2) |
+| stream | `stream_id=<id>` | multi-stream media (a media container's track members — extraction semantics pinned by the mime schema so member bytes are deterministic and promotable, §8.1/§11; also composes onto another axis as before; bare ops route via default-member resolution, §6.2) |
+| card | `card=<N>` | multi-card vCard files (1-indexed; `BEGIN:VCARD`/`END:VCARD` delimiter-pinned extraction, so member bytes are deterministic and promotable — the mbox precedent) |
+| entry | `entry=<N>` | calendar files (ICS; 1-indexed `VEVENT`-delimited entries, promotable likewise) |
+| item | `item=<id>` | HEIF/HEIC image items (container-declared item ids; the `pitm` primary is the default-member target, §6.2) |
+| attachment | `attachment=<N>` | a `work` transport's exposable embedded files (PDF embedded files / portfolio members; OOXML embedded objects — §7.1) |
 | path | `path=<relpath>` | archive members (kept-whole archives: zip, tar/tgz) |
 | message | `msg=<N>` | mailbox archives (mbox; 1-indexed). Extraction semantics — the `From ` delimiter convention and `>From ` un-stuffing variant — are pinned by the mime schema, so member bytes are deterministic and promotable (§8.1) |
 | part | `part=<N>` | MIME message parts (email; 1-indexed addressable parts — every leaf part plus every nested `message/rfc822` as a whole, in depth-first pre-order — as CTE-decoded payload bytes; promotable per §8.1) |
@@ -1414,7 +1622,7 @@ The `token_counts` view (§9.6) is computed with: text counted by a local BPE to
 
 ### 12.14 Serving a corpus
 
-No server is part of the corpus contract — a corpus is a directory of records, schemas, and caches, fully usable offline through the library and CLI (§1.5 principle 9). A serving layer may front one or more corpora — records, derived views (§9), artifact bytes, resolver output (§6) — over HTTP for browsing or search. It should remain a thin read surface that serializes what the library already produces, adding no parsing, derivation, or resolution logic of its own, and it never drafts, normalizes, or executes corpus-local code. Multi-corpus routing (mapping public ids to corpus roots) is a serving-layer concern; the tooling itself is single-root per invocation. One sharp edge: a functional-URI value passed through a URL query string must be fully percent-encoded.
+No server is part of the corpus contract — a corpus is a directory of records, schemas, and caches, fully usable offline through the library and CLI (§1.5 principle 9). A serving layer may front one or more corpora — records, derived views (§9), artifact bytes, resolver output (§6) — over HTTP for browsing or search. It should remain a thin read surface that serializes what the library already produces, adding no parsing, derivation, or resolution logic of its own, and it never attests, normalizes, or executes corpus-local code. Multi-corpus routing (mapping public ids to corpus roots) is a serving-layer concern; the tooling itself is single-root per invocation. One sharp edge: a functional-URI value passed through a URL query string must be fully percent-encoded.
 
 ### 12.15 Open implementation questions
 
@@ -1448,6 +1656,37 @@ Tooling alignment order, mirroring §12.16's tooling-first discipline:
 4. **The zip default flips** (raw archives stop exploding; tar/tgz gains a manifest drafter + `path=` transform).
 5. **`corpus pack`** (consolidation, §12.8) follows when a corpus wants it — e.g. folding thousands of sibling standalone files into a handful of taxonomy archives with no record edits.
 
+### 12.18 The 3.0 revision migration (non-normative)
+
+The migration story for the 2.x → 3.0 contract change. Inventory at drafting time (2026-07-13): **11,005 records** (3,629 private + 7,376 public); ~5,820 records carry ~19,350 section blocks; the private corpus is ~85% conversation-shaped (2,961 iMessage + 66 Discord + 59 Google Chat records), plus 54 bank statements, 44 receipts, 153 emails, containers and media; the public corpus is 7,213 HTML documents (2,360 of them ALLDATA procedure pages), 102 videos, 61 PDFs. **Zero ledger citations exist into the 125 Discord/Google Chat conversation records (verified 2026-07-13)**; ledger citations elsewhere are protected by the touch-keyed snapshot binding (below).
+
+Order of operations, tooling-first per the §12.16 discipline:
+
+1. **Tooling alignment.** The parser/emitter learns qualified section openers, the `structural` segment kind, and the two-status lifecycle (a 2.x `status: draft` parses tolerantly as stub-era input); the drafters split into attestations + derivation ops (§12.4); shapers land (`corpus.shape` registry; the iMessage sub-drafter re-registers as a shaper); `corpus draft` retires, `corpus reattest` arrives; lint gains form-coherence and byte-mark rules and drops draft-status rules; `health` and the member index are untouched (§12.9). Lint + health then *define* 3.0 conformance before any record sweep.
+2. **The grammar sweep** (mechanical, per-record, lint-gated). Every stored TOC section converts or drops by the byte-mark rule: a section whose boundary is a byte-mark (EPUB nav → `spine=` marks; PDF outline wraps → `page=` marks; a media chapter; a Google Chat topic) becomes a structural segment (level from the source's own hierarchy else 1, `entry`/address preserved as the mark position); a **synthetic** section drops entirely — foremost the iMessage per-day sections (owner's decision, 2026-07-13: *"Absolutely remove that. It shouldn't have been there to begin with"*) — per-day grouping becomes the `corpus toc --tz` read-time rendering.
+3. **The status sweep.** `status: draft` → `stub`. A 2.x-era mechanical body found on such a record is a **grandfathered materialized derivation**: tolerated by lint, superseded by the record's next pass (a re-normalize authors the stored form; a re-attest may strip it). Whether to strip these bodies eagerly (pure 3.0: re-derive on demand) or lazily (pragmatic: 2,961 conversations stay readable in-file through the transition) is an open question below; the lazy path is recommended and leaves no permanent transitionary state — every record exits it through its next pass.
+4. **Form adoption sweeps.**
+   - The **125 Discord/Google Chat conversations** re-shape mechanically (`corpus.shape.conversation`): form section + authorship-ordered codebook, one `text/message` per message at `turn=<N>` (codebook `participant:` indexes; timestamps in the source-stated zone — Google Chat locale strings normalize to UTC, DCE offsets kept verbatim, zone-less sources stay zone-less; `reply_to:` where the platform reference resolves in-record), `text/metadata` for DCE event messages, attachment markers at `turn=<N>&att=<M>` (no embeds — lineage-resolvable), Google Chat `topic_id` structural marks. Authored titles/descriptions are preserved verbatim; zero ledger citations exist into these records, so nothing re-anchors.
+   - The **iMessage fleet** (2,961): day sections drop (step 2); the envelope form already conforms (`text/message` with verbatim `sender:` — licensed alongside the codebook form, §7.3); each record gains its `<!--section conversation-->` (with the codebook derived from the distinct senders) on its next pass through normalize — the sweep enqueues them; no re-transcription of anything.
+   - **Statements (54) and receipts (44)** adopt `form/statement` / `form/receipt` as those overlays are authored — the origins already exist; the overlays inherit their shape guidance.
+   - **102 public videos** re-attest as track manifests on demand (tracks promotable thereafter); no eager sweep — residence and shape change nothing about their bytes.
+   - The **iCloud contacts export** re-attests under the new disposition: the ~150-card `text/vcard` artifact — currently one record segmented `el=<N>` — becomes a `card=` **manifest** with delimiter-pinned card embeds, each promotable to its own `text/vcard` record. The consumer is already waiting: the pending cross-platform identity-linking ledger pass ("identity-v2") wants to cite *individual cards*, not offsets into a 150-card blob.
+   - The **Facebook / Instagram / Threads export containers** (already ingested) need **zero new machinery**: their conversation JSONs surface as promotable members shaped by `form/conversation` (per-producer `form:` mappings on their origin overlays, §7.2), and their media trees are lineage-resolvable at `turn=<N>&att=<M>` — the Discord pattern verbatim. The work is authoring mappings, not building anything.
+5. **Gates.** Every sweep lands lint-clean + health-clean with the tooling suite green. For any sweep touching a **ledger-cited** record: the ledger's snapshot binding is touch-keyed (`ledger.md` §13.2) — a re-shaped record's new touch flags exactly the evidence entries needing re-verification; `ath ledger verify` names them; re-anchor (line/turn addresses move; quotes are verbatim spans and mostly survive) and `--stamp` re-bind. No citation silently rots: a broken anchor is a loud verify failure until re-anchored.
+
+**Open questions** (flagged, not resolved here):
+
+1. The form overlay `checks:` grammar — settle with the first three overlays (`conversation`, `statement`, `receipt`), not in the abstract.
+2. The concrete mime-schema key surgery (`mode`/`draft.*` → `attest:`/`derive:` naming, aliasing, tolerance window) — tooling-time detail.
+3. Eager vs lazy stripping of grandfathered 2.x mechanical bodies on stubs (step 3; lazy recommended).
+4. Demuxer determinism for `stream_id=` member bytes (§11) — pin against container sample tables, and decide the reference implementation.
+5. Sidecar-declared chapters vs the byte-mark rule: 3.0 admits producer-declared enrichment as a mark source (§4.3.2.3, §12.3.7) — confirm this extension is wanted, or restrict marks to container bytes only.
+6. Text-based subtitle tracks project faithfully; bitmap subtitle tracks (PGS) have no lossless text projection — they stay embeds until an OCR-provenance projection is specified.
+7. Whether `canonical_strategy` (persist currently disabled, §7.1) computes at ingest attestation or as a derivation op when re-enabled.
+8. The derived-body op's cache/indexing contract for very large records (a 72k-message conversation's `body` on demand) — likely just §12.9's cache doing its job, but measure.
+9. The exposable-embed attest sets per `work`-disposition format — which PDF/OOXML internals attest (embedded files yes; every OLE sub-object?), and at what depth — settle per mime schema with the first real captures that carry them.
+10. The re-homed CLI surfaces for the retired `draft` verb's options — the `--fingerprint`/`--no-fingerprint` override (§12.4.4) and the mbox selective `--messages` declaration (§12.4.1) — are currently named only as "the ingest/re-attest surface", a placeholder; settle the concrete verbs and flags at tooling time.
+
 ---
 
 ## Appendix A: Glossary
@@ -1460,23 +1699,36 @@ Tooling alignment order, mirroring §12.16's tooling-first discipline:
 | **Transport** | The media-type-shaped container of a file. Also the name for the bytes-level hash field (`transport:`). |
 | **Content** | What a transport carries. Decomposes into segments. |
 | **Segment** | An addressable unit of content. Carries one atom, one address, and at most one atomic classification. |
-| **Atom** | One of four content types: `text`, `image`, `audio`, `video`. |
+| **Atom** | One of four **content** types: `text`, `image`, `audio`, `video`. A structural segment carries none — it is a mark, not content. |
 | **Record body** | The markdown content below the frontmatter. Organized into three zones. |
 | **Segment body** | The markdown prose inside a single `text`-atom segment block. |
 | **Zone** | One of three partitions of the record body: metadata, content, annotations. |
 | **Artifact block** | `<!--artifact <mime-type>-->` — exactly one per record. Opener arg is the authoritative media-type declaration. |
 | **Origin block** | `<!--origin [<id>[/<subtype>]]-->` — one or more per record. Carries `uri:` and `snapshot:`. |
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
-| **Section block** | `<!--section-->` — structural grouping; the TOC unit. Contains zero or more segments. |
+| **Section block** | `<!--section <form-id>-->` — a **form span**: a positional span of the content zone carrying a named structural form and its codebook fields. Depth one, never overlapping, rare. *(3.0: the 1.0–2.x TOC-grouping role is retired — see Structural segment.)* |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
+| **Structural segment** | `<!--segment structural-->` — a body-empty **byte-mark**: the source's own declared boundary (heading, outline entry, chapter, topic) at an address, with `level:` and optional `entry:`. The TOC is a derived rendering over these marks. |
 | **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, `relation`, …); record- or segment-scope (via `address:`). |
-| **Namespace** | One of `mime`, `origin`, `atom`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
+| **Namespace** | One of `mime`, `origin`, `form`, `atom`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
+| **Form** | The fourth classification axis (3.0): what structural shape a span of content decomposes into (`conversation`, `statement`, `receipt`). Declared by a `form/` overlay; bound on a section opener; names shapes, never subjects. |
+| **Codebook** | A list field on a form section's header that envelope segment fields index into (e.g. `participants:` ↔ `participant: 2`) — derivable from the span's own bytes, entry grammar `<display> <durable-id>`. |
 | **Provenance** | On a context block (§4.4.6): `provenance: auto` = engine-stamped (a detector or overlay-declared emission), stripped and regenerated on re-run; absent or `asserted` = human/normalizer, never auto-touched. |
-| **Self-contained** | The universal container disposition: every transport produces a single record (lifting nested-stream metadata when present). A raw archive drafts as an embed manifest of its members. *(2.1: the former schema-declared `decomposable` disposition is removed.)* |
+| **Self-contained** | The universal container principle: every transport produces a single record (lifting nested-stream metadata when present). A raw archive is attested as an embed manifest of its members. *(2.1: the former schema-declared `decomposable` disposition is removed.)* |
 | **Container / member** | A container is an artifact whose content is other transports (an archive); a member is one such contained transport, declared as a content-addressed embed on the container's record. |
+| **Member / Unit** | A member is a transport with its own MIME and standalone byte identity (a manifest or exposable embed, promotable). A unit is content *within* one transport, reached by unit ops (`turn=`) under a form mapping — never an embed. |
 | **Promotion** | Minting a first-class record for a container member without copying its bytes: the promoted `id` is the member's blake3, resolved by streaming through the container (§2, §8.1). |
-| **Mode** | A mime schema's drafting behavior: `extract-only` or `body-draft`. |
-| **Capture, Ingest, Draft, Normalize** | Pipeline stages. |
+| **Disposition** | A mime schema's declared container-vs-transport judgment (§7.1, §1.2): `manifest` — the members ARE the content — or `work` — one transport whose internals surface as exposable embeds. Declared (origin-overridable), auditable, never sniffed per record. Distinct from the 2.1-removed `artifact_kind` (nothing explodes at ingest). |
+| **Exposable embed** | An internal member file of a `work`-disposition transport, attested as addressable and promotable without being the content (a PDF's embedded file at `attachment=<N>`, a docx's pasted photo) — versus a **manifest embed**, whose members ARE the content. |
+| **Attestation** | Ingest-stamped byte-facts: artifact fields, manifest/exposable embeds, structural byte-marks, sidecar lift. Deterministic; stripped + regenerated by re-attest. |
+| **Derivation op** | A resolver operation deriving mechanical content from the artifact (`body`, `members`, `transcribe`, `turn=`) — on-demand, cacheable, pure or version-labeled (§6.4). |
+| **Shaper** | Deterministic normalize tooling that authors a record's stored form from a declared form mapping — the mechanical half of the one authoring pass. |
+| **Lineage-chained resolution** | Read-time materialization of content a record's bytes declare but do not contain, through the record's containment-lineage parent (§6.2). Derived, never stored. |
+| **Default-member resolution** | Read-side sugar (§6.2): a bare op routes to a container's sole member of the required kind, or its declared primary (`pitm`); ambiguity fails loudly. Citation-safe by content-addressing; attested embeds keep explicit addresses. |
+| **Muxing contract** | §6.2's normative behavior for media cuts and conversions: composition cuts via per-kind default members (subtitles opt-in), composable stream selection (`stream_id=0,2`), ordered multi-cuts (`time_range=a-b,c-d` → concatenation), precise-by-default cut semantics (`cut=copy` the disclosed keyframe-snapped path), `format=` conversion (encoding only, atom-compatible, implementation-defined token set), pinned order select→cut→convert→size. Behavior normative, mechanics resolver-owned (maps onto ffmpeg primitives — the `fit=` precedent); results are version-labeled ephemeral renderings, never new artifacts. |
+| **Capture, Ingest, Normalize** | Pipeline stages. *(3.0: draft retired — its duties split into ingest attestation, derivation ops, and the normalize pass.)* |
+| **Stub** | Identity + attested facts; readable through derivation ops; not yet citable. |
+| **Normalized** | Faithful form authored; the citable state. |
 | **Touch** | A single processing pass. Recorded in `touch[]`. |
 | **Touch chain** | The ordered list `touch[0..N]`. Records current-shape provenance; reset by re-stub (§8.4). |
 | **Re-stub** | A deliberate reset that discards body and accumulated metadata, leaving only byte-intrinsic state and the touch chain. See §8.4. |
@@ -1504,10 +1756,11 @@ A curatorial vocabulary for the content **sources** a corpus is expected to hold
 
 ### B.2 How a content type lands in the corpus
 
-There is **no per-content-type metadata schema** and no "document kind" field. A content type expresses itself through three orthogonal mechanisms:
+There is **no per-content-type metadata schema** and no "document kind" field. A content type expresses itself through four orthogonal mechanisms:
 
-1. **MIME type** (`mime` namespace, §7.1) — the artifact's media type (`text/html`, `application/pdf`, `application/epub+zip`, `video/mp4`, …) selects the drafter, the addressing scheme, and the canonicalization strategy. A "research paper" is just an `application/pdf` artifact; a "blog post" is `text/html`.
-2. **Ledger assertion** (`ledger.md`) — *what kind of thing* an artifact documents, and any domain signal worth recording (e.g. a `peer-reviewed` / `preprint` credibility signal), is asserted as typed claims whose evidence cites the record — minted mechanically by harvest rules where membership is deterministic (`ledger.md` §10). This replaces per-document enum metadata fields entirely. *(1.0 expressed this as corpus-side composite classifications.)*
-3. **Origin** (`origin` namespace, §7.2) — capture provenance: source URL(s), capture timestamp, per-host capture recipe. "Where it came from" lives here.
+1. **MIME type** (`mime` namespace, §7.1) — the artifact's media type (`text/html`, `application/pdf`, `application/epub+zip`, `video/mp4`, …) selects the attestations, the derivation ops, the addressing scheme, and the canonicalization strategy. A "research paper" is just an `application/pdf` artifact; a "blog post" is `text/html`.
+2. **Form** (`form` namespace, §7.8; 3.0) — where the content's *structural shape* passes the minting test (a conversation, a statement, a receipt), a form span declares it — shape only, never subject.
+3. **Ledger assertion** (`ledger.md`) — *what kind of thing* an artifact documents, and any domain signal worth recording (e.g. a `peer-reviewed` / `preprint` credibility signal), is asserted as typed claims whose evidence cites the record — minted mechanically by harvest rules where membership is deterministic (`ledger.md` §10). This replaces per-document enum metadata fields entirely. *(1.0 expressed this as corpus-side composite classifications.)*
+4. **Origin** (`origin` namespace, §7.2) — capture provenance: source URL(s), capture timestamp, per-host capture recipe. "Where it came from" lives here.
 
 Backlog growth, grooming, and prioritization of what to capture are **curatorial** concerns owned by the layers above the corpus — the ledger's needs and coverage gaps generate ingestion demand (`ledger.md` §7, §9) — not corpus-pipeline stages.
