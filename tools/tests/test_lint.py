@@ -367,27 +367,26 @@ def test_classify_block_flags_retired(tmp_path):
     assert len(fired) == 1 and fired[0].severity == "warning"
 
 
-def test_section_composite_flags_retired(tmp_path):
+def test_qualified_section_is_form_not_retired(tmp_path):
+    """3.0: a qualified section opener binds the FORM axis (§4.4.1) — a valid
+    structural-shape judgment, not a returning composite. It is never flagged
+    `section-composite-retired` (the rule is gone), and it contributes `form/<id>`
+    to the derived classifications view (§9.1)."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    sec = segments.Section(
-        address="block=1", entry="x", classification="recipe/dinner", segments=[]
-    )
-    fired = [
-        f
-        for f in lint.lint(post, [sec], root)
-        if f.rule_id == "section-composite-retired"
-    ]
-    assert len(fired) == 1 and fired[0].severity == "warning"
+    seg = segments.Segment(atom="text", address="turn=1", body="hi")
+    sec = segments.Section(address="turn=1", form="conversation", segments=[seg])
+    fired = {f.rule_id for f in lint.lint(post, [sec], root)}
+    assert "section-composite-retired" not in fired
+    assert not any(f.severity == "error" for f in lint.lint(post, [sec], root))
+    post.content = segments.emit([sec])
+    assert "form/conversation" in records.derived_classifications(post)
 
 
 def test_clean_record_has_no_retired_findings(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    assert not any(
-        f.rule_id in ("classify-block-retired", "section-composite-retired")
-        for f in _lint(post, root)
-    )
+    assert not any(f.rule_id == "classify-block-retired" for f in _lint(post, root))
 
 
 # ---------- normalizer-support parity rules ---------- #

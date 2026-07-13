@@ -1029,34 +1029,44 @@ def append_issue_block(
 
 
 def derived_classifications(post: frontmatter.Post) -> list[str]:
-    """Compute the derived `classifications[]` view by walking metadata blocks.
+    """Compute the derived `classifications[]` view by walking the body (spec §9.1).
 
-    Per spec §9.1 (2.0 — structural-derived only): artifact contributes
-    `mime/<mime-type>`; each qualified origin block contributes
-    `origin/<id>[/<subtype>]`. Dedupe preserving body order. Embeds and issues do
-    not contribute (embeds are assets, issues are problems; separate views), and
-    legacy classify blocks no longer do (interpretive classification is ledger
-    knowledge, ATH-CORPUS 2.0).
+    Structural-derived only: the artifact contributes `mime/<mime-type>`; each qualified
+    origin block contributes `origin/<id>[/<subtype>]`; each **qualified section opener**
+    contributes `form/<form-id>` (3.0). Dedupe preserving body order. Embeds and context
+    blocks do not contribute (embeds are assets, context records observations), and legacy
+    classify blocks no longer do (interpretive classification is ledger knowledge, 2.0).
     """
+    from . import segments as _segments
+
     result: list[str] = []
     seen: set[str] = set()
 
-    artifact = artifact_block(post)
-    if artifact and artifact.get("mime"):
-        entry = f"mime/{artifact['mime']}"
+    def _add(entry: str) -> None:
         if entry not in seen:
             result.append(entry)
             seen.add(entry)
+
+    artifact = artifact_block(post)
+    if artifact and artifact.get("mime"):
+        _add(f"mime/{artifact['mime']}")
 
     for origin in iter_origin_blocks(post):
         id_ = origin.get("id")
         if not id_:
             continue
         subtype = origin.get("subtype")
-        entry = f"origin/{id_}/{subtype}" if subtype else f"origin/{id_}"
-        if entry not in seen:
-            result.append(entry)
-            seen.add(entry)
+        _add(f"origin/{id_}/{subtype}" if subtype else f"origin/{id_}")
+
+    # Qualified section openers contribute `form/<form-id>` (§9.1, §4.4.1). A bare 2.x TOC
+    # section (form=None) contributes nothing. Parse-tolerant: an unparseable content zone
+    # simply yields no form rows.
+    try:
+        for blk in _segments.iter_blocks(post.content or ""):
+            if isinstance(blk, _segments.Section) and blk.form:
+                _add(f"form/{blk.form}")
+    except Exception:
+        pass
 
     return result
 

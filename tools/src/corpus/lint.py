@@ -351,6 +351,8 @@ def _rule_atom_invalid(post, blocks, root) -> Iterator[Finding]:
 
 
 def _check_atom(seg: _segments.Segment) -> Iterator[Finding]:
+    if seg.is_structural:  # the fifth kind — a byte-mark, not an atom (§4.3.2.3)
+        return
     if seg.atom not in _VALID_ATOMS:
         yield Finding(
             rule_id="atom-invalid",
@@ -423,7 +425,9 @@ def _rule_segment_entry_outside_top_level(post, blocks, root) -> Iterator[Findin
     for blk in blocks:
         if isinstance(blk, _segments.Section):
             for seg in blk.segments:
-                if seg.entry is not None:
+                # A structural byte-mark's `entry:` (the source's own mark text) is valid
+                # inside a form span (§4.3.2.3); a content segment's is top-level only.
+                if seg.entry is not None and not seg.is_structural:
                     yield Finding(
                         rule_id="segment-entry-in-section",
                         severity="error",
@@ -453,6 +457,8 @@ def _rule_section_address_span(post, blocks, root) -> Iterator[Finding]:
     (`time_range=`) sections are structurally bounded intervals, not content envelopes."""
     for blk in blocks:
         if not isinstance(blk, _segments.Section) or not blk.segments:
+            continue
+        if blk.address is None:  # whole-record form section — envelope deliberately omitted
             continue
         expected = _segments.section_address(blk.segments)
         if expected is None or expected == blk.address:
@@ -573,10 +579,14 @@ def _rule_context_shape(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_classify_retired(post, blocks, root) -> Iterator[Finding]:
-    """The classify block and section-scope composites were removed in ATH-CORPUS 2.0:
-    what content means is ledger knowledge (harvest rules / claims, `ledger.md` §10),
-    never a record assertion. A surviving block is a 1.0-era record awaiting migration —
-    flagged, not failed (parse stays tolerant; `load`/`dump` round-trip it losslessly)."""
+    """The classify block was removed in ATH-CORPUS 2.0: what content means is ledger
+    knowledge (harvest rules / claims, `ledger.md` §10), never a record assertion. A
+    surviving block is a 1.0-era record awaiting migration — flagged, not failed (parse
+    stays tolerant; `load`/`dump` round-trip it losslessly).
+
+    A **qualified section opener** is NOT a returning composite: in 3.0 it binds the form
+    axis (`form/<id>`, §4.4.1), a structural-shape judgment checkable against the bytes —
+    validated by the form-coherence rules, never flagged here."""
     for blk in _records.iter_classify_blocks(post):
         ns = blk.get("namespace") or ""
         cid = blk.get("id") or ""
@@ -591,18 +601,6 @@ def _rule_classify_retired(post, blocks, root) -> Iterator[Finding]:
             ),
             subtype=qualified,
         )
-    for top_i, blk in enumerate(blocks, 1):
-        if isinstance(blk, _segments.Section) and blk.classification:
-            yield Finding(
-                rule_id="section-composite-retired",
-                severity="warning",
-                message=(
-                    f"section {top_i} carries composite `{blk.classification}` — section-scope "
-                    f"composites dissolved in ATH-CORPUS 2.0 (§4.4.3): express it as a ledger "
-                    f"claim over the section span."
-                ),
-                address=_addr_str(blk.address),
-            )
 
 
 # ---------- normalizer-support rules (luklacloud-intent parity) ---------- #
@@ -1099,7 +1097,6 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),
-    ("section-composite-retired", _rule_classify_retired),
     # normalizer-support parity (luklacloud intent)
     ("description-too-long", _rule_description_too_long),
     ("mime-extension-mismatch", _rule_mime_extension_mismatch),

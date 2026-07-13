@@ -69,13 +69,15 @@ _CORE = (
 _MANIFEST_HEADER = [
     "# manifest.corpus — one op per line; `#` comments; shlex-tokenised.",
     "# Grammar:",
-    "#   record  id=<hex> status=<stub|draft|normalized>",
+    "#   record  id=<hex> status=<stub|normalized>",
     "#   embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]",
-    "#   section addr=<a> [entry=\"...\"] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]",
+    "#   section [form=<form-id>] [addr=<a>] [entry=\"...\"] [desc=@desc/..] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [k=v ...]",
+    "#   seg     structural addr=<a> level=<int> [entry=\"...\"]   # §4.3.2.3 byte-mark",
     "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]",
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
+    "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
     "# status is set on the `record` line above (authoritative) — it is NOT in meta.yaml.",
     "# Spec §4.3: embed lives in the METADATA zone (reconciliation #1 vs the v0.x reference).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
@@ -156,16 +158,16 @@ def add_embed(
 def open_section(
     b: Build,
     *,
-    address,
+    address=None,
     entry: str | None = None,
-    classification: str | None = None,
+    form: str | None = None,
     description: str | None = None,
     fields: dict | None = None,
 ) -> segments.Section:
     sec = segments.Section(
         address=address,
         entry=entry,
-        classification=classification,
+        form=form,
         description=description,
         extra=dict(fields or {}),
     )
@@ -184,21 +186,27 @@ def add_segment(
     description: str | None = None,
     entry: str | None = None,
     perceptual: str | None = None,
+    level: int | None = None,
     extra: dict | None = None,
 ) -> segments.Segment:
-    _check_body_lossless(b.corpus_root, atom, overlay, body)
+    structural = atom == segments._STRUCTURAL
+    if not structural:
+        _check_body_lossless(b.corpus_root, atom, overlay, body)
     seg = segments.Segment(
         atom=atom,
         address=address,
         perceptual=perceptual,
         entry=entry,
         description=description,
-        body=body or "",
+        body="" if structural else (body or ""),
         extra=dict(extra or {}),
         overlay=overlay,
+        level=level,
     )
     if b._section is not None:
-        if entry:
+        # A content segment's `entry:` is a top-level-only leaf label; a structural
+        # byte-mark's `entry:` (the source's own mark text) rides inside a form span.
+        if entry and not structural:
             raise ValueError(
                 "in-section segment cannot carry `entry` (the section is the TOC unit)"
             )
@@ -206,6 +214,27 @@ def add_segment(
     else:
         b.blocks.append(seg)
     return seg
+
+
+def add_structural(
+    b: Build,
+    *,
+    address,
+    level: int = 1,
+    entry: str | None = None,
+    extra: dict | None = None,
+) -> segments.Segment:
+    """Append a structural byte-mark segment (§4.3.2.3) — the record that the source itself
+    declares a boundary at `address`, with a `level` and optional `entry` (the mark's own
+    text). Body-empty; takes no atom overlay."""
+    return add_segment(
+        b,
+        atom=segments._STRUCTURAL,
+        address=address,
+        entry=entry,
+        level=level,
+        extra=extra,
+    )
 
 
 def add_issue(
@@ -265,7 +294,7 @@ def add_blocks(b: Build, blocks: list) -> None:
                 b,
                 address=blk.address,
                 entry=blk.entry,
-                classification=blk.classification,
+                form=blk.form,
                 description=blk.description,
                 fields=blk.extra,
             )
@@ -277,7 +306,10 @@ def add_blocks(b: Build, blocks: list) -> None:
                     address=seg.address,
                     body=seg.body or None,
                     description=seg.description,
+                    # A structural mark's `entry:` is valid inside a form span (§4.3.2.3).
+                    entry=seg.entry if seg.is_structural else None,
                     perceptual=seg.perceptual,
+                    level=seg.level,
                     extra=seg.extra,
                 )
             b._section = None  # close the section so a later top-level block isn't nested
@@ -292,6 +324,7 @@ def add_blocks(b: Build, blocks: list) -> None:
                 description=blk.description,
                 entry=blk.entry,
                 perceptual=blk.perceptual,
+                level=blk.level,
                 extra=blk.extra,
             )
         else:
@@ -500,6 +533,8 @@ def write_workdir(
     def _seg_line(seg: segments.Segment, loc: str) -> str:
         opener = seg.overlay or seg.atom
         parts = [f"seg {opener}", f"addr={_fmt_addr(seg.address)}"]
+        if seg.level is not None:  # structural byte-mark (§4.3.2.3)
+            parts.append(f"level={seg.level}")
         if seg.body and seg.body.strip():
             parts.append("body=" + _body_ref(loc, seg.address, seg.body.rstrip("\n")))
         if seg.description:
@@ -516,13 +551,16 @@ def write_workdir(
     for blk in blocks:
         if isinstance(blk, segments.Section):
             sec_i += 1
-            parts = ["section", f"addr={_fmt_addr(blk.address)}"]
+            parts = ["section"]
+            if blk.form:
+                parts.append(f"form={blk.form}")
+            if blk.address is not None:
+                parts.append(f"addr={_fmt_addr(blk.address)}")
             if blk.entry:
                 parts.append("entry=" + shlex.quote(blk.entry))
-            if blk.classification:
-                parts.append(f"class={blk.classification}")
             if blk.description:
-                parts.append("desc=" + _desc_ref(f"s{sec_i}", blk.address, blk.description))
+                loc = blk.address if blk.address is not None else "record"
+                parts.append("desc=" + _desc_ref(f"s{sec_i}", loc, blk.description))
             for k, v in (blk.extra or {}).items():
                 parts.append(f"{k}={_fmt_scalar(v)}")
             lines.append("")
@@ -625,13 +663,15 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 )
             elif verb == "section":
                 kv = _kv(toks[1:])
+                # `form=` is the 3.0 spelling; `class=` reads tolerantly (a decomposed dir
+                # produced by a 2.x tool). `addr` is optional (whole-record form section).
                 open_section(
                     b,
-                    address=_parse_addr(kv["addr"]),
+                    address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
                     entry=kv.get("entry"),
-                    classification=kv.get("class"),
+                    form=(kv.get("form") or kv.get("class")),
                     description=_filetext(work, kv.get("desc")),
-                    fields=_rest(kv, {"addr", "entry", "class", "desc"}),
+                    fields=_rest(kv, {"addr", "entry", "form", "class", "desc"}),
                 )
             elif verb == "seg":
                 opener = toks[1]
@@ -647,7 +687,8 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                     description=_filetext(work, kv.get("desc")),
                     entry=kv.get("entry"),
                     perceptual=kv.get("perceptual"),
-                    extra=_rest(kv, {"addr", "body", "desc", "entry", "perceptual"}),
+                    level=(int(kv["level"]) if "level" in kv else None),
+                    extra=_rest(kv, {"addr", "body", "desc", "entry", "perceptual", "level"}),
                 )
             elif verb == "issue":
                 opener = toks[1]

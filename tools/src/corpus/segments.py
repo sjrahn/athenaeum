@@ -7,11 +7,15 @@ which routed embeds through this module).
 
 Content-zone grammar (§4.3.2):
 
-- A `<!--section [<namespace>/<id>]-->` opens a structural grouping. The header carries
-  `address` (scoped to the media's axis — `time_range=` for temporal, `page=` for PDF,
-  `sheet=` for xlsx, `turn=` for sessions), and optional `entry` (the TOC label) +
-  `description`. Sections contain segments; they have no body of their own. Closer is
-  followed directly by the first child segment opener — prose between is a parse error.
+- A `<!--section <form-id>-->` opens a **form span** (spec §4.3.2.1, 3.0): the qualified
+  opener carries the record-scope form id (`conversation`, `statement`, `receipt`), exactly
+  as a segment opener carries its atom id. The header carries the form overlay's codebook /
+  envelope fields (e.g. `participants:`), an optional `address` (the span envelope — OMITTED
+  on a whole-record form section), and optional `entry` + `description`. Sections contain
+  segments; they have no body of their own. Closer is followed directly by the first child
+  segment opener — prose between is a parse error. A **bare** `<!--section-->` (no form id) is
+  the 2.x TOC grouping unit — retired in place (§4.3.2.1); it reads tolerantly (form=None,
+  contributes no `form/*` classification) so 2.x records round-trip until the grammar sweep.
 
 - A `<!--segment <atom>-->` or `<!--segment <atom>/<overlay-id>-->` opens an atomic
   content block. `atom ∈ {text, image, audio, video}`, on the opener line; an
@@ -20,6 +24,15 @@ Content-zone grammar (§4.3.2):
   `speaker`, `entry` (only when top-level). Only `text`-atom segments may carry a
   non-empty body; image/audio/video segments are body-empty positioning markers whose
   whole-asset descriptions live on the matching embed (§4.3.2.2).
+
+- A `<!--segment structural-->` (spec §4.3.2.3, 3.0) is the fifth segment kind — the
+  **byte-mark**: a body-empty mark recording that the source itself declares a structural
+  boundary (a heading, an outline entry, a chapter mark, a topic boundary) at an `address`,
+  with a `level:` (int; the source's own hierarchy, else 1) and an optional `entry:` (the
+  mark's own text, verbatim). It carries no content atom and no body, takes no atom overlay,
+  and is excluded from `token_counts.body` (§9.6). Its identity is (`structural`, address),
+  stacking beside content segments at the same address per the standard rule; unlike a
+  content segment, a structural mark MAY carry `entry:` inside a form section.
 
 A record's content zone is homogeneous at the top level: all sections OR all segments.
 Nesting depth = 1: sections contain segments; segments contain nothing; sections don't
@@ -45,6 +58,11 @@ _CLOSER = "-->"
 # segments are body-empty positioning markers whose whole-asset descriptions live on
 # the matching embed.
 _VALID_ATOMS = frozenset({"text", "image", "audio", "video"})
+# Per spec §4.3.2.3 (3.0): the fifth segment kind. Not an atom — carries no body, takes no
+# atom overlay, is excluded from `token_counts.body`. Its opener-id is bare `structural`.
+_STRUCTURAL = "structural"
+# Every recognized segment opener-id axis: the four atoms plus the structural byte-mark.
+_VALID_SEGMENT_KINDS = _VALID_ATOMS | {_STRUCTURAL}
 
 
 @dataclass
@@ -89,11 +107,26 @@ class Segment:
     # e.g. "text/data-table", "image/photo". On disk: `<atom>/<id>`; bundled schema
     # filename flattens to `schema/atom/<atom>/<atom>_<id>.yaml`.
     overlay: str | None = None
+    # The structural byte-mark's own hierarchy level (§4.3.2.3), set ONLY on a
+    # `atom == "structural"` segment (else None, never emitted). The source's declared depth
+    # (h1-h6, outline depth, nav nesting), else 1.
+    level: int | None = None
+
+    @property
+    def is_structural(self) -> bool:
+        """True for the fifth segment kind — the `<!--segment structural-->` byte-mark
+        (§4.3.2.3), which carries no content atom and no body."""
+        return self.atom == _STRUCTURAL
 
     def to_header_dict(self) -> dict[str, Any]:
         """Return the dict that would be YAML-dumped between the header comment
-        delimiters. `atom` (and any atomic overlay) sits on the opener line itself."""
+        delimiters. `atom` (and any atomic overlay) sits on the opener line itself.
+
+        A structural byte-mark emits `address`, then `level`, then `entry` (§4.3.2.3):
+        no body, no atom overlay, no perceptual/description."""
         out: dict[str, Any] = {"address": self.address}
+        if self.level is not None:
+            out["level"] = self.level
         if self.perceptual is not None:
             out["perceptual"] = self.perceptual
         if self.entry is not None:
@@ -108,33 +141,35 @@ class Segment:
 
 @dataclass
 class Section:
-    """Structural grouping primitive — universal TOC unit (spec §4.3.2.1).
+    """The **form span** — a positional span over the content zone carrying a form id
+    (spec §4.3.2.1, 3.0).
 
-    A section groups segments under an axis-scoped address and an optional TOC `entry`.
-    Used wherever a media has natural section boundaries: video speaker runs, PDF
-    outline entries, HTML h1 headings, xlsx sheets, claude session user turns.
+    A section declares that a span of the content zone has a named structural **form**
+    (`conversation`, `statement`, `receipt`). The qualified opener carries the form id;
+    the header carries the form overlay's codebook / envelope fields (on `extra`), an
+    optional `address` (the span envelope — OMITTED on a whole-record form section), and
+    optional `entry` + `description`. The section has no atom and no body of its own; its
+    closer is followed directly by the first child segment opener.
 
-    A section has no atom and no body — it's purely structural. Its closer is followed
-    directly by the first child segment opener.
+    `form` is the form id on the opener (`<!--section conversation-->`); a **bare**
+    `<!--section-->` has form=None — the 2.x TOC grouping unit, retired in place (§4.3.2.1)
+    and read tolerantly so 2.x records round-trip until the grammar sweep. A qualified opener
+    contributes `form/<id>` to the derived classifications view (§9.1).
 
-    `classification` carries an optional composite id on the opener (e.g.
-    `<!--section <namespace>/<id>-->`); bare `<!--section-->` has classification=None.
-    Section-scope composites dissolved in ATH-CORPUS 2.0 (§4.4.3) — the grammar is
-    kept parse/emit-tolerant for 1.0-era records; lint flags them for migration.
-
-    `description` is normalizer-written prose used when the section's address is an
-    artifact-self-slice with no matching embed (spec §4.3.1.4 carve-out).
+    `description` is normalizer-written prose describing what this span IS.
     """
 
-    address: str | list[str]
+    address: str | list[str] | None = None
     entry: str | None = None
-    classification: str | None = None
+    form: str | None = None
     description: str | None = None
     segments: list[Segment] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_header_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"address": self.address}
+        out: dict[str, Any] = {}
+        if self.address is not None:
+            out["address"] = self.address
         if self.entry is not None:
             out["entry"] = self.entry
         if self.description is not None:
@@ -148,7 +183,7 @@ class Section:
         segments: list[Segment],
         *,
         entry: str | None = None,
-        classification: str | None = None,
+        form: str | None = None,
         description: str | None = None,
         fields: dict[str, Any] | None = None,
     ) -> Section:
@@ -172,7 +207,7 @@ class Section:
         return cls(
             address=address,
             entry=entry,
-            classification=classification,
+            form=form,
             description=description,
             segments=list(segments),
             extra=dict(fields or {}),
@@ -294,18 +329,21 @@ def emit(blocks: list[Block]) -> str:
 
 
 def _emit_section(sec: Section) -> str:
+    header = sec.to_header_dict()
+    opener = (
+        _SECTION_OPENER if sec.form is None else f"{_SECTION_OPENER} {sec.form}"
+    )
+    if not header:
+        # A whole-record form section may carry no header fields at all (no envelope,
+        # no codebook): emit an empty header block rather than a stray blank line.
+        return f"{opener}\n{_CLOSER}\n"
     header_yaml = yaml.safe_dump(
-        sec.to_header_dict(),
+        header,
         sort_keys=False,
         allow_unicode=True,
         width=10**9,
         default_flow_style=False,
     ).rstrip("\n")
-    opener = (
-        _SECTION_OPENER
-        if sec.classification is None
-        else f"{_SECTION_OPENER} {sec.classification}"
-    )
     return f"{opener}\n{header_yaml}\n{_CLOSER}\n"
 
 
@@ -402,7 +440,10 @@ def iter_blocks(body: str) -> list[Block]:
                     break
                 if peek == "segment":
                     child, cursor = _parse_segment_block(lines, cursor, line_no=cursor + 1)
-                    if child.entry is not None:
+                    if child.entry is not None and not child.is_structural:
+                        # A structural byte-mark's `entry:` is the source's own mark text and
+                        # is valid inside a form section (§4.3.2.3); a content segment's `entry:`
+                        # (an authored leaf label) is top-level only.
                         raise ValueError(
                             f"segment inside section at line {cursor}: `entry:` is "
                             f"only valid on top-level segments"
@@ -464,9 +505,10 @@ def _parse_section_header(
 ) -> tuple[Section, int]:
     """Parse a `<!--section-->` block's header and return the constructed Section plus
     the index of the line after the header closer."""
-    # Optional legacy composite id on the opener (1.0): `<!--section <ns>/<id>`. Bare = None.
+    # The form id on a qualified opener (`<!--section conversation-->`, §4.3.2.1). A bare
+    # `<!--section-->` (the retired 2.x TOC grouping) has form=None.
     opener_suffix = lines[start].rstrip().removeprefix(_SECTION_OPENER).strip()
-    classification = opener_suffix or None
+    form = opener_suffix or None
 
     header_start = start + 1
     j = header_start
@@ -482,7 +524,14 @@ def _parse_section_header(
     if not isinstance(header, dict):
         raise ValueError(f"section header at line {line_no} is not a mapping: {header!r}")
 
-    address = _normalize_address(header.pop("address", ""), what="section", line_no=line_no)
+    # `address` is the span envelope — OMITTED on a whole-record form section (§4.3.2.1),
+    # so it is optional (None when absent) rather than required as in 2.x.
+    address_raw = header.pop("address", None)
+    address: str | list[str] | None
+    if address_raw in (None, ""):
+        address = None
+    else:
+        address = _normalize_address(address_raw, what="section", line_no=line_no)
     entry_raw = header.pop("entry", None)
     entry = str(entry_raw).strip() if entry_raw is not None else None
     description_raw = header.pop("description", None)
@@ -492,7 +541,7 @@ def _parse_section_header(
         Section(
             address=address,
             entry=entry,
-            classification=classification,
+            form=form,
             description=description,
             extra=header,
         ),
@@ -551,6 +600,40 @@ def _parse_segment_block(
             f"with header `atom: {legacy_atom}`"
         )
     atom = atom_from_opener or legacy_atom
+
+    # The structural byte-mark (§4.3.2.3) — the fifth segment kind. Not an atom: it takes no
+    # overlay and carries `address` + `level` + optional `entry`, no body.
+    if atom == _STRUCTURAL:
+        if overlay is not None:
+            raise ValueError(
+                f"segment at line {line_no}: `structural` takes no atom overlay"
+            )
+        address = _normalize_address(
+            header.pop("address", ""), what="segment", line_no=line_no
+        )
+        level_raw = header.pop("level", 1)
+        try:
+            level = int(level_raw)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"structural segment at line {line_no}: `level` must be an integer, "
+                f"got {level_raw!r}"
+            ) from None
+        entry_raw = header.pop("entry", None)
+        entry = str(entry_raw).strip() if entry_raw is not None else None
+        header.pop("mode", None)
+        return (
+            Segment(
+                atom=_STRUCTURAL,
+                address=address,
+                entry=entry,
+                body="",
+                extra=header,
+                level=level,
+            ),
+            k,
+        )
+
     if atom not in _VALID_ATOMS:
         raise ValueError(
             f"segment at line {line_no}: atom {atom!r} not one of {sorted(_VALID_ATOMS)}"
