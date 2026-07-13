@@ -670,25 +670,32 @@ def _rule_mime_extension_mismatch(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_entry_missing(post, blocks, root) -> Iterator[Finding]:
-    """Every top-level block (section / top-level segment) should carry a non-empty `entry`
-    (the §4.3.2.2 TOC label) — error on a normalized record, warning otherwise. A record
-    whose content zone is a SINGLE top-level block is exempt: it is its own TOC line (the
-    frontmatter title already carries it), so an `entry` would only duplicate the title."""
-    if len(blocks) <= 1:
+    """PARTIAL authored labeling only (3.0). `entry` on a top-level block is an OPTIONAL
+    authored leaf label (§4.3.2.2), and a uniformly bare flat content zone is the default,
+    well-formed state (§4.3.2.1) — never flagged. What IS a defect worth surfacing: a
+    half-built authored TOC, where some top-level content blocks carry an `entry` and
+    others do not — warning, never error. Structural segments are excluded from the count:
+    their `entry:` is the source's own mark text, optional by §4.3.2.3, not an authored
+    label. A single-content-block record is exempt as before (its own TOC line)."""
+    content = [
+        (i + 1, blk)
+        for i, blk in enumerate(blocks)
+        if getattr(blk, "atom", None) != _segments._STRUCTURAL
+    ]
+    if len(content) <= 1:
         return
-    status = post.metadata.get("status", "")
-    missing = [i + 1 for i, blk in enumerate(blocks) if not (getattr(blk, "entry", None) or "").strip()]
-    if not missing:
-        return
+    missing = [o for o, blk in content if not (getattr(blk, "entry", None) or "").strip()]
+    if not missing or len(missing) == len(content):
+        return  # fully labeled, or the uniformly-bare default state — both well-formed
     ords = ", ".join(str(o) for o in missing[:20])
     more = f" (+{len(missing) - 20} more)" if len(missing) > 20 else ""
-    where = " on a normalized record" if status == "normalized" else f" (status: {status})"
     yield Finding(
         rule_id="entry-missing",
-        severity="error" if status == "normalized" else "warning",
+        severity="warning",
         message=(
-            f"{len(missing)} of {len(blocks)} top-level blocks are missing `entry`{where}. "
-            f"Backfill: {ords}{more}."
+            f"{len(missing)} of {len(content)} top-level content blocks are missing `entry` "
+            f"while others carry one — a half-built authored TOC. Backfill or clear: "
+            f"{ords}{more}."
         ),
         fields={"missing_ordinals": missing[:20]},
     )

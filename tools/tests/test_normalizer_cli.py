@@ -36,9 +36,9 @@ def _record(root: Path) -> None:
     )
     post.content = segments.emit(
         [
-            segments.Segment(atom="text", address="el=1", body="sam seder news"),
-            # a second entry-less top block so entry-missing fires (single-block records
-            # are exempt — the record is its own TOC line)
+            segments.Segment(atom="text", address="el=1", body="sam seder news", entry="News"),
+            # a second, entry-LESS top block beside a labeled one: partial labeling is the
+            # 3.0 entry-missing trigger (uniformly bare zones are the well-formed default)
             segments.Segment(atom="text", address="el=2", body="more news"),
         ]
     )

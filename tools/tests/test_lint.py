@@ -427,11 +427,21 @@ def test_segment_lossless_contract(tmp_path):
 def test_entry_missing(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    seg = segments.Segment(atom="text", address="el=1", body="hi")  # no entry
-    seg2 = segments.Segment(atom="text", address="el=2", body="ho")  # no entry
-    assert "entry-missing" in {f.rule_id for f in lint.lint(post, [seg, seg2], root)}
-    # A single top-level block is exempt — the record is its own TOC line.
-    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [seg], root)}
+    bare = segments.Segment(atom="text", address="el=1", body="hi")  # no entry
+    bare2 = segments.Segment(atom="text", address="el=2", body="ho")  # no entry
+    labeled = segments.Segment(atom="text", address="el=3", body="yo", entry="Appendix")
+    # A uniformly bare flat zone is the §4.3.2.1 default, well-formed state — silent.
+    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [bare, bare2], root)}
+    # PARTIAL labeling — a half-built authored TOC — fires, as a warning.
+    partial = [f for f in lint.lint(post, [bare, labeled], root) if f.rule_id == "entry-missing"]
+    assert partial and partial[0].severity == "warning"
+    # Fully labeled and single-block records are silent.
+    labeled2 = segments.Segment(atom="text", address="el=4", body="hey", entry="Notes")
+    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [labeled, labeled2], root)}
+    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [bare], root)}
+    # Structural byte-marks never count: their entry is the source's, optional (§4.3.2.3).
+    mark = segments.Segment(atom="structural", address="el=1", level=1, entry="Ch. 1")
+    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [mark, bare, bare2], root)}
 
 
 def test_body_sanity_rules(tmp_path):
