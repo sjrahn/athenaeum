@@ -128,6 +128,17 @@ def resolve(
             corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
         )
 
+    # `turn=<N>` (§6.2): the verbatim N-th unit of the record's declared unit array, located by
+    # the origin overlay's form mapping (§7.2). `turn=<N>&att=<M>` materializes unit N's M-th
+    # declared attachment through lineage-chained resolution. Record-level ops.
+    turn = _turn_index(parsed)
+    if turn is not None:
+        n, att_m = turn
+        return _resolve_turn(
+            corpus_root, canonical_uri, parsed.hash, artifact_record, n, att_m,
+            regenerate=regenerate,
+        )
+
     if store is None:
         store = get_store(corpus_root)
     if transcriber is None:
@@ -323,6 +334,100 @@ def _resolve_members(
     cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
     return cache_p.resolve()
+
+
+def _turn_index(parsed: furi.ParsedURI) -> tuple[int, int | None] | None:
+    """Recognize `turn=<N>` (optionally `&att=<M>`) as the whole param chain; return
+    `(N, att_M | None)` or None when the URI is not a bare unit op."""
+    params = list(parsed.params)
+    if not params or params[0][0] != "turn":
+        return None
+    try:
+        n = int(params[0][1] or "")
+    except (TypeError, ValueError):
+        return None
+    if len(params) == 1:
+        return n, None
+    if len(params) == 2 and params[1][0] == "att":
+        try:
+            return n, int(params[1][1] or "")
+        except (TypeError, ValueError):
+            return None
+    return None  # a further-composed chain is not a bare unit op
+
+
+def _resolve_turn(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_record: Any,
+    n: int,
+    att_m: int | None,
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize a `turn=` unit op (§6.2). `turn=<N>` returns the verbatim N-th unit object
+    as JSON, located by the origin overlay's form mapping (§7.2). `turn=<N>&att=<M>` resolves
+    unit N's M-th declared attachment through **lineage-chained resolution**: the attachment's
+    declared path is resolved as a member of the record's blake3-pinned containment parent
+    (the promotion-lineage origin, §8.1), never stored — so it cannot rot, and an absent
+    member fails loudly."""
+    from . import shape
+    from .shape import units
+
+    resolved = shape.form_for_record(artifact_record, corpus_root)
+    if resolved is None:
+        raise ValueError("turn= requires a declared form mapping (origin overlay `form:`, §7.2)")
+    _origin_id, _form_id, mapping = resolved
+    data = units.load_json_artifact(corpus_root, artifact_record)
+    msg = units.unit(data, mapping, n)
+    if msg is None:
+        raise ValueError(f"turn={n}: out of range (the unit array has fewer messages)")
+
+    if att_m is None:
+        urihash_value = furi.urihash(canonical_uri)
+        cache_p = furi.cache_path(corpus_root, urihash_value, "json")
+        if cache_p.is_file() and not regenerate:
+            return cache_p.resolve()
+        cache_p.parent.mkdir(parents=True, exist_ok=True)
+        cache_p.write_text(json.dumps(msg, indent=2) + "\n", encoding="utf-8")
+        _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+        return cache_p.resolve()
+
+    # turn=N&att=M — lineage-chained attachment resolution.
+    atts = units.attachments(msg, mapping)
+    if not 1 <= att_m <= len(atts):
+        raise ValueError(f"turn={n}&att={att_m}: unit {n} declares {len(atts)} attachment(s)")
+    att = atts[att_m - 1]
+    ref = units.field(att, mapping, "attachment_path")
+    if ref is None:
+        ref = units.field(att, mapping, "attachment_url") if isinstance(att, dict) else att
+    ref = str(ref or "").strip()
+    if not ref:
+        raise ValueError(f"turn={n}&att={att_m}: attachment declares no resolvable reference")
+
+    container = _lineage_container(artifact_record)
+    if container is None:
+        raise ValueError(
+            f"turn={n}&att={att_m}: attachment `{ref}` is not lineage-resolvable "
+            f"(the record has no containment-lineage origin, §4.3.1.4)"
+        )
+    # Resolve the attachment as a member of the container (recursing through the resolver).
+    member_uri = f"{furi.SCHEME}://{container}?path={furi.quote_value(ref)}"
+    return resolve(member_uri, corpus_root, regenerate=regenerate)
+
+
+def _lineage_container(artifact_record: Any) -> str | None:
+    """The blake3 id of the record's containment-lineage parent — the `corpus://<container>?…`
+    an origin block records at promotion (§8.1) — or None when the record is standalone."""
+    for uri in records.iter_origin_uris(artifact_record):
+        u = str(uri)
+        if u.startswith(f"{furi.SCHEME}://"):
+            try:
+                return furi.parse(u).hash
+            except Exception:
+                continue
+    return None
 
 
 def _resolve_body(
