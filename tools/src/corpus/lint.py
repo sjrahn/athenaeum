@@ -890,11 +890,13 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
     if not has_segment:
         return
     referenced: set[str] = _wikilink_addresses(post)
+    # Only SEGMENT addresses reference embeds (§4.3.1.4 — address membership on segments).
+    # A section's span address does not: a 3.0 section is a form span, not an
+    # embed-referencing grouping, and the 2.x leniency that counted it masked latent orphans.
     for blk in blocks:
         if isinstance(blk, _segments.Section):
             for child in blk.segments:
                 referenced.update(_addresses(getattr(child, "address", None)))
-            referenced.update(_addresses(getattr(blk, "address", None)))
         elif isinstance(blk, _segments.Segment):
             referenced.update(_addresses(getattr(blk, "address", None)))
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
