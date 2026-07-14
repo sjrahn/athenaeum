@@ -17,16 +17,17 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
   in `event_kinds` is a **platform event** — emitted as `text/metadata` EVEN WHEN AUTHORED
   (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage` all carry an author, so the author-less
   test never fires for them). An authored event KEEPS its `participant:` codebook index (the
-  caller / pinner is a fact) and carries the verbatim kind on `event:` (the `text/metadata`
-  overlay's declared event-kind field). A non-event unit gets no `event:` field (a reply is
-  already expressed by `reply_to`).
+  caller / pinner is a fact) and carries the verbatim discriminator on the `text/metadata`
+  overlay's `kind:` field. A non-event unit gets no `kind:` field (a reply is already expressed
+  by `reply_to`).
 - `topic` (dotted path): the source's own topic/thread id (Google Chat's `topic_id`). At the
   first unit carrying a topic value NOT seen earlier in the record, a `<!--segment structural-->`
   byte-mark (level 1, `entry:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
   address — a producer-declared boundary (§4.3.2.3), the TOC unit for a topic directory.
 - `timestamp_style` (optional mapping scalar): absent = the timestamp is kept VERBATIM (the DCE
   case). The one supported style, `google-takeout-en-utc`, normalizes Google's fixed
-  English-locale UTC takeout strings to ISO-8601; anything that doesn't match stays verbatim.
+  English-locale UTC takeout strings to ISO-8601; anything that doesn't match stays verbatim. An
+  EMPTY timestamp value (a blank `created_date`) omits the envelope field entirely.
 
 **Topic-mark address decision** (the open question). The mark shares its `turn=<N>` address with
 that turn's `text/message` segment. This is legal: `segment-address-duplicate` keys on
@@ -180,11 +181,13 @@ def shape_conversation(
             if author_present:  # an authored event (a DCE Call/pin) keeps its actor
                 envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]
             if is_kind_event:  # the verbatim producer discriminator on the declared field
-                envelope["event"] = str(kind_value)
+                envelope["kind"] = str(kind_value)
         else:
             overlay = "text/message"
             envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]
-        if timestamp is not None:
+        # An empty timestamp value omits the field entirely (a zone-less/blank source is not a
+        # timestamp — e.g. Google Chat system messages with an empty created_date).
+        if timestamp is not None and str(timestamp).strip():
             envelope["timestamp"] = _normalize_timestamp(str(timestamp), ts_style)
         reply_ref = units.field(msg, mapping, "reply_to")
         if reply_ref is not None and str(reply_ref) in turn_by_msgid:

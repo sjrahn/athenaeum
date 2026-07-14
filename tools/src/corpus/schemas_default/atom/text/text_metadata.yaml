@@ -29,14 +29,14 @@ extended_fields:
     semantic_type: timestamp
     required: false
     description: The event's time, in the source-stated zone, where the export states one.
-  event:
+  kind:
     type: string
     required: false
     description: |
-      The event kind, verbatim from the export — a short label the source distinguishes them
-      by (`join`, `leave`, `call`, `pin`, `rename`), or a producer's raw discriminator value
-      (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage`, the mechanical `conversation`
-      shaper stamps it here when a mapping's `kind` value is in its `event_kinds`). Omitted
+      The event kind, verbatim from the export — the producer's own discriminator value that
+      marks this entry as an event (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage`, a
+      Google Chat system-message type). The mechanical `conversation` shaper stamps it here
+      when a mapping's `kind` value is in its `event_kinds` list (spec §12.18 step 4). Omitted
       when the source states none.
 normalization:
   guidance: |
@@ -44,4 +44,4 @@ normalization:
     not paraphrase or summarize it. Where the exporter attributes the event to an actor (a
     call's caller, a message's pinner), carry that actor's codebook index on `participant:`;
     a bare, author-less notice carries none. Where the exporter states an event kind, carry it
-    on `event:`; otherwise leave it off.
+    verbatim on `kind:`; otherwise leave it off.
