@@ -33,6 +33,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "reattest":        ("Capture & ingest",       "Bulk re-derive the attested layer from artifacts (never touches the authored layer)"),
     "redraft":         ("Capture & ingest",       "Bulk re-derive whole records (2.x; superseded by reattest for the attested layer)"),
     # Normalization queue (P6) — request/claim contract for the interpretive normalize stage (spec §8.5)
+    "shape":           ("Normalize",              "Author a record's stored form from its declared form mapping (the shaper — deterministic half of normalize)"),
     "enqueue":         ("Normalize",              "Request a (re-)normalization pass for a record"),
     "drain":           ("Normalize",              "Claim the next queued record (prints its id; empty queue → exit 1)"),
     "finalize":        ("Normalize",              "Close a claimed pass (gated on status: normalized + lint-clean)"),
