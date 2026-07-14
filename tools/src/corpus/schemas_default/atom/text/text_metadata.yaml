@@ -3,15 +3,27 @@ kind: atomic
 description: |
   A platform-generated event line within a conversation — a join/leave notice, a call
   record, a pin, a channel-name change — that the exporter emits as a message-shaped entry
-  but which is NOT participant-authored content (spec §12.18 step 4, the DCE event case).
-  The segment body is the event's verbatim text (lossless); it carries no `participant:`
-  codebook index because no participant authored it. Kept as its own atom so a composition
-  view (or a harvest rule) can distinguish authored messages from system events without
-  parsing prose.
+  but which is NOT authored *content* (spec §12.18 step 4, the DCE event case). The segment
+  body is the event's verbatim text (lossless). Kept as its own atom so a composition view
+  (or a harvest rule) can distinguish authored messages from system events without parsing
+  prose. An event may still be **attributed** to an actor — a DCE `Call`'s caller, a pin's
+  pinner — whom the exporter records as the entry's author; that actor is a fact and rides the
+  `participant:` codebook index, exactly like a `text/message`. A truly author-less event
+  (a bare join notice) carries no `participant:`.
 applies_to:
   atom: text
 enables_lossless: true
 extended_fields:
+  participant:
+    type: integer
+    codebook: participants
+    required: false
+    description: |
+      Codebook index — the 0-based position of the event's attributed actor (the caller who
+      placed a call, the member who pinned a message) in the enclosing form section's
+      `participants:` list (§7.3). Present only when the exporter attributes the event to an
+      actor; a truly author-less event (a system join/leave notice) omits it. Unlike a
+      `text/message`, the index attributes an EVENT to an actor, not authorship of content.
   timestamp:
     type: string
     semantic_type: timestamp
@@ -21,10 +33,15 @@ extended_fields:
     type: string
     required: false
     description: |
-      A short event-kind label where the source distinguishes them (join, leave, call,
-      pin, rename), verbatim from the export. Omitted when the source states none.
+      The event kind, verbatim from the export — a short label the source distinguishes them
+      by (`join`, `leave`, `call`, `pin`, `rename`), or a producer's raw discriminator value
+      (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage`, the mechanical `conversation`
+      shaper stamps it here when a mapping's `kind` value is in its `event_kinds`). Omitted
+      when the source states none.
 normalization:
   guidance: |
-    Transcribe the event line verbatim. Do not attribute it to a participant — it is a
-    platform event, not authored content. Where the exporter states an event kind, carry it
+    Transcribe the event line verbatim — it is a platform event, not authored content, so do
+    not paraphrase or summarize it. Where the exporter attributes the event to an actor (a
+    call's caller, a message's pinner), carry that actor's codebook index on `participant:`;
+    a bare, author-less notice carries none. Where the exporter states an event kind, carry it
     on `event:`; otherwise leave it off.
