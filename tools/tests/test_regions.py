@@ -179,6 +179,60 @@ def test_save_regions_rejects_bad_box(tmp_path):
         regions.save_regions(root, "a" * 64, [{"box": [0.1, 0.1, 0.0, 0.2], "atom": "image"}])
 
 
+def _mixed_statement_record(root: Path) -> Path:
+    """Mixed-artifact PDF (§4.3.2.1): a formless page-1 cover letter, then a `statement`
+    section over pages 2-6 (the case the parser fix admits)."""
+    rid = "e" * 64
+    p = root / "records" / "ee" / f"{rid}.md"
+    (root / "records" / "ee").mkdir(parents=True, exist_ok=True)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": rid, "title": "March Statement", "description": "A statement.",
+         "status": "normalized", "transport": "sha256:" + "f" * 64,
+         "touch": ["corpus.ingest@0.1.0"]}
+    )
+    records.set_artifact_block(post, mime="application/pdf", fields={"page_count": 6})
+    cover = segments.Segment(atom="image", address="page=1", entry="Cover",
+                             description="Cover letter accompanying the March statement.")
+    sec = segments.Section(
+        form="statement", address="pages=2-6", entry="Statement",
+        extra={"account": "…7841", "period": "2026-03"},
+        segments=[
+            segments.Segment(atom="text", overlay="text/ocr", address="page=2", body="opening"),
+            segments.Segment(atom="text", overlay="text/ocr", address="page=6", body="closing"),
+        ],
+    )
+    post.content = segments.emit([cover, sec])
+    records.dump(post, p)
+    return p
+
+
+def test_save_regions_mixed_record_preserves_formless_and_places_top_level(tmp_path):
+    root = _make_corpus(tmp_path)
+    rec = _mixed_statement_record(root)
+
+    out = regions.save_regions(
+        root, "e" * 64,
+        [
+            {"page": 1, "box": [0.1, 0.1, 0.2, 0.2], "atom": "image"},  # formless → top-level
+            {"page": 3, "box": [0.2, 0.2, 0.3, 0.1], "atom": "text", "overlay": "ocr"},  # section
+        ],
+    )
+    assert out["addresses"] == ["page=1&bbox=0.1,0.1,0.2,0.2", "page=3&bbox=0.2,0.2,0.3,0.1"]
+
+    blocks = segments.iter_blocks(records.load(rec).content or "")
+    top_addrs = [b.address for b in blocks if isinstance(b, segments.Segment)]
+    # The formless cover-letter segment SURVIVES (not dropped) …
+    assert "page=1" in top_addrs
+    # … and the region on the formless page rides TOP-LEVEL (no containing section ≠ error).
+    assert "page=1&bbox=0.1,0.1,0.2,0.2" in top_addrs
+    # The region on a statement page landed IN the section.
+    sec = next(b for b in blocks if isinstance(b, segments.Section))
+    assert "page=3&bbox=0.2,0.2,0.3,0.1" in [s.address for s in sec.segments]
+    # Before-only order preserved: the section is last, formless segments precede it.
+    assert isinstance(blocks[-1], segments.Section)
+
+
 def test_save_regions_rejects_unknown_overlay(tmp_path):
     """The cropper's historical `caption` typo (bundled overlay is `captions`)."""
     root = _make_corpus(tmp_path)
@@ -189,10 +243,16 @@ def test_save_regions_rejects_unknown_overlay(tmp_path):
         )
 
 
-def test_save_regions_rejects_page_without_section(tmp_path):
+def test_save_regions_page_without_section_rides_top_level(tmp_path):
+    """A region on a page no section covers is NOT an error (superseding the old reject): it
+    rides at the top level — the mixed-artifact / cover-letter case (§4.3.2.1)."""
     root = _make_corpus(tmp_path)
-    _pdf_record(root)
-    with pytest.raises(regions.RegionSaveError):
-        regions.save_regions(
-            root, "c" * 64, [{"page": 9, "box": [0.1, 0.1, 0.2, 0.2], "atom": "image"}]
-        )
+    rec = _pdf_record(root)
+    out = regions.save_regions(
+        root, "c" * 64, [{"page": 9, "box": [0.1, 0.1, 0.2, 0.2], "atom": "image"}]
+    )
+    assert out["addresses"] == ["page=9&bbox=0.1,0.1,0.2,0.2"]
+    blocks = segments.iter_blocks(records.load(rec).content or "")
+    top_addrs = [b.address for b in blocks if isinstance(b, segments.Segment)]
+    assert "page=9&bbox=0.1,0.1,0.2,0.2" in top_addrs  # rode top-level, not an error
+    assert any(isinstance(b, segments.Section) for b in blocks)  # the section is intact

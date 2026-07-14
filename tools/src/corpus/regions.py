@@ -146,26 +146,30 @@ def _merge_bbox(
 ) -> list[Any]:
     """Replace bbox-addressed segments with `new_segments`, preserving everything else.
 
-    Honors the homogeneous-top-level rule: a sectioned record keeps its sections (regions
-    placed inside the section whose page-envelope contains them); a sectionless record
-    keeps its top-level non-bbox segments and appends the new ones at top level."""
-    has_sections = any(isinstance(b, segments.Section) for b in existing)
-    if has_sections:
-        sections = [b for b in existing if isinstance(b, segments.Section)]
-        for sec in sections:
-            sec.segments = [s for s in sec.segments if not _is_bbox_segment(s)]
-        for page, seg in new_segments:
-            sec = _section_for_page(sections, page) if page is not None else None
-            if sec is None:
-                raise RegionSaveError(
-                    f"no section contains page {page}; cannot place region {seg.address!r} "
-                    "(draw it on a page that falls inside an existing section)"
-                )
+    Handles the mixed-artifact record (§4.3.2.1): formless top-level segments (a statement's
+    page-1 cover letter) coexisting with sections (the statement proper). Existing non-bbox
+    top-level segments are PRESERVED — never dropped. Each new region lands in the section whose
+    page-envelope contains its page; a region on a **formless page** (no containing section — the
+    cover-letter case) rides at the top level, which is not an error. The reassembly keeps the
+    before-only order (formless top-level segments precede the sections, §4.3.2.1); a whole-record
+    section that thereby gains a sibling is caught by `finish`'s grammar re-parse in the caller."""
+    sections = [b for b in existing if isinstance(b, segments.Section)]
+    top_level = [
+        b for b in existing if isinstance(b, segments.Segment) and not _is_bbox_segment(b)
+    ]
+    for sec in sections:
+        sec.segments = [s for s in sec.segments if not _is_bbox_segment(s)]
+
+    new_top: list[segments.Segment] = []
+    for page, seg in new_segments:
+        sec = _section_for_page(sections, page) if page is not None else None
+        if sec is not None:
             seg.entry = None  # in-section segments can't carry a TOC entry
             sec.segments.append(seg)
-        return sections
-    kept = [b for b in existing if isinstance(b, segments.Segment) and not _is_bbox_segment(b)]
-    return kept + [seg for _page, seg in new_segments]
+        else:
+            new_top.append(seg)  # a region on a formless page → top-level (not an error)
+
+    return [*top_level, *new_top, *sections]
 
 
 # ---------- the save entry point ---------- #
