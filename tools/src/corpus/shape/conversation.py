@@ -29,14 +29,14 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
   English-locale UTC takeout strings to ISO-8601; anything that doesn't match stays verbatim. An
   EMPTY timestamp value (a blank `created_date`) omits the envelope field entirely.
 
-**Topic-mark address decision** (the open question). The mark shares its `turn=<N>` address with
-that turn's `text/message` segment. This is legal: `segment-address-duplicate` keys on
-`(opener-id, address)`, and a `structural` mark's opener-id differs from `text/message`
-(spec §4.3.2.2 pair-uniqueness). The mark is emitted at **first appearance of each distinct
-topic value**, not at every value change: a Space's threads interleave in time (thread A, then
-B, then A again), so run-boundary detection would spam a mark at every switch; first-appearance
-yields one mark per distinct topic — a clean directory. For the common contiguous-run case the
-two coincide.
+**Topic-mark address decision.** The mark shares its `turn=<N>` address with that turn's
+`text/message` segment. This is legal: `segment-address-duplicate` keys on `(opener-id, address)`,
+and a `structural` mark's opener-id differs from `text/message` (spec §4.3.2.2 pair-uniqueness).
+The mark is emitted at the **first turn of each topic-value run** — whenever a unit's topic value
+differs from the previous topic-bearing unit's (the byte-mark rule: a boundary where the source's
+own grouping changes, §4.3.2.3). A contiguous run of one topic yields a single mark at its start;
+a topic that resumes after another (a non-contiguous recurrence) opens a new run and earns a new
+mark. A topic-less unit does not break a run.
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ def shape_conversation(
     # A whole-record form section (address omitted, §4.3.2.1) carrying the codebook.
     recordbuild.open_section(build, form="conversation", fields={"participants": codebook})
 
-    seen_topics: set[str] = set()
+    prev_topic: str | None = None
     for n, msg in enumerate(messages, start=1):
         author_id = units.field(msg, mapping, "author_id")
         author_name = units.field(msg, mapping, "author_name")
@@ -167,13 +167,14 @@ def shape_conversation(
         is_kind_event = kind_value is not None and str(kind_value) in event_kinds
         is_event = (not author_present) or is_kind_event
 
-        # Topic byte-mark at the first unit carrying a not-yet-seen topic value (§4.3.2.3).
+        # Topic byte-mark at the first turn of each topic-value run — a boundary where the
+        # source's own grouping changes (§4.3.2.3). A topic-less unit doesn't break a run.
         topic = units.field(msg, mapping, "topic")
         if topic is not None:
             tkey = str(topic)
-            if tkey not in seen_topics:
-                seen_topics.add(tkey)
+            if tkey != prev_topic:
                 recordbuild.add_structural(build, address=f"turn={n}", level=1, entry=tkey)
+            prev_topic = tkey
 
         envelope: dict[str, Any] = {}
         if is_event:

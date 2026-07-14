@@ -145,23 +145,25 @@ form:
 _TOPIC_CHAT = {
     "messages": [
         {"id": "1", "author": {"id": "u1", "name": "A"}, "topic_id": "T-A", "content": "a1"},
-        {"id": "2", "author": {"id": "u1", "name": "A"}, "topic_id": "T-B", "content": "b1"},
-        # T-A recurs (interleaved threads) — must NOT emit a second mark.
-        {"id": "3", "author": {"id": "u1", "name": "A"}, "topic_id": "T-A", "content": "a2"},
-        {"id": "4", "author": {"id": "u1", "name": "A"}, "topic_id": "T-C", "content": "c1"},
+        # Same topic run continues — NO mark at turn 2.
+        {"id": "2", "author": {"id": "u1", "name": "A"}, "topic_id": "T-A", "content": "a2"},
+        {"id": "3", "author": {"id": "u1", "name": "A"}, "topic_id": "T-B", "content": "b1"},
+        # T-A resumes after T-B (a non-contiguous recurrence) — a NEW run → a new mark.
+        {"id": "4", "author": {"id": "u1", "name": "A"}, "topic_id": "T-A", "content": "a3"},
     ]
 }
 
 
-def test_topic_marks_first_appearance_share_turn_address(tmp_path):
+def test_topic_marks_at_run_boundaries_share_turn_address(tmp_path):
     root, post = _shaped(tmp_path, _TOPIC_OVERLAY, _TOPIC_CHAT)
     sec = _section(post)
     marks = [s for s in sec.segments if s.is_structural]
-    # One mark per DISTINCT topic (T-A recurring at turn 3 adds none), at the topic's first turn.
+    # A mark at the first turn of each topic-value RUN: T-A(1), T-B(3), T-A-again(4). turn 2 (the
+    # run continuing) gets none; the T-A recurrence at turn 4 opens a new run and earns a mark.
     assert [(m.address, m.entry, m.level) for m in marks] == [
         ("turn=1", "T-A", 1),
-        ("turn=2", "T-B", 1),
-        ("turn=4", "T-C", 1),
+        ("turn=3", "T-B", 1),
+        ("turn=4", "T-A", 1),
     ]
     # Each mark shares its turn= address with that turn's message segment (legal: distinct
     # opener-ids, §4.3.2.2) — the message segments are all still present.
