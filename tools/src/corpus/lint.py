@@ -989,6 +989,10 @@ _HTML_RESIDUE_RE = re.compile(r"<\s*(script|style|iframe)\b", re.IGNORECASE)
 _WIKILINK_WELLFORMED_RE = re.compile(r"!?\[\[(?:(?!\[\[|\]\]).)*?\]\]", re.DOTALL)
 _WIKILINK_OPEN_RE = re.compile(r"\[\[")
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
+# Verbatim-transcript atoms (§12.18 step 4): a chat user genuinely typing an unpaired ``` is
+# faithful content, not a truncation artifact, so those bodies are exempt from fence-balance
+# counting — the heuristic only makes sense for extracted document bodies.
+_VERBATIM_BODY_OVERLAYS = frozenset({"text/message", "text/metadata"})
 _HTML_COMMENT_OPENER_RE = re.compile(r"<!--\s*(/?[A-Za-z]+)")
 # Closed block vocabulary (spec §4.3). `context` is the annotations family; `issue` is kept
 # for the tolerant read of not-yet-upgraded legacy records.
@@ -1042,6 +1046,13 @@ def _rule_body_wikilink_malformed(post, blocks, root) -> Iterator[Finding]:
 
 def _rule_body_codefence_unbalanced(post, blocks, root) -> Iterator[Finding]:
     count = len(_FENCE_RE.findall(post.content or ""))
+    # Exempt verbatim-transcript bodies: subtract their fences from the balance count (rather
+    # than the whole body), so a genuine imbalance in an extracted document body elsewhere in
+    # the same record still surfaces. An unpaired ``` a chat user typed is content, not a
+    # truncation signal (§12.18 step 4).
+    for seg in _iter_all_segments(blocks):
+        if getattr(seg, "overlay", None) in _VERBATIM_BODY_OVERLAYS:
+            count -= len(_FENCE_RE.findall(seg.body or ""))
     if count % 2:
         yield Finding(
             rule_id="body-codefence-unbalanced",

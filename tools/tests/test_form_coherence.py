@@ -229,3 +229,28 @@ def test_sectionless_flat_record_still_parses():
     blocks = segments.iter_blocks(body)
     assert [b.address for b in blocks] == ["el=1", "el=2"]
     assert all(isinstance(b, segments.Segment) for b in blocks)
+
+
+# ---------- codefence balance vs verbatim chat text (§12.18 step 4) ---------- #
+
+
+def test_codefence_unbalanced_skips_verbatim_transcript_bodies(tmp_path):
+    root = _root(tmp_path)
+    # A chat user genuinely typed a bare ``` — verbatim content in a text/message body, not a
+    # truncation artifact. The balance rule must not fire on it.
+    sec = segments.Section(
+        form="conversation", extra={"participants": ["A x"]},
+        segments=[segments.Segment(atom="text", overlay="text/message", address="turn=1",
+                                   body="here's code:\n```\nprint(1)", extra={"participant": 0})],
+    )
+    post = _post()
+    post.content = segments.emit([sec])
+    assert "body-codefence-unbalanced" not in _fired(post, root)
+
+
+def test_codefence_unbalanced_still_flags_extracted_document_bodies(tmp_path):
+    root = _root(tmp_path)
+    # The same unpaired fence in a NON-transcript (extracted document) body still surfaces.
+    post = _post()
+    post.content = segments.emit([segments.Segment(atom="text", address="el=1", body="```\nx")])
+    assert "body-codefence-unbalanced" in _fired(post, root)
