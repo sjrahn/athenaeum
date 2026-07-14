@@ -1,21 +1,41 @@
-"""text/vcard drafter — one `el=`-addressable text segment per contact card, faithful labeled
-rendering, RFC 6350 unfolding, embedded-PHOTO lift to an image embed + marker, and house
-parse-tolerance (skip a malformed card, never fail the file). Fixtures are built in-test.
+"""text/vcard `card=<N>` member addressing — the 3.0 manifest rework (spec §12.18 step 4,
+§12.11, §8.1). A `.vcf` is a MANIFEST: each contact card is a byte-exact `text/vcard` member
+embed at `card=<N>`, attested eagerly at ingest, promotable to its own record. The 2.x per-card
+`el=` text-segment drafting is retired.
+
+The fixture `.vcf` is built in-test from known card byte-strings (so member blake3s are exact):
+a CRLF card, an LF card with a folded continuation line + only `N` (formed display name), a CRLF
+card carrying an embedded-bytes PHOTO (bytes stay INSIDE the card), and a trailing malformed
+card (a `BEGIN:VCARD` with no `END:VCARD`).
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import shutil
 from pathlib import Path
 
 import blake3
 
-from corpus import hashing, lint, mime, paths, records, schemas, segments
+from corpus import (
+    containment,
+    hashing,
+    lint,
+    mime,
+    paths,
+    records,
+    resolver,
+    schemas,
+    segments,
+    vcardfile,
+)
 from corpus._cli import ingest as ingest_cli
-from corpus.draft import vcard
+from corpus._cli import promote as promote_cli
+from corpus._cli import reattest as reattest_cli
+from corpus.store import LocalArtifactStore
 
-# A real 1x1 PNG (magic-sniffable), used for the embedded-photo path.
+# A real 1x1 PNG (magic-sniffable), used for the embedded-photo-stays-inside path.
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 )
@@ -26,265 +46,283 @@ def _b3(data: bytes) -> str:
     return blake3.blake3(data).hexdigest()
 
 
-def _card(*lines: str) -> str:
-    body = "".join(f"{line}\r\n" for line in lines)
-    return "BEGIN:VCARD\r\nVERSION:3.0\r\n" + body + "END:VCARD\r\n"
+# ---------- fixture cards (exact bytes) ---------- #
+
+# Card 1 — CRLF, FN display name.
+_C1 = (
+    b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\n"
+    b"TEL;TYPE=CELL:+15550001111\r\nPRODID:-//Test//EN\r\nEND:VCARD\r\n"
+)
+# Card 2 — bare LF, a FOLDED continuation line, only `N` (→ formed display name).
+_C2 = (
+    b"BEGIN:VCARD\nVERSION:3.0\nN:Turing;Alan;;;\n"
+    b"NOTE:a long value split across two lin\n es here\nPRODID:-//Test//EN\nEND:VCARD\n"
+)
+# Card 3 — CRLF, an embedded-bytes PHOTO whose base64 stays inside the card's member bytes.
+_C3 = (
+    b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:With Photo\r\n"
+    b"PHOTO;ENCODING=b;TYPE=PNG:" + _PNG_B64.encode() + b"\r\nPRODID:-//Test//EN\r\nEND:VCARD\r\n"
+)
+# A trailing malformed card: BEGIN with no matching END before EOF.
+_MALFORMED = b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:No End Here\r\n"
+
+_VCF = _C1 + _C2 + _C3 + _MALFORMED
+_MEMBERS = [_C1, _C2, _C3]  # the three well-formed cards, in ordinal order
 
 
-# ---------- corpus harness (mirrors test_eml.py) ---------- #
+# ---------- corpus / pipeline harness (mirrors test_mbox.py) ---------- #
 
 
 def _corpus(tmp_path: Path) -> Path:
     root = tmp_path / "c"
     (root / "records").mkdir(parents=True)
-    (root / "schema").mkdir(parents=True)
+    (root / "schema").mkdir(parents=True)  # empty → packaged defaults
     schemas.cache_clear()
     return root
 
 
-def _ingest_vcf(tmp_path: Path, root: Path, raw: bytes, name: str = "contacts.vcf") -> str:
-    src = tmp_path / name
+def _ingest(root: Path, raw: bytes, name: str = "contacts.vcf") -> str:
+    src = root / name
     src.write_bytes(raw)
     cap = root / "capture"
     cap.mkdir(exist_ok=True)
     staged = cap / name
     shutil.copy(src, staged)
     assert ingest_cli._ingest_one(root, staged) == 0
-    return hashing.hash_file(src)["blake3"]
-
-
-def _draft(root: Path, target: str) -> int:
-    from tests._draftlib import draft_for_test
-
-    return draft_for_test(root, target)
+    rid = hashing.hash_file(src)["blake3"]
+    src.unlink()
+    return rid
 
 
 def _record(root: Path, rid: str):
     return records.load(paths.record_path(root, rid))
 
 
-def _blocks(post):
-    return segments.iter_blocks(post.content or "")
+def _embeds(root: Path, rid: str) -> list[dict]:
+    return list(records.iter_embed_blocks(_record(root, rid)))
 
 
-def _drafted(tmp_path, raw: bytes):
-    root = _corpus(tmp_path)
-    rid = _ingest_vcf(tmp_path, root, raw)
-    assert _draft(root, rid) == 0
-    post = _record(root, rid)
-    return root, rid, post
+def _promote(root: Path, uri: str) -> int:
+    return promote_cli.run(argparse.Namespace(uri=uri, json=False, corpus_root=str(root)))
 
 
-# ---------- unfolding (unit) ---------- #
+# ====================================================================== #
+# A. byte-exact extraction semantics (vcardfile)
+# ====================================================================== #
 
 
-def _unfolded(text: str) -> list[str]:
-    # A file's trailing newline leaves a harmless empty logical line (ignored downstream).
-    return [line for line in vcard.unfold(text) if line]
+def test_scan_delimits_every_wellformed_card_byte_exact():
+    scan = vcardfile.scan(_VCF)
+    assert scan.count == 3
+    assert scan.skipped == 1  # the trailing unterminated card
+    for facts, member in zip(scan.facts, _MEMBERS, strict=True):
+        assert _VCF[facts.start : facts.end] == member  # the pinned span is verbatim
+        assert facts.blake3 == _b3(member)
+        assert facts.bytes == len(member)
 
 
-def test_unfold_rejoins_continuation_lines():
-    text = "NOTE:one long value split across two physical li\r\n nes here\r\nFN:X\r\n"
-    assert _unfolded(text) == ["NOTE:one long value split across two physical lines here", "FN:X"]
+def test_scan_is_terminator_agnostic_crlf_and_lf():
+    # Card 1 ends CRLF, card 2 ends LF — the pins are byte-exact for either terminator.
+    facts = vcardfile.scan(_VCF).facts
+    assert _VCF[facts[0].start : facts[0].end] == _C1 and _C1.endswith(b"END:VCARD\r\n")
+    assert _VCF[facts[1].start : facts[1].end] == _C2 and _C2.endswith(b"END:VCARD\n")
 
 
-def test_unfold_tolerates_tab_continuation_and_bare_lf():
-    text = "NOTE:a\n\tb\nFN:Y\n"  # tab continuation, LF-only endings
-    assert _unfolded(text) == ["NOTE:ab", "FN:Y"]
+def test_resolve_member_by_path(tmp_path):
+    p = tmp_path / "x.vcf"
+    p.write_bytes(_VCF)
+    assert vcardfile.resolve_member(p, 1) == _C1
+    assert vcardfile.resolve_member(p, 2) == _C2
+    assert vcardfile.resolve_member(p, 3) == _C3
+    # A folded continuation line stays FOLDED in the member bytes (unfolding is read-time only).
+    assert b"two lin\n es here" in _C2
+    import pytest
+
+    with pytest.raises(ValueError, match="no such card"):
+        vcardfile.resolve_member(p, 9)
 
 
-def test_unfold_qp_softbreak_continuation():
-    # A vCard 2.1 QUOTED-PRINTABLE `=`-terminated line continues onto the next physical line.
-    text = "NOTE;ENCODING=QUOTED-PRINTABLE:caf=C3=A9 =\r\nnext\r\n"
-    assert _unfolded(text) == ["NOTE;ENCODING=QUOTED-PRINTABLE:caf=C3=A9 next"]
+def test_photo_bytes_stay_inside_the_card_member():
+    # The embedded base64 is part of card 3's member bytes — never lifted out.
+    assert _PNG_B64.encode() in _C3
+    assert vcardfile.scan(_VCF).facts[2].blake3 == _b3(_C3)
 
 
-# ---------- one segment per card ---------- #
-
-
-def test_one_text_segment_per_card_flat_with_entries(tmp_path):
-    raw = (_card("FN:Ada Lovelace") + _card("FN:Alan Turing") + _card("FN:Grace Hopper")).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    blocks = _blocks(post)
-    assert all(isinstance(b, segments.Segment) and b.atom == "text" for b in blocks)
-    assert [b.address for b in blocks] == ["el=1", "el=2", "el=3"]
-    assert [b.entry for b in blocks] == ["Ada Lovelace", "Alan Turing", "Grace Hopper"]
-    assert records.artifact_block(post)["fields"]["card_count"] == 3
-
-
-def test_body_renders_every_property_faithfully(tmp_path):
-    raw = _card(
-        "FN:Adam Dickins",
-        "N:Dickins;Adam;;;",
-        "TEL;TYPE=CELL:+15551234567",
-        "EMAIL;TYPE=HOME:adam@example.com",
-        "item1.TEL;type=pref:58083",
-        "CATEGORIES:myContacts",
-    ).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    body = _blocks(post)[0].body
-    assert "- **FN**: Adam Dickins" in body
-    assert "- **N**: Dickins;Adam;;;" in body  # structured value verbatim
-    assert "- **TEL** (TYPE=CELL): +15551234567" in body  # meaningful param preserved
-    assert "- **EMAIL** (TYPE=HOME): adam@example.com" in body
-    assert "- **item1.TEL** (type=pref): 58083" in body  # apple group prefix preserved
-    assert "- **CATEGORIES**: myContacts" in body
-
-
-# ---------- display-name fallback ---------- #
-
-
-def test_display_name_fallback_chain(tmp_path):
+def test_display_name_fallback_chain():
     raw = (
-        _card("N:Smith;Jane;;Dr.;")  # no FN → formed N
-        + _card("ORG:Acme;RnD")  # no FN/N → ORG first component
-        + _card("EMAIL:solo@example.com")  # → EMAIL
-        + _card("REV:2020-01-01T00:00:00Z")  # nothing usable → ordinal
-    ).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    assert [b.entry for b in _blocks(post)] == [
-        "Dr. Jane Smith",
-        "Acme",
-        "solo@example.com",
-        "Card 4",
-    ]
-
-
-# ---------- embedded photo extraction ---------- #
-
-
-def test_embedded_photo_lifts_to_embed_and_marker(tmp_path):
-    raw = (
-        _card("FN:With Photo", f"PHOTO;ENCODING=b;TYPE=PNG:{_PNG_B64}")
-        + _card("FN:No Photo")
-    ).encode()
-    root, _rid, post = _drafted(tmp_path, raw)
-
-    embeds = list(records.iter_embed_blocks(post))
-    assert len(embeds) == 1
-    assert embeds[0]["media_type"] == "image/png"
-    assert embeds[0]["address"] == "el=1"
-    assert embeds[0]["transport"] == records.format_hash("blake3", _b3(_PNG))
-
-    blocks = _blocks(post)
-    # text el=1 (with entry) + image marker el=1 (body-empty, no entry) + text el=2.
-    assert (blocks[0].atom, blocks[0].address, blocks[0].entry) == ("text", "el=1", "With Photo")
-    assert (blocks[1].atom, blocks[1].address, blocks[1].entry, blocks[1].body) == (
-        "image",
-        "el=1",
-        None,
-        "",
+        b"BEGIN:VCARD\r\nN:Smith;Jane;;Dr.;\r\nEND:VCARD\r\n"  # no FN → formed N
+        b"BEGIN:VCARD\r\nORG:Acme;RnD\r\nEND:VCARD\r\n"  # → ORG first component
+        b"BEGIN:VCARD\r\nEMAIL:solo@example.com\r\nEND:VCARD\r\n"  # → EMAIL
+        b"BEGIN:VCARD\r\nREV:2020-01-01T00:00:00Z\r\nEND:VCARD\r\n"  # nothing usable → ordinal
     )
-    assert (blocks[2].atom, blocks[2].address, blocks[2].entry) == ("text", "el=2", "No Photo")
-    # The megabytes are NOT in any body.
-    assert _PNG_B64 not in (post.content or "")
-
-    # Lint: text + image at el=1 do NOT collide (distinct opener-ids); the marker leaves the
-    # expected entry-missing advisory but no errors (the task's pre-approved draft warning).
-    findings = lint.lint(post, blocks, root)
-    assert not [f for f in findings if f.severity == "error"]
-    assert not [f for f in findings if f.rule_id == "embed-missing-target"]
-    assert not [f for f in findings if f.rule_id == "embed-unreferenced"]
-    assert [f for f in findings if f.rule_id == "entry-missing"]
+    names = [f.display_name for f in vcardfile.scan(raw).facts]
+    assert names == ["Dr. Jane Smith", "Acme", "solo@example.com", "Card 4"]
 
 
-def test_repeated_photo_dedups_to_one_embed_with_address_list(tmp_path):
+def test_malformed_middle_card_resumes_at_next_begin():
+    # A malformed card in the MIDDLE (missing END, then a fresh BEGIN) is skipped; the next
+    # card keeps a contiguous ordinal.
     raw = (
-        _card("FN:A", f"PHOTO;ENCODING=b;TYPE=PNG:{_PNG_B64}")
-        + _card("FN:B", f"PHOTO;ENCODING=b;TYPE=PNG:{_PNG_B64}")
-    ).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    embeds = list(records.iter_embed_blocks(post))
-    assert len(embeds) == 1  # same bytes → one embed
-    assert embeds[0]["address"] == ["el=1", "el=2"]  # both card positions
+        b"BEGIN:VCARD\r\nFN:Good\r\nEND:VCARD\r\n"
+        b"BEGIN:VCARD\r\nFN:Broken\r\n"  # no END before the next BEGIN
+        b"BEGIN:VCARD\r\nFN:AfterBreak\r\nEND:VCARD\r\n"
+    )
+    scan = vcardfile.scan(raw)
+    assert scan.count == 2 and scan.skipped == 1
+    assert [f.display_name for f in scan.facts] == ["Good", "AfterBreak"]
+    assert [f.ordinal for f in scan.facts] == [1, 2]
 
 
-def test_photo_url_is_a_field_not_an_embed(tmp_path):
-    # Google Contacts exports every photo as an external URL — never embedded bytes.
-    raw = _card("FN:Adam", "PHOTO:https://lh3.googleusercontent.com/contacts/AB123").encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    assert list(records.iter_embed_blocks(post)) == []
-    assert "- **PHOTO**: https://lh3.googleusercontent.com/contacts/AB123" in _blocks(post)[0].body
+# ====================================================================== #
+# B. attest — one text/vcard embed per card at card=<N> (eager, at ingest)
+# ====================================================================== #
 
 
-# ---------- malformed-card tolerance ---------- #
+def test_ingest_attests_one_card_embed_per_wellformed_card(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    embeds = _embeds(root, rid)
+    by_addr = {e["address"]: e for e in embeds}
+    assert set(by_addr) == {"card=1", "card=2", "card=3"}  # malformed card left no embed
+
+    for n, member in zip((1, 2, 3), _MEMBERS, strict=True):
+        e = by_addr[f"card={n}"]
+        assert e["media_type"] == "text/vcard"
+        assert e["transport"] == records.format_hash("blake3", _b3(member))
+        assert e["fields"]["bytes"] == len(member)
+    # The display name rides the embed description: (FN, formed N, FN).
+    assert by_addr["card=1"]["fields"]["description"] == "Ada Lovelace"
+    assert by_addr["card=2"]["fields"]["description"] == "Alan Turing"
+    assert by_addr["card=3"]["fields"]["description"] == "With Photo"
 
 
-def test_malformed_card_skipped_not_fatal(tmp_path):
-    good = _card("FN:Good One")
-    raw = (good + "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:No End Here\r\n").encode()  # 2nd unterminated
-    _root, _rid, post = _drafted(tmp_path, raw)
-    blocks = _blocks(post)
-    assert [b.entry for b in blocks] == ["Good One"]  # good card survived; broken one skipped
-    assert records.artifact_block(post)["fields"]["card_count"] == 1
-    issues = records.iter_issue_blocks(post)
-    assert any("malformed" in (i.get("fields") or {}).get("description", "") for i in issues)
+def test_manifest_content_zone_is_empty_and_lints_clean(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    post = _record(root, rid)
+    assert post.metadata["status"] == "stub"
+    assert not (post.content or "").strip()  # a manifest — the members ARE the content
+    blocks = segments.iter_blocks(post.content or "")
+    assert not [f for f in lint.lint(post, blocks, root) if f.severity == "error"]
 
 
-# ---------- quoted-printable ---------- #
+def test_no_image_embed_lifted_for_embedded_photo(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    embeds = _embeds(root, rid)
+    assert all(e["media_type"] == "text/vcard" for e in embeds)  # no image/* embed at attest
+    assert not any(str(e["media_type"]).startswith("image/") for e in embeds)
 
 
-def test_quoted_printable_value_decoded_to_content(tmp_path):
-    raw = _card("FN:QP", "NOTE;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:caf=C3=A9").encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    body = _blocks(post)[0].body
-    assert "- **NOTE**: café" in body  # decoded; consumed ENCODING/CHARSET params dropped
-    assert "QUOTED-PRINTABLE" not in body
+def test_artifact_fields_card_count_version_prodid(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    fields = records.artifact_block(_record(root, rid))["fields"]
+    assert fields["card_count"] == 3  # malformed excluded
+    assert fields["vcard_version"] == "3.0"  # uniform
+    assert fields["product_id"] == "-//Test//EN"  # uniform → surfaced
 
 
-# ---------- empty file ---------- #
+def test_malformed_card_counted_in_an_issue(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    issues = records.iter_issue_blocks(_record(root, rid))
+    mal = [i for i in issues if "malformed" in (i.get("fields") or {}).get("description", "")]
+    assert mal and (mal[0].get("fields") or {}).get("skipped_cards") == 1
 
 
 def test_empty_file_yields_no_cards_and_an_issue(tmp_path):
-    _root, _rid, post = _drafted(tmp_path, b"")
-    assert _blocks(post) == []
+    root = _corpus(tmp_path)
+    rid = _ingest(root, b"", name="empty.vcf")
+    post = _record(root, rid)
+    assert _embeds(root, rid) == []
     assert records.artifact_block(post)["fields"]["card_count"] == 0
     assert any(i.get("subtype") == "empty-body" for i in records.iter_issue_blocks(post))
 
 
-# ---------- artifact fields ---------- #
-
-
-def test_artifact_fields_version_and_uniform_prodid(tmp_path):
+def test_nonuniform_prodid_omitted(tmp_path):
+    root = _corpus(tmp_path)
     raw = (
-        _card("PRODID:-//Test//EN", "FN:One") + _card("PRODID:-//Test//EN", "FN:Two")
-    ).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    fields = records.artifact_block(post)["fields"]
-    assert fields["card_count"] == 2
-    assert fields["vcard_version"] == "3.0"
-    assert fields["product_id"] == "-//Test//EN"  # uniform → surfaced
+        b"BEGIN:VCARD\r\nPRODID:-//A//EN\r\nFN:One\r\nEND:VCARD\r\n"
+        b"BEGIN:VCARD\r\nPRODID:-//B//EN\r\nFN:Two\r\nEND:VCARD\r\n"
+    )
+    rid = _ingest(root, raw)
+    assert "product_id" not in records.artifact_block(_record(root, rid))["fields"]
 
 
-def test_nonuniform_prodid_is_omitted(tmp_path):
-    raw = (_card("PRODID:-//A//EN", "FN:One") + _card("PRODID:-//B//EN", "FN:Two")).encode()
-    _root, _rid, post = _drafted(tmp_path, raw)
-    assert "product_id" not in records.artifact_block(post)["fields"]
+# ====================================================================== #
+# C. card= resolve — exact bytes, blake3 matches the embed transport
+# ====================================================================== #
 
 
-# ---------- clean lint on a realistic (photo-free) directory ---------- #
+def test_resolver_card_resolves_exact_member_bytes(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    for n, member in zip((1, 2, 3), _MEMBERS, strict=True):
+        out = resolver.resolve(f"corpus://{rid}?card={n}", root)
+        assert out.read_bytes() == member
+        assert _b3(out.read_bytes()) == _b3(member)
 
 
-def test_photo_free_directory_lints_clean(tmp_path):
-    raw = (
-        _card("FN:Ada Lovelace", "TEL;TYPE=CELL:+15550001111")
-        + _card("N:Turing;Alan;;;", "EMAIL:alan@example.com")
-        + _card("ORG:Acme;", "item1.TEL;type=pref:58083")
-    ).encode()
-    root, _rid, post = _drafted(tmp_path, raw)
-    assert lint.lint(post, _blocks(post), root) == []
+# ====================================================================== #
+# D. promote round-trip — a card= member becomes its own text/vcard record
+# ====================================================================== #
 
 
-# ---------- mime detection ---------- #
+def test_promote_card_round_trip(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+
+    assert _promote(root, f"corpus://{rid}?card=2") == 0
+    pid = _b3(_C2)  # the promoted id equals the embed's blake3 transport
+    post = _record(root, pid)
+    assert post.metadata["id"] == pid
+    assert records.media_type_for(post) == "text/vcard"
+    # The origin records the containment lineage as history; a card has no member filename.
+    origin = next(records.iter_origin_blocks(post))["fields"]
+    assert origin["uri"] == f"corpus://{rid}?card=2"
+    assert "filename" not in origin
+    # Bytes were NOT copied out of the .vcf …
+    assert not LocalArtifactStore(root).is_local(pid, "vcf")
+    # … but they resolve back through containment (extracted from the container).
+    out = resolver.resolve(f"corpus://{pid}", root)
+    assert out.read_bytes() == _C2
+
+
+def test_containment_open_member_stream_direct(tmp_path):
+    p = tmp_path / "contacts.vcf"
+    p.write_bytes(_VCF)
+    with containment.open_member_stream(p, "text/vcard", "card=3") as fp:
+        assert fp.read() == _C3
+    assert containment.member_source_metadata(p, "text/vcard", "card=3") == {}
+
+
+# ====================================================================== #
+# E. reattest idempotence — the attested manifest re-derives byte-for-byte
+# ====================================================================== #
+
+
+def test_reattest_is_idempotent(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    rf = paths.record_path(root, rid)
+    before = rf.read_text(encoding="utf-8")
+    # Re-deriving the attested layer yields byte-identical output (no touch appended).
+    assert reattest_cli.reattest_record(rf, root) == before
+
+
+# ====================================================================== #
+# MIME detection (unchanged)
+# ====================================================================== #
 
 
 def test_vcf_detects_as_text_vcard(tmp_path):
     f = tmp_path / "x.vcf"
-    f.write_bytes(_card("FN:Ada").encode())
+    f.write_bytes(_C1)
     assert mime.detect(f) == "text/vcard"
 
 
 def test_begin_vcard_magic_detects_without_extension(tmp_path):
     f = tmp_path / "contacts_no_ext"
-    f.write_bytes(_card("FN:Ada").encode())
+    f.write_bytes(_C1)
     assert mime.detect(f) == "text/vcard"

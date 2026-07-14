@@ -102,6 +102,20 @@ def open_member_stream(
         with mboxfile.open_member(container_path, ordinal) as fp:
             yield fp
         return
+    # A vCard file is a container whose members are addressed `card=<N>` (spec §12.11, §12.18
+    # step 4) — one card's exact `BEGIN:VCARD`/`END:VCARD` byte span. A `.vcf` is small and a
+    # card bounded, so this yields a BytesIO over the extracted span rather than a stream.
+    if container_media_type == "text/vcard" and key == "card":
+        import io
+
+        from . import vcardfile
+
+        try:
+            ordinal = int(value)
+        except ValueError as exc:
+            raise ValueError(f"vcard member {address!r}: card= needs an integer ordinal") from exc
+        yield io.BytesIO(vcardfile.resolve_member(container_path, ordinal))
+        return
     # An email is a container whose members are addressed `part=<N>` (spec §12.11) — the
     # decoded MIME part's bytes. A single message is bounded (parsed whole), so this yields a
     # BytesIO rather than a scan; the mailbox it may itself live in is the unbounded thing.
@@ -136,6 +150,10 @@ def member_source_metadata(
     # An mbox message has no member filename and no meaningful per-member mtime (its ordinal
     # is a position, not a name) — a promoted message's origin carries the lineage uri only.
     if container_media_type == "application/mbox" and key == "msg":
+        return {}
+    # A vCard card, likewise: its `card=<N>` ordinal is a position, not a filename — a promoted
+    # card's origin carries the containment-lineage uri only (spec §8.1).
+    if container_media_type == "text/vcard" and key == "card":
         return {}
     # An email part carries its declared filename (e.g. a promoted `contract.pdf`) when it
     # names itself; no meaningful mtime.

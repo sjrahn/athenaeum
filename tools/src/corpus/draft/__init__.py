@@ -132,7 +132,7 @@ from . import jsonfile as _jsonfile  # noqa: E402, F401
 from . import mbox_manifest as _mbox_manifest  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import tar_manifest as _tar_manifest  # noqa: E402, F401
-from . import vcard as _vcard  # noqa: E402, F401
+from . import vcard_manifest as _vcard_manifest  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
 from . import xls as _xls  # noqa: E402, F401
 from . import xlsx as _xlsx  # noqa: E402, F401

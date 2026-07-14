@@ -1,157 +1,120 @@
 description: |
   vCard — the address-book contact interchange format (RFC 6350 / RFC 2426). One delivered
-  `.vcf` file holds N contact cards (`BEGIN:VCARD … END:VCARD`), and stays ONE record: each
-  card is an `el=`-addressable SEGMENT of the file, never its own record (a downstream ledger
-  cites an individual contact by its segment address, `corpus://<hash>?el=<N>`). The drafter is
-  purely mechanical: it UNFOLDS RFC 6350 continuation lines, splits the stream into cards, and
-  emits one `<!--segment text-->` per card at `el=<ordinal>` (1-indexed block order) whose body
-  is a faithful labeled rendering of every property the card carries (group prefix, name,
-  parameters, and value preserved verbatim — a reader reconstructs the card's data), with the
-  card's display name (FN, else a formed N, else ORG/EMAIL/TEL) on the segment `entry:` so
-  `corpus toc` reads as a contact directory. An embedded-BYTES `PHOTO` (`ENCODING=b`/`BASE64`,
-  or an inline `data:` URI) is lifted to a content-addressed `<!--embed image/*-->` (dedup'd by
-  transport) with a body-empty `<!--segment image-->` positioning marker at the card's `el=` —
-  the HTML inline-data-URI precedent; the megabytes never sit in the body and the bytes are
-  never dropped (the transport hash + the retained artifact keep them). A `PHOTO` whose value is
-  an external URL (Google Contacts exports every photo this way) is NOT an embed — it renders as
-  a faithful labeled field. Parse-tolerant per house doctrine: a malformed card is logged as an
-  issue and skipped, never failing the whole file. What a contact MEANS (who the person is,
-  their relationships) is ledger knowledge, never a record assertion (ATH-CORPUS 2.0).
+  `.vcf` file holds N contact cards (`BEGIN:VCARD … END:VCARD`) and is a **manifest** container
+  (§7.1; the disposition follows from the `vcard-manifest` strategy): each card is a
+  content-addressed `text/vcard` **member** embed at `card=<N>` (1-indexed card order),
+  delimiter-pinned and **promotable** to its own record (§8.1) without its bytes leaving the file.
+
+  **Why a manifest, not the 2.x `el=` text segments.** Through ATH-CORPUS 2.x this stayed one
+  record whose cards were `el=`-addressable TEXT SEGMENTS of a faithful labeled body. 3.0 retires
+  that per-card `el=` drafting: a downstream ledger consumer (the cross-platform "identity-v2"
+  linking pass) cites an INDIVIDUAL card, and a manifest embed is promotable where a text segment
+  is not — a cited card becomes its own first-class `text/vcard` record (origin =
+  `corpus://<file>?card=<N>`) with its bytes still resident in the `.vcf`. So the card is the
+  manifest member, and the labeled per-property rendering the 2.x drafter wrote is now a
+  read-time `body`-derivation / normalize concern, never the attested layer.
+
+  **Attest (ingest / reattest) — eager, complete, byte-exact.** ONE `text/vcard` embed per card
+  at `card=<N>`. Unlike an mbox (10^5 messages → selective `--messages` declaration, §12.11), a
+  `.vcf` is small, so ALL cards attest **eagerly** — no mbox-style selectivity. Each embed's
+  `transport` is the blake3 over the card's EXACT member bytes (the verbatim byte span from the
+  `BEGIN:VCARD` line start through the `END:VCARD` line end incl. its terminator — pinned in
+  `corpus.vcardfile`, the mbox precedent on the contact axis), `bytes` its length, and the card's
+  display name (FN, else a formed N, else ORG / NICKNAME / EMAIL / TEL — the 2.x fallback chain)
+  rides the embed `description:`.
+
+  **Bytes are verbatim.** A card's member bytes are the raw `.vcf` bytes of its span — folded
+  RFC 6350 continuation lines, CRLF-or-LF terminators, and QUOTED-PRINTABLE payloads all
+  preserved. RFC 6350 line-unfolding is a READ-time concern of a consumer, NEVER applied to the
+  member bytes: identity is bytes (§2). A `card=<N>` resolve (`transforms/vcard.py`) round-trips
+  to the byte-identical member the embed's `transport` records, and `corpus promote` mints it.
+
+  **PHOTO bytes stay inside the card.** An embedded-bytes `PHOTO` (`ENCODING=b`, or an inline
+  `data:` URI) is part of its card's member bytes and is NOT lifted to a separate image embed at
+  attest (the 2.x drafter DID lift it to an `image/*` embed; that behavior now belongs to
+  normalize/annotation if a describe pass wants the face). This keeps a card one promotable
+  transport. A `PHOTO` whose value is an external URL is likewise just card bytes.
+
+  Parse-tolerant per house doctrine: a malformed card (a `BEGIN:VCARD` with no matching
+  `END:VCARD` before the next `BEGIN`/EOF) is skipped and counted in a `partial-content` issue,
+  never failing the whole file. What a contact MEANS (who the person is, their relationships) is
+  ledger knowledge, never a record assertion (ATH-CORPUS 2.0).
 applies_to:
   content_types:
   - text/vcard
-mode: body-draft
-artifact_kind: self_contained
-address_scheme:
-- param: el
-  type: integer
-  description: |-
-    1-indexed position of a vCard in the file, in `BEGIN:VCARD … END:VCARD` block order.
-    `el=3` names the third card. Stable across drafter changes because the artifact is
-    immutable. A card's text segment (its labeled fields) and its single lifted PHOTO embed +
-    positioning marker all share the card's `el=` (distinct segments by opener-id: `text`
-    vs `image`).
-- param: photo
-  type: integer
-  description: |-
-    Sub-selector disambiguating multiple embedded PHOTOs within one card — `el=3&photo=2` is
-    the second embedded photo of card 3. Absent when a card carries at most one embedded photo
-    (the common case), where the embed + marker ride the bare `el=`.
-embeds:
-  media_types:
-  - image/jpeg
-  - image/png
-  - image/gif
-  - image/webp
-  - image/tiff
-  - image/bmp
-  description: |-
-    One `<!--embed <media-type>-->` block per unique-content EMBEDDED photo (a `PHOTO` property
-    carrying its bytes inline — `ENCODING=b`/`BASE64` or a `data:` URI), deduplicated by
-    `transport` (the `blake3:<hex>` of the decoded image bytes — the same face reused across
-    contacts collapses to one embed with an address list). The opener carries the decoded MIME
-    type (from the `TYPE=` param, the `data:` prefix, or a magic-byte sniff). The body never
-    carries the base64 — only the metadata; the bytes live in the artifact (the `.vcf` retains
-    the base64) and are content-identified by `transport`. A PHOTO whose value is an external
-    URL is a labeled field, not an embed.
-  fields:
-    address:
-      type: string-or-list
-      required: true
-      description: "Card address(es) where these bytes appear (`el=<N>`, or `el=<N>&photo=<K>`). Scalar for a single occurrence, a YAML list when the same face is reused across cards. Same polymorphic shape as Segment.address (spec §4.3)."
-    transport:
-      type: string
-      required: true
-      description: "`<algo>:<hex>` content hash of the decoded photo bytes (`blake3:<64-hex>`). The embed's content id and dedup key. Universal embed field per spec §4.3.1.4."
-    alt:
-      type: string
-      required: false
-      description: "The source PHOTO parameter set that carried meaning (e.g. the `TYPE=` value), verbatim. Omitted when the property carried none."
+# Resolver's initial working kind for the functional-URI pipeline: `card=<N>` materializes one
+# card's exact member bytes (`transforms/vcard.py`).
+working_kind: vcard
 transport_algos:
 - sha256
+draft:
+  strategy: vcard-manifest
+address_scheme:
+- param: card
+  type: integer
+  description: |-
+    `card=<N>` — the 1-indexed Nth card's exact member bytes as `text/vcard` (the `BEGIN:VCARD`
+    line start through the `END:VCARD` line end incl. terminator, verbatim). The address the
+    `vcard-manifest` drafter records on each card's embed; round-trips to byte-identical content
+    via `transforms/vcard.py`, and is the promotion address (§8.1). Ordinals count only the
+    successfully-delimited cards in file order (a skipped malformed card leaves no ordinal).
 normalization:
   method: refinement
   guidance: |
     This guidance applies to every normalize pass over a `text/vcard` record — a delivered
-    address-book export (`.vcf`), one record holding N contact cards. The drafter
-    (`tools/src/corpus/draft/vcard.py`) is mechanical and its output is already faithful and
-    lossless; the normalizer's job here is small and mostly frontmatter.
+    address-book export (`.vcf`), a **manifest** record whose N contact cards are `text/vcard`
+    member embeds at `card=<N>`. The drafter is mechanical and its attestation is already
+    faithful and lossless; the normalizer's job here is small and mostly frontmatter.
 
     ## What the drafter already did — leave it alone
 
-    - **UNFOLDED** every RFC 6350 continuation line and split the stream into cards.
-    - Emitted **one `<!--segment text-->` per card** at `address: el=<N>` (1-indexed card
-      order), `entry:` = the card's display name, body = a markdown list of the card's
-      properties, one per line: `- **[group.]NAME** (params): value`. The property name, any
-      group prefix (`item1.`), the parameters (`type=CELL`, …), and the value are preserved
-      VERBATIM — including vCard value escaping (`\n`, `\,`, `\;`) and semicolon-structured
-      `N`/`ADR` component values. Do NOT paraphrase, re-order, decompose, or "clean up" these
-      lines — that is faithful form, and a downstream ledger claim cites the exact span.
-    - Lifted any **embedded-bytes PHOTO** to a top-of-body `<!--embed image/*-->` (dedup'd by
-      transport) plus a body-empty `<!--segment image-->` marker at the same `el=`. A PHOTO
-      whose value is an external URL is left as a labeled field (not embedded).
+    - Emitted **one `text/vcard` embed per card** at `address: card=<N>` (1-indexed card order),
+      `transport:` = the blake3 over the card's exact member bytes, `bytes:` its length, and the
+      card's display name on the embed `description:`. The content zone is **empty** — the cards
+      ARE the manifest (the members), not body-flow content. Do NOT invent body segments.
+    - Recorded `card_count`, `vcard_version`, and (when uniform) `product_id` on the artifact
+      block. A malformed card is skipped and counted in a `partial-content` issue — preserve it.
 
-    Do NOT re-segment, merge, or re-attribute cards; do not strip `entry:` labels. Touch a
-    segment only to fix a genuine extraction defect, and note it as an `issue`.
-
-    ## Structure
-
-    This is a flat, sectionless record: one top-level segment per card. That is the right
-    shape for a contact directory — do NOT invent sections. When a file carries embedded
-    photos, each lifted photo is an extra top-level body-empty `image` marker with no `entry:`;
-    the mechanical draft leaves an `entry-missing` advisory on those markers. To finalize such
-    a record, give each card its own `<!--section-->` (`entry:` = the display name) wrapping the
-    card's `text` segment + its `image` marker(s) — sections are the TOC unit and in-section
-    segments carry no `entry:`. A file with NO embedded photos needs no such restructuring (it
-    is already a clean flat directory of labeled `text` segments).
+    Do NOT re-address, merge, or drop card embeds; card identity is byte-exact. A card that a
+    downstream ledger pass wants to cite is **promoted** to its own `text/vcard` record
+    (`corpus promote corpus://<file>?card=<N>`) — that promoted record normalizes on its own.
 
     ## `description` — the summary surface
 
     Write a faithful 1–3 sentence frontmatter `description` in a single physical line: name the
-    source (the origin overlay says which — e.g. an iCloud/Apple contacts export, a Google
-    Contacts Takeout slice), the contact count (the artifact block's `card_count`), and the
-    vCard version. Stay faithful — describe what the file IS, not who the contacts are.
+    source (the origin overlay says which — an iCloud/Apple contacts export, a Google Contacts
+    Takeout slice), the contact count (`card_count`), and the vCard version (`vcard_version`).
+    Stay faithful — describe what the file IS, not who the contacts are.
 
     ## `title`
 
     Author a frontmatter `title` from the origin: the export source + count, e.g.
     "iCloud contacts export — 150 contacts" or "Google Contacts (All Contacts) — 621 contacts".
-    The artifact block carries `card_count` / `vcard_version` / `product_id` candidates.
 
-    ## Embedded photos — describe (only when the file carried base64 photos)
+    ## Embedded photos — deferred
 
-    For each `<!--segment image-->` marker, the whole-asset description lives on the matching
-    `<!--embed image/...-->` block (keyed by `address`), NOT on the segment (the marker body
-    stays empty). Describe what the photo VISIBLY shows; do not infer the subject's identity
-    from the card's name — that is a ledger claim citing evidence, not a record assertion.
-
-    Note: a `text/vcard` resolver transform (materializing a card's embedded photo bytes from
-    `corpus://<id>?el=<N>`) is NOT yet built — real exports so far carry photos as external
-    URLs, not embedded base64, so no record needs it. When the first base64-photo export
-    arrives, add `corpus.transforms.vcard` (the `el=`/`photo=` extractor, the HTML `extract_el`
-    precedent) so the marker resolves and this describe pass can view the bytes. Until then the
-    drafter still captures the photo faithfully (the embed's `transport` hash + the retained
-    `.vcf` bytes), so nothing is lost.
+    An embedded-bytes `PHOTO` stays inside its card's member bytes (not lifted at attest). If a
+    describe pass ever wants the face, that is a normalize/annotation concern on the promoted
+    card's own record — not this manifest. Real exports so far carry photos as external URLs, so
+    no record needs it yet; the bytes are never lost (they are in the card's `transport`).
 
     ## Privacy — this is (typically) a private personal corpus
 
-    Names, phone numbers, emails, addresses, birthdays, and notes are the CONTENT. They are
-    already in the faithful body; do NOT redact, mask, or placeholder. Derived sensitivity is a
+    Names, phone numbers, emails, addresses, birthdays, and notes are the CONTENT. They are in
+    the cards' verbatim bytes; do NOT redact, mask, or placeholder. Derived sensitivity is a
     ledger/codex concern, never a partition here.
 
     ## Verification
 
     - `description` is a single physical line, populated.
-    - Every card is one top-level `text` segment (or, once restructured for photos, one section)
-      addressed `el=<N>` in card order; property lines are verbatim.
-    - Every `image` marker is body-empty and its `el=` appears in some embed's `address`.
-    - Drafter-emitted issues (skipped malformed cards, empty file) are preserved.
+    - Every card is one `text/vcard` embed addressed `card=<N>` in card order; the content zone
+      is empty. Drafter-emitted issues (skipped malformed cards, empty file) are preserved.
 extended_fields:
   card_count:
     type: integer
     required: false
     source: file_metadata
-    description: Number of `BEGIN:VCARD … END:VCARD` cards the drafter parsed (skipped malformed cards excluded). A fact about the bytes.
+    description: Number of successfully-delimited `BEGIN:VCARD … END:VCARD` cards (skipped malformed cards excluded); equals the count of `card=<N>` embeds. A fact about the bytes.
   vcard_version:
     type: string_or_list
     required: false
