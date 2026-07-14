@@ -24,7 +24,8 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
 - `topic` (dotted path): the source's own topic/thread id (Google Chat's `topic_id`). At the
   first unit carrying a topic value NOT seen earlier in the record, a `<!--segment structural-->`
   byte-mark (level 1, `entry:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
-  address — a producer-declared boundary (§4.3.2.3), the TOC unit for a topic directory.
+  address — a producer-declared boundary (§4.3.2.3), the TOC unit for a topic directory. Emitted
+  ONLY for a non-trivial partition (see below); a partition into singletons emits none.
 - `timestamp_style` (optional mapping scalar): absent = the timestamp is kept VERBATIM (the DCE
   case). The one supported style, `google-takeout-en-utc`, normalizes Google's fixed
   English-locale UTC takeout strings to ISO-8601; anything that doesn't match stays verbatim. An
@@ -37,6 +38,14 @@ The mark is emitted at **first appearance of each distinct topic value**: the pr
 topic MEMBERSHIP per message (not switch events), so one mark per topic at its birth is the honest
 declared boundary — the TOC unit for a topic directory — and per-turn membership stays
 byte-recoverable via the `turn=` unit op. A topic that recurs later adds no second mark.
+
+**Non-trivial partition only.** Marks emit only when at least one topic value spans >1 unit. A
+partition into singletons (every unit its own `topic_id`) declares NO grouping — it merely
+duplicates the `turn=` axis — so it emits zero marks (Google Chat's real fleet is entirely
+unthreaded this way: 239,240 messages, each its own topic, would otherwise emit 239,240 body-empty
+noise marks). The per-unit topic stays byte-recoverable via the `turn=` op; a genuinely threaded
+space (some topic spanning multiple messages) marks ALL its topics' first turns unchanged — the
+gate is on the partition, not on the individual topic.
 """
 
 from __future__ import annotations
@@ -141,10 +150,14 @@ def shape_conversation(
     codebook: list[str] = []
     index_by_entry: dict[str, int] = {}
     turn_by_msgid: dict[str, int] = {}
+    topic_counts: dict[str, int] = {}
     for n, msg in enumerate(messages, start=1):
         mid = units.field(msg, mapping, "message_id")
         if mid is not None:
             turn_by_msgid.setdefault(str(mid), n)
+        topic_val = units.field(msg, mapping, "topic")
+        if topic_val is not None:
+            topic_counts[str(topic_val)] = topic_counts.get(str(topic_val), 0) + 1
         author_id = units.field(msg, mapping, "author_id")
         author_name = units.field(msg, mapping, "author_name")
         if author_id is None and author_name is None:
@@ -153,6 +166,12 @@ def shape_conversation(
         if entry not in index_by_entry:
             index_by_entry[entry] = len(codebook)
             codebook.append(entry)
+
+    # Topic marks fire only for a NON-TRIVIAL partition — at least one topic value spanning >1
+    # unit. A partition into singletons (every unit its own topic_id — Google Chat's unthreaded
+    # spaces) declares no grouping, so it emits no marks (the per-unit topic stays byte-recoverable
+    # via the `turn=` unit op); a genuinely threaded space marks every topic's first turn unchanged.
+    topic_marks_enabled = any(c > 1 for c in topic_counts.values())
 
     # A whole-record form section (address omitted, §4.3.2.1) carrying the codebook.
     recordbuild.open_section(build, form="conversation", fields={"participants": codebook})
@@ -171,12 +190,13 @@ def shape_conversation(
         is_kind_event = kind_value is not None and str(kind_value) in event_kinds
         is_event = (not author_present) or is_kind_event
 
-        # Topic byte-mark at the first unit carrying a not-yet-seen topic value (§4.3.2.3):
-        # the producer declares topic MEMBERSHIP per message, so one mark per topic at its
-        # birth is the honest declared boundary — per-turn membership stays byte-recoverable
-        # via the `turn=` unit op. A topic that recurs adds no second mark.
+        # Topic byte-mark at the first unit carrying a not-yet-seen topic value (§4.3.2.3),
+        # emitted only for a non-trivial partition (gate above): the producer declares topic
+        # MEMBERSHIP per message, so one mark per topic at its birth is the honest declared
+        # boundary — per-turn membership stays byte-recoverable via the `turn=` unit op. A topic
+        # that recurs adds no second mark.
         topic = units.field(msg, mapping, "topic")
-        if topic is not None:
+        if topic_marks_enabled and topic is not None:
             tkey = str(topic)
             if tkey not in seen_topics:
                 seen_topics.add(tkey)

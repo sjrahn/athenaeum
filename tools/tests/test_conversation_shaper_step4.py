@@ -157,8 +157,10 @@ def test_topic_marks_first_appearance_share_turn_address(tmp_path):
     root, post = _shaped(tmp_path, _TOPIC_OVERLAY, _TOPIC_CHAT)
     sec = _section(post)
     marks = [s for s in sec.segments if s.is_structural]
-    # One mark per DISTINCT topic at its birth (T-A recurring at turn 3 adds none): T-A(1),
-    # T-B(2), T-C(4). Topic MEMBERSHIP per message stays byte-recoverable via the turn= op.
+    # T-A spans turns 1 & 3 → the partition is NON-TRIVIAL, so marks emit. One mark per DISTINCT
+    # topic at its birth (T-A recurring at turn 3 adds none): T-A(1), T-B(2), T-C(4). Because the
+    # partition is non-trivial, ALL first-appearances mark — the singletons T-B / T-C included,
+    # not only the multi-unit T-A (marking only multi-unit topics would misrepresent the directory).
     assert [(m.address, m.entry, m.level) for m in marks] == [
         ("turn=1", "T-A", 1),
         ("turn=2", "T-B", 1),
@@ -171,6 +173,27 @@ def test_topic_marks_first_appearance_share_turn_address(tmp_path):
     # The mark precedes its turn's message in reading order.
     assert sec.segments[0].is_structural and sec.segments[1].address == "turn=1"
 
+    assert not _lint_errors(post, root)
+
+
+_SINGLETON_TOPIC_CHAT = {
+    "messages": [
+        {"id": str(i), "author": {"id": "u1", "name": "A"}, "topic_id": f"T-{i}",
+         "content": f"m{i}"}
+        for i in range(1, 5)
+    ]
+}
+
+
+def test_trivial_singleton_topic_partition_emits_no_marks(tmp_path):
+    """Google Chat's real fleet: every message its own topic_id. A partition into singletons
+    declares NO grouping (it merely duplicates the turn= axis), so ZERO structural marks emit —
+    otherwise 239,240 unthreaded messages would each spawn a body-empty noise mark."""
+    root, post = _shaped(tmp_path, _TOPIC_OVERLAY, _SINGLETON_TOPIC_CHAT)
+    sec = _section(post)
+    assert [s for s in sec.segments if s.is_structural] == []  # no topic marks at all
+    # The messages are all present; the per-unit topic stays byte-recoverable via turn=.
+    assert [s.address for s in sec.segments] == ["turn=1", "turn=2", "turn=3", "turn=4"]
     assert not _lint_errors(post, root)
 
 
