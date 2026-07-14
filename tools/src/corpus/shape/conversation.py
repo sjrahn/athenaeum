@@ -18,8 +18,9 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
   (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage` all carry an author, so the author-less
   test never fires for them). An authored event KEEPS its `participant:` codebook index (the
   caller / pinner is a fact) and carries the verbatim discriminator on the `text/metadata`
-  overlay's `kind:` field. A non-event unit gets no `kind:` field (a reply is already expressed
-  by `reply_to`).
+  overlay's declared `event:` field — the mapping key `kind` names where the discriminator lives
+  in the SOURCE; the envelope reuses the established overlay field. A non-event unit gets no
+  `event:` field (a reply is already expressed by `reply_to`).
 - `topic` (dotted path): the source's own topic/thread id (Google Chat's `topic_id`). At the
   first unit carrying a topic value NOT seen earlier in the record, a `<!--segment structural-->`
   byte-mark (level 1, `entry:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
@@ -32,11 +33,10 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
 **Topic-mark address decision.** The mark shares its `turn=<N>` address with that turn's
 `text/message` segment. This is legal: `segment-address-duplicate` keys on `(opener-id, address)`,
 and a `structural` mark's opener-id differs from `text/message` (spec §4.3.2.2 pair-uniqueness).
-The mark is emitted at the **first turn of each topic-value run** — whenever a unit's topic value
-differs from the previous topic-bearing unit's (the byte-mark rule: a boundary where the source's
-own grouping changes, §4.3.2.3). A contiguous run of one topic yields a single mark at its start;
-a topic that resumes after another (a non-contiguous recurrence) opens a new run and earns a new
-mark. A topic-less unit does not break a run.
+The mark is emitted at **first appearance of each distinct topic value**: the producer declares
+topic MEMBERSHIP per message (not switch events), so one mark per topic at its birth is the honest
+declared boundary — the TOC unit for a topic directory — and per-turn membership stays
+byte-recoverable via the `turn=` unit op. A topic that recurs later adds no second mark.
 """
 
 from __future__ import annotations
@@ -66,10 +66,13 @@ _MONTHS = {
     )
 }
 # `Wednesday, January 8, 2014 at 6:26:59 AM UTC` — weekday ignored (redundant), day/hour
-# non-zero-padded, a literal ` UTC` suffix required (a non-UTC value stays verbatim).
+# non-zero-padded, a trailing `UTC` required (a non-UTC value stays verbatim). Every inter-token
+# separator is `\s+`, NOT a literal space: Google's real takeout strings put a NARROW NO-BREAK
+# SPACE (U+202F) before AM/PM (and use it in other date renderings too), which Python's Unicode
+# `\s` matches — a plain-space pattern falls back verbatim on every real value.
 _TAKEOUT_RE = re.compile(
-    r"^[A-Za-z]+, (?P<month>[A-Za-z]+) (?P<day>\d{1,2}), (?P<year>\d{4}) at "
-    r"(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2}) (?P<ampm>AM|PM) UTC$"
+    r"^[A-Za-z]+,\s+(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2}),\s+(?P<year>\d{4})\s+at\s+"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})\s+(?P<ampm>AM|PM)\s+UTC$"
 )
 
 
@@ -96,10 +99,11 @@ def _normalize_timestamp(raw: str, style: Any) -> str:
     """The timestamp envelope value. With no `timestamp_style` (the DCE case) or an unrecognized
     style, the source string is kept VERBATIM. The one supported style, `google-takeout-en-utc`,
     parses Google's fixed English-locale UTC takeout format
-    (`Wednesday, January 8, 2014 at 6:26:59 AM UTC`) to ISO-8601 (`2014-01-08T06:26:59Z`) with a
-    locale-independent regex; a value that doesn't match that exact shape (or isn't UTC-suffixed)
-    stays verbatim — a zone-less or unparseable source is never guessed at (spec: zone-less
-    sources stay zone-less)."""
+    (`Wednesday, January 8, 2014 at 6:26:59 AM UTC`, whose real bytes separate seconds from AM/PM
+    with a NARROW NO-BREAK SPACE U+202F) to ISO-8601 (`2014-01-08T06:26:59Z`) with a
+    locale-independent regex whose separators are Unicode `\\s+`; a value that doesn't match that
+    shape (or isn't UTC-suffixed) stays verbatim — a zone-less or unparseable source is never
+    guessed at (spec: zone-less sources stay zone-less)."""
     if str(style or "") != _TAKEOUT_EN_UTC:
         return raw
     m = _TAKEOUT_RE.match(raw.strip())
@@ -153,7 +157,7 @@ def shape_conversation(
     # A whole-record form section (address omitted, §4.3.2.1) carrying the codebook.
     recordbuild.open_section(build, form="conversation", fields={"participants": codebook})
 
-    prev_topic: str | None = None
+    seen_topics: set[str] = set()
     for n, msg in enumerate(messages, start=1):
         author_id = units.field(msg, mapping, "author_id")
         author_name = units.field(msg, mapping, "author_name")
@@ -167,14 +171,16 @@ def shape_conversation(
         is_kind_event = kind_value is not None and str(kind_value) in event_kinds
         is_event = (not author_present) or is_kind_event
 
-        # Topic byte-mark at the first turn of each topic-value run — a boundary where the
-        # source's own grouping changes (§4.3.2.3). A topic-less unit doesn't break a run.
+        # Topic byte-mark at the first unit carrying a not-yet-seen topic value (§4.3.2.3):
+        # the producer declares topic MEMBERSHIP per message, so one mark per topic at its
+        # birth is the honest declared boundary — per-turn membership stays byte-recoverable
+        # via the `turn=` unit op. A topic that recurs adds no second mark.
         topic = units.field(msg, mapping, "topic")
         if topic is not None:
             tkey = str(topic)
-            if tkey != prev_topic:
+            if tkey not in seen_topics:
+                seen_topics.add(tkey)
                 recordbuild.add_structural(build, address=f"turn={n}", level=1, entry=tkey)
-            prev_topic = tkey
 
         envelope: dict[str, Any] = {}
         if is_event:
@@ -182,7 +188,7 @@ def shape_conversation(
             if author_present:  # an authored event (a DCE Call/pin) keeps its actor
                 envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]
             if is_kind_event:  # the verbatim producer discriminator on the declared field
-                envelope["kind"] = str(kind_value)
+                envelope["event"] = str(kind_value)
         else:
             overlay = "text/message"
             envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]
