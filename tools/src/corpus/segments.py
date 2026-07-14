@@ -34,9 +34,13 @@ Content-zone grammar (§4.3.2):
   stacking beside content segments at the same address per the standard rule; unlike a
   content segment, a structural mark MAY carry `entry:` inside a form section.
 
-A record's content zone is homogeneous at the top level: all sections OR all segments.
-Nesting depth = 1: sections contain segments; segments contain nothing; sections don't
-nest.
+A record's content zone is a flat run of segments (the default), one or more sections, or —
+the mixed-artifact case (§4.3.2.1) — formless top-level segments BEFORE the first section
+opener, then the section(s) (a statement PDF's page-1 cover letter as bare segments, then a
+`statement` section over pages 2-6). A segment after a section opener is that section's child
+(the positional span), never a top-level sibling — so top-level mixing is admissible only in
+the before-only direction. A whole-record section (no `address`) admits no sibling of either
+kind. Nesting depth = 1: sections contain segments; segments contain nothing; sections don't nest.
 """
 
 from __future__ import annotations
@@ -374,10 +378,14 @@ def _emit_segment(seg: Segment) -> str:
 def iter_blocks(body: str) -> list[Block]:
     """Parse `body` (the content zone only) into an ordered list of top-level blocks.
 
-    A record's content zone is homogeneous at the top: all `Section`s or all
-    `Segment`s. Mixed top-level raises `ValueError`. For a section-shaped record,
-    each section's `segments` list is populated from the segments that follow its
-    header (until the next section opener or EOF).
+    The content zone is a bare flat run of `Segment`s (the default), or one or more
+    `Section`s, or — the mixed-artifact case (§4.3.2.1) — **formless top-level segments
+    before the first section opener**, then the section(s): a statement PDF whose page-1
+    cover letter rides as bare `page=1` segments, then `<!--section statement
+    address: pages=2-6-->` over the statement proper. For a section, its `segments` list is
+    populated from the segments that follow its header (until the next section opener or EOF),
+    so a segment AFTER a section opener is that section's child (its positional span, §4.3.2.1),
+    never a top-level formless sibling — the **before-only** rule (see below).
 
     Recognized openers:
     - `<!--section [<namespace>/<id>]` — top-level section
@@ -387,7 +395,15 @@ def iter_blocks(body: str) -> list[Block]:
       segment opener
 
     Rejects:
-    - Mixed top-level (sections + segments at the top).
+    - A top-level formless segment AFTER a section opener (the between/after mixed case). The
+      spec's positional-span rule (§4.3.2.1: a section's span runs to the next opener or the end
+      of the zone) makes such a segment the preceding section's child, not a sibling — so a
+      top-level formless segment is admissible only BEFORE the first section (**before-only**;
+      the between/after case is genuinely ambiguous in the spec text — §4.3.2.1 line 379 names
+      only the before case — and no real record needs it). In practice this reject is a guard:
+      a post-section segment is consumed as a child before the top level sees it.
+    - A whole-record section (`address` omitted, one section over the entire zone) with ANY
+      sibling block, of either kind (§4.3.2.2: it admits no siblings).
     - Prose between a section's closer and its first child segment opener.
     - `entry:` field on a segment inside a section.
     - Unknown atom.
@@ -398,7 +414,7 @@ def iter_blocks(body: str) -> list[Block]:
     """
     lines = body.splitlines()
     blocks: list[Block] = []
-    top_kind: str | None = None  # "section" or "segment", set on first block
+    seen_section = False  # set once any section opener is parsed (before-only rule)
 
     i = 0
     while i < len(lines):
@@ -408,13 +424,7 @@ def iter_blocks(body: str) -> list[Block]:
             continue
 
         if kind == "section":
-            if top_kind is None:
-                top_kind = "section"
-            elif top_kind != "section":
-                raise ValueError(
-                    f"record top-level is heterogeneous at line {i + 1}: "
-                    f"sections and segments cannot mix"
-                )
+            seen_section = True
             section, after_header = _parse_section_header(lines, i, line_no=i + 1)
             cursor = after_header
             # Reject prose between section closer and first child opener.
@@ -455,15 +465,25 @@ def iter_blocks(body: str) -> list[Block]:
             i = cursor
 
         else:  # kind == "segment"
-            if top_kind is None:
-                top_kind = "segment"
-            elif top_kind != "segment":
+            if seen_section:
+                # A top-level formless segment after a section is the between/after mixed case
+                # (§4.3.2.1): unsupported — formless segments are admissible only before the
+                # first section opener. (Normally unreachable: a post-section segment is
+                # consumed as the section's child above.)
                 raise ValueError(
-                    f"record top-level is heterogeneous at line {i + 1}: "
-                    f"sections and segments cannot mix"
+                    f"formless segment at line {i + 1} follows a section: a top-level segment "
+                    f"is only valid before the first section opener (§4.3.2.1)"
                 )
             seg, i = _parse_segment_block(lines, i, line_no=i + 1)
             blocks.append(seg)
+
+    # A whole-record section (address omitted) spans the entire content zone, so it admits no
+    # sibling of either kind — no formless segments before it, no other section (§4.3.2.2).
+    if any(isinstance(b, Section) and b.address is None for b in blocks) and len(blocks) > 1:
+        raise ValueError(
+            "a whole-record section (no `address`) admits no sibling blocks (§4.3.2.2); "
+            f"found {len(blocks)} top-level blocks"
+        )
 
     return blocks
 

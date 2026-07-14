@@ -9,7 +9,7 @@ from pathlib import Path
 
 import frontmatter
 
-from corpus import lint, schemas, segments
+from corpus import lint, records, schemas, segments
 
 
 def _root(tmp_path: Path) -> Path:
@@ -145,3 +145,87 @@ def test_form_overlays_bundled(tmp_path):
         assert ov and ov.get("kind") == "form"
         assert "checks" in ov
     assert set(schemas.list_form_overlays(root)) >= {"conversation", "statement", "receipt"}
+
+
+# ---------- mixed-artifact top level: formless segments before a section (§4.3.2.1) ---------- #
+
+
+def _mixed_statement() -> str:
+    """The spec's worked example (§4.3.2.1): a page-1 cover letter as a bare formless `image`
+    segment, then a `statement` section over pages 2-6."""
+    cover = segments.Segment(
+        atom="image", address="page=1",
+        description="Cover letter accompanying the March statement.",
+    )
+    sec = segments.Section(
+        form="statement", address="pages=2-6",
+        extra={"account": "…7841", "period": "2026-03"},
+        segments=[
+            segments.Segment(atom="text", overlay="text/ocr", address="page=2", body="opening"),
+            segments.Segment(atom="text", overlay="text/ocr", address="page=6", body="closing"),
+        ],
+    )
+    return segments.emit([cover, sec])
+
+
+def test_formless_segments_before_section_parse():
+    """The worked example parses: a formless top-level segment, then the section + children.
+    (Before the fix this raised 'sections and segments cannot mix'.)"""
+    blocks = segments.iter_blocks(_mixed_statement())
+    assert isinstance(blocks[0], segments.Segment) and blocks[0].address == "page=1"
+    assert isinstance(blocks[1], segments.Section) and blocks[1].form == "statement"
+    assert blocks[1].address == "pages=2-6"
+    assert [s.address for s in blocks[1].segments] == ["page=2", "page=6"]
+    assert len(blocks) == 2  # the cover segment is NOT absorbed into the section
+
+
+def test_mixed_statement_lints_clean(tmp_path):
+    root = _root(tmp_path)
+    post = _post()
+    # A full record so only form/mixing rules can speak: PDF artifact (page=1 is a renderable
+    # self-slice, not a missing embed) + an origin.
+    records.set_artifact_block(post, mime="application/pdf", fields={})
+    records.append_origin_block(post, uri="file:///march.pdf", snapshot="2026-03-31T00:00:00Z")
+    post.content = _mixed_statement()
+    findings = lint.lint(post, segments.iter_blocks(post.content), root)
+    assert not [f for f in findings if f.severity == "error"], [f.rule_id for f in findings]
+
+
+def test_two_sections_with_leading_formless_segment_parse():
+    cover = segments.Segment(atom="image", address="page=1")
+    sec_a = segments.Section(
+        form="statement", address="pages=2-3", extra={"account": "a", "period": "2026-01"},
+        segments=[segments.Segment(atom="text", overlay="text/ocr", address="page=2", body="a")],
+    )
+    sec_b = segments.Section(
+        form="statement", address="pages=4-5", extra={"account": "a", "period": "2026-02"},
+        segments=[segments.Segment(atom="text", overlay="text/ocr", address="page=4", body="b")],
+    )
+    blocks = segments.iter_blocks(segments.emit([cover, sec_a, sec_b]))
+    assert [type(b).__name__ for b in blocks] == ["Segment", "Section", "Section"]
+    assert blocks[0].address == "page=1"
+    assert (blocks[1].address, blocks[2].address) == ("pages=2-3", "pages=4-5")
+
+
+def test_whole_record_section_rejects_formless_sibling():
+    import pytest
+
+    cover = segments.Segment(atom="image", address="page=1")
+    sec = segments.Section(  # whole-record: address omitted → spans the entire zone
+        form="conversation", extra={"participants": ["A x"]},
+        segments=[segments.Segment(atom="text", overlay="text/message", address="turn=1",
+                                   body="hi", extra={"participant": 0})],
+    )
+    with pytest.raises(ValueError, match="whole-record section"):
+        segments.iter_blocks(segments.emit([cover, sec]))
+
+
+def test_sectionless_flat_record_still_parses():
+    """The default case is untouched: a bare flat run of formless segments."""
+    body = segments.emit([
+        segments.Segment(atom="text", address="el=1", body="one"),
+        segments.Segment(atom="text", address="el=2", body="two"),
+    ])
+    blocks = segments.iter_blocks(body)
+    assert [b.address for b in blocks] == ["el=1", "el=2"]
+    assert all(isinstance(b, segments.Segment) for b in blocks)
