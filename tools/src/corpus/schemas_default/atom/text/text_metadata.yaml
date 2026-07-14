@@ -29,7 +29,7 @@ extended_fields:
     semantic_type: timestamp
     required: false
     description: The event's time, in the source-stated zone, where the export states one.
-  event:
+  kind:
     type: string
     required: false
     description: |
@@ -44,4 +44,4 @@ normalization:
     not paraphrase or summarize it. Where the exporter attributes the event to an actor (a
     call's caller, a message's pinner), carry that actor's codebook index on `participant:`;
     a bare, author-less notice carries none. Where the exporter states an event kind, carry it
-    verbatim on `event:`; otherwise leave it off.
+    verbatim on `kind:`; otherwise leave it off.

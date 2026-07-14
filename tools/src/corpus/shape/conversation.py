@@ -18,9 +18,9 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
   (DCE's `Call` / `RecipientAdd` / `ChannelPinnedMessage` all carry an author, so the author-less
   test never fires for them). An authored event KEEPS its `participant:` codebook index (the
   caller / pinner is a fact) and carries the verbatim discriminator on the `text/metadata`
-  overlay's declared `event:` field — the mapping key `kind` names where the discriminator lives
-  in the SOURCE; the envelope reuses the established overlay field. A non-event unit gets no
-  `event:` field (a reply is already expressed by `reply_to`).
+  overlay's declared `kind:` field — the mapping key `kind` names where the discriminator lives
+  in the SOURCE, and the envelope stamps it under the same name. A non-event unit gets no
+  `kind:` field (a reply is already expressed by `reply_to`).
 - `topic` (dotted path): the source's own topic/thread id (Google Chat's `topic_id`). At the
   first unit carrying a topic value NOT seen earlier in the record, a `<!--segment structural-->`
   byte-mark (level 1, `entry:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
@@ -188,7 +188,7 @@ def shape_conversation(
             if author_present:  # an authored event (a DCE Call/pin) keeps its actor
                 envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]
             if is_kind_event:  # the verbatim producer discriminator on the declared field
-                envelope["event"] = str(kind_value)
+                envelope["kind"] = str(kind_value)
         else:
             overlay = "text/message"
             envelope["participant"] = index_by_entry[_codebook_entry(author_name, author_id)]

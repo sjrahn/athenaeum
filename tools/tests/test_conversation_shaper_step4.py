@@ -1,5 +1,5 @@
 """The §12.18 step-4 additions to the generic `conversation` shaper: `kind`/`event_kinds`
-(authored platform events → `text/metadata` keeping `participant:`, verbatim kind on `event:`),
+(authored platform events → `text/metadata` keeping `participant:`, verbatim kind on `kind:`),
 `topic` (Google Chat `topic_id` → `<!--segment structural-->` byte-marks, first-appearance),
 and `timestamp_style` (Google takeout en-locale UTC strings → ISO, else verbatim).
 
@@ -106,17 +106,17 @@ def test_authored_event_is_metadata_keeps_participant_and_kind(tmp_path):
 
     segs = sec.segments
     m1, m2, e1, m3 = segs[0], segs[1], segs[2], segs[3]
-    # turn 1: a plain message — text/message, no event field.
+    # turn 1: a plain message — text/message, no kind field.
     assert (m1.overlay, m1.address) == ("text/message", "turn=1")
-    assert "event" not in m1.extra
-    # turn 2: authored Call → text/metadata, KEEPS participant (Bea=1), verbatim kind on event:.
+    assert "kind" not in m1.extra
+    # turn 2: authored Call → text/metadata, KEEPS participant (Bea=1), verbatim kind.
     assert (m2.overlay, m2.address) == ("text/metadata", "turn=2")
     assert m2.extra["participant"] == 1
-    assert m2.extra["event"] == "Call"
-    # turn 3: author-less RecipientAdd → text/metadata, no participant, event carried.
+    assert m2.extra["kind"] == "Call"
+    # turn 3: author-less RecipientAdd → text/metadata, no participant, kind carried.
     assert (e1.overlay, e1.address) == ("text/metadata", "turn=3")
     assert "participant" not in e1.extra
-    assert e1.extra["event"] == "RecipientAdd"
+    assert e1.extra["kind"] == "RecipientAdd"
     # turn 4: plain message again.
     assert (m3.overlay, m3.extra.get("participant")) == ("text/message", 0)
 
