@@ -58,7 +58,7 @@ SESSION=drain-monitor
 corpus queue --prune                                    # sweep aged outcomes first
 while id=$(corpus drain --wait --by "$SESSION"); do
     #   >>> hand $id to a `normalizer` agent <<<
-    #   it self-guides from `corpus guidance $id`, sets status: normalized, recompiles.
+    #   it self-guides from `corpus guidance $id`, authors the vouch, recompiles.
     corpus finalize "$id" || corpus release "$id" --failed "<reason>"
 done
 ```
@@ -97,7 +97,8 @@ Each claimed id goes to a `normalizer` agent (subagent type `normalizer`, define
 workspace root's `.claude/agents/`). Brief it with only the **corpus root** + the id(s) plus
 the finalize contract — it carries **no** format knowledge and pulls
 everything from the corpus at runtime (`corpus diagnose` / `guidance` / `overlay` / `atoms`).
-It must leave the record at `status: normalized` **and** lint-clean, or `corpus finalize`
+It must leave the record passing the §8.5 pass gate — **authored** (title + description),
+**formed where its overlays declare a form**, and lint-clean — or `corpus finalize`
 refuses (exit 1). The monitor owns claim + finalize/release; the agent owns the
 normalization. Do **not** tell the agent to touch the queue.
 

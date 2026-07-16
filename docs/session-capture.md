@@ -90,7 +90,7 @@ different boxes never collide, and each machine's sessions fold into one corpus.
   a capture timestamp into `ccsession.bundle_comment`.
 - **`--project`** narrows discovery when a session id (unlikely) collides across project dirs,
   or to disambiguate a `--from` lookup.
-- **Citation eligibility.** The ledger only cites `normalized` records. A session record is
-  mechanically complete at `draft` (nothing to transcribe); when the first ledger citation of
-  a session is authored, resolve how it reaches `normalized` (a trivial confirm or a spec
-  carve-out) — see the open point in `spec/corpus.md` §7.2.
+- **Citation eligibility** *(resolved by 3.1)*: the ledger cites verifiable surfaces, not
+  record state (ATH-LEDGER §6.3) — a session record's `path=` member anchors resolve
+  mechanically through the container, so sessions are citable as ingested; the old
+  "how does a session reach `normalized`" open point dissolved with the status field.
