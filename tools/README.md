@@ -5,7 +5,7 @@ shipping four libraries and two CLIs:
 
 | Package | Surface | Contract |
 |---|---|---|
-| `corpus` | `corpus <subcommand>` — parse, lint, draft, resolve, derive views, and orchestrate the capture → ingest → draft → normalize pipeline | [ATH-CORPUS v2.0](../spec/corpus.md) |
+| `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → normalize pipeline | [ATH-CORPUS v3.1](../spec/corpus.md) |
 | `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `corpus`, `ledger`, `codex`) | [ATH-ARCH](../spec/athenaeum.md) |
 | `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH-LEDGER](../spec/ledger.md) |
 | `codex` | `ath codex <name> scope\|notes\|build\|check` — targeting, vault generation, the certified build with the public-profile leak check | [ATH-CODEX](../spec/codex.md) |
