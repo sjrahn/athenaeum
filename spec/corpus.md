@@ -761,6 +761,7 @@ Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>
 | `turn=<N>&att=<M>` *(3.0)* | turn-structured record | bytes | The M-th attachment declared by unit N, materialized through **lineage-chained resolution** (below). |
 | `cut=precise\|copy` *(3.0)* | (cut config) | (config) | Cut semantics for `time_range=` (the muxing contract): `precise` (default — frame-accurate, re-encodes) or `copy` (keyframe-snapped stream copy, disclosed). Position-independent, like `dpi=`. |
 | `format=<token>` *(3.0)* | media / image | converted rendering | Output-format conversion, composing **after** selection and cutting (the muxing contract): `time_range=12:04-12:09&format=gif`. Changes encoding only, never the addressed content. |
+| `scenes=<threshold>` *(3.1)* | video / stream | boundary proposals | Scene-cut boundary proposals over the video timeline — a text listing of cut timestamps at the stated detection threshold, engine-versioned (§6.4). Normalizer support for boundary work (`form/slide-deck`, §12.20): proposals to be verified by the pass, never marks. |
 
 A parameter applied to an incompatible working type is a hard error.
 
