@@ -309,3 +309,80 @@ def test_add_blocks_matches_segments_emit_flat_segments():
             segments.Segment(atom="image", address="bbox=0,0,1,1", body=""),
         ]
     )
+
+
+def test_list_valued_extra_round_trips_through_manifest(tmp_path):
+    """A form codebook (`speakers:`, `participants:` — `type: list` on the form overlay)
+    must be hand-authorable in a manifest and round-trip decompose→compile: emitted in
+    `_fmt_addr`'s bracket-pipe convention (`[a|b]`), parsed back element-wise typed.
+    The transcript pilot's finding — before this, only a shaper could build one."""
+    root = _make_corpus(tmp_path)
+    p = root / "records" / "aa" / ("a" * 64 + ".md")
+    p.parent.mkdir(parents=True)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {
+            "id": "a" * 64,
+            "title": "",
+            "description": "",
+            "transport": "sha256:" + "b" * 64,
+            "touch": "corpus.ingest@0.1.0",
+        }
+    )
+    records.set_artifact_block(post, mime="audio/opus", fields={})
+    sec = segments.Section(
+        form="transcript",
+        extra={"speakers": ["Speaker 1 diarization:1", "Speaker 2 diarization:2"]},
+        segments=[
+            segments.Segment(
+                atom="text",
+                overlay="text/transcript",
+                address="time_range=00:00-00:06",
+                body="Hello.",
+                extra={"speaker": 0},
+            ),
+            segments.Segment(
+                atom="text",
+                overlay="text/transcript",
+                address="time_range=00:06-00:09",
+                body="Hi again.",
+                extra={"speaker": 1},
+            ),
+        ],
+    )
+    post.content = segments.emit([sec])
+    records.dump(post, p)
+    original_text = p.read_text("utf-8")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    loaded = records.load(p)
+    blocks = segments.iter_blocks(loaded.content or "")
+    sha = hashlib.sha256(p.read_bytes()).hexdigest()
+    recordbuild.write_workdir(loaded, blocks, workdir, source=str(p), orig_sha256=f"sha256:{sha}")
+
+    manifest = (workdir / "manifest.corpus").read_text("utf-8")
+    assert "speakers='[Speaker 1 diarization:1|Speaker 2 diarization:2]'" in manifest
+
+    rebuilt = recordbuild.read_workdir(workdir, root)
+    rebuilt_secs = [
+        b for b in segments.iter_blocks(rebuilt.content or "") if isinstance(b, segments.Section)
+    ]
+    assert rebuilt_secs[0].extra["speakers"] == [
+        "Speaker 1 diarization:1",
+        "Speaker 2 diarization:2",
+    ]
+    assert [s.extra["speaker"] for s in rebuilt_secs[0].segments] == [0, 1]
+    records.dump(rebuilt, p)
+    assert p.read_text("utf-8") == original_text
+
+
+def test_typed_and_fmt_scalar_list_symmetry():
+    """`_typed` inverts `_fmt_scalar` for lists: element-wise typing, empty list, and
+    the single-entry codebook case."""
+    import shlex as _shlex
+
+    for value in (["Speaker 1 diarization:1"], [1, 2, 3], ["a b", "c"], []):
+        emitted = recordbuild._fmt_scalar(value)
+        parsed = recordbuild._typed(_shlex.split(f"k={emitted}")[0].partition("=")[2])
+        assert parsed == value, value

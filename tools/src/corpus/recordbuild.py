@@ -400,6 +400,12 @@ def _fmt_scalar(value) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, list):
+        # The `_fmt_addr` bracket-pipe convention, extended to generic extras so a
+        # list-valued extended field — a form codebook (`speakers:`, `participants:`) —
+        # is hand-authorable in a manifest, not just shaper-buildable (the transcript
+        # pilot's finding). Entries are scalars; `|` inside an entry is unsupported.
+        return shlex.quote("[" + "|".join(str(x) for x in value) + "]")
     return shlex.quote(str(value))
 
 
@@ -426,6 +432,12 @@ def _typed(raw: str):
         return int(raw)
     if raw in ("true", "false"):
         return raw == "true"
+    if raw.startswith("[") and raw.endswith("]"):
+        # Bracket-pipe list (`[a|b|c]`, `_fmt_scalar`'s emit convention) — element-wise
+        # typed so `[1|2]` round-trips as ints and a codebook entry as its string. A
+        # literal string value that is itself bracket-wrapped is not representable as a
+        # bare extra (same tradeoff `_parse_addr` already makes).
+        return [_typed(x.strip()) for x in raw[1:-1].split("|") if x.strip()]
     return raw
 
 
