@@ -360,6 +360,53 @@ def test_public_build_rasters_without_false_leak(system: Path) -> None:
     assert "](assets/" in note
 
 
+def test_human_citation_resolves_derived_title_and_caches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Post-3.2 a cited record usually carries no frontmatter `title` — the
+    lightweight YAML-only parse (`_read_frontmatter`) finds nothing, so
+    `_human_citation` must fall through to the full `records.load` +
+    `title_for` derived resolution (corpus §4.2.3) instead of degrading to
+    the `record <hash>…` placeholder. The resolution is cached by record
+    path — proven here by monkeypatching `records.load` to blow up on a
+    second citation of the same record."""
+    import yaml
+
+    from codex.build import _human_citation, _title_cache
+    from corpus import schemas
+
+    h = "7" * 64
+    mime = "application/x-test-citation"
+    root = tmp_path / "corpus"
+    schema_dir = root / "schema" / "mime" / "application"
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "application_x-test-citation.yaml").write_text(
+        yaml.safe_dump({
+            "applies_to": {"content_types": [mime]},
+            "extended_fields": {"subject": {"type": "string", "role": "title"}},
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    p = root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True)
+    p.write_text(
+        f"---\nid: {h}\ntouch:\n- corpus.ingest@0.1.0\n---\n\n"
+        f"<!--artifact {mime}\nsubject: Derived Display Title\n-->\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+    _title_cache.clear()
+
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    assert _human_citation(join, f"corpus://{h}") == "Derived Display Title"
+
+    def _boom(*a: object, **k: object) -> None:
+        raise AssertionError("records.load must not run again — the cache should hit")
+
+    monkeypatch.setattr("corpus.records.load", _boom)
+    assert _human_citation(join, f"corpus://{h}") == "Derived Display Title"
+
+
 def test_interp_claim_id_basis_inherits_privacy(system: Path) -> None:
     """based_on may cite claim ids (§7.2): the interpretation inherits the
     claim's privacy; an unresolvable basis fails closed."""

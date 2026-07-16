@@ -397,3 +397,96 @@ def test_unchecked_anchor_quote_counts_record_scoped(system: Path) -> None:
     join = CorpusJoin(_corpora(system))
     res = verify_ledger(ledger, join, set(), stamp=False)
     assert res.verified == 1 and res.record_scoped == 1
+
+
+def test_verify_derived_title_with_no_frontmatter_pair(tmp_path: Path) -> None:
+    """Post-3.2 the frontmatter title/description pair is usually absent — the
+    display title is DERIVED from a role-marked schema field instead (corpus
+    §4.2.3). A quote of that derived title must still verify: the value is
+    recomputable from the record's own stored blocks, machine-checkable like
+    any attested field (ledger.md §6.3, 1.2), even with no frontmatter pair
+    to fall back on. Custom role-marked schema mirrors
+    `test_derived_editorial.py`'s synthetic overlays."""
+    import yaml
+
+    from corpus import schemas
+
+    h = "5" * 64
+    mime = "application/x-test-verify-title"
+    root = tmp_path / "corpus"
+    schema_dir = root / "schema" / "mime" / "application"
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "application_x-test-verify-title.yaml").write_text(
+        yaml.safe_dump({
+            "applies_to": {"content_types": [mime]},
+            "extended_fields": {"subject": {"type": "string", "role": "title"}},
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+    p = root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True)
+    p.write_text(
+        f"---\nid: {h}\ntouch:\n- corpus.ingest@0.1.0\n---\n\n"
+        f"<!--artifact {mime}\nsubject: Derived Display Title\n-->\n\n"
+        "<!--origin\nsnapshot: '2026-01-01T00:00:00Z'\n-->\n\n"
+        "<!--segment text\naddress: el=1\n-->\nbody text\n<!--/segment-->\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:title", "predicate": "titled", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "quote": "Derived Display Title",
+                                  "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1
+    assert not res.errors and not res.warnings
+
+
+def test_verify_section_header_title_quote(tmp_path: Path) -> None:
+    """A form span's header `title:` field (corpus §4.2.3 — the vouch's new
+    home) is normalizer-written editorial prose the record body carries; a
+    quote against it must verify like any other body content (ledger.md
+    §6.3, 1.2). `title:` lives in `Section.extra`, distinct from the
+    dataclass's own `.description` field."""
+    import frontmatter
+
+    from corpus import paths, records, segments
+
+    h = "6" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/plain", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    seg = segments.Segment(atom="text", address="turn=1", body="transcript body")
+    section = segments.Section(
+        address="turn=1-1", form="testform", segments=[seg],
+        extra={"title": "Span Header Title"},
+    )
+    post.content = segments.emit([section])
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:title", "predicate": "titled", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "turn=1",
+                                  "quote": "Span Header Title",
+                                  "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1
+    assert not res.errors and not res.warnings

@@ -146,7 +146,8 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         return None
     from corpus import records, segments  # heavy import, deferred
 
-    path = join.record_path(holders[0].root, hash_)
+    corpus_root = holders[0].root
+    path = join.record_path(corpus_root, hash_)
     try:
         post = records.load(path)
         blocks = segments.iter_blocks(post.content)
@@ -164,9 +165,16 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
 
     def block_texts(b) -> tuple[str, ...]:
         # a block's citable text: body + normalizer-written prose (descriptions,
-        # TOC entries) — all of it is record content a quote may cite
-        return (getattr(b, "body", ""), getattr(b, "description", None) or "",
-                getattr(b, "entry", None) or "")
+        # TOC entries, section-header titles) — all of it is record content a
+        # quote may cite. A Section's `title:` header field rides on `.extra`
+        # (spec corpus.md §4.2.3) — the whole-record vouch's new home, and
+        # every span-scope section's own span title — while `.description`
+        # is a dedicated dataclass field, already covered below.
+        parts = (getattr(b, "body", ""), getattr(b, "description", None) or "",
+                 getattr(b, "entry", None) or "")
+        if isinstance(b, segments.Section):
+            parts += (str((b.extra or {}).get("title") or ""),)
+        return parts
 
     for b in blocks:
         add(getattr(b, "address", None), *block_texts(b))
@@ -183,11 +191,21 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
                 str(embed.get("title") or flds.get("title") or ""))
     except Exception:
         pass
-    # frontmatter prose and origin-block field values are record content too —
-    # a quote may cite the title, the description, or stored provenance (a
-    # chat's group name lives only in its origin fields)
-    for key in ("title", "description"):
-        add(None, str(post.metadata.get(key) or ""))
+    # the derived display title/description (corpus §4.2.3) are a pure function
+    # of the record's own stored blocks — machine-checkable and citable exactly
+    # like any attested field, so a quote of the display title still verifies
+    # post-3.2 even though the frontmatter pair itself is no longer a
+    # verifiable surface in its own right (ledger.md §6.3, 1.2): the derived
+    # value it resolves to IS body content, routed through the frontmatter
+    # override when one is present (§4.2.1). Origin-block field values are
+    # record content too — a quote may cite stored provenance (a chat's group
+    # name lives only in its origin fields)
+    try:
+        title, description = records.derived_editorial(post, corpus_root)
+    except Exception:  # tolerant by contract: a schema config error is not a quote failure
+        title, description = "", ""
+    add(None, title)
+    add(None, description)
     try:
         for origin in records.iter_origin_blocks(post):
             for v in (origin.get("fields") or {}).values():

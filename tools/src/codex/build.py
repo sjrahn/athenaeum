@@ -47,6 +47,25 @@ class BuildResult:
         return not self.problems
 
 
+_title_cache: dict[Path, str] = {}
+
+
+def _resolved_title(record_path: Path, corpus_root: Path) -> str:
+    """The full-parse derived display title (corpus §4.2.3), cached by record
+    path — citations repeat records heavily within one build (at most a few
+    hundred distinct records get cited), so paying for the full `records.load`
+    parse once per record, rather than once per citation, is affordable."""
+    if record_path not in _title_cache:
+        from corpus import records
+
+        try:
+            post = records.load(record_path)
+            _title_cache[record_path] = records.title_for(post, corpus_root)
+        except Exception:  # tolerant by contract: unparseable → no title
+            _title_cache[record_path] = ""
+    return _title_cache[record_path]
+
+
 def _human_citation(join: CorpusJoin, uri: str) -> str | None:
     m = CORPUS_URI_RE.match(uri)
     if not m:
@@ -54,9 +73,15 @@ def _human_citation(join: CorpusJoin, uri: str) -> str | None:
     holders = join.holders(m.group(1))
     if not holders:
         return None
-    fm = _read_frontmatter(join.record_path(holders[0].root, m.group(1)))
-    title = str(fm.get("title") or "").strip() or f"record {m.group(1)[:12]}…"
-    return title
+    root = holders[0].root
+    record_path = join.record_path(root, m.group(1))
+    # a non-empty frontmatter title is a deliberate override (§4.2.1),
+    # strongest in precedence — the lightweight YAML-only parse resolves it
+    # without paying for a full record load; everything else falls through to
+    # the cached derived resolution (§4.2.3), which needs the full parse
+    override = str(_read_frontmatter(record_path).get("title") or "").strip()
+    title = override or _resolved_title(record_path, root)
+    return title or f"record {m.group(1)[:12]}…"
 
 
 def _git_commit(path: Path) -> str:
