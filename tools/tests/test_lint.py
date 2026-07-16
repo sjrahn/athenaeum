@@ -541,3 +541,29 @@ def test_issue_on_draft_rule_dropped(tmp_path):
         post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
     )
     assert "issue-on-draft" not in _fired(post, root)
+
+
+def test_section_description_redundant_spares_whole_record_vouch(tmp_path):
+    """*(3.2)* `section-description-redundant` fires on a SPAN-scope all-lossless section,
+    but never on a whole-record section (no address) — that header's `description:` is the
+    record's editorial vouch (§4.2.3, §4.3.2.1), not a span synopsis."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(
+        atom="text", overlay="text/message", address="turn=1", body="hi",
+        extra={"participant": 0},
+    )
+
+    span = segments.Section(
+        address="turn=1", form="conversation", segments=[seg],
+        description="A synopsis restating lossless content.",
+        extra={"participants": ["Andy <a@x>"]},
+    )
+    assert "section-description-redundant" in _fired(post, root, [span])
+
+    whole = segments.Section(
+        address=None, form="conversation", segments=[seg],
+        description="The record's editorial vouch — the whole conversation, summarized.",
+        extra={"participants": ["Andy <a@x>"]},
+    )
+    assert "section-description-redundant" not in _fired(post, root, [whole])

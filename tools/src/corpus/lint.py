@@ -787,8 +787,12 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
 
 
 def _rule_section_description_redundant(post, blocks, root) -> Iterator[Finding]:
-    """A section whose every child segment is lossless does not need a `description` — the
-    segments already hold the content faithfully (advisory, info)."""
+    """A SPAN-scope section whose every child segment is lossless does not need a
+    `description` — the segments already hold the content faithfully (advisory, info).
+    *(3.2)* A WHOLE-RECORD section (no `address`) is exempt: its `description:` header
+    field is the record's editorial vouch (spec §4.2.3, §4.3.2.1 — the vouch's home),
+    summarizing the whole artifact, never a restatement of what its lossless children
+    already hold."""
 
     def _is_lossless(seg: _segments.Segment) -> bool:
         if seg.atom != "text":
@@ -803,6 +807,8 @@ def _rule_section_description_redundant(post, blocks, root) -> Iterator[Finding]
 
     for top_i, blk in enumerate(blocks, 1):
         if not isinstance(blk, _segments.Section):
+            continue
+        if blk.address is None:  # whole-record section: the vouch's home (§4.2.3)
             continue
         if not (blk.description or "").strip() or not blk.segments:
             continue
