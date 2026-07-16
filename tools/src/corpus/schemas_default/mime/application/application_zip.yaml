@@ -25,3 +25,22 @@ transport_algos:
 - sha256
 draft:
   strategy: zip-manifest
+# (3.2) `comment` (the zip archive comment, when present) is role-marked title: real
+# corpus evidence (both `corpus assemble` producer-export bundles — discord-export /
+# google-takeout / facebook-export — and `corpus session capture`'s claude-code-session
+# zips) shows it's consistently a deterministic identity string the corpus's own tooling
+# stamps (`<producer>-export · <name> · <account> · exported <timestamp>`), not producer-
+# arbitrary junk — an honest title-shaped fact for the bundle. It sits at the artifact
+# layer (weakest in the §4.2.3 precedence), so a producer-export origin overlay's more
+# specific title mark (task 3) still wins when one exists. The `zip-manifest` drafter also
+# writes a `title` field (the root-stripped wrapper-dir name) when `draft.manifest.root_strip`
+# is enabled, but no corpus enables that for plain `application/zip` today (only the
+# unraid-diagnostics subtype does, on its own mime schema) — left undeclared here for lack
+# of real evidence; see `application_unraid_diagnostics.yaml` for that mark instead.
+extended_fields:
+  comment:
+    type: string
+    required: false
+    role: title
+    source: file_metadata
+    description: The zip archive's comment field, when present. The corpus's own assembly/session tooling stamps a deterministic identity string here (job/producer + name + account + export timestamp); a third-party zip's comment may be empty or unrelated, in which case the layer simply falls through.

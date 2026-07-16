@@ -18,9 +18,9 @@ from corpus._cli import dispatch
 
 A = "a0" * 32  # proxy, UNTITLED (no title candidate anywhere), missing artifact, legacy `status:`
 B = "b0" * 32  # rendered (stored content, no form), titled (frontmatter override), has its pdf
-C = "c0" * 32  # formed, titled only via the artifact-bare-title legacy fallback
+C = "c0" * 32  # formed, titled via the artifact layer (text/html's packaged `role: title`)
 D = "d0" * 32  # formed, titled (frontmatter override), open warning issue
-E = "e0" * 32  # no origin block (invalid), titled via the legacy fallback
+E = "e0" * 32  # no origin block (invalid), titled via the artifact layer (text/html)
 
 
 def _corpus(tmp_path: Path) -> Path:
@@ -95,7 +95,7 @@ def _populate(tmp_path: Path) -> Path:
         content_blocks=[segments.Segment(atom="text", address="page=1", body="hello")],
     )
     _write(
-        root, C, mime="image/png", ext="png", artifact=True,
+        root, C, mime="text/html", ext="html", artifact=True,
         content_blocks=[
             segments.Section(
                 form="conversation",
@@ -119,7 +119,7 @@ def _populate(tmp_path: Path) -> Path:
             "address": "bbox=0,0,1,1",
         },
     )
-    _write(root, E, mime="image/png", ext="png", artifact=True, origin=False)
+    _write(root, E, mime="text/html", ext="html", artifact=True, origin=False)
     return root
 
 
@@ -134,9 +134,9 @@ def test_layer_presence(tmp_path):
     assert counts["proxy"] == 2  # A, E
     assert counts["rendered"] == 1  # B
     assert counts["formed"] == 2  # C, D
-    # B, D carry a frontmatter override; C, E derive a title only via the transitional
-    # legacy artifact-bare-title fallback (spec §12.21 phase 2 not yet landed); A has no
-    # title candidate anywhere — genuinely untitled (spec §4.2.3).
+    # B, D carry a frontmatter override; C, E derive a title via the artifact layer
+    # (text/html's packaged `role: title` mark on its bare `title` field, §12.21 step 2);
+    # A has no title candidate anywhere — genuinely untitled (spec §4.2.3).
     assert counts["titled"] == 4  # B, C, D, E
     assert counts["untitled"] == 1  # A
     assert counts["legacy_status"] == 1  # A only

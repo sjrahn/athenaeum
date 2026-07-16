@@ -1,13 +1,12 @@
 """Derived-editorial resolution (spec §4.2.3, ATH-CORPUS 3.2) — the shared
 `records.derived_editorial_field` / `derived_editorial` implementation.
 
-Builds custom role-marked mime/origin/form overlays (no packaged schema carries `role:`
-yet — phase 2 of the §12.21 migration lands separately) to exercise the full precedence
-chain end to end, independent of the transitional legacy fallback covered by
-`test_sidecar.py::test_title_for_priority_frontmatter_then_legacy_artifact_then_ytdlp`.
-Field names here (`subject`, `headline`, `blurb`, …) deliberately never collide with the
-legacy fallback's own field names (`title`, `ytdlp_title`), so these tests isolate the
-role-marked resolution alone.
+Builds custom role-marked mime/origin/form overlays to exercise the full precedence chain
+end to end in isolation, independent of any particular corpus's real schemas. See
+`test_sidecar.py` for coverage against the PACKAGED schemas' real `role:` marks (the
+§12.21 step 2 role-marking sweep) — `text/html`'s artifact-layer title, and a qualified
+origin's `ytdlp_title` (plus the origin-qualification gap that surfaces alongside it, now
+that the transitional `_legacy_title_fallback` is retired).
 """
 
 from __future__ import annotations
@@ -298,3 +297,21 @@ def test_birth_frontmatter_has_no_editorial_keys():
     `description` at all — not even empty placeholders."""
     fm = records.stub_frontmatter(record_id="b" * 64, touch_id="corpus.ingest@0.1.0")
     assert "title" not in fm and "description" not in fm
+
+
+def test_list_valued_role_field_joins_not_reprs(tmp_path):
+    """A `string_or_list` role-marked field (an iMessage group renamed mid-window) derives
+    a comma-joined title, never a Python-repr string (spec §4.2.3 via `_first_non_empty`)."""
+    root = _make_corpus(tmp_path)
+    post = _base_post()
+    records.set_artifact_block(post, mime=_MIME, fields={})
+    records.append_origin_block(
+        post,
+        uri="testsrc://x",
+        snapshot="2026-01-01T00:00:00Z",
+        schema_id="testsrc",
+        fields={"headline": ["Old Name", "New Name"]},
+    )
+    field = records.derived_editorial_field(post, root, "title")
+    assert field.value == "Old Name, New Name"
+    assert field.layer == "origin"

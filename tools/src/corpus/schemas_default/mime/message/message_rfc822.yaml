@@ -52,6 +52,21 @@ address_scheme:
     containers get no ordinal), materialized as its **CTE-decoded** payload bytes (identity is
     the decoded bytes, not the base64/QP transfer text). The address the eml drafter records on
     each non-body part's embed; round-trips to byte-identical content via `transforms/message.py`.
+# (3.2) `subject` is the artifact's own honest title-shaped fact (the RFC2047-decoded
+# Subject: header) — role-marked so a message derives a display title with no LLM pass.
+# The drafter ALSO writes a redundant `title` field (an exact copy of `subject`, the
+# pre-3.2 title-authoring shortcut, see `draft/eml.py`); it stays undeclared/unmarked here
+# rather than doubly-marking the same value under two names. The normalization guidance's
+# `<clean subject> — <sender> (<date>)` shaping (thread-sibling disambiguation) remains an
+# origin/form-layer concern this artifact-layer mark doesn't preempt — it's the weakest
+# layer in the §4.2.3 precedence, so a stronger candidate still wins when one exists.
+extended_fields:
+  subject:
+    type: string
+    required: false
+    role: title
+    source: file_metadata
+    description: RFC2047-decoded `Subject:` header, single-line. Repeats across a thread (`Re:`/`Fwd:` chains) — not unique among siblings, but honestly the message's own title-shaped fact.
 normalization:
   method: refinement
   guidance: |

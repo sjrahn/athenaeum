@@ -1129,14 +1129,19 @@ def _role_marked_fields(schema: dict[str, Any] | None, role: str) -> list[str]:
 def _first_non_empty(fields: dict[str, Any] | None, names: list[str]) -> str:
     """The first non-empty value among `names`, read from `fields` in the order given —
     the within-layer resolution rule (spec §4.2.3: "the schema's declaration order, first
-    non-empty winning")."""
+    non-empty winning"). A list-valued field (`string_or_list` — e.g. an iMessage group's
+    names across a rename window) joins its non-empty items with ", " rather than
+    stringifying to a Python repr."""
     if not fields:
         return ""
     for name in names:
         value = fields.get(name)
         if value is None:
             continue
-        text = str(value).strip()
+        if isinstance(value, (list, tuple)):
+            text = ", ".join(t for v in value if (t := str(v).strip()))
+        else:
+            text = str(value).strip()
         if text:
             return text
     return ""
@@ -1222,23 +1227,6 @@ def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: s
     return _first_non_empty(section.extra, names)
 
 
-def _legacy_title_fallback(post: frontmatter.Post) -> tuple[str, str | None]:
-    """TODO(3.2 phase 2): transitional pre-role-mark fallback (spec §12.21 step 2) —
-    replicates the pre-3.2 `title_for` chain (the artifact block's bare `title` field, then
-    the first origin block's `ytdlp_title`) so display titles don't regress fleet-wide in
-    the window before the mime/origin schemas declare `role: title` on these fields.
-    Retire this function once that role-marking sweep lands — every corpus's titles will
-    then resolve through `_artifact_editorial_candidate` / `_origin_editorial_candidate`
-    on their own merits, and this stops contributing anything new."""
-    artifact = artifact_block(post)
-    if artifact and (t := (artifact.get("fields") or {}).get("title")):
-        return str(t).strip(), "artifact"
-    for origin in iter_origin_blocks(post):
-        if t := (origin.get("fields") or {}).get("ytdlp_title"):
-            return str(t).strip(), "origin"
-    return "", None
-
-
 def derived_editorial_field(
     post: frontmatter.Post,
     corpus_root: Path,
@@ -1255,8 +1243,21 @@ def derived_editorial_field(
     rule, §12.21 step 1) — then the form layer (whole-record section only), then origin
     (latest qualified block wins), then artifact; each layer's own within-layer resolution
     is first-non-empty by schema declaration order. An empty/absent layer candidate falls
-    through to the next. `title` additionally falls through to a transitional legacy
-    candidate (see `_legacy_title_fallback`) before giving up.
+    through to the next, and an all-empty chain resolves to an honest empty result (spec
+    §4.2.3) — not a defect, a role-marking or forming opportunity health surfaces.
+
+    *(3.2 phase 2, §12.21 step 2)* The transitional pre-role-mark fallback (the artifact
+    block's bare `title` field, then the first origin block's `ytdlp_title`, unconditional
+    on schema declaration or origin qualification) is retired now that the mime/origin
+    schemas carry real `role:` marks. NOTE a real gap this surfaced: the origin layer only
+    resolves through a QUALIFIED origin block (`schema_id` set) — and today nothing in the
+    ingest/capture pipeline stamps a host-pattern-matched qualifier (`<!--origin
+    youtube.com-->`) on a URL-retrieved origin; only producer-declared/sidecar-bound origins
+    (local-file exports — imessage-export, discord-conversation, receipts, …) ever get
+    qualified. A video/web record whose only title candidate lives on an unqualified origin
+    block (e.g. `ytdlp_title`) now derives an empty title until that qualification gap is
+    closed — see the corpus-wide `derived-editorial coverage` health report (§12.21 open
+    question 2).
     """
     if include_override:
         override = str(post.metadata.get(role) or "").strip()
@@ -1274,11 +1275,6 @@ def derived_editorial_field(
     artifact_value = _artifact_editorial_candidate(post, corpus_root, role)
     if artifact_value:
         return EditorialField(value=artifact_value, layer="artifact")
-
-    if role == "title":
-        legacy_value, legacy_layer = _legacy_title_fallback(post)
-        if legacy_value:
-            return EditorialField(value=legacy_value, layer=legacy_layer)
 
     return EditorialField(value="", layer=None)
 

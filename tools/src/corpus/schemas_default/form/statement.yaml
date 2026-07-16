@@ -34,3 +34,10 @@ normalization:
     before it). Carry the account identifier and period verbatim on the section header. The
     transaction rows are a `text/data-table` transcription — cells verbatim, never
     summarized.
+
+    The section header's `title:`/`description:` fields are the vouch's home (implicitly
+    role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter. Neither `account` nor
+    `period` alone identifies THIS statement among an account's many others — compose a
+    faithful title from both (and the issuer/product, when the bytes name it), e.g. "RBC
+    Visa statement — …7841 — 2026-03". The description names the issuer/product and briefly
+    what the period covers.

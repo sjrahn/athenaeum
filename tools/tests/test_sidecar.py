@@ -7,7 +7,7 @@ from typing import Any
 
 import frontmatter
 
-from corpus import records
+from corpus import records, schemas
 from corpus.draft import _sidecar
 
 _INFO: dict[str, Any] = {
@@ -179,23 +179,65 @@ def test_merge_origin_fields_noop_without_fields_or_origin():
     assert not bare.metadata.get("_origins")
 
 
-def test_title_for_priority_frontmatter_then_legacy_artifact_then_ytdlp(tmp_path):
-    """*(3.2)* Neither `text/html` nor a bare origin block carries a `role: title` mark in
-    the packaged schemas yet (§12.21 phase 2 is a later step), so this exercises the
-    TRANSITIONAL legacy fallback (`records._legacy_title_fallback`) — kept so display
-    titles don't regress fleet-wide before the role-marking sweep lands. Its order
-    (artifact bare `title` beats origin `ytdlp_title`) is the pre-3.2 `title_for` chain;
-    the frontmatter override still wins over everything, per spec §4.2.1."""
-    post = _post_with_origin()
+def test_title_for_priority_frontmatter_then_artifact_then_qualified_origin(tmp_path):
+    """*(3.2 phase 2, §12.21 step 2)* The transitional `records._legacy_title_fallback` is
+    retired — title resolution now runs entirely through role-marked schema fields
+    (spec §4.2.3). `text/html`'s artifact-block `title` carries `role: title` in the
+    PACKAGED schema (task 1 of the role-marking sweep), so it resolves with no
+    corpus-local schema at all. The origin layer's `ytdlp_title` (role-marked on the
+    universal `origin/origin.yaml`) only resolves through a QUALIFIED origin block
+    (`schema_id` set) — this test declares a synthetic per-host overlay to exercise that
+    path; see `test_ytdlp_title_on_unqualified_origin_does_not_resolve` below for what a
+    BARE origin now does instead (the gap the legacy fallback used to paper over). The
+    frontmatter override still wins over everything, per spec §4.2.1."""
+    origin_dir = tmp_path / "schema" / "origin" / "web"
+    origin_dir.mkdir(parents=True)
+    (origin_dir / "video.example.yaml").write_text(
+        "applies_to:\n  host_patterns: [video.example]\n"
+        "extended_fields:\n  ytdlp_title:\n    type: string\n    role: title\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+
+    post = frontmatter.Post(content="")
+    records.append_origin_block(
+        post,
+        uri="https://video.example/v/1",
+        snapshot="2026-06-02T00:00:00Z",
+        schema_id="video.example",
+    )
     records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
-    # legacy fallback, no artifact candidate yet → origin ytdlp_title.
+    # no artifact candidate yet → the qualified origin's role-marked ytdlp_title.
     assert records.title_for(post, tmp_path) == "From yt-dlp"
-    # legacy fallback prefers the artifact bare `title` over origin `ytdlp_title`.
+    # the form/origin/artifact precedence (§4.2.3) has origin outrank artifact... but here
+    # the ARTIFACT layer is what we're adding, so re-verify origin still wins while both
+    # are present (origin > artifact, per precedence — form strongest, then origin, then
+    # artifact weakest).
     records.set_artifact_block(post, mime="text/html", fields={"title": "Artifact Title"})
+    assert records.title_for(post, tmp_path) == "From yt-dlp"
+    # remove the origin candidate → falls through to the artifact layer.
+    post.metadata["_origins"][-1]["fields"].pop("ytdlp_title")
     assert records.title_for(post, tmp_path) == "Artifact Title"
     # the frontmatter override is strongest of all, regardless of layer.
     post.metadata["title"] = "Normalized Title"
     assert records.title_for(post, tmp_path) == "Normalized Title"
+
+
+def test_ytdlp_title_on_unqualified_origin_does_not_resolve(tmp_path):
+    """*(3.2 phase 2)* Documents a real pipeline gap this retirement surfaced: nothing in
+    ingest/capture stamps a host-pattern-matched qualifier onto a URL-retrieved origin
+    block today (confirmed against both live corpora — every web/video capture's origin
+    block is bare; only producer-declared/sidecar-bound origins — imessage-export,
+    discord-conversation, receipts, … — ever get one). So `ytdlp_title`'s `role: title`
+    mark (declared on the universal `origin/origin.yaml`, §12.21 step 2) is unreachable on
+    a BARE origin block — `_origin_editorial_candidate` requires a qualified `schema_id`.
+    Before this retirement, `_legacy_title_fallback` read `ytdlp_title` off ANY origin
+    block unconditionally, papering over the gap. Wiring host-pattern origin qualification
+    into ingest/capture is a follow-up, tracked but not fixed here (out of this worker's
+    schema-only scope)."""
+    post = _post_with_origin()  # bare — no schema_id
+    records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
+    assert records.title_for(post, tmp_path) == ""
 
 
 def test_stub_frontmatter_carries_no_editorial_keys():
@@ -224,8 +266,13 @@ def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatte
     assert "title" not in (records.artifact_block(post).get("fields") or {})  # no generic title
     assert post.metadata.get("title") is None  # no frontmatter override (normalizer-owned)
     assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"
-    # frontmatter has no override → falls to the origin ytdlp_title (legacy fallback today).
-    assert records.title_for(post, tmp_path) == "YT"
+    # *(3.2 phase 2)* The routed `ytdlp_title` sits on a BARE origin block (this test never
+    # qualifies it with a `schema_id`), so it does not resolve as a derived title — the
+    # role-marked origin layer only reads a QUALIFIED block (§4.2.3). This is the routing
+    # test, not the resolution test; see `test_ytdlp_title_on_unqualified_origin_does_not_resolve`
+    # for that gap, and `test_title_for_priority_frontmatter_then_artifact_then_qualified_origin`
+    # for the qualified-origin resolution path.
+    assert records.title_for(post, tmp_path) == ""
 
 
 # ---------- enrichment-sidecar lifecycle ---------- #

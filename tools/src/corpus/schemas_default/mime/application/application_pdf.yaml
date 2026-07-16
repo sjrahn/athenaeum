@@ -365,6 +365,7 @@ extended_fields:
   title:
     type: string
     required: false
+    role: title
     source: file_metadata
     description: Title from the PDF /Info dictionary, if present.
   author:

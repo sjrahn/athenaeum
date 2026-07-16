@@ -47,6 +47,7 @@ extended_fields:
   description:
     type: string
     required: false
+    role: description
     source: normalizer
     description: |-
       Normalizer-written summary of what the artifact depicts (whole-image). Distinct from per-segment `description:` fields that scope to a sub-bbox under an overlay.

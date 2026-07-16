@@ -33,3 +33,10 @@ normalization:
     payment/tender block faithfully — the tender block is the load-bearing matching hook, so
     keep it verbatim (card tail, amount, auth). Never fabricate text for a raster tape; render
     and describe instead.
+
+    The section header's `title:`/`description:` fields are the vouch's home (implicitly
+    role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter. `merchant` alone is a
+    mechanical byte-fact, not a title: a faithful title composes it with the transaction
+    date (and the item kind, when distinctive) so it identifies THIS receipt among a
+    merchant's many others — e.g. "Costco Wholesale — 2026-06-19", not just "Costco
+    Wholesale". The description names what was purchased and the total, in brief.

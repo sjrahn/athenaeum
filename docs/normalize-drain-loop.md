@@ -97,10 +97,13 @@ Each claimed id goes to a `normalizer` agent (subagent type `normalizer`, define
 workspace root's `.claude/agents/`). Brief it with only the **corpus root** + the id(s) plus
 the finalize contract — it carries **no** format knowledge and pulls
 everything from the corpus at runtime (`corpus diagnose` / `guidance` / `overlay` / `atoms`).
-It must leave the record passing the §8.5 pass gate — **authored** (title + description),
-**formed where its overlays declare a form**, and lint-clean — or `corpus finalize`
-refuses (exit 1). The monitor owns claim + finalize/release; the agent owns the
-normalization. Do **not** tell the agent to touch the queue.
+It must leave the record passing the §8.5 pass gate — **formed where its overlays declare a
+form**, and lint-clean — or `corpus finalize` refuses (exit 1). *(3.2)* The vouch is no
+longer part of the gate: where the record is formed, the agent authors it on that form's
+section header (`title:`/`description:`); a record staying formless owes none — its derived
+title/description are already honest (spec §4.2.3, §8.5). The monitor owns claim +
+finalize/release; the agent owns the normalization. Do **not** tell the agent to touch the
+queue.
 
 ## Stop, failures, backlog
 

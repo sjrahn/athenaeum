@@ -41,3 +41,8 @@ normalization:
     author into it via `participant:` (or carry a verbatim `sender:` when the source's
     records use that form). Timestamps stay in the source-stated zone. Never invent a
     day-break section — that is a read-time rendering (§4.3.2.3).
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    A faithful title names who the conversation is with/among; the description says who's
+    in it and what it covers.

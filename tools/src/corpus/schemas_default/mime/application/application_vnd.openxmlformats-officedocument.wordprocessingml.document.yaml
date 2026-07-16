@@ -142,6 +142,11 @@ extended_fields:
     description: |-
       True iff the OOXML zip contains any `word/media/` part. A discoverability signal; the v1 drafter does not yet emit image segments for docx (see normalization guidance).
   title:
+    # (3.2) Deliberately NOT role: title — this field's own description records that it's
+    # "often a document-management code rather than a readable title," with the real title
+    # meant to arrive via the form/origin layer instead (stronger in the §4.2.3 precedence).
+    # Role-marking it would surface the raw docProps code as the derived title on every
+    # formless docx, which is exactly the outcome this field's guidance warns against.
     type: string
     required: false
     source: file_metadata

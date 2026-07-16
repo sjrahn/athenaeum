@@ -219,6 +219,7 @@ extended_fields:
   title:
     type: string
     required: false
+    role: title
     source: file_metadata
     description: '`<dc:title>` from `docProps/core.xml`, if set by the author.'
   application:

@@ -46,3 +46,10 @@ normalization:
     (one entry for a single-speaker recording); index every segment's `speaker:` into
     it. Verbatim speech only — no paraphrase, no grammar cleanup; disclose unclear spans
     as [inaudible] rather than guessing.
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    Title it from the source's own name for the recording where one exists (a lecture/
+    episode title), else a faithful descriptive title from what the speech covers; the
+    description names who's speaking (by diarization label where identity is unknown)
+    and what the speech is about.

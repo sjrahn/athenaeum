@@ -43,3 +43,8 @@ normalization:
     to the slide-unit count. Narration is NOT this record's content — it lives on the
     sibling audio track's `form/transcript`; the same-video composition joins the two
     on (lineage × timeline).
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    Title the deck from its own title slide or the source's own name for it; describe what
+    it presents and, briefly, its scope (slide count, whether narration accompanies it).

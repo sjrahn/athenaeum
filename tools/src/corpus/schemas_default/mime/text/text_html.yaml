@@ -231,11 +231,13 @@ extended_fields:
   title:
     type: string
     required: false
+    role: title
     source: file_metadata
     description: Document <title> from the snapshot.
   description:
     type: string
     required: false
+    role: description
     source: file_metadata
     description: Meta description or og:description, if declared.
   lang:

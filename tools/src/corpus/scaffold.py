@@ -83,6 +83,29 @@ extended_fields:
       the file was authored / scanned / exported. The keeper provenance for a local
       file (the staging path is ephemeral). Aggregated into the `timeline` derived
       view (§9.4). Absent for retrieval origins. Spec §7.2.
+  # (3.2) Host-agnostic yt-dlp sidecar lift (spec §7.2, §7.1 `sidecar.ytdlp_keys`): every
+  # mime schema whose artifact carries a yt-dlp `.info.json` enrichment (audio/video)
+  # declares the same `ytdlp_title`/`ytdlp_description` keys, so the mark belongs on THIS
+  # universal overlay rather than any one per-host file — it reaches every qualified origin
+  # block through the loader's universal-then-per-id layering, e.g. `<!--origin youtube.com-->`.
+  # `ytdlp_title` is the canonical §4.2.3 example: a video record derives an honest display
+  # title from its sidecar lift alone, no LLM pass needed.
+  ytdlp_title:
+    type: string
+    required: false
+    role: title
+    description: |
+      The source post's title, lifted from the yt-dlp `.info.json` sidecar at ingest
+      (spec §7.1 `sidecar.ytdlp_keys`, §7.2). Present only on origin blocks whose artifact
+      mime schema declares the sidecar lift and whose capture actually carried one.
+  ytdlp_description:
+    type: string
+    required: false
+    role: description
+    description: |
+      The source post's own description text, lifted from the yt-dlp `.info.json` sidecar
+      at ingest (spec §7.1 `sidecar.ytdlp_keys`, §7.2). Same presence condition as
+      `ytdlp_title` above.
 """
 
 _README_TEMPLATE = """\

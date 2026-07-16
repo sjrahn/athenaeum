@@ -130,6 +130,7 @@ extended_fields:
   title:
     type: string
     required: false
+    role: title
     source: file_metadata
     description: Dublin Core `dc:title` from the OPF metadata — the format's title candidate.
   creator:
