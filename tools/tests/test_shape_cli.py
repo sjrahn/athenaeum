@@ -2,8 +2,9 @@
 
 Uses the bundled `conversation` shaper against a synthetic JSON chat producer: an origin overlay
 declares `form: {id: conversation, mapping}`, and the verb shapes the stub's content zone,
-appends the `shape.conversation` touch WITHOUT flipping status, and reports `shaped`. A record
-whose origin declares no form is reported `skipped` (not an error). Batch + stdin driving covered.
+appends the `shape.conversation` touch WITHOUT authoring the vouch (title/description stay
+empty — shaping is only half the normalize pass, §8.1), and reports `shaped`. A record whose
+origin declares no form is reported `skipped` (not an error). Batch + stdin driving covered.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def _ingest_chat(root: Path, schema_id: str = "conv-export") -> str:
     src.unlink()
     post = frontmatter.Post("")
     post.metadata.update(
-        {"id": rid, "title": "", "description": "", "status": "stub",
+        {"id": rid, "title": "", "description": "",
          "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"}
     )
     records.set_artifact_block(post, mime="application/json", fields={})
@@ -82,7 +83,7 @@ def _run(root: Path, *targets: str) -> int:
 # ---------- happy path: shape a declared form ---------- #
 
 
-def test_shape_builds_form_and_keeps_status(tmp_path, capsys):
+def test_shape_builds_form_and_leaves_vouch_unauthored(tmp_path, capsys):
     root = _corpus(tmp_path)
     rid = _ingest_chat(root)
 
@@ -91,15 +92,17 @@ def test_shape_builds_form_and_keeps_status(tmp_path, capsys):
     assert f"shaped {rid[:12]} (conversation)" in out
 
     post = records.load(paths.record_path(root, rid))
-    # The content zone was authored (a conversation section with two turns).
+    # The content zone was shaped (a conversation section with two turns).
     (sec,) = segments.iter_blocks(post.content or "")
     assert isinstance(sec, segments.Section) and sec.form == "conversation"
     assert [s.address for s in sec.segments] == ["turn=1", "turn=2"]
-    # The shape touch was appended; status is UNCHANGED (normalize owns stub → normalized).
+    assert records.derived_state(post) == "formed"
+    # The shape touch was appended; the vouch is UNCHANGED — shaping is only half the
+    # normalize pass (§8.1); title/description are the interpretive agent's remaining work.
     chain = post.metadata["touch"]
     chain = chain if isinstance(chain, list) else [chain]
     assert any("shape.conversation" in t for t in chain)
-    assert post.metadata["status"] == "stub"
+    assert not records.is_authored(post)
 
 
 # ---------- skip path: no declared form ---------- #
@@ -131,7 +134,7 @@ def test_shape_batch_multiple_ids(tmp_path, capsys):
     LocalArtifactStore(root).put(r2, "json", src)
     src.unlink()
     post = frontmatter.Post("")
-    post.metadata.update({"id": r2, "title": "", "description": "", "status": "stub",
+    post.metadata.update({"id": r2, "title": "", "description": "",
                           "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"})
     records.set_artifact_block(post, mime="application/json", fields={})
     records.append_origin_block(post, uri=None, snapshot="2026-01-01T00:00:00Z",

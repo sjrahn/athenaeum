@@ -1,4 +1,4 @@
-"""Reset a record to status: stub (spec §8.4)."""
+"""Reset a record to its attested baseline (spec §8.4)."""
 
 from __future__ import annotations
 
@@ -17,5 +17,5 @@ def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     _, record_file = paths.resolve_record(root, args.target)
     rid = restub.restub(record_file)
-    print(f"re-stubbed {rid[:12]} (status → stub; canonical/description/embeds/issues cleared)")
+    print(f"re-stubbed {rid[:12]} (attested baseline; title/description/canonical/embeds/issues cleared)")
     return 0

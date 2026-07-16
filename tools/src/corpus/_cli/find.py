@@ -9,9 +9,21 @@ import sys
 from corpus import records
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
+_STATE_CHOICES = ("proxy", "rendered", "formed", "authored", "any")
+
 
 def configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--status", help="Filter by status: stub | draft | normalized.")
+    parser.add_argument(
+        "--state",
+        choices=_STATE_CHOICES,
+        default="any",
+        help=(
+            "Filter by derived state (spec §4.1): proxy | rendered | formed. `authored` "
+            "filters on the vouch instead — it is ORTHOGONAL to the state enum (a record can "
+            "be authored at any of proxy/rendered/formed), so `--state authored` matches any "
+            "record where `is_authored` is true, regardless of proxy/rendered/formed."
+        ),
+    )
     parser.add_argument("--mime", help="Filter by artifact MIME type.")
     parser.add_argument("--host", help="Filter by origin URI host (substring match).")
     parser.add_argument("--classification", help="Filter by derived classification id (mime/* or origin/*).")
@@ -28,9 +40,12 @@ def run(args: argparse.Namespace) -> int:
         except Exception as e:
             print(f"WARN: load failed for {md}: {e}", file=sys.stderr)
             continue
-        status = post.metadata.get("status", "")
+        state = records.derived_state(post)
+        authored = records.is_authored(post)
         mime = records.media_type_for(post)
-        if args.status and status != args.status:
+        if args.state == "authored" and not authored:
+            continue
+        if args.state not in ("any", "authored") and state != args.state:
             continue
         if args.mime and mime != args.mime:
             continue
@@ -44,7 +59,8 @@ def run(args: argparse.Namespace) -> int:
         rows.append(
             {
                 "id": post.metadata.get("id", md.stem),
-                "status": status,
+                "state": state,
+                "authored": authored,
                 "mime": mime,
                 "title": records.title_for(post),
                 "uri": records.primary_origin_uri(post),
@@ -56,6 +72,7 @@ def run(args: argparse.Namespace) -> int:
     else:
         for r in rows:
             t = r["title"][:40] if r["title"] else ""
-            print(f"  {r['id'][:12]}  {r['status']:<10}  {r['mime']:<28}  {t}")
+            marker = "✓" if r["authored"] else " "
+            print(f"  {r['id'][:12]}  {r['state']:<9} {marker}  {r['mime']:<28}  {t}")
         print(f"\n{len(rows)} record(s)")
     return 0

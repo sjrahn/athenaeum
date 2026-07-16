@@ -27,7 +27,13 @@ Exposes:
   caller emits the artifact + origin blocks via the mutators.
 
 Frontmatter core fields (spec §4.2 — the only fields, in spec order):
-    id, description, status, transport, canonical, perceptual, touch, visibility
+    id, title, description, transport, canonical, perceptual, touch, visibility
+
+*(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19): a record's state is
+derived, never stored. `load()` still reads a legacy `status:` key tolerantly (it survives
+in `post.metadata` for lint to see — the `frontmatter-legacy-status` rule) but `dumps()`
+never emits it — any write drops it. See `is_authored` / `is_formed` /
+`has_stored_rendering` / `derived_state` below for the derived-state predicates.
 
 Block grammar (spec §4.3):
     Metadata zone:    <!--artifact <mime-type>-->     (exactly 1)
@@ -50,12 +56,13 @@ import yaml
 
 from . import paths
 
-# Spec §4.2 core-fields order.
+# Spec §4.2 core-fields order. `status` retired 3.1 (§4.1, §12.19) — a legacy `status:` key
+# on input parses tolerantly into `post.metadata` (lint sees it) but is never written back;
+# `dumps()` builds frontmatter from exactly this order, so omission here IS the drop.
 _CORE_FIELD_ORDER = [
     "id",
     "title",
     "description",
-    "status",
     "transport",
     "canonical",
     "perceptual",
@@ -1071,6 +1078,73 @@ def derived_classifications(post: frontmatter.Post) -> list[str]:
     return result
 
 
+# ---------- derived-state predicates (spec §4.1) ---------- #
+
+
+def is_authored(post: frontmatter.Post) -> bool:
+    """The vouch (spec §4.1): `title` AND `description` both non-empty after strip.
+
+    Orthogonal to `is_formed` / `has_stored_rendering` — authoring can land on a formless
+    proxy exactly as on a formed record, and a shaper can form a record before any vouch is
+    written. Never folded into `derived_state`."""
+    title = str(post.metadata.get("title") or "").strip()
+    description = str(post.metadata.get("description") or "").strip()
+    return bool(title) and bool(description)
+
+
+def is_formed(post: frontmatter.Post) -> bool:
+    """True when a **form section** governs the record's content zone (spec §4.1,
+    §4.3.2.1): at least one qualified `<!--section <form-id>-->` block — a bare 2.x TOC
+    section (form=None) does not count, exactly as it contributes no `form/*` row to the
+    derived classifications view (§9.1). Parse-tolerant: an unparseable content zone reads
+    as not-formed rather than raising."""
+    from . import segments as _segments
+
+    try:
+        blocks = _segments.iter_blocks(post.content or "")
+    except Exception:
+        return False
+    return any(isinstance(b, _segments.Section) and b.form for b in blocks)
+
+
+def has_stored_rendering(post: frontmatter.Post) -> bool:
+    """True when the record's content zone carries at least one **content-atom** segment
+    (text/image/audio/video) — structural byte-marks (§4.3.2.3) do NOT count, since they
+    carry no rendering of their own, only a boundary mark. Segments count whether top-level
+    (formless) or nested inside a form section. Parse-tolerant, like `is_formed`."""
+    from . import segments as _segments
+
+    try:
+        blocks = _segments.iter_blocks(post.content or "")
+    except Exception:
+        return False
+    for b in blocks:
+        if isinstance(b, _segments.Section):
+            if any(not s.is_structural for s in b.segments):
+                return True
+        elif isinstance(b, _segments.Segment) and not b.is_structural:
+            return True
+    return False
+
+
+def derived_state(post: frontmatter.Post) -> str:
+    """The record's derived layer state (spec §4.1) — one of:
+
+    - `"formed"` — a form section governs the content zone (`is_formed`); wins even when
+      the record ALSO carries top-level formless segments (the mixed-artifact case, §4.3.2.1).
+    - `"rendered"` — a stored rendering with no governing form: the grandfathered population
+      (§12.18 step 3 / §12.19) — `has_stored_rendering` true, `is_formed` false.
+    - `"proxy"` — neither: the artifact's proxy under the identity contract (§4.1, §7.8),
+      complete and honest, not a backlog.
+
+    `is_authored` is orthogonal and never folds into this enum — check it separately."""
+    if is_formed(post):
+        return "formed"
+    if has_stored_rendering(post):
+        return "rendered"
+    return "proxy"
+
+
 # ---------- stub creation ---------- #
 
 
@@ -1089,6 +1163,9 @@ def stub_frontmatter(
     default to empty (both filled at normalize — `title` from the namespaced block-level
     candidates: an artifact `*_title`, an origin `ytdlp_title`).
 
+    *(3.1)* No `status` field — the record is born the artifact's proxy (§4.1), not a
+    `stub` awaiting one; its state is derived, never stored.
+
     The caller is responsible for emitting the artifact + first origin blocks via
     `set_artifact_block()` and `append_origin_block()`.
     """
@@ -1096,7 +1173,6 @@ def stub_frontmatter(
         "id": record_id,
         "title": "",
         "description": description,
-        "status": "stub",
     }
     if transport:
         fm["transport"] = transport

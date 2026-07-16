@@ -34,7 +34,6 @@ def _image_record(root: Path) -> Path:
             "id": rid,
             "title": "Wiring Diagram — Front Lighting",
             "description": "An image.",
-            "status": "normalized",
             "transport": "blake3:" + "b" * 64,
             "touch": ["corpus.ingest@0.1.0", "corpus.draft.mime/image/png@0.1.0"],
         }
@@ -63,7 +62,6 @@ def _pdf_record(root: Path) -> Path:
             "id": rid,
             "title": "Service Bulletin — Brakes",
             "description": "A bulletin.",
-            "status": "normalized",
             "transport": "sha256:" + "d" * 64,
             "touch": ["corpus.ingest@0.1.0", "corpus.draft.mime/application/pdf@0.1.0"],
         }
@@ -127,7 +125,7 @@ def test_save_regions_preserves_title_and_metadata(tmp_path):
 
     after = records.load(rec)
     assert after.metadata["title"] == "Wiring Diagram — Front Lighting"
-    assert after.metadata["status"] == "normalized"
+    assert after.metadata["description"] == "An image."
     assert records.title_for(after) == "Wiring Diagram — Front Lighting"
     assert records.artifact_block(after) == records.artifact_block(before)
     assert list(records.iter_origin_blocks(after)) == list(records.iter_origin_blocks(before))
@@ -188,7 +186,7 @@ def _mixed_statement_record(root: Path) -> Path:
     post = frontmatter.Post("")
     post.metadata.update(
         {"id": rid, "title": "March Statement", "description": "A statement.",
-         "status": "normalized", "transport": "sha256:" + "f" * 64,
+         "transport": "sha256:" + "f" * 64,
          "touch": ["corpus.ingest@0.1.0"]}
     )
     records.set_artifact_block(post, mime="application/pdf", fields={"page_count": 6})

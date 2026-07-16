@@ -31,7 +31,7 @@ def _ingest_json(root: Path, text: str) -> str:
     LocalArtifactStore(root).put(rid, "json", src)
     post = frontmatter.Post("")
     post.metadata.update(
-        {"id": rid, "title": "", "description": "", "status": "stub",
+        {"id": rid, "title": "", "description": "",
          "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"}
     )
     records.set_artifact_block(post, mime="application/json", fields={})
@@ -50,7 +50,7 @@ def test_derive_body_equals_drafted_content_zone(tmp_path):
     # Derived body from the stub (record untouched).
     stub = records.load(path)
     derived = derive.derive_body(stub, root)
-    assert stub.metadata["status"] == "stub"  # derivation did not mutate the record
+    assert records.derived_state(stub) == "proxy"  # derivation did not mutate the record
     assert (stub.content or "") == ""          # stub body still empty
 
     # What the (transitional) draft stage stores.
@@ -111,7 +111,6 @@ def test_normalized_decompose_uses_stored_body(tmp_path):
     rid = _ingest_json(root, json.dumps({"x": 1}, indent=2) + "\n")
     rf = paths.record_path(root, rid)
     post = records.load(rf)
-    post.metadata["status"] = "normalized"
     post.content = segments.emit([segments.Segment(atom="text", address="line=1", body="authored")])
     records.dump(post, rf)
     work = tmp_path / "w2"

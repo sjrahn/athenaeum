@@ -1,10 +1,10 @@
 """Offline corpus health signals.
 
 A read-only, fully-offline scan that surfaces what a corpus operator (or a curation
-skill) wants to triage: how many records sit at each lifecycle status, which are
-stuck, which carry unresolved issues, which are missing their bytes, and which fail
-basic structural validity. `scan_all` returns a structured report; the `corpus
-health` CLI renders it as JSON or a summary.
+skill) wants to triage: how records sit across the derived layers (spec §4.1 —
+formed / rendered / proxy, plus the authored vouch), which carry unresolved issues,
+which are missing their bytes, and which fail basic structural validity. `scan_all`
+returns a structured report; the `corpus health` CLI renders it as JSON or a summary.
 
 Generalized from the reference: the CarbonAi domain signals (vertical-coverage
 keywords, keyword cross-referencing, classification cue-matching, v0.3 migration
@@ -24,8 +24,7 @@ import frontmatter
 
 from . import records, touches
 
-_REQUIRED_KEYS = ("id", "description", "status", "touch")
-_VALID_STATUSES = {"stub", "draft", "normalized"}
+_REQUIRED_KEYS = ("id", "description", "touch")
 
 
 @dataclass
@@ -67,11 +66,33 @@ def build_uri_index(refs: list[RecordRef]) -> dict[str, str]:
 # ---------- signals ---------- #
 
 
-def records_by_status(refs: list[RecordRef]) -> dict[str, int]:
-    out: Counter[str] = Counter()
+def layer_presence(refs: list[RecordRef]) -> dict[str, int]:
+    """Layer-presence census (spec §4.1, §12.19 — succeeding the 3.0 status census): how the
+    fleet sits across the derived-state enum, plus the orthogonal authored vouch and a
+    transitional legacy-status count. `rendered` is `derived_state == "rendered"` — a stored
+    rendering with no governing form, the grandfathered population (§12.18 step 3). The queue
+    is standing demand, not backlog (§8.5), so this reports layer presence only — not how many
+    records "need" a pass."""
+    formed = rendered = proxy = authored = legacy_status = 0
     for r in refs:
-        out[str(r.post.metadata.get("status", "unknown"))] += 1
-    return dict(out)
+        state = records.derived_state(r.post)
+        if state == "formed":
+            formed += 1
+        elif state == "rendered":
+            rendered += 1
+        else:
+            proxy += 1
+        if records.is_authored(r.post):
+            authored += 1
+        if "status" in r.post.metadata:
+            legacy_status += 1
+    return {
+        "formed": formed,
+        "rendered": rendered,
+        "proxy": proxy,
+        "authored": authored,
+        "legacy_status": legacy_status,
+    }
 
 
 def records_by_mime(refs: list[RecordRef]) -> dict[str, int]:
@@ -81,43 +102,32 @@ def records_by_mime(refs: list[RecordRef]) -> dict[str, int]:
     return dict(out)
 
 
-def pending_normalize(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
-    """Records in `draft` status (awaiting normalize). Sorted by id — the touch chain
-    carries no timestamps, so recency isn't recoverable from the record alone."""
-    drafts = sorted(
-        (r for r in refs if r.post.metadata.get("status") == "draft"), key=lambda r: r.record_id
-    )
-    return [
-        {
-            "id": r.record_id,
-            "title": records.title_for(r.post),
-            "media_type": records.media_type_for(r.post),
-        }
-        for r in drafts[:limit]
-    ]
-
-
-def stuck_at_stub(
+def unshaped(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
 ) -> list[dict[str, Any]]:
-    """Records still at `stub`. `supported_draft` is True when a drafter is registered
-    for the record's mime — i.e. `corpus draft` would advance it."""
-    from . import draft as draft_pkg
-    from . import schemas
+    """Records at the `proxy` derived state (spec §4.1 — no stored rendering, not formed).
+    `shapable` is True when the record's origin declares a form with a registered mechanical
+    shaper (`corpus shape` would advance it) — the 3.1 successor of the 2.x `stuck_at_stub`
+    "supported_draft" signal, re-keyed from the retired draft-strategy registry to the shape
+    registry (spec §12.5.0). A `proxy` record with `shapable: false` is not necessarily stuck
+    — most of the population is formless-permanently by design (§7.8) and correctly so."""
+    from . import shape as shape_pkg
 
     out: list[dict[str, Any]] = []
     for r in refs:
-        if r.post.metadata.get("status") != "stub":
+        if records.derived_state(r.post) != "proxy":
             continue
-        mime = records.media_type_for(r.post)
-        schema_id = schemas.mime_schema_id_for(corpus_root, mime) if mime else None
-        supported = bool(schema_id and draft_pkg.get_drafter(schema_id))
+        resolved = shape_pkg.form_for_record(r.post, corpus_root)
+        shapable = bool(
+            resolved
+            and (shape_pkg.get_shaper(resolved[0]) or shape_pkg.get_shaper(resolved[1]))
+        )
         out.append(
             {
                 "id": r.record_id,
                 "title": records.title_for(r.post),
-                "media_type": mime,
-                "supported_draft": supported,
+                "media_type": records.media_type_for(r.post),
+                "shapable": shapable,
             }
         )
     return out[:limit]
@@ -212,14 +222,15 @@ def missing_artifacts(
     return out[:limit]
 
 
-def empty_description_normalized(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
-    """Normalized records with an empty `description` (the one-line summary should be
-    populated by normalize)."""
+def formed_unauthored(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
+    """Formed records (a form section governs the content zone, spec §4.1) whose vouch isn't
+    written yet — the interpretive half of the normalize pass (title/description) still
+    outstanding. Succeeds the 3.0 `empty_description_normalized` signal, which conflated
+    formed+authored under one `status: normalized` flag; formed and authored are now
+    orthogonal, so this reports specifically the formed-but-not-authored gap."""
     out: list[dict[str, Any]] = []
     for r in refs:
-        if r.post.metadata.get("status") != "normalized":
-            continue
-        if str(r.post.metadata.get("description") or "").strip():
+        if records.derived_state(r.post) != "formed" or records.is_authored(r.post):
             continue
         out.append({"id": r.record_id, "title": records.title_for(r.post)})
     return out[:limit]
@@ -227,7 +238,12 @@ def empty_description_normalized(refs: list[RecordRef], *, limit: int = 50) -> l
 
 def validity_violations(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
     """A quick structural sanity check (a subset of `corpus lint`): required keys,
-    id==filename, valid status, non-empty touch, artifact block past stub, ≥1 origin."""
+    id==filename, non-empty touch, artifact block present, ≥1 origin.
+
+    *(3.1)* No more status validity check (the field is retired, §4.1) and no more
+    past-stub gate on the artifact-block check: attestation — including the artifact block —
+    is the universal baseline written at ingest (§4.1's "attested | always" row), so every
+    record is expected to carry one from birth, not only "past" some lifecycle marker."""
     out: list[dict[str, Any]] = []
     for r in refs:
         m = r.post.metadata
@@ -238,13 +254,10 @@ def validity_violations(refs: list[RecordRef], *, limit: int = 50) -> list[dict[
         rid = m.get("id")
         if rid and rid != r.path.stem:
             problems.append(f"id != filename ({rid} vs {r.path.stem})")
-        if m.get("status") not in _VALID_STATUSES:
-            problems.append(f"invalid status: {m.get('status')!r}")
         if not touches.touch_list(r.post):
             problems.append("touch[] is empty")
         artifact = m.get("_artifact")
-        past_stub = m.get("status") in ("draft", "normalized")
-        if past_stub and (not artifact or not artifact.get("mime")):
+        if not artifact or not artifact.get("mime"):
             problems.append("missing <!--artifact--> block (mime unset)")
         if not (m.get("_origins") or []):
             problems.append("no <!--origin--> blocks")
@@ -279,13 +292,12 @@ def canonical_duplicate_clusters(refs: list[RecordRef], *, limit: int = 50) -> l
 
 
 SIGNAL_NAMES = (
-    "records_by_status",
+    "layer_presence",
     "records_by_mime",
-    "pending_normalize",
-    "stuck_at_stub",
+    "unshaped",
     "unresolved_issues",
     "missing_artifacts",
-    "empty_description_normalized",
+    "formed_unauthored",
     "validity_violations",
     "canonical_duplicate_clusters",
 )
@@ -303,22 +315,20 @@ def scan_all(
     selected = set(only) if only else set(SIGNAL_NAMES)
 
     report: dict[str, Any] = {"spec_version": "1.0", "total_records": len(refs)}
-    if "records_by_status" in selected:
-        report["records_by_status"] = records_by_status(refs)
+    if "layer_presence" in selected:
+        report["layer_presence"] = layer_presence(refs)
     if "records_by_mime" in selected:
         report["records_by_mime"] = records_by_mime(refs)
-    if "pending_normalize" in selected:
-        report["pending_normalize"] = pending_normalize(refs, limit=limit)
-    if "stuck_at_stub" in selected:
-        report["stuck_at_stub"] = stuck_at_stub(refs, corpus_root, limit=limit)
+    if "unshaped" in selected:
+        report["unshaped"] = unshaped(refs, corpus_root, limit=limit)
     if "unresolved_issues" in selected:
         report["unresolved_issues"] = unresolved_issues(refs, limit=limit)
     if "missing_artifacts" in selected:
         report["missing_artifacts"] = missing_artifacts(
             refs, corpus_root, limit=limit, skip_remote_check=skip_remote_check
         )
-    if "empty_description_normalized" in selected:
-        report["empty_description_normalized"] = empty_description_normalized(refs, limit=limit)
+    if "formed_unauthored" in selected:
+        report["formed_unauthored"] = formed_unauthored(refs, limit=limit)
     if "validity_violations" in selected:
         report["validity_violations"] = validity_violations(refs, limit=limit)
     if "canonical_duplicate_clusters" in selected:

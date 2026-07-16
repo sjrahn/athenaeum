@@ -1,8 +1,9 @@
 """The normalization queue (spec §8.5) — request/claim contract + the CLI verbs.
 
-The queue is external, untracked state under `queue/`; it never writes records.
-A claim is an atomic rename, `finalize` gates on `status: normalized` + lint-clean,
-and the verbs are exit-code-meaningful so a `/loop` session can drive them.
+The queue is external, untracked state under `queue/`; it never writes records or inspects
+them at enqueue time. `finalize` gates on the **pass gate** (3.1, §8.5): authored (the vouch,
+§4.1) + formed-where-declared (§4.4.6) + lint-clean. The verbs are exit-code-meaningful so a
+`/loop` session can drive them.
 """
 
 from __future__ import annotations
@@ -19,6 +20,10 @@ from corpus._cli import dispatch
 RID = "a1" * 32
 RID2 = "b2" * 32
 
+_FORM_OVERLAY = (
+    "applies_to:\n  schemes: [convtest]\nkind: interpretive\nform:\n  id: conversation\n"
+)
+
 
 def _corpus(tmp_path: Path) -> Path:
     root = tmp_path / "c"
@@ -28,20 +33,50 @@ def _corpus(tmp_path: Path) -> Path:
     return root
 
 
+def _declare_form_overlay(root: Path, schema_id: str = "conv-test") -> None:
+    """Author an origin overlay declaring `form: {id: conversation}` (no mapping — the
+    `declared_form_unmet` half of the pass gate only needs the id)."""
+    odir = root / "schema" / "origin"
+    odir.mkdir(parents=True, exist_ok=True)
+    (odir / f"{schema_id}.yaml").write_text(_FORM_OVERLAY, encoding="utf-8")
+    schemas.cache_clear()
+
+
 def _put(
-    root: Path, rid: str, *, status: str, description: str = "", entry: str | None = "Intro"
+    root: Path, rid: str, *,
+    title: str = "",
+    description: str = "",
+    entry: str | None = "Intro",
+    origin: bool = True,
+    schema_id: str | None = None,
+    section_form: str | None = None,
+    section_fields: dict | None = None,
 ) -> None:
+    """Build a fixture record. `title`/`description` set together is authored (spec §4.1);
+    `schema_id` (paired with `_declare_form_overlay`) declares a form; `section_form` stamps
+    a matching (or deliberately mismatched) form section so the "formed-where-declared" half
+    of the pass gate can be exercised in isolation. `section_fields` supplies the form
+    overlay's required envelope fields (e.g. `conversation`'s `participants:`) so a stamped
+    section can lint clean."""
     post = frontmatter.Post(
         content="", **records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
     )
     records.set_artifact_block(post, mime="text/plain")
-    records.append_origin_block(post, uri="file:///x.txt", snapshot="2026-06-05T00:00:00Z")
-    post.content = segments.emit(
-        [segments.Segment(atom="text", address="el=1", body="hello", entry=entry)]
-    )
-    post.metadata["status"] = status
-    if status == "normalized":
-        post.metadata["title"] = "T"
+    if origin:
+        records.append_origin_block(
+            post, uri="file:///x.txt", snapshot="2026-06-05T00:00:00Z", schema_id=schema_id
+        )
+    if section_form:
+        seg = segments.Segment(atom="text", address="turn=1", body="hello")
+        post.content = segments.emit(
+            [segments.Section(form=section_form, segments=[seg], extra=section_fields or {})]
+        )
+    else:
+        seg = segments.Segment(atom="text", address="el=1", body="hello", entry=entry)
+        post.content = segments.emit([seg])
+    if title:
+        post.metadata["title"] = title
+    if description:
         post.metadata["description"] = description
     records.dump(post, paths.record_path(root, rid))
 
@@ -49,7 +84,8 @@ def _put(
 # ---------- library: request / claim / settle ---------- #
 
 
-def test_enqueue_is_idempotent_and_status_aware(tmp_path):
+def test_enqueue_is_idempotent(tmp_path):
+    """Enqueue never inspects the record (§8.5) — no record even exists at this path."""
     root = _corpus(tmp_path)
     assert queue.enqueue(root, RID) == "requested"
     assert queue.enqueue(root, RID) == "already-requested"  # joins the pending request
@@ -109,7 +145,7 @@ def test_complete_fail_requeue_transitions(tmp_path):
 
 def test_queue_never_writes_records(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)
     before = paths.record_path(root, RID).read_text(encoding="utf-8")
     queue.enqueue(root, RID)
     queue.drain(root)
@@ -122,7 +158,7 @@ def test_queue_never_writes_records(tmp_path):
 
 def test_enqueue_then_drain_cli(tmp_path, capsys):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)
     assert dispatch(["enqueue", RID, "--corpus-root", str(root)]) == 0
     capsys.readouterr()
     assert dispatch(["drain", "--corpus-root", str(root)]) == 0
@@ -134,7 +170,7 @@ def test_enqueue_then_drain_cli(tmp_path, capsys):
 
 def test_drain_wait_claims_an_already_pending_request(tmp_path, capsys):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)
     queue.enqueue(root, RID)
     # A claimable request is returned immediately — --wait never sleeps when there's work.
     rc = dispatch(
@@ -156,7 +192,7 @@ def test_drain_wait_times_out_on_empty_queue(tmp_path, capsys):
 
 def test_drain_wait_picks_up_a_late_arrival(tmp_path, capsys):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)
 
     def _enqueue_soon() -> None:
         time.sleep(0.15)
@@ -177,14 +213,14 @@ def test_drain_wait_picks_up_a_late_arrival(tmp_path, capsys):
 
 def test_finalize_requires_a_claim(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="normalized", description="A summary.")
+    _put(root, RID, title="T", description="A summary.")
     rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
     assert rc != 0  # not claimed
 
 
-def test_finalize_refuses_unnormalized(tmp_path):
+def test_finalize_refuses_unauthored(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)  # no title/description → not authored
     queue.enqueue(root, RID)
     queue.drain(root)
     rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
@@ -192,9 +228,24 @@ def test_finalize_refuses_unnormalized(tmp_path):
     assert queue.state(root, RID)["state"] == "claimed"  # claim left intact
 
 
+def test_finalize_refuses_declared_form_without_section(tmp_path):
+    """Authored, lint-clean, but the origin declares a form (§4.4.6) that no section in the
+    content zone carries — the "formed-where-declared" half of the pass gate (§8.5)."""
+    root = _corpus(tmp_path)
+    _declare_form_overlay(root)
+    _put(root, RID, title="T", description="A summary.", schema_id="conv-test")
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
+    assert rc != 0
+    assert queue.state(root, RID)["state"] == "claimed"
+
+
 def test_finalize_refuses_on_blocking_lint(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="normalized", description="")  # empty desc → description-empty error
+    # Authored, and no form declared (formed-where-declared is vacuous) — but no origin block
+    # at all, an `origins-empty` lint ERROR (spec §4.3.1.2), so only the lint gate refuses.
+    _put(root, RID, title="T", description="A summary.", origin=False)
     queue.enqueue(root, RID)
     queue.drain(root)
     rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
@@ -204,7 +255,7 @@ def test_finalize_refuses_on_blocking_lint(tmp_path):
 
 def test_finalize_completes_a_clean_pass(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="normalized", description="A faithful summary.")
+    _put(root, RID, title="T", description="A faithful summary.")
     # Self-check: the fixture genuinely lints clean (no error-severity findings).
     post = records.load(paths.record_path(root, RID))
     blocks = segments.iter_blocks(post.content or "")
@@ -219,9 +270,25 @@ def test_finalize_completes_a_clean_pass(tmp_path):
     assert st["state"] == "idle" and st["result"]["outcome"] == "completed"
 
 
+def test_finalize_passes_formed_authored_clean(tmp_path):
+    """The full pass gate (§8.5): authored + formed-where-declared + lint-clean, together."""
+    root = _corpus(tmp_path)
+    _declare_form_overlay(root)
+    _put(
+        root, RID, title="T", description="A conversation record.", schema_id="conv-test",
+        section_form="conversation", section_fields={"participants": ["Andy <a1>"]},
+    )
+    post = records.load(paths.record_path(root, RID))
+    assert records.derived_state(post) == "formed"
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    assert dispatch(["finalize", RID, "--corpus-root", str(root)]) == 0
+    assert queue.state(root, RID)["result"]["outcome"] == "completed"
+
+
 def test_await_resolves_completed_then_failed(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="normalized", description="A summary.")
+    _put(root, RID, title="T", description="A summary.")
     queue.enqueue(root, RID)
     queue.drain(root)
     queue.complete(root, RID)
@@ -233,9 +300,23 @@ def test_await_resolves_completed_then_failed(tmp_path):
     assert dispatch(["await", RID, "--timeout", "5", "--corpus-root", str(root)]) != 0
 
 
+def test_await_record_state_fallback_uses_pass_gate(tmp_path):
+    """Absent a recorded outcome, `await` falls back to the record-state predicates: authored
+    + formed-where-declared (no lint in the poll loop, §8.5)."""
+    root = _corpus(tmp_path)
+    _put(root, RID, title="T", description="A summary.")
+    assert dispatch(["await", RID, "--timeout", "1", "--corpus-root", str(root)]) == 0
+
+    unauthored = "c3" * 32
+    _put(root, unauthored)
+    rc = dispatch(["await", unauthored, "--timeout", "0.2", "--interval", "0.05",
+                   "--corpus-root", str(root)])
+    assert rc != 0
+
+
 def test_await_times_out_while_pending(tmp_path):
     root = _corpus(tmp_path)
-    _put(root, RID, status="draft")
+    _put(root, RID)
     queue.enqueue(root, RID)  # requested → pending, never settles
     rc = dispatch(
         ["await", RID, "--timeout", "0.2", "--interval", "0.05", "--corpus-root", str(root)]

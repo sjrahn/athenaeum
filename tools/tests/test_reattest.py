@@ -34,7 +34,7 @@ def _ingest_zip(root: Path) -> str:
     src.unlink()
     post = frontmatter.Post("")
     post.metadata.update(
-        {"id": rid, "title": "", "description": "", "status": "stub",
+        {"id": rid, "title": "", "description": "",
          "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"}
     )
     records.set_artifact_block(post, mime="application/zip", fields={})
@@ -59,7 +59,8 @@ def test_reattest_derives_embeds_on_a_stub(tmp_path):
     embeds = list(records.iter_embed_blocks(post))
     assert len(embeds) == 2  # the zip's two members, attested
     assert {e["address"] for e in embeds} == {"path=a/one.txt", "path=b/two.txt"}
-    assert post.metadata["status"] == "stub"  # attestation never flips status
+    assert not records.is_authored(post)        # attestation never authors the vouch
+    assert records.derived_state(post) == "proxy"  # embeds don't count as a stored rendering
     assert (post.content or "") == ""          # a manifest has no body
     # a touch was appended for the real change
     touch = post.metadata["touch"]
@@ -86,7 +87,6 @@ def test_reattest_preserves_authored_layer(tmp_path):
     # Attest, then simulate normalize: author an embed description + editorial fields + body.
     rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
     post = records.load(rf)
-    post.metadata["status"] = "normalized"
     post.metadata["title"] = "My Bundle"
     post.metadata["description"] = "An authored summary."
     post.metadata["_embeds"][0]["fields"]["description"] = "the first member, described"
@@ -114,7 +114,7 @@ def test_reattest_cli_dry_run_writes_nothing(tmp_path):
         target = None
         mime = None
         host = None
-        status = "any"
+        state = "any"
         dry_run = True
         fingerprint = None
         corpus_root = str(root)

@@ -1,7 +1,7 @@
 """The re-stub operation per spec/corpus.md §8.4.
 
-Returns a record to `status: stub`, ready for a fresh draft pass. Everything
-**derived from a schema decision** is discarded. Everything **tied to the bytes
+Returns a record to its **attested baseline** (spec §4.1), ready for fresh attestation.
+Everything **derived from a schema decision** is discarded. Everything **tied to the bytes
 themselves or to provenance** is preserved.
 
 What survives:
@@ -17,10 +17,11 @@ What survives:
 
 What is reset:
 
-- `description` → empty; `canonical`; `perceptual` (record-scope).
+- `title`, `description` → empty; `canonical`; `perceptual` (record-scope).
 - The artifact block's body fields; all classify blocks; all embed blocks; all
   section/segment blocks; all issue blocks.
-- `status` → `stub`; body content zone → empty.
+- Body content zone → empty. *(3.1)* No `status` to reset — the record's derived state
+  (§4.1) falls back to `proxy` on its own once the vouch and any rendering are cleared.
 
 This port supports only the spec-v1.0 → spec-v1.0 re-stub. The reference's
 v0.2/v0.3 migration paths (CarbonAi-specific debt) are not carried.

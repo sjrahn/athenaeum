@@ -77,13 +77,6 @@ _HASH_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{32,128}$", re.IGNORECASE)
 _PERCEPTUAL_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{16,128}$", re.IGNORECASE)
 _BLAKE3_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_ATOMS = {"text", "image", "audio", "video"}
-# 3.0 two-status lifecycle (§4.1): the canonical statuses are `stub` and `normalized`.
-# A 2.x `status: draft` is TOLERATED — it reads as a stub carrying a grandfathered
-# materialized derivation (§12.18 step 3, the lazy path), superseded by the record's next
-# pass. The fleet swept draft→stub on 2026-07-13 (status-sweep-30); the tolerance stays
-# normative per the §8.1 tombstone for any stray 2.x `draft` still encountered.
-_VALID_STATUSES = {"stub", "normalized"}
-_TOLERATED_STATUSES = {"draft"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}
 # Universal FALLBACK vocab for issue severity/resolution. The authoritative set is the
 # `enum:` declared on the layered `context/issue` schema (a corpus may extend it); these
@@ -113,30 +106,40 @@ def _rule_id_format(post, blocks, root) -> Iterator[Finding]:
         )
 
 
-def _rule_status_invalid(post, blocks, root) -> Iterator[Finding]:
-    s = post.metadata.get("status", "")
-    # `draft` is tolerated (grandfathered stub, §12.18 step 3) — not a finding.
-    if s in _VALID_STATUSES or s in _TOLERATED_STATUSES:
+def _rule_legacy_status(post, blocks, root) -> Iterator[Finding]:
+    """A record still carrying a frontmatter `status:` key (spec §4.1, §12.19 — retired 3.1).
+    Read-tolerant on parse (the key survives in `post.metadata` for exactly this rule to see)
+    but never re-emitted: `records.dumps` drops it on the record's next write, so a stray
+    is transitional — the migration sweep clears the fleet; after it, this rule catches any
+    record that missed the sweep or was hand-edited back in."""
+    if "status" not in post.metadata:
         return
     yield Finding(
-        rule_id="status-invalid",
-        severity="error",
+        rule_id="frontmatter-legacy-status",
+        severity="info",
         message=(
-            f"`status` is {s!r}; must be one of {sorted(_VALID_STATUSES)} "
-            f"(spec §4.1; a 2.x `draft` is tolerated as a grandfathered stub)."
+            f"frontmatter carries a legacy `status: {post.metadata.get('status')!r}` key "
+            f"(spec §4.1) — a 3.0 field, ignored and dropped on the record's next write."
         ),
     )
 
 
-def _rule_description_format(post, blocks, root) -> Iterator[Finding]:
-    """`description` is empty until normalize, then 1–3 sentences. Cap at ~600 chars."""
-    status = post.metadata.get("status", "")
+def _rule_vouch_half_authored(post, blocks, root) -> Iterator[Finding]:
+    """The vouch (spec §4.1) is `title` AND `description` together — a full vouch is both,
+    so a record carrying exactly one is a half-authored pass (`is_authored` is deliberately
+    strict-AND; this is its diagnostic complement). `description` is separately capped at
+    ~600 chars (1–3 sentences)."""
+    title = (post.metadata.get("title") or "").strip()
     desc = (post.metadata.get("description") or "").strip()
-    if status == "normalized" and not desc:
+    if bool(title) != bool(desc):
         yield Finding(
-            rule_id="description-empty",
-            severity="error",
-            message="`description` is empty on a normalized record (spec §4.2).",
+            rule_id="vouch-half-authored",
+            severity="warning",
+            message=(
+                f"the vouch is half-authored: `{'title' if title else 'description'}` is set "
+                f"but `{'description' if title else 'title'}` is empty — a full vouch (spec "
+                f"§4.1) carries both."
+            ),
         )
     if len(desc) > 600:
         yield Finding(
@@ -715,7 +718,12 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
     """Body ⟺ lossless (spec §4.3.2.3). A `text` segment whose atomic overlay opts out of
     lossless (`enables_lossless: false`, e.g. `text/data-table-dynamic`) is a body-empty
     marker — it must carry a `description`, not a transcribed body."""
-    status = post.metadata.get("status", "")
+    # `is_authored` (not `has_stored_rendering`) is the honest severity signal here: by the
+    # time this loop reaches a segment at all, the record necessarily has a stored rendering
+    # (the segment IS one) — `has_stored_rendering` would be tautologically true and collapse
+    # the info/warning distinction. The vouch's presence is what actually escalates urgency:
+    # a still-unauthored pass is expected to have gaps (info); an authored one shouldn't (warning).
+    authored = _records.is_authored(post)
     for label, seg in _iter_segments_labelled(blocks):
         if seg.atom != "text" or not seg.overlay:
             continue
@@ -742,7 +750,7 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
         elif not desc:
             yield Finding(
                 rule_id="segment-description-required",
-                severity="warning" if status == "normalized" else "info",
+                severity="warning" if authored else "info",
                 message=(
                     f"{label} (`{seg.overlay}`) is a non-lossless body-empty marker with no "
                     f"`description` — describe what the region is/computes on the segment header."
@@ -819,9 +827,13 @@ _EMBED_ADDRESS_KEYS = {"el", "time", "page", "frame", "time_range"}
 
 
 def _rule_embed_description_empty_on_normalized(post, blocks, root) -> Iterator[Finding]:
-    """A normalized record whose image/audio/video embed has no `description` is missing the
-    normalizer's whole-asset summary (info — persist an issue if intentionally undescribed)."""
-    if post.metadata.get("status") != "normalized":
+    """An embed carried by a record past the attested-only baseline — authored (the vouch is
+    written) or already rendering stored content — whose image/audio/video embed has no
+    `description` is missing the normalizer's whole-asset summary (info — persist an issue
+    if intentionally undescribed). Unlike the 3.0 `status == "normalized"` gate (which implied
+    BOTH halves), either half alone is enough signal that this embed should have been looked
+    at by now."""
+    if not (_records.is_authored(post) or _records.has_stored_rendering(post)):
         return
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         top_type = str(eb.get("media_type") or "").split("/", 1)[0]
@@ -835,8 +847,9 @@ def _rule_embed_description_empty_on_normalized(post, blocks, root) -> Iterator[
             severity="info",
             message=(
                 f"embed {i} (`{eb.get('media_type')}` at `{_addr_str(eb.get('address'))}`) carries "
-                f"no `description` on a normalized record. Populate the whole-asset summary, or "
-                f"persist an issue if the asset is intentionally undescribed (chrome, logo)."
+                f"no `description` on a record past the attested-only baseline. Populate the "
+                f"whole-asset summary, or persist an issue if the asset is intentionally "
+                f"undescribed (chrome, logo)."
             ),
             address=_addr_str(eb.get("address")),
             fields={"media_type": eb.get("media_type")},
@@ -1002,7 +1015,13 @@ _KNOWN_COMMENT_KEYWORDS = frozenset(
 
 
 def _rule_body_empty_normalized(post, blocks, root) -> Iterator[Finding]:
-    if post.metadata.get("status") != "normalized" or (post.content or "").strip():
+    # The 3.0 gate was `status == "normalized"` (formed + authored). `has_stored_rendering`
+    # collapses out of its 3.1 successor: it can never be true in the same breath as an empty
+    # content zone, so the honest gate is `is_authored` alone. Note this now also advises on a
+    # legitimate 3.1 state — an authored FORMLESS proxy (§4.1) genuinely has no content zone —
+    # so a hit here is not necessarily wrong, just worth a look; severity stays "warning", not
+    # "error", and the pass gate (§8.5) doesn't block on it.
+    if not _records.is_authored(post) or (post.content or "").strip():
         return
     # A manifest record (a self_contained container recorded as embeds — e.g. a kept-whole
     # zip) legitimately has an empty content zone: the members are verbatim, resolvable
@@ -1013,7 +1032,7 @@ def _rule_body_empty_normalized(post, blocks, root) -> Iterator[Finding]:
     yield Finding(
         rule_id="body-empty-normalized",
         severity="warning",
-        message="content zone is empty on a normalized record.",
+        message="content zone is empty on an authored record with no embeds.",
     )
 
 
@@ -1224,8 +1243,9 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
 
 _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("id-format", _rule_id_format),
-    ("status-invalid", _rule_status_invalid),
-    ("description", _rule_description_format),
+    ("frontmatter-legacy-status", _rule_legacy_status),
+    ("vouch-half-authored", _rule_vouch_half_authored),
+    ("description-too-long", _rule_vouch_half_authored),
     ("transport-format", _rule_transport_format),
     ("canonical-format", _rule_canonical_format),
     ("perceptual-format", _rule_perceptual_format),
@@ -1273,8 +1293,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal
 # frontmatter/structure checks (athenaeum's idiomatic rule_ids).
 DIAGNOSE_QUICK_RULES: tuple[str, ...] = (
-    "description",
-    "status-invalid",
+    "vouch-half-authored",
+    "frontmatter-legacy-status",
     "transport-format",
     "canonical-format",
     "touch-format",

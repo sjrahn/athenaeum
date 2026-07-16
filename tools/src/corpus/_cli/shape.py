@@ -5,10 +5,11 @@ normalize pass**. For each target it loads the record, finds its declared form (
 overlay's `form:` mapping, §7.2), and — when a registered shaper applies — builds the authored
 content zone through `recordbuild` (grammar-validated), writing the record back in place.
 
-`shape_record` appends the `shape.<form-id>` touch and does **NOT** flip status: the interpretive
-normalize pass owns the `stub → normalized` transition once the editorial work (title,
-description, per-asset descriptions) is done (§12.5). A record whose origin declares no form, or
-whose form has no registered shaper, is **skipped** — not an error.
+`shape_record` appends the `shape.<form-id>` touch and does **NOT** author the vouch: the
+interpretive normalize pass owns the editorial work (title, description, per-asset
+descriptions) that completes the record — the queue's `finalize` gates on both halves
+together (authored + formed-where-declared + lint clean, §8.5). A record whose origin
+declares no form, or whose form has no registered shaper, is **skipped** — not an error.
 
 Accepts multiple record ids (hash / hex prefix / path), and `-` to read whitespace/newline-
 separated ids from stdin (fleet driving). Exits nonzero only on a hard error — a missing record

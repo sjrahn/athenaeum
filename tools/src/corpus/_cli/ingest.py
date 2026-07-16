@@ -156,8 +156,9 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
 def _attest_stub(post: frontmatter.Post, corpus_root: Path, record_id: str) -> None:
     """Attest byte-facts onto a fresh stub at ingest (§8.1) via the shared `derive.attest`.
     Best-effort — a type with no registered drafter or unreadable bytes leaves a bare stub
-    (attestable later with `corpus reattest`). The stub's `stub` status and empty content
-    zone are unchanged (the body is derived on demand, §6.2)."""
+    (attestable later with `corpus reattest`). The stub's empty content zone is unchanged
+    (the body is derived on demand, §6.2) — it stays the artifact's proxy (§4.1) until a form
+    is stamped or the vouch is authored."""
     import logging
 
     from corpus import derive

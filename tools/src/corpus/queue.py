@@ -1,9 +1,11 @@
 """The normalization queue (spec §8.5).
 
 External, untracked request/claim state that lets any actor request a
-(re-)normalization pass for a record and await its outcome. The queue **never
-writes records** — `status`, `touch[]`, and body are owned by ingest, draft, and
-the normalizer; queue operations are read-only on records. State lives under
+(re-)normalization pass for a record and await its outcome. The queue is **standing
+demand, never a backlog** (§8.5, 3.1): an entry exists because some consumer wants a pass,
+not because the record owes one. The queue **never writes records** — `touch[]` and body
+are owned by ingest and the normalize pass; queue operations are read-only on records. State
+lives under
 `<root>/queue/` as per-id marker files:
 
     <id>.req      pending request          (idle → requested)
@@ -47,7 +49,7 @@ DEFAULT_LEASE_SECONDS = 1800
 
 # A settled `.result` older than this (days) is prunable. A `.result` is
 # coordination state for a requester's `await`, not history — the record's own
-# `status`/`touch[]` is durable — so once this grace window passes, any awaiter is
+# `touch[]` is durable — so once this grace window passes, any awaiter is
 # long done and the marker is spent. A week is generously beyond any await.
 DEFAULT_PRUNE_DAYS = 7
 
@@ -260,7 +262,7 @@ def entries(root: Path) -> list[dict]:
 def prune(root: Path, older_than_days: float = DEFAULT_PRUNE_DAYS) -> dict[str, list[str]]:
     """Remove settled `.result` markers (and orphaned `.tmp.*` write scratch) older
     than `older_than_days`. A `.result` is coordination state for a requester's
-    `await`, not history (the record's `status`/`touch[]` is durable), so an aged one
+    `await`, not history (the record's `touch[]` is durable), so an aged one
     is spent. Only `.result`/`.tmp.*` are touched — live `.req`/`.claim` entries are
     never removed, so this never races an in-flight pass. Idempotent.
 

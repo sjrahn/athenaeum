@@ -20,12 +20,14 @@ def _root(tmp_path: Path) -> Path:
     return root
 
 
-def _post(status: str = "stub") -> frontmatter.Post:
+def _post(legacy_status: str | None = None) -> frontmatter.Post:
     post = frontmatter.Post("")
     post.metadata.update(
-        {"id": "a" * 64, "title": "", "description": "d", "status": status,
+        {"id": "a" * 64, "title": "", "description": "d",
          "touch": "corpus.ingest@0.1.0"}
     )
+    if legacy_status is not None:
+        post.metadata["status"] = legacy_status
     return post
 
 
@@ -33,21 +35,24 @@ def _fired(post, root):
     return {f.rule_id for f in lint.lint(post, segments.iter_blocks(post.content or ""), root)}
 
 
-# ---------- two-status lifecycle (§4.1) ---------- #
+# ---------- derived-state lifecycle (§4.1) ---------- #
 
 
-def test_draft_status_tolerated():
-    post = _post("draft")
+def test_no_legacy_status_key_not_flagged():
+    post = _post()
+    assert "status" not in post.metadata
     assert not any(
-        f.rule_id == "status-invalid"
+        f.rule_id == "frontmatter-legacy-status"
         for f in lint.lint(post, [], Path("/nonexistent"))
     )
 
 
-def test_unknown_status_flagged():
+def test_legacy_status_key_flagged_regardless_of_value():
+    """Any stray `status:` value — even one that was never a valid 3.0 status — is flagged
+    the same way: the field itself is retired (spec §4.1), not its value."""
     post = _post("bogus")
     fired = {f.rule_id for f in lint.lint(post, [], Path("/nonexistent"))}
-    assert "status-invalid" in fired
+    assert "frontmatter-legacy-status" in fired
 
 
 # ---------- byte-mark (§4.3.2.3) ---------- #

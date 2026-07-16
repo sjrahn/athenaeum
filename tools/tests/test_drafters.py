@@ -38,7 +38,6 @@ def _ingest(corpus_root: Path, fixture: str, mime: str, ext: str) -> str:
         {
             "id": rid,
             "description": "",
-            "status": "stub",
             "transport": f"sha256:{h['sha256']}",
             "touch": "corpus.ingest@0.1.0",
         }
@@ -65,7 +64,6 @@ def _ingest_html_str(corpus_root: Path, html: str, *, uri: str, name: str) -> st
         {
             "id": rid,
             "description": "",
-            "status": "stub",
             "transport": f"sha256:{h['sha256']}",
             "touch": "corpus.ingest@0.1.0",
         }
@@ -273,7 +271,7 @@ def test_draft_cli_pipeline_against_image(tmp_path):
     assert rc == 0
 
     post = records.load(paths.record_path(root, rid))
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "rendered"  # stored content, no governing form
     assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]
@@ -582,7 +580,7 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
     assert draft_for_test(root, rid) == 0
 
     post = records.load(paths.record_path(root, rid))
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "rendered"  # stored content, no governing form
     assert "canonical" not in post.metadata  # canonical persistence disabled (not useful yet)
     chain = post.metadata.get("touch", [])
     chain_list = chain if isinstance(chain, list) else [chain]

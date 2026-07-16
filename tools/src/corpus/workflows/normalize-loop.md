@@ -9,7 +9,7 @@ The verb cycle each iteration:
     enqueue   request a (re-)normalization pass for a record (the requester side)
     drain     claim the next pending record — prints its id (the consumer/loop side)
     guidance  read the merged overlay guidance for the claimed record
-    finalize  close the pass — gated on status: normalized AND lint-clean
+    finalize  close the pass — gated on the pass gate: authored + formed-where-declared + lint-clean (§8.5)
     release   return the claim — bare re-queues it; --failed records a failure
     await     (requester side) block until a record's pass settles, resolve by exit code
 
@@ -22,7 +22,7 @@ A timer (e.g. cron) wakes the loop; it drains until the queue is empty, then sle
     while id=$(corpus drain --by "$SESSION"); do
         corpus guidance "$id"
         # ...normalize $id in-session: title, description, segment/embed descriptions,
-        #    re-segmentation; set status: normalized; recompile...
+        #    re-segmentation; author the vouch (title + description); recompile...
         corpus finalize "$id" || corpus release "$id" --failed "<reason>"
     done
 
@@ -40,9 +40,9 @@ Prefer this mode whenever a long-lived process or event runner is available: nea
 
 ## Results
 
-A request and its claim are transient — each transition supersedes the prior state. A **settled** pass records an outcome so a requester's `corpus await <id>` can resolve completed-vs-failed, and tell a *re-normalization* apart from an earlier pass (`status` alone cannot — a re-normalized record is still `status: normalized`). That outcome is **coordination state, not history**: the record's own `status` and `touch[]` are the durable trail.
+A request and its claim are transient — each transition supersedes the prior state. A **settled** pass records an outcome so a requester's `corpus await <id>` can resolve completed-vs-failed, and tell a *re-normalization* apart from an earlier pass (the record alone cannot — only its touch chain grows). That outcome is **coordination state, not history**: the record's own `touch[]` is the durable trail.
 
-Outcomes are **never discarded at loop end**. The loop (consumer) and a requester (`enqueue` → `await`) are decoupled and asynchronous; a requester may `await` after a loop iteration ends, and deleting on loop end would race it — dropping the awaiter to the `status` fallback that cannot distinguish a re-normalization. Instead, GC by **age**:
+Outcomes are **never discarded at loop end**. The loop (consumer) and a requester (`enqueue` → `await`) are decoupled and asynchronous; a requester may `await` after a loop iteration ends, and deleting on loop end would race it — dropping the awaiter to the record-state fallback that cannot distinguish a re-normalization. Instead, GC by **age**:
 
     corpus queue --prune                 # remove settled outcomes older than the grace window (default 7 d)
     corpus queue --prune --older-than 0  # remove all settled outcomes now

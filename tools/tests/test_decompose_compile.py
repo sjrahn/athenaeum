@@ -109,7 +109,6 @@ def test_decompose_compile_preserves_frontmatter_title(tmp_path):
     rec = _make_golden_record_file(root)
     # Promote the golden to a normalized record carrying a real frontmatter title.
     post = records.load(rec)
-    post.metadata["status"] = "normalized"
     post.metadata["title"] = "Power Brake Assist — Parts and Labor"
     records.dump(post, rec)
     original_text = rec.read_text("utf-8")
@@ -133,12 +132,35 @@ def test_decompose_compile_preserves_frontmatter_title(tmp_path):
     assert records.title_for(records.load(rec)) == "Power Brake Assist — Parts and Labor"
 
 
-def test_status_is_authored_on_the_manifest_record_line(tmp_path):
-    """Status lives on the manifest `record status=` line (the advertised, editable place),
-    NOT in meta.yaml — so editing it there is no longer a silent no-op that costs a compile
-    pass to discover."""
+def test_manifest_record_line_never_emits_status(tmp_path):
+    """*(3.1, §4.1/§12.19)* `status` is retired — `write_workdir` never emits a `status=` key
+    on the manifest `record` line (or anywhere else), regardless of what a legacy record's
+    frontmatter carried on read."""
     root = _make_corpus(tmp_path)
-    rec = _make_golden_record_file(root)  # status: draft
+    rec = _make_golden_record_file(root)  # legacy fixture in-memory carries status: draft
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    post = records.load(rec)
+    assert "status" not in post.metadata  # dumps() already dropped it when the fixture wrote
+    blocks = segments.iter_blocks(post.content or "")
+    recordbuild.write_workdir(post, blocks, workdir, source=str(rec), orig_sha256="sha256:x")
+
+    manifest_path = workdir / "manifest.corpus"
+    meta_text = (workdir / "meta.yaml").read_text("utf-8")
+    record_line = next(
+        line for line in manifest_path.read_text("utf-8").splitlines()
+        if line.startswith("record ")
+    )
+    assert "status=" not in record_line
+    assert "status:" not in meta_text
+
+
+def test_manifest_record_line_tolerates_and_ignores_legacy_status(tmp_path):
+    """A hand-edited (or pre-3.1) manifest's `record id=<hex> status=<s>` line reads
+    parse-tolerantly — `status=` is accepted and silently ignored, never landing on the
+    compiled record's metadata."""
+    root = _make_corpus(tmp_path)
+    rec = _make_golden_record_file(root)
     workdir = tmp_path / "work"
     workdir.mkdir()
     post = records.load(rec)
@@ -146,17 +168,15 @@ def test_status_is_authored_on_the_manifest_record_line(tmp_path):
     recordbuild.write_workdir(post, blocks, workdir, source=str(rec), orig_sha256="sha256:x")
 
     manifest_path = workdir / "manifest.corpus"
-    meta_text = (workdir / "meta.yaml").read_text("utf-8")
-    assert "status=draft" in manifest_path.read_text("utf-8")  # on the record line
-    assert "status:" not in meta_text  # and NOT duplicated in meta.yaml
-
-    # Editing the manifest line is now what changes status on compile.
+    rid = post.metadata["id"]
     manifest_path.write_text(
-        manifest_path.read_text("utf-8").replace("status=draft", "status=normalized"),
+        manifest_path.read_text("utf-8").replace(
+            f"record id={rid}", f"record id={rid} status=normalized"
+        ),
         encoding="utf-8",
     )
     rebuilt = recordbuild.read_workdir(workdir, root)
-    assert rebuilt.metadata.get("status") == "normalized"
+    assert "status" not in rebuilt.metadata
 
 
 def test_multiline_description_round_trips_as_block_literal(tmp_path):
@@ -221,7 +241,7 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     assert len(origins) == 1
     assert origins[0]["fields"]["uri"] == "https://example.com/g.pdf"
     # Resets:
-    assert re_loaded.metadata["status"] == "stub"
+    assert "status" not in re_loaded.metadata
     assert re_loaded.metadata["description"] == ""
     # Artifact body fields (incl. the namespaced `title` candidate) reset — re-derived
     # at the next draft; so there's no title candidate and `title_for` is empty.

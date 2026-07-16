@@ -7,12 +7,11 @@ layer** (the stored content zone, embed/segment descriptions, editorial fields, 
 issues). It is the deterministic recompile of just the attested facts: `git diff records/`
 surfaces exactly which records a schema / overlay / tooling change affected.
 
-Unlike the 2.x `corpus redraft` (which re-derived the whole record and so refused
-`normalized` records), re-attest preserves the authored layer, so it needs no
-normalized-refusal guard and sweeps every status by default. **Idempotent**: a record whose
-attested facts re-derive byte-for-byte is not rewritten and appends no touch (the pass only
-records itself when it actually changed something). `--dry-run` reports the set without
-writing.
+Unlike the 2.x `corpus redraft` (which re-derived the whole record and so refused an
+authored record), re-attest preserves the authored layer, so it needs no authored-refusal
+guard and sweeps every derived state by default. **Idempotent**: a record whose attested
+facts re-derive byte-for-byte is not rewritten and appends no touch (the pass only records
+itself when it actually changed something). `--dry-run` reports the set without writing.
 
 Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest*
 (the normalize edit substrate) rather than from the source *artifact*.
@@ -69,10 +68,13 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--host", default=None, help="only records with an origin URI on this host (subdomains included)."
     )
     parser.add_argument(
-        "--status",
-        choices=("stub", "draft", "normalized", "any"),
+        "--state",
+        choices=("proxy", "rendered", "formed", "any"),
         default="any",
-        help="which record statuses to consider (default: any — the attested layer is status-independent).",
+        help=(
+            "which derived states (spec §4.1) to consider (default: any — the attested "
+            "layer is state-independent)."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -147,8 +149,7 @@ def run(args: argparse.Namespace) -> int:
 
     for rf in candidates:
         post = records.load(rf)
-        status = str(post.metadata.get("status") or "").lower()
-        if args.status != "any" and status != args.status:
+        if args.state != "any" and records.derived_state(post) != args.state:
             continue
         if args.mime and records.media_type_for(post) != args.mime:
             continue

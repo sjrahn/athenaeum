@@ -72,10 +72,12 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     assert segment_pos < issue_pos
 
     loaded = records.load(p)
-    # Core frontmatter preserved.
-    for k in ("id", "description", "status", "transport"):
+    # Core frontmatter preserved. `status` is NOT among these — dumps() never emits it
+    # (spec §4.1, §12.19), so a round-tripped record carries no status line to read back.
+    for k in ("id", "description", "transport"):
         assert loaded.metadata[k] == post.metadata[k]
     assert loaded.metadata["touch"] == post.metadata["touch"]
+    assert "status" not in loaded.metadata
 
     # Metadata-zone blocks preserved.
     assert records.media_type_for(loaded) == "application/pdf"
@@ -254,9 +256,25 @@ def test_dump_emits_canonical_frontmatter_field_order(tmp_path):
     post, p = _make_golden(tmp_path)
     records.dump(post, p)
     raw = p.read_text("utf-8")
-    # The 8 core fields appear in spec order before the closing `---`.
+    # The core fields appear in spec order before the closing `---`. `status` is retired
+    # (§4.1, §12.19) — never emitted, so it's not one of them.
     pre = raw.split("---", 2)[1]
     indices = []
-    for key in ["id", "description", "status", "transport", "touch"]:
+    for key in ["id", "description", "transport", "touch"]:
         indices.append(pre.index(f"{key}:"))
     assert indices == sorted(indices)
+
+
+def test_dump_never_emits_legacy_status(tmp_path):
+    """A record parsed with a legacy `status:` key reads tolerantly (it survives in
+    `post.metadata` for lint's `frontmatter-legacy-status` rule to see) but `dumps()` never
+    re-emits it — any write drops it (spec §4.1, §12.19)."""
+    post, p = _make_golden(tmp_path)
+    assert post.metadata["status"] == "draft"  # the fixture carries a legacy status key
+
+    text = records.dumps(post)
+    assert "status:" not in text.split("---", 2)[1]
+
+    records.dump(post, p)
+    reloaded = records.load(p)
+    assert "status" not in reloaded.metadata

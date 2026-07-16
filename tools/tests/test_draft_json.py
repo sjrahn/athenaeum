@@ -33,7 +33,6 @@ def _ingest_json(corpus_root: Path, text: str, name: str = "doc") -> str:
         {
             "id": rid,
             "description": "",
-            "status": "stub",
             "transport": f"sha256:{h['sha256']}",
             "touch": "corpus.ingest@0.1.0",
         }
@@ -60,7 +59,7 @@ def test_json_array_drafts_to_one_verbatim_code_segment(tmp_path: Path) -> None:
     rid = _ingest_json(root, text)
     post = _draft(root, rid)
 
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "rendered"  # stored content, no governing form
     art = records.artifact_block(post)
     assert art["fields"]["json_root"] == "array"
     assert art["fields"]["json_top_count"] == 2

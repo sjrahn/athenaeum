@@ -225,6 +225,5 @@ def save_regions(
         "segment_count": _count_segments(merged),
         "bbox_segment_count": len(new_segments),
         "addresses": addresses,
-        "status": post.metadata.get("status"),
         "touch": touches.touch_list(post),
     }

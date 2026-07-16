@@ -22,7 +22,7 @@ Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
 
 Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 
-    record  id=<hex> status=<s>
+    record  id=<hex>
     embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]
     section addr=<a> [entry="..."] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [perceptual=..] [k=v ...]
@@ -31,6 +31,11 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 `seg` enforces body⟺lossless (spec §4.3.2.2): a `body=` ref is permitted only for
 a lossless atom/overlay; `image` / `audio` / `video` and a text overlay declaring
 `enables_lossless: false` take `desc=` only.
+
+*(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19). A legacy `record
+id=<hex> status=<s>` line reads parse-tolerantly (the `status=` key is accepted and ignored)
+but `write_workdir` never emits one — a record's state is derived, never authored on the
+manifest line.
 """
 
 from __future__ import annotations
@@ -56,7 +61,6 @@ _CORE = (
     "id",
     "title",
     "description",
-    "status",
     "transport",
     "canonical",
     "perceptual",
@@ -69,7 +73,7 @@ _CORE = (
 _MANIFEST_HEADER = [
     "# manifest.corpus — one op per line; `#` comments; shlex-tokenised.",
     "# Grammar:",
-    "#   record  id=<hex> status=<stub|normalized>",
+    "#   record  id=<hex>",
     "#   embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]",
     "#   section [form=<form-id>] [addr=<a>] [entry=\"...\"] [desc=@desc/..] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [k=v ...]",
@@ -78,7 +82,7 @@ _MANIFEST_HEADER = [
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
     "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
-    "# status is set on the `record` line above (authoritative) — it is NOT in meta.yaml.",
+    "# record state is derived (spec §4.1), never authored — no `status=` on the record line.",
     "# Spec §4.3: embed lives in the METADATA zone (reconciliation #1 vs the v0.x reference).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
     "#   text/data-table, text/transcript, …). image/audio/video and non-lossless text",
@@ -480,12 +484,7 @@ def write_workdir(
     (out / "desc").mkdir(parents=True, exist_ok=True)
 
     meta = {
-        # `status` is authored on the manifest `record` line (the editable, advertised
-        # place); duplicating it here would be a confusing second source of truth and an
-        # edit there would be silently ignored. So it lives in the manifest, not meta.yaml.
-        "frontmatter": {
-            k: post.metadata[k] for k in _CORE if k in post.metadata and k != "status"
-        },
+        "frontmatter": {k: post.metadata[k] for k in _CORE if k in post.metadata},
         "artifact": post.metadata.get("_artifact"),
         "origins": post.metadata.get("_origins") or [],
         "classifies": post.metadata.get("_classifies") or [],
@@ -515,9 +514,9 @@ def write_workdir(
 
     derived_header = (
         [
-            f"# BODY DERIVED at decompose time by the `{derived_body}` op (§6.2) — this stub",
-            "#   stores no body. Editing + `corpus compile` here is AUTHORING the record's form,",
-            "#   NOT round-tripping stored bytes. The compiled record's status/touch are yours to set.",
+            f"# BODY DERIVED at decompose time by the `{derived_body}` op (§6.2) — this record",
+            "#   stores no rendering. Editing + `corpus compile` here is AUTHORING the record's",
+            "#   form, NOT round-tripping stored bytes. The compiled record's touch is yours to set.",
         ]
         if derived_body
         else []
@@ -525,7 +524,7 @@ def write_workdir(
     lines: list[str] = [
         *_MANIFEST_HEADER,
         *derived_header,
-        f"record id={post.metadata.get('id', '')} status={post.metadata.get('status', '')}",
+        f"record id={post.metadata.get('id', '')}",
         "",
     ]
 
@@ -660,8 +659,8 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 kv = _kv(toks[1:])
                 if meta_id and kv.get("id") and kv["id"] != meta_id:
                     raise ValueError("record id disagrees with meta.yaml")
-                if kv.get("status"):  # authoritative — the manifest line owns status
-                    b.post.metadata["status"] = kv["status"]
+                # `status=` on a legacy manifest line is parse-tolerated and ignored — spec
+                # §4.1 retires the field; a record's state is derived, never authored here.
                 seen_record = True
                 continue
             if not seen_record:

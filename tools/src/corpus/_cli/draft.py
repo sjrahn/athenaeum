@@ -6,11 +6,12 @@ derivation op**, body-writing to the normalize pass. The `run()` here is a signp
 errors with those pointers.
 
 `derive_record` — the transitional whole-record re-derivation (attest + store the mechanical
-body on a `status: stub` record) — survives as the shared core `corpus redraft` still calls;
-it runs the drafter through `corpus.derive.build_content_zone` and stores the body a 3.0
-record would derive on demand. In 3.0 a re-derived mechanical body on a record is exactly the
-grandfathered shape: a stub carrying a materialized derivation (§12.18 step 3), superseded by
-the record's next pass. It is not exposed as a CLI verb.
+body on a record with no stored rendering) — survives as the shared core `redraft_record`
+(the test-helper successor of `corpus redraft`, §12.19) still calls; it runs the drafter
+through `corpus.derive.build_content_zone` and stores the body a 3.0 record would derive on
+demand. A re-derived mechanical body on a record with no governing form is exactly the
+grandfathered shape (§4.1's `rendered` state — §12.18 step 3), superseded by the record's next
+pass. It is not exposed as a CLI verb.
 """
 
 from __future__ import annotations
@@ -30,11 +31,12 @@ from corpus.derive import DeriveError, build_content_zone
 from corpus.derive import apply_drafter_result as _apply_drafter_result
 
 # `corpus draft` is the transitional (2.x-shape) verb: it applies the drafter's attested
-# facts AND stores the derived body, leaving the record at `status: stub`. In 3.0 those split
+# facts AND stores the derived body, leaving the record formless (§4.1). In 3.0 those split
 # — ingest attests, the `body` op derives, normalize authors — but the stage is retired lazily
-# (the grandfathered-body path, §12.18 step 3): a re-derived mechanical body is exactly a stub
-# carrying a materialized derivation. The shared drafter-run core lives in `corpus.derive`;
-# `DraftError` is kept as the historical alias of `DeriveError` for existing callers/tests.
+# (the grandfathered-body path, §12.18 step 3): a re-derived mechanical body with no governing
+# form is exactly the `rendered` derived state. The shared drafter-run core lives in
+# `corpus.derive`; `DraftError` is kept as the historical alias of `DeriveError` for existing
+# callers/tests.
 DraftError = DeriveError
 
 
@@ -75,12 +77,13 @@ def derive_record(
     """Re-derive `post`'s mechanical content from its retained artifact, **in place**: run the
     matching drafter (via the shared `corpus.derive.build_content_zone` core), apply the
     metadata-zone result, emit + grammar-validate the content zone, apply the per-host
-    canonical content-scoping override, and append the draft touch. The record stays at
-    `status: stub`: in 3.0 a re-derived mechanical body is exactly the grandfathered shape —
-    a stub carrying a materialized derivation (§12.18 step 3), superseded by its next pass.
-    No dedup and no write — the caller owns those. `post` must be a stub. The transitional
-    core shared by `corpus draft` and `corpus redraft`. Raises `DraftError` (missing schema /
-    drafter) or `ArtifactMissing` (artifact not local)."""
+    canonical content-scoping override, and append the draft touch. The record stays
+    formless (§4.1) — no form is stamped here: a re-derived mechanical body with no
+    governing form is exactly the grandfathered `rendered` state (§12.18 step 3), superseded
+    by its next pass. No dedup and no write — the caller owns those. `post` must have no
+    stored rendering yet. The transitional core shared by `corpus draft` and the
+    `redraft_record` test helper (§12.19). Raises `DraftError` (missing schema / drafter) or
+    `ArtifactMissing` (artifact not local)."""
     from corpus.derive import produces_body, reattach_descriptions, strip_attested_layer
 
     build, result, mt_schema, binary_file, mime_schema_id = build_content_zone(
@@ -136,11 +139,11 @@ def derive_record(
 
         references.emit_overlay_references(post, corpus_root, binary_file)
 
-    # Append the draft touch; the record stays a stub. A re-derived mechanical body is a
-    # grandfathered materialized derivation in 3.0 (§12.18 step 3) — the touch id is history
-    # (kept unchanged), not lifecycle. Nothing writes `status: draft` after the 2026-07-13 sweep.
+    # Append the draft touch. A re-derived mechanical body with no governing form is a
+    # grandfathered materialized derivation (§4.1's `rendered` state, §12.18 step 3) — the
+    # touch id is history (kept unchanged), not lifecycle. *(3.1)* No `status` field to set —
+    # the record's derived state falls out of what it now carries (§4.1).
     touches.record_touch(post, touches.script_identifier("draft." + mime_schema_id))
-    post.metadata["status"] = "stub"
 
 
 def _discard_duplicate(corpus_root, record_id: str, record_file, extension: str) -> None:

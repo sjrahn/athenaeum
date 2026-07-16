@@ -69,12 +69,32 @@ def form_for_record(
     return None
 
 
+def declared_form_unmet(post: frontmatter.Post, corpus_root: Path) -> str | None:
+    """The "formed where declared" half of the pass gate (spec §8.5, §4.4.6): when the
+    record's origin overlay declares a form (`form_for_record`) but no section in the
+    content zone carries that form id, return the declared form id — the gate's refusal
+    detail. Returns None when either no form is declared, or the declared form IS present
+    (nothing to refuse on this half; form-coherence lint separately checks that a STAMPED
+    section actually conforms — this only checks that a DECLARED one was stamped at all)."""
+    resolved = form_for_record(post, corpus_root)
+    if resolved is None:
+        return None
+    _, form_id, _ = resolved
+    from corpus import segments as _segments
+
+    blocks = _segments.iter_blocks(post.content or "")
+    if any(isinstance(b, _segments.Section) and b.form == form_id for b in blocks):
+        return None
+    return form_id
+
+
 def shape_record(post: frontmatter.Post, corpus_root: Path) -> bool:
     """Shape `post`'s content zone in place if a declared form + registered shaper apply;
     return True when shaped. Loads corpus-local shapers first, resolves the record's form,
     prefers an origin-id-keyed shaper over the form-id-keyed one, builds the content zone via
-    `recordbuild`, grammar-validates it, and appends the `shape.<form-id>` touch. The record's
-    status is NOT flipped here (the normalize pass owns that once editorial work is done)."""
+    `recordbuild`, grammar-validates it, and appends the `shape.<form-id>` touch. Shaping is
+    only half the normalize pass (§8.1) — it does NOT author the vouch (the editorial fields
+    are the interpretive agent's remaining work; the queue's `finalize` gates on both, §8.5)."""
     from corpus import local_code
 
     local_code.load_corpus_modules(corpus_root, "shapers")

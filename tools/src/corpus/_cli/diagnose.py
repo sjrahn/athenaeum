@@ -5,7 +5,8 @@ metadata-zone block, the content-zone block TOC, the derived classifications/iss
 and a quick-lint section. A normalizer pass runs this first. The Lint section here is the
 `DIAGNOSE_QUICK_RULES` subset — the full overlay-aware ruleset (body sanity, embed
 integrity, …) is the verification gate at `corpus lint <hash>`, which the pass must clear
-before flipping `status: normalized`.
+before the queue's `finalize` closes it (spec §8.5's pass gate: authored + formed-where-
+declared + lint clean).
 
 `--json` emits the same data as one JSON object. Markdown to stdout.
 """
@@ -27,8 +28,8 @@ from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 CORE_FIELDS = (
     "id",
+    "title",
     "description",
-    "status",
     "transport",
     "canonical",
     "perceptual",
@@ -95,7 +96,8 @@ def _check_artifact(corpus_root: Path, record_id: str, post) -> dict[str, Any]:
 def _emit(corpus_root, record_id, post, blocks, findings, artifact_info) -> None:
     metadata = post.metadata
     title = records.title_for(post)
-    status = metadata.get("status", "")
+    state = records.derived_state(post)
+    authored = records.is_authored(post)
     media_type = records.media_type_for(post)
     touch_chain = metadata.get("touch") or []
     if isinstance(touch_chain, str):
@@ -103,7 +105,10 @@ def _emit(corpus_root, record_id, post, blocks, findings, artifact_info) -> None
     last = touch_chain[-1] if touch_chain else ""
 
     print(f"# {record_id[:12]}… — {title}\n")
-    print(f"`status: {status}` · `mime: {media_type}` · `touch: {len(touch_chain)}` · `last: {last}`\n")
+    print(
+        f"`state: {state}` · `authored: {authored}` · `mime: {media_type}` · "
+        f"`touch: {len(touch_chain)}` · `last: {last}`\n"
+    )
 
     print("## Lint\n")
     if not findings:
@@ -221,7 +226,8 @@ def _emit_json(corpus_root, record_id, post, blocks, findings, artifact_info) ->
         {
             "record": record_id,
             "title": records.title_for(post),
-            "status": post.metadata.get("status", ""),
+            "state": records.derived_state(post),
+            "authored": records.is_authored(post),
             "mime": records.media_type_for(post),
             "lint": findings,
             "artifact": artifact_info,

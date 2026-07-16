@@ -19,7 +19,7 @@ def run(args: argparse.Namespace) -> int:
     post = records.load(record_file)
 
     print(f"id:          {record_id}")
-    print(f"status:      {post.metadata.get('status')}")
+    print(f"state:       {records.derived_state(post)}  (authored: {records.is_authored(post)})")
     print(f"description: {(post.metadata.get('description') or '').strip()[:200]}")
     print(f"mime:        {records.media_type_for(post)}")
     print(f"title:       {records.title_for(post)}")

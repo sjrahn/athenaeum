@@ -65,13 +65,14 @@ def test_e2e_pdf_lifecycle(tmp_path, capsys):
     assert dispatch(["lint", pdf, "--corpus-root", str(root)]) == 0
     capsys.readouterr()
 
-    # The drafter ran: status advanced and PDF metadata was extracted. (onepager.pdf
-    # is a full-page-image PDF — the scanned image-of-document shape — so the drafter
-    # emits one body-empty image marker per page, sectionless; `body` + lint stay clean.)
+    # The drafter ran: the record now carries a stored rendering (no governing form — the
+    # `rendered` derived state, §4.1) and PDF metadata was extracted. (onepager.pdf is a
+    # full-page-image PDF — the scanned image-of-document shape — so the drafter emits one
+    # body-empty image marker per page, sectionless; `body` + lint stay clean.)
     from corpus import paths, records, segments
 
     post = records.load(paths.record_path(root, pdf))
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "rendered"
     assert "page_count" in post.metadata["_artifact"]["fields"]
     blocks = list(segments.iter_blocks(post.content or ""))
     assert [getattr(b, "atom", None) for b in blocks] == ["image", "image"]

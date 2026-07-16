@@ -200,7 +200,7 @@ def test_manifest_content_zone_is_empty_and_lints_clean(tmp_path):
     root = _corpus(tmp_path)
     rid = _ingest(root, _VCF)
     post = _record(root, rid)
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "proxy"  # embeds don't count as a stored rendering
     assert not (post.content or "").strip()  # a manifest — the members ARE the content
     blocks = segments.iter_blocks(post.content or "")
     assert not [f for f in lint.lint(post, blocks, root) if f.severity == "error"]

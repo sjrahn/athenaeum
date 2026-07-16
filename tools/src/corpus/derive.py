@@ -162,8 +162,8 @@ def attest(
 ) -> str:
     """Derive + apply the **attested layer** onto `post` in place (§8.1, §12.4): run the mime
     drafter and apply its metadata result (artifact fields, embeds, drafter issues), NEVER
-    storing the body (the `body` op derives it on demand) and NEVER changing status. Returns
-    the mime schema id.
+    storing the body (the `body` op derives it on demand) and NEVER touching the authored
+    layer (title/description, form sections). Returns the mime schema id.
 
     `strip=True` (re-attest, §12.4.6) first clears the current attested layer — embeds, the
     `corpus.draft.*` issues, and the artifact block's extended fields — and carries authored
@@ -241,7 +241,7 @@ def build_content_zone(
       is the derived body (empty for a `manifest`/non-`body-draft` schema).
     - `result` — the drafter's metadata-zone `DrafterResult` (the attested facts).
 
-    Pure over the artifact bytes + schemas; does NOT emit, apply, persist, or change status.
+    Pure over the artifact bytes + schemas; does NOT emit, apply, or persist anything.
     Raises `DeriveError` / `ArtifactMissing`."""
     media_type = records.media_type_for(post)
     drafter, strategy, mime_schema_id, mt_schema = resolve_drafter(corpus_root, media_type)

@@ -23,12 +23,15 @@ def _make_corpus(tmp_path: Path) -> Path:
 
 
 def _clean_post() -> frontmatter.Post:
+    """A bare, unauthored proxy record (spec §4.1) — no title, no description, no
+    `status:` key. Lints fully clean: neither half of the vouch is set (so
+    `vouch-half-authored` doesn't fire), and an unauthored record's empty content zone
+    is expected, not flagged (`body-empty-normalized` gates on `is_authored`)."""
     post = frontmatter.Post("")
     post.metadata.update(
         {
             "id": "a" * 64,
-            "description": "ok",
-            "status": "draft",
+            "description": "",
             "touch": "corpus.ingest@0.1.0",
         }
     )
@@ -96,12 +99,23 @@ def test_missing_id_caught(tmp_path):
     assert any(f.rule_id == "id-missing" for f in findings)
 
 
-def test_status_invalid_caught(tmp_path):
+def test_legacy_status_flagged(tmp_path):
+    """A record still carrying a frontmatter `status:` key is flagged (info) — a transitional
+    3.0 field, never re-emitted on write (spec §4.1, §12.19)."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    post.metadata["status"] = "frobnicated"
+    post.metadata["status"] = "stub"
     findings = _lint(post, root)
-    assert any(f.rule_id == "status-invalid" for f in findings)
+    hit = next(f for f in findings if f.rule_id == "frontmatter-legacy-status")
+    assert hit.severity == "info"
+
+
+def test_no_legacy_status_key_not_flagged(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    assert "status" not in post.metadata
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "frontmatter-legacy-status" for f in findings)
 
 
 def test_touch_grammar(tmp_path):
@@ -318,13 +332,24 @@ def test_issue_spec_shape_passes(tmp_path):
     assert not any(f.rule_id.startswith("issue-") for f in findings)
 
 
-def test_normalized_record_must_have_description(tmp_path):
+def test_half_vouch_flagged(tmp_path):
+    """A record carrying a title but no description (or vice versa) is a half-authored
+    vouch — a full vouch (spec §4.1) is both together."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    post.metadata["status"] = "normalized"
-    post.metadata["description"] = ""
+    post.metadata["title"] = "Half-vouched"
     findings = _lint(post, root)
-    assert any(f.rule_id == "description-empty" for f in findings)
+    hit = next(f for f in findings if f.rule_id == "vouch-half-authored")
+    assert hit.severity == "warning"
+
+
+def test_full_vouch_not_flagged(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["title"] = "Fully vouched"
+    post.metadata["description"] = "ok"
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "vouch-half-authored" for f in findings)
 
 
 def test_segment_address_duplicate_caught(tmp_path):
@@ -455,9 +480,10 @@ def test_body_sanity_rules(tmp_path):
         "body-unknown-comment",
         "body-wikilink-malformed",
     } <= fired
-    # empty body on a normalized record
+    # empty body on an authored record (title + description both set → is_authored)
     norm = _clean_post()
-    norm.metadata["status"] = "normalized"
+    norm.metadata["title"] = "T"
+    norm.metadata["description"] = "d"
     norm.content = ""
     assert "body-empty-normalized" in _fired(norm, root)
 
@@ -465,7 +491,8 @@ def test_body_sanity_rules(tmp_path):
 def test_embed_description_empty_on_normalized(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    post.metadata["status"] = "normalized"
+    post.metadata["title"] = "T"
+    post.metadata["description"] = "d"  # authored → the embed-description gate applies
     records.append_embed_block(
         post, media_type="image/png", address="el=4", transport="blake3:" + "0" * 64
     )
@@ -474,10 +501,10 @@ def test_embed_description_empty_on_normalized(tmp_path):
 
 def test_issue_on_draft_rule_dropped(tmp_path):
     """3.0: the `issue-on-draft` draft-status rule is dropped (§12.18 step 1 — lint drops
-    draft-status rules). A `draft` record is a grandfathered stub; an interpretive issue on
-    it yields no `issue-on-draft` finding."""
+    draft-status rules). A record with no stored rendering is the artifact's proxy (§4.1);
+    an interpretive issue on it yields no `issue-on-draft` finding."""
     root = _make_corpus(tmp_path)
-    post = _clean_post()  # status draft (grandfathered)
+    post = _clean_post()
     records.append_issue_block(
         post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
     )

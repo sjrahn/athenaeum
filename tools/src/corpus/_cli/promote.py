@@ -229,8 +229,9 @@ def _mint_stub(
     containment_uri: str,
     origin_fields: dict[str, Any],
 ) -> str:
-    """Emit a fresh promoted stub — status `stub`, `touch[0]` the promote pass, first origin the
-    containment lineage. Bytes are NOT written to `artifacts/`; they stay in the container."""
+    """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
+    first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
+    the container."""
     transport = [records.format_hash(algo, hexval) for algo, hexval in aux.items()]
     transport_value: str | list[str] | None
     if not transport:

@@ -199,7 +199,7 @@ def test_capture_creates_clean_record_and_reencounters(tmp_path):
     tr = _write_session(projects, "sid-x", subagents={"agent-a1": [{"k": 1}]})
     rid = _capture(root, tr)
     post = records.load(paths.record_path(root, rid))
-    assert str(post.metadata.get("status")) == "stub"
+    assert records.derived_state(post) == "proxy"
     # origin bound to the producer overlay, uri-less
     origins = list(records.iter_origin_blocks(post))
     assert origins and origins[0]["id"] == "claude-code-session"

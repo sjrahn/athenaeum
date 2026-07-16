@@ -234,9 +234,10 @@ def test_embed_unreferenced_relaxed_for_manifest():
 
 
 def test_body_empty_normalized_relaxed_for_manifest():
-    # A normalized manifest (empty content zone + embeds) must NOT flag body-empty-normalized.
+    # An authored manifest (empty content zone + embeds) must NOT flag body-empty-normalized.
     post = frontmatter.Post("")
-    post.metadata["status"] = "normalized"
+    post.metadata["title"] = "A manifest"
+    post.metadata["description"] = "A kept-whole archive."
     post.metadata["_embeds"] = [
         {
             "media_type": "text/plain",
@@ -246,9 +247,10 @@ def test_body_empty_normalized_relaxed_for_manifest():
         }
     ]
     assert list(lint._rule_body_empty_normalized(post, [], None)) == []
-    # But a normalized record empty of BOTH content and embeds is still flagged.
+    # But an authored record empty of BOTH content and embeds is still flagged.
     bare = frontmatter.Post("")
-    bare.metadata["status"] = "normalized"
+    bare.metadata["title"] = "Bare"
+    bare.metadata["description"] = "Empty of content and embeds."
     findings = list(lint._rule_body_empty_normalized(bare, [], None))
     assert findings and findings[0].rule_id == "body-empty-normalized"
 

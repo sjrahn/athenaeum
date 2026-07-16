@@ -230,7 +230,7 @@ def test_draft_declares_selected_messages(tmp_path):
     assert by_addr["msg=3"]["transport"] == records.format_hash("blake3", _b3(members[2]))
 
     post = records.load(paths.record_path(root, mbox_id))
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "proxy"  # embeds don't count as a stored rendering
     # Summary lives on the artifact block; content zone is empty (a manifest record).
     fields = records.artifact_block(post)["fields"]
     assert fields["message_count"] == 3
@@ -270,7 +270,7 @@ def test_reattest_changed_hash_is_a_hard_error(tmp_path):
     with pytest.raises(SystemExit, match="stale"):
         reattest_cli.run(
             argparse.Namespace(
-                target=mbox_id, mime=None, host=None, status="any", dry_run=False,
+                target=mbox_id, mime=None, host=None, state="any", dry_run=False,
                 fingerprint=None, messages="2", corpus_root=str(root),
             )
         )
@@ -282,7 +282,7 @@ def test_plain_draft_is_empty_manifest(tmp_path):
     mbox_id = _ingest(root, p)
     assert _draft_cli(root, mbox_id) == 0
     post = records.load(paths.record_path(root, mbox_id))
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "proxy"
     assert list(records.iter_embed_blocks(post)) == []  # no messages declared
     assert records.artifact_block(post)["fields"]["message_count"] == 3
 
@@ -300,7 +300,7 @@ def test_messages_flag_rejected_on_non_mbox(tmp_path):
     with pytest.raises(SystemExit, match="only valid for an mbox"):
         reattest_cli.run(
             argparse.Namespace(
-                target=zid, mime=None, host=None, status="any", dry_run=False,
+                target=zid, mime=None, host=None, state="any", dry_run=False,
                 fingerprint=None, messages="1", corpus_root=str(root),
             )
         )

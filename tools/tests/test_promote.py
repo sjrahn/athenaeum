@@ -79,7 +79,7 @@ def test_promote_mints_stub_with_containment_lineage(tmp_path):
     pid = _b3(_PAYLOAD)
     post = records.load(paths.record_path(root, pid))
     assert post.metadata["id"] == pid
-    assert post.metadata["status"] == "stub"
+    assert records.derived_state(post) == "proxy"
     assert records.media_type_for(post) == "text/plain"
     assert touches.touch_list(post) == [touches.script_identifier("promote")]
     # Origin records the containment lineage AS HISTORY (uri + member metadata).
@@ -155,7 +155,7 @@ def test_promote_folds_into_existing_standalone(tmp_path):
 
     # A standalone record for the same bytes already exists (an earlier ingest, §5.2).
     prior = frontmatter.Post("")
-    prior.metadata.update({"id": pid, "status": "stub", "touch": "corpus.ingest@0"})
+    prior.metadata.update({"id": pid, "touch": "corpus.ingest@0"})
     records.set_artifact_block(prior, mime="text/plain", fields={})
     records.append_origin_block(prior, snapshot=touches.now_iso(), fields={"filename": "local.txt"})
     records.dump(prior, paths.record_path(root, pid))

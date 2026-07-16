@@ -2,8 +2,8 @@
 
 Polls the external queue state — read-only on the record. Resolves when the
 record has no pending/in-flight request and reports the most recent pass outcome:
-exit 0 on a completed pass (or, absent a recorded result, a `status: normalized`
-record), non-zero on a failed pass or timeout.
+exit 0 on a completed pass (or, absent a recorded result, a record that already meets
+the record-state fallback below), non-zero on a failed pass or timeout.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import time
 
 from corpus import paths, records
 from corpus import queue as _queue
+from corpus import shape as _shape
 from corpus._cli._common import add_corpus_root_arg, attach_workflow_note, resolved_corpus_root
 
 
@@ -45,14 +46,14 @@ def run(args: argparse.Namespace) -> int:
     while True:
         st = _queue.state(root, rid)
         if not _queue.is_pending(st):
-            return _settle(st, record_file, rid)
+            return _settle(st, record_file, rid, root)
         if deadline is not None and time.monotonic() >= deadline:
             print(f"await {rid[:12]}: timed out after {args.timeout}s", file=sys.stderr)
             return 1
         time.sleep(args.interval)
 
 
-def _settle(st: dict, record_file, rid: str) -> int:
+def _settle(st: dict, record_file, rid: str, root) -> int:
     result = st.get("result")
     if result and result.get("outcome") == "completed":
         print(f"{rid[:12]} normalized")
@@ -61,10 +62,20 @@ def _settle(st: dict, record_file, rid: str) -> int:
         reason = result.get("reason") or "(no reason given)"
         print(f"{rid[:12]} normalization failed: {reason}", file=sys.stderr)
         return 1
-    # No recorded pass — fall back to the record's own status.
+    # No recorded pass — fall back to the record-state predicates (authored + formed-where-
+    # declared, spec §8.5's pass gate minus lint: lint is deliberately NOT re-run in this poll
+    # loop — it's a per-record, potentially expensive check, and `finalize` already gated on
+    # it when the pass completed; a bare fallback here only needs the two structural halves).
     post = records.load(record_file)
-    if post.metadata.get("status") == "normalized":
+    authored = records.is_authored(post)
+    unmet_form = _shape.declared_form_unmet(post, root)
+    if authored and unmet_form is None:
         print(f"{rid[:12]} normalized")
         return 0
-    print(f"{rid[:12]}: no normalization pass recorded (status: {post.metadata.get('status')!r})", file=sys.stderr)
+    reasons = []
+    if not authored:
+        reasons.append("not authored")
+    if unmet_form is not None:
+        reasons.append(f"form {unmet_form!r} not carried")
+    print(f"{rid[:12]}: no normalization pass recorded ({'; '.join(reasons)})", file=sys.stderr)
     return 1

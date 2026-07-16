@@ -88,18 +88,22 @@ def _parse_filter(raw: str, known: list[str]) -> list[str] | None:
 def _format_summary(report: dict[str, Any]) -> str:
     lines = [f"corpus health — {report['total_records']} record(s)", ""]
 
-    if "records_by_status" in report:
-        parts = ", ".join(f"{k}: {v}" for k, v in sorted(report["records_by_status"].items()))
-        lines.append(f"status: {parts}")
+    if "layer_presence" in report:
+        lp = report["layer_presence"]
+        parts = ", ".join(
+            f"{k}: {v}" for k, v in lp.items() if k in ("formed", "rendered", "proxy")
+        )
+        lines.append(f"layers: {parts}")
+        lines.append(f"authored: {lp.get('authored', 0)}")
+        if lp.get("legacy_status"):
+            lines.append(f"legacy_status: {lp['legacy_status']} (pending migration sweep)")
     if "records_by_mime" in report:
         parts = ", ".join(f"{k}: {v}" for k, v in sorted(report["records_by_mime"].items()))
         lines.append(f"mime: {parts}")
-    if "pending_normalize" in report:
-        lines.append(f"pending_normalize: {len(report['pending_normalize'])}")
-    if "stuck_at_stub" in report:
-        items = report["stuck_at_stub"]
-        unsupported = sum(1 for i in items if not i["supported_draft"])
-        lines.append(f"stuck_at_stub: {len(items)} ({unsupported} unsupported MIME)")
+    if "unshaped" in report:
+        items = report["unshaped"]
+        shapable = sum(1 for i in items if i["shapable"])
+        lines.append(f"unshaped: {len(items)} ({shapable} shapable)")
     if "unresolved_issues" in report:
         groups = report["unresolved_issues"]
         total = sum(len(v) for v in groups.values())
@@ -110,8 +114,8 @@ def _format_summary(report: dict[str, Any]) -> str:
         by_cat: Counter[str] = Counter(i.get("category", "unknown") for i in items)
         bycat = ", ".join(f"{k}: {v}" for k, v in sorted(by_cat.items()))
         lines.append(f"missing_artifacts: {len(items)}" + (f" ({bycat})" if bycat else ""))
-    if "empty_description_normalized" in report:
-        lines.append(f"empty_description_normalized: {len(report['empty_description_normalized'])}")
+    if "formed_unauthored" in report:
+        lines.append(f"formed_unauthored: {len(report['formed_unauthored'])}")
     if "validity_violations" in report:
         items = report["validity_violations"]
         lines.append(f"validity_violations: {len(items)}")
