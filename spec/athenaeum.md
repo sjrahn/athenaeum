@@ -5,7 +5,7 @@ version: 13
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-07-12
+date_modified: 2026-07-16
 ---
 
 # Athenaeum — Architecture Specification
@@ -55,7 +55,7 @@ The system has three data layers and one driver:
 | **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id + snapshot version via `ref://` (`spec/ledger.md` §6.5). |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 across the registered corpora. Grammar: `spec/corpus.md` §6. |
 | **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
-| **Normalizer** | The interpretive agent pass that takes a record from mechanical `draft` to faithful `normalized`. |
+| **Normalizer** | The interpretive half of the corpus's one authoring pass: renders a record under its form contract where no mechanical shaper can, and authors the editorial vouch (`spec/corpus.md` §8.1, §4.1). |
 | **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope — the system's one persona; member repos carry none. |
 
 ## 2. Topology

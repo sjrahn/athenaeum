@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-LEDGER
 title: "Ledger Specification"
-version: 1.0
+version: 1.1
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
-date_modified: 2026-07-02
+date_modified: 2026-07-16
 ---
 
 # Ledger Specification
@@ -17,6 +17,8 @@ date_modified: 2026-07-02
 The **ledger** is the Athenaeum system's knowledge layer (`spec/athenaeum.md`): the single fact substrate between the corpora (faithful bytes, `spec/corpus.md`) and the codices (targeted prose compilations, `spec/codex.md`). It holds **concepts** — materialized real-world things (§4) carrying typed claims in which **every claim carries evidence**: `corpus://` URIs into captured bytes (span-precise where verified) and `ref://` URIs into mirrored reference datasets (§6.5) — and **interpretations**, the pre-assertion workspace beside them.
 
 The name is meant literally: a ledger is claims with evidence and an audit trail. Entries are *posted* (claims — asserted, each with computable trust) or held in *suspense* (interpretations — not yet assertable). The boundary between the two is physical (§1.3), which is what lets every consumer of the fact graph trust that everything in it is asserted knowledge.
+
+**Version 1.1** tracks the corpus layers amendment (`spec/corpus.md` 3.1): the corpus `status` field is retired, so citability re-keys from record status to **verifiable surfaces** — a stored rendering under a named form contract, mechanically derived content (engine-pinned), or authored prose (§6.3, §13.1) — and the snapshot binding gains a derivation-op version pin for derived-surface evidence (§13.2). The demand discipline is unchanged in spirit: the ledger raises corpus work by enqueuing, never by authoring records.
 
 ### 1.2 One ledger
 
@@ -317,12 +319,12 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
 
 - The derived citation MUST resolve: **`corpus://{hash}`** with the full 64-hex blake3 — anchor span parameters (`el=`, `page=`, `time_range=`, `frame=`, `page=N&bbox=`, `path=`, or a `#fragment`) per the corpus functional-URI grammar (`spec/corpus.md` §6) — or **`ref://{dataset}/{id}`** into a registered reference dataset (§6.5). (Rosters and `based_on` references, which carry direct URIs, obey the same grammar.)
 - **Resolution is content-addressed, never scoped.** A hash resolves by blake3 across every corpus in `ledger.yaml` `corpora:` — some corpus satisfies it or none does; there is no per-corpus URI form. Which corpus holds the bytes (and hence the evidence's sensitivity, §6.4) is a derived property, not URI syntax. A hash resolving in no registered corpus is a validation error.
-- **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth; not every valid address materializes under `corpus resolve`, and that alone does not invalidate a citation.
+- **Anchor only as precisely as verified.** A record-level cite is always safe; a wrong anchor is bad provenance — worse than none. Segment addresses printed by the corpus tooling (`corpus body` / `corpus toc`) are ground truth. *(1.1)* Every anchor is expected to resolve mechanically — against the record's stored rendering or through a derivation op (`spec/corpus.md` §6.2) — and §13.2 verifies it there; an anchor that cannot be mechanically resolved is a citation defect, not a tolerated form. (An anchor whose surface has no text projection — an image region, an untranscribed span — still resolves and bounds-checks; it simply carries no `quote`.)
 - **Quotes are verbatim spans** of the resolved content at the cited anchor — they exist to be machine-checked (§13.2). Paraphrase belongs in `note` or `reasoning`, never in `quote`.
 
 ### 6.3 Source honesty
 
-Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. When the needed source is a still-unnormalized `stub` record, request normalization (`corpus enqueue`) rather than citing its derived text — validation flags evidence whose record is not `normalized`. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
+Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. *(1.1)* Citability keys to **verifiable surfaces**, never to record state: a stored rendering under a named form contract, a derivation op's mechanical output (engine-pinned, `spec/corpus.md` §6.4), and authored prose (§13.2) all verify — citing into a formless record's derived body is legitimate evidence, machine-checked like any other, with the op version pinned on the binding (§13.2). Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
 
 ### 6.4 Sensitivity — derived, not declared
 
@@ -491,7 +493,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
-**Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution across the registered corpora); `ref://` citations name registered datasets (§6.5); cited records are `normalized` (warn when a declared `enqueue` need covers the draft).
+**Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution across the registered corpora); `ref://` citations name registered datasets (§6.5); *(1.1)* every citation resolves to a **verifiable surface** and passes §13.2 — the 1.0 cited-records-are-`normalized` check retires with the corpus `status` field (`spec/corpus.md` §4.1).
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
@@ -507,7 +509,9 @@ Beyond record existence, validation MUST — once per claim edit, and on demand 
 
 1. **Anchor resolution**: every span parameter resolves against the cited record (the segment address exists; the page/region/time-range is within bounds).
 2. **Quote verification**: every `quote` is found verbatim (modulo whitespace and presentational-markup normalization — inline markers such as `<u>…</u>` vanish before matching, so a quote cites the *rendered* text and never truncates around markup) within the content the URI resolves to. The citable content includes normalizer-written prose the record carries beside segment bodies — embed descriptions, section entries, title/description frontmatter — with the evidence discipline that a quote of *derived* prose (an image's description is the normalizer's reading, not the artifact's bytes) rides `kind: incidental`, never `direct` or `authoritative`.
-3. **Snapshot binding**: verification records the cited record's normalization state (its latest `touch` identity) — for `ref://` evidence, the dataset's mirror snapshot version (§6.5) — on the fact's **sources entry**: one binding per *(fact, source)*, shared by every evidence entry anchored to it, so a later re-normalization or mirror update flags the evidence for re-verification instead of silently rotting. Re-stamping is touch-keyed: an unchanged touch never rewrites the binding.
+3. **Snapshot binding**: verification records the cited record's content state (its latest `touch` identity) — for `ref://` evidence, the dataset's mirror snapshot version (§6.5) — on the fact's **sources entry**: one binding per *(fact, source)*, shared by every evidence entry anchored to it, so a later authoring pass or mirror update flags the evidence for re-verification instead of silently rotting. Re-stamping is touch-keyed: an unchanged touch never rewrites the binding. *(1.1)* For evidence whose anchored content resolves through a **derivation op** rather than the stored record body, the binding additionally pins the op's version label (`spec/corpus.md` §6.4): the touch chain does not move when resolver tooling upgrades, so the op pin is what flags a derived surface's drift — exactly as the touch flags a re-authored one. (The pin's concrete binding format settles with the first derived-surface citation — `spec/corpus.md` §12.19 open questions.)
+
+*(1.1)* Verifying against derived surfaces makes member anchors first-class: a `?path=` member's bytes derive mechanically through their container, so anchors and quotes into members verify like any other surface — no honest citation form remains unverifiable by construction.
 
 A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.
 

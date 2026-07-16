@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-CORPUS
 title: "Corpus Specification"
-version: 3.0
+version: 3.1
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
-date_modified: 2026-07-13
+date_modified: 2026-07-16
 ---
 
 # Corpus Specification
@@ -19,6 +19,8 @@ The corpus sits beneath the ledger layer, which interprets it through `corpus://
 **Version 2.1** — the **containment amendment** — decoupled records from standalone artifact files. Every transport is now self-contained (the `decomposable` disposition and the `artifact_kind` declaration retire): a raw archive drafts as an embed manifest, and any declared member may be **promoted** to a first-class record whose bytes remain inside the container, resolved by streaming (§2, §1.2, §8.1). No existing record changes shape (§12.17).
 
 **Version 3.0** — the **derivation revision** — completes the movement 2.1 began: a record stores only what is **authored** (the normalize pass's faithful form) or **attested** (ingest-stamped byte-facts), and everything mechanical is **derived, addressable, and reproducible**. The `draft` stage retires: its fact-stamping becomes ingest **attestation**, its content extraction becomes resolver **derivation ops** (§6.2), and its body-writing becomes the normalize pass's job — mechanical (a *shaper*) where a declared form mapping makes the shape deterministic, interpretive where it does not. The stored table of contents retires with it: TOC grouping becomes a derived rendering over **structural segments** (byte-marks only, §4.3.2.3), and the freed **section block** becomes the surface of the new **form axis** (§4.4.1, §7.8) — record- and span-scope structural form, the fourth classification axis. Embeds close to *"this asset is part of this record's capture"* (§4.3.1.4); referenced-but-not-contained content materializes through lineage-chained resolution (§6.2), derived and never stored. Media containers are attested as track manifests (§1.2). Removed and reshaped sections are tombstoned in place exactly as 2.0 did; the 2.0 tombstones themselves are untouched — the form axis is *not* the classify block returning (§7.8).
+
+**Version 3.1** — the **layers amendment** — retires the last stored lifecycle field: `status` leaves the frontmatter, and a record's state becomes **derived from what the record demonstrably carries** (§4.1) — every record is **attested** at birth (the artifact's *proxy*: complete and consumable through the derivation ops), a record is **formed** where a named form contract governs a stored rendering, and **authored** where the editorial vouch is written. `normalized` dissolves into *formed + authored*; `stub` dissolves into the plain record. Two ideas carry the amendment: **formless is the zeroth form** — the identity contract ("the faithful representation of these bytes is the bytes"), valid indefinitely, prescribing nothing, with deliberately no catch-all shape and no default — and **forms are a goal, not a rarity** (§7.8, amending 3.0's "rare by design"): the form namespace is the corpus's *rendering-contract library*, adopted lazily where benefit demands, so `origin` says where bytes came from, `mime` says what container they arrived in, and `form` says what markdown shape renders them faithfully. Citability re-keys accordingly — ledger verification checks evidence against **verifiable surfaces** (stored renderings, engine-pinned derived content, authored prose) rather than against a status flag (`ledger.md` §6.3, §13.2) — and the normalization queue becomes **standing demand**, never a backlog (§8.5). Migration: §12.19.
 
 ---
 
@@ -64,16 +66,21 @@ captured bytes              (no identity yet — staging only)
        │
        │ ingest             deterministic: hashes, MIME detection, byte-fact ATTESTATION
        ▼                    (artifact fields, manifest embeds, structural byte-marks, sidecar lift)
-   stub record              identity + attested facts; bytes persisted; readable through the
-       │                    resolver's derivation ops (§6.2) — a derived body, never stored
-       │ normalize          the ONE authoring pass: a mechanical shaper where a declared form
-       ▼                    mapping makes the shape deterministic; an interpretive agent where not
- normalized record          faithful form authored — the citable state (ledger.md §6.3)
+    record                  the artifact's PROXY — identity + attested facts; bytes persisted;
+       │                    complete and consumable at birth: formless, the zeroth form (§7.8),
+       │                    readable through the resolver's derivation ops (§6.2)
+       │ normalize          the ONE authoring pass, demand-driven (§8.5): renders the record
+       ▼                    under a NAMED form contract — a mechanical shaper where a declared
+ formed + authored          mapping makes the shape deterministic, an interpretive agent where
+    record                  not — and/or authors the vouch (title, description, annotations).
+                            The preferred citation surface (ledger.md §6.3)
 ```
 
-Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. **Promotion** (§8.1) is a second entry point to `stub`: it mints a record for a container member's bytes, which are already retrievable by id through the container (§2) and are not copied. Re-running any stage is an expected refinement pattern, not a fallback; every stage from ingest onward appends a `touch[]` entry to the record's provenance chain (which `re-stub` may reset, §8.4).
+Once ingested, the artifact's bytes must remain retrievable by id. Where and how the implementation stores them is its concern; the contract is that a lookup by id produces the bytes. **Promotion** (§8.1) is a second entry point: it mints a record for a container member's bytes, which are already retrievable by id through the container (§2) and are not copied. Re-running any stage is an expected refinement pattern, not a fallback; every stage from ingest onward appends a `touch[]` entry to the record's provenance chain (which `re-stub` may reset, §8.4).
 
-*(3.0: the `draft` stage and status retire — tombstoned at §8.1. Its three duties split cleanly: fact-stamping → ingest **attestation**; content extraction → resolver **derivation ops** (§6.2), computed on demand and cached, so a stub is fully readable without storing a mechanical body; body-writing → the normalize pass. What 2.x called "the drafted body" was always a pure derivation of (artifact × schemas × tooling) — 3.0 stops storing it and derives it instead, which is the same move 2.1 made for archive members and the tree view.)*
+*(3.0: the `draft` stage and status retire — tombstoned at §8.1. Its three duties split cleanly: fact-stamping → ingest **attestation**; content extraction → resolver **derivation ops** (§6.2), computed on demand and cached, so a just-ingested record is fully readable without storing a mechanical body; body-writing → the normalize pass. What 2.x called "the drafted body" was always a pure derivation of (artifact × schemas × tooling) — 3.0 stops storing it and derives it instead, which is the same move 2.1 made for archive members and the tree view.)*
+
+*(3.1: the `stub`/`normalized` statuses retire with the `status` field itself — §4.1. Nothing is pending by default: a record with no stored rendering and no vouch is not an unfinished stub but the artifact's proxy, complete at birth. The lower box of the diagram is where a record goes when a rendering contract or a consumer's demand takes it there — not where every record is headed.)*
 
 ### 1.5 Design principles
 
@@ -144,32 +151,38 @@ The on-disk organization of these schemas is implementation-discretionary; a ref
 
 A markdown file with YAML frontmatter. The frontmatter carries the bytes-identity header; the record body carries the schema-derived metadata blocks AND the segmented rendering of the transport's content AND any annotations.
 
-A record is always at one of two statuses:
+*(3.1)* A record is born complete. Ingest (or promotion) attests the bytes' identity and facts, and from that moment the record is the artifact's **proxy**: bytes retrievable by id (§2); artifact block + **attested byte-facts** emitted — the mime schema's declared attestations (artifact fields; manifest embeds for archive/mail/media-container types; structural byte-marks; sidecar lift); first origin block populated from capture / containment context; fully *readable* — its mechanical body is a resolver derivation (§6.2), computed on demand, cacheable by a search index (§9), never persisted to the record. Everything beyond attestation is layered on when it earns its place, and every layer is **self-evident in the record's own bytes** — there is no stored lifecycle field summarizing them (*3.1: `status` is retired*; §12.19):
 
-| Status | Meaning | Stage that produced it |
+| Layer | Present when | Written by |
 |---|---|---|
-| `stub` | Identity established; bytes retrievable by id (§2); artifact block + **attested byte-facts** emitted — the mime schema's declared attestations (artifact fields; manifest embeds for archive/mail/media-container types; structural byte-marks; sidecar lift); first origin block populated from capture / containment context. The stored content zone holds byte-marks only; the record is nonetheless fully *readable* — its mechanical body is a resolver derivation (§6.2), computed on demand, cacheable by a search index (§9), never persisted to the record. | ingest / promote |
-| `normalized` | Faithful form **authored**: the stored content zone (shaper- or agent-written), descriptions, the two editorial fields, faithfulness issues. The citable state — ledger evidence anchors and quotes bind against it (`ledger.md` §6.3, §13.2). | normalize |
+| **attested** | always — the universal baseline above | ingest / promote (§8.1); refreshed by re-attest (§8.3) |
+| **formed** | a **form section** (§4.3.2.1) governs the record's stored content zone: the record carries a stored **rendering** of its content under a named rendering contract (§7.8) | the normalize pass — a mechanical shaper where a declared mapping applies, an interpretive agent where not (§4.4.6) |
+| **authored** | the **vouch** is written: the two editorial fields (`title`, `description`) are non-empty — embed/segment descriptions and asserted annotations ride with it | the normalize pass |
 
-*(3.0: the `draft` status is retired — see the §8.1 tombstone. A 2.x record at `status: draft` reads tolerantly as a stub carrying a grandfathered materialized derivation; §12.18.)*
+Three consequences carry the model:
+
+- **Formless is the zeroth form.** A record with no form section is not pending — it is the artifact's proxy under the **identity contract** (§7.8): the faithful representation of the bytes is the bytes, delivered through the derivation ops, prescribing nothing about what the artifact is. Most artifacts a corpus consumes as raw context — code, datasets, media, containers — live here permanently and correctly. A formless record is upgraded to a named form when one is identified or authored for it (§4.4.6), and only then.
+- **A stored rendering rides a named form.** Steady-state invariant: a record stores a content zone beyond its byte-marks only where a form contract governs it — under the identity contract, a "stored rendering" would merely restate bytes the resolver already derives. (Formless segments *within* a record that carries a form span are the mixed-artifact case and conform — §4.3.2.1. Renderings the 2.x→3.x migrations grandfathered without a form exit through their next pass — §12.19.)
+- **The vouch is orthogonal.** Authoring can land on a formless proxy (a titled, described container) exactly as on a formed record, and a shaper can form a record before any vouch is written. What 2.x–3.0 called `normalized` was precisely *formed + authored* and dissolves into those two predicates.
+
+State is **reported, never stored**: health, the queue's pass gate (§8.5), and the ledger's verification (`ledger.md` §13.2) each derive the predicate they need from the record; the touch chain (§4.2.2) remains the provenance trail. *(3.0: the `draft` status retired — the §8.1 tombstone. 3.1: `stub` and `normalized` follow it; a record carrying a `status:` field reads tolerantly — the field is ignored on read and dropped on the record's next write; §12.19.)*
 
 ### 4.2 Frontmatter
 
-The frontmatter (`---...---` at the top of the file) holds **only the bytes-identity header** plus the two editorial display fields — at most nine fields. Everything else lives in body blocks (§4.3) or surfaces as derived views (§9).
+The frontmatter (`---...---` at the top of the file) holds **only the bytes-identity header** plus the two editorial display fields — at most eight fields *(3.1: `status` retired, §4.1)*. Everything else lives in body blocks (§4.3) or surfaces as derived views (§9).
 
 #### 4.2.1 Core fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Primary identity — blake3 hash of the artifact's bytes, 64-char lowercase hex. Filename stem. Bare hex (no `<algo>:` prefix; algorithm is invariant). |
-| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) at `stub` and authored at `normalized`. The deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (the artifact block's bare `title` field, or an origin block's `ytdlp_title`) or writes its own. |
-| `description` | string | yes | 1–3 sentence summary. Empty at `stub`, authored at `normalized`. The primary mechanism for discovery. |
-| `status` | enum | yes | `stub` or `normalized`. |
+| `title` | string | yes | Short display title. The key is always present; its value is empty (`''`) until the vouch is authored (§4.1). The deterministic pipeline never populates it — the normalizer chooses among the **block-level title candidates** (the artifact block's bare `title` field, or an origin block's `ytdlp_title`) or writes its own. |
+| `description` | string | yes | 1–3 sentence summary. Empty until the vouch is authored. The primary mechanism for discovery. |
 | `transport` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Byte-level hash(es) of the file under additional algorithms beyond the primary blake3. The primary blake3 lives on `id` and is **not** duplicated here. Use `transport:` only for alternative algorithms. |
 | `canonical` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | A canonicalized-content hash per the mime schema's `canonical_strategy`. Lets two records be compared for "same content?" even when ever-changing metadata (timestamps, producer strings) differs. *(3.0: computed at ingest attestation or as a derivation op when re-enabled — open question §12.18; the 2.x persist-disabled status note of §7.1 carries over.)* |
 | `perceptual` | `<algo>:<hex>` \| list[`<algo>:<hex>`] | no | Record-scope perceptual fingerprint — present only for single-atom records (e.g. an image artifact carries a perceptual hash). Multi-atom records carry per-segment perceptual fingerprints in segment headers instead. |
 | `touch` | string \| list[string] | yes (≥1) | Ordered list of touch identifiers, one per processing pass. Singular (bare string) when one entry; list when 2+. `touch[0]` is the original ingest. |
-| `visibility` | enum | no | `visible` (default), `deranked`, `hidden`. Editorial curation, orthogonal to status. |
+| `visibility` | enum | no | `visible` (default), `deranked`, `hidden`. Editorial curation, orthogonal to the derived content state (§4.1). |
 
 #### 4.2.2 Touch identifiers
 
@@ -196,7 +209,7 @@ Every block has the same shape: an HTML comment whose opener line carries a keyw
 <!--embed <mime-type>-->                  # 0..N
 
 ─── content zone ─────────────────────────
-<!--section <form-id>-->                  # 0..N form spans (rare; depth one; never overlap)
+<!--section <form-id>-->                  # 0..N form spans (depth one; never overlap)
    containing <!--segment ...--> blocks
 <!--segment <atom>[/<id>]-->              # content segments (top-level = formless)
 <!--segment structural-->                 # byte-mark TOC entries (top-level or in-span)
@@ -376,7 +389,7 @@ address: turn=2&att=1
 
 - **Positional span.** A section's closer is followed directly by its first child block; its span runs to the next section opener or the end of the content zone. Markdown prose between a section closer and the next opener is a parse error — sections have no body region.
 - **Depth one, no overlap, one form per span.** Sections never nest and never overlap (positional by construction). A whole-record section (no `address`) admits no sibling sections. Forms do not nest; a genuinely separable sub-document is a **promotion** candidate, not a nested form.
-- **Rare by design.** A section exists *only* where a form is declared. Most records — the entire public-web document population, containers, single assets — have no section at all: a bare flat content zone is the default, well-formed state. Segments before the first section opener (or in a sectionless record) are **formless** content under mime + atoms alone — the mixed-artifact case: a statement PDF whose page 1 is a cover letter carries page 1's segments bare, then `<!--section statement address: pages=2-6-->` over the statement proper.
+- **Formless is the zeroth form; a named form is earned.** *(3.1, amending 3.0's "rare by design.")* A section exists *only* where a named form is declared — and a record with no section is not deficient: its content stands under the **identity contract** (§4.1, §7.8), consumable through the derived body, prescribing nothing about what the artifact is. Artifacts with no faithful markdown shape — code, datasets, media, containers — stay formless permanently; that is their correct steady state, never a backlog. For artifacts a markdown shape genuinely fits, formless is instead a starting point: a named form is the goal, adopted lazily when identified or authored (§4.4.6, §7.8). Segments before the first section opener are **formless** content under mime + atoms alone — the mixed-artifact case: a statement PDF whose page 1 is a cover letter carries page 1's segments bare, then `<!--section statement address: pages=2-6-->` over the statement proper.
 - **Coherence is lint-enforced.** A record carrying `<!--section <form-id>-->` MUST satisfy that form overlay's declared conformance checks (§7.8) — envelope fields present, codebook indexes in range, addresses parse in the span's scheme. There is no half-asserted form and no transitionary state: stamping the form and conforming the span land together.
 
 *(The 2.0 note on section-scope composites is unchanged and remains at §4.4.3: a passage's meaning is still a ledger claim over the span. The form id on the opener is a structural-shape judgment, not a meaning — §7.8.)*
@@ -402,7 +415,7 @@ address: page=2&bbox=0.06,0.12,0.88,0.30
 ... transactions rendered per the statement form's contract ...
 ```
 
-Page 1 carries no form (a "letter" fails the §7.8 minting test today); the statement's codebook/envelope fields (`account`, `period`) ride the section header, mechanically derivable from the span's own bytes; lint runs `form/statement`'s checks over pages 2–6 only.
+Page 1 stays formless — no contract has been identified for it and nothing yet demands one (§7.8: adoption is benefit-driven; formless is valid indefinitely); the statement's codebook/envelope fields (`account`, `period`) ride the section header, mechanically derivable from the span's own bytes; lint runs `form/statement`'s checks over pages 2–6 only.
 
 ##### 4.3.2.2 The segment block
 
@@ -785,7 +798,7 @@ The resolver's surface (CLI, library, HTTP service, etc.) is implementation-defi
 
 Resolver results may be cached. Cache lifetime, eviction policy, and storage location are all implementation-defined; the spec mandates only that the result is deterministic and reproducible from inputs — for a version-labeled op (§6.3), the cache key includes the engine + version.
 
-**Pinning by authorship.** While a record is a stub, a version-labeled result is cache-transient — it may be regenerated under a newer engine, and nothing depends on which. The moment a normalize pass **consumes** such a result into the stored body, the output is pinned *in the record*, with engine/version provenance on the pass (touch chain) and on the segments where the form carries it (`text/ocr`'s engine/confidence fields — the §11 OCR-provenance philosophy, extended to transcripts): the corpus owns the derivation's provenance rather than laundering a pre-baked layer. A later pass re-derives only deliberately, disclosed by a new touch. This is what makes the retirement of the draft stage *reproducible*: a future normalize pass re-resolves the same surfaces — or knowingly upgrades them — without a stored intermediate rotting in between.
+**Pinning by authorship.** Until a pass consumes it, a version-labeled result is cache-transient — it may be regenerated under a newer engine, and nothing *in the record* depends on which (*3.1:* a ledger citation of a derived surface pins the op version on its own binding — `ledger.md` §13.2 — so drift there flags loudly without the corpus storing anything). The moment a normalize pass **consumes** such a result into the stored body, the output is pinned *in the record*, with engine/version provenance on the pass (touch chain) and on the segments where the form carries it (`text/ocr`'s engine/confidence fields — the §11 OCR-provenance philosophy, extended to transcripts): the corpus owns the derivation's provenance rather than laundering a pre-baked layer. A later pass re-derives only deliberately, disclosed by a new touch. This is what makes the retirement of the draft stage *reproducible*: a future normalize pass re-resolves the same surfaces — or knowingly upgrades them — without a stored intermediate rotting in between.
 
 ---
 
@@ -803,7 +816,7 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 - `working_kind` (optional) — the resolver's initial working-value kind for the functional-URI transform pipeline (`pdf`, `image`, `audio`, `video`, `html`, `epub`, `zip`, …); falls back to a built-in table for the bundled types when omitted.
 - *(3.0)* `mode` and `draft.*` **retire** — there is no draft stage to configure. In their place a mime schema declares three things:
   - `disposition:` — `manifest` | `work` (default `work`): the **container-vs-transport judgment** (§1.2), declared per format because it is not derivable from the bytes. `manifest` — the members ARE the content: every member attests as a manifest embed (promotable), the content zone holds only container byte-marks. `work` — one transport whose content decomposes as units; internal member files the schema names attest as **exposable embeds** — addressable and promotable without being the content: a PDF's embedded files / portfolio members (the `attachment=<N>` axis, §12.11), OOXML embedded media and OLE objects. The authoring criterion is normative: *are the members independently meaningful transports?* An MKV audio track is (the transcript lives on it); `word/document.xml` is not. EPUB's 2.x `self_contained` wording is this key's ancestor (`disposition: work`). An origin overlay MAY override for a deviant producer (§7.2); the resolved disposition is always auditable from the record's attested shape, never sniffed per record. *(Distinct from the 2.1-removed `artifact_kind`, whose tombstone stands: nothing explodes at ingest under either value.)*
-  - `attest:` — the **ingest attestations**: which byte-facts ingest stamps at stub time. Artifact-block fields (a PDF's `/Info`, an EPUB's Dublin Core, an eml's headers); **manifest embeds** for `disposition: manifest` types (archive members at `path=`, mail messages at `msg=`, cards at `card=`, calendar entries at `entry=`, MIME parts at `part=`, media tracks at `stream_id=`, image items at `item=`); **exposable embeds** for `work` types that declare them; **structural byte-marks** (a media container's chapters); sidecar lift (§7.2). Attestations are deterministic byte-facts — the theme's "attested" half — and re-attest regenerates them (§8.3).
+  - `attest:` — the **ingest attestations**: which byte-facts ingest stamps at ingest time. Artifact-block fields (a PDF's `/Info`, an EPUB's Dublin Core, an eml's headers); **manifest embeds** for `disposition: manifest` types (archive members at `path=`, mail messages at `msg=`, cards at `card=`, calendar entries at `entry=`, MIME parts at `part=`, media tracks at `stream_id=`, image items at `item=`); **exposable embeds** for `work` types that declare them; **structural byte-marks** (a media container's chapters); sidecar lift (§7.2). Attestations are deterministic byte-facts — the theme's "attested" half — and re-attest regenerates them (§8.3).
   - `derive:` — the **derivation ops** the type exposes (§6.2), with any per-type config (the 2.x `draft.manifest` config becomes the `members` op's config; a strategy-named general implementation may serve many schemas exactly as `zip-manifest` did).
 
   The concrete YAML key surgery (which 2.x keys alias, which hard-retire) is implementation-guide material (§12.4); a schema still declaring `mode`/`draft.*` is read tolerantly and ignored.
@@ -837,7 +850,7 @@ An origin overlay's `normalization.guidance` is **body-shaping tactics** — how
 
 *(3.0)* An origin overlay MAY declare its records' **form**:
 
-- `form:` — `{id: <form-id>, mapping: {…}}`. The `id` names the `form/` overlay every record of this origin carries (the **declared** stamping path, §4.4.6). The `mapping` names where the form's units live in *this producer's* format — for a chat transcript: the messages array path, and the per-message paths for author identity, display name, timestamp (+ its parse convention), text, reply reference, attachment declarations. The mapping is consumed mechanically — by the shaper that stamps and conforms the span at normalize, and by the resolver's `turn=` unit op (§6.2) — so a new platform is one origin overlay with a mapping, zero code. Absent the key, records of this origin are formless unless a form is asserted (§4.4.6).
+- `form:` — `{id: <form-id>, mapping: {…}}`. The `id` names the `form/` overlay every record of this origin carries (the **declared** stamping path, §4.4.6). The `mapping` names where the form's units live in *this producer's* format — for a chat transcript: the messages array path, and the per-message paths for author identity, display name, timestamp (+ its parse convention), text, reply reference, attachment declarations. The mapping is consumed mechanically — by the shaper that stamps and conforms the span at normalize, and by the resolver's `turn=` unit op (§6.2) — so a new platform is one origin overlay with a mapping, zero code. An overlay MAY declare `form:` with an `id` and **no** `mapping` when the shape is named but no mechanical shaper can drive it — adoption then rides the interpretive pass (§4.4.6). Absent the key entirely, records of this origin stand under the zeroth form (§4.1, §7.8) unless a form is asserted (§4.4.6).
 
 The ingest pipeline iterates every origin block in the record. For each origin schema, if any origin block's `uri:` matches the schema's host pattern (or another declared cue), it upgrades that origin block's opener from bare `<!--origin-->` to `<!--origin <id>-->` and populates the schema's extended fields. The qualified opener contributes `origin/<id>[/<subtype>]` to the derived classifications view. (*Promotion* is reserved for the container-member operation of §8.1.)
 
@@ -905,7 +918,7 @@ A segment carries exactly one atomic class id, on the opener line. The structura
 | Body-shaping guidance keyed by page type | The origin overlay (subtypes, §7.2) or an atom overlay (§7.3) |
 | `extended_fields` | Claim values and qualifiers |
 
-The fact base and predicate grammar that `classify_when` defined are now specified in the harvest-rule contract (`ledger.md` §10), unchanged in substance: draft-visible facts only (`mime`, `origin.*`, `media.*`) *(3.0: the fact base has since grown `form.*` — `ledger.md` §10 — and "draft-visible" reads "attested-or-derived, never authored prose" under the two-status lifecycle)*, exact-by-default operators, missing-fact-is-false, and body keywords permanently excluded as the canonical false-positive source.
+The fact base and predicate grammar that `classify_when` defined are now specified in the harvest-rule contract (`ledger.md` §10), unchanged in substance: draft-visible facts only (`mime`, `origin.*`, `media.*`) *(3.0: the fact base has since grown `form.*` — `ledger.md` §10 — and "draft-visible" reads "attested-or-derived, never authored prose"; 3.1 keeps that reading under the derived-state lifecycle, §4.1)*, exact-by-default operators, missing-fact-is-false, and body keywords permanently excluded as the canonical false-positive source.
 
 ### 7.5 Semantic-type vocabulary
 
@@ -948,9 +961,11 @@ When fingerprinting is on, the algorithm for a segment is determined by its `ato
 
 The `<algo>:<hex>` value records which algorithm produced it, so a record self-documents how it was fingerprinted.
 
-### 7.8 The form namespace *(3.0)*
+### 7.8 The form namespace *(3.0; recontracted 3.1)*
 
-A `form` schema declares an overlay for one **record-scope structural shape** — the normal form a span of content decomposes into. It binds on a section-block opener (§4.3.2.1) exactly as an atom overlay binds on a segment opener.
+A `form` schema declares one **rendering contract**: an expectation for how a set of bytes is faithfully represented in a markdown shape. It binds on a section-block opener (§4.3.2.1) exactly as an atom overlay binds on a segment opener. *(3.1)* The namespace is the corpus's **shape-contract library**, the third leg of a deliberate separation of concerns: **origin** says where the bytes came from, **mime** says what container they arrived in, **form** says what markdown shape renders them faithfully. The layers never bleed (§1.5 principle 5): an origin overlay binds a form and maps the producer's format onto it (§7.2); the form overlay owns the shape.
+
+**The zeroth form** *(3.1)*. `formless` is a member of the form domain, not a gap in it — the library's **identity contract**: the faithful representation of the bytes is the bytes, delivered through the derivation ops (§6.2), its verification the attestation already in hand. It prescribes nothing about what the artifact is, which is exactly the record layer's discipline — and it is why there is deliberately **no catch-all shape and no default form**: stamping a generic shape on an artifact merely so it "has a form" asserts a shape its bytes may not have (much of what a corpus consumes — code, datasets, binaries, containers — is nowhere near document form). A named form is a **prescription, and it is earned**: by *identification* (an existing contract fits the artifact) or by *authorship* (a new contract is written for it); until then the record stands formless, consumable, and honest (§4.1).
 
 - `kind: form`
 - `description` — prose definition of the shape.
@@ -959,9 +974,13 @@ A `form` schema declares an overlay for one **record-scope structural shape** �
 - `checks` — the mechanical conformance obligations lint enforces on any span carrying this form (§4.3.2.1): required envelope fields, codebook indexes in range, address monotonicity. *(The check grammar is tooling-defined pending the first three overlays — §12.18 open questions.)*
 - `normalization.guidance` — prose tactics for the authoring pass, stated **once** for every origin that maps onto the form.
 
-**The minting test.** A form is minted when all four hold: (1) its decomposition contract **recurs across ≥2 origins**; (2) it **changes the normal form** — the span decomposes differently than mime + atoms alone would render it; (3) every fact it declares is **checkable against the bytes**; (4) a layer above **consumes it generically** (a composition view, a harvest rule). One origin wanting a shape is origin-overlay guidance; a label that changes nothing about decomposition is not a form.
+**Forms are a goal, not a rarity** *(3.1, amending 3.0's "rare by design")*. For the right artifacts — those with a faithful markdown shape — a named form is where the record is headed: messaging exports render as `conversation`, statements and receipts as their contracts, and the document population (captured articles, manuals, papers) as a small set of **generic shapes**. Adoption is **lazy and benefit-driven** — §4.4.6's two stamping paths, pulled by demand through the queue (§8.5) — never forced by totality: nothing requires every record to carry a named form, which is precisely what keeps the library honest and small. The population splits cleanly: formless-permanently (no faithful markdown shape exists — the identity contract IS the rendering), formless-for-now (a shape fits but none is yet identified, authored, or worth the pass), and formed.
 
-**Forms name shapes, never subjects.** `conversation`, `statement`, `receipt` are shapes: a time-ordered participant-attributed message sequence; a period envelope with transaction line items; an itemized-commerce document. `product-manual` is **not** a form — a manual decomposes as a generic document (mime + atoms suffice), and manual-*ness* is a role (`reference` block `role:`) or a ledger claim. `episode` vs `film` are legitimate — act structure with title/credit conventions vs scene-and-chapter continuity are decomposition contracts in the bytes — while *which show* an episode belongs to is the ledger rostering the record onto a concept, exactly as `form/receipt` never names the merchant (the origin block and the bytes do). This is the normative line that keeps §4.3.1.3/§7.4 honestly tombstoned: the classify block asserted meaning at record scope and is not returning; the form opener asserts shape at span scope, mechanically checkable, nothing more. Forms minted with this revision: `conversation`, `statement`, `receipt` (each already recurring across origins in the operating corpora); candidates that mint when their consumer arrives, not before: `procedure`, `listing`, `log`, `episode`, `film`.
+**The minting test** *(3.1 restatement)*. A form is minted when all four hold: (1) it names a **shape, never a subject** (below); (2) its decomposition contract states what a faithful rendering IS, precisely enough that conformance is **mechanically checkable against the bytes** — every fact it declares recomputable from the span; (3) a **population wants it** — the contract recurs across ≥2 origins, or a generic shape covers a modality-wide population; (4) a consumer **uses it** — a shaper, a composition view, a harvest rule, or the ledger's span-precise citation surface. One origin wanting a shape is origin-overlay guidance; a label that changes nothing about rendering or checking is not a form. *(3.0's second criterion — "changes the normal form vs. mime + atoms alone" — relaxes: a generic shape may render close to what mime + atoms already produce; what it adds is the contract itself — a named, checkable expectation a stored rendering can be verified against (§4.3.2.1 coherence; `ledger.md` §13.2), which an uncontracted rendering never has.)*
+
+**Generic shapes, guarded** *(3.1)*. A small generic hierarchy — on the order of `document`, `article`, `procedure`, `transcript`, `data-table-set` — is expected to cover the corpus's entire rendered population in **fewer than ten shapes**; a proposed eleventh generic shape is a design smell to be argued for, not a routine mint. A generic shape is still a real contract (an honest `form/document` binds artifacts that genuinely render as documents); what it must never be is a default (the zeroth form, above).
+
+**Forms name shapes, never subjects.** `conversation`, `statement`, `receipt` are shapes: a time-ordered participant-attributed message sequence; a period envelope with transaction line items; an itemized-commerce document. `product-manual` is **not** a form — a manual decomposes as a generic document (`form/document` at most, 3.1), and manual-*ness* is a role (`reference` block `role:`) or a ledger claim. `episode` vs `film` are legitimate — act structure with title/credit conventions vs scene-and-chapter continuity are decomposition contracts in the bytes — while *which show* an episode belongs to is the ledger rostering the record onto a concept, exactly as `form/receipt` never names the merchant (the origin block and the bytes do). This is the normative line that keeps §4.3.1.3/§7.4 honestly tombstoned: the classify block asserted meaning at record scope and is not returning; the form opener asserts shape at span scope, mechanically checkable, nothing more. *(3.1)* The guard binds hardest exactly where the library grows: a shape is generic or it is nothing — `form/procedure`, never `form/<site>-procedure`; the subject half of any proposed compound form belongs to the origin block (provenance) or the ledger (meaning). Forms minted at 3.0: `conversation`, `statement`, `receipt` (each recurring across origins in the operating corpora); the generic shapes above mint as their populations adopt and their consumers arrive — never before.
 
 **Stamping** is §4.4.6's two paths (declared via the origin overlay's `form:` key; asserted by an interpretive pass through the normalize gate). **Coherence** is §4.3.2.1's lint rule. **Downstream**, `form.*` joins the ledger harvest fact base (`ledger.md` §10) — deterministic rosters keyed on shape (`every form/receipt records onto the spending concept`) — and composition views consume *(form, envelope)* tuples with no platform knowledge: the cross-platform conversation thread joins spans on (ledger identity × timestamp); the same-video view joins tracks on (lineage × timeline); one composition layer, two join keys, zero stored view state.
 
@@ -974,10 +993,10 @@ A `form` schema declares an overlay for one **record-scope structural shape** �
 | Stage | Mechanics | Touch identifier shape |
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
-| `ingest` | blake3 of bytes → `id`; `transport_algos` → `transport:`; MIME detect → artifact-block opener; **byte-fact attestation** per the mime schema's `attest:` and `disposition:` (§7.1) — artifact fields, manifest/exposable embeds (members / messages / cards / entries / parts / tracks / items), structural byte-marks, sidecar lift; emit stub with first origin block from capture context; persist binary. | `<pkg>.ingest@<v>` |
-| `promote` | Mint a record for a container member already in the corpus: locate by embed declaration, stream + blake3-verify → `id`; MIME detect; **attest** per the member's mime schema; emit stub whose first origin block records the containment lineage as history (`uri: corpus://<container-id>?<member-address>` + `filename`/`source_modified` where present). Bytes are NOT copied (§2). | `<pkg>.promote@<v>` |
-| `draft` | *(retired in 3.0.)* The stage's three duties split: fact-stamping → ingest **attestation** (above); content extraction → resolver **derivation ops** (§6.2); body-writing → the normalize pass. A `status: draft` record reads tolerantly as a stub (§12.18). | — |
-| `normalize` | The **one authoring pass**: consumes the derivation ops and authors the stored faithful form — executed by a mechanical **shaper** where the record's declared form mapping (§7.2) or manifest shape makes it deterministic, by an interpretive agent where judgment is required — plus descriptions, the editorial fields, faithfulness issues, and `status: normalized`. | `<pkg>.shape.<id>@<v>` / `<model-id>` / combined (`+`) |
+| `ingest` | blake3 of bytes → `id`; `transport_algos` → `transport:`; MIME detect → artifact-block opener; **byte-fact attestation** per the mime schema's `attest:` and `disposition:` (§7.1) — artifact fields, manifest/exposable embeds (members / messages / cards / entries / parts / tracks / items), structural byte-marks, sidecar lift; emit the record (the artifact's proxy, §4.1) with first origin block from capture context; persist binary. | `<pkg>.ingest@<v>` |
+| `promote` | Mint a record for a container member already in the corpus: locate by embed declaration, stream + blake3-verify → `id`; MIME detect; **attest** per the member's mime schema; emit a record whose first origin block records the containment lineage as history (`uri: corpus://<container-id>?<member-address>` + `filename`/`source_modified` where present). Bytes are NOT copied (§2). | `<pkg>.promote@<v>` |
+| `draft` | *(retired in 3.0.)* The stage's three duties split: fact-stamping → ingest **attestation** (above); content extraction → resolver **derivation ops** (§6.2); body-writing → the normalize pass. A `status: draft` record reads tolerantly as a just-attested record (§12.18). | — |
+| `normalize` | The **one authoring pass**: consumes the derivation ops and renders the record under its named form contract (§7.8) — executed by a mechanical **shaper** where the record's declared form mapping (§7.2) or manifest shape makes it deterministic, by an interpretive agent where judgment is required — and/or authors the vouch: the editorial fields, descriptions, faithfulness issues (§4.1). | `<pkg>.shape.<id>@<v>` / `<model-id>` / combined (`+`) |
 
 Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-defined.
 
@@ -991,7 +1010,7 @@ A corpus may also specialize the **shaping** of its own content with corpus-loca
 |---|---|---|
 | Hashing, MIME detection, schema lookup | deterministic | mechanical |
 | Byte-fact attestation (artifact fields, manifest embeds, byte-marks, sidecar lift) | deterministic | mechanical |
-| Member promotion (byte streaming, hash verify, stub mint) | deterministic | mechanical |
+| Member promotion (byte streaming, hash verify, record mint) | deterministic | mechanical |
 | Derivation ops (`body`, `members`, text layers, renders, unit ops) | deterministic | pure functions (§6.3) |
 | Transcription / OCR ops | deterministic **per engine version** | version-labeled; pinned by authorship (§6.4) |
 | Origin-host matching; overlay-declared reference/relation emission | deterministic | overlay-declared |
@@ -1013,13 +1032,13 @@ Each re-run appends a `touch[]` entry.
 
 ### 8.4 Re-stub
 
-`re-stub` is a deliberate reset operation that returns a record to `status: stub`, ready for fresh attestation. Everything **derived from a schema decision** is discarded. Everything **tied to the bytes themselves** is preserved.
+`re-stub` is a deliberate reset operation that returns a record to its attested baseline (§4.1), ready for fresh attestation — the verb keeps its historical name. Everything **derived from a schema decision** is discarded. Everything **tied to the bytes themselves** is preserved.
 
 | What survives | What is reset |
 |---|---|
 | `id`, `transport` — byte-intrinsic. | `title` and `description` → empty; `canonical`, `perceptual` (record-scope). |
 | The artifact block's opener (the MIME) and the origin blocks with their `uri:` history. | The artifact block's attested fields, all embed blocks, all sections/segments (authored and byte-mark alike), all context blocks. |
-| `visibility`. | `status` → `stub`; record body's content zone → empty. |
+| `visibility`. | Record body's content zone → empty. |
 | `touch[]` collapses to its first entry (the original ingest touch) plus the re-stub touch. | |
 | The persisted bytes. | |
 
@@ -1029,15 +1048,17 @@ Re-stub is invoked deliberately — never automatic. Its uses:
 - Records whose accumulated normalize work was wrong.
 - Migration from a deprecated schema generation.
 
-Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It remains the migration translation point: it accepts older frontmatter on input — including 2.x `status: draft` — and always writes a current-spec-shaped stub on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
+Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It remains the migration translation point: it accepts older frontmatter on input — including any legacy `status:` field — and always writes a current-spec-shaped record on output, preserving byte-intrinsic state and discarding everything that depended on the prior schema shape.
 
 ### 8.5 The normalization queue
 
 `normalize` (§8.1) is the one stage the corpus tooling does not itself initiate — it is driven by an external **loop session** (a scheduled agent), which runs the mechanical shaper where the record's form mapping licenses one and works interpretively where not (§12.5). The tooling provides only the **request/claim contract** that lets any actor ask for a (re-)normalization pass and await its result; it never invokes a normalizer.
 
-**The queue never writes records.** Record `status`, `touch[]`, and body are authored solely by `ingest` and the normalize pass (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns `status`; the queue owns only its own entries.
+*(3.1)* The queue is **standing demand, never a backlog**. An entry exists because some consumer wants a pass — the ledger citing into a record, a codex compiling one, an overlay newly declaring a form, guidance improving — and the queue's size measures outstanding *demand*, not outstanding *work owed*. A formless record no consumer has asked about is complete, not pending (§4.1); it enters the queue when a reason does.
 
-**Requests are status-independent and repeatable.** A record may be enqueued at any status — `stub` for a first pass, or `normalized` for a *refinement* when a new overlay matches it or its guidance improves (re-normalize, §8.3). `normalized` is not terminal; each completed pass appends a `<model-id>` touch. Enqueue never inspects `status`.
+**The queue never writes records.** A record's `touch[]` and body are authored solely by `ingest` and the normalize pass (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns the record; the queue owns only its own entries.
+
+**Requests are state-independent and repeatable.** A record may be enqueued in any state — a formless proxy for a first pass, or a formed + authored record for a *refinement* when a new overlay matches it or its guidance improves (re-normalize, §8.3). No state is terminal; each completed pass appends a touch. Enqueue never inspects the record.
 
 A queue entry moves `idle → requested → claimed → idle`, recording the last pass's outcome:
 
@@ -1045,15 +1066,15 @@ A queue entry moves `idle → requested → claimed → idle`, recording the las
 |---|---|---|
 | `enqueue <id>` | request a (re-)normalization pass; idempotent — a request arriving while one is pending joins it. | no |
 | `drain` | atomically **claim** the next pending entry and emit its `id`; an empty queue is a non-error empty result — the loop's stop signal. A blocking variant long-polls for the next claim instead of reporting empty (the *standing* mode below). Reclaims a claim whose lease has lapsed (a dead session). | no |
-| `finalize <id>` | close the claimed pass **complete** — gated on the record being `status: normalized` and linting clean; refuses (non-zero) on a blocking finding, so a dirty pass is never reported done. | reads only |
+| `finalize <id>` | close the claimed pass **complete** — gated on the **pass gate** (below); refuses (non-zero) on a blocking finding, so a dirty pass is never reported done. | reads only |
 | `release <id> [--failed]` | return a claim — bare re-queues it; `--failed` records a failed outcome. | no |
 | `await <id>` | block until the requested pass reaches a terminal outcome; success/failure by exit status. | reads only |
 
-**Done** means the normalizer set `status: normalized` *and* the record lints clean — `finalize` enforces both halves.
+**The pass gate** *(3.1, succeeding the 3.0 `status: normalized` gate)*. **Done** means the pass left the record **authored** (the vouch present, §4.1), **formed where its overlays declare a form** (§7.2, §4.4.6 — form-coherence lint covers the conformance half), and linting clean. All three are derived from the record itself; `finalize` enforces them together.
 
-**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, form §7.8, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline requires `normalized` records (`ledger.md` §6.3): the ledger contributes by enqueuing, never by supplying a normalizer. *(3.0)* The loop session consults the record's declared form: a form-mapped record shapes mechanically — the agent's remaining work is the editorial fields and descriptions — while a formless record is the fully interpretive case. `finalize`'s done-gate — `status: normalized` + lint clean, which now includes form-coherence (§4.3.2.1) — is unchanged.
+**Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, form §7.8, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline prefers formed surfaces and raises demand by enqueuing (`ledger.md` §6.3): the ledger contributes by enqueuing, never by supplying a normalizer. *(3.0)* The loop session consults the record's declared form: a form-mapped record shapes mechanically — the agent's remaining work is the editorial fields and descriptions — while a record with a declared-but-unmapped or asserted form is the interpretive case. `finalize`'s done-gate is the pass gate above, form-coherence (§4.3.2.1) included.
 
-**Entry lifecycle and pruning.** A request and its claim are transient — each transition supersedes the prior state — but a settled pass records its **outcome** so a requester's `await` can resolve it, and so a *re-normalization* is distinguishable from an earlier pass (which `status` alone cannot tell apart, since a re-normalized record is still `normalized`). An outcome is **coordination state, not history**: the record's own `status` and `touch[]` are the durable trail. Because a requester may `await` after a loop iteration ends, an outcome is **never discarded at loop end** — that would race the awaiter, dropping it to the `status` fallback. Outcomes are instead garbage-collected by **age**: a settled outcome past a grace window (plus any orphaned scratch) is prunable, never a live request or claim — so the queue's footprint stays bounded without dropping an outcome a requester still needs. The grace window and the prune trigger are operational policy, not part of the contract.
+**Entry lifecycle and pruning.** A request and its claim are transient — each transition supersedes the prior state — but a settled pass records its **outcome** so a requester's `await` can resolve it, and so a *re-normalization* is distinguishable from an earlier pass (which the record alone cannot tell apart — only its touch chain grows). An outcome is **coordination state, not history**: the record's own `touch[]` is the durable trail. Because a requester may `await` after a loop iteration ends, an outcome is **never discarded at loop end** — that would race the awaiter, dropping it to the record-state fallback. Outcomes are instead garbage-collected by **age**: a settled outcome past a grace window (plus any orphaned scratch) is prunable, never a live request or claim — so the queue's footprint stays bounded without dropping an outcome a requester still needs. The grace window and the prune trigger are operational policy, not part of the contract.
 
 ---
 
@@ -1269,9 +1290,9 @@ The hash families of §2 / §4.2.1 land at different stages (§7.6 encoding):
 
 There is no frontmatter `hashes` field and no mandatory per-MIME perceptual hash. A MIME with no canonical strategy and no fingerprint knob is blake3-`id`-only, and that record is normal.
 
-#### 12.3.4 The stub record
+#### 12.3.4 The record at birth *(3.1; formerly "the stub record")*
 
-Ingest emits the stub record (§4.1). The frontmatter carries only the bytes-identity header — `id`, `transport:` (any `transport_algos`), `status: stub`, `touch: [<pkg>.ingest@<v>]`, and the two editorial fields `title: ''` / `description: ''`, empty until the normalizer authors them (§4.2.1). Everything else lands in body blocks:
+Ingest emits the record — the artifact's proxy, complete at birth (§4.1). The frontmatter carries only the bytes-identity header — `id`, `transport:` (any `transport_algos`), `touch: [<pkg>.ingest@<v>]`, and the two editorial fields `title: ''` / `description: ''`, empty until the normalizer authors them (§4.2.1); *(3.1)* no `status` field. Everything else lands in body blocks:
 
 - The **artifact block**, its body holding the format-intrinsic extended fields the mime schema declares, named bare (`title`/`author`/`page_count`, not `pdf_title`; §4.3.1.1). Sources: PDF info dict, EXIF, ID3, HTML `<meta>`, OPF Dublin Core, ffprobe streams.
 - The mime schema's remaining **attestations** (§7.1): manifest/exposable embeds per the disposition, structural byte-marks, sidecar lift.
@@ -1350,7 +1371,7 @@ A page's most relevant outbound links are part of the capture itself — a produ
 - **The rules** (`references.parse_rules` → `ReferenceRule`): a list of `{match, role, capture, cross_host}`. A rule's `match` keys (`selector` CSS, `href_pattern`/`text_pattern` regex on the resolved href / anchor text, `rel` token) are ANDed; rules are ORed. `role` (corpus-local label — `manual`, `spec-sheet`) rides onto the emitted reference; `capture: true` opts the target into the depth-1 grab (default false = annotate only); `cross_host: allow` (the default — manuals are off-host) lets a match reach another host, `same` host-restricts it. Parse-tolerant: a non-mapping entry, a rule with no match key, or a bad `cross_host` is skipped, never fatal.
 - **Matching** (`references.match` / `matches_for_record`): parse the DOM, scope candidate anchors by `selector` (else all `<a href>`), apply the AND filters, resolve relatives against the base URL, normalize, drop non-crawlable hrefs (`urls.is_crawlable_href` — the same filter `links`/`crawl` use), enforce `cross_host: same`, and dedupe by URL (DOM order, first rule wins for role/capture). `matches_for_record` applies the host's rules against the record's primary origin URI and excludes self-links. Shared by the overlay emission, `corpus links --references`, and the grab.
 - **Emission rides the attestation pass** (`references.emit_overlay_references`; §8.1 — record-scoped, so it attests at ingest). Each match emits one `<!--context reference-->` with `provenance: auto`, the rule's `role`, tier-1 `attribution_text` (the link text), and tier-2 `source_url` (the resolved href). It stops at tier 2: the mechanical emission writes **no** tier-3 `source_uri` and reads **no** corpus state, keeping it a pure function of the artifact (§4.3.3.3). Whether `source_url` is itself a record is a read-time derived edge: `derived_views.references` (§9.9) resolves it against the URI index and surfaces `captured`/`resolved_uri`, so the edge self-heals (`captured ⇄ pending`) under capture/removal/supersession. Idempotent for free: `auto` blocks are stripped + regenerated by re-attest (§4.4.6), so emission never duplicates. **Known gap:** emission is HTML-only and *record-scoped* in the current implementation — no segment anchor is written, because the declared link usually sits in un-segmented chrome and a brittle DOM→segment map would mis-pin it. §4.3.3.3 specifies a segment-pinned anchor (`address:`/`quote:`); closing this gap is an open item (§12.15).
-- **The depth-1 grab** (`references.fetch_references`): `select_for_capture(matches, force=)` picks targets — `force=True` (`--with-references`) all, `force=False` (`--no-references`) none, `force=None` (default) the rules' own `capture: true`. Each selected, not-already-captured target is fetched once via `capture_and_ingest` — depth is fixed at 1 (a grabbed target is ingested as a stub, never expanded; multi-hop stays `crawl`'s job, §11). Best-effort: a per-target failure is recorded, not raised. Surfaces: `corpus capture --with-references` / `--no-references` (the inline grab after the primary ingest), `corpus crawl --references [seed]` (the deferred sweep; `--dry-run` lists pending targets).
+- **The depth-1 grab** (`references.fetch_references`): `select_for_capture(matches, force=)` picks targets — `force=True` (`--with-references`) all, `force=False` (`--no-references`) none, `force=None` (default) the rules' own `capture: true`. Each selected, not-already-captured target is fetched once via `capture_and_ingest` — depth is fixed at 1 (a grabbed target is ingested as its own record, never expanded; multi-hop stays `crawl`'s job, §11). Best-effort: a per-target failure is recorded, not raised. Surfaces: `corpus capture --with-references` / `--no-references` (the inline grab after the primary ingest), `corpus crawl --references [seed]` (the deferred sweep; `--dry-run` lists pending targets).
 - **Discovery + view.** `corpus links --references <record>` previews the declared subset, each line annotated `[role=…, captured|pending, auto?]`. The `references` derived view (§9.9) is the `reference`-namespace projection; the reverse edge (which records reference *this* one) is a corpus-wide read, not indexed (§9.9 / §11).
 
 #### 12.3.11 Pre-ingest bundle assembly (`corpus assemble`, 2.1)
@@ -1419,7 +1440,7 @@ Fingerprints attest at ingest where the knob resolves on (§7.7). A segment gets
 
 #### 12.4.6 Bulk re-attest (`corpus reattest`)
 
-The attested layer is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an in-place `.md` rewrite, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. **`corpus reattest`** `[target] [--mime/--host/--status] [--dry-run] [--fingerprint]` sweeps the attested layer (§8.3) across the corpus — an unchanged record re-derives byte-for-byte and is not rewritten (idempotent; `--dry-run` reports the set, writing nothing). Unlike the 2.x `corpus redraft` it succeeds, re-attest never touches the authored layer (§4.4.7), so it needs no `normalized`-refusal guard; authored-layer sweeps are **re-normalize** dispatches through the queue (§8.5). The **`corpus draft` verb retires**. Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest* (§12.4.2) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to canonical text without writing, so reattest can compare against disk.)
+The attested layer is a deterministic function of (retained artifact + schemas + tooling), and `id = blake3(artifact)` is unchanged by re-derivation — so regenerating it is an in-place `.md` rewrite, and `git diff records/` surfaces exactly which records a schema / overlay / tooling change affected. **`corpus reattest`** `[target] [--mime/--host/--state] [--dry-run] [--fingerprint]` sweeps the attested layer (§8.3) across the corpus — an unchanged record re-derives byte-for-byte and is not rewritten (idempotent; `--dry-run` reports the set, writing nothing). *(3.1: the 3.0 `--status` selector re-keys to the derived-state predicates of §4.1 — e.g. formless-only; concrete flag names are tooling-time detail.)* Unlike the 2.x `corpus redraft` it succeeds, re-attest never touches the authored layer (§4.4.7), so it needs no authored-refusal guard; authored-layer sweeps are **re-normalize** dispatches through the queue (§8.5). The **`corpus draft` verb retires**. Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest* (§12.4.2) rather than from the source *artifact* — different inputs, different jobs. (`records.dumps` serializes a record to canonical text without writing, so reattest can compare against disk.)
 
 Pipeline-state provenance is the `touch[]` chain (§4.2.2): each pass appends a `<pkg>.<module>@<version>` (or `<model-id>`) identifier, so the latest touch's tooling version encodes the spec era of the record's current shape and re-run targeting reads it. There is no separate `conversion_method` / `conversion_tool` field.
 
@@ -1437,7 +1458,7 @@ This is purely mechanical: the pipeline does not invent links the original conte
 
 ### 12.5 Normalize
 
-Normalization brings a record from `stub` to `normalized` (§8.1) — the **one authoring pass**. It is executed by a **shaper** (deterministic tooling registered per form or manifest strategy — the successor of the 2.x draft strategies) wherever the record's declared form mapping makes the shape mechanical, and by an interpretive agent session (through the queue, §8.5) wherever judgment is required; most records are a composition — the shaper writes the form, the agent authors what only judgment can (editorial fields, descriptions, faithfulness issues). The agent works over the same derivation ops any reader uses (`corpus body`, the introspection ops, `transcribe`) — nothing it consumes is privileged or unreproducible.
+Normalization is the **one authoring pass** (§8.1): it renders a record under its named form contract and/or authors the vouch (§4.1). It is executed by a **shaper** (deterministic tooling registered per form or manifest strategy — the successor of the 2.x draft strategies) wherever the record's declared form mapping makes the shape mechanical, and by an interpretive agent session (through the queue, §8.5) wherever judgment is required; most records are a composition — the shaper writes the form, the agent authors what only judgment can (editorial fields, descriptions, faithfulness issues). The agent works over the same derivation ops any reader uses (`corpus body`, the introspection ops, `transcribe`) — nothing it consumes is privileged or unreproducible.
 
 #### 12.5.0 Shapers
 
@@ -1447,22 +1468,22 @@ A **shaper** is deterministic normalize tooling: it reads the origin overlay's `
 
 The normalizer authors the record's stored faithful form — faithful-form work only:
 
-- Authors the stored content zone from the derived body and the introspection ops (where a shaper hasn't already written the form), improving formatting fidelity (broken tables, malformed lists) and resolving encoding ambiguity where determinable.
+- Authors the stored content zone from the derived body and the introspection ops (where a shaper hasn't already written the form), improving formatting fidelity (broken tables, malformed lists) and resolving encoding ambiguity where determinable. *(3.1)* A stored rendering rides a named form (§4.1): the interpretive pass authors a content zone only under the record's declared form or one it asserts through §4.4.6's gate — on a record staying formless, its work is the vouch alone.
 - Writes asset descriptions on embeds and on self-slice / non-lossless segments via `description:` (lossy interpretation — never in a faithful segment body); fills embed `alt` only when the source provides it.
 - Surfaces problems as `<!--context issue/<id>-->` blocks in the annotations zone.
 - Authors the frontmatter `title` and `description` (the two editorial fields, empty until now).
-- Re-segments where judged appropriate (structural only), and sets `status: normalized`.
+- Re-segments where judged appropriate (structural only).
 
 The pass MUST preserve faithfulness (§1.5 principle 3): no information that wasn't in the source; descriptive content lives on `description:` / `alt`, never in a segment body.
 
 #### 12.5.2 Self-verification
 
-Before declaring the record normalized, the normalizer confirms:
+Before finalizing the pass, the normalizer confirms:
 
 - The artifact-block opener MIME matches the actual MIME of the stored binary (the opener is authoritative, §12.3.2).
 - The `id` (blake3) matches the binary's hash.
 - The on-disk record path matches the shard convention.
-- `corpus lint` is clean at `normalized` severity — lint is the executable encoding of the spec's required-field and grammar rules.
+- `corpus lint` is clean at the pass gate's severity (§8.5) — lint is the executable encoding of the spec's required-field and grammar rules.
 
 Failures here are pipeline bugs; they should fail loudly.
 
@@ -1472,7 +1493,7 @@ A context block stores as `{namespace, id, subtype, fields}` in `post.metadata["
 
 - **Issue loading and parse tolerance.** `schemas.load_context_schema(corpus_root, "<ns>/<id>")` layers `context/<ns>/<ns>.yaml` → `context/<ns>/<id>.yaml`. `records.iter_issue_blocks` / `append_issue_block` are shims over `_contexts` filtered to the `issue` namespace, so pipeline detectors, `health.unresolved_issues`, the §9.2 view, and lint's issue rules share one path. The reader is parse-tolerant: a legacy `<!--issue <id>-->` still loads (as the `issue` namespace) and upgrades to `<!--context issue/<id>-->` on the next write.
 - **Reference lint.** `context-namespace-unknown` flags a block whose namespace has no `context/<ns>` overlay. *(The 1.0 `reference-unresolved` lint retired with the stored tier-3 `source_uri`, §4.4.5.)*
-- **Decompose/compile conventions.** The manifest keeps a dedicated `issue <id> sev= res= detector=` line for the issue namespace and a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`). Two conventions keep the working dir hand-editable: `status` is authored only on the manifest `record … status=` line (not duplicated in `meta.yaml`, where an edit would be a silent no-op), and `meta.yaml` renders a multi-line string as a YAML block literal (`|`) so a multi-line `description` never reads as a truncated stump. An address list in the manifest is bracketed and `|`-separated (`[a|b|…]`), not comma-separated — a single address (e.g. `bbox=x,y,w,h`) already contains commas.
+- **Decompose/compile conventions.** The manifest keeps a dedicated `issue <id> sev= res= detector=` line for the issue namespace and a generic `context <ns>/<id> k=v…` line for the others (`recordbuild.add_context`). Two conventions keep the working dir hand-editable: record-level manifest facts are authored only on the manifest `record …` line (not duplicated in `meta.yaml`, where an edit would be a silent no-op) — *(3.1: the line's `status=` key retires with the field; until the tooling sweep it round-trips inertly)* — and `meta.yaml` renders a multi-line string as a YAML block literal (`|`) so a multi-line `description` never reads as a truncated stump. An address list in the manifest is bracketed and `|`-separated (`[a|b|…]`), not comma-separated — a single address (e.g. `bbox=x,y,w,h`) already contains commas.
 
 #### 12.5.4 Normalizer-support commands
 
@@ -1501,7 +1522,7 @@ One caveat the image guidance makes explicit: unlike a PDF (vector source, re-re
 
 The queue contract is §8.5; the verbs live in `_cli/{enqueue,drain,finalize,release,await,queue}.py` over the `corpus.queue` library.
 
-**State layout.** External, untracked, under `<root>/queue/` (gitignored alongside `artifacts/`, `capture/`, `cache/`), one marker per record: `<id>.req` (pending request: `requested_at`, `requested_by`), `<id>.claim` (in-flight: `claimed_at`, `claimed_by`), `<id>.result` (last terminal outcome: `completed` | `failed`, with `reason`). A record's queue state is a pure function of which marker exists; markers are JSON written atomically (temp sibling + `os.replace`). The queue never touches `records/` — every verb is read-only on the record (`finalize` reads it to lint; `await` reads `status` as a fallback).
+**State layout.** External, untracked, under `<root>/queue/` (gitignored alongside `artifacts/`, `capture/`, `cache/`), one marker per record: `<id>.req` (pending request: `requested_at`, `requested_by`), `<id>.claim` (in-flight: `claimed_at`, `claimed_by`), `<id>.result` (last terminal outcome: `completed` | `failed`, with `reason`). A record's queue state is a pure function of which marker exists; markers are JSON written atomically (temp sibling + `os.replace`). The queue never touches `records/` — every verb is read-only on the record (`finalize` reads it to gate; `await` reads the record's derived state as a fallback).
 
 **Atomic claim.** `drain` claims by `os.rename(<id>.req → <id>.claim)` — atomic on POSIX, so when two loop sessions race, exactly one wins (the loser's rename raises and it moves to the next candidate). Requests are claimed FIFO by `requested_at`. An empty queue returns nothing on stdout and exit 1 — the loop's stop signal (per §8.5 this is a non-error empty result; the exit code exists only to break the loop). A stale `.claim` (a dead session) is reclaimable once `claimed_at` is older than `--lease` (default 30 min); reclaim renames it back to `.req`. A duplicate pass from an over-eager reclaim is wasteful, not unsafe (re-normalization is idempotent), so reclaim is best-effort.
 
@@ -1511,14 +1532,14 @@ The queue contract is §8.5; the verbs live in `_cli/{enqueue,drain,finalize,rel
 while id=$(corpus drain --by "$SESSION"); do
     corpus guidance "$id"     # merged overlay normalization.guidance (§12.5.4)
     # ...the agent normalizes $id in-session: title, description, embed/segment
-    #    descriptions, re-segmentation; sets status: normalized; recompiles...
+    #    descriptions, re-segmentation; recompiles...
     corpus finalize "$id" || corpus release "$id" --failed "<reason>"
 done
 ```
 
 That bare loop is the **scheduled** shape: a tick (cron) drains until dry, then the model sleeps until the next tick — the model polls, waking on a clock even when the queue is empty. `drain --wait` moves the poll off the model: it long-polls the claim primitive in the subprocess and returns the instant a request is claimable, blocking instead of exiting on an empty queue (until `--timeout`, if set; `--interval` sets the poll cadence, default 2 s). The wait holds no claim — `drain` claims atomically only at the moment it succeeds — so an interrupt mid-wait leaks nothing. A **standing** loop runs `corpus drain --wait` under a persistent runner that re-invokes per claim, so the (expensive) model wakes only when there is genuinely work. The contract is unchanged: `--wait` is an ergonomic over the same atomic claim.
 
-**The done gate.** `finalize` refuses (exit 1, claim left intact) unless the record is `status: normalized` *and* lints with no error-severity findings — a dirty pass is never reported complete. A requester (a codex agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code, so it works for a re-normalization of an already-`normalized` record (status alone can't tell the new pass apart — the queue entry can). Because per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every codex; a codex contributes by authoring overlays and enqueuing, never by supplying a normalizer.
+**The done gate.** `finalize` refuses (exit 1, claim left intact) unless the pass gate holds (§8.5: authored + formed-where-declared + lint clean, all derived from the record) — a dirty pass is never reported complete. A requester (a codex agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code, so it works for a re-normalization of an already-passed record (the record alone can't tell the new pass apart — the queue entry can). Because per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every codex; a codex contributes by authoring overlays and enqueuing, never by supplying a normalizer.
 
 **Result lifecycle.** `.req` and `.claim` are transient — each transition is an atomic rename that consumes the prior marker — but a settled pass leaves a `<id>.result` that nothing removes on its own (§8.5: an outcome must outlive the pass so a decoupled requester can await after the loop tick ends). Results are GC'd by age: `corpus queue --prune [--older-than DAYS]` (default 7 d; `0` = now) removes settled results past the grace window and sweeps crash-orphaned `*.tmp.*` scratch, never touching live `.req`/`.claim`. Run it periodically; it is idempotent.
 
@@ -1542,9 +1563,9 @@ Every stage is independently re-runnable (§8.3); each re-run appends a `touch[]
 - **`corpus reattest`** — re-run the attestation layer from the retained artifact + current schemas/tooling (§12.4.6, §8.3).
 - **Re-normalize** — enqueue the record again (§12.5.6); refreshes the authored layer (shaper or agent) and faithfulness issues, may re-segment.
 - **`corpus compile`** — reassemble a record from a decomposed manifest (§12.4.2) — a different input than `reattest`'s artifact.
-- **`re-stub`** — the deliberate reset to `status: stub` (§8.4).
+- **`re-stub`** — the deliberate reset to the attested baseline (§8.4).
 
-**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (an attestation or mime-schema change), `--classification` (a `mime/*` / `origin/*` / `form/*` class), `--status` (e.g. only `stub`).
+**Scoping a sweep.** Deterministic re-derivation makes scoping a `git diff records/` concern rather than a field-level-diff one: re-derive the affected set and the diff *is* the surgical, reviewable change surface. Scope by the most precise selector available — `--host` (a re-captured / re-overlaid origin), `--mime` (an attestation or mime-schema change), `--classification` (a `mime/*` / `origin/*` / `form/*` class), or a derived-state selector (§4.1 — e.g. formless-only).
 
 ### 12.8 Maintenance: GC and record removal
 
@@ -1652,7 +1673,7 @@ Tooling alignment order, mirroring §12.16's tooling-first discipline:
 
 1. **The member index + store fallback** land in the resolver/store layer (§12.9), so a bare blake3 resolves through containment before anything mints records that depend on it.
 2. **`health` redefines "missing"** as *unresolvable by any route* — standalone or containment (`missing_artifacts` consults the member index). Deep byte-verification of container members (streaming re-hash against embed `transport:` hashes) is an explicit verb, not a default check.
-3. **`corpus promote`** mints member records (§8.1), verifying streamed bytes against the embed's recorded hash before writing the stub.
+3. **`corpus promote`** mints member records (§8.1), verifying streamed bytes against the embed's recorded hash before writing the record.
 4. **The zip default flips** (raw archives stop exploding; tar/tgz gains a manifest drafter + `path=` transform).
 5. **`corpus pack`** (consolidation, §12.8) follows when a corpus wants it — e.g. folding thousands of sibling standalone files into a handful of taxonomy archives with no record edits.
 
@@ -1687,6 +1708,24 @@ Order of operations, tooling-first per the §12.16 discipline:
 9. The exposable-embed attest sets per `work`-disposition format — which PDF/OOXML internals attest (embedded files yes; every OLE sub-object?), and at what depth — settle per mime schema with the first real captures that carry them.
 10. The re-homed CLI surfaces for the retired `draft` verb's options — the `--fingerprint`/`--no-fingerprint` override (§12.4.4) and the mbox selective `--messages` declaration (§12.4.1) — are currently named only as "the ingest/re-attest surface", a placeholder; settle the concrete verbs and flags at tooling time.
 
+### 12.19 The 3.1 layers migration (non-normative)
+
+The migration story for the 3.0 → 3.1 contract change. Inventory at drafting time (2026-07-16): **11,058 records** (7,376 public + 3,682 private), every one at `status: stub` or `status: normalized` (the §12.18 sweeps are complete). Of these: **7,751 `normalized`** records carry stored renderings, of which only **139** carry form sections (the §12.18 step-4 conversions — conversations, statements/receipts, vcards) — the rest, dominated by the ~6,800-record public document population, are stored renderings under no named contract; **3,307 `stub`** records include the **3,278 grandfathered materialized derivations** of §12.18 step 3; **4,651 queue requests** are pending (3,194 private — the iMessage fleet + statements/receipts — and 1,457 public). Ledger snapshot bindings exist on cited records throughout, all touch-keyed (`ledger.md` §13.2).
+
+Order of operations, tooling-first per the §12.16 discipline:
+
+1. **Tooling alignment.** The parser accepts and ignores a frontmatter `status:` field (read-tolerant); the emitter never writes one — any record's next write drops it. The derived-state predicates of §4.1 (*formed*: a form section governs the stored content zone; *authored*: the two editorial fields non-empty) land in the records library as the one shared implementation. Lint re-keys every status-conditioned rule to the predicates (form-coherence is already predicate-shaped); the queue's `finalize` re-keys to the pass gate (§8.5); `health` retires its status tallies **and the remaining draft-era surfaces** (pre-existing debt rides along — e.g. the `corpus redraft --status` remnant) in favor of layer-presence reporting (attested / formed / authored / grandfathered counts, standing demand); sweep selectors (`--status`) re-key to derived-state flags. The suite green on all of this *defines* 3.1 conformance before any record sweep.
+2. **The status-removal sweep** (the third status sweep; mechanical, per-record). Strip the `status:` line from every record's frontmatter — a frontmatter-only edit, zero body bytes change — with a `corpus.migrate.<sweep-name>@<v>` touch appended per record and a per-tenant migration manifest committed alongside, exactly as the §12.18 sweeps did.
+3. **Ledger re-verify.** The sweep's touch flags **every cited record's** snapshot binding — the touch-keyed loud-flag discipline working as designed, not rot. Because the sweep changed no body bytes, anchors and quotes are untouched: `ath ledger verify` re-checks and `--stamp` re-binds mechanically in one pass. The ledger's own gate re-keys in the same step (`ledger.md` §13.1's evidence check and §6.3's discipline move from status to verifiable surfaces; §13.2 gains the derivation-op version pin).
+4. **Form-library growth** (lazy — no eager sweep). The generic shape contracts (§7.8: `document`, `article`, `procedure`, …) are authored as their consumers arrive; the rendered-but-formless population adopts at its next pass through normalize. One measured shortcut is available per contract: where an existing stored rendering **already conforms** to a newly minted generic contract, a mechanical adopt sweep may stamp + conform in bulk — measured against the real bodies first, never assumed (the §12.18 lesson: a fixture proves the code, only the fleet proves the contract). The step-3 grandfathered bodies keep their §12.18 exit: adopt a form at the record's next pass, or remain convenience-only, unverifiable, and strippable.
+5. **Gates.** Suite green; both corpora lint- and health-clean; `ath ledger check` + `verify` clean. Every sweep lands as one reviewable commit per tenant (`git diff records/` is the change surface).
+
+**Open questions** (flagged, not resolved here):
+
+1. Concrete CLI names for the derived-state selectors and health's layer-presence report — tooling time.
+2. The derivation-op version pin's binding format on ledger sources entries (`ledger.md` §13.2) — settle with the first derived-surface citation, not in the abstract.
+3. Whether the queue's public backlog (1,457 pending requests predating the standing-demand reframe) still represents real demand — re-derive it from actual consumers (ledger worklists, codex scopes) rather than carrying it forward on faith.
+
 ---
 
 ## Appendix A: Glossary
@@ -1706,12 +1745,16 @@ Order of operations, tooling-first per the §12.16 discipline:
 | **Artifact block** | `<!--artifact <mime-type>-->` — exactly one per record. Opener arg is the authoritative media-type declaration. |
 | **Origin block** | `<!--origin [<id>[/<subtype>]]-->` — one or more per record. Carries `uri:` and `snapshot:`. |
 | **Embed block** | `<!--embed <mime-type>-->` — content-addressed asset metadata. Deduplicated by `transport:`. |
-| **Section block** | `<!--section <form-id>-->` — a **form span**: a positional span of the content zone carrying a named structural form and its codebook fields. Depth one, never overlapping, rare. *(3.0: the 1.0–2.x TOC-grouping role is retired — see Structural segment.)* |
+| **Section block** | `<!--section <form-id>-->` — a **form span**: a positional span of the content zone carrying a named structural form and its codebook fields. Depth one, never overlapping. *(3.0: the 1.0–2.x TOC-grouping role is retired — see Structural segment.)* |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom. |
 | **Structural segment** | `<!--segment structural-->` — a body-empty **byte-mark**: the source's own declared boundary (heading, outline entry, chapter, topic) at an address, with `level:` and optional `entry:`. The TOC is a derived rendering over these marks. |
 | **Context block** | `<!--context <namespace>/<id>[/<subtype>]-->` — an annotations-zone observation (namespaces: `issue`, `reference`, `relation`, …); record- or segment-scope (via `address:`). |
 | **Namespace** | One of `mime`, `origin`, `form`, `atom`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
-| **Form** | The fourth classification axis (3.0): what structural shape a span of content decomposes into (`conversation`, `statement`, `receipt`). Declared by a `form/` overlay; bound on a section opener; names shapes, never subjects. |
+| **Form** | The fourth classification axis (3.0): a **rendering contract** — an expectation for how a set of bytes is faithfully represented in a markdown shape (`conversation`, `statement`, `receipt`). Declared by a `form/` overlay; bound on a section opener; names shapes, never subjects; a goal for the right artifacts, never a default (3.1, §7.8). |
+| **Formless (the zeroth form)** | The identity contract (3.1): the faithful representation of the bytes is the bytes, delivered through derivation ops. Valid indefinitely; prescribes nothing about what the artifact is. |
+| **Proxy** | A record's universal role from birth (3.1, §4.1): the attested, consumable stand-in for its artifact — complete without any stored rendering or vouch. |
+| **Formed** | Derived state predicate (3.1): a form section governs the record's stored content zone — a stored rendering under a named contract. |
+| **Authored / Vouch** | Derived state predicate (3.1): the two editorial fields are non-empty — the normalize pass's editorial vouch (title, description; embed/segment descriptions and asserted annotations ride with it). |
 | **Codebook** | A list field on a form section's header that envelope segment fields index into (e.g. `participants:` ↔ `participant: 2`) — derivable from the span's own bytes, entry grammar `<display> <durable-id>`. |
 | **Provenance** | On a context block (§4.4.6): `provenance: auto` = engine-stamped (a detector or overlay-declared emission), stripped and regenerated on re-run; absent or `asserted` = human/normalizer, never auto-touched. |
 | **Self-contained** | The universal container principle: every transport produces a single record (lifting nested-stream metadata when present). A raw archive is attested as an embed manifest of its members. *(2.1: the former schema-declared `decomposable` disposition is removed.)* |
@@ -1727,8 +1770,8 @@ Order of operations, tooling-first per the §12.16 discipline:
 | **Default-member resolution** | Read-side sugar (§6.2): a bare op routes to a container's sole member of the required kind, or its declared primary (`pitm`); ambiguity fails loudly. Citation-safe by content-addressing; attested embeds keep explicit addresses. |
 | **Muxing contract** | §6.2's normative behavior for media cuts and conversions: composition cuts via per-kind default members (subtitles opt-in), composable stream selection (`stream_id=0,2`), ordered multi-cuts (`time_range=a-b,c-d` → concatenation), precise-by-default cut semantics (`cut=copy` the disclosed keyframe-snapped path), `format=` conversion (encoding only, atom-compatible, implementation-defined token set), pinned order select→cut→convert→size. Behavior normative, mechanics resolver-owned (maps onto ffmpeg primitives — the `fit=` precedent); results are version-labeled ephemeral renderings, never new artifacts. |
 | **Capture, Ingest, Normalize** | Pipeline stages. *(3.0: draft retired — its duties split into ingest attestation, derivation ops, and the normalize pass.)* |
-| **Stub** | Identity + attested facts; readable through derivation ops; not yet citable. |
-| **Normalized** | Faithful form authored; the citable state. |
+| **Stub** | *(retired 3.1)* The 2.x–3.0 name for a just-attested record — now simply the record at its attested baseline, the artifact's proxy (§4.1). Survives in the `re-stub` verb name. |
+| **Normalized** | *(retired 3.1)* The 2.x–3.0 citable status — dissolves into *formed + authored* (§4.1); citability re-keys to verifiable surfaces (`ledger.md` §13.2). |
 | **Touch** | A single processing pass. Recorded in `touch[]`. |
 | **Touch chain** | The ordered list `touch[0..N]`. Records current-shape provenance; reset by re-stub (§8.4). |
 | **Re-stub** | A deliberate reset that discards body and accumulated metadata, leaving only byte-intrinsic state and the touch chain. See §8.4. |
@@ -1759,7 +1802,7 @@ A curatorial vocabulary for the content **sources** a corpus is expected to hold
 There is **no per-content-type metadata schema** and no "document kind" field. A content type expresses itself through four orthogonal mechanisms:
 
 1. **MIME type** (`mime` namespace, §7.1) — the artifact's media type (`text/html`, `application/pdf`, `application/epub+zip`, `video/mp4`, …) selects the attestations, the derivation ops, the addressing scheme, and the canonicalization strategy. A "research paper" is just an `application/pdf` artifact; a "blog post" is `text/html`.
-2. **Form** (`form` namespace, §7.8; 3.0) — where the content's *structural shape* passes the minting test (a conversation, a statement, a receipt), a form span declares it — shape only, never subject.
+2. **Form** (`form` namespace, §7.8; 3.0) — where a rendering contract fits the content (a conversation, a statement, a document), a form span declares it — shape only, never subject; formless (the zeroth form) where none does or none is yet adopted (3.1).
 3. **Ledger assertion** (`ledger.md`) — *what kind of thing* an artifact documents, and any domain signal worth recording (e.g. a `peer-reviewed` / `preprint` credibility signal), is asserted as typed claims whose evidence cites the record — minted mechanically by harvest rules where membership is deterministic (`ledger.md` §10). This replaces per-document enum metadata fields entirely. *(1.0 expressed this as corpus-side composite classifications.)*
 4. **Origin** (`origin` namespace, §7.2) — capture provenance: source URL(s), capture timestamp, per-host capture recipe. "Where it came from" lives here.
 
