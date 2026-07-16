@@ -23,8 +23,8 @@ extended_fields:
       the span's own segments, always.
 decomposition: |
   The span decomposes into one `text/transcript` segment per utterance at
-  `time_range=<s>-<e>`, ordered monotonically by start, each carrying `speaker:` (a
-  codebook index into `speakers:`). Segment bodies are verbatim speech — never
+  `time_range=<s>-<e>` (corpus MM:SS convention; HH:MM:SS past the hour), ordered
+  monotonically by start, each carrying `speaker:` (a codebook index into `speakers:`). Segment bodies are verbatim speech — never
   paraphrase; a genuinely unintelligible span is disclosed inline as `[inaudible]`. The
   mechanical transcript derives from a version-labeled engine (`?transcribe`, §6.2/§6.4);
   the FORMED span is that projection verified — and where needed corrected — by the pass,

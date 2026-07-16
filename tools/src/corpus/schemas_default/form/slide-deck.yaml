@@ -20,7 +20,11 @@ decomposition: |
   marker segment at the slide's address (video-borne: `time_range=<s>-<e>`, the interval
   the slide holds the screen; the still derives at `frame=<s>` — no embed,
   lineage-resolvable) plus, where the slide carries text, a sibling `text/ocr` segment
-  at the same address with the on-screen text verbatim in reading order. What a slide
+  at the same address with the on-screen text verbatim in reading order. Time addresses
+  use the corpus MM:SS convention (HH:MM:SS past the hour). On a promoted TRACK record,
+  render stills through the CONTAINER by lineage (`corpus://<container>?frame=…`) — a
+  raw elementary stream (Annex-B) is not independently seekable, so `frame=` on the
+  track's own hash fails by construction (pilot finding, §12.20). What a slide
   SHOWS beyond its text (figures, photos, layout) stays `description:` on the image
   segment — faithful-form discipline. The deck's own declared grouping (an agenda, the
   container's chapter marks inherited through lineage) is structural marks or sections,

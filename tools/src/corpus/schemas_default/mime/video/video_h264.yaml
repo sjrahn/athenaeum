@@ -5,7 +5,11 @@ description: |
   produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal schema: this
   type exists so a promoted track record flows through ingest/lint/resolve like any other
   artifact; the track itself carries no further mime-declared structure (it is a formless leaf
-  — frame work rides the video atom's derivation ops, §1.2).
+  — frame work rides the video atom's derivation ops, §1.2). NOTE: a bare elementary stream is
+  not independently seekable — `frame=`/`time_range=` on the track's own hash fail by
+  construction; derive renderings through the CONTAINER by containment lineage
+  (`corpus://<container>?stream_id=<n>&…`), which is also where the shared-timeline composition
+  lives (§1.2).
 applies_to:
   content_types:
   - video/h264

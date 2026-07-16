@@ -1744,7 +1744,7 @@ Order of operations, tooling-first per the §12.16 discipline:
 
 **Open questions** (flagged, not resolved here):
 
-1. The scene-cut op's pinned parameterization (engine, threshold, minimum interval) — settle on the pilot's real deck, not in the abstract.
+1. The scene-cut op's pinned parameterization (engine, threshold, minimum interval) — settle on the pilot's real deck, not in the abstract. *(Resolved by the pilot, 2026-07-16: `scenes=0.3` recovered 33 of 36 slides with zero over-segmentation — a good default, and the miss pattern (a same-background title-card transition; two unexplained misses in a content-heavy stretch) is not threshold-fixable, which confirms the contract's proposed-then-verified split is load-bearing: no threshold substitutes for the eyeball pass.)*
 2. Whether film-scale track records want residency claims ahead of the storage-network arc — parked with that proposal.
 3. Bitmap subtitle tracks remain §12.18 OQ6: no lossless text projection; they stay embeds until an OCR-provenance projection is specified.
 
