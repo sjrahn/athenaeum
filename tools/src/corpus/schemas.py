@@ -185,6 +185,7 @@ def cache_clear() -> None:
     load_mime_schema.cache_clear()
     mime_schema_id_for.cache_clear()
     load_origin_overlay_by_id.cache_clear()
+    load_origin_overlays.cache_clear()
     load_context_schema.cache_clear()
     load_form_overlay.cache_clear()
 
@@ -607,6 +608,7 @@ def _origin_id_from_relpath(relpath: str) -> str:
     return stem
 
 
+@lru_cache(maxsize=64)
 def load_origin_overlays(
     corpus_root: Path,
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -615,6 +617,13 @@ def load_origin_overlays(
     Each overlay is layered: `origin/origin.yaml` (universal) → per-host file. Per-host
     overlays are corpus-local only in normal usage (the package ships only the
     universal), but the reference's nested layout is read tolerantly if present.
+
+    Cached per `corpus_root` (like the other per-record loaders — schemas are immutable
+    for the life of a process, `cache_clear()` invalidates); every caller iterates it
+    read-only (`best_origin_overlay_for_uris`, `origin_overlays_for_uris`,
+    `capture.recipes._overlay_section_for_url`), so this matters on a sweep or crawl that
+    resolves the origin match for thousands of URIs in one process — the discovery walk +
+    every overlay's YAML re-parse is otherwise redone on EVERY call.
     """
     sources = _sources(corpus_root)
     out: list[tuple[str, dict[str, Any]]] = []
@@ -705,6 +714,67 @@ def _uri_scheme(uri: str) -> str:
 
 def origin_ids_for_uris(corpus_root: Path, uris: list[str]) -> list[str]:
     return [id_ for id_, _ in origin_overlays_for_uris(corpus_root, uris)]
+
+
+def best_origin_overlay_for_uris(corpus_root: Path, uris: list[str]) -> str | None:
+    """Return the id of the single most-specific origin overlay matching at least one of
+    `uris` — the winner-selection an origin-block qualification stamp needs (spec §7.2)
+    when more than one overlay's predicate matches. `None` when nothing matches.
+
+    Match predicate mirrors `origin_overlays_for_uris` (same overlay files, same host-
+    pattern/`include_subdomains`/scheme cues). Winner selection mirrors
+    `capture.recipes._overlay_section_for_url`'s established precedence, generalized to
+    also rank scheme matches: the longest matching `host_pattern` string wins (most
+    specific — an exact host match is necessarily at least as long as any pattern that
+    reaches it only via `include_subdomains`); `host_pattern: "*"` is a lowest-priority
+    catch-all (score 0); a scheme match scores by the scheme string's length (schemes bind
+    the non-web families — `imessage:`, etc. — which don't carry a host, so they don't
+    contend with host-pattern scores on the same uri in practice). Ties (equal score)
+    break toward the lexicographically GREATEST id, exactly as the capture-recipe matcher
+    does — deterministic, and consistent with the sibling matcher rather than a new rule.
+    """
+    if not uris:
+        return None
+    clean_uris = [str(u).strip() for u in uris if u]
+    if not clean_uris:
+        return None
+    matches: list[tuple[int, str]] = []
+    for id_, schema in load_origin_overlays(corpus_root):
+        applies_to = schema.get("applies_to") or {}
+        patterns: list[str] = []
+        if "host_pattern" in applies_to:
+            patterns.append(str(applies_to["host_pattern"]))
+        if "host_patterns" in applies_to:
+            patterns.extend(str(p) for p in applies_to["host_patterns"])
+        schemes: set[str] = set()
+        if "scheme" in applies_to:
+            schemes.add(str(applies_to["scheme"]).lower())
+        if "schemes" in applies_to:
+            schemes.update(str(s).lower() for s in applies_to["schemes"])
+        if not patterns and not schemes:
+            continue
+        include_subdomains = bool(applies_to.get("include_subdomains", False))
+        best_for_overlay: int | None = None
+        for uri in clean_uris:
+            for pattern in patterns:
+                if pattern == "*":
+                    score = 0
+                elif urlcanon.same_domain(uri, pattern, include_subdomains=include_subdomains):
+                    score = len(pattern)
+                else:
+                    continue
+                if best_for_overlay is None or score > best_for_overlay:
+                    best_for_overlay = score
+            if schemes and _uri_scheme(uri) in schemes:
+                score = len(_uri_scheme(uri))
+                if best_for_overlay is None or score > best_for_overlay:
+                    best_for_overlay = score
+        if best_for_overlay is not None:
+            matches.append((best_for_overlay, id_))
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    return matches[0][1]
 
 
 # ---------- context (annotation-zone) schemas ---------- #

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import frontmatter
+from pathlib import Path
 
-from corpus import records, segments
+import frontmatter
+import yaml
+
+from corpus import records, schemas, segments
 
 
 def _make_golden(tmp_path):
@@ -211,6 +214,122 @@ def test_set_origin_schema_id_stamps_most_recent_block():
     assert post.metadata["_origins"][-1]["id"] == "imessage-export"
     assert records.derived_classifications(post) == ["origin/imessage-export"]
     assert records.set_origin_schema_id(post, "  ") is False  # empty/whitespace is a no-op
+
+
+# ---------- qualify_origin_blocks (origin-block host qualification, spec §7.2) ---------- #
+
+
+def _origin_corpus(tmp_path: Path, **overlays: dict) -> Path:
+    """A minimal corpus tree with the given origin overlays under schema/origin/web/
+    (`name=applies_to-dict`), for exercising `qualify_origin_blocks`."""
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    d = root / "schema" / "origin" / "web"
+    d.mkdir(parents=True)
+    for name, applies_to in overlays.items():
+        (d / f"{name}.yaml").write_text(
+            yaml.safe_dump({"applies_to": applies_to}, sort_keys=False), encoding="utf-8"
+        )
+    schemas.cache_clear()
+    return root
+
+
+def test_qualify_origin_blocks_stamps_matching_bare_block(tmp_path):
+    root = _origin_corpus(tmp_path, video={"host_pattern": "video.example"})
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, uri="https://video.example/v/1", snapshot="2026-06-02T00:00:00Z"
+    )
+    stamped = records.qualify_origin_blocks(post, root)
+    assert stamped == ["video"]
+    assert post.metadata["_origins"][0]["id"] == "video"
+    assert records.derived_classifications(post) == ["origin/video"]
+
+
+def test_qualify_origin_blocks_no_match_stays_bare(tmp_path):
+    root = _origin_corpus(tmp_path, video={"host_pattern": "video.example"})
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, uri="https://unrelated.example/x", snapshot="2026-06-02T00:00:00Z"
+    )
+    assert records.qualify_origin_blocks(post, root) == []
+    assert post.metadata["_origins"][0]["id"] is None
+
+
+def test_qualify_origin_blocks_never_touches_existing_id(tmp_path):
+    """Producer-declared / already-qualified ids are sacrosanct — never re-stamped, never
+    downgraded, even when a differently-matching overlay exists."""
+    root = _origin_corpus(tmp_path, other={"host_pattern": "video.example"})
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post,
+        uri="https://video.example/v/1",
+        snapshot="2026-06-02T00:00:00Z",
+        schema_id="producer-declared",
+    )
+    assert records.qualify_origin_blocks(post, root) == []
+    assert post.metadata["_origins"][0]["id"] == "producer-declared"
+
+
+def test_qualify_origin_blocks_iterates_every_block(tmp_path):
+    """A re-capture may carry more than one origin block — qualification is per-block, not
+    just-the-latest (contrast `set_origin_schema_id`, which is deliberately most-recent-only
+    for the producer-declared path)."""
+    root = _origin_corpus(
+        tmp_path,
+        a={"host_pattern": "a.example"},
+        b={"host_pattern": "b.example"},
+    )
+    post = frontmatter.Post("")
+    records.append_origin_block(post, uri="https://a.example/1", snapshot="2026-06-02T00:00:00Z")
+    records.append_origin_block(
+        post,
+        uri="https://b.example/2",
+        snapshot="2026-06-03T00:00:00Z",
+        schema_id="already-set",
+    )
+    records.append_origin_block(
+        post, uri="https://unmatched.example/3", snapshot="2026-06-04T00:00:00Z"
+    )
+    assert records.qualify_origin_blocks(post, root) == ["a"]
+    ids = [o["id"] for o in post.metadata["_origins"]]
+    assert ids == ["a", "already-set", None]
+
+
+def test_qualify_origin_blocks_idempotent(tmp_path):
+    root = _origin_corpus(tmp_path, video={"host_pattern": "video.example"})
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, uri="https://video.example/v/1", snapshot="2026-06-02T00:00:00Z"
+    )
+    assert records.qualify_origin_blocks(post, root) == ["video"]
+    # Second run finds nothing left unqualified — no re-stamp, no change reported.
+    assert records.qualify_origin_blocks(post, root) == []
+    assert post.metadata["_origins"][0]["id"] == "video"
+
+
+def test_qualify_origin_blocks_subdomain_matching(tmp_path):
+    root = _origin_corpus(
+        tmp_path, video={"host_pattern": "video.example", "include_subdomains": True}
+    )
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, uri="https://cdn.video.example/v/1", snapshot="2026-06-02T00:00:00Z"
+    )
+    assert records.qualify_origin_blocks(post, root) == ["video"]
+
+
+def test_qualify_origin_blocks_no_uri_stays_bare(tmp_path):
+    """A uri-less (local-file) origin has nothing to match against — stays bare, exactly
+    like a uri present but unmatched (spec §7.2: local-file origins bind only through the
+    producer-declared path, `set_origin_schema_id`)."""
+    root = _origin_corpus(tmp_path, video={"host_pattern": "video.example"})
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, uri=None, snapshot="2026-06-02T00:00:00Z", fields={"filename": "chat.html"}
+    )
+    assert records.qualify_origin_blocks(post, root) == []
+    assert post.metadata["_origins"][0]["id"] is None
 
 
 def test_local_origin_dedups_by_filename():

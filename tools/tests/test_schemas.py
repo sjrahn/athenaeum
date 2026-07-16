@@ -267,3 +267,75 @@ def test_resolve_fingerprint_origin_overlay_overrides_mime(tmp_path):
     assert schemas.resolve_fingerprint(root, "text/plain", by_uri, None) is False
     # No origin match → mime wins.
     assert schemas.resolve_fingerprint(root, "text/plain", _bare_post(), None) is True
+
+
+# ---------- best_origin_overlay_for_uris (origin-block host qualification, spec §7.2) ---------- #
+
+
+def test_best_origin_overlay_for_uris_match_and_miss(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_yaml(
+        root / "schema" / "origin" / "web" / "instagram.com.yaml",
+        {"applies_to": {"host_pattern": "instagram.com", "include_subdomains": True}},
+    )
+    schemas.cache_clear()
+    assert (
+        schemas.best_origin_overlay_for_uris(root, ["https://www.instagram.com/p/x/"])
+        == "instagram.com"
+    )
+    assert schemas.best_origin_overlay_for_uris(root, ["https://example.com"]) is None
+    assert schemas.best_origin_overlay_for_uris(root, []) is None
+
+
+def test_best_origin_overlay_for_uris_include_subdomains(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_yaml(
+        root / "schema" / "origin" / "web" / "video.example.yaml",
+        {"applies_to": {"host_pattern": "video.example", "include_subdomains": True}},
+    )
+    schemas.cache_clear()
+    # A deep subdomain only matches because include_subdomains is set.
+    assert (
+        schemas.best_origin_overlay_for_uris(root, ["https://cdn.video.example/v/1"])
+        == "video.example"
+    )
+    _write_yaml(
+        root / "schema" / "origin" / "web" / "strict.example.yaml",
+        {"applies_to": {"host_pattern": "strict.example"}},  # include_subdomains defaults False
+    )
+    schemas.cache_clear()
+    assert schemas.best_origin_overlay_for_uris(root, ["https://cdn.strict.example/x"]) is None
+
+
+def test_best_origin_overlay_for_uris_specificity_beats_catchall(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_yaml(
+        root / "schema" / "origin" / "web" / "star.yaml",
+        {"applies_to": {"host_pattern": "*"}},
+    )
+    _write_yaml(
+        root / "schema" / "origin" / "web" / "instagram.com.yaml",
+        {"applies_to": {"host_pattern": "instagram.com"}},
+    )
+    schemas.cache_clear()
+    # The specific host overlay outranks the catch-all for a matching uri …
+    assert (
+        schemas.best_origin_overlay_for_uris(root, ["https://instagram.com/x"])
+        == "instagram.com"
+    )
+    # … but the catch-all still wins when nothing more specific matches.
+    assert schemas.best_origin_overlay_for_uris(root, ["https://other.com"]) == "star"
+
+
+def test_best_origin_overlay_for_uris_scheme_cue(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_yaml(
+        root / "schema" / "origin" / "otherwise" / "imessage-live.yaml",
+        {"applies_to": {"scheme": "imessage"}},
+    )
+    schemas.cache_clear()
+    assert (
+        schemas.best_origin_overlay_for_uris(root, ["imessage://chat/123"])
+        == "imessage-live"
+    )
+    assert schemas.best_origin_overlay_for_uris(root, ["https://example.com"]) is None

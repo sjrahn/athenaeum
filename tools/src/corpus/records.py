@@ -976,6 +976,42 @@ def set_origin_schema_id(post: frontmatter.Post, schema_id: str) -> bool:
     return True
 
 
+def qualify_origin_blocks(post: frontmatter.Post, corpus_root: Path) -> list[str]:
+    """Stamp the matching origin-overlay id onto every bare (id-less) `<!--origin-->`
+    block whose `uri:` matches an overlay's host pattern / scheme cue — the §7.2 upgrade
+    from a bare opener to `<!--origin <id>-->` for a URL-retrieved origin (the sibling of
+    `set_origin_schema_id`'s producer-declared, uri-less binding path).
+
+    Iterates EVERY origin block (a re-capture may carry more than one), never just the
+    most-recent. **Never touches a block that already carries an id** — a producer-
+    declared id (this function's own prior stamp, or `set_origin_schema_id`'s) is
+    sacrosanct: never re-stamped, never downgraded. A bare block with no `uri:`, or whose
+    `uri:` matches no overlay, is correctly left bare (no overlay, no id — spec §7.2).
+    Deterministic (`schemas.best_origin_overlay_for_uris` resolves ties) and idempotent —
+    a second call finds nothing left unqualified to stamp.
+
+    Returns the list of overlay ids stamped, one entry per newly-qualified block (empty
+    when nothing changed)."""
+    from . import schemas as _schemas
+
+    stamped: list[str] = []
+    for origin in post.metadata.get("_origins") or []:
+        if origin.get("id"):
+            continue
+        fields = origin.get("fields") or {}
+        uri = fields.get("uri")
+        uris = uri if isinstance(uri, list) else ([uri] if uri else [])
+        uris = [str(u).strip() for u in uris if u]
+        if not uris:
+            continue
+        winner = _schemas.best_origin_overlay_for_uris(corpus_root, uris)
+        if not winner:
+            continue
+        origin["id"] = winner
+        stamped.append(winner)
+    return stamped
+
+
 def append_embed_block(
     post: frontmatter.Post,
     *,
@@ -1249,15 +1285,13 @@ def derived_editorial_field(
     *(3.2 phase 2, §12.21 step 2)* The transitional pre-role-mark fallback (the artifact
     block's bare `title` field, then the first origin block's `ytdlp_title`, unconditional
     on schema declaration or origin qualification) is retired now that the mime/origin
-    schemas carry real `role:` marks. NOTE a real gap this surfaced: the origin layer only
-    resolves through a QUALIFIED origin block (`schema_id` set) — and today nothing in the
-    ingest/capture pipeline stamps a host-pattern-matched qualifier (`<!--origin
-    youtube.com-->`) on a URL-retrieved origin; only producer-declared/sidecar-bound origins
-    (local-file exports — imessage-export, discord-conversation, receipts, …) ever get
-    qualified. A video/web record whose only title candidate lives on an unqualified origin
-    block (e.g. `ytdlp_title`) now derives an empty title until that qualification gap is
-    closed — see the corpus-wide `derived-editorial coverage` health report (§12.21 open
-    question 2).
+    schemas carry real `role:` marks. The origin layer only resolves through a QUALIFIED
+    origin block (`schema_id` set) — `qualify_origin_blocks` is what sets it for a
+    URL-retrieved origin (host-pattern / scheme match, §7.2), wired into both ingest and
+    `corpus reattest` via `derive.apply_drafter_result`, so a video/web record's
+    `ytdlp_title` resolves as soon as its host has a matching origin overlay. A record
+    whose host carries NO overlay stays bare and its title candidate stays unreachable —
+    correct (no overlay, no id), not a gap.
     """
     if include_override:
         override = str(post.metadata.get(role) or "").strip()

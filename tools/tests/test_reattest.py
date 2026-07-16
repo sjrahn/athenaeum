@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import frontmatter
+import yaml
 
 from corpus import hashing, paths, records, schemas
 from corpus._cli import reattest as reattest_cli
@@ -104,6 +105,89 @@ def test_reattest_preserves_authored_layer(tmp_path):
              (e.get("fields") or {}).get("description")
              for e in records.iter_embed_blocks(after)}
     assert descs.get("path=a/one.txt") == "the first member, described"
+
+
+def _write_origin_overlay(root: Path, filename: str, applies_to: dict) -> None:
+    d = root / "schema" / "origin" / "web"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / filename).write_text(
+        yaml.safe_dump({"applies_to": applies_to}, sort_keys=False), encoding="utf-8"
+    )
+    schemas.cache_clear()
+
+
+def _ingest_zip_with_uri(root: Path, uri: str) -> str:
+    src = root / "bundle.zip"
+    with zipfile.ZipFile(src, "w") as zf:
+        zf.writestr("a/one.txt", "hello one")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(root).put(rid, "zip", src)
+    src.unlink()
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": rid, "title": "", "description": "",
+         "transport": f"sha256:{h['sha256']}", "touch": "corpus.ingest@0.1.0"}
+    )
+    records.set_artifact_block(post, mime="application/zip", fields={})
+    records.append_origin_block(post, uri=uri, snapshot="2026-01-01T00:00:00Z")
+    records.dump(post, paths.record_path(root, rid))
+    return rid
+
+
+def test_reattest_qualifies_bare_origin_block_with_matching_overlay(tmp_path):
+    """§7.2's origin-block host qualification is wired into `corpus reattest` (the shared
+    `derive.apply_drafter_result` seam) — a record ingested before an overlay existed, or
+    before this fix, gets its bare origin block qualified on its next re-attest."""
+    root = _make_corpus(tmp_path)
+    _write_origin_overlay(
+        root, "video.example.yaml",
+        {"host_patterns": ["video.example"], "include_subdomains": True},
+    )
+    rid = _ingest_zip_with_uri(root, "https://video.example/v/1")
+    rf = paths.record_path(root, rid)
+
+    # bare at birth
+    assert next(iter(records.iter_origin_blocks(records.load(rf))))["id"] is None
+
+    new_text = reattest_cli.reattest_record(rf, root)
+    rf.write_text(new_text, encoding="utf-8")
+    post = records.load(rf)
+    origins = list(records.iter_origin_blocks(post))
+    assert origins[0]["id"] == "video.example"
+    assert "<!--origin video.example" in rf.read_text(encoding="utf-8")
+    assert "<!--origin\n" not in rf.read_text(encoding="utf-8")  # opener upgraded, not left bare
+
+
+def test_reattest_never_downgrades_a_producer_declared_origin_id(tmp_path):
+    """A producer-declared id is sacrosanct — re-attest must never re-stamp or downgrade it,
+    even when a DIFFERENT overlay's host pattern would also match the block's uri."""
+    root = _make_corpus(tmp_path)
+    _write_origin_overlay(root, "other.example.yaml", {"host_pattern": "video.example"})
+    rid = _ingest_zip_with_uri(root, "https://video.example/v/1")
+    rf = paths.record_path(root, rid)
+    post = records.load(rf)
+    assert records.set_origin_schema_id(post, "producer-declared") is True
+    records.dump(post, rf)
+
+    new_text = reattest_cli.reattest_record(rf, root)
+    rf.write_text(new_text, encoding="utf-8")
+    post = records.load(rf)
+    assert next(iter(records.iter_origin_blocks(post)))["id"] == "producer-declared"
+
+
+def test_reattest_origin_qualification_is_idempotent(tmp_path):
+    root = _make_corpus(tmp_path)
+    _write_origin_overlay(root, "video.example.yaml", {"host_pattern": "video.example"})
+    rid = _ingest_zip_with_uri(root, "https://video.example/v/1")
+    rf = paths.record_path(root, rid)
+
+    first = reattest_cli.reattest_record(rf, root)
+    rf.write_text(first, encoding="utf-8")
+    assert next(iter(records.iter_origin_blocks(records.load(rf))))["id"] == "video.example"
+    # A second re-attest re-derives byte-for-byte — nothing left to qualify.
+    second = reattest_cli.reattest_record(rf, root)
+    assert second == first
 
 
 def test_reattest_cli_dry_run_writes_nothing(tmp_path):

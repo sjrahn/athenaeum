@@ -223,21 +223,48 @@ def test_title_for_priority_frontmatter_then_artifact_then_qualified_origin(tmp_
     assert records.title_for(post, tmp_path) == "Normalized Title"
 
 
-def test_ytdlp_title_on_unqualified_origin_does_not_resolve(tmp_path):
-    """*(3.2 phase 2)* Documents a real pipeline gap this retirement surfaced: nothing in
-    ingest/capture stamps a host-pattern-matched qualifier onto a URL-retrieved origin
-    block today (confirmed against both live corpora — every web/video capture's origin
-    block is bare; only producer-declared/sidecar-bound origins — imessage-export,
-    discord-conversation, receipts, … — ever get one). So `ytdlp_title`'s `role: title`
-    mark (declared on the universal `origin/origin.yaml`, §12.21 step 2) is unreachable on
-    a BARE origin block — `_origin_editorial_candidate` requires a qualified `schema_id`.
-    Before this retirement, `_legacy_title_fallback` read `ytdlp_title` off ANY origin
-    block unconditionally, papering over the gap. Wiring host-pattern origin qualification
-    into ingest/capture is a follow-up, tracked but not fixed here (out of this worker's
-    schema-only scope)."""
+def test_ytdlp_title_on_never_qualified_origin_does_not_resolve(tmp_path):
+    """*(qualify-32)* Re-keyed now that origin-block host qualification is real (wired into
+    ingest + `corpus reattest` via `derive.apply_drafter_result` →
+    `records.qualify_origin_blocks`, spec §7.2). This test's intent was never "qualification
+    never happens" — it is "the origin layer never blindly reads an unqualified block,
+    qualified or not": `_origin_editorial_candidate` requires a `schema_id`, and here none
+    is ever set (no `records.qualify_origin_blocks` call, and the origin's host — `x` — has
+    no overlay declared in `tmp_path`'s empty schema tree, so even running qualification
+    would find nothing to stamp). `ytdlp_title`'s `role: title` mark therefore stays
+    unreachable — correct: no overlay, no id, no derived title (§7.2's "no overlay, no id"
+    rule). See `test_title_for_resolves_ytdlp_title_once_origin_qualification_runs` below for
+    the now-real path where a matching overlay DOES qualify the block and the title
+    resolves."""
     post = _post_with_origin()  # bare — no schema_id
     records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
     assert records.title_for(post, tmp_path) == ""
+
+
+def test_title_for_resolves_ytdlp_title_once_origin_qualification_runs(tmp_path):
+    """*(qualify-32)* The gap `test_ytdlp_title_on_never_qualified_origin_does_not_resolve`
+    used to document end-to-end: with a matching per-host overlay declared (`ytdlp_title`
+    role-marked `title`, mirroring `test_title_for_priority_frontmatter_then_artifact_then_
+    qualified_origin`'s synthetic overlay), running the real qualification helper stamps
+    the origin block's opener, and the role-marked field now resolves through it."""
+    origin_dir = tmp_path / "schema" / "origin" / "web"
+    origin_dir.mkdir(parents=True)
+    (origin_dir / "video.example.yaml").write_text(
+        "applies_to:\n  host_patterns: [video.example]\n"
+        "extended_fields:\n  ytdlp_title:\n    type: string\n    role: title\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+
+    post = _post_with_origin()  # bare — the fixture's uri is https://x/v/1, no host match here
+    post.metadata["_origins"][-1]["fields"]["uri"] = "https://video.example/v/1"
+    records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
+    assert records.title_for(post, tmp_path) == ""  # still bare — qualification hasn't run yet
+
+    stamped = records.qualify_origin_blocks(post, tmp_path)
+    assert stamped == ["video.example"]
+    assert post.metadata["_origins"][-1]["id"] == "video.example"
+    assert records.title_for(post, tmp_path) == "From yt-dlp"
 
 
 def test_stub_frontmatter_carries_no_editorial_keys():

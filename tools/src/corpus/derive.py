@@ -98,6 +98,14 @@ def apply_drafter_result(
     for alias in result.get("origin_uri_aliases") or []:
         records.add_origin_uri_alias(post, str(alias), corpus_root=corpus_root)
 
+    # Host-pattern / scheme qualification of any still-bare origin block (§7.2's "the
+    # ingest pipeline iterates every origin block" upgrade). Runs after the producer-
+    # declared stamp above so it never contends with it — `qualify_origin_blocks` skips
+    # any block that already carries an id, from either path. The single seam every
+    # caller of `attest()` shares (fresh ingest AND `corpus reattest`), so a record born
+    # before this fix gets qualified retroactively on its next re-attest.
+    records.qualify_origin_blocks(post, corpus_root)
+
     # Content-zone structural byte-marks (§4.3.2.3) — currently just media-container chapters
     # (`time=<tc>`, §12.20 item 2). Top-level only, prepended ahead of any existing content
     # zone (the "formless segments before the first section" shape, §4.3.2.1) — chapters mark
