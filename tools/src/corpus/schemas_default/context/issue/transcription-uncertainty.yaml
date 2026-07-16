@@ -1,0 +1,17 @@
+# Transcription-uncertainty issues — engine transcript content preserved verbatim where
+# the pass could not verify or reconcile it. The sibling of `transcription-unavailable`
+# (no transcript at all): here a transcript EXISTS, but a span of it is disclosed as
+# uncertain rather than silently trusted or silently "corrected". Minted by the
+# form/transcript pilot (§12.20): the same narrator's name transcribed two ways across
+# one recording, neither spelling corroborated by any other source surface.
+
+description: |
+  A span of an engine transcript is preserved verbatim but disclosed as uncertain: the
+  pass could not verify it against any corroborating surface, and correcting it would
+  be a guess. Examples: a proper noun the engine renders inconsistently across the
+  recording; a low-confidence passage bordering [inaudible]; a term of art the engine
+  plausibly mangled. The description names the uncertain span(s) by address and states
+  why reconciliation was withheld — the honest alternative to silent trust or silent
+  correction (the verbatim-speech discipline of `form/transcript`).
+
+applies_at: [record, segment]
