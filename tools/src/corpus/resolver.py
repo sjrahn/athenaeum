@@ -45,7 +45,23 @@ log = logging.getLogger(__name__)
 
 # Params that don't drive a transform and don't change output bytes. They carry
 # addressing or render-config information that the resolver passes through.
-_NOOP_PARAMS: frozenset[str] = frozenset({"dpi", "stream_id", "time"})
+# `cut=` is position-independent config for `time_range=` (like `dpi=` for `page=`);
+# `stream_id=` is likewise config here — the resolver reads its value into the render
+# context (below) for `time_range=`/`format=`/`scenes=` to compose via ffmpeg `-map`,
+# rather than registering it as its own working-kind transform (§6.2, §12.20 item 4).
+_NOOP_PARAMS: frozenset[str] = frozenset({"dpi", "stream_id", "time", "cut"})
+
+# The muxing contract's ops (§6.2) whose output is engine-versioned (§6.3/§6.4): ffmpeg
+# encoder/detector output drifts across versions, so a URI carrying any of these folds the
+# ffmpeg engine id into the cache key exactly as `transcribe` folds in its adapter's engine.
+_FFMPEG_ENGINE_PARAMS: frozenset[str] = frozenset({"time_range", "format", "scenes"})
+
+# Working kinds whose final cache extension isn't known until the transform chain actually
+# runs: `htmlel` resolves polymorphically to image|bytes (§6.2 `el=`); `video`/`audio`/
+# `media` are ffmpeg-produced Paths whose extension depends on the source's container
+# family (bare `time_range=`) or the `format=` token — neither predictable from the param
+# chain alone the way every other op's output kind is.
+_DEFERRED_EXTENSION_KINDS: frozenset[str] = frozenset({"htmlel", "video", "audio", "media"})
 
 
 # Built-in MIME → initial working-value kind. This is now a FALLBACK: the authoritative
@@ -179,23 +195,32 @@ def resolve(
             f"(declare `working_kind:` on its mime schema, or add it to the resolver table)"
         )
     final_kind = _predict_final_kind(parsed, initial_kind)
-    # Version-labeled ops (§6.3, §6.4): `transcribe` output drifts across engines, so its cache
-    # key includes the engine id and the sidecar records it — determinism holds per engine.
-    version_label = (
-        getattr(transcriber, "engine", None)
-        if any(k == "transcribe" for k, _ in parsed.params)
-        else None
-    )
+    # Version-labeled ops (§6.3, §6.4): `transcribe` output drifts across transcription
+    # engines; the muxing contract's `time_range=`/`format=`/`scenes=` drift across ffmpeg
+    # versions the same way ("cuts, muxes, and conversions are version-labeled ops", §6.2).
+    # Either way the cache key includes the engine id and the sidecar records it —
+    # determinism holds per engine/version.
+    if any(k == "transcribe" for k, _ in parsed.params):
+        version_label = getattr(transcriber, "engine", None)
+    elif any(k in _FFMPEG_ENGINE_PARAMS for k, _ in parsed.params):
+        from .transforms import video as video_tf
+
+        version_label = video_tf.ffmpeg_engine_label()
+    else:
+        version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
     urihash_value = furi.urihash(key_uri)
     # A terminal `el=N` on HTML is polymorphic: an `<img>` materializes to a PNG image,
-    # a `<video>`/`<audio>`/`<a href="data:…">` carrier to raw bytes. The concrete output
-    # kind — hence the cache extension — isn't known until the element is selected, so the
-    # cache hit is a stem glob (cheap: no parse of a possibly-huge HTML) and the cache path
-    # is deferred until after the element is materialized.
-    terminal_htmlel = final_kind == "htmlel"
+    # a `<video>`/`<audio>`/`<a href="data:…">` carrier to raw bytes. A terminal muxing-
+    # contract op (`video`/`audio`/`media`, §6.2) is a Path an ffmpeg command already wrote,
+    # whose extension depends on the source's container family or the `format=` token — also
+    # not known until the chain runs. Either way the concrete kind — hence the cache
+    # extension — isn't known until the transform runs, so the cache hit is a stem glob
+    # (cheap: no parse of a possibly-huge HTML, no ffmpeg invocation) and the cache path is
+    # deferred until after materialization.
+    terminal_deferred = final_kind in _DEFERRED_EXTENSION_KINDS
     cache_p: Path | None
-    if terminal_htmlel:
+    if terminal_deferred:
         cached = _find_cached_by_stem(corpus_root, urihash_value)
         if cached is not None and not regenerate:
             log.debug("cache hit: %s", cached)
@@ -222,6 +247,16 @@ def resolve(
         if dpi_value < 1:
             raise ValueError(f"dpi= must be positive, got {dpi_value}")
         ctx["dpi"] = dpi_value
+    # `cut=` (§6.2): position-independent config for `time_range=`, like `dpi=` for `page=`.
+    cut_raw = furi.get_last(parsed, "cut")
+    if cut_raw is not None and cut_raw not in ("precise", "copy"):
+        raise ValueError(f"cut= must be 'precise' or 'copy', got {cut_raw!r}")
+    ctx["cut_mode"] = cut_raw or "precise"
+    # `stream_id=<id>[,<id>…]` (§6.2): read here (not a registered transform, §12.20 item 4)
+    # so `time_range=`/`format=`/`scenes=` compose it via ffmpeg `-map` themselves.
+    stream_id_values = [v for k, v in parsed.params if k == "stream_id" and v]
+    if stream_id_values:
+        ctx["stream_ids"] = [s.strip() for s in stream_id_values[-1].split(",") if s.strip()]
     # Audio transforms pull the transcriber from the context; the video `frame`
     # transform range-checks against the source duration when it's known.
     ctx["transcriber"] = transcriber
@@ -295,18 +330,29 @@ def resolve(
                 working, ctx
             )
             cache_p = furi.cache_path(corpus_root, urihash_value, terminal_ext)
+        elif cache_p is None and current_kind in ("video", "audio", "media"):
+            # A terminal muxing-contract op (§6.2): `working` is a Path an ffmpeg command
+            # already wrote — its extension is the source's container family (bare
+            # `time_range=`) or the `format=` token's target; either way, only known now.
+            terminal_ext = Path(working).suffix.lstrip(".") or KIND_TO_EXTENSION.get(
+                current_kind, "bin"
+            )
+            terminal_mime = _media_mime_for_ext(terminal_ext)
+            cache_p = furi.cache_path(corpus_root, urihash_value, terminal_ext)
     finally:
         # pypdfium2's PdfDocument is reference-counted; close explicitly.
         if pdf_doc is not None:
             pdf_doc.close()
 
-    # `terminal_htmlel` resolves its concrete kind (image|bytes) only after the element is
-    # selected, so the predicted sentinel `htmlel` legitimately differs from `current_kind`.
-    if not terminal_htmlel and current_kind != final_kind:
+    # `htmlel` and the muxing-contract kinds resolve their concrete extension only after the
+    # chain runs, so the predicted sentinel legitimately differs from `current_kind` for
+    # `htmlel` specifically (image|bytes); the muxing kinds are NOT exempted — `current_kind`
+    # must still equal the predicted `video`/`audio`/`media`, a real correctness check.
+    if final_kind != "htmlel" and current_kind != final_kind:
         raise RuntimeError(
             f"predicted final kind {final_kind!r} but transform chain produced {current_kind!r}"
         )
-    assert cache_p is not None  # set for every non-htmlel kind, and by the htmlel terminal
+    assert cache_p is not None  # set for every non-deferred kind, and by the deferred terminals
 
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     _write_to_cache(working, current_kind, cache_p)
@@ -571,14 +617,36 @@ def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
         working.save(cache_p, format="PNG")
     elif kind in ("text", "json"):
         cache_p.write_text(working, encoding="utf-8")
-    elif kind == "audio":
-        # `working` is a Path to ffmpeg's temp output; move it into the cache.
+    elif kind in ("audio", "video", "media"):
+        # `working` is a Path to ffmpeg's temp output (extract_audio, or a muxing-contract
+        # op — `time_range=`/`format=`/`scenes=`'s Path-valued results, §6.2); move it into
+        # the cache.
         shutil.move(str(working), cache_p)
     elif kind == "bytes":
         # `working` is the raw member bytes; cache verbatim.
         cache_p.write_bytes(working)
     else:
         raise NotImplementedError(f"no cache writer for kind {kind!r}")
+
+
+#: Extensions the built-in `mimetypes` table doesn't reliably map on every platform —
+#: matched to the `mime.extension_for` canonical choices so a muxing-contract result's
+#: sidecar mime agrees with what ingest would have recorded for the same container.
+_MEDIA_MIME_OVERRIDES: dict[str, str] = {
+    "m4a": "audio/mp4",
+    "mkv": "video/x-matroska",
+    "mov": "video/quicktime",
+    "webm": "video/webm",
+}
+
+
+def _media_mime_for_ext(ext: str) -> str:
+    """Best-effort mime for a muxing-contract op's terminal extension (§6.2) — used for the
+    sidecar only; identity is the hash, never the extension or the mime."""
+    import mimetypes as _mimetypes
+
+    guessed, _ = _mimetypes.guess_type(f"x.{ext}")
+    return guessed or _MEDIA_MIME_OVERRIDES.get(ext, "application/octet-stream")
 
 
 def _working_kind_for(corpus_root: Path, media_type: str) -> str | None:

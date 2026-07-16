@@ -43,6 +43,12 @@ class RenderContext(TypedDict, total=False):
     # The video `frame` transform range-checks the requested timecode against this
     # when the resolver plumbs the source record's duration through.
     video_duration_seconds: float
+    # Muxing-contract config (§6.2): `cut=precise|copy` (default "precise") and the
+    # `stream_id=<id>[,<id>…]` selection list. Position-independent, like `dpi` — the
+    # resolver extracts them once before the transform chain runs, and `time_range=`/
+    # `format=`/`scenes=` read them to compose ffmpeg `-map` selection and cut semantics.
+    cut_mode: str
+    stream_ids: list
 
 
 HandlerFunc = Callable[[Any, str | None, RenderContext], Any]

@@ -31,6 +31,22 @@ _MARK_COLORS: tuple[tuple[int, int, int], ...] = (
 )
 
 
+@register("image", "format", "image")
+def format_image(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`format=png` in a frame context (§6.2: "png (frame contexts aside)") — an already-
+    selected image (a `frame=`/`page=` render) is always cache-written as PNG, so this is
+    an identity confirmation, not a conversion. The muxing contract's video/audio targets
+    (mp4/webm/gif/m4a/ogg/wav) live on the `video`/`audio` working kinds instead
+    (`corpus.transforms.video`) — an image working value has no muxing to do."""
+    if value is None or value.strip().lower() != "png":
+        raise ValueError(
+            f"format={value!r} not supported on an image working value (only 'png' — "
+            f"the muxing contract's media targets apply to video/audio, not a "
+            f"already-selected frame/page render)"
+        )
+    return img
+
+
 @register("image", "bbox", "image")
 def bbox(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
     """`bbox=x,y,w,h` — synonym for `crop=`. Matches the address-scheme param
