@@ -1,0 +1,41 @@
+form_id: slide-deck
+kind: form
+description: |
+  An ordered sequence of visually-composed slides (spec §7.8) — a presentation's shape:
+  a slide video, a webinar screen track, a deck export. Names a SHAPE, never a subject —
+  which event, whose deck, what it presents are the origin block's and the ledger's
+  concerns. Modality-blind by axis: a video-borne deck addresses each slide at
+  `time_range=` (its on-screen interval; the representative still derives at `frame=`
+  through the resolver); a native deck export (pptx and kin) joins the axis list with
+  its first consumer.
+extended_fields:
+  slide_count:
+    type: integer
+    required: true
+    description: |
+      The number of slides the span carries — exactly the count of its slide units,
+      mechanically derivable (and checkable) from the span itself.
+decomposition: |
+  The span decomposes into one slide unit per slide, in presentation order: an `image`
+  marker segment at the slide's address (video-borne: `time_range=<s>-<e>`, the interval
+  the slide holds the screen; the still derives at `frame=<s>` — no embed,
+  lineage-resolvable) plus, where the slide carries text, a sibling `text/ocr` segment
+  at the same address with the on-screen text verbatim in reading order. What a slide
+  SHOWS beyond its text (figures, photos, layout) stays `description:` on the image
+  segment — faithful-form discipline. The deck's own declared grouping (an agenda, the
+  container's chapter marks inherited through lineage) is structural marks or sections,
+  never extra slides.
+checks:
+  envelope_required: [slide_count]
+  address_axes: [time_range]
+  monotonic: true
+normalization:
+  guidance: |
+    Boundaries are mechanically proposed (the pinned scene-cut op) and verified by eye
+    against rendered stills (`corpus preview`, `frame=` transforms) — merge a slide's
+    animation steps into one unit, split missed cuts. One image marker per slide;
+    transcribe on-screen text verbatim as `text/ocr` (reading order, no paraphrase);
+    describe non-text content in the image segment's `description:`. Set `slide_count`
+    to the slide-unit count. Narration is NOT this record's content — it lives on the
+    sibling audio track's `form/transcript`; the same-video composition joins the two
+    on (lineage × timeline).

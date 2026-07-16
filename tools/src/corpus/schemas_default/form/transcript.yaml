@@ -1,0 +1,48 @@
+form_id: transcript
+kind: form
+description: |
+  Continuous speech rendered as time-anchored, speaker-attributed verbatim text (spec
+  §7.8) — the faithful text projection of an audio timeline: a narration, lecture,
+  monologue, voice memo, or a soundtrack's speech. Names a SHAPE, never a subject: WHO a
+  diarized voice belongs to and what the speech is ABOUT are the ledger's concerns. The
+  boundary against `form/conversation` is exchange structure: `conversation` names a
+  multi-party EXCHANGE (turns as the shape, reply structure meaningful); `transcript`
+  names SPEECH-OVER-TIME (attribution exists — the codebook — but exchange structure is
+  not the contract). A recorded meeting may honestly wear either; the pass picks the
+  shape the bytes actually have.
+extended_fields:
+  speakers:
+    type: list
+    required: true
+    description: |
+      The diarization codebook — first-appearance order, entry grammar
+      "<display> <durable-id>". Where diarization knows no identity, the display is the
+      engine's label and the durable id its diarization index ("Speaker 1 diarization:1");
+      a single-speaker recording carries the degenerate one-entry list. Tying a diarized
+      voice to a person is ledger work, never a field here. Mechanically derivable from
+      the span's own segments, always.
+decomposition: |
+  The span decomposes into one `text/transcript` segment per utterance at
+  `time_range=<s>-<e>`, ordered monotonically by start, each carrying `speaker:` (a
+  codebook index into `speakers:`). Segment bodies are verbatim speech — never
+  paraphrase; a genuinely unintelligible span is disclosed inline as `[inaudible]`. The
+  mechanical transcript derives from a version-labeled engine (`?transcribe`, §6.2/§6.4);
+  the FORMED span is that projection verified — and where needed corrected — by the pass,
+  the record's touch disclosing the engine lineage. On-screen/burned-in text is NOT
+  speech — it belongs to the video track as `text/ocr`.
+checks:
+  envelope_required: [speakers]
+  codebook:
+    - segment_field: speaker
+      codebook_field: speakers
+  address_axes: [time_range]
+  monotonic: true
+normalization:
+  guidance: |
+    Start from the engine transcript (`?transcribe` — diarized, timestamped) and verify
+    it against playback (`time_range=` cuts through the resolver): correct mishears,
+    merge or split utterances at natural boundaries, keep timestamps at the engine's
+    precision. Derive `speakers:` from the diarization labels in first-appearance order
+    (one entry for a single-speaker recording); index every segment's `speaker:` into
+    it. Verbatim speech only — no paraphrase, no grammar cleanup; disclose unclear spans
+    as [inaudible] rather than guessing.
