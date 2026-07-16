@@ -2,9 +2,11 @@
 
 Evidence cites `corpus://{hash}` with no corpus qualifier (§6.2): a hash
 either resolves in some registered corpus or it doesn't. Which corpora hold
-the bytes drives derived sensitivity (§6.4); the record's `status` drives the
-normalized-citation discipline (§6.3). Everything here is read-only stat/head
-access against `records/{ab}/{hash}.md` — no corpus tooling is invoked.
+the bytes drives derived sensitivity (§6.4); citability keys to verifiable
+surfaces, never to a stored lifecycle field (§6.3) — the corpus `status`
+frontmatter key is retired (`spec/corpus.md` §4.1) and this module reads none
+of it. Everything here is read-only stat/head access against
+`records/{ab}/{hash}.md` — no corpus tooling is invoked.
 """
 
 from __future__ import annotations
@@ -13,8 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-
-_STATUS_RANK = {"stub": 0, "draft": 1, "normalized": 2}
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class CorpusJoin:
     def __init__(self, corpora: list[RegisteredCorpus]):
         self.corpora = corpora
         self._holders: dict[str, list[RegisteredCorpus]] = {}
-        self._status: dict[str, tuple[str | None, str]] = {}  # hash -> (status, touch)
+        self._touch: dict[str, str] = {}
 
     @property
     def complete(self) -> bool:
@@ -84,26 +84,18 @@ class CorpusJoin:
             return None
         return all(c.private for c in held)
 
-    def status(self, hash_: str) -> str | None:
-        """The best lifecycle status across holders (normalized > draft > stub)."""
-        return self._meta(hash_)[0]
-
     def touch(self, hash_: str) -> str:
-        """The latest touch identity of the best-status holder ("" when none)."""
-        return self._meta(hash_)[1]
-
-    def _meta(self, hash_: str) -> tuple[str | None, str]:
-        if hash_ not in self._status:
-            best: str | None = None
-            best_touch = ""
-            for c in self.holders(hash_):
-                fm = _read_frontmatter(self.record_path(c.root, hash_))
-                st = fm.get("status")
-                if isinstance(st, str) and (
-                    best is None or _STATUS_RANK.get(st, -1) > _STATUS_RANK.get(best, -1)
-                ):
-                    best = st
-                    touches = fm.get("touch") or []
-                    best_touch = str(touches[-1]) if isinstance(touches, list) and touches else ""
-            self._status[hash_] = (best, best_touch)
-        return self._status[hash_]
+        """The latest touch identity of the record ("" when none). Read from
+        the first holding corpus's copy — the same holder `verify` parses for
+        content (`load_record_content`), so the stamp and the staleness compare
+        see one consistent chain. (Multi-holder hashes have INDEPENDENT record
+        files and touch chains; holder selection is stable — manifest order.)"""
+        if hash_ not in self._touch:
+            touch = ""
+            holders = self.holders(hash_)
+            if holders:
+                fm = _read_frontmatter(self.record_path(holders[0].root, hash_))
+                touches = fm.get("touch") or []
+                touch = str(touches[-1]) if isinstance(touches, list) and touches else ""
+            self._touch[hash_] = touch
+        return self._touch[hash_]

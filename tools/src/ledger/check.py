@@ -104,12 +104,12 @@ def run_check(
     # -------------------------------------------------- resolution availability
     resolve_live = not no_corpus and join.complete
     if no_corpus:
-        rep.note("corpus join skipped (--no-corpus): resolution, status, and sensitivity "
-                 "checks not run")
+        rep.note("corpus join skipped (--no-corpus): resolution, binding-staleness, and "
+                 "sensitivity checks not run")
     elif not join.complete:
         rep.warn("corpus join", f"registered corpora missing on disk "
-                 f"({', '.join(join.missing)}) — resolution, status, and sensitivity "
-                 "checks NOT run; this check result certifies structure only")
+                 f"({', '.join(join.missing)}) — resolution, binding-staleness, and "
+                 "sensitivity checks NOT run; this check result certifies structure only")
 
     # ---------------------------------------------------------------- indexes
     ids: dict[str, Path] = {}
@@ -162,10 +162,9 @@ def run_check(
             return target if target in live_facts else None
         return None
 
-    # needed inside the fact loop below (per-source resolution/status checks),
-    # so computed ahead of the claims pass that used to compute them
+    # needed inside the fact loop below (per-source resolution checks), so
+    # computed ahead of the claims pass that used to compute it
     retired = views.retired_terms(ledger_root)
-    need_hashes = _declared_need_hashes(interps)
     used_sources: dict[Path, set[str]] = {}
 
     # ------------------------------------------------------------- fact files
@@ -265,7 +264,7 @@ def run_check(
 
         # the per-fact sources table: claim evidence cites a `source` key
         # (validated in the claims pass below) that resolves here to exactly
-        # one record|ref target — resolution/status/re-normalization is
+        # one record|ref target — resolution and binding staleness are
         # checked ONCE per source, not once per citing evidence entry
         sources = o.get("sources")
         if sources is not None and not isinstance(sources, dict):
@@ -307,23 +306,11 @@ def run_check(
                         if not join.resolves(h):
                             rep.err(swhere, f"cites corpus://{h[:12]}… which resolves "
                                            "in no registered corpus")
-                        else:
-                            status = join.status(h)
-                            if status != "normalized":
-                                if h in need_hashes:
-                                    rep.warn(swhere, f"cites corpus://{h[:12]}… still "
-                                                    f"status={status} (a declared "
-                                                    "enqueue need covers it)")
-                                else:
-                                    rep.err(swhere, f"cites corpus://{h[:12]}… still "
-                                                   f"status={status} — request "
-                                                   "normalization (corpus enqueue) and "
-                                                   "declare the need")
-                            if isinstance(v, dict) and v.get("touch") and join.touch(h) \
-                                    and v["touch"] != join.touch(h):
-                                rep.warn(swhere, f"corpus://{h[:12]}… re-normalized "
-                                                "since this source was verified — "
-                                                "re-run `ath ledger verify`")
+                        elif isinstance(v, dict) and v.get("touch") and join.touch(h) \
+                                and v["touch"] != join.touch(h):
+                            rep.warn(swhere, f"corpus://{h[:12]}… touched since this "
+                                            "source was verified — re-run `ath ledger "
+                                            "verify`")
                 else:
                     r = str(sentry["ref"])
                     rm = SOURCE_REF_RE.match(r)
@@ -497,7 +484,7 @@ def run_check(
                                "fact's sources")
             else:
                 used_sources.setdefault(f, set()).add(skey)
-                # resolution/status/re-normalization already checked once, at
+                # resolution and binding staleness already checked once, at
                 # the sources-table pass above — here only the authentication
                 # bar (distinct records) and per-claim privacy are derived
                 entry = fact_sources[skey]
@@ -772,18 +759,6 @@ def run_check(
     rep.counts["interpretations"] = len(interps)
     rep.counts["claims"] = len(all_claims)
     return rep
-
-
-def _declared_need_hashes(interps: dict[Path, dict]) -> set[str]:
-    """Hashes named by enqueue needs — drafts these cover warn instead of erroring."""
-    out: set[str] = set()
-    for o in interps.values():
-        for n in o.get("needs") or []:
-            if isinstance(n, dict):
-                m = CORPUS_URI_RE.match(str(n.get("record", "")))
-                if m:
-                    out.add(m.group(1))
-    return out
 
 
 def _iter_strings(v: object):

@@ -18,7 +18,7 @@ H_PUB = "a" * 64      # resolves in the public corpus
 H_PRIV = "b" * 64     # resolves only in the private corpus
 H_BOTH = "c" * 64     # resolves in both → public evidence
 H_PUB2 = "d" * 64     # second public record
-H_DRAFT = "e" * 64    # public, still a draft
+H_NO_STATUS = "e" * 64  # public, no frontmatter `status` key (post-3.1-sweep world)
 H_GONE = "f" * 64     # resolves nowhere
 
 OPENQ_SKELETON = (
@@ -26,10 +26,14 @@ OPENQ_SKELETON = (
 )
 
 
-def _record(corpus_root: Path, h: str, status: str = "normalized") -> None:
+def _record(corpus_root: Path, h: str, status: str | None = "normalized") -> None:
+    """`status` is decorative test frontmatter, not read by any production
+    code (the corpus `status` field is retired, §4.1) — pass None to model
+    the post-sweep record shape that carries no status key at all."""
     p = corpus_root / "records" / h[:2] / f"{h}.md"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(f"---\nid: {h}\ntitle: t\nstatus: {status}\n---\n\nbody\n", encoding="utf-8")
+    status_line = f"status: {status}\n" if status is not None else ""
+    p.write_text(f"---\nid: {h}\ntitle: t\n{status_line}---\n\nbody\n", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -54,7 +58,7 @@ def system(tmp_path: Path) -> Path:
     priv = root / "corpora" / "corpus-private"
     for h in (H_PUB, H_BOTH, H_PUB2):
         _record(pub, h)
-    _record(pub, H_DRAFT, status="draft")
+    _record(pub, H_NO_STATUS, status=None)
     for h in (H_PRIV, H_BOTH):
         _record(priv, h)
     ledger = root / "ledger"
@@ -264,10 +268,10 @@ def test_sources_unused_warns(system: Path) -> None:
     assert any("not referenced by any evidence" in w for w in rep.warnings)
 
 
-def test_source_status_checked_once_not_per_evidence(system: Path) -> None:
-    """Resolution/status/re-normalization checks fire ONCE per sources entry —
-    two claims sharing one source must not double the message."""
-    sources = {"s1": {"record": H_DRAFT}}
+def test_source_resolution_checked_once_not_per_evidence(system: Path) -> None:
+    """Resolution checks fire ONCE per sources entry — two claims sharing one
+    source must not double the message."""
+    sources = {"s1": {"record": H_GONE}}
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
         "sources": sources,
@@ -277,27 +281,24 @@ def test_source_status_checked_once_not_per_evidence(system: Path) -> None:
         ],
     })
     rep = _check(system)
-    assert sum("still status=draft" in e for e in rep.errors) == 1
+    assert sum("resolves in no registered corpus" in e for e in rep.errors) == 1
 
 
-def test_draft_citation_error_downgraded_by_need(system: Path) -> None:
-    sources = {"s1": {"record": H_DRAFT}}
+def test_no_status_field_checks_clean(system: Path) -> None:
+    """1.1 (§6.3, §13.1): citability keys to verifiable surfaces, never to a
+    stored status flag — the 1.0 cited-records-are-`normalized` check
+    retires with the corpus `status` field. A record carrying no frontmatter
+    `status` key at all (the post-3.1-sweep shape, `spec/corpus.md` §4.1)
+    checks clean: no warning, no crash."""
+    sources = {"s1": {"record": H_NO_STATUS}}
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",
         "sources": sources,
         "claims": [_claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}])],
     })
     rep = _check(system)
-    assert any("still status=draft" in e for e in rep.errors)
-    _interp(system, {
-        "id": "need-draft", "kind": "assessment", "statement": "normalize it",
-        "reasoning": "cited", "based_on": [f"corpus://{H_DRAFT}"],
-        "needs": [{"action": "enqueue", "record": f"corpus://{H_DRAFT}", "why": "cited"}],
-        "status": "standing", "asof": "2026-07-02",
-    })
-    rep = _check(system)
-    assert not any("still status=draft" in e for e in rep.errors)
-    assert any("still status=draft" in w for w in rep.warnings)
+    assert not rep.errors
+    assert not any("status" in w for w in rep.warnings)
 
 
 def test_no_corpus_skips_resolution(system: Path) -> None:

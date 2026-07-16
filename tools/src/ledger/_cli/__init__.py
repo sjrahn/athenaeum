@@ -85,7 +85,8 @@ def _system(root: Path | None) -> tuple[Path, CorpusJoin, set[str]]:
 def _cmd_check(argv: Sequence[str]) -> int:
     ap = _base_parser("ath ledger check", "Validate the ledger (spec/ledger.md §13.1).")
     ap.add_argument("--no-corpus", action="store_true",
-                    help="skip the corpus join (resolution/status/sensitivity checks)")
+                    help="skip the corpus join (resolution/binding-staleness/sensitivity "
+                         "checks)")
     ns = ap.parse_args(list(argv))
     ledger_root, join, datasets = _system(ns.root)
     from ledger.check import run_check

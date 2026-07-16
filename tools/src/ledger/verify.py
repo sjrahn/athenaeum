@@ -3,8 +3,9 @@
 Beyond record existence: every span anchor must resolve against the cited
 record, every quote must be found verbatim (modulo whitespace normalization)
 in the content the URI resolves to, and passing entries are stamped with the
-record's touch identity (snapshot binding) so later re-normalization flags
-them for re-verification instead of silently rotting.
+record's touch identity (snapshot binding) so a later authoring or migration
+pass — anything that moves the touch — flags them for re-verification
+instead of silently rotting.
 
 Verification reads record *markdown* only — segment bodies are the faithful
 text — so it works without artifact bytes. Anchor forms with no checkable
@@ -374,6 +375,12 @@ def verify_ledger(
                 # date alone must not rewrite the tree on every run
                 if isinstance(prev, dict) and prev.get("touch") == touch:
                     continue
+                # OPEN (1.1, spec/ledger.md §13.2; spec/corpus.md §12.19 open
+                # question 2): for evidence resolved through a derivation op
+                # rather than the stored record body, the binding also pins
+                # the op's version label here — format unsettled until the
+                # first derived-surface citation lands. Touch-keyed binding
+                # below is unaffected and needs no change for that case.
                 stamped: dict[str, str] = {"touch": touch}
                 if today:
                     stamped["at"] = today
