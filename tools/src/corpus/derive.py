@@ -94,6 +94,14 @@ def apply_drafter_result(
     for alias in result.get("origin_uri_aliases") or []:
         records.add_origin_uri_alias(post, str(alias), corpus_root=corpus_root)
 
+    # Content-zone structural byte-marks (§4.3.2.3) — currently just media-container chapters
+    # (`time=<tc>`, §12.20 item 2). Top-level only, prepended ahead of any existing content
+    # zone (the "formless segments before the first section" shape, §4.3.2.1) — chapters mark
+    # the container's shared timeline, never a form span.
+    marks = result.get("structural_segments") or []
+    if marks:
+        _apply_structural_segments(post, marks)
+
     # Drafter-detected issues (spec-shaped). Skip a malformed dict missing `severity`.
     for issue in result.get("issues") or []:
         severity = issue.get("severity")
@@ -114,6 +122,62 @@ def apply_drafter_result(
         )
 
 
+def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any]]) -> None:
+    """Merge attested structural byte-marks (§4.3.2.3) onto `post`'s content zone, prepended
+    ahead of any existing top-level content. **Additive and idempotent by union, never
+    strip-then-regenerate**: unlike embeds (re-derived from the artifact's own bytes on every
+    attest), the currently-implemented source is the **one-shot yt-dlp sidecar**
+    (`_sidecar.py`) — consumed and deleted right after ingest (`ingest._cleanup_enrichment`),
+    exactly like the `ytdlp_*` origin fields it rides alongside. A re-attest therefore sees no
+    chapters at all (`chapters=None` → `marks=[]` → this function isn't even called, per its
+    caller's `if marks:` guard) and must never strip what ingest already attested — there is
+    nothing left to regenerate it from. A mark already present (matched on `(address, entry)`)
+    is skipped rather than duplicated, so a future re-derivable source (the mp4 chapter-atom
+    path, a named gap — §12.20 item 2) can call this safely too.
+
+    Defensive, not just decorative: a video/audio record's content zone is empty for every
+    record in the fleet today (§8.1 — `attest` never stores a body; a stored body is
+    normalize's job), so prepending is the common case, but a malformed existing content zone,
+    or one already governed by a whole-record form section (which admits no sibling block,
+    §4.3.2.2), is left untouched rather than corrupted — logged and skipped."""
+    from corpus import segments as segs_mod
+
+    try:
+        existing = segs_mod.iter_blocks(post.content or "")
+    except ValueError as exc:
+        print(
+            f"  WARN: structural-mark attestation skipped — existing content zone does not "
+            f"parse: {exc}",
+            file=sys.stderr,
+        )
+        return
+    if existing and isinstance(existing[0], segs_mod.Section) and existing[0].address is None:
+        print(
+            "  WARN: structural-mark attestation skipped — record already carries a "
+            "whole-record form section, which admits no sibling block (§4.3.2.2)",
+            file=sys.stderr,
+        )
+        return
+    already = {
+        (b.address, b.entry)
+        for b in existing
+        if isinstance(b, segs_mod.Segment) and b.is_structural
+    }
+    new_blocks = [
+        segs_mod.Segment(
+            atom=segs_mod._STRUCTURAL,
+            address=str(m["address"]),
+            level=int(m.get("level") or 1),
+            entry=(str(m["entry"]) if m.get("entry") else None),
+        )
+        for m in marks
+        if (str(m["address"]), (str(m["entry"]) if m.get("entry") else None)) not in already
+    ]
+    if not new_blocks:
+        return
+    post.content = segs_mod.emit(new_blocks + list(existing))
+
+
 def _is_drafter_issue(ctx: dict) -> bool:
     """A mechanical drafter-emitted issue — the attested layer's issue half. Identified by
     the `corpus.draft.*` detector family (a capturer's issue detector is preserved)."""
@@ -128,7 +192,12 @@ def strip_attested_layer(post: frontmatter.Post) -> dict[str, str]:
     the artifact block's extended fields (the opener MIME stays; it is byte-intrinsic) — and
     return the authored embed `description:`s keyed by transport hash so a re-attestation can
     carry them forward. Makes re-attestation and the transitional draft idempotent: attesting
-    an already-attested record does not double its embeds/issues."""
+    an already-attested record does not double its embeds/issues.
+
+    Content-zone structural byte-marks (§4.3.2.3) are deliberately NOT stripped here: the
+    currently-implemented source (media-container chapters) is a one-shot sidecar consumed and
+    deleted at ingest (see `_apply_structural_segments`), so there is nothing to regenerate
+    them from on re-attest — they persist untouched, exactly as `ytdlp_*` origin fields do."""
     authored_desc: dict[str, str] = {}
     for e in records.iter_embed_blocks(post):
         d = (e.get("fields") or {}).get("description")

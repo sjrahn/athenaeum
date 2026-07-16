@@ -28,6 +28,17 @@ mimetypes.add_type("message/rfc822", ".eml")
 # `text/x-vcard`; pin it to the RFC 6350 canonical so ingest + the zip member index agree.
 mimetypes.add_type("text/vcard", ".vcf")
 mimetypes.add_type("text/vcard", ".vcard")
+# The four pinned track-extraction elementary forms a promoted media-container track carries
+# (spec §12.20.1) — a bare Annex-B (h264/hevc) or opus-framing stream has no reliable magic
+# byte signature of its own (opus's framing is a corpus invention with none at all; h264 and
+# hevc Annex-B share the same start-code prefix, §12.20.1), so `corpus promote`'s streamed-head
+# sniff (`sniff_head`) leans on the extension its embed's declared `filename` supplies — the
+# same disambiguation a zip member already uses (`_ZIP_EXT_REFINEMENTS`). ADTS AAC additionally
+# gets a real magic-byte signature below (our fixed ADTS encoding is fully deterministic).
+mimetypes.add_type("video/h264", ".h264")
+mimetypes.add_type("video/hevc", ".h265")
+mimetypes.add_type("audio/aac", ".adts")
+mimetypes.add_type("audio/opus", ".opus")
 
 # Magic-byte signatures: (offset, prefix_bytes, mime).
 _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
@@ -59,6 +70,13 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"PK\x03\x04", "application/zip"),  # refined below
     (0, b"ID3", "audio/mpeg"),
     (0, b"\xff\xfb", "audio/mpeg"),
+    # ADTS AAC sync word + fixed header (12-bit sync `1111 1111 1111`, ID=0/MPEG-4, layer=00,
+    # protection_absent=1/no-CRC) — `\xff\xf1` exactly. This is the promoted-track pinned form
+    # (spec §12.20.1, `corpus.streams._adts_header`, which always emits ID=0 no-CRC), so the
+    # signature is fully deterministic for OUR bytes; it also happens to be the standard ADTS
+    # "MPEG-4, no CRC" prefix, so an ordinary dropped-in `.aac` file gets recognized too. Distinct
+    # from the MP3 signature above (`\xff\xfb` has layer bits that ADTS never sets).
+    (0, b"\xff\xf1", "audio/aac"),
     # Uncompressed tar (POSIX ustar / GNU): the `ustar` magic sits at offset 257 (inside the
     # first member header). A gzip-wrapped tar (`.tgz`) hides this behind gzip magic and is
     # refined by `_refine_gzip`. The tar family drafts as an embed manifest (spec §12.4).
@@ -356,6 +374,11 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
         "application/epub+zip": "epub",
         "application/java-archive": "jar",
+        # Promoted media-container tracks (spec §12.20.1) — the pinned elementary forms.
+        "video/h264": "h264",
+        "video/hevc": "h265",
+        "audio/aac": "adts",
+        "audio/opus": "opus",
     }
     if mime in canonical:
         return canonical[mime]

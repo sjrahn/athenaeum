@@ -800,6 +800,17 @@ def _build_ydl_opts(
         "getcomments": True,
         "quiet": False,
         "no_warnings": False,
+        # `--embed-chapters` equivalent (spec §12.20 item 2(a)): new video captures carry
+        # chapter marks in-band, in the artifact's own bytes, going forward — the
+        # `FFmpegMetadataPP` postprocessor is what the yt-dlp CLI flag itself builds
+        # (`add_chapters=True`), with `add_metadata`/`add_infojson` left off so this adds
+        # nothing beyond chapters. Requires ffmpeg on PATH (already a system dependency here).
+        # An overlay declaring its own `postprocessors:` replaces this list entirely, same as
+        # every other default key — that's an explicit host-level opt-out, not a bug.
+        "postprocessors": [
+            {"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": False,
+             "add_infojson": False},
+        ],
         # YouTube needs an external JS runtime to decode signature/n challenges.
         # Register node (any Node 18+ on PATH) + fetch the per-player EJS solver.
         "js_runtimes": {"node": {}},

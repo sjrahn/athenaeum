@@ -1,0 +1,11 @@
+description: |
+  A promoted media-container video track's pinned Annex-B elementary stream (spec §12.20.1):
+  the avcC config record's parameter-set NALs (SPS/PPS) followed by every sample's NAL units,
+  reframed to start-code framing, in decode order — a deterministic, engine-free extraction
+  produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal schema: this
+  type exists so a promoted track record flows through ingest/lint/resolve like any other
+  artifact; the track itself carries no further mime-declared structure (it is a formless leaf
+  — frame work rides the video atom's derivation ops, §1.2).
+applies_to:
+  content_types:
+  - video/h264

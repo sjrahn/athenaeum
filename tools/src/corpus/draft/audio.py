@@ -31,6 +31,7 @@ from corpus import recordbuild, resolver, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
+from corpus.draft._trackmanifest import attest_track_manifest
 from corpus.draft._transcript import parse_transcript_sections
 from corpus.segments import Section
 from corpus.transcription import TranscriptionUnavailable
@@ -115,10 +116,17 @@ def draft(
     # `ytdlp_*` fields, never the body/artifact/frontmatter. The body stays transcript-only.
     sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
 
+    # Track-manifest attestation (spec §12.20 items 1-2): one embed per elementary stream, for
+    # an ISOBMFF container (audio/mp4, i.e. .m4a/.m4b) — additive, a no-op for mp3/wav (no
+    # `moov` box to probe). No chapter-mark wiring here: unlike the video capturer, the audio
+    # path has no established chapters-bearing sidecar consumer in this increment.
+    track_embeds, track_issues = attest_track_manifest(audio_path)
+    issues.extend(track_issues)
+
     recordbuild.add_blocks(build, sections)
     return {
         "fields": fields,
-        "embeds": [],
+        "embeds": track_embeds,
         "issues": issues,
         "origin_fields": sidecar["origin_fields"],
         "origin_uri_aliases": sidecar["origin_aliases"],

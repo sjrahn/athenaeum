@@ -1,0 +1,12 @@
+description: |
+  A promoted media-container audio track's pinned `corpus-opus-framing@1` elementary stream
+  (spec §12.20.1): no conventional self-framing elementary form exists for Opus, so this is a
+  corpus-defined pinned framing — the `dOps` box payload verbatim, then a big-endian `u32`
+  length prefix + raw packet bytes per sample, in decode order — a deterministic, engine-free
+  extraction produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal
+  schema: this type exists so a promoted track record flows through ingest/lint/resolve like
+  any other artifact; the track itself carries no further mime-declared structure (it is a
+  formless leaf — the transcript rides the audio atom's derivation ops, `?transcribe`, §1.2).
+applies_to:
+  content_types:
+  - audio/opus

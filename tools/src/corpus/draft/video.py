@@ -27,6 +27,15 @@ Produces a `draft`-status body from a video artifact:
    body losslessly transcribes the addressed time-range; the adapter's output is
    approximate and the normalizer corrects it.
 
+4. Track-manifest attestation (spec §12.20 items 1-2, `draft/_trackmanifest.py`): one embed
+   per elementary stream for an ISOBMFF container (mp4/quicktime), additive to the facts
+   above — a no-op for webm/mkv (Matroska/EBML support is a deferred item). Chapter marks
+   (from the same yt-dlp sidecar step 3 reads) land as structural byte-marks (§4.3.2.3) via
+   the **sidecar path only** — `_sidecar.py`'s `chapters[]`. The mp4 chapter-atom path
+   (`chpl` box / `chap`-track) is a **named gap**: not implemented this increment, so a
+   chaptered mp4 with no yt-dlp sidecar (e.g. a plain capture, not a yt-dlp download) attests
+   no structural marks even though the container bytes may carry them.
+
 Registered for every bundled `video/*` mime-schema id; a corpus with a custom video
 mime schema registers its own drafter for that id.
 """
@@ -44,6 +53,7 @@ from corpus import recordbuild, resolver, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
+from corpus.draft._trackmanifest import attest_track_manifest, chapter_structural_segments
 from corpus.draft._transcript import parse_chaptered_sections, parse_transcript_sections
 from corpus.segments import Section
 from corpus.transcription import TranscriptionUnavailable
@@ -138,13 +148,27 @@ def draft(
         fields["speakers"] = [{"id": idx, "name": None} for idx in distinct_speakers]
         fields["is_diarized"] = True
 
+    # Track-manifest attestation (spec §12.20 items 1-2): one embed per elementary stream, on
+    # top of the existing container facts above (additive — "corpus reattest upgrades an
+    # existing video record additively", §12.20 item 2). ISOBMFF only; a no-op (empty result)
+    # for webm/mkv until Matroska/EBML support lands (§12.20's deferred item).
+    track_embeds, track_issues = attest_track_manifest(video_path)
+    issues.extend(track_issues)
+
+    # Chapter marks → structural byte-marks (§4.3.2.3, §12.20 item 2(b) — the sidecar path;
+    # the mp4 chapter-atom path is a named gap, see the module docstring). Reuses the same
+    # `chapters` the section-by-chapters heuristic above already lifted from the yt-dlp
+    # sidecar — no second sidecar read.
+    structural_segments = chapter_structural_segments(chapters)
+
     recordbuild.add_blocks(build, sections)
     return {
         "fields": fields,
-        "embeds": [],
+        "embeds": track_embeds,
         "issues": issues,
         "origin_fields": sidecar["origin_fields"],
         "origin_uri_aliases": sidecar["origin_aliases"],
+        "structural_segments": structural_segments,
     }
 
 

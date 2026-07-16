@@ -182,6 +182,19 @@ def resolve(
     if parsed.is_bare:
         return artifact_binary.resolve()
 
+    # `stream_id=<n>` ALONE (§12.20 item 4): the bare/terminal identity case. Composed with an
+    # engine op (`time_range=`/`format=`/`scenes=`) `stream_id=` stays pure addressing config
+    # (handled below via `_NOOP_PARAMS` + `ctx["stream_ids"]`, feeding the phase-1 ffmpeg `-map`
+    # path) — but alone, it must resolve to the track's PINNED IDENTITY bytes
+    # (`corpus.streams.extract_stream`), never fall through to the raw container the generic
+    # no-op branch below would otherwise return. Pure byte-work: no ffmpeg engine version folds
+    # into the cache key (§12.20 item 1).
+    if parsed.params and all(k == "stream_id" for k, _ in parsed.params):
+        return _resolve_stream_identity(
+            corpus_root, canonical_uri, parsed.hash, artifact_binary,
+            parsed.params, regenerate=regenerate,
+        )
+
     # Effectively bare: all params are no-ops (pure addressing). Return source.
     if all(k in _NOOP_PARAMS for k, _ in parsed.params):
         return artifact_binary.resolve()
@@ -402,6 +415,83 @@ def _resolve_members(
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+    return cache_p.resolve()
+
+
+# Pinned per-codec elementary form's cache extension (spec §12.20.1 / §12.20 item 4) — the
+# same four the promoted-track embed's filename hint uses (`draft/_trackmanifest.py`), except
+# AAC: `.adts` here names the byte format directly (the resolver cache has no promote-time
+# MIME-sniff concern to serve).
+_STREAM_IDENTITY_EXTENSIONS: dict[str, str] = {
+    "h264": "h264",
+    "hevc": "h265",
+    "aac": "adts",
+    "opus": "opus",
+}
+
+
+def _resolve_stream_identity(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_binary: Path,
+    params: list[tuple[str, str | None]],
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize the bare `stream_id=<n>` identity op (§12.20 item 4): the track's pinned
+    extraction bytes via `corpus.streams.extract_stream` — never the raw container, and never
+    an ffmpeg engine version folded into the cache key (this is pure byte-work, §12.20 item 1;
+    contrast the engine-versioned muxing-contract ops that COMPOSE `stream_id=` via `-map`,
+    §6.2). Single-track only: a comma-list or repeated `stream_id=` has no meaning for pure
+    identity extraction (you cannot concatenate two different codecs' elementary bytes) — that
+    combination is only valid alongside a muxing-contract op.
+
+    The extension is cheap to predict ahead of the cache check (unlike the muxing contract's
+    deferred-extension kinds, §12.20 item 1's engine path): `probe_streams` reads only the
+    small `moov` subtree, never sample data."""
+    from . import streams
+
+    values = [v for _, v in params if v]
+    if len(values) != 1 or "," in values[-1]:
+        raise ValueError(
+            "bare stream_id= identity resolution takes exactly one track id (compose with "
+            "time_range=/format=/scenes= to select or mux multiple streams)"
+        )
+    try:
+        stream_id = int(values[-1])
+    except ValueError as exc:
+        raise ValueError(f"stream_id= must be an integer, got {values[-1]!r}") from exc
+
+    tracks = streams.probe_streams(artifact_binary)
+    track = next((t for t in tracks if t.index == stream_id), None)
+    if track is None:
+        raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s))")
+    ext = _STREAM_IDENTITY_EXTENSIONS.get(track.codec)
+    if ext is None:
+        raise NotImplementedError(
+            f"stream_id={stream_id}: identity extraction not implemented for codec "
+            f"{track.codec!r}"
+        )
+
+    urihash_value = furi.urihash(canonical_uri)
+    cache_p = furi.cache_path(corpus_root, urihash_value, ext)
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_p.with_name(f"{cache_p.name}.tmp")
+    try:
+        with tmp.open("wb") as out:
+            for chunk in streams.extract_stream(artifact_binary, stream_id):
+                out.write(chunk)
+        tmp.replace(cache_p)
+    finally:
+        tmp.unlink(missing_ok=True)
+    _write_sidecar(
+        corpus_root, canonical_uri, source_hash, cache_p, "bytes",
+        mime_override=track.media_type,
+    )
     return cache_p.resolve()
 
 

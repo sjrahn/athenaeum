@@ -19,6 +19,7 @@ consulted for byte lookup; the member index is the only route.
 
 from __future__ import annotations
 
+import io
 import os
 import shutil
 from collections.abc import Iterator
@@ -34,6 +35,39 @@ from . import paths, records, tararchive, ziparchive
 from .store import ArtifactMissing, ArtifactStore, get_store
 
 _CHUNK = 1 << 20
+
+# ISOBMFF media-container types whose members are addressed `stream_id=<n>` (spec §1.2,
+# §12.20 item 4) — the elementary-track axis, dispatched to `corpus.streams.extract_stream`
+# below. Matroska/WebM (EBML) is out of scope for this increment (`corpus.streams` itself
+# refuses non-ISOBMFF containers, §12.20.1's deferred item).
+_ISOBMFF_STREAM_CONTAINERS = frozenset({"video/mp4", "video/quicktime", "audio/mp4"})
+
+
+class _IteratorReader(io.RawIOBase):
+    """A read-only raw stream over an iterator of byte chunks — lets a chunked producer (here,
+    `streams.extract_stream`) flow through `read()` without ever holding the whole track. The
+    same adapter shape as `mboxfile._MemberReader`; wrapped in a `BufferedReader` by the caller
+    for exact-length reads."""
+
+    def __init__(self, chunks: Iterator[bytes]) -> None:
+        self._chunks = chunks
+        self._buf = b""
+        self._eof = False
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:  # type: ignore[override]
+        want = len(b)
+        while len(self._buf) < want and not self._eof:
+            try:
+                self._buf += next(self._chunks)
+            except StopIteration:
+                self._eof = True
+        n = min(want, len(self._buf))
+        b[:n] = self._buf[:n]
+        self._buf = self._buf[n:]
+        return n
 
 
 # ---------- the member index ---------- #
@@ -106,8 +140,6 @@ def open_member_stream(
     # step 4) — one card's exact `BEGIN:VCARD`/`END:VCARD` byte span. A `.vcf` is small and a
     # card bounded, so this yields a BytesIO over the extracted span rather than a stream.
     if container_media_type == "text/vcard" and key == "card":
-        import io
-
         from . import vcardfile
 
         try:
@@ -116,12 +148,26 @@ def open_member_stream(
             raise ValueError(f"vcard member {address!r}: card= needs an integer ordinal") from exc
         yield io.BytesIO(vcardfile.resolve_member(container_path, ordinal))
         return
+    # A media container's elementary track, addressed `stream_id=<N>` (spec §1.2, §12.20 item
+    # 4) — the pinned identity bytes via `corpus.streams.extract_stream`, streamed chunk by
+    # chunk through the `_IteratorReader` adapter so a large track is never held whole. ISOBMFF
+    # only (`corpus.streams` refuses Matroska/WebM with a clear error, which propagates here
+    # unchanged rather than being swallowed into the generic "cannot stream member" message).
+    if container_media_type in _ISOBMFF_STREAM_CONTAINERS and key == "stream_id":
+        from . import streams
+
+        try:
+            ordinal = int(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"track member {address!r}: stream_id= needs an integer track index"
+            ) from exc
+        yield io.BufferedReader(_IteratorReader(streams.extract_stream(container_path, ordinal)))
+        return
     # An email is a container whose members are addressed `part=<N>` (spec §12.11) — the
     # decoded MIME part's bytes. A single message is bounded (parsed whole), so this yields a
     # BytesIO rather than a scan; the mailbox it may itself live in is the unbounded thing.
     if container_media_type == "message/rfc822" and key == "part":
-        import io
-
         from . import emlfile
 
         try:
@@ -154,6 +200,11 @@ def member_source_metadata(
     # A vCard card, likewise: its `card=<N>` ordinal is a position, not a filename — a promoted
     # card's origin carries the containment-lineage uri only (spec §8.1).
     if container_media_type == "text/vcard" and key == "card":
+        return {}
+    # A media-container track, likewise: `stream_id=<N>` is a position (moov `trak` order), not
+    # a filename or a meaningful mtime — a promoted track's origin carries the containment-
+    # lineage uri only (spec §8.1, §12.20 item 3).
+    if container_media_type in _ISOBMFF_STREAM_CONTAINERS and key == "stream_id":
         return {}
     # An email part carries its declared filename (e.g. a promoted `contract.pdf`) when it
     # names itself; no meaningful mtime.
