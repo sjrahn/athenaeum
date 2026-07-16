@@ -115,14 +115,13 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         record_id=record_id,
         transport=transport_value,
         touch_id=touches.script_identifier("ingest"),
-        description="",
     )
     post = frontmatter.Post(content="", **fm)
     # The artifact block carries no generic `title`: a capture-sidecar title (e.g. a yt-dlp
     # title) is non-primary-source metadata whose home is the origin block's `ytdlp_title`,
-    # merged at draft. The frontmatter `title` stays empty until the normalizer authors it
-    # from the namespaced candidates (an artifact `*_title`, an origin `ytdlp_title`); see
-    # `records.title_for`.
+    # merged at draft. The frontmatter carries no `title`/`description` at birth at all
+    # (spec §12.3.4) — the display pair is derived from role-marked fields (§4.2.3); see
+    # `records.title_for` / `records.derived_editorial`.
     records.set_artifact_block(post, mime=media_type, fields={})
     records.append_origin_block(
         post,

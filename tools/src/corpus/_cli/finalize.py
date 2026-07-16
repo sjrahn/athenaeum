@@ -1,11 +1,14 @@
 """Close a claimed normalization pass as complete (spec §8.5).
 
-**The pass gate** (3.1, succeeding the 3.0 `status: normalized` gate): the record must be
-**authored** (the vouch present, §4.1), **formed where its overlays declare a form** (§7.2,
-§4.4.6 — form-coherence lint covers the conformance half), and lint clean. All three are
-derived from the record itself. An unmet half or a blocking lint finding makes finalize
-refuse (exit 1) so a dirty pass is never reported done — the loop should fix it and
-re-finalize, or `corpus release <id> --failed`. finalize is read-only on the record.
+**The pass gate** (3.1, re-keyed 3.2): the record must be **formed where its overlays
+declare a form** (§7.2, §4.4.6 — form-coherence lint covers the conformance half) and lint
+clean. The 3.1 gate's authored half dissolves with the layer it named (§4.1) — a formed
+span's editorial fields ride its section header under its own contract, and a record
+staying formless owes no vouch: its derived title/description are already honest (§4.2.3).
+Both remaining halves are derived from the record itself. An unmet form or a blocking lint
+finding makes finalize refuse (exit 1) so a dirty pass is never reported done — the loop
+should fix it and re-finalize, or `corpus release <id> --failed`. finalize is read-only on
+the record.
 """
 
 from __future__ import annotations
@@ -42,10 +45,6 @@ def run(args: argparse.Namespace) -> int:
     post = records.load(record_file)
 
     refusals: list[str] = []
-    if not records.is_authored(post):
-        refusals.append(
-            "not authored — the vouch (title + description) is not fully written (spec §4.1)"
-        )
     unmet_form = _shape.declared_form_unmet(post, root)
     if unmet_form is not None:
         refusals.append(

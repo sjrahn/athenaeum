@@ -179,28 +179,36 @@ def test_merge_origin_fields_noop_without_fields_or_origin():
     assert not bare.metadata.get("_origins")
 
 
-def test_title_for_priority_frontmatter_then_artifact_then_ytdlp():
+def test_title_for_priority_frontmatter_then_legacy_artifact_then_ytdlp(tmp_path):
+    """*(3.2)* Neither `text/html` nor a bare origin block carries a `role: title` mark in
+    the packaged schemas yet (§12.21 phase 2 is a later step), so this exercises the
+    TRANSITIONAL legacy fallback (`records._legacy_title_fallback`) — kept so display
+    titles don't regress fleet-wide before the role-marking sweep lands. Its order
+    (artifact bare `title` beats origin `ytdlp_title`) is the pre-3.2 `title_for` chain;
+    the frontmatter override still wins over everything, per spec §4.2.1."""
     post = _post_with_origin()
     records.merge_origin_fields(post, {"ytdlp_title": "From yt-dlp"})
-    # 3) only an origin ytdlp_title → display falls all the way back to it.
-    assert records.title_for(post) == "From yt-dlp"
-    # 2) a namespaced artifact `*_title` candidate outranks ytdlp_title.
+    # legacy fallback, no artifact candidate yet → origin ytdlp_title.
+    assert records.title_for(post, tmp_path) == "From yt-dlp"
+    # legacy fallback prefers the artifact bare `title` over origin `ytdlp_title`.
     records.set_artifact_block(post, mime="text/html", fields={"title": "Artifact Title"})
-    assert records.title_for(post) == "Artifact Title"
-    # 1) the normalizer-authored frontmatter title is canonical.
+    assert records.title_for(post, tmp_path) == "Artifact Title"
+    # the frontmatter override is strongest of all, regardless of layer.
     post.metadata["title"] = "Normalized Title"
-    assert records.title_for(post) == "Normalized Title"
+    assert records.title_for(post, tmp_path) == "Normalized Title"
 
 
-def test_stub_frontmatter_carries_empty_title_and_description():
+def test_stub_frontmatter_carries_no_editorial_keys():
+    """*(3.2, spec §12.3.4)* Birth frontmatter carries no `title`/`description` at all —
+    the display pair is derived, not stored blank placeholders."""
     fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
-    assert fm["title"] == "" and fm["description"] == ""
+    assert "title" not in fm and "description" not in fm
 
 
 def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatter_empty(tmp_path):
     # A media drafter's title rides on the ORIGIN block as `ytdlp_title` (non-primary-source);
-    # the artifact block carries no generic `title`, and the frontmatter `title` is NOT
-    # auto-populated (normalizer-owned).
+    # the artifact block carries no generic `title`, and the frontmatter carries no `title`
+    # key at all (normalizer-owned override, spec §12.3.4).
     from corpus._cli.draft import _apply_drafter_result
 
     fm = records.stub_frontmatter(record_id="ab" + "0" * 62, touch_id="t")
@@ -214,9 +222,10 @@ def test_apply_drafter_result_routes_ytdlp_title_to_origin_and_leaves_frontmatte
     }
     _apply_drafter_result(post, result, "video/video_mp4", tmp_path)
     assert "title" not in (records.artifact_block(post).get("fields") or {})  # no generic title
-    assert post.metadata.get("title") == ""  # frontmatter title untouched (normalizer-owned)
+    assert post.metadata.get("title") is None  # no frontmatter override (normalizer-owned)
     assert post.metadata["_origins"][-1]["fields"]["ytdlp_title"] == "YT"
-    assert records.title_for(post) == "YT"  # frontmatter empty → origin ytdlp_title candidate
+    # frontmatter has no override → falls to the origin ytdlp_title (legacy fallback today).
+    assert records.title_for(post, tmp_path) == "YT"
 
 
 # ---------- enrichment-sidecar lifecycle ---------- #

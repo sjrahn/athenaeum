@@ -5,8 +5,8 @@ metadata-zone block, the content-zone block TOC, the derived classifications/iss
 and a quick-lint section. A normalizer pass runs this first. The Lint section here is the
 `DIAGNOSE_QUICK_RULES` subset — the full overlay-aware ruleset (body sanity, embed
 integrity, …) is the verification gate at `corpus lint <hash>`, which the pass must clear
-before the queue's `finalize` closes it (spec §8.5's pass gate: authored + formed-where-
-declared + lint clean).
+before the queue's `finalize` closes it (spec §8.5's pass gate, 3.2: formed-where-declared
++ lint clean).
 
 `--json` emits the same data as one JSON object. Markdown to stdout.
 """
@@ -95,18 +95,19 @@ def _check_artifact(corpus_root: Path, record_id: str, post) -> dict[str, Any]:
 
 def _emit(corpus_root, record_id, post, blocks, findings, artifact_info) -> None:
     metadata = post.metadata
-    title = records.title_for(post)
+    title_field = records.derived_editorial_field(post, corpus_root, "title")
+    desc_field = records.derived_editorial_field(post, corpus_root, "description")
     state = records.derived_state(post)
-    authored = records.is_authored(post)
     media_type = records.media_type_for(post)
     touch_chain = metadata.get("touch") or []
     if isinstance(touch_chain, str):
         touch_chain = [touch_chain]
     last = touch_chain[-1] if touch_chain else ""
 
-    print(f"# {record_id[:12]}… — {title}\n")
+    print(f"# {record_id[:12]}… — {title_field.value}\n")
     print(
-        f"`state: {state}` · `authored: {authored}` · `mime: {media_type}` · "
+        f"`state: {state}` · `title: {title_field.layer or 'none'}` · "
+        f"`description: {desc_field.layer or 'none'}` · `mime: {media_type}` · "
         f"`touch: {len(touch_chain)}` · `last: {last}`\n"
     )
 
@@ -222,12 +223,16 @@ def _emit_json(corpus_root, record_id, post, blocks, findings, artifact_info) ->
         }
         for b in blocks
     ]
+    title_field = records.derived_editorial_field(post, corpus_root, "title")
+    desc_field = records.derived_editorial_field(post, corpus_root, "description")
     json.dump(
         {
             "record": record_id,
-            "title": records.title_for(post),
+            "title": title_field.value,
+            "title_layer": title_field.layer,
+            "description": desc_field.value,
+            "description_layer": desc_field.layer,
             "state": records.derived_state(post),
-            "authored": records.is_authored(post),
             "mime": records.media_type_for(post),
             "lint": findings,
             "artifact": artifact_info,

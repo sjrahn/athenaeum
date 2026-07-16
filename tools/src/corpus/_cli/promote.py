@@ -245,7 +245,6 @@ def _mint_stub(
         record_id=record_id,
         transport=transport_value,
         touch_id=touches.script_identifier("promote"),
-        description="",
     )
     post = frontmatter.Post(content="", **fm)
     records.set_artifact_block(post, mime=media_type, fields={})

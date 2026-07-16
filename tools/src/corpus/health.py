@@ -2,9 +2,10 @@
 
 A read-only, fully-offline scan that surfaces what a corpus operator (or a curation
 skill) wants to triage: how records sit across the derived layers (spec §4.1 —
-formed / rendered / proxy, plus the authored vouch), which carry unresolved issues,
-which are missing their bytes, and which fail basic structural validity. `scan_all`
-returns a structured report; the `corpus health` CLI renders it as JSON or a summary.
+formed / rendered / proxy, plus derived-editorial coverage, §4.2.3/§12.21), which carry
+unresolved issues, which are missing their bytes, and which fail basic structural
+validity. `scan_all` returns a structured report; the `corpus health` CLI renders it as
+JSON or a summary.
 
 Generalized from the reference: the CarbonAi domain signals (vertical-coverage
 keywords, keyword cross-referencing, classification cue-matching, v0.3 migration
@@ -24,7 +25,10 @@ import frontmatter
 
 from . import records, touches
 
-_REQUIRED_KEYS = ("id", "description", "touch")
+# *(3.2)* `description` drops out — it is no longer a stored, birth-required field (spec
+# §4.2, §12.3.4): the display description is derived, and the frontmatter key survives only
+# as an optional override, absent in the steady state.
+_REQUIRED_KEYS = ("id", "touch")
 
 
 @dataclass
@@ -66,14 +70,16 @@ def build_uri_index(refs: list[RecordRef]) -> dict[str, str]:
 # ---------- signals ---------- #
 
 
-def layer_presence(refs: list[RecordRef]) -> dict[str, int]:
+def layer_presence(refs: list[RecordRef], corpus_root: Path) -> dict[str, int]:
     """Layer-presence census (spec §4.1, §12.19 — succeeding the 3.0 status census): how the
-    fleet sits across the derived-state enum, plus the orthogonal authored vouch and a
-    transitional legacy-status count. `rendered` is `derived_state == "rendered"` — a stored
-    rendering with no governing form, the grandfathered population (§12.18 step 3). The queue
-    is standing demand, not backlog (§8.5), so this reports layer presence only — not how many
-    records "need" a pass."""
-    formed = rendered = proxy = authored = legacy_status = 0
+    fleet sits across the derived-state enum, plus **derived-editorial coverage** (3.2,
+    §12.21 step 1, succeeding the retired `authored` tally) and a transitional legacy-status
+    count. `rendered` is `derived_state == "rendered"` — a stored rendering with no governing
+    form, the grandfathered population (§12.18 step 3). `titled`/`untitled` count records
+    whose derived title (spec §4.2.3) is non-empty vs. empty — the empty set is the §12.21
+    role-marking worklist, not a defect tally. The queue is standing demand, not backlog
+    (§8.5), so this reports layer presence only — not how many records "need" a pass."""
+    formed = rendered = proxy = titled = untitled = legacy_status = 0
     for r in refs:
         state = records.derived_state(r.post)
         if state == "formed":
@@ -82,15 +88,18 @@ def layer_presence(refs: list[RecordRef]) -> dict[str, int]:
             rendered += 1
         else:
             proxy += 1
-        if records.is_authored(r.post):
-            authored += 1
+        if records.title_for(r.post, corpus_root):
+            titled += 1
+        else:
+            untitled += 1
         if "status" in r.post.metadata:
             legacy_status += 1
     return {
         "formed": formed,
         "rendered": rendered,
         "proxy": proxy,
-        "authored": authored,
+        "titled": titled,
+        "untitled": untitled,
         "legacy_status": legacy_status,
     }
 
@@ -125,7 +134,7 @@ def unshaped(
         out.append(
             {
                 "id": r.record_id,
-                "title": records.title_for(r.post),
+                "title": records.title_for(r.post, corpus_root),
                 "media_type": records.media_type_for(r.post),
                 "shapable": shapable,
             }
@@ -213,7 +222,7 @@ def missing_artifacts(
         out.append(
             {
                 "id": r.record_id,
-                "title": records.title_for(r.post),
+                "title": records.title_for(r.post, corpus_root),
                 "media_type": mime,
                 "expected_path": str(expected),
                 "category": category,
@@ -222,21 +231,9 @@ def missing_artifacts(
     return out[:limit]
 
 
-def formed_unauthored(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
-    """Formed records (a form section governs the content zone, spec §4.1) whose vouch isn't
-    written yet — the interpretive half of the normalize pass (title/description) still
-    outstanding. Succeeds the 3.0 `empty_description_normalized` signal, which conflated
-    formed+authored under one `status: normalized` flag; formed and authored are now
-    orthogonal, so this reports specifically the formed-but-not-authored gap."""
-    out: list[dict[str, Any]] = []
-    for r in refs:
-        if records.derived_state(r.post) != "formed" or records.is_authored(r.post):
-            continue
-        out.append({"id": r.record_id, "title": records.title_for(r.post)})
-    return out[:limit]
-
-
-def validity_violations(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
+def validity_violations(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
+) -> list[dict[str, Any]]:
     """A quick structural sanity check (a subset of `corpus lint`): required keys,
     id==filename, non-empty touch, artifact block present, ≥1 origin.
 
@@ -263,7 +260,11 @@ def validity_violations(refs: list[RecordRef], *, limit: int = 50) -> list[dict[
             problems.append("no <!--origin--> blocks")
         if problems:
             out.append(
-                {"id": r.record_id, "title": records.title_for(r.post), "problems": problems}
+                {
+                    "id": r.record_id,
+                    "title": records.title_for(r.post, corpus_root),
+                    "problems": problems,
+                }
             )
     return out[:limit]
 
@@ -297,7 +298,6 @@ SIGNAL_NAMES = (
     "unshaped",
     "unresolved_issues",
     "missing_artifacts",
-    "formed_unauthored",
     "validity_violations",
     "canonical_duplicate_clusters",
 )
@@ -316,7 +316,7 @@ def scan_all(
 
     report: dict[str, Any] = {"spec_version": "1.0", "total_records": len(refs)}
     if "layer_presence" in selected:
-        report["layer_presence"] = layer_presence(refs)
+        report["layer_presence"] = layer_presence(refs, corpus_root)
     if "records_by_mime" in selected:
         report["records_by_mime"] = records_by_mime(refs)
     if "unshaped" in selected:
@@ -327,10 +327,8 @@ def scan_all(
         report["missing_artifacts"] = missing_artifacts(
             refs, corpus_root, limit=limit, skip_remote_check=skip_remote_check
         )
-    if "formed_unauthored" in selected:
-        report["formed_unauthored"] = formed_unauthored(refs, limit=limit)
     if "validity_violations" in selected:
-        report["validity_violations"] = validity_violations(refs, limit=limit)
+        report["validity_violations"] = validity_violations(refs, corpus_root, limit=limit)
     if "canonical_duplicate_clusters" in selected:
         report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(refs, limit=limit)
     return report

@@ -124,29 +124,53 @@ def _rule_legacy_status(post, blocks, root) -> Iterator[Finding]:
     )
 
 
-def _rule_vouch_half_authored(post, blocks, root) -> Iterator[Finding]:
-    """The vouch (spec §4.1) is `title` AND `description` together — a full vouch is both,
-    so a record carrying exactly one is a half-authored pass (`is_authored` is deliberately
-    strict-AND; this is its diagnostic complement). `description` is separately capped at
-    ~600 chars (1–3 sentences)."""
-    title = (post.metadata.get("title") or "").strip()
-    desc = (post.metadata.get("description") or "").strip()
-    if bool(title) != bool(desc):
-        yield Finding(
-            rule_id="vouch-half-authored",
-            severity="warning",
-            message=(
-                f"the vouch is half-authored: `{'title' if title else 'description'}` is set "
-                f"but `{'description' if title else 'title'}` is empty — a full vouch (spec "
-                f"§4.1) carries both."
-            ),
-        )
+def _rule_editorial_override_shape(post, blocks, root) -> Iterator[Finding]:
+    """*(3.2)* Frontmatter `title:`/`description:` are OPTIONAL overrides of the derived
+    editorial pair (spec §4.2.1, §4.2.3), not a required together-vouch — the retired
+    `is_authored` strict-AND is gone, and a record carrying exactly one is a legal, lone
+    editorial assertion, not a defect. What's still worth flagging: an explicit empty-string
+    `''` value, a 3.1-era placeholder (the old required-vouch shape) that `dumps()` now
+    drops on the record's next write (spec §12.21) — info, mirroring the
+    `frontmatter-legacy-status` precedent. `description` is separately capped at ~600 chars
+    (1–3 sentences) when present."""
+    for key in ("title", "description"):
+        raw = post.metadata.get(key)
+        if isinstance(raw, str) and raw == "":
+            yield Finding(
+                rule_id="editorial-override-placeholder",
+                severity="info",
+                message=(
+                    f"frontmatter `{key}: ''` is a 3.1-era placeholder (spec §12.21) — "
+                    f"`dumps()` drops it on the record's next write; safe to ignore or strip."
+                ),
+            )
+    desc = str(post.metadata.get("description") or "").strip()
     if len(desc) > 600:
         yield Finding(
             rule_id="description-too-long",
             severity="warning",
             message=f"`description` is {len(desc)} chars; aim ≤600 (1–3 sentences).",
         )
+
+
+def _rule_editorial_override_redundant(post, blocks, root) -> Iterator[Finding]:
+    """*(3.2, §12.21 step 1)* A frontmatter override whose value EQUALS the record's
+    derived value computed WITHOUT the override is noise, not an assertion (spec §4.2.1)."""
+    for role in ("title", "description"):
+        override = str(post.metadata.get(role) or "").strip()
+        if not override:
+            continue
+        beneath = _records.derived_editorial_field(post, root, role, include_override=False)
+        if beneath.value and beneath.value == override:
+            yield Finding(
+                rule_id="editorial-override-redundant",
+                severity="warning",
+                message=(
+                    f"frontmatter `{role}` override equals the record's derived {role} "
+                    f"(layer: {beneath.layer}) — noise, not an assertion (spec §4.2.1); "
+                    f"drop the override."
+                ),
+            )
 
 
 def _rule_transport_format(post, blocks, root) -> Iterator[Finding]:
@@ -718,12 +742,14 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
     """Body ⟺ lossless (spec §4.3.2.3). A `text` segment whose atomic overlay opts out of
     lossless (`enables_lossless: false`, e.g. `text/data-table-dynamic`) is a body-empty
     marker — it must carry a `description`, not a transcribed body."""
-    # `is_authored` (not `has_stored_rendering`) is the honest severity signal here: by the
-    # time this loop reaches a segment at all, the record necessarily has a stored rendering
-    # (the segment IS one) — `has_stored_rendering` would be tautologically true and collapse
-    # the info/warning distinction. The vouch's presence is what actually escalates urgency:
-    # a still-unauthored pass is expected to have gaps (info); an authored one shouldn't (warning).
-    authored = _records.is_authored(post)
+    # *(3.2, re-keyed off `is_authored`'s retirement)* `is_formed` (not `has_stored_rendering`)
+    # is the honest severity signal here: by the time this loop reaches a segment at all, the
+    # record necessarily has a stored rendering (the segment IS one) — `has_stored_rendering`
+    # would be tautologically true and collapse the info/warning distinction. Under 3.2 the
+    # vouch rides the form (§4.1), so a record under a named form contract is the one that
+    # shouldn't have gaps (warning); a record still rendering formless/grandfathered content
+    # with no governing contract yet is expected to (info).
+    formed = _records.is_formed(post)
     for label, seg in _iter_segments_labelled(blocks):
         if seg.atom != "text" or not seg.overlay:
             continue
@@ -750,7 +776,7 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
         elif not desc:
             yield Finding(
                 rule_id="segment-description-required",
-                severity="warning" if authored else "info",
+                severity="warning" if formed else "info",
                 message=(
                     f"{label} (`{seg.overlay}`) is a non-lossless body-empty marker with no "
                     f"`description` — describe what the region is/computes on the segment header."
@@ -827,13 +853,14 @@ _EMBED_ADDRESS_KEYS = {"el", "time", "page", "frame", "time_range"}
 
 
 def _rule_embed_description_empty_on_normalized(post, blocks, root) -> Iterator[Finding]:
-    """An embed carried by a record past the attested-only baseline — authored (the vouch is
-    written) or already rendering stored content — whose image/audio/video embed has no
-    `description` is missing the normalizer's whole-asset summary (info — persist an issue
-    if intentionally undescribed). Unlike the 3.0 `status == "normalized"` gate (which implied
-    BOTH halves), either half alone is enough signal that this embed should have been looked
-    at by now."""
-    if not (_records.is_authored(post) or _records.has_stored_rendering(post)):
+    """An embed carried by a record past the attested-only baseline — carrying a deliberate
+    editorial override (spec §4.2.1 — the 3.2 analog of "the vouch is written" for a record
+    with no content zone to hold a form-section vouch) or already rendering stored content —
+    whose image/audio/video embed has no `description` is missing the normalizer's
+    whole-asset summary (info — persist an issue if intentionally undescribed). Unlike the
+    3.0 `status == "normalized"` gate (which implied BOTH halves), either half alone is
+    enough signal that this embed should have been looked at by now."""
+    if not (_records.has_editorial_override(post) or _records.has_stored_rendering(post)):
         return
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         top_type = str(eb.get("media_type") or "").split("/", 1)[0]
@@ -1017,11 +1044,14 @@ _KNOWN_COMMENT_KEYWORDS = frozenset(
 def _rule_body_empty_normalized(post, blocks, root) -> Iterator[Finding]:
     # The 3.0 gate was `status == "normalized"` (formed + authored). `has_stored_rendering`
     # collapses out of its 3.1 successor: it can never be true in the same breath as an empty
-    # content zone, so the honest gate is `is_authored` alone. Note this now also advises on a
-    # legitimate 3.1 state — an authored FORMLESS proxy (§4.1) genuinely has no content zone —
-    # so a hit here is not necessarily wrong, just worth a look; severity stays "warning", not
-    # "error", and the pass gate (§8.5) doesn't block on it.
-    if not _records.is_authored(post) or (post.content or "").strip():
+    # content zone. *(3.2)* `is_authored` retires with the layer it named — the only way a
+    # record can carry a written vouch AND an empty content zone now is a frontmatter
+    # OVERRIDE (a form-section vouch requires the section, which requires content), so
+    # `has_editorial_override` is the honest, narrower gate. A hit here is not necessarily
+    # wrong — a formless-permanently record may legitimately carry an override and no
+    # content — just worth a look; severity stays "warning", not "error", and the pass gate
+    # (§8.5) doesn't block on it.
+    if not _records.has_editorial_override(post) or (post.content or "").strip():
         return
     # A manifest record (a self_contained container recorded as embeds — e.g. a kept-whole
     # zip) legitimately has an empty content zone: the members are verbatim, resolvable
@@ -1244,8 +1274,9 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
 _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("id-format", _rule_id_format),
     ("frontmatter-legacy-status", _rule_legacy_status),
-    ("vouch-half-authored", _rule_vouch_half_authored),
-    ("description-too-long", _rule_vouch_half_authored),
+    ("editorial-override-placeholder", _rule_editorial_override_shape),
+    ("description-too-long", _rule_editorial_override_shape),
+    ("editorial-override-redundant", _rule_editorial_override_redundant),
     ("transport-format", _rule_transport_format),
     ("canonical-format", _rule_canonical_format),
     ("perceptual-format", _rule_perceptual_format),
@@ -1293,7 +1324,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal
 # frontmatter/structure checks (athenaeum's idiomatic rule_ids).
 DIAGNOSE_QUICK_RULES: tuple[str, ...] = (
-    "vouch-half-authored",
+    "editorial-override-placeholder",
+    "editorial-override-redundant",
     "frontmatter-legacy-status",
     "transport-format",
     "canonical-format",

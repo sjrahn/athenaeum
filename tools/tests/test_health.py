@@ -1,9 +1,9 @@
 """Offline health signals + the `corpus health` CLI.
 
 Builds a small fixture corpus spanning the derived-state layers (spec §4.1 — proxy /
-rendered / formed, plus the orthogonal authored vouch), an open issue, a missing artifact,
-a structurally-invalid record, and a stray legacy `status:` key. Asserts each signal
-surfaces the right records. No network.
+rendered / formed, plus derived-editorial coverage, §4.2.3), an open issue, a missing
+artifact, a structurally-invalid record, and a stray legacy `status:` key. Asserts each
+signal surfaces the right records. No network.
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ import frontmatter
 from corpus import health, paths, records, segments
 from corpus._cli import dispatch
 
-A = "a0" * 32  # proxy, unauthored, missing artifact, carries a legacy `status:` key
-B = "b0" * 32  # rendered (stored content, no form), authored, has its pdf
-C = "c0" * 32  # formed, UNauthored (empty vouch) — the formed_unauthored target
-D = "d0" * 32  # formed, authored, open warning issue
-E = "e0" * 32  # no origin block (invalid)
+A = "a0" * 32  # proxy, UNTITLED (no title candidate anywhere), missing artifact, legacy `status:`
+B = "b0" * 32  # rendered (stored content, no form), titled (frontmatter override), has its pdf
+C = "c0" * 32  # formed, titled only via the artifact-bare-title legacy fallback
+D = "d0" * 32  # formed, titled (frontmatter override), open warning issue
+E = "e0" * 32  # no origin block (invalid), titled via the legacy fallback
 
 
 def _corpus(tmp_path: Path) -> Path:
@@ -40,16 +40,19 @@ def _write(
     origin: bool = True,
     ext: str | None = None,
     artifact: bool = False,
+    artifact_title: bool = True,
     issue: dict | None = None,
     content_blocks: list | None = None,
     legacy_status: str | None = None,
 ) -> None:
-    fm = records.stub_frontmatter(
-        record_id=rid, touch_id="corpus.ingest@0.1.0", description=description
-    )
-    fm["title"] = title
+    fm = records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
+    if title:
+        fm["title"] = title
+    if description:
+        fm["description"] = description
     post = frontmatter.Post(content="", **fm)
-    records.set_artifact_block(post, mime=mime, fields={"title": rid[:4]})
+    artifact_fields = {"title": rid[:4]} if artifact_title else {}
+    records.set_artifact_block(post, mime=mime, fields=artifact_fields)
     if origin:
         records.append_origin_block(
             post, uri=f"https://e.com/{rid[:4]}", snapshot="2026-05-31T00:00:00Z"
@@ -84,7 +87,8 @@ def _write(
 
 def _populate(tmp_path: Path) -> Path:
     root = _corpus(tmp_path)
-    _write(root, A, mime="image/png", legacy_status="stub")  # no artifact → missing
+    # No artifact title candidate, no origin, no override → genuinely untitled (spec §4.2.3).
+    _write(root, A, mime="image/png", artifact_title=False, legacy_status="stub")
     _write(
         root, B, mime="application/pdf", ext="pdf", artifact=True,
         title="A Bulletin", description="A rendered bulletin with no governing form.",
@@ -126,11 +130,15 @@ def _ids(items: list[dict]) -> set[str]:
 def test_layer_presence(tmp_path):
     root = _populate(tmp_path)
     refs = health.load_all_records(root)
-    counts = health.layer_presence(refs)
+    counts = health.layer_presence(refs, root)
     assert counts["proxy"] == 2  # A, E
     assert counts["rendered"] == 1  # B
     assert counts["formed"] == 2  # C, D
-    assert counts["authored"] == 2  # B, D (title + description both set)
+    # B, D carry a frontmatter override; C, E derive a title only via the transitional
+    # legacy artifact-bare-title fallback (spec §12.21 phase 2 not yet landed); A has no
+    # title candidate anywhere — genuinely untitled (spec §4.2.3).
+    assert counts["titled"] == 4  # B, C, D, E
+    assert counts["untitled"] == 1  # A
     assert counts["legacy_status"] == 1  # A only
 
 
@@ -141,12 +149,6 @@ def test_unshaped(tmp_path):
     assert _ids(items) == {A, E}
     # Neither A nor E has an origin overlay declaring a form, so neither is shapable.
     assert all(i["shapable"] is False for i in items)
-
-
-def test_formed_unauthored(tmp_path):
-    root = _populate(tmp_path)
-    refs = health.load_all_records(root)
-    assert _ids(health.formed_unauthored(refs)) == {C}
 
 
 def test_unresolved_issues_grouped(tmp_path):
@@ -168,7 +170,7 @@ def test_missing_artifacts(tmp_path):
 def test_validity_violations_no_origin(tmp_path):
     root = _populate(tmp_path)
     refs = health.load_all_records(root)
-    items = health.validity_violations(refs)
+    items = health.validity_violations(refs, root)
     by_id = {i["id"]: i for i in items}
     assert E in by_id
     assert any("origin" in p for p in by_id[E]["problems"])

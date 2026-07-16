@@ -94,7 +94,7 @@ def _format_summary(report: dict[str, Any]) -> str:
             f"{k}: {v}" for k, v in lp.items() if k in ("formed", "rendered", "proxy")
         )
         lines.append(f"layers: {parts}")
-        lines.append(f"authored: {lp.get('authored', 0)}")
+        lines.append(f"titled: {lp.get('titled', 0)}  untitled: {lp.get('untitled', 0)}")
         if lp.get("legacy_status"):
             lines.append(f"legacy_status: {lp['legacy_status']} (pending migration sweep)")
     if "records_by_mime" in report:
@@ -114,8 +114,6 @@ def _format_summary(report: dict[str, Any]) -> str:
         by_cat: Counter[str] = Counter(i.get("category", "unknown") for i in items)
         bycat = ", ".join(f"{k}: {v}" for k, v in sorted(by_cat.items()))
         lines.append(f"missing_artifacts: {len(items)}" + (f" ({bycat})" if bycat else ""))
-    if "formed_unauthored" in report:
-        lines.append(f"formed_unauthored: {len(report['formed_unauthored'])}")
     if "validity_violations" in report:
         items = report["validity_violations"]
         lines.append(f"validity_violations: {len(items)}")

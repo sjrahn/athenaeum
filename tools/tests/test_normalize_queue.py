@@ -1,9 +1,10 @@
 """The normalization queue (spec §8.5) — request/claim contract + the CLI verbs.
 
 The queue is external, untracked state under `queue/`; it never writes records or inspects
-them at enqueue time. `finalize` gates on the **pass gate** (3.1, §8.5): authored (the vouch,
-§4.1) + formed-where-declared (§4.4.6) + lint-clean. The verbs are exit-code-meaningful so a
-`/loop` session can drive them.
+them at enqueue time. `finalize` gates on the **pass gate** (3.1, re-keyed 3.2, §8.5):
+formed-where-declared (§4.4.6) + lint-clean. The 3.1 gate's authored half dissolved into the
+form layer (§4.1) — a record staying formless owes no vouch. The verbs are exit-code-
+meaningful so a `/loop` session can drive them.
 """
 
 from __future__ import annotations
@@ -52,7 +53,8 @@ def _put(
     section_form: str | None = None,
     section_fields: dict | None = None,
 ) -> None:
-    """Build a fixture record. `title`/`description` set together is authored (spec §4.1);
+    """Build a fixture record. `title`/`description` set together is a full frontmatter
+    editorial override (spec §4.2.1) — optional under 3.2, never required by the pass gate;
     `schema_id` (paired with `_declare_form_overlay`) declares a form; `section_form` stamps
     a matching (or deliberately mismatched) form section so the "formed-where-declared" half
     of the pass gate can be exercised in isolation. `section_fields` supplies the form
@@ -218,14 +220,41 @@ def test_finalize_requires_a_claim(tmp_path):
     assert rc != 0  # not claimed
 
 
-def test_finalize_refuses_unauthored(tmp_path):
+def test_finalize_passes_unauthored_formless_lint_clean(tmp_path):
+    """*(3.2)* The retired authored half of the pass gate no longer blocks finalize — a
+    formless, lint-clean record with no vouch anywhere (no frontmatter override, no
+    section) completes cleanly: "a record staying formless owes no vouch — its derived
+    title/description are already honest" (spec §8.5)."""
     root = _corpus(tmp_path)
-    _put(root, RID)  # no title/description → not authored
+    _put(root, RID)  # no title/description, no declared form
+    post = records.load(paths.record_path(root, RID))
+    assert records.derived_editorial_field(post, root, "title").value == ""
     queue.enqueue(root, RID)
     queue.drain(root)
     rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
-    assert rc != 0
-    assert queue.state(root, RID)["state"] == "claimed"  # claim left intact
+    assert rc == 0
+    st = queue.state(root, RID)
+    assert st["state"] == "idle" and st["result"]["outcome"] == "completed"
+
+
+def test_finalize_passes_formed_without_vouch(tmp_path):
+    """*(3.2)* A formed record whose section header carries no title/description still
+    passes finalize — the vouch is optional, not required, now that "authored" dissolves
+    into the form layer (spec §4.1, §8.5)."""
+    root = _corpus(tmp_path)
+    _declare_form_overlay(root)
+    _put(
+        root, RID, schema_id="conv-test",
+        section_form="conversation", section_fields={"participants": ["Andy <a1>"]},
+    )
+    post = records.load(paths.record_path(root, RID))
+    assert records.derived_state(post) == "formed"
+    assert records.derived_editorial_field(post, root, "title").value == ""
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    rc = dispatch(["finalize", RID, "--corpus-root", str(root)])
+    assert rc == 0
+    assert queue.state(root, RID)["result"]["outcome"] == "completed"
 
 
 def test_finalize_refuses_declared_form_without_section(tmp_path):
@@ -301,15 +330,24 @@ def test_await_resolves_completed_then_failed(tmp_path):
 
 
 def test_await_record_state_fallback_uses_pass_gate(tmp_path):
-    """Absent a recorded outcome, `await` falls back to the record-state predicates: authored
-    + formed-where-declared (no lint in the poll loop, §8.5)."""
+    """Absent a recorded outcome, `await` falls back to the record-state predicate:
+    formed-where-declared (no lint in the poll loop, §8.5, re-keyed 3.2 — the authored half
+    dissolved into the form layer, so a bare formless record needs no vouch to settle)."""
     root = _corpus(tmp_path)
     _put(root, RID, title="T", description="A summary.")
     assert dispatch(["await", RID, "--timeout", "1", "--corpus-root", str(root)]) == 0
 
-    unauthored = "c3" * 32
-    _put(root, unauthored)
-    rc = dispatch(["await", unauthored, "--timeout", "0.2", "--interval", "0.05",
+    # A bare, override-less, formless record ALSO settles now — no vouch required.
+    untitled = "d4" * 32
+    _put(root, untitled)
+    assert dispatch(["await", untitled, "--timeout", "1", "--corpus-root", str(root)]) == 0
+
+    # A record whose origin declares a form the content zone doesn't carry still fails —
+    # the "formed-where-declared" half of the gate still applies.
+    _declare_form_overlay(root, schema_id="conv-test")
+    unmet = "c3" * 32
+    _put(root, unmet, schema_id="conv-test")
+    rc = dispatch(["await", unmet, "--timeout", "0.2", "--interval", "0.05",
                    "--corpus-root", str(root)])
     assert rc != 0
 

@@ -81,7 +81,7 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
 
     # Metadata-zone blocks preserved.
     assert records.media_type_for(loaded) == "application/pdf"
-    assert records.title_for(loaded) == "Golden"
+    assert records.title_for(loaded, tmp_path) == "Golden"
 
     origins = list(records.iter_origin_blocks(loaded))
     assert len(origins) == 1

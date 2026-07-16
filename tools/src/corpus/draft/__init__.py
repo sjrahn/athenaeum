@@ -33,8 +33,10 @@ merges onto the record:
                    `title` candidate when the format exposes one (the opener's MIME names
                    the provenance, so artifact fields aren't prefixed)
     embeds       — metadata-zone embeds (list of dicts: {media_type, address, transport, fields})
-    description  — frontmatter description; set only when the record's is still empty
-                   (e.g. a yt-dlp caption). The normalizer may later refine it.
+    description  — *(3.2)* DISCARDED by `derive.apply_drafter_result` — the frontmatter
+                   `description` is a deliberate editorial override (spec §4.2.1), never a
+                   drafter-authored byte-fact; the display description is derived from
+                   role-marked fields instead (§4.2.3). No drafter should populate this key.
     issues       — spec §4.3.3.1 issue dicts: {id, severity, resolution, detector, address?, ...}
     canonical    — `<algo>:<hex>` if the mime schema declared a canonical_strategy; else None
     origin_fields — non-primary-source enrichment (e.g. a media `ytdlp_*` set) → origin block
@@ -58,7 +60,7 @@ class DrafterResult(TypedDict, total=False):
 
     fields: dict[str, Any]
     embeds: list[dict[str, Any]]
-    description: str | None  # frontmatter description; applied only when currently empty
+    description: str | None  # *(3.2)* discarded — see the module docstring
     issues: list[dict[str, Any]]
     canonical: str | None
     origin_fields: dict[str, Any]  # enrichment → origin block (spec §7.2)

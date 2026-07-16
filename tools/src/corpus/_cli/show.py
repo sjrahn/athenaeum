@@ -18,11 +18,13 @@ def run(args: argparse.Namespace) -> int:
     record_id, record_file = paths.resolve_record(root, args.target)
     post = records.load(record_file)
 
+    title_field = records.derived_editorial_field(post, root, "title")
+    desc_field = records.derived_editorial_field(post, root, "description")
     print(f"id:          {record_id}")
-    print(f"state:       {records.derived_state(post)}  (authored: {records.is_authored(post)})")
-    print(f"description: {(post.metadata.get('description') or '').strip()[:200]}")
+    print(f"state:       {records.derived_state(post)}")
+    print(f"title:       {title_field.value}  (layer: {title_field.layer or 'none'})")
+    print(f"description: {desc_field.value[:200]}  (layer: {desc_field.layer or 'none'})")
     print(f"mime:        {records.media_type_for(post)}")
-    print(f"title:       {records.title_for(post)}")
     transport = post.metadata.get("transport")
     if transport:
         print(f"transport:   {transport}")

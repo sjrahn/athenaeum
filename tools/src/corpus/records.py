@@ -17,9 +17,9 @@ Exposes:
 - `dump(post, path)` — write `post` back to disk in canonical layout: frontmatter →
   metadata-zone blocks (artifact, origins, classifies, embeds) → content body →
   annotation-zone blocks (context; `issue` is one namespace of it).
-- Accessors: `media_type_for`, `title_for`, `artifact_block`, `iter_origin_blocks`,
-  `iter_classify_blocks`, `iter_embed_blocks`, `iter_context_blocks`, `iter_issue_blocks`,
-  `primary_origin_uri`.
+- Accessors: `media_type_for`, `title_for`, `description_for`, `derived_editorial`,
+  `artifact_block`, `iter_origin_blocks`, `iter_classify_blocks`, `iter_embed_blocks`,
+  `iter_context_blocks`, `iter_issue_blocks`, `primary_origin_uri`.
 - Mutators: `set_artifact_block`, `append_origin_block`,
   `append_embed_block`, `append_context_block`, `append_issue_block`.
 - Hash helpers: `format_hash(algo, hex_value)`.
@@ -32,8 +32,16 @@ Frontmatter core fields (spec §4.2 — the only fields, in spec order):
 *(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19): a record's state is
 derived, never stored. `load()` still reads a legacy `status:` key tolerantly (it survives
 in `post.metadata` for lint to see — the `frontmatter-legacy-status` rule) but `dumps()`
-never emits it — any write drops it. See `is_authored` / `is_formed` /
-`has_stored_rendering` / `derived_state` below for the derived-state predicates.
+never emits it — any write drops it. See `is_formed` / `has_stored_rendering` /
+`derived_state` below for the derived-state predicates.
+
+*(3.2)* `title`/`description` are retired as STORED fields — the display pair is
+**derived** from role-marked schema fields (spec §4.2.3), computed by `derived_editorial`
+/ `title_for` / `description_for`. Frontmatter `title:`/`description:` survive only as an
+optional deliberate **override**: `load()` reads a stored pair tolerantly (empty-string
+values are 3.1-era placeholders, not overrides) and `dumps()` drops an empty-string value
+on write while preserving a non-empty one verbatim. `is_authored` is retired with the
+stored-vouch state it named — see spec §4.1's "the vouch rides the form."
 
 Block grammar (spec §4.3):
     Metadata zone:    <!--artifact <mime-type>-->     (exactly 1)
@@ -48,6 +56,7 @@ Block grammar (spec §4.3):
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +78,12 @@ _CORE_FIELD_ORDER = [
     "touch",
     "visibility",
 ]
+
+# *(3.2)* The two frontmatter fields that are no longer stored facts but OPTIONAL
+# overrides of the derived editorial pair (spec §4.2.1, §4.2.3) — `dumps()` drops an
+# empty-string value for these on write (a 3.1-era placeholder) while preserving a
+# non-empty one (the override).
+_EDITORIAL_OVERRIDE_KEYS = frozenset({"title", "description"})
 
 # Block opener prefixes.
 _ARTIFACT_OPENER = "<!--artifact"
@@ -160,8 +175,17 @@ def dumps(post: frontmatter.Post) -> str:
     # Build core frontmatter — only spec-defined fields, in spec order.
     core: dict[str, Any] = {}
     for key in _CORE_FIELD_ORDER:
-        if key in post.metadata:
-            core[key] = post.metadata[key]
+        if key not in post.metadata:
+            continue
+        value = post.metadata[key]
+        # *(3.2)* `title`/`description` are OPTIONAL overrides of the derived editorial
+        # pair (spec §4.2.1, §4.2.3) — an empty-string value is a 3.1-era placeholder
+        # (the old required-vouch shape), never a deliberate assertion, so it is dropped
+        # on write; a non-empty value is the override and is preserved verbatim (only the
+        # §12.21 migration sweep may drop a non-empty value, never the emitter).
+        if key in _EDITORIAL_OVERRIDE_KEYS and isinstance(value, str) and value == "":
+            continue
+        core[key] = value
     fm_text = _dump_yaml_block(core)
 
     # Build the metadata zone — artifact, origins, classifies, embeds.
@@ -569,25 +593,15 @@ def media_type_for(post: frontmatter.Post) -> str:
     return str(artifact.get("mime") or "")
 
 
-def title_for(post: frontmatter.Post) -> str:
-    """Return the record's display title.
+def title_for(post: frontmatter.Post, corpus_root: Path) -> str:
+    """Return the record's derived display title (spec §4.2.3). See `derived_editorial`."""
+    return derived_editorial_field(post, corpus_root, "title").value
 
-    The normalizer-authored frontmatter `title` is canonical. Before normalization it is
-    empty, so fall back to a **block-level title candidate**: the artifact block's bare
-    `title` field (the opener's MIME already names the format, so the candidate isn't
-    namespaced — spec §4.3.1.1), then an origin block's `ytdlp_title` (whose `ytdlp_`
-    prefix survives because the origin opener names the source record, not the extraction
-    tool). The normalizer ultimately chooses among these candidates (or writes its own) to
-    fill the frontmatter `title` (spec §4.2.1)."""
-    if title := str(post.metadata.get("title") or "").strip():
-        return title
-    artifact = artifact_block(post)
-    if artifact and (t := (artifact.get("fields") or {}).get("title")):
-        return str(t)
-    for origin in iter_origin_blocks(post):
-        if t := (origin.get("fields") or {}).get("ytdlp_title"):
-            return str(t)
-    return ""
+
+def description_for(post: frontmatter.Post, corpus_root: Path) -> str:
+    """Return the record's derived display description (spec §4.2.3). See
+    `derived_editorial`."""
+    return derived_editorial_field(post, corpus_root, "description").value
 
 
 def iter_origin_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
@@ -1078,18 +1092,232 @@ def derived_classifications(post: frontmatter.Post) -> list[str]:
     return result
 
 
+# ---------- derived editorial fields (spec §4.2.3) ---------- #
+
+_EDITORIAL_ROLES = ("title", "description")
+
+
+@dataclass(frozen=True)
+class EditorialField:
+    """One resolved display-editorial field (spec §4.2.3): its value and which layer
+    produced it.
+
+    `layer` is one of `"override"` (the frontmatter pair, §4.2.1), `"form"`, `"origin"`,
+    `"artifact"` (role-marked candidates, precedence artifact → origin → form), or `None`
+    when every layer's candidate is empty — an honest empty result, not a defect."""
+
+    value: str
+    layer: str | None = None
+
+
+def _role_marked_fields(schema: dict[str, Any] | None, role: str) -> list[str]:
+    """Field names in `schema`'s `extended_fields` declared `role: <role>` (spec §4.2.3),
+    in YAML declaration order. Tolerant of a missing/malformed `extended_fields` (unknown
+    `role:` values, and non-dict declarations, are silently ignored)."""
+    if not isinstance(schema, dict):
+        return []
+    ext = schema.get("extended_fields")
+    if not isinstance(ext, dict):
+        return []
+    return [
+        name
+        for name, decl in ext.items()
+        if isinstance(decl, dict) and decl.get("role") == role
+    ]
+
+
+def _first_non_empty(fields: dict[str, Any] | None, names: list[str]) -> str:
+    """The first non-empty value among `names`, read from `fields` in the order given —
+    the within-layer resolution rule (spec §4.2.3: "the schema's declaration order, first
+    non-empty winning")."""
+    if not fields:
+        return ""
+    for name in names:
+        value = fields.get(name)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _artifact_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
+    """The artifact layer's role-marked candidate (spec §4.2.3, weakest in precedence):
+    the artifact block's mime schema `extended_fields` marked `role: <role>`."""
+    from . import schemas as _schemas
+
+    artifact = artifact_block(post)
+    if not artifact:
+        return ""
+    mime = str(artifact.get("mime") or "")
+    if not mime:
+        return ""
+    schema = _schemas.load_mime_schema(corpus_root, mime)
+    names = _role_marked_fields(schema, role)
+    if not names:
+        return ""
+    return _first_non_empty(artifact.get("fields"), names)
+
+
+def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
+    """The origin layer's role-marked candidate (spec §4.2.3): the LATEST qualified origin
+    block whose overlay marks a non-empty `role: <role>` field wins — origin blocks append
+    in capture order, so a re-capture's fields supersede. A bare (unqualified) origin block
+    matches no overlay and contributes nothing (spec §7.2)."""
+    from . import schemas as _schemas
+
+    for origin in reversed(list(iter_origin_blocks(post))):
+        schema_id = origin.get("id")
+        if not schema_id:
+            continue
+        schema = _schemas.load_origin_overlay_by_id(corpus_root, str(schema_id))
+        names = _role_marked_fields(schema, role)
+        if not names:
+            continue
+        value = _first_non_empty(origin.get("fields"), names)
+        if value:
+            return value
+    return ""
+
+
+def _whole_record_section(post: frontmatter.Post) -> Any:
+    """The record's whole-record form section (spec §4.3.2.1: a qualified section with no
+    `address`), or None. At most one exists per the grammar (a whole-record section admits
+    no sibling sections). Parse-tolerant, like the derived-state predicates below."""
+    from . import segments as _segments
+
+    try:
+        blocks = _segments.iter_blocks(post.content or "")
+    except Exception:
+        return None
+    for blk in blocks:
+        if isinstance(blk, _segments.Section) and blk.form and blk.address is None:
+            return blk
+    return None
+
+
+def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
+    """The form layer's role-marked candidate (spec §4.2.3, strongest of the three
+    schema-driven layers): only the WHOLE-RECORD form section contributes — a span-scope
+    section describes its span, never the record. The universal `title:`/`description:`
+    header fields are implicitly role-marked on every form and checked first; any
+    additional field the form contract explicitly marks is checked after, in the schema's
+    declaration order."""
+    from . import schemas as _schemas
+
+    section = _whole_record_section(post)
+    if section is None:
+        return ""
+    if role == "description":
+        implicit = str(section.description or "").strip()
+    else:
+        implicit = str((section.extra or {}).get(role) or "").strip()
+    if implicit:
+        return implicit
+    schema = _schemas.load_form_overlay(corpus_root, section.form)
+    names = [n for n in _role_marked_fields(schema, role) if n not in _EDITORIAL_ROLES]
+    if not names:
+        return ""
+    return _first_non_empty(section.extra, names)
+
+
+def _legacy_title_fallback(post: frontmatter.Post) -> tuple[str, str | None]:
+    """TODO(3.2 phase 2): transitional pre-role-mark fallback (spec §12.21 step 2) —
+    replicates the pre-3.2 `title_for` chain (the artifact block's bare `title` field, then
+    the first origin block's `ytdlp_title`) so display titles don't regress fleet-wide in
+    the window before the mime/origin schemas declare `role: title` on these fields.
+    Retire this function once that role-marking sweep lands — every corpus's titles will
+    then resolve through `_artifact_editorial_candidate` / `_origin_editorial_candidate`
+    on their own merits, and this stops contributing anything new."""
+    artifact = artifact_block(post)
+    if artifact and (t := (artifact.get("fields") or {}).get("title")):
+        return str(t).strip(), "artifact"
+    for origin in iter_origin_blocks(post):
+        if t := (origin.get("fields") or {}).get("ytdlp_title"):
+            return str(t).strip(), "origin"
+    return "", None
+
+
+def derived_editorial_field(
+    post: frontmatter.Post,
+    corpus_root: Path,
+    role: str,
+    *,
+    include_override: bool = True,
+) -> EditorialField:
+    """Resolve one display-editorial field — the shared implementation behind
+    `title_for` / `description_for` / `derived_editorial` (spec §4.2.3).
+
+    `role` is `"title"` or `"description"`. Precedence, strongest first: the frontmatter
+    override (§4.2.1) when `include_override` — pass `include_override=False` to resolve
+    what an override would be redundant AGAINST (the `editorial-override-redundant` lint
+    rule, §12.21 step 1) — then the form layer (whole-record section only), then origin
+    (latest qualified block wins), then artifact; each layer's own within-layer resolution
+    is first-non-empty by schema declaration order. An empty/absent layer candidate falls
+    through to the next. `title` additionally falls through to a transitional legacy
+    candidate (see `_legacy_title_fallback`) before giving up.
+    """
+    if include_override:
+        override = str(post.metadata.get(role) or "").strip()
+        if override:
+            return EditorialField(value=override, layer="override")
+
+    form_value = _form_editorial_candidate(post, corpus_root, role)
+    if form_value:
+        return EditorialField(value=form_value, layer="form")
+
+    origin_value = _origin_editorial_candidate(post, corpus_root, role)
+    if origin_value:
+        return EditorialField(value=origin_value, layer="origin")
+
+    artifact_value = _artifact_editorial_candidate(post, corpus_root, role)
+    if artifact_value:
+        return EditorialField(value=artifact_value, layer="artifact")
+
+    if role == "title":
+        legacy_value, legacy_layer = _legacy_title_fallback(post)
+        if legacy_value:
+            return EditorialField(value=legacy_value, layer=legacy_layer)
+
+    return EditorialField(value="", layer=None)
+
+
+def derived_editorial(post: frontmatter.Post, corpus_root: Path) -> tuple[str, str]:
+    """`(title, description)` — spec §4.2.3's derived editorial pair, computed at read
+    time exactly like the classifications view. The one shared resolution every consumer
+    (the derived body, search indexing, export, health, `title_for`/`description_for`)
+    reads. See `derived_editorial_fields` for the winning-layer diagnostic."""
+    return (
+        derived_editorial_field(post, corpus_root, "title").value,
+        derived_editorial_field(post, corpus_root, "description").value,
+    )
+
+
+def derived_editorial_fields(
+    post: frontmatter.Post, corpus_root: Path
+) -> dict[str, EditorialField]:
+    """`{"title": EditorialField, "description": EditorialField}` — the diagnostic variant
+    of `derived_editorial`, reporting which layer won each field (`show`/`diagnose`/`find`
+    want this over the bare value)."""
+    return {
+        role: derived_editorial_field(post, corpus_root, role) for role in _EDITORIAL_ROLES
+    }
+
+
+def has_editorial_override(post: frontmatter.Post) -> bool:
+    """True when the frontmatter carries a non-empty `title` or `description` override
+    (spec §4.2.1). The closest 3.2 analog of the retired `is_authored` vouch-presence
+    signal for a record whose content zone carries no form section to hold the interpretive
+    vouch (§4.2.3's "the vouch rides the form") — used where a lint rule's old `is_authored`
+    gate was really asking "has anyone deliberately asserted an editorial claim on this
+    record," not "is this record formed.\""""
+    return bool(str(post.metadata.get("title") or "").strip()) or bool(
+        str(post.metadata.get("description") or "").strip()
+    )
+
+
 # ---------- derived-state predicates (spec §4.1) ---------- #
-
-
-def is_authored(post: frontmatter.Post) -> bool:
-    """The vouch (spec §4.1): `title` AND `description` both non-empty after strip.
-
-    Orthogonal to `is_formed` / `has_stored_rendering` — authoring can land on a formless
-    proxy exactly as on a formed record, and a shaper can form a record before any vouch is
-    written. Never folded into `derived_state`."""
-    title = str(post.metadata.get("title") or "").strip()
-    description = str(post.metadata.get("description") or "").strip()
-    return bool(title) and bool(description)
 
 
 def is_formed(post: frontmatter.Post) -> bool:
@@ -1137,7 +1365,10 @@ def derived_state(post: frontmatter.Post) -> str:
     - `"proxy"` — neither: the artifact's proxy under the identity contract (§4.1, §7.8),
       complete and honest, not a backlog.
 
-    `is_authored` is orthogonal and never folds into this enum — check it separately."""
+    *(3.2)* The authored state retires with the layer it named — the vouch dissolves into
+    the form layer (§4.1: "the vouch rides the form"), so this enum is now the whole
+    picture; the derived-editorial pair (`derived_editorial`) is orthogonal display data,
+    not a state."""
     if is_formed(post):
         return "formed"
     if has_stored_rendering(post):
@@ -1153,27 +1384,26 @@ def stub_frontmatter(
     record_id: str,
     transport: str | list[str] | None = None,
     touch_id: str,
-    description: str = "",
 ) -> dict[str, Any]:
     """Build a fresh stub-record frontmatter dict.
 
     `record_id` is the bare blake3 hex (becomes `id`). `transport` is alternative
     byte hashes (`<algo>:<hex>` or list); the primary blake3 lives on `id` and is NOT
-    duplicated here. `touch_id` bootstraps the touch chain. `title` and `description`
-    default to empty (both filled at normalize — `title` from the namespaced block-level
-    candidates: an artifact `*_title`, an origin `ytdlp_title`).
+    duplicated here. `touch_id` bootstraps the touch chain.
 
     *(3.1)* No `status` field — the record is born the artifact's proxy (§4.1), not a
     `stub` awaiting one; its state is derived, never stored.
 
+    *(3.2)* No `title`/`description` either (spec §12.3.4) — the display pair is
+    **derived** from role-marked attested and sidecar-lifted fields the same ingest just
+    stamped (§4.2.3), so the proxy is presentable the moment it exists. The frontmatter
+    pair survives only as an optional deliberate override, written later by an authoring
+    pass — never at birth.
+
     The caller is responsible for emitting the artifact + first origin blocks via
     `set_artifact_block()` and `append_origin_block()`.
     """
-    fm: dict[str, Any] = {
-        "id": record_id,
-        "title": "",
-        "description": description,
-    }
+    fm: dict[str, Any] = {"id": record_id}
     if transport:
         fm["transport"] = transport
     fm["touch"] = touch_id

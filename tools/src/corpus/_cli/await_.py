@@ -62,20 +62,22 @@ def _settle(st: dict, record_file, rid: str, root) -> int:
         reason = result.get("reason") or "(no reason given)"
         print(f"{rid[:12]} normalization failed: {reason}", file=sys.stderr)
         return 1
-    # No recorded pass — fall back to the record-state predicates (authored + formed-where-
-    # declared, spec §8.5's pass gate minus lint: lint is deliberately NOT re-run in this poll
-    # loop — it's a per-record, potentially expensive check, and `finalize` already gated on
-    # it when the pass completed; a bare fallback here only needs the two structural halves).
+    # No recorded pass — fall back to the record-state predicate (formed-where-declared,
+    # spec §8.5's pass gate minus lint, re-keyed 3.2: the authored half dissolved into the
+    # form layer, §4.1 — a formless record owes no vouch, its derived title/description are
+    # already honest, §4.2.3). Lint is deliberately NOT re-run in this poll loop — it's a
+    # per-record, potentially expensive check, and `finalize` already gated on it when the
+    # pass completed; a bare fallback here only needs the structural half plus the derived
+    # state, reported honestly rather than guessed at.
     post = records.load(record_file)
-    authored = records.is_authored(post)
+    state = records.derived_state(post)
     unmet_form = _shape.declared_form_unmet(post, root)
-    if authored and unmet_form is None:
-        print(f"{rid[:12]} normalized")
+    if unmet_form is None:
+        print(f"{rid[:12]} normalized (state: {state})")
         return 0
-    reasons = []
-    if not authored:
-        reasons.append("not authored")
-    if unmet_form is not None:
-        reasons.append(f"form {unmet_form!r} not carried")
-    print(f"{rid[:12]}: no normalization pass recorded ({'; '.join(reasons)})", file=sys.stderr)
+    print(
+        f"{rid[:12]}: no normalization pass recorded (state: {state}; "
+        f"form {unmet_form!r} not carried)",
+        file=sys.stderr,
+    )
     return 1

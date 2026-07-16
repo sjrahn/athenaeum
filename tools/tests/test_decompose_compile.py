@@ -129,7 +129,9 @@ def test_decompose_compile_preserves_frontmatter_title(tmp_path):
     assert rec.read_text("utf-8") == original_text, (
         "decompose->compile must round-trip the frontmatter title byte-identically"
     )
-    assert records.title_for(records.load(rec)) == "Power Brake Assist — Parts and Labor"
+    assert (
+        records.title_for(records.load(rec), root) == "Power Brake Assist — Parts and Labor"
+    )
 
 
 def test_manifest_record_line_never_emits_status(tmp_path):
@@ -242,11 +244,11 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     assert origins[0]["fields"]["uri"] == "https://example.com/g.pdf"
     # Resets:
     assert "status" not in re_loaded.metadata
-    assert re_loaded.metadata["description"] == ""
+    assert "description" not in re_loaded.metadata  # dropped entirely, spec §12.3.4
     # Artifact body fields (incl. the namespaced `title` candidate) reset — re-derived
     # at the next draft; so there's no title candidate and `title_for` is empty.
     assert (records.artifact_block(re_loaded).get("fields") or {}) == {}
-    assert records.title_for(re_loaded) == ""
+    assert records.title_for(re_loaded, root) == ""
     assert list(records.iter_classify_blocks(re_loaded)) == []
     assert list(records.iter_embed_blocks(re_loaded)) == []
     assert list(records.iter_issue_blocks(re_loaded)) == []

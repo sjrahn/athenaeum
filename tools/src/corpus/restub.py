@@ -17,7 +17,8 @@ What survives:
 
 What is reset:
 
-- `title`, `description` → empty; `canonical`; `perceptual` (record-scope).
+- `title`, `description` → dropped entirely (spec §12.3.4 — no editorial keys at birth,
+  same as a fresh ingest); `canonical`; `perceptual` (record-scope).
 - The artifact block's body fields; all classify blocks; all embed blocks; all
   section/segment blocks; all issue blocks.
 - Body content zone → empty. *(3.1)* No `status` to reset — the record's derived state
@@ -69,7 +70,6 @@ def restub_post(post: frontmatter.Post, *, touch_chain: list[str]) -> frontmatte
         record_id=record_id,
         transport=transport_value,
         touch_id=seed,
-        description="",
     )
     if visibility:
         fm["visibility"] = str(visibility)

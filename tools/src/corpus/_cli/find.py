@@ -9,7 +9,7 @@ import sys
 from corpus import records
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
-_STATE_CHOICES = ("proxy", "rendered", "formed", "authored", "any")
+_STATE_CHOICES = ("proxy", "rendered", "formed", "untitled", "any")
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -18,10 +18,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         choices=_STATE_CHOICES,
         default="any",
         help=(
-            "Filter by derived state (spec §4.1): proxy | rendered | formed. `authored` "
-            "filters on the vouch instead — it is ORTHOGONAL to the state enum (a record can "
-            "be authored at any of proxy/rendered/formed), so `--state authored` matches any "
-            "record where `is_authored` is true, regardless of proxy/rendered/formed."
+            "Filter by derived state (spec §4.1): proxy | rendered | formed. `untitled` "
+            "filters on the derived editorial title instead (spec §4.2.3) — it is ORTHOGONAL "
+            "to the state enum (a record can derive an empty title at any of "
+            "proxy/rendered/formed), so `--state untitled` matches any record whose derived "
+            "title is empty — the §12.21 role-marking worklist — regardless of "
+            "proxy/rendered/formed."
         ),
     )
     parser.add_argument("--mime", help="Filter by artifact MIME type.")
@@ -41,11 +43,11 @@ def run(args: argparse.Namespace) -> int:
             print(f"WARN: load failed for {md}: {e}", file=sys.stderr)
             continue
         state = records.derived_state(post)
-        authored = records.is_authored(post)
+        title = records.derived_editorial_field(post, root, "title")
         mime = records.media_type_for(post)
-        if args.state == "authored" and not authored:
+        if args.state == "untitled" and title.value:
             continue
-        if args.state not in ("any", "authored") and state != args.state:
+        if args.state not in ("any", "untitled") and state != args.state:
             continue
         if args.mime and mime != args.mime:
             continue
@@ -60,9 +62,9 @@ def run(args: argparse.Namespace) -> int:
             {
                 "id": post.metadata.get("id", md.stem),
                 "state": state,
-                "authored": authored,
                 "mime": mime,
-                "title": records.title_for(post),
+                "title": title.value,
+                "title_layer": title.layer,
                 "uri": records.primary_origin_uri(post),
             }
         )
@@ -72,7 +74,7 @@ def run(args: argparse.Namespace) -> int:
     else:
         for r in rows:
             t = r["title"][:40] if r["title"] else ""
-            marker = "✓" if r["authored"] else " "
-            print(f"  {r['id'][:12]}  {r['state']:<9} {marker}  {r['mime']:<28}  {t}")
+            layer = f"[{r['title_layer']}]" if r["title_layer"] else "[none]"
+            print(f"  {r['id'][:12]}  {r['state']:<9} {layer:<11} {r['mime']:<28}  {t}")
         print(f"\n{len(rows)} record(s)")
     return 0

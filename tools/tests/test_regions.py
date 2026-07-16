@@ -126,7 +126,7 @@ def test_save_regions_preserves_title_and_metadata(tmp_path):
     after = records.load(rec)
     assert after.metadata["title"] == "Wiring Diagram — Front Lighting"
     assert after.metadata["description"] == "An image."
-    assert records.title_for(after) == "Wiring Diagram — Front Lighting"
+    assert records.title_for(after, root) == "Wiring Diagram — Front Lighting"
     assert records.artifact_block(after) == records.artifact_block(before)
     assert list(records.iter_origin_blocks(after)) == list(records.iter_origin_blocks(before))
 

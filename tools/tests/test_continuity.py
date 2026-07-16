@@ -111,7 +111,7 @@ def test_non_container_fallback(tmp_path):
     ids = ["aa" * 32, "bb" * 32]
     for rid in ids:
         post = frontmatter.Post(
-            "", **records.stub_frontmatter(record_id=rid, touch_id="t@0.1.0", description="")
+            "", **records.stub_frontmatter(record_id=rid, touch_id="t@0.1.0")
         )
         rp = paths.record_path(root, rid)
         rp.parent.mkdir(parents=True, exist_ok=True)

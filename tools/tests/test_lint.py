@@ -23,15 +23,15 @@ def _make_corpus(tmp_path: Path) -> Path:
 
 
 def _clean_post() -> frontmatter.Post:
-    """A bare, unauthored proxy record (spec §4.1) — no title, no description, no
-    `status:` key. Lints fully clean: neither half of the vouch is set (so
-    `vouch-half-authored` doesn't fire), and an unauthored record's empty content zone
-    is expected, not flagged (`body-empty-normalized` gates on `is_authored`)."""
+    """A bare proxy record (spec §4.1) — no `title`/`description` keys at all (spec
+    §12.3.4: birth frontmatter carries no editorial fields), no `status:` key. Lints
+    fully clean: no stored placeholder to flag (`editorial-override-placeholder`), and an
+    override-less record's empty content zone is expected, not flagged
+    (`body-empty-normalized` gates on `has_editorial_override`)."""
     post = frontmatter.Post("")
     post.metadata.update(
         {
             "id": "a" * 64,
-            "description": "",
             "touch": "corpus.ingest@0.1.0",
         }
     )
@@ -332,24 +332,55 @@ def test_issue_spec_shape_passes(tmp_path):
     assert not any(f.rule_id.startswith("issue-") for f in findings)
 
 
-def test_half_vouch_flagged(tmp_path):
-    """A record carrying a title but no description (or vice versa) is a half-authored
-    vouch — a full vouch (spec §4.1) is both together."""
+def test_lone_override_is_legal(tmp_path):
+    """*(3.2)* A record carrying a title override but no description (or vice versa) is a
+    legal, deliberate lone editorial assertion — the retired `is_authored` strict-AND (and
+    its `vouch-half-authored` lint rule) is gone; nothing flags this."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
     post.metadata["title"] = "Half-vouched"
     findings = _lint(post, root)
-    hit = next(f for f in findings if f.rule_id == "vouch-half-authored")
-    assert hit.severity == "warning"
+    assert not any(f.rule_id.startswith("editorial-override-") for f in findings)
 
 
-def test_full_vouch_not_flagged(tmp_path):
+def test_empty_string_placeholder_flagged(tmp_path):
+    """A stored empty-string `description: ''` is 3.1-era placeholder residue (spec
+    §12.21) — info, not a defect; `dumps()` drops it on the next write."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["description"] = ""
+    findings = _lint(post, root)
+    hit = next(f for f in findings if f.rule_id == "editorial-override-placeholder")
+    assert hit.severity == "info"
+
+
+def test_full_override_not_flagged_as_placeholder(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
     post.metadata["title"] = "Fully vouched"
     post.metadata["description"] = "ok"
     findings = _lint(post, root)
-    assert not any(f.rule_id == "vouch-half-authored" for f in findings)
+    assert not any(f.rule_id == "editorial-override-placeholder" for f in findings)
+
+
+def test_editorial_override_redundant_flagged(tmp_path):
+    """*(3.2, §12.21 step 1)* A frontmatter override equal to the record's derived value
+    beneath it (here, via the transitional legacy artifact-bare-`title` fallback — no
+    packaged schema is role-marked yet) is noise, not an assertion."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["title"] = "T"  # equals the artifact block's bare `title` field
+    findings = _lint(post, root)
+    hit = next(f for f in findings if f.rule_id == "editorial-override-redundant")
+    assert hit.severity == "warning"
+
+
+def test_editorial_override_not_redundant_when_it_diverges(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["title"] = "A Deliberately Different Title"
+    findings = _lint(post, root)
+    assert not any(f.rule_id == "editorial-override-redundant" for f in findings)
 
 
 def test_segment_address_duplicate_caught(tmp_path):
@@ -480,7 +511,8 @@ def test_body_sanity_rules(tmp_path):
         "body-unknown-comment",
         "body-wikilink-malformed",
     } <= fired
-    # empty body on an authored record (title + description both set → is_authored)
+    # empty body on a record carrying an editorial override (title + description both set
+    # → has_editorial_override)
     norm = _clean_post()
     norm.metadata["title"] = "T"
     norm.metadata["description"] = "d"
@@ -492,7 +524,7 @@ def test_embed_description_empty_on_normalized(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
     post.metadata["title"] = "T"
-    post.metadata["description"] = "d"  # authored → the embed-description gate applies
+    post.metadata["description"] = "d"  # override present → the embed-description gate applies
     records.append_embed_block(
         post, media_type="image/png", address="el=4", transport="blake3:" + "0" * 64
     )

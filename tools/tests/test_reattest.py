@@ -59,7 +59,7 @@ def test_reattest_derives_embeds_on_a_stub(tmp_path):
     embeds = list(records.iter_embed_blocks(post))
     assert len(embeds) == 2  # the zip's two members, attested
     assert {e["address"] for e in embeds} == {"path=a/one.txt", "path=b/two.txt"}
-    assert not records.is_authored(post)        # attestation never authors the vouch
+    assert not records.has_editorial_override(post)  # attestation never authors the vouch
     assert records.derived_state(post) == "proxy"  # embeds don't count as a stored rendering
     assert (post.content or "") == ""          # a manifest has no body
     # a touch was appended for the real change

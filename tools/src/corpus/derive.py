@@ -61,10 +61,14 @@ def apply_drafter_result(
         artifact_fields[key] = value
     records.set_artifact_block(post, mime=artifact["mime"], fields=artifact_fields)
 
-    # Frontmatter description: set only when still empty (don't clobber a human edit).
-    desc = result.get("description")
-    if desc and not str(post.metadata.get("description") or "").strip():
-        post.metadata["description"] = str(desc)
+    # *(3.2)* A drafter's top-level `description` is intentionally DISCARDED — the frontmatter
+    # `description` is a deliberate editorial override (spec §4.2.1), never a byte-fact ingest
+    # attests; the display description is derived from role-marked fields instead (§4.2.3).
+    # No registered drafter currently populates this key (verified at the 3.2 migration), so
+    # this is a no-op today; it stays a documented discard rather than a silent no-op so a
+    # future drafter's `description` key fails loudly-by-omission instead of quietly writing
+    # a birth-time frontmatter field the spec now forbids (§12.3.4).
+    _ = result.get("description")  # discarded — see above
 
     # canonical (from the mime schema's canonical_strategy): intentionally NOT persisted
     # (§7.1 status note — the value corrupts cross-URL dedup on text-empty PDFs; disabled).
