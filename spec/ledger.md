@@ -1,7 +1,7 @@
 ---
 spec_id: ATH-LEDGER
 title: "Ledger Specification"
-version: 1.1
+version: 1.2
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
@@ -19,6 +19,8 @@ The **ledger** is the Athenaeum system's knowledge layer (`spec/athenaeum.md`): 
 The name is meant literally: a ledger is claims with evidence and an audit trail. Entries are *posted* (claims — asserted, each with computable trust) or held in *suspense* (interpretations — not yet assertable). The boundary between the two is physical (§1.3), which is what lets every consumer of the fact graph trust that everything in it is asserted knowledge.
 
 **Version 1.1** tracks the corpus layers amendment (`spec/corpus.md` 3.1): the corpus `status` field is retired, so citability re-keys from record status to **verifiable surfaces** — a stored rendering under a named form contract, mechanically derived content (engine-pinned), or authored prose (§6.3, §13.1) — and the snapshot binding gains a derivation-op version pin for derived-surface evidence (§13.2). The demand discipline is unchanged in spirit: the ledger raises corpus work by enqueuing, never by authoring records.
+
+**Version 1.2** tracks the corpus derived-editorial amendment (`spec/corpus.md` 3.2): the corpus's authored state dissolves into its form layer, and a record's frontmatter title/description become derived display values (an optional override at most — corpus §4.2.3), so the **"authored prose" verifiable surface narrows to prose the record BODY carries under an authoring touch** — form-span renderings, section-header editorial fields, embed/segment descriptions — never the frontmatter pair (§6.3). Existing evidence is unaffected: quotes anchor into body content, which is exactly the surface that remains.
 
 ### 1.2 One ledger
 
@@ -324,7 +326,7 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
 
 ### 6.3 Source honesty
 
-Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. *(1.1)* Citability keys to **verifiable surfaces**, never to record state: a stored rendering under a named form contract, a derivation op's mechanical output (engine-pinned, `spec/corpus.md` §6.4), and authored prose (§13.2) all verify — citing into a formless record's derived body is legitimate evidence, machine-checked like any other, with the op version pinned on the binding (§13.2). Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
+Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. *(1.1)* Citability keys to **verifiable surfaces**, never to record state: a stored rendering under a named form contract, a derivation op's mechanical output (engine-pinned, `spec/corpus.md` §6.4), and authored body prose — form-span renderings, section-header editorial fields, embed/segment descriptions *(1.2: never the frontmatter pair, which is a derived display value — corpus §4.2.3)* — all verify (§13.2); citing into a formless record's derived body is legitimate evidence, machine-checked like any other, with the op version pinned on the binding (§13.2). Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
 
 ### 6.4 Sensitivity — derived, not declared
 
