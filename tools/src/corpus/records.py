@@ -1385,20 +1385,39 @@ def has_stored_rendering(post: frontmatter.Post) -> bool:
     return False
 
 
-def derived_state(post: frontmatter.Post) -> str:
+def derived_state(post: frontmatter.Post, corpus_root: Path | None = None) -> str:
     """The record's derived layer state (spec §4.1) — one of:
 
+    - `"terminal"` *(3.3)* — a TERMINAL contract governs the record
+      (`shape.governing_form`, §7.8) and it stores no rendering: an opener-only whole-record
+      terminal section is still `terminal`, never `formed` — a terminal contract is not a
+      rendering contract, so it can't satisfy the `formed` row even when stamped. Requires
+      `corpus_root` (schema context) to resolve; see below.
     - `"formed"` — a form section governs the content zone (`is_formed`); wins even when
       the record ALSO carries top-level formless segments (the mixed-artifact case, §4.3.2.1).
     - `"rendered"` — a stored rendering with no governing form: the grandfathered population
       (§12.18 step 3 / §12.19) — `has_stored_rendering` true, `is_formed` false.
-    - `"proxy"` — neither: the artifact's proxy under the identity contract (§4.1, §7.8),
-      complete and honest, not a backlog.
+    - `"proxy"` — none of the above: the artifact's proxy under the identity contract (§4.1,
+      §7.8), complete and honest, not a backlog. *(3.3: narrows to mean genuinely
+      unassessed-or-awaiting now that formless-permanently is the `terminal` value above.)*
 
-    *(3.2)* The authored state retires with the layer it named — the vouch dissolves into
-    the form layer (§4.1: "the vouch rides the form"), so this enum is now the whole
-    picture; the derived-editorial pair (`derived_editorial`) is orthogonal display data,
-    not a state."""
+    `corpus_root` is OPTIONAL schema context (3.3): terminal detection needs the overlay
+    grain (`shape.governing_form` walks origin/mime declarations and the disposition
+    derivation, §7.8) that a bare record can't supply. Omit it and the call degrades
+    gracefully to the pre-3.3 three-way read (formed/rendered/proxy only) — every existing
+    caller keeps working unchanged. Pass it to get the full four-way split (health, the
+    pass gate, and any caller with a corpus root in hand should).
+
+    *(3.2)* The authored state retired with the layer it named — the vouch dissolves into
+    the form layer (§4.1: "the vouch rides the form"), so this enum (now four-valued) is
+    the whole picture; the derived-editorial pair (`derived_editorial`) is orthogonal
+    display data, not a state."""
+    if corpus_root is not None:
+        from . import shape as _shape
+
+        resolved = _shape.governing_form(post, corpus_root)
+        if resolved is not None and resolved[1] and not has_stored_rendering(post):
+            return "terminal"
     if is_formed(post):
         return "formed"
     if has_stored_rendering(post):

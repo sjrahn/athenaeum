@@ -9,7 +9,7 @@ import sys
 from corpus import records
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
-_STATE_CHOICES = ("proxy", "rendered", "formed", "untitled", "any")
+_STATE_CHOICES = ("proxy", "terminal", "rendered", "formed", "untitled", "any")
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -18,12 +18,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
         choices=_STATE_CHOICES,
         default="any",
         help=(
-            "Filter by derived state (spec §4.1): proxy | rendered | formed. `untitled` "
-            "filters on the derived editorial title instead (spec §4.2.3) — it is ORTHOGONAL "
-            "to the state enum (a record can derive an empty title at any of "
-            "proxy/rendered/formed), so `--state untitled` matches any record whose derived "
-            "title is empty — the §12.21 role-marking worklist — regardless of "
-            "proxy/rendered/formed."
+            "Filter by derived state (spec §4.1): proxy | terminal | rendered | formed. "
+            "`untitled` filters on the derived editorial title instead (spec §4.2.3) — it is "
+            "ORTHOGONAL to the state enum (a record can derive an empty title at any state), "
+            "so `--state untitled` matches any record whose derived title is empty — the "
+            "§12.21 role-marking worklist — regardless of state."
         ),
     )
     parser.add_argument("--mime", help="Filter by artifact MIME type.")
@@ -42,7 +41,7 @@ def run(args: argparse.Namespace) -> int:
         except Exception as e:
             print(f"WARN: load failed for {md}: {e}", file=sys.stderr)
             continue
-        state = records.derived_state(post)
+        state = records.derived_state(post, root)
         title = records.derived_editorial_field(post, root, "title")
         mime = records.media_type_for(post)
         if args.state == "untitled" and title.value:

@@ -31,6 +31,7 @@ import frontmatter
 from corpus import records as _records
 from corpus import schemas as _schemas
 from corpus import segments as _segments
+from corpus import shape as _shape
 
 VERSION = "0.1.0"
 
@@ -846,7 +847,17 @@ def _rule_embed_description_empty_on_normalized(post, blocks, root) -> Iterator[
     whose image/audio/video embed has no `description` is missing the normalizer's
     whole-asset summary (info — persist an issue if intentionally undescribed). Unlike the
     3.0 `status == "normalized"` gate (which implied BOTH halves), either half alone is
-    enough signal that this embed should have been looked at by now."""
+    enough signal that this embed should have been looked at by now.
+
+    *(3.3)* A TERMINAL-governed record (§7.8) is exempt outright — its members (a
+    manifest's attested member embeds, most visibly) are the licensed residue of a
+    deliberate describe pass, never demand (§8.5): the roster IS the attestation, and
+    per-member descriptions are each promoted member's own concern, not a nag on the
+    container. §12.20 anticipated this: its "body-empty" lint warning dissolves with its
+    embeds, exactly as a zip's would."""
+    governing = _shape.governing_form(post, root)
+    if governing is not None and governing[1]:
+        return
     if not (_records.has_editorial_override(post) or _records.has_stored_rendering(post)):
         return
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
@@ -1039,6 +1050,12 @@ def _rule_body_empty_normalized(post, blocks, root) -> Iterator[Finding]:
     # content — just worth a look; severity stays "warning", not "error", and the pass gate
     # (§8.5) doesn't block on it.
     if not _records.has_editorial_override(post) or (post.content or "").strip():
+        return
+    # *(3.3)* A TERMINAL-governed record (§7.8) legitimately has an empty content zone AND
+    # no embeds (e.g. a bare `form/passthrough` stream/still) — the contract prescribes
+    # exactly that. Exempt outright, ahead of the embeds check below.
+    governing = _shape.governing_form(post, root)
+    if governing is not None and governing[1]:
         return
     # A manifest record (a self_contained container recorded as embeds — e.g. a kept-whole
     # zip) legitimately has an empty content zone: the members are verbatim, resolvable
@@ -1255,6 +1272,37 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                     prev_low = low
 
 
+def _rule_terminal_stored_rendering(post, blocks, root) -> Iterator[Finding]:
+    """The terminal-contract inversion (spec §7.8, 3.3): a TERMINAL contract
+    (`form/passthrough` / `form/manifest`, or a corpus-declared one — keyed on the
+    `terminal: true` overlay marker via `shape.governing_form`, never a hardcoded form id)
+    prescribes the ABSENCE of a stored rendering. Every other form's conformance requires
+    the shape to be PRESENT; this one requires it to be ABSENT — a record governed by a
+    terminal contract that carries a stored content-zone rendering (a body-bearing segment,
+    or any non-byte-mark content beyond structural marks and the optional whole-record
+    opener — `has_stored_rendering`) is the violation, and it is an error: the contract was
+    adopted as the judgment that no rendering would ever earn its place, so one existing
+    means either the judgment was wrong or the rendering is stale residue either way."""
+    resolved = _shape.governing_form(post, root)
+    if resolved is None:
+        return
+    form_id, is_terminal = resolved
+    if not is_terminal:
+        return
+    if _records.has_stored_rendering(post):
+        yield Finding(
+            rule_id="terminal-stored-rendering",
+            severity="error",
+            message=(
+                f"record is governed by terminal contract `form/{form_id}` (spec §7.8) but "
+                f"carries a stored content-zone rendering — a terminal contract prescribes "
+                f"the ABSENCE of a stored rendering; drop the rendering or adopt a rendering "
+                f"contract instead of a terminal one."
+            ),
+            fields={"form": form_id},
+        )
+
+
 # ---------- rule registry + entry point ---------- #
 
 
@@ -1305,6 +1353,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("form-codebook-index-out-of-range", _rule_form_coherence),
     ("form-address-axis", _rule_form_coherence),
     ("form-address-nonmonotonic", _rule_form_coherence),
+    # terminal contracts (§7.8, 3.3) — the inverted conformance check.
+    ("terminal-stored-rendering", _rule_terminal_stored_rendering),
 )
 
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal

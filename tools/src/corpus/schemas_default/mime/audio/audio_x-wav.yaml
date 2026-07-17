@@ -1,3 +1,12 @@
+description: |
+  WAV (PCM/uncompressed, RIFF container). A bare, single-elementary-stream audio file —
+  the RIFF wrapper is not a manifest of independently meaningful members. The bytes ARE
+  the terminal rendering (spec §7.8, 3.3): a `form: {id: passthrough}` mime default
+  follows below.
 applies_to:
   content_types:
   - audio/x-wav
+# (3.3, §7.1) The format's terminal-contract default. An origin overlay's own `form:`
+# (§7.2) — or a per-record asserted whole-record section — overrides this either way.
+form:
+  id: passthrough

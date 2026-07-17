@@ -91,7 +91,7 @@ def _format_summary(report: dict[str, Any]) -> str:
     if "layer_presence" in report:
         lp = report["layer_presence"]
         parts = ", ".join(
-            f"{k}: {v}" for k, v in lp.items() if k in ("formed", "rendered", "proxy")
+            f"{k}: {lp[k]}" for k in ("formed", "terminal", "rendered", "proxy") if k in lp
         )
         lines.append(f"layers: {parts}")
         lines.append(f"titled: {lp.get('titled', 0)}  untitled: {lp.get('untitled', 0)}")

@@ -455,6 +455,45 @@ def pipeline_disposition(schema: dict[str, Any]) -> str:
     return "manifest" if strategy.endswith("-manifest") else "work"
 
 
+def _origin_disposition(corpus_root: Path, post: Any) -> str | None:
+    """The most-specific origin-overlay `disposition:` override (§7.2), or None when no
+    qualified origin block's overlay sets one. Mirrors `_origin_fingerprint`'s walk of
+    qualified origin blocks — first explicit value wins."""
+    from corpus import records  # lazy: records imports schemas
+
+    seen: set[str] = set()
+    for blk in records.iter_origin_blocks(post):
+        id_ = str(blk.get("id") or "")
+        if not id_ or id_ in seen:
+            continue
+        seen.add(id_)
+        sch = load_origin_overlay_by_id(corpus_root, id_)
+        value = str((sch or {}).get("disposition") or "").strip().lower()
+        if value in ("manifest", "work"):
+            return value
+    return None
+
+
+def resolved_disposition_for_record(corpus_root: Path, post: Any) -> str:
+    """The record's resolved `disposition` (§7.1, §1.2, 3.3) — the container-vs-transport
+    judgment for THIS record: an origin overlay's `disposition:` override (§7.2) wins over
+    the mime schema's declared/derived default (`pipeline_disposition`), which wins over the
+    `work` fallback. Feeds the terminal-forms derivation (§7.8): a resolved `manifest` with
+    no rendering contract declared stands under `form/manifest`, no overlay edit needed."""
+    override = _origin_disposition(corpus_root, post)
+    if override is not None:
+        return override
+    from corpus import records  # lazy: records imports schemas
+
+    mime = records.media_type_for(post)
+    if not mime:
+        return "work"
+    schema = load_mime_schema(corpus_root, mime)
+    if not isinstance(schema, dict):
+        return "work"
+    return pipeline_disposition(schema)
+
+
 def normalize_pipeline_keys(schema: dict[str, Any]) -> dict[str, Any]:
     """Return `schema` with the legacy `mode`/`draft.*` view back-filled from the 3.0
     `disposition`/`derive.*` keys when a schema declares only the new form — so the drafter
@@ -521,6 +560,50 @@ def list_form_overlays(corpus_root: Path) -> list[str]:
             continue
         out.append(stem)
     return sorted(dict.fromkeys(out))
+
+
+# ---------- terminal contracts (§7.8, 3.3) ---------- #
+#
+# A terminal contract (`form/passthrough`, `form/manifest`) prescribes the ABSENCE of a
+# stored rendering rather than a shape (§7.8). The `terminal: true` overlay key is the ONE
+# machine-readable marker — every resolution below keys off it, never a hardcoded form id,
+# so a corpus registering its own terminal contract (a new overlay carrying the marker)
+# works with zero code changes here.
+
+
+def is_terminal_form(corpus_root: Path, form_id: str) -> bool:
+    """True when `form_id` names a TERMINAL contract — its overlay carries `terminal: true`
+    (§7.8, 3.3). An unresolvable or malformed overlay reads as non-terminal (parse-tolerant,
+    like every other schema read in this module)."""
+    overlay = load_form_overlay(corpus_root, form_id)
+    return bool(isinstance(overlay, dict) and overlay.get("terminal") is True)
+
+
+def resolve_mime_terminal_form(corpus_root: Path, mime: str) -> str | None:
+    """Resolve the mime schema's `form:` default (§7.1, 3.3) to a TERMINAL form id, or None.
+
+    Mime-level `form:` admits terminal contracts ONLY — a rendering contract is producer
+    knowledge and rides the origin overlay's `form:` instead (§7.2), which also overrides
+    this default either way. A mime `form:` naming a non-terminal (or unresolvable) form id
+    is a schema-authoring mistake: logged as a warning and tolerantly rejected rather than
+    raised, so one corpus's bad mime schema can't break ingest/health of an unrelated
+    record."""
+    schema = load_mime_schema(corpus_root, mime)
+    if not isinstance(schema, dict):
+        return None
+    form = schema.get("form")
+    if not isinstance(form, dict) or not form.get("id"):
+        return None
+    form_id = str(form["id"])
+    if is_terminal_form(corpus_root, form_id):
+        return form_id
+    log.warning(
+        "mime schema for %r declares form %r, but it is not a terminal contract — "
+        "mime-level `form:` admits terminal contracts only (spec §7.1); ignoring.",
+        mime,
+        form_id,
+    )
+    return None
 
 
 # ---------- fingerprint resolution ---------- #

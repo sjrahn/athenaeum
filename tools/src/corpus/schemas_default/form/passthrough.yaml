@@ -1,0 +1,32 @@
+form_id: passthrough
+kind: form
+terminal: true
+description: |
+  The identity contract, NAMED and ASSERTABLE (spec §7.8, 3.3 — the terminal-forms
+  amendment). Adopting this contract is the earned judgment that no markdown shape will
+  EVER render these bytes more faithfully or more token-efficiently than the bytes
+  themselves, delivered through the derivation ops (§6.2) — the zeroth form's "formless is
+  permanent" half, made machine-readable. Its conformance check is the INVERSION of every
+  other form's: the content zone holds structural byte-marks only (or nothing at all) — a
+  stored rendering under this contract is the lint violation, never the absence of one.
+  Population: media streams and stills, code drops, datasets, binaries — the raw-context
+  artifacts §4.1 names. Declaration rides the overlay grain (a mime schema's `form:`
+  default, an origin overlay's override) because formless-permanence is almost always a
+  class fact, not a record fact; per-record assertion covers the exception.
+extended_fields: {}
+decomposition: |
+  None — a terminal contract prescribes the ABSENCE of a stored rendering, so there is no
+  decomposition to declare. The content zone carries structural byte-marks only where the
+  transport has any (a media container's chapter marks); an optional whole-record opener
+  may carry the editorial header (§4.2.3) with no children beneath it. Stamping a section
+  at all is optional and editorial — the declaration alone governs (§7.8).
+checks: {}
+normalization:
+  guidance: |
+    There is no shaping work here — the contract's entire content IS the absence of a
+    stored rendering. The only licensed pass work is the optional whole-record opener's
+    editorial header (title/description, §4.2.3) — a deliberate describe pass, never
+    demand (§8.5) — plus any embed/segment descriptions genuinely warranted. Never author
+    a transcription or a summary body; that would violate the contract it adopts.
+    Adopting `passthrough` at all is a deliberate judgment (§4.4.6), earned exactly like
+    any named form's identification — never stamped merely to flatter a census (§12.22).

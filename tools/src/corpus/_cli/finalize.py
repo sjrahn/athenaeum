@@ -9,6 +9,13 @@ Both remaining halves are derived from the record itself. An unmet form or a blo
 finding makes finalize refuse (exit 1) so a dirty pass is never reported done — the loop
 should fix it and re-finalize, or `corpus release <id> --failed`. finalize is read-only on
 the record.
+
+*(3.3)* A record governed by a TERMINAL contract (`form/passthrough` / `form/manifest`,
+spec §7.8) satisfies the formed-where-declared half trivially — `declared_form_unmet`
+never refuses on a terminal declaration, since the contract's whole point is that no
+section need ever be stamped — so an enqueued terminal record drains to a no-op finalize
+(lint-clean is still required; the new `terminal-stored-rendering` rule is the one that
+can still block it).
 """
 
 from __future__ import annotations

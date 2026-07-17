@@ -88,7 +88,11 @@ def _write(
 def _populate(tmp_path: Path) -> Path:
     root = _corpus(tmp_path)
     # No artifact title candidate, no origin, no override → genuinely untitled (spec §4.2.3).
-    _write(root, A, mime="image/png", artifact_title=False, legacy_status="stub")
+    # `application/octet-stream` carries no packaged mime schema — genuinely proxy, not
+    # terminal (unlike `image/png`, which gained a `form: {id: passthrough}` mime default
+    # in 3.3 — see `test_terminal_forms.py` for that behavior; this fixture predates and is
+    # orthogonal to it).
+    _write(root, A, mime="application/octet-stream", artifact_title=False, legacy_status="stub")
     _write(
         root, B, mime="application/pdf", ext="pdf", artifact=True,
         title="A Bulletin", description="A rendered bulletin with no governing form.",

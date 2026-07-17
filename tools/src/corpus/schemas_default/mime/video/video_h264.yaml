@@ -13,3 +13,9 @@ description: |
 applies_to:
   content_types:
   - video/h264
+# (3.3, §7.1) A formless leaf (above) is exactly a disposition: work format with no
+# faithful markdown shape — the terminal-contract default follows. An origin overlay's
+# own `form:` (§7.2) — or a per-record asserted whole-record section (e.g. this specific
+# track recognized as a real `slide-deck`, §12.20) — overrides either way (§7.8).
+form:
+  id: passthrough

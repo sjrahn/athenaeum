@@ -70,7 +70,7 @@ def _settle(st: dict, record_file, rid: str, root) -> int:
     # pass completed; a bare fallback here only needs the structural half plus the derived
     # state, reported honestly rather than guessed at.
     post = records.load(record_file)
-    state = records.derived_state(post)
+    state = records.derived_state(post, root)
     unmet_form = _shape.declared_form_unmet(post, root)
     if unmet_form is None:
         print(f"{rid[:12]} normalized (state: {state})")

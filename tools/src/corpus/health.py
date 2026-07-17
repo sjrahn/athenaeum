@@ -75,15 +75,20 @@ def layer_presence(refs: list[RecordRef], corpus_root: Path) -> dict[str, int]:
     fleet sits across the derived-state enum, plus **derived-editorial coverage** (3.2,
     §12.21 step 1, succeeding the retired `authored` tally) and a transitional legacy-status
     count. `rendered` is `derived_state == "rendered"` — a stored rendering with no governing
-    form, the grandfathered population (§12.18 step 3). `titled`/`untitled` count records
-    whose derived title (spec §4.2.3) is non-empty vs. empty — the empty set is the §12.21
-    role-marking worklist, not a defect tally. The queue is standing demand, not backlog
-    (§8.5), so this reports layer presence only — not how many records "need" a pass."""
-    formed = rendered = proxy = titled = untitled = legacy_status = 0
+    form, the grandfathered population (§12.18 step 3). `terminal` *(3.3)* is
+    `derived_state == "terminal"` — a terminal contract governs and no rendering is stored
+    (§7.8); it narrows what `proxy` means to genuinely unassessed-or-awaiting. `titled`/
+    `untitled` count records whose derived title (spec §4.2.3) is non-empty vs. empty — the
+    empty set is the §12.21 role-marking worklist, not a defect tally. The queue is standing
+    demand, not backlog (§8.5), so this reports layer presence only — not how many records
+    "need" a pass."""
+    formed = terminal = rendered = proxy = titled = untitled = legacy_status = 0
     for r in refs:
-        state = records.derived_state(r.post)
+        state = records.derived_state(r.post, corpus_root)
         if state == "formed":
             formed += 1
+        elif state == "terminal":
+            terminal += 1
         elif state == "rendered":
             rendered += 1
         else:
@@ -96,6 +101,7 @@ def layer_presence(refs: list[RecordRef], corpus_root: Path) -> dict[str, int]:
             legacy_status += 1
     return {
         "formed": formed,
+        "terminal": terminal,
         "rendered": rendered,
         "proxy": proxy,
         "titled": titled,
@@ -115,16 +121,20 @@ def unshaped(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
 ) -> list[dict[str, Any]]:
     """Records at the `proxy` derived state (spec §4.1 — no stored rendering, not formed).
-    `shapable` is True when the record's origin declares a form with a registered mechanical
-    shaper (`corpus shape` would advance it) — the 3.1 successor of the 2.x `stuck_at_stub`
-    "supported_draft" signal, re-keyed from the retired draft-strategy registry to the shape
-    registry (spec §12.5.0). A `proxy` record with `shapable: false` is not necessarily stuck
-    — most of the population is formless-permanently by design (§7.8) and correctly so."""
+    *(3.3)* `proxy` here EXCLUDES `terminal` records — a terminal contract (§7.8) already
+    answers "will this ever get a rendering?" with no, so it never appears in this list;
+    `proxy` narrows to genuinely unassessed-or-awaiting. `shapable` is True when the
+    record's origin declares a form with a registered mechanical shaper (`corpus shape`
+    would advance it) — the 3.1 successor of the 2.x `stuck_at_stub` "supported_draft"
+    signal, re-keyed from the retired draft-strategy registry to the shape registry (spec
+    §12.5.0). A `proxy` record with `shapable: false` is not necessarily stuck — most of
+    the remaining population is formless-for-now, awaiting identification, authorship, or
+    a worthwhile pass (§7.8)."""
     from . import shape as shape_pkg
 
     out: list[dict[str, Any]] = []
     for r in refs:
-        if records.derived_state(r.post) != "proxy":
+        if records.derived_state(r.post, corpus_root) != "proxy":
             continue
         resolved = shape_pkg.form_for_record(r.post, corpus_root)
         shapable = bool(

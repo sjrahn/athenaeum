@@ -97,7 +97,7 @@ def _emit(corpus_root, record_id, post, blocks, findings, artifact_info) -> None
     metadata = post.metadata
     title_field = records.derived_editorial_field(post, corpus_root, "title")
     desc_field = records.derived_editorial_field(post, corpus_root, "description")
-    state = records.derived_state(post)
+    state = records.derived_state(post, corpus_root)
     media_type = records.media_type_for(post)
     touch_chain = metadata.get("touch") or []
     if isinstance(touch_chain, str):
@@ -232,7 +232,7 @@ def _emit_json(corpus_root, record_id, post, blocks, findings, artifact_info) ->
             "title_layer": title_field.layer,
             "description": desc_field.value,
             "description_layer": desc_field.layer,
-            "state": records.derived_state(post),
+            "state": records.derived_state(post, corpus_root),
             "mime": records.media_type_for(post),
             "lint": findings,
             "artifact": artifact_info,

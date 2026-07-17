@@ -21,7 +21,7 @@ def run(args: argparse.Namespace) -> int:
     title_field = records.derived_editorial_field(post, root, "title")
     desc_field = records.derived_editorial_field(post, root, "description")
     print(f"id:          {record_id}")
-    print(f"state:       {records.derived_state(post)}")
+    print(f"state:       {records.derived_state(post, root)}")
     print(f"title:       {title_field.value}  (layer: {title_field.layer or 'none'})")
     print(f"description: {desc_field.value[:200]}  (layer: {desc_field.layer or 'none'})")
     print(f"mime:        {records.media_type_for(post)}")

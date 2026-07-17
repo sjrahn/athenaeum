@@ -12,3 +12,8 @@ description: |
 applies_to:
   content_types:
   - video/hevc
+# (3.3, §7.1) A formless leaf (above) is exactly a disposition: work format with no
+# faithful markdown shape — the terminal-contract default follows. An origin overlay's
+# own `form:` (§7.2) — or a per-record asserted whole-record section — overrides either way.
+form:
+  id: passthrough

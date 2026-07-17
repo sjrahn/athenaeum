@@ -69,7 +69,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--state",
-        choices=("proxy", "rendered", "formed", "any"),
+        choices=("proxy", "terminal", "rendered", "formed", "any"),
         default="any",
         help=(
             "which derived states (spec §4.1) to consider (default: any — the attested "
@@ -149,7 +149,7 @@ def run(args: argparse.Namespace) -> int:
 
     for rf in candidates:
         post = records.load(rf)
-        if args.state != "any" and records.derived_state(post) != args.state:
+        if args.state != "any" and records.derived_state(post, corpus_root) != args.state:
             continue
         if args.mime and records.media_type_for(post) != args.mime:
             continue
