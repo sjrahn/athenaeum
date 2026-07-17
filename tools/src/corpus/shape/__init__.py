@@ -51,25 +51,33 @@ def get_shaper(key: str) -> ShaperFn | None:
     return REGISTRY.get(key)
 
 
-def _origin_uris(origin: dict[str, Any]) -> list[str]:
-    """The block's `uri:` value(s) as a flat list of non-empty strings (string or list)."""
+def _origin_primary_uri(origin: dict[str, Any]) -> str | None:
+    """The block's PRIMARY `uri:` value — the first entry, the capture's identity URI.
+    Dedup-folded aliases are deliberately not exposed to route matching (§7.2): aliases
+    are not gate-grade route evidence."""
     uri = (origin.get("fields") or {}).get("uri")
     uris = uri if isinstance(uri, list) else ([uri] if uri else [])
-    return [str(u).strip() for u in uris if u]
+    for u in uris:
+        if u:
+            return str(u).strip()
+    return None
 
 
-def _route_rule_matches(rule: dict[str, Any], uris: list[str]) -> bool:
-    """A route rule matches when its `match` regex (unanchored `re.search`) hits any of the
-    block's URIs; a rule with no `match` key matches everything (terminal fallback). A
-    malformed regex is treated as non-matching rather than raised (§7.2, parse tolerantly)."""
+def _route_rule_matches(rule: dict[str, Any], primary_uri: str | None) -> bool:
+    """A route rule matches when its `match` regex (unanchored `re.search`) hits the
+    block's primary URI; a rule with no `match` key matches everything (terminal
+    fallback). A malformed regex is treated as non-matching rather than raised (§7.2,
+    parse tolerantly)."""
     pattern = rule.get("match")
     if pattern is None:
         return True
+    if primary_uri is None:
+        return False
     try:
         compiled = re.compile(str(pattern))
     except re.error:
         return False
-    return any(compiled.search(u) for u in uris)
+    return compiled.search(primary_uri) is not None
 
 
 def form_for_record(
@@ -82,11 +90,12 @@ def form_for_record(
 
     `form:` is either the single declaration `{id, mapping?}` or, for a multi-shape origin
     (3.2 additive), a **list of route rules** `{match?, id, mapping?}` tried in declaration
-    order — the first rule whose `match` regex hits any of the block's `uri:` value(s) is the
-    declaration (a rule missing `match` matches everything). A rule missing `id` is skipped.
-    A block matching no rule stands as if `form:` were absent — the walk continues to the
-    record's next qualified origin block rather than returning None early. A `form:` value
-    that is neither a dict nor a list is ignored (treated as absent)."""
+    order — the first rule whose `match` regex hits the block's PRIMARY `uri:` value (the
+    first entry; alias URIs are not gate-grade evidence, §7.2) is the declaration (a rule
+    missing `match` matches everything). A rule missing `id` is skipped. A block matching
+    no rule stands as if `form:` were absent — the walk continues to the record's next
+    qualified origin block rather than returning None early. A `form:` value that is
+    neither a dict nor a list is ignored (treated as absent)."""
     for origin in records.iter_origin_blocks(post):
         oid = str(origin.get("id") or "")
         if not oid:
@@ -97,11 +106,11 @@ def form_for_record(
             mapping = form.get("mapping") if isinstance(form.get("mapping"), dict) else {}
             return oid, str(form["id"]), dict(mapping)
         if isinstance(form, list):
-            uris = _origin_uris(origin)
+            primary_uri = _origin_primary_uri(origin)
             for rule in form:
                 if not isinstance(rule, dict) or not rule.get("id"):
                     continue
-                if _route_rule_matches(rule, uris):
+                if _route_rule_matches(rule, primary_uri):
                     mapping = rule.get("mapping") if isinstance(rule.get("mapping"), dict) else {}
                     return oid, str(rule["id"]), dict(mapping)
             # No rule matched: this block stands as if `form:` were absent — fall through
