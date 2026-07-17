@@ -450,14 +450,12 @@ def iter_blocks(body: str) -> list[Block]:
                     break
                 if peek == "segment":
                     child, cursor = _parse_segment_block(lines, cursor, line_no=cursor + 1)
-                    if child.entry is not None and not child.is_structural:
-                        # A structural byte-mark's `entry:` is the source's own mark text and
-                        # is valid inside a form section (§4.3.2.3); a content segment's `entry:`
-                        # (an authored leaf label) is top-level only.
-                        raise ValueError(
-                            f"segment inside section at line {cursor}: `entry:` is "
-                            f"only valid on top-level segments"
-                        )
+                    # A content segment's `entry:` (an authored leaf label, §4.3.2.2) is valid
+                    # inside a form section as well as at top level (relaxed 2026-07-17, the
+                    # form-adopt-32 migration): a generic form span wraps an already-labeled
+                    # multi-block rendering whole, and the label identifies the child among
+                    # its siblings exactly as it did at top level. A structural byte-mark's
+                    # `entry:` (the source's own mark text, §4.3.2.3) was always valid here.
                     section.segments.append(child)
                 else:
                     cursor += 1
