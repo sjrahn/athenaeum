@@ -16,6 +16,7 @@ id so a corpus specializes the shaping of its own content without editing this p
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -50,13 +51,42 @@ def get_shaper(key: str) -> ShaperFn | None:
     return REGISTRY.get(key)
 
 
+def _origin_uris(origin: dict[str, Any]) -> list[str]:
+    """The block's `uri:` value(s) as a flat list of non-empty strings (string or list)."""
+    uri = (origin.get("fields") or {}).get("uri")
+    uris = uri if isinstance(uri, list) else ([uri] if uri else [])
+    return [str(u).strip() for u in uris if u]
+
+
+def _route_rule_matches(rule: dict[str, Any], uris: list[str]) -> bool:
+    """A route rule matches when its `match` regex (unanchored `re.search`) hits any of the
+    block's URIs; a rule with no `match` key matches everything (terminal fallback). A
+    malformed regex is treated as non-matching rather than raised (§7.2, parse tolerantly)."""
+    pattern = rule.get("match")
+    if pattern is None:
+        return True
+    try:
+        compiled = re.compile(str(pattern))
+    except re.error:
+        return False
+    return any(compiled.search(u) for u in uris)
+
+
 def form_for_record(
     post: frontmatter.Post, corpus_root: Path
 ) -> tuple[str, str, dict[str, Any]] | None:
     """The `(origin_id, form_id, mapping)` the record's origin overlay declares via its `form:`
     key (§7.2), or None. Walks the record's qualified origin blocks, loading each overlay, and
     returns the first that declares a form. The origin id is returned so an origin-keyed shaper
-    can be preferred over the generic form-keyed one."""
+    can be preferred over the generic form-keyed one.
+
+    `form:` is either the single declaration `{id, mapping?}` or, for a multi-shape origin
+    (3.2 additive), a **list of route rules** `{match?, id, mapping?}` tried in declaration
+    order — the first rule whose `match` regex hits any of the block's `uri:` value(s) is the
+    declaration (a rule missing `match` matches everything). A rule missing `id` is skipped.
+    A block matching no rule stands as if `form:` were absent — the walk continues to the
+    record's next qualified origin block rather than returning None early. A `form:` value
+    that is neither a dict nor a list is ignored (treated as absent)."""
     for origin in records.iter_origin_blocks(post):
         oid = str(origin.get("id") or "")
         if not oid:
@@ -66,6 +96,16 @@ def form_for_record(
         if isinstance(form, dict) and form.get("id"):
             mapping = form.get("mapping") if isinstance(form.get("mapping"), dict) else {}
             return oid, str(form["id"]), dict(mapping)
+        if isinstance(form, list):
+            uris = _origin_uris(origin)
+            for rule in form:
+                if not isinstance(rule, dict) or not rule.get("id"):
+                    continue
+                if _route_rule_matches(rule, uris):
+                    mapping = rule.get("mapping") if isinstance(rule.get("mapping"), dict) else {}
+                    return oid, str(rule["id"]), dict(mapping)
+            # No rule matched: this block stands as if `form:` were absent — fall through
+            # to the record's next qualified origin block rather than returning None here.
     return None
 
 

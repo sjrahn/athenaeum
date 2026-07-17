@@ -1,0 +1,40 @@
+form_id: procedure
+kind: form
+description: |
+  Stepped work instructions (spec §7.8): content whose shape is an ordered sequence of
+  actions meant to be PERFORMED — removal/installation and repair procedures, diagnostic
+  and test sequences (including trouble-code charts: named condition blocks plus ordered
+  diagnostic steps), calibration and programming sequences, recipes, runbooks. Names a
+  SHAPE, never a subject (`form/procedure`, never `form/<site>-procedure`). The boundary
+  against `form/article` is imperative structure: steps to perform, in order, with
+  branch points — not prose to understand. A procedure page's framing prose (purpose,
+  special tools, definitions) belongs to the span; the steps are its spine.
+extended_fields: {}
+decomposition: |
+  The span preserves the source's own procedural structure: named phase or condition
+  headings ("Removal", "Installation", "Diagnostic Aids", "Conditions for Setting the
+  DTC") as markdown headings; the numbered steps as ordered lists in source order,
+  verbatim, never renumbered or reflowed. Cautions / warnings / notes stay INLINE at the
+  step they govern — never hoisted away. Decision branches ("if …, go to step N") stay
+  intact at their branch point, nested under the step where the source nests them.
+  Torque values, clearances, measurement targets, special-tool identifiers survive
+  verbatim at their step. Mid-procedure figures are described embeds at their source
+  position, with lossless sibling transcriptions where a figure region is genuinely
+  text. Named supporting blocks (special tools, required parts) render as their faithful
+  list or `text/data-table`.
+checks:
+  address_axes: [el, pages, page]
+  monotonic: true
+normalization:
+  guidance: |
+    Keep step ORDER and step INTEGRITY absolute: no merging, no splitting, no
+    paraphrase — a wrong or reordered step in service content is a safety defect, and a
+    caution separated from its step is a broken caution. Where the source presents a
+    branch table or decision matrix, render it as the table it is rather than flattening
+    to prose.
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    Title from the procedure's own name shorn of site chrome; the description says what
+    is being done to what (and for a diagnostic chart, which codes/conditions it
+    covers), written from the steps themselves.

@@ -1,0 +1,44 @@
+form_id: document
+kind: form
+description: |
+  A page-like faithful rendering whose payload is figures, tables, or mixed plate matter
+  (spec §7.8): the generic contract for artifacts that genuinely render as pages of
+  presented content — a connector view sheet, a torque-specification plate, a parts or
+  labor catalog, a wiring schematic page, a datasheet, a form. Names a SHAPE, never a
+  subject. NOT a catch-all: an artifact with no faithful page rendering (code, datasets,
+  binaries, containers) stays formless — stamping `document` on it would assert a shape
+  its bytes do not have. The boundary against `form/article` is which way the dependency
+  runs: here the figures/tables/plates ARE the content and prose frames them; prose-led
+  reading matter is an article. Stepped work instructions are `form/procedure`; an
+  entries-are-the-content listing is `form/index`.
+extended_fields: {}
+decomposition: |
+  The span carries the page's presented content in source order: framing text (a
+  breadcrumb, a heading, a caption) as text segments; every figure as a described embed —
+  the `description:` is the lossy-asset disclosure, grounded in viewing the bytes; every
+  losslessly-transcribable figure region (a spec table, a pin-out, a parts list, a
+  legend) ALSO as a sibling `text/ocr` or `text/data-table` segment at the chained
+  address (`el=N&bbox=…`), cells verbatim — the image positioning-marker and the lossless
+  transcription coexist. Machine-readable tables render directly as `text/data-table`
+  (markdown grid, or literal HTML `<table>` where structure demands). The schematic
+  topology of a drawing is NOT losslessly textualizable and gets no fabricated
+  transcription — the described embed and any discrete text legend are its faithful
+  rendering.
+checks:
+  address_axes: [el, pages, page]
+  monotonic: true
+normalization:
+  guidance: |
+    The lossless extraction IS the value of this form: transcribe every readable table,
+    legend, and callout region exactly (fastener | value | unit | condition; pin | wire
+    color | circuit | function), never summarize, and leave a genuinely unreadable cell
+    blank with a `partial-content` issue naming it — never guess a value. Fill every
+    embed's `description:` from the resolved bytes, concrete and short. Where the page
+    promises content that was never captured, persist a `missing-media` issue — never
+    fabricate.
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    Title from the page's own title shorn of site chrome; the description names what the
+    page presents and what a reader can recover from it (e.g. the component, the
+    spec rows, the connector and its pin-out).

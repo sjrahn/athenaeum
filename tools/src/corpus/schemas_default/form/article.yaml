@@ -1,0 +1,39 @@
+form_id: article
+kind: form
+description: |
+  Prose-led reading matter (spec §7.8): a piece written to be READ — heading-structured
+  paragraphs carrying an explanation, description, notice, or account, with any figures
+  or tables ATTENDING the prose rather than being the payload. Names a SHAPE, never a
+  subject: a system-operation description, a service precaution, a policy page, an
+  encyclopedia entry, and a blog post all wear it. The boundary against `form/document`
+  is which way the dependency runs: in an ARTICLE the prose is the content and
+  figures/tables illustrate it; in a DOCUMENT the figures/tables/plates ARE the content
+  and prose frames them. The boundary against `form/procedure` is imperative structure:
+  steps meant to be performed in order are a procedure, prose meant to be understood is
+  an article. The boundary against `form/bulletin` is the advisory envelope: a numbered,
+  dated, tracked advisory is a bulletin even when its body reads as an article.
+extended_fields: {}
+decomposition: |
+  The span renders the piece's own structure faithfully: the source's headings as
+  markdown headings inside text segments, paragraphs verbatim, lists as lists. A figure
+  arrives as a described embed (its `description:` the lossy-asset disclosure) placed
+  where the source places it; a losslessly-transcribable figure additionally carries its
+  sibling `text/ocr` / `text/data-table` segment at the chained address. An in-prose
+  data table renders as `text/data-table`. No summary, no inferred context, no links the
+  source lacks. Addressing rides the record's native axes (`el=` for web drafts,
+  `pages=` for paginated sources).
+checks:
+  address_axes: [el, pages, page, line]
+  monotonic: true
+normalization:
+  guidance: |
+    Render the prose faithfully and completely — no paraphrase, no editorial summary in
+    the body, specifics never smoothed away (an "always/never" clause, a voltage or
+    torque caution, a warranty condition survives verbatim). Promote the source's own
+    subsection headings; do not invent structure the source lacks. Short single-block
+    pieces (a precaution notice) stay flat.
+
+    On a whole-record span, the section header's `title:`/`description:` fields are the
+    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
+    Title from the piece's own title, shorn of site chrome suffixes; the description is
+    a genuine synopsis of what the piece covers, written from the body.
