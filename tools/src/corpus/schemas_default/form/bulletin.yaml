@@ -15,10 +15,13 @@ description: |
 extended_fields:
   bulletin_no:
     type: string
-    required: true
+    required: false
     description: |
       The issuer's own bulletin/advisory number, verbatim as the document prints it
-      (e.g. "09-06-03-004D"). Mechanically derivable from the span's own bytes.
+      (e.g. "09-06-03-004D"). Mechanically derivable from the span's own bytes. A
+      regulator-format notice (an NHTSA recall envelope) may print NO bulletin number —
+      its `campaign_id` is then the tracked identifier; a document printing NEITHER is
+      not a bulletin.
   bulletin_date:
     type: string
     required: false
@@ -32,6 +35,13 @@ extended_fields:
     description: |
       The prior bulletin number this document declares it supersedes/replaces, verbatim
       from the document's own supersession line. Absent when the document declares none.
+  superseded_by:
+    type: string
+    required: false
+    description: |
+      The successor bulletin number, when the document ITSELF is a forward-reference —
+      the real "this bulletin has been superseded by #X" stub shape, whose entire body
+      is the supersession notice. Verbatim from the printed line.
   campaign_id:
     type: string
     required: false
@@ -46,17 +56,21 @@ decomposition: |
   advisory body with the source's own headings (Condition/Concern, Cause,
   Correction/Recommendation, warranty information) preserved; figures as described
   embeds; any inline repair steps rendered with procedure discipline (order and inline
-  cautions intact).
+  cautions intact). Two real variants conform: a REGULATOR NOTICE whose envelope is the
+  regulator's format (MANUFACTURER / CAMPAIGN ID / SUMMARY, no issuer bulletin number),
+  and a SUPERSESSION STUB whose entire body is the printed forward-reference — the
+  identity envelope IS that document, and its faithful rendering is short.
 checks:
-  envelope_required: [bulletin_no]
   address_axes: [el, pages, page]
   monotonic: true
 normalization:
   guidance: |
-    The identity envelope is the harvest surface — carry `bulletin_no` (and date /
-    supersedes / campaign id where printed) verbatim onto the section header AND keep
-    the printed lines verbatim in the body so span-precise citations land on the
-    document's own words. Never normalize an issuer's number format. The
+    The identity envelope is the harvest surface — carry whichever tracked identifiers
+    the document prints (`bulletin_no`, date, supersedes / superseded-by, campaign id)
+    verbatim onto the section header AND keep the printed lines verbatim in the body so
+    span-precise citations land on the document's own words. Never normalize an
+    issuer's number format, and match the supersession line as printed — real fleets
+    spell it "Supersede:", "Supercede:", "superceded", or state it inline in prose. The
     affected-vehicles table transcribes cell-exact.
 
     On a whole-record span, the section header's `title:`/`description:` fields are the

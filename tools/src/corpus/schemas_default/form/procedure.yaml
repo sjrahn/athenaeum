@@ -21,7 +21,10 @@ decomposition: |
   verbatim at their step. Mid-procedure figures are described embeds at their source
   position, with lossless sibling transcriptions where a figure region is genuinely
   text. Named supporting blocks (special tools, required parts) render as their faithful
-  list or `text/data-table`.
+  list or `text/data-table`. Where the source's procedural spine IS a decision table
+  (Step | Action | Yes | No — a common diagnostic shape), that table rendered as
+  `text/data-table` is the faithful spine: the ordered-list discipline applies to
+  sources that present ordered lists, never as a reflow target.
 checks:
   address_axes: [el, pages, page]
   monotonic: true
