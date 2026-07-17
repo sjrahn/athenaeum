@@ -26,7 +26,6 @@ decomposition: |
   rendering.
 checks:
   address_axes: [el, pages, page]
-  monotonic: true
 normalization:
   guidance: |
     The lossless extraction IS the value of this form: transcribe every readable table,

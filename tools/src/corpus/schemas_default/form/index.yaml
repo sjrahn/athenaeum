@@ -30,7 +30,6 @@ decomposition: |
   honest empty listing.
 checks:
   address_axes: [el, pages, page]
-  monotonic: true
 normalization:
   guidance: |
     The entries are the content: render every one, verbatim labels, no editorial

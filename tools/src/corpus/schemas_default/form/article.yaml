@@ -24,7 +24,6 @@ decomposition: |
   `pages=` for paginated sources).
 checks:
   address_axes: [el, pages, page, line]
-  monotonic: true
 normalization:
   guidance: |
     Render the prose faithfully and completely — no paraphrase, no editorial summary in

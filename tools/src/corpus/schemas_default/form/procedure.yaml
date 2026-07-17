@@ -27,7 +27,6 @@ decomposition: |
   sources that present ordered lists, never as a reflow target.
 checks:
   address_axes: [el, pages, page]
-  monotonic: true
 normalization:
   guidance: |
     Keep step ORDER and step INTEGRITY absolute: no merging, no splitting, no

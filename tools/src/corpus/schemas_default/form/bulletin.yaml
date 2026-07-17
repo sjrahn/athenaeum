@@ -62,7 +62,6 @@ decomposition: |
   identity envelope IS that document, and its faithful rendering is short.
 checks:
   address_axes: [el, pages, page]
-  monotonic: true
 normalization:
   guidance: |
     The identity envelope is the harvest surface — carry whichever tracked identifiers

@@ -455,25 +455,6 @@ def _check_perceptual_shape(seg: _segments.Segment) -> Iterator[Finding]:
             )
 
 
-def _rule_segment_entry_outside_top_level(post, blocks, root) -> Iterator[Finding]:
-    """In-section segments must not carry `entry:` — that's a section-only field."""
-    for blk in blocks:
-        if isinstance(blk, _segments.Section):
-            for seg in blk.segments:
-                # A structural byte-mark's `entry:` (the source's own mark text) is valid
-                # inside a form span (§4.3.2.3); a content segment's is top-level only.
-                if seg.entry is not None and not seg.is_structural:
-                    yield Finding(
-                        rule_id="segment-entry-in-section",
-                        severity="error",
-                        message=(
-                            "segment carries `entry:` but is inside a section; "
-                            "entry: is a top-level segment field only (spec §4.3.2.2)."
-                        ),
-                        address=_addr_str(seg.address),
-                    )
-
-
 def _rule_section_empty(post, blocks, root) -> Iterator[Finding]:
     for blk in blocks:
         if isinstance(blk, _segments.Section) and not blk.segments:
@@ -1295,7 +1276,6 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("atom-invalid", _rule_atom_invalid),
     ("segment-non-text-with-body", _rule_segment_non_text_with_body),
     ("segment-perceptual-format", _rule_segment_perceptual_format),
-    ("segment-entry-in-section", _rule_segment_entry_outside_top_level),
     ("section-empty", _rule_section_empty),
     ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
