@@ -701,6 +701,12 @@ def run_check(
                 rep.err(where, f"bad need action {n.get('action')!r}")
             if n.get("action") == "enqueue" and not CORPUS_URI_RE.match(str(n.get("record", ""))):
                 rep.err(where, "enqueue need requires a bare corpus:// record")
+            if n.get("action") == "promote":
+                m = CORPUS_URI_RE.match(str(n.get("record", "")))
+                if not m or not m.group(2):
+                    rep.err(where, "promote need requires a member corpus:// record "
+                                   "(container hash + member address, e.g. "
+                                   "corpus://<hash>?path=…)")
             if not n.get("why"):
                 rep.err(where, "need requires a why")
 

@@ -15,7 +15,11 @@ resident in the parent `.vcf` container, resolved through the member index (§12
 (the shared byte-exact-scan module, §12.11) already does the RFC 6350 unfolding — this module
 adds the one further transform a consumer, not the parser, owns: QUOTED-PRINTABLE hex-escape
 decoding (vcardfile's docstring: "RFC 6350 line-unfolding is a READ-time concern of a
-consumer" — decoding is the same kind of consumer-side concern, one level up).
+consumer" — decoding is the same kind of consumer-side concern, one level up). The decode
+helpers themselves (`is_binary`, `decoded_value`, …) live ON `vcardfile`, shared with the
+resolver's `prop=<N>` transform (`transforms/vcard.py`) so a citation's `?prop=N` anchor
+resolves to EXACTLY the datum this shaper's `prop=N` segment renders — one point of truth,
+the `units.py` `turn=` precedent.
 
 **PHOTO/LOGO/SOUND/KEY exclusion** (spec §4.3.1.4, the already-preserved-bytes rule): a
 `b`/`BASE64`-encoded property's value is never transcribed — the segment renders header-only
@@ -28,8 +32,6 @@ schema's own PHOTO handling was.
 
 from __future__ import annotations
 
-import quopri
-import re
 from pathlib import Path
 from typing import Any
 
@@ -38,72 +40,13 @@ import frontmatter
 from corpus import containment, mime, recordbuild, records, vcardfile
 from corpus.shape import register_shaper
 
-# vCard 2.1/3.0 spellings for the two control-parameter values this module acts on.
-_QP_VALUES = {"QUOTED-PRINTABLE", "Q"}
-_BINARY_VALUES = {"B", "BASE64"}
-
-# RFC 6350 §3.4 TEXT-value escaping: `\\`, `\,`, `\;` are the escaped literal, `\n`/`\N`
-# an embedded newline. Applies uniformly to every property's value regardless of ENCODING
-# (a distinct, always-on layer from QUOTED-PRINTABLE's octet-level transfer encoding) — a
-# bare, unescaped `;`/`,` is a real structural separator (N's/ADR's components, a
-# multi-valued NICKNAME/CATEGORIES list) and is left alone; only a BACKSLASH-prefixed one
-# is a literal character. An unrecognized escape (a stray trailing backslash, a vendor
-# quirk) is left verbatim rather than guessed at (parse-tolerant).
-_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
-_ESCAPE_MAP = {"n": "\n", "N": "\n", ",": ",", ";": ";", "\\": "\\"}
-
-
-def _unescape_text(value: str) -> str:
-    return _ESCAPE_RE.sub(lambda m: _ESCAPE_MAP.get(m.group(1), m.group(0)), value)
-
-
-def _param_value(prop: vcardfile.Property, key: str) -> str | None:
-    """The value of a KEYED parameter named `key` (case-insensitive), or None."""
-    for k, v in prop.params:
-        if k and k.upper() == key:
-            return v
-    return None
-
-
-def _has_bare_token(prop: vcardfile.Property, token: str) -> bool:
-    """True when an UNKEYED parameter (vCard 2.1's bare-type style, e.g. `;BASE64`)
-    equals `token`, case-insensitive."""
-    return any(k is None and v.upper() == token for k, v in prop.params)
-
-
-def _is_quoted_printable(prop: vcardfile.Property) -> bool:
-    enc = _param_value(prop, "ENCODING")
-    return bool(enc) and enc.upper() in _QP_VALUES
-
-
-def _is_binary(prop: vcardfile.Property) -> bool:
-    enc = _param_value(prop, "ENCODING")
-    if enc and enc.upper() in _BINARY_VALUES:
-        return True
-    return any(_has_bare_token(prop, tok) for tok in _BINARY_VALUES)
-
-
-def _decoded_value(prop: vcardfile.Property) -> str:
-    """The property's rendered value. `vcardfile.parse_cards` already unfolded RFC 6350
-    continuation lines (incl. the vCard 2.1 QUOTED-PRINTABLE soft break); this layers two
-    further consumer-side decodes on top, always in this order: (1) where the property
-    declares `ENCODING=QUOTED-PRINTABLE`, the actual hex-escape byte decode, honoring an
-    explicit `CHARSET` param (old vCard 2.1 style) and falling back to UTF-8; (2) RFC 6350
-    §3.4's TEXT-value backslash-escape decode (`\\n`→ a real newline, `\\,`/`\\;`→ a
-    literal comma/semicolon), which applies UNCONDITIONALLY — independent of `ENCODING` — to
-    every text-valued property (a compound field's own bare `;`/`,` separators, e.g. `N` or
-    `ADR`, are untouched; only a backslash-escaped one is unescaped). Never called for a
-    binary-encoded property (`_is_binary`) — see the shaper."""
-    value = prop.value
-    if _is_quoted_printable(prop):
-        charset = _param_value(prop, "CHARSET") or "utf-8"
-        raw = value.encode("ascii", errors="replace")
-        decoded = quopri.decodestring(raw)
-        try:
-            value = decoded.decode(charset, errors="strict")
-        except (LookupError, UnicodeDecodeError):
-            value = decoded.decode("utf-8", errors="replace")
-    return _unescape_text(value)
+# Backward-compatible aliases — the decode logic itself now lives on `vcardfile` (shared with
+# the resolver's `prop=<N>` transform, `transforms/vcard.py`); these keep the pre-refactor
+# private names resolvable for any existing direct reference (e.g. `tests/
+# test_contact_card_shaper.py`'s pure-helper unit tests).
+_is_quoted_printable = vcardfile.is_quoted_printable
+_is_binary = vcardfile.is_binary
+_decoded_value = vcardfile.decoded_value
 
 
 def _rendered_params(prop: vcardfile.Property) -> list[str]:
@@ -150,7 +93,7 @@ def shape_contact_card(
         params = _rendered_params(prop)
         if params:
             header["params"] = params
-        body = None if _is_binary(prop) else (_decoded_value(prop) or None)
+        body = None if vcardfile.is_binary(prop) else (vcardfile.decoded_value(prop) or None)
         recordbuild.add_segment(
             build,
             atom="text",

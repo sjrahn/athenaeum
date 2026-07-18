@@ -129,3 +129,22 @@ def text_encoding_repair(value: Any, mapping: dict[str, Any]) -> Any:
         return value.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
         return value
+
+
+def repair_json_strings(value: Any, mapping: dict[str, Any]) -> Any:
+    """Recursively apply `text_encoding_repair` to every string in a JSON-shaped structure
+    (dict/list/str; any other type passes through unchanged) — the resolver's `turn=` unit op
+    (§6.2) uses this to hand back a unit object whose text reads the SAME as the shaper's own
+    per-turn envelope segments (`author_name`/`text`, `shape/conversation.py`), rather than the
+    mapped fields only. Meta's mojibake export bug corrupts the WHOLE JSON payload uniformly
+    (reactions, attachment captions, platform ids — not just the two mapped fields), and the
+    repair is a guarded round-trip that is a no-op on already-correct text (`text_encoding_repair`
+    docstring), so applying it to every string here is safe. Absent `text_encoding` on the
+    mapping, this is a no-op walk (matches `text_encoding_repair`'s own no-repair contract)."""
+    if isinstance(value, str):
+        return text_encoding_repair(value, mapping)
+    if isinstance(value, list):
+        return [repair_json_strings(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {k: repair_json_strings(v, mapping) for k, v in value.items()}
+    return value

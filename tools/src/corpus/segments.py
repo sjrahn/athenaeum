@@ -45,6 +45,7 @@ kind. Nesting depth = 1: sections contain segments; segments contain nothing; se
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -370,6 +371,74 @@ def _emit_segment(seg: Segment) -> str:
     if body:
         return f"{_OPENER_PREFIX}{opener_id}\n{header_yaml}\n{_CLOSER}\n\n{body}\n"
     return f"{_OPENER_PREFIX}{opener_id}\n{header_yaml}\n{_CLOSER}\n"
+
+
+# ---------- axis addressing (anchor lookup, e.g. `corpus body --anchor turn=4`) ---------- #
+
+_AXIS_SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
+
+# Address params `ledger.verify.scoped_text` always treats as `unchecked` — never
+# resolved to body text, even when a value happens to be integer-range shaped
+# (`time_range=0-30`); an anchor on one of these always falls back to the whole record.
+# Mirrored here (not imported — this package stays free of a ledger-ward dependency) so
+# `--anchor` never claims to scope a param verify itself would never scope.
+_UNCHECKED_AXES = frozenset({"time_range", "frame", "bbox", "path", "region", "rotate"})
+
+
+def parse_axis_span(value: str) -> tuple[int, int] | None:
+    """A bare integer-span value (`4`, or a range `4-8`) → `(lo, hi)`; `None` if `value`
+    isn't shaped that way (a temporal/bbox/path value is not an integer-span axis)."""
+    m = _AXIS_SPAN_RE.match(value.strip())
+    if not m:
+        return None
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    return lo, hi
+
+
+def address_axis_spans(address: str | list[str] | None) -> list[tuple[str, int, int]]:
+    """A segment's `address` → `[(axis, lo, hi)]` for every integer-span param it
+    carries. A compound address (`el=5&bbox=0,0,10,10`) registers only the int-span,
+    checkable parts. This is the same address grammar `ledger.verify.scoped_text` scopes
+    an evidence anchor against — an axis this finds is exactly an axis
+    `corpus body --anchor <axis>=<N>` can target."""
+    out: list[tuple[str, int, int]] = []
+    if address is None:
+        return out
+    addrs = address if isinstance(address, list) else [address]
+    for a in addrs:
+        if not isinstance(a, str) or "=" not in a:
+            continue
+        for part in a.split("&"):
+            axis, _, value = part.partition("=")
+            axis = axis.strip()
+            if axis in _UNCHECKED_AXES:
+                continue
+            span = parse_axis_span(value)
+            if span is not None:
+                out.append((axis, *span))
+    return out
+
+
+def leaf_segments(blocks: list[Block]) -> Iterator[Segment]:
+    """Every addressable leaf `Segment` in document order: top-level segments, and each
+    section's children. A section itself carries no body of its own to anchor into
+    (§4.3.2.1) — its span, when it has one, is the envelope of its children under a
+    pluralized axis name (`page`→`pages`, ...), distinct from the children's own axis, so
+    leaf-only matching never collides with a section-level span."""
+    for b in blocks:
+        if isinstance(b, Section):
+            yield from b.segments
+        else:
+            yield b
+
+
+def render_segment(seg: Segment) -> str:
+    """Render one segment exactly as `emit` would: its opener, header (address plus
+    every attribution field it carries — sender/timestamp on a message, name on a vcard
+    field, ...), and body. Used to reprint a single `--anchor`-addressed segment with its
+    attribution context intact."""
+    return _emit_segment(seg)
 
 
 # ---------- parse ---------- #

@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-LEDGER
 title: "Ledger Specification"
-version: 1.2
+version: 1.3
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
-date_modified: 2026-07-16
+date_modified: 2026-07-18
 ---
 
 # Ledger Specification
@@ -328,7 +328,7 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
 
 ### 6.3 Source honesty
 
-Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. *(1.1)* Citability keys to **verifiable surfaces**, never to record state: a stored rendering under a named form contract, a derivation op's mechanical output (engine-pinned, `spec/corpus.md` §6.4), and authored body prose — form-span renderings, section-header editorial fields, embed/segment descriptions *(1.2: never the frontmatter pair, which is a derived display value — corpus §4.2.3)* — all verify (§13.2); citing into a formless record's derived body is legitimate evidence, machine-checked like any other, with the op version pinned on the binding (§13.2). *(1.3)* **Evidence strength never keys to form state**: status assignment (§8) weighs source authority and independence — a claim meeting the confirmed bar on formless-record evidence is confirmed, and a record governed by a **terminal contract** (corpus §7.8) is a complete source whose derived surfaces are permanent, including a manifest record's attested member roster (first-class direct evidence for containment and existence facts). Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. *(1.3)* The demand signal keys to formless-**for-now** alone: enqueuing a terminal record raises nothing — no better surface is coming — and where a needed surface is a container *member*, the demand is `corpus promote` (then form the promoted record), not "normalize the container." When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
+Only assert what a source shows. Model knowledge is a *lead* for searching or capturing, never evidence. *(1.1)* Citability keys to **verifiable surfaces**, never to record state: a stored rendering under a named form contract, a derivation op's mechanical output (engine-pinned, `spec/corpus.md` §6.4), and authored body prose — form-span renderings, section-header editorial fields, embed/segment descriptions *(1.2: never the frontmatter pair, which is a derived display value — corpus §4.2.3)* — all verify (§13.2); citing into a formless record's derived body is legitimate evidence, machine-checked like any other, with the op version pinned on the binding (§13.2). *(1.3)* **Evidence strength never keys to form state**: status assignment (§8) weighs source authority and independence — a claim meeting the confirmed bar on formless-record evidence is confirmed, and a record governed by a **terminal contract** (corpus §7.8) is a complete source whose derived surfaces are permanent, including a manifest record's attested member roster (first-class direct evidence for containment and existence facts). Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. *(1.3)* The demand signal keys to formless-**for-now** alone: enqueuing a terminal record raises nothing — no better surface is coming — and where a needed surface is a container *member*, the demand is a **`promote`** need (`corpus promote 'corpus://<container-id>?<member-address>'`; then form the promoted record) — never "normalize the container." Promoted members land **bodiless** until formed. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
 
 ### 6.4 Sensitivity — derived, not declared
 
@@ -375,8 +375,9 @@ Structured, evidence-linked **pre-assertion** items, physically beside the facts
   "proposes": { /* a draft Claim object (§5.1), for claim-shaped hypotheses */ },
   "challenges": { "claim": "file-id:short", "state": "blake3:…" },  // corrections only: the claim under challenge, pinned as it stood (§7.3)
   "needs": [
-    { "action": "capture", "why": "…" },                       // enqueue | search | capture | observe
-    { "action": "enqueue", "record": "corpus://…", "why": "…" }
+    { "action": "capture", "why": "…" },                       // enqueue | search | capture | observe | promote
+    { "action": "enqueue", "record": "corpus://…", "why": "…" },
+    { "action": "promote", "record": "corpus://…?path=…", "why": "…" }
   ],
   "status": "open",                // §7.3
   "resolution": null,

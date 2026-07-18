@@ -63,12 +63,21 @@ _FFMPEG_ENGINE_PARAMS: frozenset[str] = frozenset({"time_range", "format", "scen
 # of an already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
 _CSV_OP_PARAMS: frozenset[str] = frozenset({"row", "col"})
 
+# The vcard property op (§6.2 `prop=`) is likewise a deterministic pure parse (never an
+# external engine), versioned the same way (`transforms.vcard.ENGINE_VERSION`).
+_VCARD_OP_PARAMS: frozenset[str] = frozenset({"prop"})
+
 # Working kinds whose final cache extension isn't known until the transform chain actually
 # runs: `htmlel` resolves polymorphically to image|bytes (§6.2 `el=`); `video`/`audio`/
 # `media` are ffmpeg-produced Paths whose extension depends on the source's container
 # family (bare `time_range=`) or the `format=` token — neither predictable from the param
-# chain alone the way every other op's output kind is.
-_DEFERRED_EXTENSION_KINDS: frozenset[str] = frozenset({"htmlel", "video", "audio", "media"})
+# chain alone the way every other op's output kind is. `memberchain` is the same problem one
+# level down the address axis (§6.2 member re-chaining, defects 3+4): a `path=` member's real
+# kind depends on ITS bytes/filename, sniffed only once its bytes are in hand — see
+# `_rechain_member`.
+_DEFERRED_EXTENSION_KINDS: frozenset[str] = frozenset(
+    {"htmlel", "video", "audio", "media", "memberchain"}
+)
 
 
 # Built-in MIME → initial working-value kind. This is now a FALLBACK: the authoritative
@@ -230,6 +239,10 @@ def resolve(
         from .transforms import csv as csv_tf
 
         version_label = csv_tf.ENGINE_VERSION
+    elif any(k in _VCARD_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import vcard as vcard_tf
+
+        version_label = vcard_tf.ENGINE_VERSION
     else:
         version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
@@ -333,7 +346,7 @@ def resolve(
     current_kind = initial_kind
     terminal_mime: str | None = None
     try:
-        for key, value in parsed.params:
+        for param_idx, (key, value) in enumerate(parsed.params):
             if key in _NOOP_PARAMS:
                 continue
             handler, promote = _resolve_handler(current_kind, key)
@@ -349,6 +362,17 @@ def resolve(
             log.debug("apply %s=%r (%s -> %s)", key, value, current_kind, handler.output_kind)
             working = handler.func(working, value, ctx)
             current_kind = handler.output_kind
+            # Member re-chaining (§6.2, defects 3+4): `path=` on a kept-whole archive
+            # (zip/tar) always yields the registry's opaque `bytes` — re-detect the member's
+            # real mime and re-enter the working-kind table so the chain can continue past it
+            # (a PDF member takes `page=`/`text` same as a top-level artifact; a JSON/text
+            # member decodes to plain text; an unrecognized member stays `bytes`, unchanged).
+            if key == "path" and current_kind == "bytes":
+                working, current_kind, pdf_doc, chain_mime = _rechain_member(
+                    corpus_root, parsed, param_idx, working, ctx, pdf_doc
+                )
+                if chain_mime is not None:
+                    terminal_mime = chain_mime
         # A terminal `pdfpage` (bare `page=N`, or `page=N&dpi=…`) renders to image, so a
         # segment's `address: page=N` image marker resolves to the page bytes as before.
         if current_kind == "pdfpage":
@@ -378,16 +402,27 @@ def resolve(
             )
             terminal_mime = _media_mime_for_ext(terminal_ext)
             cache_p = furi.cache_path(corpus_root, urihash_value, terminal_ext)
+        elif cache_p is None:
+            # A `memberchain`-deferred URI (§6.2, defects 3+4): the member's real final kind
+            # was unknowable until `_rechain_member` ran, but it always lands on an ordinary
+            # KIND_TO_EXTENSION-registered kind (image/text/json/bytes, or video/audio/media —
+            # already handled above) — assign the cache path now that it's known.
+            if current_kind not in KIND_TO_EXTENSION:
+                raise NotImplementedError(
+                    f"final output kind {current_kind!r} has no cache extension registered"
+                )
+            cache_p = furi.cache_path(corpus_root, urihash_value, KIND_TO_EXTENSION[current_kind])
     finally:
         # pypdfium2's PdfDocument is reference-counted; close explicitly.
         if pdf_doc is not None:
             pdf_doc.close()
 
-    # `htmlel` and the muxing-contract kinds resolve their concrete extension only after the
-    # chain runs, so the predicted sentinel legitimately differs from `current_kind` for
-    # `htmlel` specifically (image|bytes); the muxing kinds are NOT exempted — `current_kind`
-    # must still equal the predicted `video`/`audio`/`media`, a real correctness check.
-    if final_kind != "htmlel" and current_kind != final_kind:
+    # `htmlel` and `memberchain` resolve their concrete extension only after the chain runs
+    # (the latter depends on a member's own sniffed mime, §6.2 defects 3+4), so the predicted
+    # sentinel legitimately differs from `current_kind` for those two; the muxing kinds are NOT
+    # exempted — `current_kind` must still equal the predicted `video`/`audio`/`media`, a real
+    # correctness check.
+    if final_kind not in ("htmlel", "memberchain") and current_kind != final_kind:
         raise RuntimeError(
             f"predicted final kind {final_kind!r} but transform chain produced {current_kind!r}"
         )
@@ -568,6 +603,11 @@ def _resolve_turn(
     msg = units.unit(data, mapping, n)
     if msg is None:
         raise ValueError(f"turn={n}: out of range (the unit array has fewer messages)")
+    # The mapping's declared `text_encoding` repair (§7.2, e.g. Meta's `meta-mojibake` export
+    # bug) is shared with the `conversation` shaper's per-turn envelope rendering
+    # (`shape/conversation.py`) — applied here too so `turn=N` hands back the SAME repaired
+    # text a human reading the formed record's segment sees, not the raw mangled bytes.
+    msg = units.repair_json_strings(msg, mapping)
 
     if att_m is None:
         urihash_value = furi.urihash(canonical_uri)
@@ -637,6 +677,115 @@ def _resolve_body(
     cache_p.write_text(body if body.endswith("\n") or not body else body + "\n", encoding="utf-8")
     _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "text")
     return cache_p.resolve()
+
+
+# ---------- member re-chaining (§6.2, defects 3+4) ---------- #
+
+# JSON-family mimes with no `working_kind:` schema entry (there's no further pipeline op to
+# chain into — a JSON payload isn't paginated/cropped/etc.) that should still print/cache as
+# text rather than the generic opaque `bytes` a raw member defaults to.
+_TEXTUAL_MEMBER_JSON_MIMES: frozenset[str] = frozenset(
+    {"application/json", "application/x-ndjson"}
+)
+
+
+def _member_text_kind(sniffed_mime: str) -> str | None:
+    """The resolver kind an already-textual member mime decodes to, or None when the mime
+    isn't textual (stays opaque `bytes`, today's behavior). `json` (not `text`) for the JSON
+    family so the cache extension is `.json` and `corpus resolve --print` streams it as such
+    (defect 3); plain `text` for anything else `text/*`-shaped."""
+    if sniffed_mime in _TEXTUAL_MEMBER_JSON_MIMES:
+        return "json"
+    if sniffed_mime.startswith("text/"):
+        return "text"
+    return None
+
+
+def _init_member_working_value(kind: str, path: Path) -> Any:
+    """Construct the initial working value for a re-chained container member (§6.2) — the
+    member-address counterpart of `resolve()`'s own top-level working-value initialization,
+    over the member's materialized cache file rather than the record's artifact. Mirrors that
+    branch exactly (same kinds, same construction) so a PDF/HTML/image/video/… member behaves
+    identically to a standalone record of the same type."""
+    if kind == "pdf":
+        doc = pdfium.PdfDocument(str(path))
+        doc.init_forms()
+        return doc
+    if kind == "html":
+        from bs4 import BeautifulSoup
+
+        return BeautifulSoup(path.read_bytes(), "html.parser")
+    if kind == "image":
+        with Image.open(path) as im:
+            im.load()
+            return im.copy()
+    if kind in ("video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv"):
+        return path
+    raise NotImplementedError(f"member working kind {kind!r} not yet supported")
+
+
+def _rechain_member(
+    corpus_root: Path,
+    parsed: furi.ParsedURI,
+    param_idx: int,
+    data: bytes,
+    ctx: transforms.RenderContext,
+    pdf_doc: pdfium.PdfDocument | None,
+) -> tuple[Any, str, pdfium.PdfDocument | None, str | None]:
+    """Re-detect a `path=`-extracted member's real mime (§6.2) and, when a further transform
+    param follows in the chain, re-enter the working-kind table (`_working_kind_for`) so
+    resolution continues in the member's OWN pipeline — a PDF member takes `page=`/`text` just
+    like a top-level artifact would (defect 4). A TERMINAL `path=` (nothing follows) never
+    promotes to a full pipeline object: that would risk a silent, unrequested re-encode of a
+    member `resolve` never asked to transform (an image member re-saved as PNG, losing its
+    original bytes identity) — a zip/tar member is documented to serve raw bytes verbatim
+    (`transforms/zip.py`/`transforms/tar.py`) except for the one case defect 3 flags: an
+    already-textual member (JSON/text) prints its decoded text rather than a `.bin` path.
+    Malformed/unrecognized members are never fatal here — they degrade to the original opaque
+    `bytes`, exactly as before this fix.
+
+    Returns `(working, kind, pdf_doc, mime_override)`. `mime_override` is the member's own
+    sniffed mime for the resolver's cache sidecar — set only in the terminal-decode case
+    (where the member's own mime IS the final result's mime); the full-pipeline case leaves it
+    None so a later op in the chain (or the default `KIND_TO_MIME` table) determines it
+    normally, exactly as for a top-level artifact.
+    """
+    ref = str(parsed.params[param_idx][1] or "")
+    has_more = any(k not in _NOOP_PARAMS for k, _ in parsed.params[param_idx + 1 :])
+    sniffed_mime = mime_mod.sniff_head(data, ref or None)
+
+    if has_more:
+        new_kind = _working_kind_for(corpus_root, sniffed_mime)
+        if new_kind is not None:
+            member_ext = mime_mod.extension_for(sniffed_mime)
+            # Cached under the prefix-canonical URI up to and including THIS `path=` step, so
+            # a repeat resolve of a different follow-on op over the same member (`path=x.pdf
+            # &page=2` after `path=x.pdf&page=1`) never re-extracts from the container, and a
+            # distinct member/position never collides (mirrors `containment._member_cache_path`
+            # one level below the promoted-record axis).
+            partial_uri = furi.canonical(
+                furi.ParsedURI(hash=parsed.hash, params=parsed.params[: param_idx + 1])
+            )
+            member_path = furi.cache_path(corpus_root, furi.urihash(partial_uri), member_ext)
+            if not member_path.is_file():
+                member_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = member_path.with_name(f"{member_path.name}.tmp")
+                tmp.write_bytes(data)
+                tmp.replace(member_path)
+            working = _init_member_working_value(new_kind, member_path)
+            if new_kind == "pdf":
+                pdf_doc = working
+            if new_kind == "csv":
+                ctx["csv_dialect"] = _csv_dialect_for(corpus_root, sniffed_mime)
+            # PDF text/probe ops read the source from disk via pypdf — point them at the
+            # MEMBER's own file, not the container's (mirrors the top-level `resolve()` setup).
+            ctx["artifact_path"] = member_path
+            return working, new_kind, pdf_doc, None
+
+    text_kind = _member_text_kind(sniffed_mime)
+    if text_kind is not None:
+        return data.decode("utf-8", errors="replace"), text_kind, pdf_doc, sniffed_mime
+    return data, "bytes", pdf_doc, None
 
 
 # ---------- internals ---------- #
@@ -715,6 +864,14 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     for key, _ in parsed.params:
         if key in _NOOP_PARAMS:
             continue
+        # `path=` on a kept-whole archive (zip/tar) always yields opaque `bytes` from the
+        # registry's point of view (transforms/zip.py, transforms/tar.py) — but the member it
+        # extracts may itself chain further (a PDF member's `page=`/`text`, defect 4), and
+        # that depends on the member's own bytes/filename, unknowable from the param chain
+        # alone. Defer, like `htmlel`/`video`/`audio`/`media` (`_rechain_member` in `resolve()`
+        # does the real work at resolve time).
+        if key == "path" and current in ("zip", "tar"):
+            return "memberchain"
         handler, _promote = _resolve_handler(current, key)
         if handler is None:
             raise ValueError(f"transform {key!r} not applicable to working kind {current!r}")

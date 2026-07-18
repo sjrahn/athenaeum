@@ -27,6 +27,7 @@ the span, never touching the span's identity.
 
 from __future__ import annotations
 
+import quopri
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -213,6 +214,82 @@ class Card:
                 # ORG is `Unit;Sub;…` structured — the first component is the org name.
                 return v.split(";", 1)[0].strip() if name == "ORG" else v
         return f"Card {ordinal}"
+
+
+# ====================================================================== #
+# Property value decoding — shared by the `contact-card` shaper
+# (`shape/contact_card.py`) and the resolver's `prop=<N>` transform
+# (`transforms/vcard.py`), one point of truth so `prop=N` always resolves to EXACTLY the
+# datum the formed record's segment renders (spec §6.2, the `units.py` `turn=` precedent).
+# ====================================================================== #
+
+# vCard 2.1/3.0 spellings for the two control-parameter values a property's rendered value
+# depends on.
+QP_VALUES = frozenset({"QUOTED-PRINTABLE", "Q"})
+BINARY_VALUES = frozenset({"B", "BASE64"})
+
+# RFC 6350 §3.4 TEXT-value escaping: `\\`, `\,`, `\;` are the escaped literal, `\n`/`\N` an
+# embedded newline. Applies uniformly to every property's value regardless of ENCODING (a
+# distinct, always-on layer from QUOTED-PRINTABLE's octet-level transfer encoding) — a bare,
+# unescaped `;`/`,` is a real structural separator (N's/ADR's components, a multi-valued
+# NICKNAME/CATEGORIES list) and is left alone; only a BACKSLASH-prefixed one is a literal
+# character. An unrecognized escape (a stray trailing backslash, a vendor quirk) is left
+# verbatim rather than guessed at (parse-tolerant).
+_TEXT_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
+_TEXT_ESCAPE_MAP = {"n": "\n", "N": "\n", ",": ",", ";": ";", "\\": "\\"}
+
+
+def _unescape_text(value: str) -> str:
+    return _TEXT_ESCAPE_RE.sub(lambda m: _TEXT_ESCAPE_MAP.get(m.group(1), m.group(0)), value)
+
+
+def param_value(prop: Property, key: str) -> str | None:
+    """The value of a KEYED parameter named `key` (case-insensitive), or None."""
+    for k, v in prop.params:
+        if k and k.upper() == key:
+            return v
+    return None
+
+
+def has_bare_token(prop: Property, token: str) -> bool:
+    """True when an UNKEYED parameter (vCard 2.1's bare-type style, e.g. `;BASE64`) equals
+    `token`, case-insensitive."""
+    return any(k is None and v.upper() == token for k, v in prop.params)
+
+
+def is_quoted_printable(prop: Property) -> bool:
+    enc = param_value(prop, "ENCODING")
+    return bool(enc) and enc.upper() in QP_VALUES
+
+
+def is_binary(prop: Property) -> bool:
+    enc = param_value(prop, "ENCODING")
+    if enc and enc.upper() in BINARY_VALUES:
+        return True
+    return any(has_bare_token(prop, tok) for tok in BINARY_VALUES)
+
+
+def decoded_value(prop: Property) -> str:
+    """The property's rendered value. `parse_cards` already unfolded RFC 6350 continuation
+    lines (incl. the vCard 2.1 QUOTED-PRINTABLE soft break); this layers two further
+    consumer-side decodes on top, always in this order: (1) where the property declares
+    `ENCODING=QUOTED-PRINTABLE`, the actual hex-escape byte decode, honoring an explicit
+    `CHARSET` param (old vCard 2.1 style) and falling back to UTF-8; (2) RFC 6350 §3.4's
+    TEXT-value backslash-escape decode (`\\n` -> a real newline, `\\,`/`\\;` -> a literal
+    comma/semicolon), which applies UNCONDITIONALLY — independent of `ENCODING` — to every
+    text-valued property (a compound field's own bare `;`/`,` separators, e.g. `N` or `ADR`,
+    are untouched; only a backslash-escaped one is unescaped). Never called for a
+    binary-encoded property (`is_binary`) — see the caller."""
+    value = prop.value
+    if is_quoted_printable(prop):
+        charset = param_value(prop, "CHARSET") or "utf-8"
+        raw = value.encode("ascii", errors="replace")
+        decoded = quopri.decodestring(raw)
+        try:
+            value = decoded.decode(charset, errors="strict")
+        except (LookupError, UnicodeDecodeError):
+            value = decoded.decode("utf-8", errors="replace")
+    return _unescape_text(value)
 
 
 # A folded continuation begins with a single space or tab (RFC 6350 §3.2).
