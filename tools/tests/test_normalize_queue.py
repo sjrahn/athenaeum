@@ -125,6 +125,30 @@ def test_drain_reclaims_a_stale_claim(tmp_path):
     assert queue.drain(root, lease=60) == RID  # reclaimed
 
 
+def test_claim_targets_a_specific_id_leaving_others_pending(tmp_path):
+    """`claim` is the targeted counterpart to `drain`'s FIFO next-in-line: a bulk driver
+    processing a known, bounded id set (e.g. a mechanical adopt sweep over one origin's
+    records) can claim exactly the id it wants without disturbing unrelated requests
+    interleaved in the same FIFO pool — no need to `drain` + `release` past them."""
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)  # requested first (FIFO head)
+    queue.enqueue(root, RID2)
+    assert queue.claim(root, RID2, by="sweep") is True  # not RID2's FIFO turn — targeted anyway
+    assert queue.state(root, RID2)["state"] == "claimed"
+    assert queue.state(root, RID2)["claimed_by"] == "sweep"
+    assert queue.state(root, RID)["state"] == "requested"  # untouched
+
+
+def test_claim_returns_false_when_nothing_pending(tmp_path):
+    root = _corpus(tmp_path)
+    assert queue.claim(root, RID) is False  # never requested
+    queue.enqueue(root, RID)
+    assert queue.claim(root, RID) is True
+    assert queue.claim(root, RID) is False  # already claimed — no live .req left
+    queue.complete(root, RID)
+    assert queue.claim(root, RID) is False  # settled — no live .req left
+
+
 def test_complete_fail_requeue_transitions(tmp_path):
     root = _corpus(tmp_path)
     queue.enqueue(root, RID)

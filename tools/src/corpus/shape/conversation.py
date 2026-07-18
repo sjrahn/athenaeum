@@ -1,13 +1,23 @@
-"""The generic mapping-driven `conversation` shaper (spec §7.8, §12.5.0, §12.18 step 4).
+"""The `conversation` shapers (spec §7.8, §12.5.0, §12.18 step 4, §12.19 step 4).
 
-Reads a JSON producer's messages via the origin overlay's `form.mapping` (§7.2) and emits the
-`form/conversation` decomposition (§7.8): a `<!--section conversation-->` carrying the
-authorship-ordered `participants:` codebook, one `text/message` per message at `turn=<N>`
-(codebook `participant:` index, source-stated timestamp, in-record `reply_to`), `text/metadata`
-for platform events, attachment markers at `turn=<N>&att=<M>` (no embed — lineage-resolvable,
-§4.3.1.4), and `<!--segment structural-->` topic byte-marks. One shaper serves Discord /
-Google Chat / Facebook / Instagram / Threads and any future JSON chat producer — the difference
-is the overlay's mapping, not code.
+Two distinct shapers, for two distinct producer shapes:
+
+- `shape_conversation` (registered under the `conversation` form id): the generic
+  mapping-driven shaper. Reads a JSON producer's messages via the origin overlay's
+  `form.mapping` (§7.2) and emits the `form/conversation` decomposition (§7.8) FROM SCRATCH:
+  a `<!--section conversation-->` carrying the authorship-ordered `participants:` codebook,
+  one `text/message` per message at `turn=<N>` (codebook `participant:` index, source-stated
+  timestamp, in-record `reply_to`), `text/metadata` for platform events, attachment markers at
+  `turn=<N>&att=<M>` (no embed — lineage-resolvable, §4.3.1.4), and `<!--segment structural-->`
+  topic byte-marks. One shaper serves Discord / Google Chat / Facebook / Instagram / Threads
+  and any future JSON chat producer — the difference is the overlay's mapping, not code.
+
+- `adopt_flat` (registered corpus-locally, keyed on the producer's origin id — e.g. a private
+  corpus's `shapers/imessage.py` registers it under `"imessage-export"`): the §12.19 step-4
+  measured-shortcut ADOPT path for a producer whose own sub-drafter already rendered a
+  faithful, flat, section-less transcript (no JSON mapping involved) — wraps the EXISTING
+  content zone in a whole-record form section, deriving the `participants:` codebook from the
+  record's own already-stored sender field. No re-transcription, no re-addressing.
 
 Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, `author_name`,
 `timestamp`, `text`, `message_id`, `reply_to`, `attachments`, `attachment_url`, plus the three
@@ -56,7 +66,7 @@ from typing import Any
 
 import frontmatter
 
-from corpus import recordbuild
+from corpus import recordbuild, segments
 from corpus.shape import register_shaper, units
 
 _IMAGE_EXT = re.compile(r"\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|heif)(\?|$)", re.IGNORECASE)
@@ -231,3 +241,75 @@ def shape_conversation(
             recordbuild.add_segment(
                 build, atom=_attachment_atom(url), address=f"turn={n}&att={m}",
             )
+
+
+def adopt_flat(
+    build: recordbuild.Build,
+    post: frontmatter.Post,
+    corpus_root: Path,
+    mapping: dict[str, Any],
+) -> None:
+    """The §12.19 step-4 measured-shortcut adopt path (spec §7.8): where a record's content
+    zone is ALREADY a faithful, flat (section-less) rendering that conforms to
+    `form/conversation`'s decomposition — a producer whose own sub-drafter already emitted
+    one message per segment with a verbatim sender field, no JSON `mapping:` involved — wrap
+    it in a whole-record `<!--section conversation-->` opener with NO re-transcription and NO
+    re-addressing. Every existing block is replayed byte-identically through the same
+    `recordbuild` ops `compile`/the mapping-driven shaper use, so grammar and lint validate
+    the replay exactly as they validated the original.
+
+    The `participants:` codebook is the distinct values of `mapping.get("sender_field",
+    "sender")` across the record's OWN existing segments, in first-appearance order — the
+    form's own preference (§7.8: "mechanically derivable from the span's own bytes, always").
+    A segment carrying no such field is simply not consulted (an attachment-only marker with
+    no sender contributes nothing; it is not an error).
+
+    Refuses (raises `ValueError`) rather than force-stamping in two cases the §12.22 lesson
+    warns against: an EMPTY content zone (nothing to adopt — report and skip, never wrap
+    nothing into a section with an empty codebook) and a content zone that ALREADY carries a
+    section (never double-wrap; idempotency guard for a record shaped more than once).
+    """
+    sender_field = str(mapping.get("sender_field") or "sender")
+    existing = segments.iter_blocks(post.content or "")
+    if any(isinstance(b, segments.Section) for b in existing):
+        raise ValueError(
+            "adopt_flat: record already carries a form section — refusing to re-wrap "
+            "(idempotency guard)"
+        )
+    existing_segments = [b for b in existing if isinstance(b, segments.Segment)]
+    if not existing_segments:
+        raise ValueError(
+            "adopt_flat: content zone is empty — nothing to adopt (§12.19 step 4 never "
+            "force-stamps; the caller should skip and report this record)"
+        )
+
+    seen: set[str] = set()
+    codebook: list[str] = []
+    for seg in existing_segments:
+        value = (seg.extra or {}).get(sender_field)
+        if value is None:
+            continue
+        s = str(value).strip()
+        if s and s not in seen:
+            seen.add(s)
+            codebook.append(s)
+
+    # A whole-record form section: no `address` (§4.3.2.1 — omitted when the form governs
+    # the entire content zone).
+    recordbuild.open_section(build, form="conversation", fields={"participants": codebook})
+    for seg in existing_segments:
+        recordbuild.add_segment(
+            build,
+            atom=seg.atom,
+            overlay=seg.overlay,
+            address=seg.address,
+            body=seg.body or None,
+            description=seg.description,
+            # A structural byte-mark's `entry:` rides inside a form span; a content
+            # segment's authored leaf `entry:` does not (none exist in this fleet — the
+            # historical sub-drafter never wrote one — so this never triggers today).
+            entry=seg.entry if seg.is_structural else None,
+            perceptual=seg.perceptual,
+            level=seg.level,
+            extra=seg.extra,
+        )

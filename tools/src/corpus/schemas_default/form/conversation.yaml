@@ -7,6 +7,15 @@ description: |
   subject — which people, which platform, what the conversation is about are the origin
   block's, the bytes', and the ledger's concerns, never this overlay's (§7.8, the
   forms-name-shapes-never-subjects line).
+
+  A THIRD axis, `el=<N>`, covers a chat export drafted from an HTML producer (one
+  addressable element per message/attachment, §6.2) rather than a JSON message array —
+  the imessage-conversation-adopt-32 finding (the §12.22 lesson repeats: measure the real
+  bodies before trusting a contract's enumerated axes). `el=` behaves as an ordinary
+  ordinal turn axis for this producer family (one bubble = one element, assigned in
+  chronological/document order), so `monotonic` stays meaningful for it — unlike the five
+  generic document-family forms, which dropped `monotonic` because their `el=` is a raw
+  extraction index, not reading order (§12.22).
 extended_fields:
   participants:
     type: list
@@ -31,7 +40,7 @@ checks:
   codebook:
     - segment_field: participant
       codebook_field: participants
-  address_axes: [turn, time_range]
+  address_axes: [turn, time_range, el]
   monotonic: true
 normalization:
   guidance: |

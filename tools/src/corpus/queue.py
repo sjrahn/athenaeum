@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT_LEASE_SECONDS",
     "DEFAULT_PRUNE_DAYS",
     "QueueError",
+    "claim",
     "complete",
     "drain",
     "enqueue",
@@ -149,6 +150,31 @@ def drain(root: Path, by: str | None = None, lease: int = DEFAULT_LEASE_SECONDS)
             continue
         break
     return None
+
+
+def claim(root: Path, rid: str, by: str | None = None) -> bool:
+    """Atomically claim a SPECIFIC pending request by id — the targeted counterpart to
+    `drain`'s FIFO next-in-line claim. For a bulk driver that must process a known, bounded
+    id set interleaved in the same FIFO pool as unrelated standing demand (e.g. a mechanical
+    adopt sweep over one origin's records): looping `drain` would occasionally claim a
+    request outside the driver's scope, and repeatedly `release`-ing it back only reorders
+    the same race rather than avoiding it. `claim` lets the driver name exactly the id it
+    wants, leaving every other entry untouched.
+
+    Returns True on a successful claim, False when `rid` has no pending `.req` (already
+    claimed, already settled, or never requested) — never raises, so a caller can treat a
+    False return as "nothing to do here" rather than an error."""
+    req_path = _req(root, rid)
+    claim_path = _claim(root, rid)
+    try:
+        os.rename(req_path, claim_path)  # atomic — decides ownership, same as `drain`'s
+    except OSError:
+        return False
+    data = _read_json(claim_path) or {"id": rid}
+    data["claimed_at"] = _now()
+    data["claimed_by"] = by
+    _write_json(claim_path, data)
+    return True
 
 
 def _try_claim_next(root: Path, qd: Path, by: str | None) -> str | None:
