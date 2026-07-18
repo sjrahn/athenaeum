@@ -1,0 +1,68 @@
+form_id: contact-card
+kind: form
+description: |
+  One address-book contact's field set (spec §7.8) — a vCard's decomposition into its
+  properties, each a quotable, single-line fact. Names a SHAPE, never a person: `form/
+  contact-card` never asserts who the contact IS, which of their numbers is "current," or
+  any relationship — that is ledger knowledge (ATH-CORPUS 2.0). The shape recurs across
+  every vCard-producing origin (iCloud/Apple Contacts, Google Contacts, any future
+  address-book export) — RFC 6350 is one universal interchange format, so one contract
+  serves all of them; only the origin overlay differs (§7.2).
+
+  MODALITY note: unlike `conversation`'s turn-ordered messages, a contact card has no
+  time axis — its properties are a flat, unordered (per RFC 6350) field set. The
+  decomposition still needs SOME address, so `prop=<N>` numbers the card's own properties
+  in file order (mechanically recomputable by re-parsing the card — never a meaningful
+  ordering claim beyond "this is where the source wrote it").
+extended_fields:
+  display_name:
+    type: string
+    required: true
+    role: title
+    description: |
+      The card's display name, mechanically derived by the same fallback chain the
+      vcard-manifest drafter's embed `description:` already uses (spec §12.11): `FN`, else
+      a formed `N` (`Prefixes Given Additional Family Suffixes`), else `ORG` / `NICKNAME` /
+      `EMAIL` / `TEL`, else a positional fallback. Always present (the chain never returns
+      empty) — every contact-card record derives an honest title with NO editorial pass
+      (role-marked, spec §4.2.3): deterministic-before-LLM, exercised.
+decomposition: |
+  The span carries one `text/field` segment per vCard property, in the card's own file
+  order, addressed `prop=<N>` (1-indexed, `BEGIN:VCARD`/`END:VCARD` excluded — same
+  numbering discipline as `card=<N>` on the parent manifest, spec §12.11). Every property
+  the card carries renders — FN, N, TEL, EMAIL, ORG, BDAY, ADR, NICKNAME, NOTE, REV,
+  PRODID, VERSION, any `X-` extension, any grouped (`item1.ADR`) property — nothing is
+  cherry-picked; a faithful decomposition is complete. A property's value is rendered
+  UNFOLDED (RFC 6350 continuation lines rejoined), where the property declares
+  `ENCODING=QUOTED-PRINTABLE`, hex-escape DECODED, and always TEXT-UNESCAPED (RFC 6350
+  §3.4: `\n`/`\N` → a real embedded newline, `\,`/`\;`/`\\` → the literal character —
+  independent of `ENCODING`, so a compound field's own bare `;`/`,` component separators
+  — `N`, `ADR` — are untouched, only a backslash-escaped one decodes; a real address's
+  second line renders as an actual line break, not a visible `\n`) — all three
+  mechanical, disclosed transforms, never a re-interpretation of what the value means. A
+  property whose
+  `ENCODING` is `b`/`BASE64` (an embedded-bytes `PHOTO`/`LOGO`/`SOUND`/`KEY`) renders
+  HEADER-ONLY, no body: the bytes are already faithfully preserved in the record's own
+  artifact (a self-slice, resolvable on demand, spec §4.3.1.4) — transcribing a base64
+  blob into markdown would add nothing but noise. This is the form's one disclosed
+  exclusion, not a gap: nothing is lost, it is simply never duplicated into the rendering.
+checks:
+  envelope_required: [display_name]
+  address_axes: [prop]
+  monotonic: true
+normalization:
+  guidance: |
+    This pass is MECHANICAL end to end (the `corpus.shape.contact_card` shaper) — every
+    fact is recomputable from the card's own bytes, so no interpretive/editorial pass is
+    needed or wanted. The shaper alone satisfies the finalize gate: `display_name` (the
+    role-marked title candidate) is populated by the shaper itself, and the universal
+    `title`/`description` frontmatter fields stay empty by design (an honest empty is not
+    a defect, spec §4.2.3) unless a later describe pass has something genuinely
+    interpretive to add (e.g. annotating a resolved `PHOTO` face — never required).
+
+    Never hand-edit a shaped `text/field` segment: re-run the shaper (`corpus shape`) if
+    the card's bytes change (a re-promote of stale content is a hash mismatch already
+    refused upstream, spec §8.1). Never invent a property the card doesn't carry, never
+    reorder or merge properties, never interpret a value (a `BDAY` of `1604-04-28` is
+    Apple's own year-omitted sentinel — render it verbatim; whether it means "no year
+    known" is ledger knowledge, not a record assertion).

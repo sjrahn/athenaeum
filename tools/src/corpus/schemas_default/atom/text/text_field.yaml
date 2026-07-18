@@ -1,0 +1,54 @@
+class_id: text/field
+kind: atomic
+description: |
+  One labeled scalar fact within a structured-field form's decomposition (spec §7.3) —
+  the `form/contact-card` case: a single vCard property (`TEL`, `EMAIL`, `ORG`, `BDAY`,
+  `ADR`, `N`, `FN`, an `X-` extension, …). The segment body is the property's verbatim
+  value — unfolded and, where the source declares it, QUOTED-PRINTABLE-decoded (both
+  mechanical, disclosed rendering transforms, spec §4.3.2.2) — a single physical line in
+  the overwhelming common case, which is exactly what makes it a clean citation surface
+  (ledger evidence quotes it verbatim). The header carries the property's own name and any
+  parameters, faithfully, so the segment stands on its own without needing the raw bytes.
+
+  Generic by design (an atom declares form, never meaning, spec §7.3's atom
+  constitution): any future structured-field form (a decomposition whose units are their
+  own `name: value` facts, not a message stream) reuses this atom rather than minting a
+  sibling.
+applies_to:
+  atom: text
+enables_lossless: true
+extended_fields:
+  name:
+    type: string
+    required: true
+    description: |
+      The property name, verbatim and uppercase per the source (`FN`, `TEL`, `ADR`,
+      `X-ABLABEL`, …) — RFC 6350's `name` token, never abbreviated or re-cased.
+  group:
+    type: string
+    required: false
+    description: |
+      The property's vCard GROUP prefix, when the source declares one (`item1.ADR` →
+      group `item1`) — RFC 6350's mechanism for relating sibling properties (e.g. an
+      `item1.ADR` and its `item1.X-ABLabel` custom label). Omitted when the source
+      carries no group prefix.
+  params:
+    type: list
+    required: false
+    description: |
+      The property's parameters, verbatim, in source order (`TYPE=CELL`, a bare `PREF`
+      token, `ENCODING=QUOTED-PRINTABLE`, `VALUE=date`, …) — rendered `KEY=value` for a
+      keyed parameter, the bare token alone for an unkeyed one (vCard 2.1 style). Kept
+      even for a control parameter already consumed by the rendering (`ENCODING`): its
+      presence is how a reader sees THAT a decode/omission happened, not just that one
+      did. Omitted when the property carries no parameters.
+normalization:
+  guidance: |
+    Transcribe the property's value verbatim into the body — no paraphrase, no
+    reformatting, no unit conversion. The one licensed transforms are RFC 6350 line-
+    unfolding (already applied before this atom ever sees the value) and QUOTED-PRINTABLE
+    hex-escape decoding where the property declares that encoding — both mechanical and
+    disclosed by the governing form's guidance, never a per-segment editorial choice. A
+    `b`/`BASE64`-encoded property (embedded-bytes `PHOTO`/`LOGO`/`SOUND`/`KEY`) carries an
+    EMPTY body — the governing form's disclosed exclusion — with `params` still faithfully
+    listing the `ENCODING` that explains why.
