@@ -56,6 +56,13 @@ _NOOP_PARAMS: frozenset[str] = frozenset({"dpi", "stream_id", "time", "cut"})
 # ffmpeg engine id into the cache key exactly as `transcribe` folds in its adapter's engine.
 _FFMPEG_ENGINE_PARAMS: frozenset[str] = frozenset({"time_range", "format", "scenes"})
 
+# The CSV row/col unit op (§6.2 `row=`, `col=`) is deterministic (a pure RFC-4180 parse,
+# not an external engine whose output drifts) but still carries a versioned op id
+# (`transforms.csv.ENGINE_VERSION`) folded into the cache key and sidecar, so a later
+# change to row/col extraction semantics is a new id rather than a silent reinterpretation
+# of an already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
+_CSV_OP_PARAMS: frozenset[str] = frozenset({"row", "col"})
+
 # Working kinds whose final cache extension isn't known until the transform chain actually
 # runs: `htmlel` resolves polymorphically to image|bytes (§6.2 `el=`); `video`/`audio`/
 # `media` are ffmpeg-produced Paths whose extension depends on the source's container
@@ -219,6 +226,10 @@ def resolve(
         from .transforms import video as video_tf
 
         version_label = video_tf.ffmpeg_engine_label()
+    elif any(k in _CSV_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import csv as csv_tf
+
+        version_label = csv_tf.ENGINE_VERSION
     else:
         version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
@@ -279,6 +290,10 @@ def resolve(
     # PDF text/probe ops read the source from disk via pypdf (the working value is a
     # pypdfium2 document); hand them the artifact path.
     ctx["artifact_path"] = artifact_binary
+    # `row=`/`col=` (§6.2, §7.1): the mime schema's declared `csv_dialect:` — the engine's
+    # only source of delimiter/quoting/header-presence knowledge (`transforms.csv`).
+    if initial_kind == "csv":
+        ctx["csv_dialect"] = _csv_dialect_for(corpus_root, media_type)
 
     # Initialize working value.
     working: Any
@@ -299,14 +314,18 @@ def resolve(
         with Image.open(artifact_binary) as im:
             im.load()
             working = im.copy()
-    elif initial_kind in ("video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message"):
+    elif initial_kind in (
+        "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv",
+    ):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
         # transform opens the zip to select a content document and its image members; the
         # zip / tar `path=` transforms open the archive to extract a member; the mbox `msg=`
         # transform streams a single message out of the mailbox; the vcard `card=` transform
         # extracts one card's exact bytes from the `.vcf`; the message `part=` transform
-        # decodes one MIME part of an email.
+        # decodes one MIME part of an email; the csv `row=` transform streams one data row
+        # out of the delimited text (containment-aware — a promoted zip-member CSV streams
+        # through `containment.ensure_local_bytes` exactly like any other member).
         working = artifact_binary
     else:
         raise NotImplementedError(f"initial kind {initial_kind!r} not yet supported")
@@ -335,6 +354,13 @@ def resolve(
         if current_kind == "pdfpage":
             working = _render_pdfpage(working, ctx)
             current_kind = "image"
+        # A terminal `csvrow` (bare `row=N`, no trailing `col=`) renders to its exact raw
+        # source text — mirroring `pdfpage`'s terminal-render contract, so a segment's
+        # `address: row=N` marker resolves to the row's bytes exactly as `page=N` resolves
+        # to the page image.
+        if current_kind == "csvrow":
+            working = working.raw
+            current_kind = "text"
         # A terminal `htmlel` (bare `el=N`) materializes to its concrete output: an `<img>`
         # to a PIL image (cache PNG), a media/attachment carrier to raw bytes (cache the
         # media's native extension). The cache path was deferred — set it now.
@@ -696,6 +722,9 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     # A terminal `pdfpage` renders to an image (see resolve()).
     if current == "pdfpage":
         current = "image"
+    # A terminal `csvrow` renders to raw text (see resolve()).
+    if current == "csvrow":
+        current = "text"
     return current
 
 
@@ -750,6 +779,31 @@ def _working_kind_for(corpus_root: Path, media_type: str) -> str | None:
     if isinstance(kind, str) and kind:
         return kind
     return _INITIAL_KIND_FOR_MIME.get(media_type)
+
+
+# `row=`/`col=` (§6.2) never hardcode delimiter/quoting/header-presence — every field here
+# is overridden by the mime schema's own `csv_dialect:` (§7.1, `text_csv.yaml`) when declared.
+_DEFAULT_CSV_DIALECT: dict[str, Any] = {
+    "delimiter": ",",
+    "quotechar": '"',
+    "doublequote": True,
+    "header_row": True,
+    "quoting": "minimal",
+}
+
+
+def _csv_dialect_for(corpus_root: Path, media_type: str) -> dict[str, Any]:
+    """The CSV dialect config for a media type: the mime schema's declared `csv_dialect:`
+    deep-merged over the RFC 4180 / Excel-dialect default, so a schema may override just
+    one field (e.g. `delimiter: ";"`) without restating the rest."""
+    from . import schemas
+
+    schema = schemas.load_mime_schema(corpus_root, media_type) or {}
+    declared = schema.get("csv_dialect")
+    merged = dict(_DEFAULT_CSV_DIALECT)
+    if isinstance(declared, dict):
+        merged.update(declared)
+    return merged
 
 
 def _load_record(corpus_root: Path, record_hash: str):

@@ -490,3 +490,46 @@ def test_verify_section_header_title_quote(tmp_path: Path) -> None:
     res = verify_ledger(ledger, join, set(), stamp=False)
     assert res.verified == 1
     assert not res.errors and not res.warnings
+
+
+def test_verify_row_axis_falls_back_to_record_scoped(tmp_path: Path) -> None:
+    """A CSV row=/col= evidence anchor (corpus §6.2's `row=`/`col=` resolver unit op)
+    cites a record whose rows are NEVER stored as segments
+    (`row=<N>` is a pure resolver derivation, deliberately not a body address axis) —
+    confirming `_parse_axis_values`'s integer-span parsing handles `row=` generically
+    (the contact-card arc's precedent for `turn=`/`card=`) exactly like any other
+    address the record's markdown doesn't carry: `scoped_text` reports `unchecked`
+    (empty `content.spans['row']`, no segments at all), the quote search falls back to
+    the whole record, and — since a terminal CSV record's origin block still carries a
+    citable `filename:` field — the citation verifies, `record_scoped`, never a hard
+    failure and never a crash on the string-valued `col=` companion param."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "7" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/csv", fields={})
+    records.append_origin_block(
+        post, snapshot="2026-01-01T00:00:00Z", fields={"filename": "trips_data-0.csv"}
+    )
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:file", "predicate": "sourced-from", "value": "x",
+                    "status": "provisional", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "row=37&col=city_name",
+                                  "quote": "trips_data-0.csv",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1 and res.record_scoped == 1
+    assert not res.errors and not res.warnings

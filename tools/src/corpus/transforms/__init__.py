@@ -19,6 +19,9 @@ Kinds:
 - `"mbox"`    — `pathlib.Path` (the artifact `.mbox`; `msg=<N>` streams one message out)
 - `"vcard"`   — `pathlib.Path` (the artifact `.vcf`; `card=<N>` extracts one card's bytes)
 - `"message"` — `pathlib.Path` (the artifact `.eml`; `part=<N>` decodes one MIME part)
+- `"csv"`     — `pathlib.Path` (the artifact `.csv`; `row=<N>` selects one data row)
+- `"csvrow"`  — `transforms.csv.CsvRowRef` (a selected row; renders to raw text on demand,
+  like `pdfpage`; `col=<name-or-index>` narrows to one field)
 - `"bytes"`   — `bytes` (a raw member, cached verbatim)
 """
 
@@ -49,6 +52,10 @@ class RenderContext(TypedDict, total=False):
     # `format=`/`scenes=` read them to compose ffmpeg `-map` selection and cut semantics.
     cut_mode: str
     stream_ids: list
+    # The mime schema's declared `csv_dialect:` (§7.1, `text_csv.yaml`), plumbed in once
+    # by the resolver for every `csv`-working-kind resolve so `row=`/`col=` never hardcode
+    # delimiter/quoting/header-presence knowledge (`transforms.csv`).
+    csv_dialect: dict
 
 
 HandlerFunc = Callable[[Any, str | None, RenderContext], Any]
@@ -83,6 +90,7 @@ def lookup(input_kind: str, param_name: str) -> Handler | None:
 
 # Importing the per-kind submodules registers their handlers.
 from . import audio as _audio  # noqa: E402, F401
+from . import csv as _csv  # noqa: E402, F401
 from . import epub as _epub  # noqa: E402, F401
 from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401

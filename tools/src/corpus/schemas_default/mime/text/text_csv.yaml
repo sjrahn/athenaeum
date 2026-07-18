@@ -1,0 +1,59 @@
+description: |
+  Delimiter-separated tabular text — a producer's exported dataset (a rides history, a
+  transaction ledger, a contact list dumped flat). The artifact bytes are the canonical
+  source; no row is lifted into a stored segment (spec §6.2's design intent: a CSV's rows
+  are addressed by the `row=<N>` resolver unit op, never by per-row body content — the
+  same "member, not a stored copy" discipline the mbox `msg=` and vcard `card=` transforms
+  apply on the container axis, here applied on the read-time derivation axis instead,
+  since a plain CSV is one work, not a manifest of independently promotable members).
+
+  **Dialect is schema-declared, never hardcoded in the engine.** `csv_dialect:` below
+  pins the delimiter, quote character, quoting mode, and header-row presence that
+  `transforms/csv.py` reads from the render context — a corpus meeting a non-comma
+  "CSV" (a semicolon-delimited European export, a header-less dump) declares its own
+  dialect on a corpus-local override of this schema; the default here is RFC 4180 /
+  Excel-dialect: comma-delimited, double-quote-quoted, `"` escaped by doubling, header
+  row present.
+applies_to:
+  content_types:
+  - text/csv
+# Resolver's initial working kind for the functional-URI pipeline: `row=<N>` selects one
+# data row (`transforms/csv.py`), auto-rendering to its raw text when terminal, exactly as
+# a PDF `page=<N>` selector auto-renders to an image.
+working_kind: csv
+# The dialect knob `transforms/csv.py` reads via the render context (resolver.py plumbs it
+# in for every `csv`-working-kind resolve) — delimiter/quoting/header-presence live HERE,
+# never in the engine, so a deviant producer's export is one schema override away.
+csv_dialect:
+  delimiter: ","
+  quotechar: '"'
+  doublequote: true
+  header_row: true
+  quoting: minimal
+# (3.3, §7.1) The format's terminal-contract default: a delimited-text dataset is its own
+# terminal rendering — no markdown shape renders it more faithfully than the bytes
+# themselves, read through `row=`/`row=&col=` (§6.2). An origin overlay's own `form:`
+# (§7.2) — or a per-record asserted whole-record section — overrides this default either
+# way (§7.8).
+form:
+  id: passthrough
+address_scheme:
+- param: row
+  type: integer
+  description: |-
+    `row=<N>` — the 1-indexed Nth DATA row (header excluded when `csv_dialect.header_row`
+    is true), addressed by resolver ordinal, never by a stored segment. Bare `row=<N>` is
+    terminal and resolves to the row's exact raw source text (RFC 4180-aware: a quoted
+    field's embedded delimiter/newline/quote never splits the row). `row=<N>&col=…`
+    refines to a single field. Streaming: the resolver stops at row N, never reading the
+    rest of the file.
+- param: col
+  type: string
+  description: |-
+    `row=<N>&col=<name-or-index>` — that row's single field value. A header-name match
+    (case-sensitive, exact) is preferred when `csv_dialect.header_row` is true and the
+    name matches one of the header's fields; otherwise the value is taken as a 1-indexed
+    integer column. `col=` alone, with no preceding `row=`, is a hard error — there is no
+    row to read a column from (`transforms/csv.py`).
+transport_algos:
+- sha256
