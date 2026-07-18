@@ -21,7 +21,10 @@ Two distinct shapers, for two distinct producer shapes:
 
 Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, `author_name`,
 `timestamp`, `text`, `message_id`, `reply_to`, `attachments`, `attachment_url`, plus the three
-§12.18 step-4 capabilities:
+§12.18 step-4 capabilities and the three FB/IG-arc additions (2026-07-17, the Meta producer
+family — Facebook/Instagram/Threads — measured against `units.unit_array`/`units.attachments`,
+shared by this shaper and the resolver's `turn=` unit op, so each is a single-point-of-truth
+addition, not per-consumer logic):
 
 - `kind` (dotted path) + `event_kinds` (list of verbatim values): a unit whose `kind` value is
   in `event_kinds` is a **platform event** — emitted as `text/metadata` EVEN WHEN AUTHORED
@@ -40,6 +43,21 @@ Mapping keys consumed: `messages` (dotted path to the unit array), `author_id`, 
   case). The one supported style, `google-takeout-en-utc`, normalizes Google's fixed
   English-locale UTC takeout strings to ISO-8601; anything that doesn't match stays verbatim. An
   EMPTY timestamp value (a blank `created_date`) omits the envelope field entirely.
+- `order` (optional mapping scalar, consumed in `units.unit_array`): absent = the source array
+  is already oldest-first. The one supported value, `newest-first`, reverses it before turn
+  assignment — Meta's own `messages[]` (Facebook/Instagram/Threads) is newest-first, so this is
+  what makes `turn=1` the OLDEST message for that producer family, matching every other producer
+  this shaper serves.
+- `attachments` as a LIST of dotted paths (consumed in `units.attachments`), instead of one
+  dotted path: each listed path's array is resolved and concatenated, in declaration order, into
+  one virtual attachment list — Meta's five parallel per-kind arrays (`photos`/`videos`/`gifs`/
+  `audio_files`/`files`, identical `{uri, creation_timestamp?}` item shape) union this way rather
+  than needing a multi-attachments-field capability of their own.
+- `text_encoding` (optional mapping scalar, consumed via `units.text_encoding_repair` on the
+  mapped `author_name`/`text` values, both codebook-building and per-turn): absent = no repair.
+  The one supported style, `meta-mojibake`, reverses Meta's export bug (UTF-8 bytes misread as
+  Latin-1, re-escaped) via a guarded `encode('latin-1').decode('utf-8')` round-trip, safe to
+  apply uniformly (already-correct text round-trips as a no-op or is left verbatim on failure).
 
 **Topic-mark address decision.** The mark shares its `turn=<N>` address with that turn's
 `text/message` segment. This is legal: `segment-address-duplicate` keys on `(opener-id, address)`,
@@ -169,7 +187,9 @@ def shape_conversation(
         if topic_val is not None:
             topic_counts[str(topic_val)] = topic_counts.get(str(topic_val), 0) + 1
         author_id = units.field(msg, mapping, "author_id")
-        author_name = units.field(msg, mapping, "author_name")
+        author_name = units.text_encoding_repair(
+            units.field(msg, mapping, "author_name"), mapping
+        )
         if author_id is None and author_name is None:
             continue  # an author-less platform event — no codebook slot
         entry = _codebook_entry(author_name, author_id)
@@ -189,9 +209,11 @@ def shape_conversation(
     seen_topics: set[str] = set()
     for n, msg in enumerate(messages, start=1):
         author_id = units.field(msg, mapping, "author_id")
-        author_name = units.field(msg, mapping, "author_name")
+        author_name = units.text_encoding_repair(
+            units.field(msg, mapping, "author_name"), mapping
+        )
         author_present = author_id is not None or author_name is not None
-        text = units.field(msg, mapping, "text")
+        text = units.text_encoding_repair(units.field(msg, mapping, "text"), mapping)
         body = str(text) if text is not None else ""
         timestamp = units.field(msg, mapping, "timestamp")
 

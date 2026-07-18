@@ -42,12 +42,28 @@ def load_json_artifact(corpus_root: Path, post: frontmatter.Post) -> Any:
     return json.loads(binary.read_text(encoding="utf-8"))
 
 
+#: The one supported `order` value (named for the producer semantics it declares, exactly as
+#: `timestamp_style`'s one supported style is named for Google's takeout format): a source whose
+#: own array is newest-message-first (Meta's Facebook/Instagram/Threads `messages[]`). The shaper
+#: and the resolver's `turn=` unit op share `unit_array`, so declaring this once here makes
+#: `turn=1` the OLDEST message everywhere, with no per-consumer reversal logic.
+_NEWEST_FIRST = "newest-first"
+
+
 def unit_array(data: Any, mapping: dict[str, Any]) -> list[Any]:
     """The unit array per `mapping['messages']` (a dotted path; empty/absent uses the JSON root
-    when it is itself a list). Returns [] when the path resolves to a non-list."""
+    when it is itself a list). Returns [] when the path resolves to a non-list.
+
+    `mapping['order']`: absent means the array is already oldest-first (unchanged). The one
+    supported value, `newest-first`, reverses it so `turn=1` is always the OLDEST unit — Meta's
+    own export order (Facebook/Instagram/Threads) is newest-first, backwards from every other
+    producer this shaper serves."""
     path = str(mapping.get("messages") or "")
     arr = get_path(data, path) if path else data
-    return arr if isinstance(arr, list) else []
+    arr = arr if isinstance(arr, list) else []
+    if str(mapping.get("order") or "") == _NEWEST_FIRST:
+        arr = list(reversed(arr))
+    return arr
 
 
 def unit(data: Any, mapping: dict[str, Any], n: int) -> Any:
@@ -66,6 +82,50 @@ def field(msg: Any, mapping: dict[str, Any], name: str) -> Any:
 
 
 def attachments(msg: Any, mapping: dict[str, Any]) -> list[Any]:
-    """The unit's attachment array per `mapping['attachments']`, or []."""
+    """The unit's attachment array per `mapping['attachments']`, or [].
+
+    `mapping['attachments']` is normally one dotted path (a single array field). When it is
+    instead a LIST of dotted paths, each path's array is resolved against the unit and the
+    results are concatenated in declaration order into one virtual attachment list — Meta's
+    per-kind split (`photos[]`/`videos[]`/`gifs[]`/`audio_files[]`/`files[]`, all sharing the
+    same `{uri, creation_timestamp?}` item shape) is the motivating case: a single dotted path
+    can express only one of the five arrays, so a list union covers all of them without
+    inventing a new attachment shape. `att=<M>` indexing is stable across calls: `unit_array`'s
+    result — and hence each unit's own field values — never changes between the shaper's pass
+    and the resolver's `turn=<N>&att=<M>` lookup for the same record."""
+    paths = mapping.get("attachments")
+    if isinstance(paths, list):
+        result: list[Any] = []
+        for p in paths:
+            arr = get_path(msg, str(p))
+            if isinstance(arr, list):
+                result.extend(arr)
+        return result
     arr = field(msg, mapping, "attachments")
     return arr if isinstance(arr, list) else []
+
+
+#: The one supported `text_encoding` value: Meta's export mojibake bug — the JSON serializer
+#: encodes non-ASCII text as if its UTF-8 bytes were Latin-1 codepoints, then escapes those.
+#: Reversible by reading the mangled string back as Latin-1 bytes and decoding as UTF-8.
+_META_MOJIBAKE = "meta-mojibake"
+
+
+def text_encoding_repair(value: Any, mapping: dict[str, Any]) -> Any:
+    """Apply the mapping's declared `text_encoding` repair to one mapped string field
+    (`author_name` / `text`), or return `value` unchanged when no repair is declared, the style
+    is unrecognized, or the value isn't a string (non-strings, including None, pass through).
+
+    The one supported style, `meta-mojibake`, reverses Meta's export bug — confirmed
+    mechanically reversible across the Facebook/Instagram/Threads census
+    (`"Szymon GrabiÅ„ski"` -> `"Szymon Grabiński"`): `value.encode('latin-1').decode('utf-8')`,
+    guarded by a try/except that falls back to the original string when the bytes don't
+    round-trip — safe to apply uniformly, including to already-correct ASCII/UTF-8 text (a
+    disclosed, per-producer mapping key, never a silent global heuristic — spec §7.2's
+    `timestamp_style` precedent for a narrowly-named, opt-in text transform)."""
+    if str(mapping.get("text_encoding") or "") != _META_MOJIBAKE or not isinstance(value, str):
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
