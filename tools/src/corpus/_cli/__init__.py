@@ -44,6 +44,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "crawl":           ("Crawl & discovery",      "Same-domain BFS over a seed URL (captures each page)"),
     "links":           ("Crawl & discovery",      "List outbound URLs from a record's HTML artifact"),
     # Inspect (P1)
+    "inspect":         ("Inspect",                "One-stop card: identity, artifact, origins, content axes, resolver ops"),
     "show":            ("Inspect",                "Compact record summary (frontmatter + content blocks)"),
     "diagnose":        ("Inspect",                "Per-record one-pager: lint + derived views + block TOC (normalizer's first call)"),
     "guidance":        ("Inspect",                "Print the normalization guidance for a record's mime + applied overlays"),
@@ -130,12 +131,23 @@ def dispatch(argv: Sequence[str]) -> int:
 # ---------- internals ---------- #
 
 
+#: Command names that get a trailing-underscore module file even though they aren't a
+#: Python keyword — `inspect` collides with the stdlib module of the same name, which a
+#: module in this package (or a test) may also want as `import inspect`; several other
+#: commands (`queue`, `gc`, ...) shadow a stdlib name too but predate this convention and
+#: stay bare (`corpus._cli.queue` is only ever imported fully-qualified) — this set is
+#: deliberately an explicit opt-in, not every stdlib-name collision, so an unrelated future
+#: command doesn't silently start requiring a trailing underscore.
+_STDLIB_SHADOW_NAMES: frozenset[str] = frozenset({"inspect"})
+
+
 def _module_name(cmd: str) -> str:
     """Map a subcommand name to its module name (dashes → underscores). A name that
     collides with a Python keyword (e.g. `await`) gets a trailing underscore so the
-    module file is importable (`await_.py`)."""
+    module file is importable (`await_.py`); `_STDLIB_SHADOW_NAMES` opts in a few more
+    for the same reason (`inspect_.py`)."""
     name = cmd.replace("-", "_").replace(".", "_")
-    if keyword.iskeyword(name):
+    if keyword.iskeyword(name) or name in _STDLIB_SHADOW_NAMES:
         name += "_"
     return name
 

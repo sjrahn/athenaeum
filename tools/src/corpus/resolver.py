@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -936,6 +937,95 @@ def _working_kind_for(corpus_root: Path, media_type: str) -> str | None:
     if isinstance(kind, str) and kind:
         return kind
     return _INITIAL_KIND_FOR_MIME.get(media_type)
+
+
+# ---------- op introspection (§6.2 — `corpus inspect`'s resolver-ops section) ---------- #
+
+
+@dataclass(frozen=True)
+class ResolverOp:
+    """One functional-URI transform reachable for a media type's resolver pipeline —
+    surfaced for read-only introspection (`corpus inspect`), never used by `resolve()`
+    itself. `engine_version` is the op's STATIC version pin (`transforms.csv.ENGINE_VERSION`,
+    `transforms.vcard.ENGINE_VERSION`) when one applies to this exact param — None for an
+    unpinned op and for the runtime-determined engines (`transcribe`'s adapter, the ffmpeg
+    muxing family), which inspection deliberately does not resolve (read-only; no shell-out,
+    no config lookup)."""
+
+    param: str
+    from_kind: str
+    output_kind: str
+    engine_version: str | None
+
+
+def working_kind_for(corpus_root: Path, media_type: str) -> str | None:
+    """Public alias of `_working_kind_for` — the resolver pipeline's initial working kind
+    for a media type, or None when nothing is registered. Exposed so a read-only caller
+    (`corpus inspect`) can report it without reaching into the private name."""
+    return _working_kind_for(corpus_root, media_type)
+
+
+def ops_for_media_type(corpus_root: Path, media_type: str) -> list[ResolverOp]:
+    """Every functional-URI transform reachable for `media_type`'s resolver pipeline: the
+    initial working kind (`_working_kind_for`) plus every follow-on kind the param chain can
+    reach — a csv `row=` op's `csvrow` output takes `col=`; a pdf `page=` op's `pdfpage`
+    output takes `render`/`text`/`words`/`probe`; an html `el=` op's `htmlel` output takes
+    every image-kind op too, through the resolver's own `pdfpage`/`htmlel` auto-promotion
+    (`_resolve_handler`, mirrored here as an explicit reachable-kind edge since no registry
+    entry names it directly).
+
+    Derived live from `transforms.REGISTRY` — never a hardcoded op table, so a new
+    transform module registering itself is picked up with zero changes here. Returns `[]`
+    when the mime has no registered pipeline (§7.1 `working_kind:`) — itself the honest
+    answer for a mime the resolver has no transform for."""
+    initial_kind = _working_kind_for(corpus_root, media_type)
+    if initial_kind is None:
+        return []
+
+    out: list[ResolverOp] = []
+    seen_kinds: set[str] = set()
+    queue: list[str] = [initial_kind]
+    while queue:
+        kind = queue.pop(0)
+        if kind in seen_kinds:
+            continue
+        seen_kinds.add(kind)
+        for (in_kind, key), handler in transforms.REGISTRY.items():
+            if in_kind != kind:
+                continue
+            out.append(
+                ResolverOp(
+                    param=key,
+                    from_kind=in_kind,
+                    output_kind=handler.output_kind,
+                    engine_version=_static_engine_version(key),
+                )
+            )
+            queue.append(handler.output_kind)
+        # The resolver's own auto-promotion (`_resolve_handler`, above): an intermediate
+        # `pdfpage`/`htmlel` selector takes every image-kind op too (rendered to an image
+        # first) even where — as for `htmlel` — no registry entry makes "image" a directly
+        # reachable follow-on kind.
+        if kind in ("pdfpage", "htmlel"):
+            queue.append("image")
+    return out
+
+
+def _static_engine_version(key: str) -> str | None:
+    """`key`'s statically-declared engine pin, or None. Reuses the exact per-param scoping
+    the resolver's own cache-key folding uses (`_CSV_OP_PARAMS`, `_VCARD_OP_PARAMS`, above)
+    so this can never drift from what a real `resolve()` actually keys on — e.g. vcard's
+    `card=` is deliberately unpinned here exactly as it is there (only `prop=` folds
+    `vcard-prop@1`)."""
+    if key in _CSV_OP_PARAMS:
+        from .transforms import csv as csv_tf
+
+        return csv_tf.ENGINE_VERSION
+    if key in _VCARD_OP_PARAMS:
+        from .transforms import vcard as vcard_tf
+
+        return vcard_tf.ENGINE_VERSION
+    return None
 
 
 # `row=`/`col=` (§6.2) never hardcode delimiter/quoting/header-presence — every field here
