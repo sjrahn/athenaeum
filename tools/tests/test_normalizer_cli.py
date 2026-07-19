@@ -12,7 +12,7 @@ from pathlib import Path
 
 import frontmatter
 
-from corpus import paths, records, schemas, segments
+from corpus import paths, queue, records, schemas, segments
 from corpus._cli import dispatch
 
 RID = "a1" * 32
@@ -86,6 +86,35 @@ def test_guidance(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "## mime schema" in out
     assert "Treat the transcript as the primary text" in out  # applied origin guidance
+
+
+def test_guidance_shows_enqueue_hint_when_present(tmp_path, capsys):
+    """A live (pending or claimed) queue entry's requester hint (§8.5, 3.3) surfaces on
+    the drain side — the proposes/disposes seam."""
+    root = _corpus(tmp_path)
+    _record(root)
+    queue.enqueue(root, RID, hint="candidate form: conversation")
+    dispatch(["guidance", RID, "--corpus-root", str(root)])
+    out = capsys.readouterr().out
+    assert "## enqueue hint" in out
+    assert "candidate form: conversation" in out
+    assert "requested" in out  # the entry's state is labeled, not just the hint text
+
+
+def test_guidance_omits_enqueue_hint_section_when_absent(tmp_path, capsys):
+    """No live queue entry (or one with no hint) — the section is omitted entirely,
+    never printed empty."""
+    root = _corpus(tmp_path)
+    _record(root)
+    dispatch(["guidance", RID, "--corpus-root", str(root)])
+    out = capsys.readouterr().out
+    assert "## enqueue hint" not in out
+
+    # A live entry with no hint at all is likewise silent on this section.
+    queue.enqueue(root, RID)
+    dispatch(["guidance", RID, "--corpus-root", str(root)])
+    out = capsys.readouterr().out
+    assert "## enqueue hint" not in out
 
 
 def test_overlay_resolves_origin_overlay(tmp_path, capsys):

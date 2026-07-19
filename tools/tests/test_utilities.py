@@ -5,7 +5,7 @@ from __future__ import annotations
 import frontmatter
 import pytest
 
-from corpus import hashing, mime, paths, touches, urls
+from corpus import hashing, mime, paths, schemas, touches, urls
 
 
 def test_hash_file_and_bytes_agree(tmp_path):
@@ -98,6 +98,36 @@ def test_mime_extension_for():
     assert mime.extension_for("application/x-ndjson") == "jsonl"
     assert mime.extension_for("audio/mp4") == "m4a"
     assert mime.extension_for("application/epub+zip") == "epub"
+
+
+def test_mime_citation_surface_builtin_defaults():
+    # The HTML family is `segments` (presentation soup — nav chrome, script payloads);
+    # every other bundled type defaults to `raw` (the derived body IS faithful content).
+    assert mime.citation_surface("text/html") == "segments"
+    assert mime.citation_surface("application/xhtml+xml") == "segments"
+    assert mime.citation_surface("application/json") == "raw"
+    assert mime.citation_surface("text/csv") == "raw"
+    assert mime.citation_surface("text/plain") == "raw"
+
+
+def test_mime_citation_surface_schema_override(tmp_path):
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    (root / "schema").mkdir()
+    schemas.cache_clear()
+
+    # No corpus_root in scope → the built-in default (raw) applies.
+    assert mime.citation_surface("application/pdf") == "raw"
+
+    local_pdf = root / "schema" / "mime" / "application" / "application_pdf.yaml"
+    local_pdf.parent.mkdir(parents=True, exist_ok=True)
+    local_pdf.write_text(
+        "applies_to:\n  content_types: [application/pdf]\ncitation_surface: segments\n",
+        encoding="utf-8",
+    )
+    schemas.cache_clear()
+    # A corpus-declared `citation_surface:` on the mime schema wins over the built-in.
+    assert mime.citation_surface("application/pdf", root) == "segments"
 
 
 def test_urls_normalize_sorts_query_strips_fragment():

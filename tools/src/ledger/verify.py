@@ -14,6 +14,14 @@ text (time_range, frame, bbox, path, #fragment) and `ref://` citations
 
 A claim whose evidence FAILS is flagged at the severity of its status:
 `confirmed` failing is an error; lower rungs warn.
+
+*(1.4)* One gate ignores claim status entirely: a `segments`-surface record
+(corpus §7.1 — raw/derived whole-record text that is presentation soup, e.g.
+a captured HTML DOM) carrying zero persisted segments has no citable surface
+at all, so claim evidence citing it is an ERROR at any status, before any
+anchor/quote matching (§13.2.4). Interpretations are exempt from the error —
+they may reference such a record freely — but draw a WARNING when they do so
+without a matching `enqueue`/`promote` need naming the same hash.
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ledger.corpora import CorpusJoin
-from ledger.model import derived_uri
+from ledger.model import CORPUS_URI_RE, derived_uri
 
 _SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 _UNCHECKED_PARAMS = {"time_range", "frame", "bbox", "path", "region", "rotate"}
@@ -37,6 +45,12 @@ class RecordContent:
     spans: dict[str, list[tuple[int, int, str]]]  # axis -> [(lo, hi, text)]
     full_text: str
     touch: str  # the latest touch identity ("" when the record carries none)
+    media_type: str = ""
+    # the format's honest citation-surface class (corpus §7.1, ledger.md §6.3/§13.2.4):
+    # "segments" — citable only once persisted segments exist; "raw" — the default,
+    # record-wide verbatim quotes are honest even on a formless record
+    citation_surface: str = "raw"
+    segment_count: int = 0  # addressable leaf segments the record actually persists
 
 
 @dataclass
@@ -216,7 +230,15 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         pass
     touches = post.metadata.get("touch") or []
     touch = str(touches[-1]) if isinstance(touches, list) and touches else ""
-    return RecordContent(spans=spans, full_text="\n".join(texts), touch=touch)
+    from corpus.mime import citation_surface as _citation_surface_for
+
+    media_type = records.media_type_for(post)
+    surface = _citation_surface_for(media_type, corpus_root=corpus_root)
+    segment_count = sum(1 for _ in segments.leaf_segments(blocks))
+    return RecordContent(
+        spans=spans, full_text="\n".join(texts), touch=touch,
+        media_type=media_type, citation_surface=surface, segment_count=segment_count,
+    )
 
 
 def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[str | None, str]:
@@ -326,6 +348,20 @@ def verify_ledger(
                     bad(skey)
                     continue
                 source_touch[skey] = content.touch
+                if content.citation_surface == "segments" and content.segment_count == 0:
+                    # §13.2.4: a segments-surface record with no persisted segments has
+                    # no citable surface at all — record-wide matching against its raw/
+                    # derived whole-record text (nav chrome, script payloads, inlined
+                    # framing) would be structurally misleading, not merely weak. This
+                    # is an error regardless of claim status (unlike `sev` below), and
+                    # it preempts anchor/quote matching entirely — no fallback applies.
+                    res.errors.append(
+                        f"{where}: evidence cites corpus://{h[:12]}… whose mime "
+                        f"({content.media_type}) requires a rendered surface — no "
+                        "persisted segments; enqueue for normalize, cite after (§13.2.4)"
+                    )
+                    bad(skey)
+                    continue
                 anchor = e.get("anchor")
                 uri = derived_uri(sources, skey, anchor) or f"corpus://{h}"
                 from corpus import functional_uri
@@ -408,4 +444,54 @@ def verify_ledger(
         if dirty:
             f.write_text(json.dumps(fact, indent=2, ensure_ascii=False) + "\n",
                          encoding="utf-8")
+
+    # §13.2.4 (interpretations exempt from the error): a segment-less
+    # segments-surface record may be referenced freely — the pre-assertion
+    # workspace exists precisely to hold discoveries the evidence bar can't
+    # yet carry — but referencing one without a matching enqueue/promote
+    # need (naming that same hash) draws a warning, so the normalize demand
+    # rides along with the discovery instead of silently going missing.
+    for f in sorted(ledger_root.glob("interpretations/*.json")):
+        try:
+            interp = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(interp, dict):
+            continue
+        where = f"interpretations/{f.name} :: {interp.get('id')}"
+        need_hashes: set[str] = set()
+        for n in interp.get("needs") or []:
+            if not isinstance(n, dict) or n.get("action") not in ("enqueue", "promote"):
+                continue
+            nm = CORPUS_URI_RE.match(str(n.get("record", "")))
+            if nm:
+                need_hashes.add(nm.group(1))
+        # corpus:// refs live in two homes on an interpretation: `based_on` (the
+        # standard reference list) and — for a hypothesis's `proposes` — the
+        # pre-reforge inline-`uri` evidence shape (proposes predates the fact it
+        # targets, so it can't yet cite a sources-table key, check.py's
+        # PROPOSES_EVIDENCE_KEYS handling). Both are references the discovery
+        # rides on, so both draw the same warning under the same need-matching.
+        refs: list[str] = list(interp.get("based_on") or [])
+        proposes = interp.get("proposes")
+        if isinstance(proposes, dict):
+            for pe in proposes.get("evidence") or []:
+                if isinstance(pe, dict):
+                    refs.append(str(pe.get("uri", "")))
+        warned: set[str] = set()
+        for b in refs:
+            m = CORPUS_URI_RE.match(str(b))
+            if not m or m.group(1) in warned or m.group(1) in need_hashes:
+                continue
+            h = m.group(1)
+            content = content_for(h)
+            if content is None or content.citation_surface != "segments" \
+                    or content.segment_count != 0:
+                continue
+            warned.add(h)
+            res.warnings.append(
+                f"{where}: references corpus://{h[:12]}… (segments-surface, none "
+                "persisted) with no enqueue/promote need — type the demand beside "
+                "the discovery"
+            )
     return res

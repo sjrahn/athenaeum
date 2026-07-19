@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from corpus import paths, records, schemas
+from corpus import queue as _queue
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
@@ -38,6 +39,8 @@ def run(args: argparse.Namespace) -> int:
     print(f"# guidance for {record_id[:12]}…  (mime: {mime or '?'})")
     print()
 
+    _print_enqueue_hint(corpus_root, record_id)
+
     stem = schemas.mime_schema_id_for(corpus_root, mime) if mime else None
     if stem is None:
         print(f"## mime schema\n\n_No mime schema declares `{mime}`._\n")
@@ -57,6 +60,22 @@ def run(args: argparse.Namespace) -> int:
             _print_guidance_block(f"origin {oid}", _origin_overlay_relpath(corpus_root, oid), ov, level=3)
 
     return 0
+
+
+def _print_enqueue_hint(corpus_root: Path, record_id: str) -> None:
+    """Surface a live queue entry's requester hint (§8.5, 3.3) — the proposes/disposes
+    seam: a reader may propose what a record looks like without authoring anything; the
+    normalizer disposes against the bytes. Printed only when a pending or claimed queue
+    entry for this record actually carries a hint; omitted entirely otherwise (no empty
+    section), since most records have no live entry at all."""
+    st = _queue.state(corpus_root, record_id)
+    hint = st.get("hint")
+    if st.get("state") not in ("requested", "claimed") or not hint:
+        return
+    print("## enqueue hint\n")
+    print(f"_requester context ({st['state']}) — a proposal, not an assertion:_\n")
+    print(hint)
+    print()
 
 
 def _guidance_text(schema: dict[str, Any]) -> str:

@@ -97,7 +97,11 @@ def _emit(rid: str | None, root, as_json: bool) -> int:
     if rid is None:
         return 1  # empty queue — the loop's stop signal (nothing on stdout)
     if as_json:
-        print(json.dumps({"id": rid, "record": str(paths.record_path(root, rid))}))
+        obj = {"id": rid, "record": str(paths.record_path(root, rid))}
+        hint = _queue.state(root, rid).get("hint")
+        if hint:
+            obj["hint"] = hint
+        print(json.dumps(obj))
     else:
         print(rid)
     return 0

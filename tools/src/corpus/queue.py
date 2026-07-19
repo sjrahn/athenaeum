@@ -114,18 +114,37 @@ def _mtime(path: Path) -> datetime.datetime:
 # ---------- request / claim / settle ---------- #
 
 
-def enqueue(root: Path, rid: str, by: str | None = None) -> str:
+def enqueue(root: Path, rid: str, by: str | None = None, hint: str | None = None) -> str:
     """Request a (re-)normalization pass for `rid`. Status-independent (§8.5) — the
     caller decides a record wants normalizing; the queue does not inspect it.
 
+    `hint` (§8.5, 3.3) is free-text requester context — the proposes/disposes seam: a
+    reader may propose what a formless record looks like without authoring anything; the
+    normalizer disposes against the bytes. Stored on the request and carried into the
+    claim (a claim is an atomic rename of the request file, so its payload rides along
+    unchanged).
+
     Idempotent: a request that arrives while one is already pending or in flight
-    joins it. Returns ``"requested"`` | ``"already-requested"`` | ``"in-flight"``.
+    joins it. A joining request's `hint` APPENDS to any existing hint (joined with
+    ``"; "``), never overwriting it — a request arriving while claimed (in-flight) is
+    reported but not persisted, exactly as before hints existed: the pass already
+    underway claimed the prior request's payload. Returns ``"requested"`` |
+    ``"already-requested"`` | ``"in-flight"``.
     """
     if _claim(root, rid).exists():
         return "in-flight"
-    if _req(root, rid).exists():
+    req_path = _req(root, rid)
+    if req_path.exists():
+        if hint:
+            existing = _read_json(req_path) or {"id": rid}
+            prior_hint = existing.get("hint")
+            existing["hint"] = f"{prior_hint}; {hint}" if prior_hint else hint
+            _write_json(req_path, existing)
         return "already-requested"
-    _write_json(_req(root, rid), {"id": rid, "requested_at": _now(), "requested_by": by})
+    data = {"id": rid, "requested_at": _now(), "requested_by": by}
+    if hint:
+        data["hint"] = hint
+    _write_json(req_path, data)
     return "requested"
 
 

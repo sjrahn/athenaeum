@@ -59,5 +59,13 @@ def _run_list(root, as_json: bool) -> int:
     for e in entries:
         who = e.get("claimed_by") or e.get("requested_by") or ""
         when = e.get("claimed_at") or e.get("requested_at") or ""
-        print(f"{e['state']:>9}  {e['id'][:12]}  {when}  {who}".rstrip())
+        line = f"{e['state']:>9}  {e['id'][:12]}  {when}  {who}".rstrip()
+        hint = e.get("hint")
+        if hint:
+            line += f"  hint: {_truncate_hint(hint)}"
+        print(line)
     return 0
+
+
+def _truncate_hint(hint: str, limit: int = 60) -> str:
+    return hint if len(hint) <= limit else hint[: limit - 3] + "..."

@@ -133,6 +133,9 @@ def test_inspect_full_card_on_formed_fixture(tmp_path, capsys):
     assert f"record:      {rid}" in out
     assert "state:       formed" in out
     assert "governing:   conversation — rendering contract  (declared: origin 'conv-export')" in out
+    # raw-class (application/json is not HTML) with 3 persisted segments — citable, and
+    # the segment count appends to the raw-surface line.
+    assert "citable:     yes (raw surface — record-wide quotes are honest; segments: 3)" in out
     assert "mime:        application/json" in out
     assert "== origins (1) ==" in out
     assert "[conv-export]" in out
@@ -189,6 +192,50 @@ def test_inspect_no_mapping_form_omits_turn_ops(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "turn=<N>" not in out
     assert "record-level: body -> markdown · members -> json (0 embed(s))" in out
+
+
+# ---------- citability line (§7.1 `citation_surface:`) ---------- #
+
+
+def test_inspect_citable_no_for_proxy_html_record(tmp_path, capsys):
+    """A segments-class record (HTML, built-in default) with zero persisted segments is
+    not citable — the honest demand is enqueue, never a record-wide quote (§7.1, §8.5)."""
+    root = _corpus(tmp_path)
+    rid = _stage(root, b"<html><body>hi</body></html>", mime="text/html", name="page.html")
+    rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert (
+        "citable:     no — segments required, none persisted "
+        "(enqueue for normalize; ledger.md §13.2)"
+    ) in out
+
+
+def test_inspect_citable_yes_for_rendered_html_record(tmp_path, capsys):
+    """Once an HTML (segments-class) record carries persisted segments, it is citable —
+    citability keys to verifiable surfaces, never record state."""
+    root = _corpus(tmp_path)
+    seg = segments.Segment(atom="text", address="el=1", body="hi there")
+    rid = _stage(
+        root, b"<html><body>hi</body></html>", mime="text/html", name="page2.html",
+        content=segments.emit([seg]),
+    )
+    rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "citable:     yes (segments: 1)" in out
+
+
+def test_inspect_citable_yes_for_raw_class_record(tmp_path, capsys):
+    """A `raw`-class record (the built-in default for non-HTML types, e.g. CSV) is
+    citable even with zero persisted segments — its derived body is already faithful
+    line-of-sight content, so record-wide quotes are honest."""
+    root = _corpus(tmp_path)
+    rid = _stage(root, b"city,fare\r\nCalgary,11\r\n", mime="text/csv", name="fares.csv")
+    rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "citable:     yes (raw surface — record-wide quotes are honest)" in out
 
 
 # ---------- content-axes compression: dense range vs sparse ---------- #

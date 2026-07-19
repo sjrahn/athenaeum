@@ -9,6 +9,7 @@ meaningful so a `/loop` session can drive them.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -93,6 +94,53 @@ def test_enqueue_is_idempotent(tmp_path):
     assert queue.enqueue(root, RID) == "already-requested"  # joins the pending request
     assert queue.drain(root) == RID  # claim it
     assert queue.enqueue(root, RID) == "in-flight"  # a request during a pass joins it
+
+
+# ---------- `--hint` (§8.5, 3.3): free-text requester context ---------- #
+
+
+def test_enqueue_hint_is_stored_on_the_request(tmp_path):
+    root = _corpus(tmp_path)
+    assert queue.enqueue(root, RID, hint="candidate form: conversation") == "requested"
+    assert queue.state(root, RID)["hint"] == "candidate form: conversation"
+
+
+def test_enqueue_without_hint_stores_none(tmp_path):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)
+    assert "hint" not in queue.state(root, RID)
+
+
+def test_enqueue_joining_request_appends_hint_never_overwrites(tmp_path):
+    root = _corpus(tmp_path)
+    assert queue.enqueue(root, RID, hint="form/conversation candidate") == "requested"
+    # A joining request (one arriving while a `.req` is already pending) appends.
+    assert (
+        queue.enqueue(root, RID, hint="messages[] with sender/timestamp")
+        == "already-requested"
+    )
+    assert (
+        queue.state(root, RID)["hint"]
+        == "form/conversation candidate; messages[] with sender/timestamp"
+    )
+
+
+def test_enqueue_joining_request_with_no_hint_leaves_existing_hint_untouched(tmp_path):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID, hint="original hint")
+    queue.enqueue(root, RID)  # no hint on the joining request
+    assert queue.state(root, RID)["hint"] == "original hint"
+
+
+def test_enqueue_hint_survives_into_the_claim(tmp_path):
+    """`drain`/`claim` copy the request payload via an atomic rename — the hint rides
+    along unchanged into the `.claim`."""
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID, hint="candidate form: conversation")
+    assert queue.drain(root) == RID
+    st = queue.state(root, RID)
+    assert st["state"] == "claimed"
+    assert st["hint"] == "candidate form: conversation"
 
 
 def test_drain_hands_out_each_request_once_then_empty(tmp_path):
@@ -450,3 +498,59 @@ def test_queue_listing(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "claimed" in out and "requested" in out
     assert RID[:12] in out and RID2[:12] in out
+
+
+def test_queue_listing_shows_short_hint_untruncated(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID, hint="looks like form/conversation")
+    assert dispatch(["queue", "--corpus-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "hint: looks like form/conversation" in out
+
+
+def test_queue_listing_truncates_long_hint_to_60_chars(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID, hint="x" * 100)
+    assert dispatch(["queue", "--corpus-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    line = next(line for line in out.splitlines() if "hint:" in line)
+    hint_field = line.split("hint: ", 1)[1]
+    assert len(hint_field) == 60
+    assert hint_field.endswith("...")
+
+
+def test_queue_listing_omits_hint_field_when_absent(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)
+    assert dispatch(["queue", "--corpus-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "hint" not in out
+
+
+def test_enqueue_cli_hint_flag(tmp_path):
+    root = _corpus(tmp_path)
+    _put(root, RID)
+    assert (
+        dispatch(
+            ["enqueue", RID, "--hint", "candidate form: conversation", "--corpus-root", str(root)]
+        )
+        == 0
+    )
+    assert queue.state(root, RID)["hint"] == "candidate form: conversation"
+
+
+def test_drain_json_includes_hint(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID, hint="candidate form: conversation")
+    assert dispatch(["drain", "--json", "--corpus-root", str(root)]) == 0
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert obj["id"] == RID
+    assert obj["hint"] == "candidate form: conversation"
+
+
+def test_drain_json_omits_hint_when_absent(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID)
+    assert dispatch(["drain", "--json", "--corpus-root", str(root)]) == 0
+    obj = json.loads(capsys.readouterr().out.strip())
+    assert "hint" not in obj

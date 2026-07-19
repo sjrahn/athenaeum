@@ -68,12 +68,49 @@ def _print_identity(root, record_id, post) -> None:
                 source = f"  (declared: origin '{declared[0]}')"
             print(f"governing:   {form_id} — {contract_kind}{source}")
 
+    print(f"citable:     {_citability_line(root, post)}")
+
     title_field = records.derived_editorial_field(post, root, "title")
     desc_field = records.derived_editorial_field(post, root, "description")
     print(f"title:       {title_field.value or '(none)'}  (layer: {title_field.layer or 'none'})")
     desc_display = desc_field.value[:200] or "(none)"
     print(f"description: {desc_display}  (layer: {desc_field.layer or 'none'})")
     print()
+
+
+def _iter_content_blocks(post) -> list:
+    """Parse the content zone into blocks (shared by the citability line and the content
+    axes section) — raises on malformed grammar; callers degrade as they see fit."""
+    return segments.iter_blocks(post.content or "")
+
+
+def _persisted_segment_count(blocks: list) -> int:
+    return sum(len(b.segments) if isinstance(b, segments.Section) else 1 for b in blocks)
+
+
+def _citability_line(root, post) -> str:
+    """The record's honest citability (§7.1 `citation_surface:`, ledger.md §6.3/§13.2):
+    a `segments`-class record (HTML by built-in default — presentation soup, not honest
+    line-of-sight content) is citable only once persisted segments exist; a `raw`-class
+    record's derived body IS faithful content, so record-wide quotes are honest even with
+    zero persisted segments."""
+    media_type = records.media_type_for(post)
+    if not media_type:
+        return "n/a — no <!--artifact--> block"
+
+    surface = _mime.citation_surface(media_type, root)
+    try:
+        seg_count = _persisted_segment_count(_iter_content_blocks(post))
+    except Exception:
+        seg_count = 0
+
+    if surface == "segments":
+        if seg_count == 0:
+            return "no — segments required, none persisted (enqueue for normalize; ledger.md §13.2)"
+        return f"yes (segments: {seg_count})"
+
+    base = "yes (raw surface — record-wide quotes are honest"
+    return f"{base}; segments: {seg_count})" if seg_count > 0 else f"{base})"
 
 
 # ---------- 2. artifact ---------- #
@@ -130,15 +167,13 @@ def _print_content_axes(post) -> None:
     addressing summary, and the embed (container-member) count."""
     print("== content axes ==")
     try:
-        blocks = segments.iter_blocks(post.content or "")
+        blocks = _iter_content_blocks(post)
     except Exception as e:
         print(f"(parse error: {e})")
         print()
         return
 
-    seg_count = sum(
-        len(b.segments) if isinstance(b, segments.Section) else 1 for b in blocks
-    )
+    seg_count = _persisted_segment_count(blocks)
     section_count = sum(1 for b in blocks if isinstance(b, segments.Section))
     print(f"sections:    {section_count} section(s), {seg_count} segment(s)")
 

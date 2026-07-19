@@ -533,3 +533,194 @@ def test_verify_row_axis_falls_back_to_record_scoped(tmp_path: Path) -> None:
     res = verify_ledger(ledger, join, set(), stamp=False)
     assert res.verified == 1 and res.record_scoped == 1
     assert not res.errors and not res.warnings
+
+
+def test_verify_segments_surface_no_persisted_segments_is_error(tmp_path: Path) -> None:
+    """§13.2.4: a `segments`-surface record (`text/html`, corpus §7.1's built-in
+    default) with zero persisted segments — the raw pre-normalize proxy state — has
+    no citable surface at all, so claim evidence citing it is an ERROR regardless of
+    claim status (here `provisional`, which would otherwise only warn on failure)."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "8" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:x", "predicate": "described", "value": "x",
+                    "status": "provisional", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "quote": "anything at all",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 0
+    assert len(res.errors) == 1
+    assert "requires a rendered surface" in res.errors[0]
+    assert "no persisted" in res.errors[0]
+    assert f"corpus://{h[:12]}" in res.errors[0]
+    assert not res.warnings
+
+
+def test_verify_segments_surface_with_persisted_segments_verifies(tmp_path: Path) -> None:
+    """The same mime, once normalized into a persisted segment, verifies exactly
+    like any other formed record — the gate keys to segment presence, never the
+    mime alone."""
+    import frontmatter
+
+    from corpus import paths, records, segments
+
+    h = "9" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    seg = segments.Segment(atom="text", address="el=1",
+                            body="hello from the rendered surface")
+    post.content = segments.emit([seg])
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:x", "predicate": "described", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "el=1",
+                                  "quote": "hello from the rendered surface",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1
+    assert not res.errors and not res.warnings
+
+
+def test_verify_interpretation_may_reference_segmentless_html_with_enqueue_need(
+    tmp_path: Path,
+) -> None:
+    """§13.2.4: interpretations are exempt from the hard error — the pre-assertion
+    workspace holds discoveries the evidence bar can't yet carry — and a matching
+    `enqueue` need naming the same hash keeps the reference clean."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "b" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "interpretations").mkdir(parents=True)
+    (ledger / "facts").mkdir()
+    (ledger / "interpretations" / "hunch.json").write_text(json.dumps({
+        "id": "hunch", "kind": "hypothesis", "status": "open", "confidence": "low",
+        "statement": "the page probably says X", "reasoning": "skimmed the raw capture",
+        "based_on": [f"corpus://{h}"],
+        "needs": [{"action": "enqueue", "record": f"corpus://{h}", "why": "normalize"}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert not res.errors and not res.warnings
+
+
+def test_verify_interpretation_referencing_segmentless_html_without_need_warns(
+    tmp_path: Path,
+) -> None:
+    """The same reference with no matching enqueue/promote need draws a WARNING —
+    never an error, since interpretations stay exempt from the hard gate."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "c" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "interpretations").mkdir(parents=True)
+    (ledger / "facts").mkdir()
+    (ledger / "interpretations" / "hunch.json").write_text(json.dumps({
+        "id": "hunch", "kind": "hypothesis", "status": "open", "confidence": "low",
+        "statement": "the page probably says X", "reasoning": "skimmed the raw capture",
+        "based_on": [f"corpus://{h}"],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert not res.errors
+    assert len(res.warnings) == 1
+    assert "no enqueue/promote need" in res.warnings[0]
+    assert f"corpus://{h[:12]}" in res.warnings[0]
+
+
+def test_verify_interpretation_proposes_inline_uri_without_need_warns(
+    tmp_path: Path,
+) -> None:
+    """corpus:// refs live in two homes on an interpretation: `based_on`, and — for
+    a hypothesis's `proposes` — the pre-reforge inline-`uri` evidence shape (check.py's
+    PROPOSES_EVIDENCE_KEYS; proposes predates the fact it targets, so it can't yet cite
+    a sources-table key). The gate must catch THIS home too, not just `based_on` — the
+    hash here is cited ONLY via `proposes.evidence[].uri`, isolating the extension."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "d" * 64
+    other = "e" * 64  # `based_on`'s own citation — unrelated to the proxy record
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
+    records.dump(post, paths.record_path(root, h))
+    other_post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=other, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(other_post, mime="text/plain", fields={})
+    records.append_origin_block(other_post, snapshot="2026-01-01T00:00:00Z")
+    records.dump(other_post, paths.record_path(root, other))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "interpretations").mkdir(parents=True)
+    (ledger / "facts").mkdir()
+    (ledger / "interpretations" / "hunch.json").write_text(json.dumps({
+        "id": "hunch", "kind": "hypothesis", "status": "open", "confidence": "low",
+        "statement": "the page probably says X", "reasoning": "skimmed the raw capture",
+        "based_on": [f"corpus://{other}"],
+        "proposes": {
+            "id": "widget:x", "predicate": "described", "asof": "2026-01-01",
+            "reasoning": "skimmed",
+            "evidence": [{"uri": f"corpus://{h}?el=2", "quote": "x", "kind": "direct"}],
+        },
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert not res.errors
+    assert len(res.warnings) == 1
+    assert "no enqueue/promote need" in res.warnings[0]
+    assert f"corpus://{h[:12]}" in res.warnings[0]

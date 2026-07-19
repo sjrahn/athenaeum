@@ -16,6 +16,15 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Identifier of the requester (e.g. a codex agent), recorded on the request.",
     )
+    parser.add_argument(
+        "--hint",
+        default=None,
+        metavar="TEXT",
+        help="Free-text requester context stored on the request, surfaced to the drain "
+        "side (spec §8.5) — e.g. a proposed form or shape observation. The proposes/"
+        "disposes seam: a reader may propose without authoring; the normalizer disposes "
+        "against the bytes. A joining request's hint appends, never overwrites.",
+    )
     add_corpus_root_arg(parser)
     attach_workflow_note(parser, "normalize-loop")
 
@@ -23,7 +32,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     rid, _ = paths.resolve_record(root, args.target)
-    outcome = _queue.enqueue(root, rid, by=args.by)
+    outcome = _queue.enqueue(root, rid, by=args.by, hint=args.hint)
     label = {
         "requested": "enqueued",
         "already-requested": "already queued",

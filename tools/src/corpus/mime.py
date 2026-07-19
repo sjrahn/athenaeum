@@ -394,3 +394,30 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
 
     guessed = mimetypes.guess_extension(mime) or ""
     return guessed.lstrip(".") or fallback
+
+
+# ------- citation surface (§7.1 `citation_surface:` — ledger.md §6.3 / §13.2) ------- #
+
+_SEGMENTS_SURFACE_MIMES = frozenset({
+    "text/html",
+    "application/xhtml+xml",
+})
+
+
+def citation_surface(media_type: str, corpus_root: Path | None = None) -> str:
+    """The format's honest citation-surface class (§7.1): ``"segments"`` — the raw/derived
+    whole-record text is presentation soup (nav chrome, script payloads), so the record is
+    citable only once persisted segments exist — or ``"raw"`` (the default) — the derived
+    body is faithful line-of-sight content and record-wide verbatim quotes are honest.
+    Schema-first (the mime schema's `citation_surface:`), falling back to the built-in
+    table: the HTML family is `segments`, every other bundled type `raw`. Consumed by
+    ledger evidence verification and `corpus inspect`; governs citability only, never
+    readability."""
+    if corpus_root is not None:
+        from . import schemas
+
+        schema = schemas.load_mime_schema(corpus_root, media_type) or {}
+        declared = schema.get("citation_surface")
+        if declared in ("segments", "raw"):
+            return declared
+    return "segments" if media_type in _SEGMENTS_SURFACE_MIMES else "raw"
