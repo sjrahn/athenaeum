@@ -33,6 +33,17 @@ from PIL import Image
 
 from . import RenderContext, register
 
+#: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the LIVE `el=` element-
+#: scoping op materialized here (the htmlel working-kind path — `extract_el` below) — folded
+#: into the resolver's cache key exactly like `transforms.csv.ENGINE_VERSION`. Scope: this pin
+#: covers only the resolver's live re-materialization of `corpus://<hash>?el=N` from the
+#: artifact bytes; a PERSISTED-SEGMENT `address: el=N` read (matching a citation's quote
+#: against the record's already-STORED body text) is a distinct, unversioned surface and never
+#: folds this in. A later change to element addressing (`is_addressable`) or carrier
+#: materialization (`carrier_data_uri`) is a NEW id, never a silent reinterpretation of an
+#: already-resolved (and potentially already-cited) result.
+ENGINE_VERSION = "html-el@1"
+
 # Image-only data URI (the `<img>` / `selector=` path keeps its strict shape).
 _DATA_URI_RE = re.compile(
     r"^data:image/([a-z0-9+.\-]+);base64,(.+)$", re.DOTALL | re.IGNORECASE

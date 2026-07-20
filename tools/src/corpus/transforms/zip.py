@@ -18,6 +18,12 @@ from pathlib import Path
 from .. import ziparchive
 from . import RenderContext, register
 
+#: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) — re-exported from
+#: `ziparchive.ENGINE_VERSION` (the canonical id, shared verbatim with `transforms/tar.py`)
+#: so callers read the pin off the TRANSFORM module, exactly the `transforms.csv.ENGINE_VERSION`
+#: precedent.
+ENGINE_VERSION = ziparchive.ENGINE_VERSION
+
 
 @register("zip", "path", "bytes")
 def extract_member(path: Path, value: str | None, ctx: RenderContext) -> bytes:

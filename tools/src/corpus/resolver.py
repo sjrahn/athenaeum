@@ -35,7 +35,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from PIL import Image
 
-from . import containment, paths, records, transforms
+from . import containment, paths, records, transforms, ziparchive
 from . import functional_uri as furi
 from . import mime as mime_mod
 from .store import ArtifactStore, get_store
@@ -67,6 +67,38 @@ _CSV_OP_PARAMS: frozenset[str] = frozenset({"row", "col"})
 # The vcard property op (§6.2 `prop=`) is likewise a deterministic pure parse (never an
 # external engine), versioned the same way (`transforms.vcard.ENGINE_VERSION`).
 _VCARD_OP_PARAMS: frozenset[str] = frozenset({"prop"})
+
+# The vcard card= member-extraction op (§12.11 `card=`) — a materially different derivation
+# than `prop=` above (whole-card raw bytes vs one decoded property), so it carries its OWN
+# version id (`transforms.vcard.CARD_ENGINE_VERSION`), checked as a separate branch below.
+_VCARD_CARD_OP_PARAMS: frozenset[str] = frozenset({"card"})
+
+# The mbox message-extraction op (§12.11 `msg=`) — pinned separator + un-stuffing semantics
+# (`transforms.mbox.ENGINE_VERSION`).
+_MBOX_OP_PARAMS: frozenset[str] = frozenset({"msg"})
+
+# The archive path= member-extraction op (§12.11 `path=`, §6.2 "Member re-chaining") — pinned
+# member-path resolution and the terminal textual decode, shared verbatim by the zip and tar
+# transforms (`transforms.zip.ENGINE_VERSION` == `transforms.tar.ENGINE_VERSION`, both
+# re-exporting the one canonical `ziparchive.ENGINE_VERSION`). Checked LAST among the per-param
+# branches below (right before `else`): when `path=` re-chains into a further op that carries
+# its OWN pin (a rechained CSV member's `row=`/`col=`, a rechained vcard's `prop=`, an HTML
+# member's `el=`), that op's more-specific id wins — `archive-path@1` folds in only for the
+# member-selection/terminal-decode step itself, when nothing more specific also matched.
+_ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
+
+# The HTML el= LIVE element-scoping op (§6.2, §12.11 `el=`) — the htmlel working-kind resolver
+# path only, never the persisted-segment `address: el=N` read (`transforms.html.ENGINE_VERSION`).
+_HTML_EL_OP_PARAMS: frozenset[str] = frozenset({"el"})
+
+# The turn= unit op and its att= companion (§6.2) — the form-mapping unit-array resolution
+# (`shape.units.ENGINE_VERSION`). RECORD-LEVEL (resolved by `_resolve_turn`, which recognizes
+# a bare `turn=`/`turn=&att=` chain and returns before this function's per-param transform loop
+# ever runs) — a `turn=` URI never reaches the generic engine-determination ladder below, so
+# `_resolve_turn` folds `shape.units.ENGINE_VERSION` into its OWN cache key directly. This
+# frozenset exists only so `_static_engine_version`'s per-param lookup (used by both
+# `ops_for_media_type` and any record-level-op caller) recognizes "turn"/"att" too.
+_UNITS_TURN_OP_PARAMS: frozenset[str] = frozenset({"turn", "att"})
 
 # Working kinds whose final cache extension isn't known until the transform chain actually
 # runs: `htmlel` resolves polymorphically to image|bytes (§6.2 `el=`); `video`/`audio`/
@@ -244,6 +276,22 @@ def resolve(
         from .transforms import vcard as vcard_tf
 
         version_label = vcard_tf.ENGINE_VERSION
+    elif any(k in _VCARD_CARD_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import vcard as vcard_tf
+
+        version_label = vcard_tf.CARD_ENGINE_VERSION
+    elif any(k in _MBOX_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import mbox as mbox_tf
+
+        version_label = mbox_tf.ENGINE_VERSION
+    elif any(k in _HTML_EL_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import html as html_tf
+
+        version_label = html_tf.ENGINE_VERSION
+    elif any(k in _ARCHIVE_PATH_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import zip as zip_tf
+
+        version_label = zip_tf.ENGINE_VERSION
     else:
         version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
@@ -611,13 +659,23 @@ def _resolve_turn(
     msg = units.repair_json_strings(msg, mapping)
 
     if att_m is None:
-        urihash_value = furi.urihash(canonical_uri)
+        # `units-turn@1` (§6.4 / `ledger.md` §13.2's op-version pin) folds into the cache key
+        # exactly like the generic per-param ladder does for csv/vcard/mbox/zip/tar/html
+        # (`resolve()`'s `key_uri = f"{canonical_uri}|engine=..."` above) — `turn=` never
+        # reaches that ladder (it short-circuits before the mime-pipeline dispatch, `resolve()`
+        # above), so `_resolve_turn` folds its own pin directly. A later change to unit-array
+        # indexing auto-invalidates any already-cached `turn=N` result.
+        key_uri = f"{canonical_uri}|engine={units.ENGINE_VERSION}"
+        urihash_value = furi.urihash(key_uri)
         cache_p = furi.cache_path(corpus_root, urihash_value, "json")
         if cache_p.is_file() and not regenerate:
             return cache_p.resolve()
         cache_p.parent.mkdir(parents=True, exist_ok=True)
         cache_p.write_text(json.dumps(msg, indent=2) + "\n", encoding="utf-8")
-        _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+        _write_sidecar(
+            corpus_root, canonical_uri, source_hash, cache_p, "json",
+            version_label=units.ENGINE_VERSION,
+        )
         return cache_p.resolve()
 
     # turn=N&att=M — lineage-chained attachment resolution.
@@ -767,7 +825,13 @@ def _rechain_member(
             partial_uri = furi.canonical(
                 furi.ParsedURI(hash=parsed.hash, params=parsed.params[: param_idx + 1])
             )
-            member_path = furi.cache_path(corpus_root, furi.urihash(partial_uri), member_ext)
+            # The extraction engine folds into THIS key too, exactly as it does into the
+            # addressable outer key in `resolve()`: without it an `archive-path@1` bump
+            # would leave this staging file behind to serve pre-bump member bytes into a
+            # re-chained continuation (a zip-embedded PDF's `page=`) — stale bytes reached
+            # through a fresh outer key, which is the one failure the pin exists to prevent.
+            staging_key = f"{partial_uri}|engine={ziparchive.ENGINE_VERSION}"
+            member_path = furi.cache_path(corpus_root, furi.urihash(staging_key), member_ext)
             if not member_path.is_file():
                 member_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = member_path.with_name(f"{member_path.name}.tmp")
@@ -946,8 +1010,10 @@ def _working_kind_for(corpus_root: Path, media_type: str) -> str | None:
 class ResolverOp:
     """One functional-URI transform reachable for a media type's resolver pipeline —
     surfaced for read-only introspection (`corpus inspect`), never used by `resolve()`
-    itself. `engine_version` is the op's STATIC version pin (`transforms.csv.ENGINE_VERSION`,
-    `transforms.vcard.ENGINE_VERSION`) when one applies to this exact param — None for an
+    itself. `engine_version` is the op's STATIC version pin (`engine_version_for_param`,
+    below — `transforms.csv.ENGINE_VERSION`, `transforms.vcard.ENGINE_VERSION`/
+    `CARD_ENGINE_VERSION`, `transforms.mbox.ENGINE_VERSION`, `transforms.zip.ENGINE_VERSION`,
+    `transforms.html.ENGINE_VERSION`) when one applies to this exact param — None for an
     unpinned op and for the runtime-determined engines (`transcribe`'s adapter, the ffmpeg
     muxing family), which inspection deliberately does not resolve (read-only; no shell-out,
     no config lookup)."""
@@ -998,7 +1064,7 @@ def ops_for_media_type(corpus_root: Path, media_type: str) -> list[ResolverOp]:
                     param=key,
                     from_kind=in_kind,
                     output_kind=handler.output_kind,
-                    engine_version=_static_engine_version(key),
+                    engine_version=engine_version_for_param(key),
                 )
             )
             queue.append(handler.output_kind)
@@ -1011,12 +1077,19 @@ def ops_for_media_type(corpus_root: Path, media_type: str) -> list[ResolverOp]:
     return out
 
 
-def _static_engine_version(key: str) -> str | None:
-    """`key`'s statically-declared engine pin, or None. Reuses the exact per-param scoping
-    the resolver's own cache-key folding uses (`_CSV_OP_PARAMS`, `_VCARD_OP_PARAMS`, above)
-    so this can never drift from what a real `resolve()` actually keys on — e.g. vcard's
-    `card=` is deliberately unpinned here exactly as it is there (only `prop=` folds
-    `vcard-prop@1`)."""
+def engine_version_for_param(key: str) -> str | None:
+    """`key`'s (an axis param name, e.g. `"row"`/`"card"`/`"turn"`) statically-declared engine
+    pin, or None when the axis carries no pin. Reuses the exact per-param scoping the
+    resolver's own cache-key folding uses (`_CSV_OP_PARAMS`, `_VCARD_OP_PARAMS`, `_MBOX_OP_PARAMS`,
+    `_ARCHIVE_PATH_OP_PARAMS`, `_HTML_EL_OP_PARAMS`, `_UNITS_TURN_OP_PARAMS`, above) so this can
+    never drift from what a real `resolve()` actually keys on.
+
+    Public: `ops_for_media_type` uses it for every mime-pipeline (registry-reachable) op below,
+    and a caller needing a pin for a RECORD-LEVEL op that bypasses `transforms.REGISTRY`
+    entirely — `turn=`/`att=`, resolved by `_resolve_turn` — can call it directly with `"turn"`
+    or `"att"` rather than assuming registry membership (`ops_for_media_type`'s docstring: a
+    record-level op is never discoverable through its registry walk, since reachability there
+    depends on the record's origin-declared form mapping, not its media type)."""
     if key in _CSV_OP_PARAMS:
         from .transforms import csv as csv_tf
 
@@ -1025,6 +1098,26 @@ def _static_engine_version(key: str) -> str | None:
         from .transforms import vcard as vcard_tf
 
         return vcard_tf.ENGINE_VERSION
+    if key in _VCARD_CARD_OP_PARAMS:
+        from .transforms import vcard as vcard_tf
+
+        return vcard_tf.CARD_ENGINE_VERSION
+    if key in _MBOX_OP_PARAMS:
+        from .transforms import mbox as mbox_tf
+
+        return mbox_tf.ENGINE_VERSION
+    if key in _ARCHIVE_PATH_OP_PARAMS:
+        from .transforms import zip as zip_tf
+
+        return zip_tf.ENGINE_VERSION
+    if key in _HTML_EL_OP_PARAMS:
+        from .transforms import html as html_tf
+
+        return html_tf.ENGINE_VERSION
+    if key in _UNITS_TURN_OP_PARAMS:
+        from .shape import units as units_tf
+
+        return units_tf.ENGINE_VERSION
     return None
 
 

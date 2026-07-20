@@ -10,6 +10,7 @@ multipart/alternative + a fake attachment), and a second plain message.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import zipfile
 from email import policy
@@ -20,6 +21,7 @@ import blake3
 import pytest
 
 from corpus import containment, hashing, mboxfile, mime, paths, records, resolver, schemas
+from corpus import functional_uri as furi
 from corpus._cli import draft as draft_cli
 from corpus._cli import ingest as ingest_cli
 from corpus._cli import promote as promote_cli
@@ -211,6 +213,40 @@ def test_transform_resolves_message_bytes(tmp_path):
     mbox_id = _ingest(root, p)
     out = resolver.resolve(f"corpus://{mbox_id}?msg=2", root)
     assert out.read_bytes() == members[1]
+
+
+def test_msg_sidecar_records_engine_version(tmp_path):
+    root = _corpus(tmp_path)
+    p, _members = _write_mbox(tmp_path)
+    mbox_id = _ingest(root, p)
+    out = resolver.resolve(f"corpus://{mbox_id}?msg=2", root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "mbox-msg@1"
+
+
+def test_msg_cache_key_includes_engine_version(tmp_path, monkeypatch):
+    """The `msg=` cache key folds in `transforms.mbox.ENGINE_VERSION` (§6.3/§6.4) — verified,
+    like `test_video_muxing.py`'s `test_cache_key_includes_engine_version`, by swapping the
+    (monkeypatched) pin between two resolves of the SAME canonical URI and observing two
+    distinct cache files."""
+    from corpus.transforms import mbox as mbox_tf
+
+    root = _corpus(tmp_path)
+    p, _members = _write_mbox(tmp_path)
+    mbox_id = _ingest(root, p)
+
+    monkeypatch.setattr(mbox_tf, "ENGINE_VERSION", "mbox-msg@fake-1")
+    out1 = resolver.resolve(f"corpus://{mbox_id}?msg=2", root)
+    sidecar1 = json.loads(furi.cache_sidecar_path(out1).read_text())
+
+    monkeypatch.setattr(mbox_tf, "ENGINE_VERSION", "mbox-msg@fake-2")
+    out2 = resolver.resolve(f"corpus://{mbox_id}?msg=2", root)
+    sidecar2 = json.loads(furi.cache_sidecar_path(out2).read_text())
+
+    assert out1 != out2  # distinct engine pin -> distinct cache key/path
+    assert sidecar1["engine"] == "mbox-msg@fake-1"
+    assert sidecar2["engine"] == "mbox-msg@fake-2"
 
 
 # ---------- D. selective declaration + idempotence ---------- #

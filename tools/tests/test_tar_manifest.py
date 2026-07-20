@@ -10,6 +10,7 @@ gzip-wrapping-a-tar to `application/x-tar`; a plain gzip and an mbox get their o
 from __future__ import annotations
 
 import io
+import json
 import tarfile
 import zipfile
 from pathlib import Path
@@ -18,6 +19,7 @@ import blake3
 import frontmatter
 import pytest
 
+from corpus import functional_uri as furi
 from corpus import (
     hashing,
     mime,
@@ -194,6 +196,23 @@ def test_path_resolves_member_bytes_end_to_end(tmp_path, compress):
     uri = f"corpus://{rid}?path=Takeout/Mail/config.cfg"
     out = resolver.resolve(uri, root)
     assert out.read_bytes() == b"[mail]\nkeep=all\n"
+
+
+def test_path_sidecar_records_engine_version(tmp_path):
+    root = _corpus(tmp_path)
+    tar_path = _make_tar(tmp_path / "diag.tar", compress=False)
+    rid = hashing.hash_file(tar_path)["blake3"]
+    LocalArtifactStore(root).put(rid, "tar", tar_path)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "status": "draft", "touch": "corpus.ingest@0.1.0"})
+    records.set_artifact_block(post, mime="application/x-tar", fields={})
+    records.dump(post, paths.record_path(root, rid))
+
+    uri = f"corpus://{rid}?path=Takeout/Mail/config.cfg"
+    out = resolver.resolve(uri, root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "archive-path@1"
 
 
 def test_resolve_member_missing_raises(tmp_path):

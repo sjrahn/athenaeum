@@ -1765,7 +1765,7 @@ Order of operations, tooling-first per the §12.16 discipline:
 **Open questions** (flagged, not resolved here):
 
 1. Concrete CLI names for the derived-state selectors and health's layer-presence report — tooling time.
-2. The derivation-op version pin's binding format on ledger sources entries (`ledger.md` §13.2) — settle with the first derived-surface citation, not in the abstract.
+2. The derivation-op version pin's binding format on ledger sources entries (`ledger.md` §13.2) — settle with the first derived-surface citation, not in the abstract. *(Resolved — ledger 1.5, 2026-07-20: the sources `verified.ops` map, engine pins keyed by axis param, stamped from resolver registry introspection; verification resolves derived-surface anchors through the resolver itself.)*
 3. Whether the queue's public backlog (1,457 pending requests predating the standing-demand reframe) still represents real demand — re-derive it from actual consumers (ledger worklists, codex scopes) rather than carrying it forward on faith.
 
 ### 12.20 The media-ops increment (non-normative)

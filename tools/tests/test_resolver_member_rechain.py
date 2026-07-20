@@ -29,7 +29,7 @@ import frontmatter
 import pytest
 
 from corpus import functional_uri as furi
-from corpus import hashing, paths, records, resolver, schemas
+from corpus import hashing, paths, records, resolver, schemas, ziparchive
 from corpus import mime as mime_mod
 from corpus.store import LocalArtifactStore
 
@@ -120,13 +120,18 @@ def test_pdf_member_page_render_terminal_still_works(tmp_path):
 
 def test_pdf_member_extraction_is_cached_and_reused_across_pages(tmp_path):
     """The member's own bytes are materialized once (cached under the prefix URI up to
-    `path=`), so a second op over the SAME member never re-extracts from the zip."""
+    `path=`, engine-folded), so a second op over the SAME member never re-extracts from
+    the zip — and an `archive-path@1` bump invalidates the staging file rather than
+    serving pre-bump bytes into a re-chained continuation."""
     root = _corpus(tmp_path)
     rid = _zip_record(root)
     resolver.resolve(f"corpus://{rid}?path=born_text.pdf&page=1&text", root)
     partial = furi.canonical(furi.parse(f"corpus://{rid}?path=born_text.pdf"))
-    member_cache = furi.cache_path(root, furi.urihash(partial), "pdf")
+    staging_key = f"{partial}|engine={ziparchive.ENGINE_VERSION}"
+    member_cache = furi.cache_path(root, furi.urihash(staging_key), "pdf")
     assert member_cache.is_file()
+    # the un-folded key must NOT be where the bytes live — that was the stale-serve gap
+    assert not furi.cache_path(root, furi.urihash(partial), "pdf").is_file()
     assert member_cache.read_bytes() == _PDF_BYTES
 
     out2 = resolver.resolve(f"corpus://{rid}?path=born_text.pdf&page=2&text", root)

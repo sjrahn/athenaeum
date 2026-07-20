@@ -25,7 +25,7 @@ decomposition: |
   transcription — the described embed and any discrete text legend are its faithful
   rendering.
 checks:
-  address_axes: [el, pages, page]
+  address_axes: [el, pages, page, block]
 normalization:
   guidance: |
     The lossless extraction IS the value of this form: transcribe every readable table,

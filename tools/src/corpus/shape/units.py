@@ -18,6 +18,17 @@ import frontmatter
 
 from corpus import containment, mime, records
 
+#: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the resolver's `turn=`
+#: unit op and its `att=` companion (spec §6.2) — the form-mapping unit-array resolution this
+#: module implements (`unit`, `attachments`, `field`, `repair_json_strings`). `turn=`/`att=` are
+#: RECORD-LEVEL ops (`resolver._resolve_turn`) that bypass `transforms.REGISTRY` entirely — they
+#: never ride the generic per-param cache-key ladder `transforms.csv.ENGINE_VERSION` does
+#: (`resolver.py`'s own comments explain why) — so `_resolve_turn` folds this constant into its
+#: cache key directly. A later change to unit-array indexing, attachment resolution, or the
+#: mojibake repair is a NEW id, never a silent reinterpretation of an already-resolved (and
+#: potentially already-cited, `ledger.md` §13.2) result.
+ENGINE_VERSION = "units-turn@1"
+
 
 def get_path(obj: Any, path: str) -> Any:
     """Dotted-path get into a nested mapping (`a.b.c`); empty path returns `obj`; a missing key

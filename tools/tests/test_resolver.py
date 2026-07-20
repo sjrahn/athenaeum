@@ -5,10 +5,12 @@ Uses tiny deterministic fixtures under tests/data/.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import frontmatter
 
+from corpus import functional_uri as furi
 from corpus import hashing, paths, records, resolver, schemas
 from corpus.store import LocalArtifactStore
 
@@ -220,6 +222,38 @@ def test_html_el_extracts_inline_image(tmp_path):
     with Image.open(out) as im:
         # The inline image matches our blue-with-red-square sample.png.
         assert im.size == (200, 150)
+
+
+def test_html_el_sidecar_records_engine_version(tmp_path):
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.html", mime="text/html", ext="html")
+    out = resolver.resolve(f"corpus://{rid}?el=4", root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "html-el@1"
+
+
+def test_html_el_cache_key_includes_engine_version(tmp_path, monkeypatch):
+    """The LIVE `el=` cache key folds in `transforms.html.ENGINE_VERSION` — verified by
+    swapping the (monkeypatched) pin between two resolves of the SAME canonical URI and
+    observing two distinct cache files (mirrors `test_video_muxing.py`'s
+    `test_cache_key_includes_engine_version`)."""
+    from corpus.transforms import html as html_tf
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.html", mime="text/html", ext="html")
+
+    monkeypatch.setattr(html_tf, "ENGINE_VERSION", "html-el@fake-1")
+    out1 = resolver.resolve(f"corpus://{rid}?el=4", root)
+    sidecar1 = json.loads(furi.cache_sidecar_path(out1).read_text())
+
+    monkeypatch.setattr(html_tf, "ENGINE_VERSION", "html-el@fake-2")
+    out2 = resolver.resolve(f"corpus://{rid}?el=4", root)
+    sidecar2 = json.loads(furi.cache_sidecar_path(out2).read_text())
+
+    assert out1 != out2
+    assert sidecar1["engine"] == "html-el@fake-1"
+    assert sidecar2["engine"] == "html-el@fake-2"
 
 
 def _ingest_html_bytes(corpus_root: Path, html: bytes) -> str:

@@ -20,11 +20,18 @@ extended_fields:
   participants:
     type: list
     required: true
+    role: title
     description: |
       The authorship-ordered codebook — first-appearance order, entry grammar
       "<display> <durable-id>". A `text/message` segment's `participant:` integer indexes
       this list (§7.3). Mechanically derivable from the span's own bytes (the distinct
-      authors, in first-appearance order), always.
+      authors, in first-appearance order), always. *(3.2, §4.2.3)* Marked `role: title`
+      as the form layer's mechanical fallback candidate — checked only when the whole-
+      record section carries no implicit `title:` (the interpretive vouch, still checked
+      first): a mechanically-shaped conversation with no authored title yet derives a
+      comma-joined participant list rather than an honest-but-unhelpful empty string —
+      a shaped-not-yet-vouched thread is not a defect, but it should not read as
+      nameless when its own codebook already names who is in it.
 decomposition: |
   The span decomposes into one `text/message` segment per message at the addressing axis
   (`turn=<N>` for a chat export, `time_range=<s>-<e>` for a recorded meeting), each carrying

@@ -240,8 +240,15 @@ def _print_resolver_ops(root, post) -> None:
         # `messages`/per-unit field paths from it) — a bare `form: {id}` declaration with no
         # mapping (contact-card) addresses by its own segment axes, and `?turn=` would fail.
         if mapping:
-            record_level.append(f"turn=<N> -> json  (form: {form_id})")
-            record_level.append("turn=<N>&att=<M> -> bytes  (lineage-chained)")
+            # turn=/att= are RECORD-LEVEL ops (`resolver._resolve_turn`) that bypass
+            # `transforms.REGISTRY` entirely, so they're not `ops_for_media_type`-reachable —
+            # named directly here, same as `body`/`members` above; the pin comes off the same
+            # `engine_version_for_param` lookup `ops_for_media_type` uses for a registry op, so
+            # it can never drift from what `resolve()` actually keys on (spec §6.4).
+            turn_engine = resolver.engine_version_for_param("turn")
+            engine_suffix = f" [engine: {turn_engine}]" if turn_engine else ""
+            record_level.append(f"turn=<N> -> json  (form: {form_id}){engine_suffix}")
+            record_level.append(f"turn=<N>&att=<M> -> bytes  (lineage-chained){engine_suffix}")
     print("  record-level: " + (" · ".join(record_level) if record_level else "none"))
 
     if not media_type:

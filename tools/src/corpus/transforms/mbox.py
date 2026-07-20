@@ -17,6 +17,12 @@ from pathlib import Path
 from .. import mboxfile
 from . import RenderContext, register
 
+#: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin), folded into the cache key
+#: and sidecar `engine:` field exactly like `transforms.csv.ENGINE_VERSION` — a later change to
+#: separator/un-stuffing semantics is a NEW id, never a silent reinterpretation of an
+#: already-resolved (and potentially already-cited) result.
+ENGINE_VERSION = "mbox-msg@1"
+
 
 @register("mbox", "msg", "bytes")
 def extract_message(path: Path, value: str | None, ctx: RenderContext) -> bytes:

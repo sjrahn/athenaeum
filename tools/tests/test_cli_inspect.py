@@ -148,8 +148,8 @@ def test_inspect_full_card_on_formed_fixture(tmp_path, capsys):
     # a form mapping, independent of the (absent) mime pipeline.
     assert (
         "record-level: body -> markdown · members -> json (0 embed(s)) · "
-        "turn=<N> -> json  (form: conversation) · "
-        "turn=<N>&att=<M> -> bytes  (lineage-chained)"
+        "turn=<N> -> json  (form: conversation) [engine: units-turn@1] · "
+        "turn=<N>&att=<M> -> bytes  (lineage-chained) [engine: units-turn@1]"
     ) in out
 
 
@@ -301,15 +301,55 @@ def test_ops_for_media_type_csv_pins_engine_on_row_and_col(tmp_path):
     assert ops["col"].engine_version == "csv-row-col@1"
 
 
-def test_ops_for_media_type_vcard_pins_engine_only_on_prop(tmp_path):
+def test_ops_for_media_type_vcard_pins_engine_on_card_and_prop(tmp_path):
     root = _corpus(tmp_path)
     ops = {op.param: op for op in resolver.ops_for_media_type(root, "text/vcard")}
     assert ops["card"].from_kind == "vcard"
     assert ops["card"].output_kind == "bytes"
-    assert ops["card"].engine_version is None  # card= is deliberately unpinned
+    assert ops["card"].engine_version == "vcard-card@1"
     assert ops["prop"].from_kind == "vcard"
     assert ops["prop"].output_kind == "text"
     assert ops["prop"].engine_version == "vcard-prop@1"
+    # Independently versioned — a `prop=` semantics change never bumps `card=`'s id or vice versa.
+    assert ops["card"].engine_version != ops["prop"].engine_version
+
+
+def test_ops_for_media_type_mbox_pins_engine_on_msg(tmp_path):
+    root = _corpus(tmp_path)
+    ops = {op.param: op for op in resolver.ops_for_media_type(root, "application/mbox")}
+    assert ops["msg"].from_kind == "mbox"
+    assert ops["msg"].output_kind == "bytes"
+    assert ops["msg"].engine_version == "mbox-msg@1"
+
+
+def test_ops_for_media_type_zip_and_tar_pin_the_same_engine_on_path(tmp_path):
+    root = _corpus(tmp_path)
+    zip_ops = {op.param: op for op in resolver.ops_for_media_type(root, "application/zip")}
+    tar_ops = {op.param: op for op in resolver.ops_for_media_type(root, "application/x-tar")}
+    assert zip_ops["path"].engine_version == "archive-path@1"
+    assert tar_ops["path"].engine_version == "archive-path@1"
+    # One canonical id shared verbatim between zip and tar (spec §12.11 `path=`).
+    assert zip_ops["path"].engine_version == tar_ops["path"].engine_version
+
+
+def test_ops_for_media_type_html_pins_engine_on_el(tmp_path):
+    root = _corpus(tmp_path)
+    ops = {op.param: op for op in resolver.ops_for_media_type(root, "text/html")}
+    assert ops["el"].from_kind == "html"
+    assert ops["el"].output_kind == "htmlel"
+    assert ops["el"].engine_version == "html-el@1"
+    # `selector=` is a distinct back-compat op, never pinned by the `el=` id.
+    assert ops["selector"].engine_version is None
+
+
+def test_engine_version_for_param_covers_turn_and_att_off_registry(tmp_path):
+    """`turn=`/`att=` are record-level ops (`resolver._resolve_turn`) that bypass
+    `transforms.REGISTRY` entirely, so `ops_for_media_type` can never surface them (its walk
+    starts from a media type's registry-declared pipeline, and turn= availability depends on
+    the record's ORIGIN-declared form mapping instead) — `engine_version_for_param` is the
+    direct lookup a caller (this CLI's record-level printer, a future ledger stamp) uses."""
+    assert resolver.engine_version_for_param("turn") == "units-turn@1"
+    assert resolver.engine_version_for_param("att") == "units-turn@1"
 
 
 def test_ops_for_media_type_pdf_reaches_promoted_image_ops(tmp_path):

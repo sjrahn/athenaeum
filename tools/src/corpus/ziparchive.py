@@ -18,6 +18,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
+#: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the `path=` archive-
+#: member axis (spec §12.11) — pinned member-path resolution (incl. wrapper-root re-derivation)
+#: and the terminal textual decode a re-chained already-textual member takes (spec §6.2 "Member
+#: re-chaining"). Kept-whole zip AND tar/tgz share ONE id — the extraction contract this module
+#: documents is byte-identical between them — so `transforms/zip.py` and `transforms/tar.py`
+#: both re-export this constant as their own `ENGINE_VERSION` rather than duplicating it. Folded
+#: into the resolver's cache key exactly like `transforms.csv.ENGINE_VERSION`: a later change to
+#: member-path resolution or decode semantics is a NEW id, never a silent reinterpretation of an
+#: already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
+ENGINE_VERSION = "archive-path@1"
+
 
 def member_names(zf: zipfile.ZipFile) -> list[str]:
     """The archive's file members (directories excluded), in central-directory order."""

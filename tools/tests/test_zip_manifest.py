@@ -9,12 +9,14 @@ identity is ledger knowledge — a harvest rule keyed on the kept-whole MIME (`l
 
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 
 import frontmatter
 import pytest
 
+from corpus import functional_uri as furi
 from corpus import (
     lint,
     mime,
@@ -270,6 +272,61 @@ def test_path_resolves_member_bytes_end_to_end(tmp_path):
     out = resolver.resolve(f"corpus://{rid}?path=config/disk.cfg", root)
     assert out.read_bytes() == b"[disk]\nspindown=30\n"
     assert out.read_bytes() == ziparchive.resolve_member(zip_path, "config/disk.cfg")
+
+
+def test_path_sidecar_records_engine_version(tmp_path):
+    root = _make_corpus(tmp_path)
+    zip_path = _make_zip(tmp_path)
+    from corpus import hashing
+
+    rid = hashing.hash_file(zip_path)["blake3"]
+    LocalArtifactStore(root).put(rid, "zip", zip_path)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "status": "draft", "touch": "corpus.ingest@0.1.0"})
+    records.set_artifact_block(post, mime=_MIME, fields={})
+    records.dump(post, paths.record_path(root, rid))
+
+    out = resolver.resolve(f"corpus://{rid}?path=config/disk.cfg", root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "archive-path@1"
+    # The one canonical id `transforms/tar.py` re-exports too (spec §12.11 `path=`).
+    from corpus.transforms import tar as tar_tf
+    from corpus.transforms import zip as zip_tf
+
+    assert zip_tf.ENGINE_VERSION == tar_tf.ENGINE_VERSION == "archive-path@1"
+
+
+def test_path_cache_key_includes_engine_version(tmp_path, monkeypatch):
+    """The `path=` cache key folds in `transforms.zip.ENGINE_VERSION` (the id the resolver
+    actually reads at call time, `resolver.py`'s `_ARCHIVE_PATH_OP_PARAMS` branch) — verified
+    by swapping the (monkeypatched) pin between two resolves of the SAME canonical URI and
+    observing two distinct cache files (mirrors `test_video_muxing.py`'s
+    `test_cache_key_includes_engine_version`)."""
+    from corpus.transforms import zip as zip_tf
+
+    root = _make_corpus(tmp_path)
+    zip_path = _make_zip(tmp_path)
+    from corpus import hashing
+
+    rid = hashing.hash_file(zip_path)["blake3"]
+    LocalArtifactStore(root).put(rid, "zip", zip_path)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "status": "draft", "touch": "corpus.ingest@0.1.0"})
+    records.set_artifact_block(post, mime=_MIME, fields={})
+    records.dump(post, paths.record_path(root, rid))
+
+    monkeypatch.setattr(zip_tf, "ENGINE_VERSION", "archive-path@fake-1")
+    out1 = resolver.resolve(f"corpus://{rid}?path=config/disk.cfg", root)
+    sidecar1 = json.loads(furi.cache_sidecar_path(out1).read_text())
+
+    monkeypatch.setattr(zip_tf, "ENGINE_VERSION", "archive-path@fake-2")
+    out2 = resolver.resolve(f"corpus://{rid}?path=config/disk.cfg", root)
+    sidecar2 = json.loads(furi.cache_sidecar_path(out2).read_text())
+
+    assert out1 != out2
+    assert sidecar1["engine"] == "archive-path@fake-1"
+    assert sidecar2["engine"] == "archive-path@fake-2"
 
 
 def test_drafter_empty_archive_issue(tmp_path):

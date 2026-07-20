@@ -33,6 +33,13 @@ from . import RenderContext, register
 #: reinterpretation of an already-resolved (and potentially already-cited) result.
 ENGINE_VERSION = "vcard-prop@1"
 
+#: Versioned op id for `card=` (spec §12.11) — the whole-card member-extraction op, pinned
+#: and versioned INDEPENDENTLY of `prop=` above: a materially different derivation (raw member
+#: bytes via the `BEGIN:VCARD`/`END:VCARD` byte-span semantics, vs one decoded property value),
+#: so the two ids drift on their own separate changes. Folded into the cache key/sidecar the
+#: same way.
+CARD_ENGINE_VERSION = "vcard-card@1"
+
 
 @register("vcard", "card", "bytes")
 def extract_card(path: Path, value: str | None, ctx: RenderContext) -> bytes:

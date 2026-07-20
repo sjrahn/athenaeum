@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import shutil
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from corpus import (
     segments,
     vcardfile,
 )
+from corpus import functional_uri as furi
 from corpus._cli import ingest as ingest_cli
 from corpus._cli import promote as promote_cli
 from corpus._cli import reattest as reattest_cli
@@ -262,6 +264,38 @@ def test_resolver_card_resolves_exact_member_bytes(tmp_path):
         out = resolver.resolve(f"corpus://{rid}?card={n}", root)
         assert out.read_bytes() == member
         assert _b3(out.read_bytes()) == _b3(member)
+
+
+def test_card_sidecar_records_engine_version(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+    out = resolver.resolve(f"corpus://{rid}?card=1", root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "vcard-card@1"
+
+
+def test_card_cache_key_includes_engine_version(tmp_path, monkeypatch):
+    """The `card=` cache key folds in `transforms.vcard.CARD_ENGINE_VERSION`, independently of
+    `prop=`'s own pin — verified by swapping the (monkeypatched) pin between two resolves of the
+    SAME canonical URI and observing two distinct cache files (mirrors
+    `test_video_muxing.py`'s `test_cache_key_includes_engine_version`)."""
+    from corpus.transforms import vcard as vcard_tf
+
+    root = _corpus(tmp_path)
+    rid = _ingest(root, _VCF)
+
+    monkeypatch.setattr(vcard_tf, "CARD_ENGINE_VERSION", "vcard-card@fake-1")
+    out1 = resolver.resolve(f"corpus://{rid}?card=1", root)
+    sidecar1 = json.loads(furi.cache_sidecar_path(out1).read_text())
+
+    monkeypatch.setattr(vcard_tf, "CARD_ENGINE_VERSION", "vcard-card@fake-2")
+    out2 = resolver.resolve(f"corpus://{rid}?card=1", root)
+    sidecar2 = json.loads(furi.cache_sidecar_path(out2).read_text())
+
+    assert out1 != out2
+    assert sidecar1["engine"] == "vcard-card@fake-1"
+    assert sidecar2["engine"] == "vcard-card@fake-2"
 
 
 # ====================================================================== #

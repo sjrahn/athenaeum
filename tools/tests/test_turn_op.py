@@ -11,6 +11,7 @@ from pathlib import Path
 import frontmatter
 import pytest
 
+from corpus import functional_uri as furi
 from corpus import hashing, paths, records, resolver, schemas
 from corpus.store import LocalArtifactStore
 
@@ -87,6 +88,40 @@ def test_turn_returns_the_nth_unit(tmp_path):
     unit2 = json.loads(resolver.resolve(f"corpus://{rid}?turn=2", root).read_text("utf-8"))
     assert unit2["content"] == "pic"
     assert resolver.resolve(f"corpus://{rid}?turn=1", root) == out
+
+
+def test_turn_sidecar_records_engine_version(tmp_path):
+    root = _corpus(tmp_path)
+    rid = _ingest_chat(root)
+    out = resolver.resolve(f"corpus://{rid}?turn=1", root)
+    sidecar = furi.cache_sidecar_path(out)
+    data = json.loads(sidecar.read_text("utf-8"))
+    assert data["engine"] == "units-turn@1"
+
+
+def test_turn_cache_key_includes_engine_version(tmp_path, monkeypatch):
+    """`turn=` is a RECORD-LEVEL op (`resolver._resolve_turn`) that bypasses the generic
+    per-param cache-key ladder `transforms.csv.ENGINE_VERSION` rides — it folds
+    `shape.units.ENGINE_VERSION` into its OWN cache key directly. Verified the same way as the
+    registry-based ops (`test_video_muxing.py`'s `test_cache_key_includes_engine_version`):
+    swap the (monkeypatched) pin between two resolves of the SAME canonical URI and observe two
+    distinct cache files."""
+    from corpus.shape import units as units_tf
+
+    root = _corpus(tmp_path)
+    rid = _ingest_chat(root)
+
+    monkeypatch.setattr(units_tf, "ENGINE_VERSION", "units-turn@fake-1")
+    out1 = resolver.resolve(f"corpus://{rid}?turn=1", root)
+    sidecar1 = json.loads(furi.cache_sidecar_path(out1).read_text())
+
+    monkeypatch.setattr(units_tf, "ENGINE_VERSION", "units-turn@fake-2")
+    out2 = resolver.resolve(f"corpus://{rid}?turn=1", root)
+    sidecar2 = json.loads(furi.cache_sidecar_path(out2).read_text())
+
+    assert out1 != out2
+    assert sidecar1["engine"] == "units-turn@fake-1"
+    assert sidecar2["engine"] == "units-turn@fake-2"
 
 
 def test_turn_out_of_range_errors(tmp_path):

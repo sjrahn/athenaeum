@@ -299,6 +299,56 @@ def test_birth_frontmatter_has_no_editorial_keys():
     assert "title" not in fm and "description" not in fm
 
 
+# ---------- packaged schema: form/conversation.yaml's `participants` mark ---------- #
+# (the untitled-604 close — a mechanically-shaped FB/IG/etc. conversation carries no
+# authored title, but its own codebook already names who is in it; see corpus.md §4.2.3.)
+
+
+def test_conversation_form_falls_through_to_participants_when_untitled(tmp_path):
+    """The PACKAGED `form/conversation.yaml` marks `participants` `role: title` — the
+    mechanical fallback for a shaped-but-not-yet-vouched conversation (no corpus-local
+    schema needed; resolves against the installed package like `text/html`'s artifact
+    title in test_sidecar.py)."""
+    post = _base_post()
+    records.set_artifact_block(post, mime="application/json", fields={})
+    seg = segments.Segment(atom="text", address="turn=1", body="hi")
+    post.content = segments.emit(
+        [
+            segments.Section(
+                form="conversation",
+                segments=[seg],
+                extra={"participants": ["Rob Hehr", "Steven Rahn", "Marco Preißer"]},
+            )
+        ]
+    )
+    title = records.derived_editorial_field(post, tmp_path, "title")
+    assert title.value == "Rob Hehr, Steven Rahn, Marco Preißer"
+    assert title.layer == "form"
+
+
+def test_conversation_form_implicit_title_still_beats_participants(tmp_path):
+    """An authored whole-record `title:` (the interpretive vouch, once a normalize pass
+    writes one) still wins over the mechanical `participants` fallback — same implicit-
+    before-explicit rule as any other form (§4.2.3)."""
+    post = _base_post()
+    records.set_artifact_block(post, mime="application/json", fields={})
+    seg = segments.Segment(atom="text", address="turn=1", body="hi")
+    post.content = segments.emit(
+        [
+            segments.Section(
+                form="conversation",
+                segments=[seg],
+                extra={
+                    "title": "Facebook Messenger — Meddl loide",
+                    "participants": ["Rob Hehr", "Steven Rahn"],
+                },
+            )
+        ]
+    )
+    title = records.derived_editorial_field(post, tmp_path, "title")
+    assert title.value == "Facebook Messenger — Meddl loide"
+
+
 def test_list_valued_role_field_joins_not_reprs(tmp_path):
     """A `string_or_list` role-marked field (an iMessage group renamed mid-window) derives
     a comma-joined title, never a Python-repr string (spec §4.2.3 via `_first_non_empty`)."""

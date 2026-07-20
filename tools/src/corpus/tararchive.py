@@ -18,9 +18,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
-from .ziparchive import common_root, relpath
+from .ziparchive import ENGINE_VERSION, common_root, relpath
 
 __all__ = [
+    "ENGINE_VERSION",
     "common_root",
     "compression",
     "member_source_modified",

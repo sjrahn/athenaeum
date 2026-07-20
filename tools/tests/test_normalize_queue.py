@@ -312,7 +312,9 @@ def test_finalize_passes_unauthored_formless_lint_clean(tmp_path):
 def test_finalize_passes_formed_without_vouch(tmp_path):
     """*(3.2)* A formed record whose section header carries no title/description still
     passes finalize — the vouch is optional, not required, now that "authored" dissolves
-    into the form layer (spec §4.1, §8.5)."""
+    into the form layer (spec §4.1, §8.5). The derived title still resolves — the
+    packaged conversation form's `participants` mechanical fallback (untitled-604 close)
+    — but that is not a vouch: description stays honestly empty."""
     root = _corpus(tmp_path)
     _declare_form_overlay(root)
     _put(
@@ -321,7 +323,8 @@ def test_finalize_passes_formed_without_vouch(tmp_path):
     )
     post = records.load(paths.record_path(root, RID))
     assert records.derived_state(post) == "formed"
-    assert records.derived_editorial_field(post, root, "title").value == ""
+    assert records.derived_editorial_field(post, root, "title").value == "Andy <a1>"
+    assert records.derived_editorial_field(post, root, "description").value == ""
     queue.enqueue(root, RID)
     queue.drain(root)
     rc = dispatch(["finalize", RID, "--corpus-root", str(root)])

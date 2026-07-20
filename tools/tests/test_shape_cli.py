@@ -99,14 +99,16 @@ def test_shape_builds_form_and_leaves_vouch_unauthored(tmp_path, capsys):
     assert records.derived_state(post) == "formed"
     # The shape touch was appended; the vouch is UNCHANGED — shaping is only half the
     # normalize pass (§8.1); the section-header title/description are the interpretive
-    # agent's remaining work (spec §4.2.3 — the vouch rides the form). Neither the shaper
-    # nor any role-marked schema field supplies a candidate here, so the derived title is
-    # honestly empty.
+    # agent's remaining work (spec §4.2.3 — the vouch rides the form). No implicit
+    # title: was authored, so the derived title falls through to the packaged form's
+    # mechanical `participants` role mark (the untitled-604 close) rather than reading
+    # honestly empty — the interpretive vouch itself is still absent.
     chain = post.metadata["touch"]
     chain = chain if isinstance(chain, list) else [chain]
     assert any("shape.conversation" in t for t in chain)
     title_field = records.derived_editorial_field(post, root, "title")
-    assert title_field.value == "" and title_field.layer is None
+    assert title_field.value == "Andy u1, Bea u2" and title_field.layer == "form"
+    assert records.derived_editorial_field(post, root, "description").value == ""
 
 
 # ---------- skip path: no declared form ---------- #
