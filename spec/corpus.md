@@ -5,7 +5,7 @@ version: 3.2
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
-date_modified: 2026-07-19
+date_modified: 2026-07-20
 ---
 
 # Corpus Specification
@@ -213,6 +213,17 @@ A record's display **title** and **description** are **derived, never stored** �
 - a **mime** schema marks artifact-block byte-facts (§7.1) — a PDF's `/Info` title, a bundle's embedded comment;
 - an **origin** overlay marks origin-block fields (§7.2) — `ytdlp_title`, `ytdlp_description`;
 - a **form** contract's section-header fields are the **interpretive** candidates: the universal header fields `title:`/`description:` (§4.3.2.1) are implicitly role-marked on every form, and a contract may mark others explicitly.
+
+**Form-level templates** *(3.3)*. A form contract may additionally declare a top-level `editorial:` block naming a **mechanical composition** over more than one header field (§7.8):
+
+```yaml
+editorial:
+  title_template: "Statement — {account} — {period}"
+```
+
+`{name}` placeholders substitute the whole-record form section's own `extended_fields` values, read exactly as a role-marked field is (§7.8's `extended_fields` — a list-valued field joins its non-empty items with `, `); static text passes through unchanged. Resolution is **all or nothing**: the template resolves only when **every** placeholder names a field holding a non-empty value on the record's own section — one unresolved placeholder falls the **entire** template through, never a partial composition. (`description_template` is a natural sibling on the same block, undeclared until a contract needs it.)
+
+Within the form layer, three candidate kinds resolve in a fixed order, each checked only when the one before is empty: the section header's own **implicit** `title:`/`description:` (the interpretive vouch — an authored value always wins where present) → the contract's declared **template**, above (a mechanical composition, reached only absent an authored value) → the contract's explicitly **role-marked** `extended_fields` (a single verbatim field, checked last of the three). This ordering is internal to the form layer alone — the cross-layer precedence below (artifact → origin → form) is unchanged.
 
 **Resolution.** Candidates resolve by layer precedence **artifact → origin → form** — each later layer overrides the earlier, the form's word strongest — with the frontmatter override (§4.2.1), when present, strongest of all. Within a layer, the **latest block wins** (origin blocks append in capture order, so a re-capture's fields supersede); within one block, the schema's declaration order decides, first non-empty winning. An empty or absent candidate falls through to the next; only a **whole-record** form section (no `address`, §4.3.2.1) contributes at record scope — a span-scope section's editorial fields describe its span, never the record.
 
@@ -1003,6 +1014,7 @@ A `form` schema declares one **rendering contract**: an expectation for how a se
 - `decomposition` — the normal form, normatively: which segment kinds compose the span (the envelope atom overlays and their required header fields), the addressing axis (`turn=`, `time_range=`, `pages=` — the form is **modality-blind**: `form/conversation` covers a chat export at `turn=` and a recorded meeting at `time_range=` with the same envelope), attachment and event conventions.
 - `checks` — the mechanical conformance obligations lint enforces on any span carrying this form (§4.3.2.1): required envelope fields, codebook indexes in range, address monotonicity. *(The check grammar is tooling-defined pending the first three overlays — §12.18 open questions.)*
 - `normalization.guidance` — prose tactics for the authoring pass, stated **once** for every origin that maps onto the form.
+- `editorial` (optional) *(3.3)* — a top-level block naming **mechanical composition templates** for the derived title/description (§4.2.3): `title_template`, a string whose `{name}` placeholders reference this form's own `extended_fields` (`description_template` is a natural sibling, undeclared until a contract needs it — the grammar admits it without a further amendment). Distinct from an `extended_fields` `role:` mark, above — a mark names one field verbatim; a template composes several into one string, e.g. `form/statement`'s `"Statement — {account} — {period}"` (neither `account` nor `period` alone identifies one statement among an account's many others).
 
 **Terminal contracts** *(3.3)*. Two members of the form domain prescribe the **absence** of a stored rendering — they are the zeroth form's judgment made assertable, closing the gap between *formless-unassessed* and *formless-by-design*:
 

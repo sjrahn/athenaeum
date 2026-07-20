@@ -55,6 +55,7 @@ Block grammar (spec §4.3):
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -1238,13 +1239,43 @@ def _whole_record_section(post: frontmatter.Post) -> Any:
     return None
 
 
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+
+def _resolve_editorial_template(template: str, fields: dict[str, Any] | None) -> str:
+    """Resolve a form's `editorial.<role>_template` (spec §4.2.3) against the whole-record
+    form section's own header field values (`fields` — the section's `extra`).
+
+    `{name}` placeholders substitute a named field's value, read exactly as
+    `_first_non_empty` reads a role-marked field (a list joins its non-empty items with
+    `, ` rather than stringifying to a Python repr); static text passes through unchanged.
+    Resolution is **all or nothing**: the template resolves only when EVERY placeholder
+    names a field holding a non-empty value — one unresolved placeholder falls the whole
+    template through (returned here as `""`), never a partial composition."""
+    if not template:
+        return ""
+    names = _TEMPLATE_PLACEHOLDER.findall(template)
+    if not names:
+        return template.strip()
+    values: dict[str, str] = {}
+    for name in names:
+        text = _first_non_empty(fields, [name])
+        if not text:
+            return ""
+        values[name] = text
+    return template.format(**values).strip()
+
+
 def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
-    """The form layer's role-marked candidate (spec §4.2.3, strongest of the three
-    schema-driven layers): only the WHOLE-RECORD form section contributes — a span-scope
-    section describes its span, never the record. The universal `title:`/`description:`
-    header fields are implicitly role-marked on every form and checked first; any
-    additional field the form contract explicitly marks is checked after, in the schema's
-    declaration order."""
+    """The form layer's candidate (spec §4.2.3, strongest of the three schema-driven
+    layers): only the WHOLE-RECORD form section contributes — a span-scope section
+    describes its span, never the record. Three candidate kinds, checked in order until
+    one is non-empty: the universal `title:`/`description:` header fields — implicitly
+    role-marked on every form, the interpretive vouch, always checked first; the
+    contract's declared `editorial.<role>_template` (a mechanical composition over more
+    than one header field, resolved all-or-nothing — see `_resolve_editorial_template`);
+    and any additional field the form contract explicitly marks `role: <role>`, in the
+    schema's declaration order."""
     from . import schemas as _schemas
 
     section = _whole_record_section(post)
@@ -1257,6 +1288,12 @@ def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: s
     if implicit:
         return implicit
     schema = _schemas.load_form_overlay(corpus_root, section.form)
+    editorial = schema.get("editorial") if isinstance(schema, dict) else None
+    template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
+    if template:
+        templated = _resolve_editorial_template(str(template), section.extra)
+        if templated:
+            return templated
     names = [n for n in _role_marked_fields(schema, role) if n not in _EDITORIAL_ROLES]
     if not names:
         return ""

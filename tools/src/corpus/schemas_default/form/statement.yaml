@@ -6,6 +6,8 @@ description: |
   block's and the ledger's concerns, never this overlay's. The span is the statement proper;
   a cover letter or mixed front matter stays formless before the section (§4.3.2.1, the mixed
   statement PDF worked example).
+editorial:
+  title_template: "Statement — {account} — {period}"
 extended_fields:
   account:
     type: string
