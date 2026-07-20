@@ -165,7 +165,8 @@ def test_save_regions_paged_places_into_section_and_drops_entry(tmp_path):
     assert "page=2&bbox=0.1,0.1,0.2,0.2" not in addrs  # old bbox dropped
     placed = next(s for s in sec.segments if s.address == "page=1&bbox=0.3,0.3,0.4,0.1")
     assert placed.overlay == "text/ocr"
-    assert placed.entry is None  # in-section segment can't carry a TOC entry
+    # region segments are born unlabeled (nesting IS admitted; regions just carry none)
+    assert placed.entry is None
 
 
 def test_save_regions_rejects_bad_box(tmp_path):

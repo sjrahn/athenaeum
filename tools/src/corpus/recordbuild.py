@@ -208,12 +208,11 @@ def add_segment(
         level=level,
     )
     if b._section is not None:
-        # A content segment's `entry:` is a top-level-only leaf label; a structural
-        # byte-mark's `entry:` (the source's own mark text) rides inside a form span.
-        if entry and not structural:
-            raise ValueError(
-                "in-section segment cannot carry `entry` (the section is the TOC unit)"
-            )
+        # A content segment's `entry:` is an authored leaf label — admitted on a child
+        # block within a form section's span (nesting admitted 2026-07-17, §4.3.3/§12.22:
+        # a generic form span wraps an already-labeled multi-block rendering whole, and
+        # the label's meaning never depended on being top-level). A structural byte-mark's
+        # `entry:` (the source's own mark text) rides inside a span as before.
         b._section.segments.append(seg)
     else:
         b.blocks.append(seg)

@@ -164,7 +164,8 @@ def _merge_bbox(
     for page, seg in new_segments:
         sec = _section_for_page(sections, page) if page is not None else None
         if sec is not None:
-            seg.entry = None  # in-section segments can't carry a TOC entry
+            # in-section leaf labels are admitted (nesting, 2026-07-17 — §4.3.3/§12.22);
+            # a region segment keeps whatever label its author gave it
             sec.segments.append(seg)
         else:
             new_top.append(seg)  # a region on a formless page → top-level (not an error)

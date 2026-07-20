@@ -137,7 +137,7 @@ normalization:
     **How a section's address works — read this before you assign one.** You do **not** compute a section's page range from the outline. A section's discrete-index address is the **auto-derived min-max page envelope of its child segments** (the value the tooling derives at compile; `bbox` is ignored — the envelope is over pages). So you assign segments to a section and the address *follows*: a section whose children span pages 4–9 is `pages=4-9`; a one-page section collapses to `pages=<N>`. Two consequences, both easy to get wrong:
 
     - **Adjacent sections may legitimately share a boundary page.** Section A ending on page 9 and section B starting on page 9 is fine — there is no section-overlap rule. (What you must NOT do: give two *segments* the same `page=N&bbox` region, or two *sections* the same `pages=N` envelope — see below.)
-    - **`entry:` is a section / top-level-segment field ONLY.** A segment that lives *inside* a section must NOT carry `entry:` — the section is its TOC unit. Putting `entry:` on an in-section segment is a **hard compile error** (`in-section segment cannot carry entry`), not a soft lint. A figure's identifying label goes in its `description:`, never `entry:` (see "Figures, diagrams, charts").
+    - **`entry:` is an authored leaf label.** Top-level blocks in a multi-block record carry it, and (nesting admitted 2026-07-17, spec §4.3.3/§12.22) so may child blocks within a form section's span — a generic form span wrapping an already-labeled multi-block rendering keeps those labels. A single-block record carries none. A figure's identifying label still goes in its `description:`, never `entry:` (see "Figures, diagrams, charts").
 
     **The outline is a starting point, not an authority.** Read it:
 

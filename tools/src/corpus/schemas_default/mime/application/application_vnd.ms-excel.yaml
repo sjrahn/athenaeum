@@ -86,7 +86,7 @@ normalization:
 
     ### In-section segments don't carry `entry:`
 
-    Per SPEC §4.3: when a record has sections, in-section segments don't carry `entry:` — the section is the TOC unit (the parser rejects `entry:` on a section's child segment). The sheet name lives on the section header; the section opener also carries the sheet-kind composite (`<!--section spreadsheet/calculator-->`, `/simple-table`, …); child segments identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
+    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header — the section opener also carries the sheet-kind composite (`<!--section spreadsheet/calculator-->`, `/simple-table`, …); child segments otherwise identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
 
     ## Refining transcribed cell-grid segments — rendering decision first, then cleanup
 
