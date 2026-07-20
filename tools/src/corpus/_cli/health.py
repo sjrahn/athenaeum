@@ -119,5 +119,12 @@ def _format_summary(report: dict[str, Any]) -> str:
         lines.append(f"validity_violations: {len(items)}")
         for item in items[:5]:
             lines.append(f"  - {item['id'][:8]}… {item['problems'][0]}")
+    if "dangling_origin_refs" in report:
+        groups = report["dangling_origin_refs"]
+        total = sum(len(v) for v in groups.values())
+        bysev = ", ".join(f"{k}: {len(v)}" for k, v in sorted(groups.items()))
+        lines.append(f"dangling_origin_refs: {total}" + (f" ({bysev})" if bysev else ""))
+        for item in groups.get("warning", [])[:5]:
+            lines.append(f"  - {item['id'][:8]}… {item['message']}")
 
     return "\n".join(lines) + "\n"

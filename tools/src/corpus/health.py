@@ -299,6 +299,72 @@ def canonical_duplicate_clusters(refs: list[RecordRef], *, limit: int = 50) -> l
     return out[:limit]
 
 
+def dangling_origin_refs(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
+) -> dict[str, list[dict[str, Any]]]:
+    """Origin blocks whose `uri:` points at a `corpus://<hash>` container that no longer
+    exists **in this corpus** (spec §5.2 — origin blocks are append-only history; §12.8 —
+    `corpus rm` retires a superseded container). Resolution is same-corpus only — a hash is
+    checked against `records/<shard>/<hash>.md` under `corpus_root` and never across the
+    tenant boundary (spec's repo-boundary rule).
+
+    Severity keys on WHICH origin block carries the dead reference, not merely that one
+    exists: a record's origin blocks are ordered by capture time, so the LAST block (or the
+    only one) is its live lineage — a dead hash there means the record's current lineage is
+    genuinely broken (`warning`). A dead hash in an earlier, superseded block is honest
+    history of a since-retired container — the record's live lineage is unaffected
+    (`info`). Each entry names the record, the dead hash, and the origin block's index (0 =
+    first) plus whether it was the latest."""
+    from . import functional_uri as furi
+    from . import paths as _paths
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in refs:
+        origins = list(records.iter_origin_blocks(r.post))
+        if not origins:
+            continue
+        last_index = len(origins) - 1
+        for i, origin in enumerate(origins):
+            fields = origin.get("fields") or {}
+            uri = fields.get("uri")
+            uris = uri if isinstance(uri, list) else ([uri] if uri else [])
+            for raw in uris:
+                candidate = str(raw or "").strip()
+                if not candidate.startswith("corpus://"):
+                    continue
+                try:
+                    parsed = furi.parse(candidate)
+                except ValueError:
+                    continue
+                dead_hash = parsed.hash
+                if _paths.record_path(corpus_root, dead_hash).is_file():
+                    continue
+                latest = i == last_index
+                severity = "warning" if latest else "info"
+                grouped[severity].append(
+                    {
+                        "id": r.record_id,
+                        "title": records.title_for(r.post, corpus_root),
+                        "dead_hash": dead_hash,
+                        "block_index": i,
+                        "block_subtype": origin.get("subtype"),
+                        "latest": latest,
+                        "uri": candidate,
+                        "message": (
+                            f"record {r.record_id} origin block {i}"
+                            f"{'/' + origin['subtype'] if origin.get('subtype') else ''} "
+                            f"cites dead corpus://{dead_hash} — "
+                            + (
+                                "live lineage broken"
+                                if latest
+                                else "retired-container history (non-latest block)"
+                            )
+                        ),
+                    }
+                )
+    return {sev: items[:limit] for sev, items in grouped.items()}
+
+
 # ---------- aggregator ---------- #
 
 
@@ -310,6 +376,7 @@ SIGNAL_NAMES = (
     "missing_artifacts",
     "validity_violations",
     "canonical_duplicate_clusters",
+    "dangling_origin_refs",
 )
 
 
@@ -341,4 +408,6 @@ def scan_all(
         report["validity_violations"] = validity_violations(refs, corpus_root, limit=limit)
     if "canonical_duplicate_clusters" in selected:
         report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(refs, limit=limit)
+    if "dangling_origin_refs" in selected:
+        report["dangling_origin_refs"] = dangling_origin_refs(refs, corpus_root, limit=limit)
     return report

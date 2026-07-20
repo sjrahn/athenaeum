@@ -180,6 +180,87 @@ def test_validity_violations_no_origin(tmp_path):
     assert any("origin" in p for p in by_id[E]["problems"])
 
 
+# ---------- dangling origin refs ---------- #
+
+LIVE = "10" * 32  # a real container record — the resolvable target
+DEAD = "20" * 32  # a hash cited by origin blocks below that owns no record
+WARN_ID = "30" * 32  # ONE origin block, citing DEAD — latest (and only) block is dangling
+INFO_ID = "40" * 32  # TWO origin blocks — DEAD (superseded), then LIVE (latest)
+
+
+def _bare_record(root: Path, rid: str, *, mime: str = "application/json") -> frontmatter.Post:
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=rid, touch_id="corpus.promote@0.1.0")
+    )
+    records.set_artifact_block(post, mime=mime)
+    return post
+
+
+def _populate_dangling(tmp_path: Path) -> Path:
+    root = _corpus(tmp_path)
+
+    live_post = _bare_record(root, LIVE, mime="application/gzip")
+    records.append_origin_block(
+        live_post, uri="https://example.com/live.tgz", snapshot="2026-07-01T00:00:00Z"
+    )
+    records.dump(live_post, paths.record_path(root, LIVE))
+
+    warn_post = _bare_record(root, WARN_ID)
+    records.append_origin_block(
+        warn_post,
+        uri=f"corpus://{DEAD}?path=Takeout/dead.json",
+        snapshot="2026-07-04T00:00:00Z",
+    )
+    records.dump(warn_post, paths.record_path(root, WARN_ID))
+
+    info_post = _bare_record(root, INFO_ID)
+    records.append_origin_block(
+        info_post,
+        uri=f"corpus://{DEAD}?path=Takeout/dead.json",
+        snapshot="2026-07-04T00:00:00Z",
+    )
+    records.append_origin_block(
+        info_post,
+        uri=f"corpus://{LIVE}?path=Takeout/live.json",
+        snapshot="2026-07-06T00:00:00Z",
+    )
+    records.dump(info_post, paths.record_path(root, INFO_ID))
+
+    return root
+
+
+def test_dangling_origin_refs_severity_by_block_position(tmp_path):
+    root = _populate_dangling(tmp_path)
+    refs = health.load_all_records(root)
+    groups = health.dangling_origin_refs(refs, root)
+
+    assert {e["id"] for e in groups.get("warning", [])} == {WARN_ID}
+    assert {e["id"] for e in groups.get("info", [])} == {INFO_ID}
+    # LIVE itself cites no corpus:// origin uri, so it is dangling-free.
+    assert WARN_ID not in {e["id"] for e in groups.get("info", [])}
+    assert INFO_ID not in {e["id"] for e in groups.get("warning", [])}
+
+    warn_entry = groups["warning"][0]
+    assert warn_entry["dead_hash"] == DEAD
+    assert warn_entry["latest"] is True
+    assert warn_entry["block_index"] == 0
+
+    info_entry = groups["info"][0]
+    assert info_entry["dead_hash"] == DEAD
+    assert info_entry["latest"] is False
+    assert info_entry["block_index"] == 0
+
+
+def test_dangling_origin_refs_cli_summary(tmp_path, capsys):
+    root = _populate_dangling(tmp_path)
+    rc = dispatch(
+        ["health", "--summary", "--filter", "dangling_origin_refs", "--corpus-root", str(root)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "dangling_origin_refs: 2" in out
+
+
 # ---------- CLI ---------- #
 
 
