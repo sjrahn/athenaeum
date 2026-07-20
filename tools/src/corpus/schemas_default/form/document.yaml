@@ -4,13 +4,15 @@ description: |
   A page-like faithful rendering whose payload is figures, tables, or mixed plate matter
   (spec §7.8): the generic contract for artifacts that genuinely render as pages of
   presented content — a connector view sheet, a torque-specification plate, a parts or
-  labor catalog, a wiring schematic page, a datasheet, a form. Names a SHAPE, never a
-  subject. NOT a catch-all: an artifact with no faithful page rendering (code, datasets,
-  binaries, containers) stays formless — stamping `document` on it would assert a shape
-  its bytes do not have. The boundary against `form/article` is which way the dependency
-  runs: here the figures/tables/plates ARE the content and prose frames them; prose-led
-  reading matter is an article. Stepped work instructions are `form/procedure`; an
-  entries-are-the-content listing is `form/index`.
+  labor catalog, a wiring schematic page, a datasheet, a form, a spreadsheet workbook's
+  data-table worksheets. Names a SHAPE, never a subject. NOT a catch-all: an artifact
+  with no faithful page rendering (code, datasets, binaries, containers) stays formless
+  — stamping `document` on it would assert a shape its bytes do not have. The boundary
+  against `form/article` is which way the dependency runs: here the figures/tables/plates
+  ARE the content and prose frames them; prose-led reading matter is an article. Stepped
+  work instructions are `form/procedure`; an entries-are-the-content listing is
+  `form/index`. `data-table-set` is deliberately not its own form (spec §7.8) —
+  table-payload pages, including a workbook's worksheets, are documents.
 extended_fields: {}
 decomposition: |
   The span carries the page's presented content in source order: framing text (a
@@ -24,8 +26,15 @@ decomposition: |
   topology of a drawing is NOT losslessly textualizable and gets no fabricated
   transcription — the described embed and any discrete text legend are its faithful
   rendering.
+
+  A spreadsheet workbook (xlsx/xls) decomposes the same way at the mime's own axis: one
+  section per worksheet, addressed `sheet=<tab-name>` (its child `text/data-table` /
+  `text/data-table-dynamic` segments at the same address, optionally narrowed
+  `sheet=<tab-name>&bbox=<A1-range>`) — see the spreadsheet mime schemas' normalization
+  guidance for the section/segment shape. Asserting `document` on those sections is the
+  same contract as any other page-like payload: the worksheets ARE the content.
 checks:
-  address_axes: [el, pages, page, block]
+  address_axes: [el, pages, page, block, sheet]
 normalization:
   guidance: |
     The lossless extraction IS the value of this form: transcribe every readable table,

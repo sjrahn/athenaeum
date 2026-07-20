@@ -116,6 +116,10 @@ normalization:
 
     `title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries NO title candidate at all; the frontmatter `title` stays empty through draft. Author it from scratch — the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
 
+    ## Asserting the structural form
+
+    A workbook whose worksheets are page-like data-table plates is exactly `form/document`'s contract (SPEC §7.8), which declares `sheet` among its checked address axes — see xlsx.yaml's "Asserting the structural form" section for the full reasoning; it applies unchanged to xls. Wrap the top-level worksheet sections in `<!--section document ...-->` once the section/segment shape above is in place.
+
     ## Forward reference
 
     The canonical interpretive overlay for spreadsheet artifacts is `spreadsheet` (see `corpus overlay spreadsheet`). Test its subclasses first — `spreadsheet/{simple-table, calculator, dataset, dashboard}` covers the common shapes, and the same vocabulary applies at both record scope and section scope (SPEC §4.4). See xlsx.yaml's forward-reference section for the full reasoning; it applies unchanged to xls.

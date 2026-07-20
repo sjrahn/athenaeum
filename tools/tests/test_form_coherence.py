@@ -259,3 +259,63 @@ def test_codefence_unbalanced_still_flags_extracted_document_bodies(tmp_path):
     post = _post()
     post.content = segments.emit([segments.Segment(atom="text", address="el=1", body="```\nx")])
     assert "body-codefence-unbalanced" in _fired(post, root)
+
+
+# ---------- form/document + the `sheet` axis (spreadsheets, §7.8) ---------- #
+
+
+def _sheet_section(name: str, addrs: list[str]) -> segments.Section:
+    """One `document`-form section over a single spreadsheet worksheet — `addrs` are the
+    child segments' own (possibly `&bbox=`-narrowed) addresses, all sharing `name`."""
+    segs = [
+        segments.Segment(
+            atom="text", overlay="text/data-table", address=a,
+            body="| a | b |\n| --- | --- |\n| 1 | 2 |",
+        )
+        for a in addrs
+    ]
+    return segments.Section(form="document", address=f"sheet={name}", entry=name, segments=segs)
+
+
+def test_document_form_admits_sheet_axis_clean(tmp_path):
+    """A multi-sheet, formed document record — one section per worksheet, some children
+    narrowed with `&bbox=`, one tab name carrying a percent-encoded `&` (SPEC's xlsx/xls
+    address scheme) — lints with NO form-coherence findings now that `document` declares
+    `sheet` among its checked address axes."""
+    root = _root(tmp_path)
+    post = _post()
+    sec_inputs = _sheet_section("INPUTS", ["sheet=INPUTS&bbox=A1:B2", "sheet=INPUTS&bbox=A6:E11"])
+    sec_overview = _sheet_section("Overview %26 Results", ["sheet=Overview %26 Results"])
+    post.content = segments.emit([sec_inputs, sec_overview])
+    fired = _fired(post, root)
+    assert not any(f.startswith("form-") for f in fired), fired
+
+
+def test_document_form_still_flags_an_axis_outside_the_declared_set(tmp_path):
+    """The axis-set check stays strict: a child address on a param `document` does not
+    declare (e.g. a non-worksheet OOXML container part, `xpath=`) still warns."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="document", address="sheet=Charts", entry="Charts",
+        segments=[segments.Segment(atom="image", address="xpath=/xl/media/image1.png")],
+    )
+    post.content = segments.emit([sec])
+    assert "form-address-axis" in _fired(post, root)
+
+
+def test_statement_pages_axis_nonmonotonic_still_flagged(tmp_path):
+    """Regression: adding `sheet` to `document`'s axes (a string-valued, unordered axis)
+    must not weaken monotonic enforcement elsewhere — `statement`'s numeric `pages` axis
+    (per-section child addresses, §4.3.2.1) still catches a genuinely out-of-order run."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="statement", address="pages=1-4", extra={"account": "a", "period": "2026-03"},
+        segments=[
+            segments.Segment(atom="text", overlay="text/ocr", address="page=3", body="x"),
+            segments.Segment(atom="text", overlay="text/ocr", address="page=1", body="y"),
+        ],
+    )
+    post.content = segments.emit([sec])
+    assert "form-address-nonmonotonic" in _fired(post, root)

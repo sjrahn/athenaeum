@@ -107,6 +107,10 @@ normalization:
 
     Use the Python records-library path for the wrap-and-split: `records.load(path)` → `iter_blocks(post.content)` → build the new `Section` list with new/reorganized `Segment` children → `post.content = segments.emit(new_blocks)` → `records.dump(post, path)`.
 
+    ## Asserting the structural form
+
+    A workbook whose worksheets are page-like data-table plates is exactly `form/document`'s contract (SPEC §7.8): `document` declares `sheet` among its checked address axes (alongside `el`/`pages`/`page`/`block`) precisely so a spreadsheet's sections can be asserted into it. Once the section/segment shape above is in place (one `<!--section-->` per worksheet, `sheet=<name>`-addressed children), wrap it as `<!--section document ...-->` (the whole-record case omits `address`; a mixed-artifact record spans only the covered sheets, SPEC §4.3.2.1). This is a STRUCTURAL judgment only — checkable mechanically (every child address on a declared axis) — independent of what a sheet's cells are *about*; that is ledger knowledge, asserted upward as claims citing the record, never a record-side assertion (SPEC §2.0/§4.4).
+
     ## Forward reference
 
     The canonical interpretive overlay for spreadsheet artifacts is `spreadsheet` (see `corpus overlay spreadsheet`). Test its subclasses first — `spreadsheet/{simple-table, calculator, dataset, dashboard}` covers the common shapes, and the same vocabulary applies at both record scope and section scope (SPEC §4.4).

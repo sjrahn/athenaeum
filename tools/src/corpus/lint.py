@@ -1177,7 +1177,19 @@ def _leading_axis(addr: Any) -> tuple[str, str]:
 
 
 def _axis_low(value: str) -> int | None:
-    """The low integer of an axis value (`3` → 3, `2-6` → 2), or None when non-numeric."""
+    """The low integer of an axis value (`3` → 3, `2-6` → 2), or None when non-numeric.
+
+    None is also the correct, deliberate outcome for a string-valued axis — e.g. a
+    spreadsheet's `sheet=<tab-name>` (`form/document`'s `sheet` axis, xlsx/xls mime
+    schemas): a tab name's lexical value bears no relationship to its true position
+    (workbook tab order, preserved by the drafter/normalizer and not re-derivable from
+    the address string alone), so treating a numeric-looking tab name (`sheet=2024`) as
+    an orderable index would be actively wrong, not just inert. The monotonic check
+    below skips ordering entirely when `_axis_low` returns None — correct for any
+    non-sequence-numbered axis, never a false positive. A form wanting real
+    interleaving-detection over such an axis needs contiguity (no segment for a given
+    axis value after another value has intervened), not ascending-integer monotonicity;
+    no form currently declares that check, so it isn't implemented here."""
     try:
         return int(str(value).split("-", 1)[0])
     except (TypeError, ValueError):
