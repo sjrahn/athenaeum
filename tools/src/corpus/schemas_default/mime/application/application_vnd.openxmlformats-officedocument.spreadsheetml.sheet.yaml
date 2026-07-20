@@ -35,7 +35,7 @@ transport_algos:
 - sha256
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xlsx drafter is the structural-content authority for an xlsx record: deterministically, it walks the OOXML zip, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `workbook_*`, `formula_count`, `external_links`, `named_ranges`, `has_pivot_tables`, `has_macros`), and renders each worksheet either as a transcribable cell-grid body (a static-data sheet) or as an empty body with a per-sheet `format-loss` issue (formula / external-ref / chart / empty sheets). The normalizer refines that first-pass output into the v1.0 shape — section-scope composite + `text/data-table` / `text/data-table-dynamic` segments — per the `spreadsheet` overlay.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xlsx drafter is the structural-content authority for an xlsx record: deterministically, it walks the OOXML zip, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `workbook_*`, `formula_count`, `external_links`, `named_ranges`, `has_pivot_tables`, `has_macros`), and renders each worksheet either as a transcribable cell-grid body (a static-data sheet) or as an empty body with a per-sheet `format-loss` issue (formula / external-ref / chart / empty sheets). The normalizer refines that first-pass output into the section/segment shape below — one `<!--section-->` per worksheet, eventually asserted `document` (see "Asserting the structural form"), with `text/data-table` / `text/data-table-dynamic` segments underneath.
 
     Don't re-extract content from the artifact yourself; let the drafter do it. But also don't assume the record body in front of you on a re-pass equals fresh drafter output — your prior normalization (or someone else's) may have rewritten segment bodies, promoted markdown to HTML, added segment-scope classifications, etc. When you need ground-truth drafter signals — e.g. "what would a fresh draft route this sheet to?", "what cell values does the artifact actually contain?", "is the current body still faithful to the artifact?" — pull a fresh draft ephemerally rather than trusting the current body:
 
@@ -62,14 +62,14 @@ normalization:
     - `address: sheet=<worksheet-name>` — the worksheet's tab name, in workbook order.
     - `entry: <worksheet-name>` — written by the drafter directly; the sheet name IS the TOC label.
 
-    Each section's child segments are the rendered content for that worksheet. The simplest sheet has one segment: the worksheet's cell grid (`sheet=<name>`, the same address as the section) as a `text/data-table` segment when the cells are static data, or — when the cells are formulas / external refs / chart-only / empty — a first-pass empty body with a `format-loss` issue that the normalizer refines into the section-scope composite shape (see the `spreadsheet` overlay). When the normalizer carves a sheet into multiple regions, each segment narrows its address with a cell range: `sheet=<name>&bbox=<A1-range>` (e.g. `sheet=Example A RP1-RP5&bbox=A6:E11`).
+    Each section's child segments are the rendered content for that worksheet. The simplest sheet has one segment: the worksheet's cell grid (`sheet=<name>`, the same address as the section) as a `text/data-table` segment when the cells are static data, or — when the cells are formulas / external refs / chart-only / empty — a first-pass empty body with a `format-loss` issue that the normalizer refines per-sheet into `text/data-table-dynamic` marker(s) and/or the section's own `description` (see "Multi-segment worksheets" and "Chart sheets vs embedded charts" below). When the normalizer carves a sheet into multiple regions, each segment narrows its address with a cell range: `sheet=<name>&bbox=<A1-range>` (e.g. `sheet=Example A RP1-RP5&bbox=A6:E11`).
 
     ### Multi-segment worksheets — tables, charts, and embedded objects
 
     A worksheet that contains multiple distinct content kinds — a static table plus an embedded chart, several non-contiguous tables, a dashboard-shaped sheet with several chart objects — splits into multiple segments under its single sheet section. Each content kind gets its own segment:
 
     - **Cell-grid content** is addressed `sheet=<name>` (whole sheet) or `sheet=<name>&bbox=<A1-range>` (a carved region), `atom: text` — a `text/data-table` segment (static / fixed cells, lossless body) or a body-empty `text/data-table-dynamic` marker for a live-calc region (described on its header, not transcribed).
-    - **Embedded chart objects** — the chart's title / axes / series (read from the chart XML's `<c:title>` / `<a:t>` elements and the cells it references) are described on the section's `spreadsheet/dashboard` composite `description`, and the backing series data is transcribed as a `text/data-table` segment. Until the resolver can rasterize an in-container chart part (`xl/charts/chart<N>.xml`) into image bytes, do NOT mint an `image/chart` segment + embed with a synthetic transport over the chart XML — that misrepresents a non-renderable part as a resolvable image. The chart visual is a deferred loss (see `dashboard.yaml`).
+    - **Embedded chart objects** — the chart's title / axes / series (read from the chart XML's `<c:title>` / `<a:t>` elements and the cells it references) are described on the section's own `description`, and the backing series data is transcribed as a `text/data-table` segment. Until the resolver can rasterize an in-container chart part (`xl/charts/chart<N>.xml`) into image bytes, do NOT mint an `image/chart` segment + embed with a synthetic transport over the chart XML — that misrepresents a non-renderable part as a resolvable image. The chart visual is a deferred loss.
     - **Embedded raster images** (`xl/media/image<N>.png`, etc.) follow the standard v1.0 image model: a body-empty `image` positioning marker addressed at `xpath=/xl/media/image<N>.<ext>`, with the visible-content description on the matching `<!--embed image/...-->` block's `description:` (per `visual-type.yaml` alt-text tactics) — never in the segment body. If the resolver cannot reach the in-container part to render the bytes, leave the embed `description:` empty and persist a `missing-media` issue rather than describing from surrounding cells.
 
     Ordering within the section follows the worksheet's natural reading order — cell-grid first (top-to-bottom), then embedded objects in their drawing-anchor order (which usually matches visual top-to-bottom on the sheet).
@@ -86,13 +86,13 @@ normalization:
 
     ### Chart sheets vs embedded charts
 
-    A **chart sheet** is a top-level worksheet whose entire content is one chart (no cell grid) — it appears in `wb.chartsheets`, not `wb.worksheets`. The drafter emits a section per chart sheet just like per worksheet. The section carries the `spreadsheet/dashboard` composite, its `description` summarizes the chart, and any backing series data is a `text/data-table` segment; the rendered chart visual is a deferred loss (no synthetic image segment/embed until the resolver supports in-container chart rasterization).
+    A **chart sheet** is a top-level worksheet whose entire content is one chart (no cell grid) — it appears in `wb.chartsheets`, not `wb.worksheets`. The drafter emits a section per chart sheet just like per worksheet. The section's own `description` summarizes the chart, and any backing series data is a `text/data-table` segment; the rendered chart visual is a deferred loss (no synthetic image segment/embed until the resolver supports in-container chart rasterization).
 
-    **Embedded charts** are chart objects anchored into a regular worksheet via the drawings part. They're independent XML parts (`xl/charts/chart<N>.xml`) referenced by `xl/drawings/drawing<M>.xml`, which is referenced by the worksheet relationships. The chart isn't part of the worksheet XML — it's a sibling part the worksheet points at. Describe each on the worksheet section's `spreadsheet/dashboard` `description` (citing the chart-part path so a reader can resolve the original); it does not become its own segment until in-container chart rasterization is supported.
+    **Embedded charts** are chart objects anchored into a regular worksheet via the drawings part. They're independent XML parts (`xl/charts/chart<N>.xml`) referenced by `xl/drawings/drawing<M>.xml`, which is referenced by the worksheet relationships. The chart isn't part of the worksheet XML — it's a sibling part the worksheet points at. Describe each on the worksheet section's own `description` (citing the chart-part path so a reader can resolve the original); it does not become its own segment until in-container chart rasterization is supported.
 
     ### In-section segments don't carry `entry:`
 
-    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header — the section opener also carries the sheet-kind composite (`<!--section spreadsheet/calculator-->`, `/simple-table`, `/dashboard`, …). Child segments otherwise identify themselves via their address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
+    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header (`address: sheet=<name>` / `entry: <name>`) — and, once the section/segment shape is in place, the section opener asserts `document` (`<!--section document ...-->`, see "Asserting the structural form" below). Child segments otherwise identify themselves via their address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
 
     ### Legacy flat-segment records — in-place upgrade
 
@@ -102,7 +102,7 @@ normalization:
 
     1. For each existing top-level segment, derive its sheet name from `entry:` (or, for a segment still carrying the legacy `xpath=/xl/worksheets/sheet<N>.xml` address, by mapping the sheet XML path to `sheet_names[<N-1>]` from the `<!--artifact application/vnd.openxmlformats-officedocument.spreadsheetml.sheet-->` block).
     2. Wrap the segment in a `<!--section-->` block with `address: sheet=<name>` and `entry: <name>`. Strip `entry:` from the segment now that it's in-section, and re-address the segment itself `sheet=<name>` (replacing any legacy `xpath=/xl/worksheets/sheet<N>.xml`; add `&bbox=<A1-range>` if you carve it into regions).
-    3. For dashboard-shaped sheets (multiple embedded charts described as bullets under headings inside one segment), classify the section `spreadsheet/dashboard` and move the per-chart descriptions onto the section's `description`; transcribe any backing series data as `text/data-table`. Do not create `image/chart` segments — chart rasterization is a deferred loss (see `dashboard.yaml`).
+    3. For dashboard-shaped sheets (multiple embedded charts described as bullets under headings inside one segment), move the per-chart descriptions onto the section's own `description`; transcribe any backing series data as `text/data-table`. Do not create `image/chart` segments — chart rasterization is a deferred loss.
     4. Append a normalizer touch. The record stays at `status: normalized`.
 
     Use the Python records-library path for the wrap-and-split: `records.load(path)` → `iter_blocks(post.content)` → build the new `Section` list with new/reorganized `Segment` children → `post.content = segments.emit(new_blocks)` → `records.dump(post, path)`.
@@ -111,18 +111,18 @@ normalization:
 
     A workbook whose worksheets are page-like data-table plates is exactly `form/document`'s contract (SPEC §7.8): `document` declares `sheet` among its checked address axes (alongside `el`/`pages`/`page`/`block`) precisely so a spreadsheet's sections can be asserted into it. Once the section/segment shape above is in place (one `<!--section-->` per worksheet, `sheet=<name>`-addressed children), wrap it as `<!--section document ...-->` (the whole-record case omits `address`; a mixed-artifact record spans only the covered sheets, SPEC §4.3.2.1). This is a STRUCTURAL judgment only — checkable mechanically (every child address on a declared axis) — independent of what a sheet's cells are *about*; that is ledger knowledge, asserted upward as claims citing the record, never a record-side assertion (SPEC §2.0/§4.4).
 
-    ## Forward reference
+    ## What a sheet IS — ledger knowledge, not a record assertion
 
-    The canonical interpretive overlay for spreadsheet artifacts is `spreadsheet` (see `corpus overlay spreadsheet`). Test its subclasses first — `spreadsheet/{simple-table, calculator, dataset, dashboard}` covers the common shapes, and the same vocabulary applies at both record scope and section scope (SPEC §4.4).
+    The 1.0 `spreadsheet` composite overlay — record- and section-scope subclasses `simple-table`, `calculator`, `dataset`, `dashboard` — is a removed 1.0 mechanism and stays removed (SPEC §7.4): it asserted a workbook's or a sheet's *meaning* (that it functions as a calculator, a dashboard, a plain dataset), and meaning is not a record-layer classification (SPEC §2.0/§4.4). There is no overlay to test subclasses against, and no record-side field stores which of these a sheet is.
 
-    Other interpretive overlays under `schema/composite/` may also apply to a spreadsheet record, but most overlays in the current corpus target *documents* (PDFs of standards, methodologies, regulations, etc.) and their cues require document-class body content that a calculator workbook does not contain. Don't shoehorn an xlsx into a document-class overlay just because the workbook is from the same source — the parent cues will fail the body-text check anyway. If a domain-specific calculator subclass (e.g. `<standard>/calculator`) would be the right tag, surface that as a gap for `/curate` rather than forcing the wrong existing subclass.
+    The record-side moves available today are structural only: the `form/document` assertion above (mechanically checkable — every child address on a declared axis) and the disclosed `description:` on each section/segment (the editorial vouch, SPEC §4.2.3) — naming a chart's title/axes/series, a live region's computed columns, a workbook's overall layout. What a sheet or workbook functions *as* — that this one is a calculator, that one a dashboard, another a plain reference dataset — is asserted upward as a ledger claim citing the record's span (`corpus://<id>#sheet=<name>`), never written into the record itself.
 
     ## Reading the drafter's signals
 
     Per-sheet signals — read each section's first-pass output:
 
     - A sheet rendered with a populated cell-grid body is static data — refine it into `text/data-table` segment(s).
-    - A sheet rendered with an empty body and a `format-loss` issue stating the reason (N formula cells, external references, chart-only, empty) is a live / chart / empty sheet — refine it into the section-scope composite shape per the `spreadsheet` overlay.
+    - A sheet rendered with an empty body and a `format-loss` issue stating the reason (N formula cells, external references, chart-only, empty) is a live / chart / empty sheet — refine it into `text/data-table-dynamic` marker(s) and/or the section's own `description`, per "Multi-segment worksheets" and "Chart sheets vs embedded charts" above.
 
     Workbook-level signals — read frontmatter:
 
@@ -169,10 +169,9 @@ normalization:
 
     The label cells on this kind of sheet are almost never tabular data — they are section markers positioned next to embedded chart pairs (e.g. `A1: "Example A"` at the top of one chart region; `A39: "Example B"` at the top of another). A 2x1 markdown table of those labels is misleading.
 
-    The v1.0 shape for a chart-dashboard sheet:
+    The shape for a chart-dashboard sheet:
 
-    - Classify the SECTION `spreadsheet/dashboard`.
-    - On the section's `description`, name each chart region and what its chart shows — title + axes + series, extracted from `<c:title>` / `<a:t>` elements in `xl/charts/chartN.xml` (e.g. "Example A: project-vs-baseline carbon-stock trajectory, project year on X, t CO2e on Y"). Do not invent values.
+    - On the section's own `description`, name each chart region and what its chart shows — title + axes + series, extracted from `<c:title>` / `<a:t>` elements in `xl/charts/chartN.xml` (e.g. "Example A: project-vs-baseline carbon-stock trajectory, project year on X, t CO2e on Y"). Do not invent values.
     - Transcribe any real backing series data that is literally present as a `text/data-table` segment.
     - The chart visual itself (axes drawn, series colors, gridlines, exact points) is a deferred loss — the resolver cannot yet rasterize `xl/charts/chartN.xml`. Do not mint an `image/chart` segment/embed; the section `description` is the record of what the charts show until rasterization lands.
 
@@ -182,7 +181,7 @@ normalization:
 
     ## Faithfulness reminder
 
-    Cell values the drafter rendered with `data_only=True` are cached computed values, not formulas. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's `spreadsheet/calculator` `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
+    Cell values the drafter rendered with `data_only=True` are cached computed values, not formulas. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's own `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
 extended_fields:
   sheet_names:
     type: list[string]
@@ -246,8 +245,7 @@ extended_fields:
       second openpyxl pass with `data_only=False` and `cell.data_type == "f"`.
       Zero means no formulas anywhere — every worksheet is static
       `text/data-table` content. Non-zero means at least one worksheet is a
-      live calculation whose cached values alone are not the methodology
-      (a `spreadsheet/calculator` section).
+      live calculation whose cached values alone are not the methodology.
   external_links:
     type: boolean
     required: true
@@ -256,10 +254,10 @@ extended_fields:
       True iff the OOXML zip contains any `xl/externalLinks/externalLink<N>.xml`
       part — the workbook references at least one external workbook
       somewhere in its cells. This is a workbook-wide discoverability
-      signal. Per-sheet classification (static `simple-table` vs live
-      `calculator`) uses the sheet's own formula text, not this flag — a
-      workbook with an external link from a calculator sheet does not make
-      its static title sheets anything but static data.
+      signal. Per-sheet routing (static `text/data-table` vs live
+      `text/data-table-dynamic`) uses the sheet's own formula text, not this
+      flag — a workbook with an external link from a calculator sheet does
+      not make its static title sheets anything but static data.
   named_ranges:
     type: list[string]
     required: false

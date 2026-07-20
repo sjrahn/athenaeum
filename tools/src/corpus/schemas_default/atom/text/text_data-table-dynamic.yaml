@@ -26,8 +26,7 @@ description: |
 
   When a live region is uninformative on its own (empty, or all-zero /
   placeholder inputs awaiting a run), do NOT emit a marker for it at all — let
-  the enclosing section composite (e.g. `spreadsheet/calculator`) describe what
-  the sheet computes.
+  the enclosing section's own `description` describe what the sheet computes.
 applies_to:
   atom: text
 enables_lossless: false

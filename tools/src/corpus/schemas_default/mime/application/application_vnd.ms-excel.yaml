@@ -71,7 +71,7 @@ normalization:
     2. **External workbook links.** No equivalent of xlsx's `xl/externalLinks/` part detection.
     3. **Macros / pivot tables.** No equivalent of xlsx's `xl/vbaProject.bin` / `xl/pivotTables/` member checks. The fields `has_macros` and `has_pivot_tables` are not declared on xls records.
 
-    The practical consequence is that the normalizer carries more weight for xls records than for xlsx ones: the drafter renders everything as static `text/data-table`, and the normalizer judges per-sheet whether a sheet is actually a live calculator. When a sheet's purpose is clearly a calculator (a small number of user inputs feeding a derived output, with cells laid out as labeled-parameter columns rather than tabular data), classify the SECTION `spreadsheet/calculator`: keep the literally-present labels / inputs (and any genuinely fixed table) as `text/data-table`, mark a live-calculation region with a body-empty `text/data-table-dynamic` segment described on its header (never transcribe its volatile values), and put the computation summary on the section `description`. The `text/data-table-dynamic` overlay already encodes the lost formula layer, so a separate per-sheet `format-loss` issue is not needed.
+    The practical consequence is that the normalizer carries more weight for xls records than for xlsx ones: the drafter renders everything as static `text/data-table`, and the normalizer judges per-sheet whether a sheet is actually a live calculator. When a sheet's purpose is clearly a calculator (a small number of user inputs feeding a derived output, with cells laid out as labeled-parameter columns rather than tabular data): keep the literally-present labels / inputs (and any genuinely fixed table) as `text/data-table`, mark a live-calculation region with a body-empty `text/data-table-dynamic` segment described on its header (never transcribe its volatile values), and put the computation summary on the section's own `description` (that the sheet functions as a calculator is ledger knowledge — a claim citing the section span, never a record-side tag). The `text/data-table-dynamic` overlay already encodes the lost formula layer, so a separate per-sheet `format-loss` issue is not needed.
 
     Use the artifact's surrounding context to inform the call. CDM/UNFCCC methodology calculators almost always have sheets named `INPUTS`, `OPTION A`/`OPTION B`/…, `Given_parameters`, `Requirements for options` — those are calculator sections where cached values are post-input snapshots and the formulas in the source artifact carry the methodology. Reference / static-data sheets in the same workbook (`INTRODUCTION`, `PROJECT TITLE`, `Sheet1`) stay static `text/data-table`.
 
@@ -86,7 +86,7 @@ normalization:
 
     ### In-section segments don't carry `entry:`
 
-    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header — the section opener also carries the sheet-kind composite (`<!--section spreadsheet/calculator-->`, `/simple-table`, …); child segments otherwise identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
+    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header (`address: sheet=<name>` / `entry: <name>`) — and, once the section/segment shape is in place, the section opener asserts `document` (`<!--section document ...-->`, see "Asserting the structural form" below); child segments otherwise identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
 
     ## Refining transcribed cell-grid segments — rendering decision first, then cleanup
 
@@ -120,13 +120,13 @@ normalization:
 
     A workbook whose worksheets are page-like data-table plates is exactly `form/document`'s contract (SPEC §7.8), which declares `sheet` among its checked address axes — see xlsx.yaml's "Asserting the structural form" section for the full reasoning; it applies unchanged to xls. Wrap the top-level worksheet sections in `<!--section document ...-->` once the section/segment shape above is in place.
 
-    ## Forward reference
+    ## What a sheet IS — ledger knowledge, not a record assertion
 
-    The canonical interpretive overlay for spreadsheet artifacts is `spreadsheet` (see `corpus overlay spreadsheet`). Test its subclasses first — `spreadsheet/{simple-table, calculator, dataset, dashboard}` covers the common shapes, and the same vocabulary applies at both record scope and section scope (SPEC §4.4). See xlsx.yaml's forward-reference section for the full reasoning; it applies unchanged to xls.
+    The 1.0 `spreadsheet` composite overlay (subclasses `simple-table`, `calculator`, `dataset`, `dashboard`) is a removed 1.0 mechanism and stays removed (SPEC §7.4) — see xlsx.yaml's section of the same name for the full reasoning; it applies unchanged to xls. The record-side moves are the `form/document` assertion above and each section's/segment's disclosed `description:`; what a sheet functions as (a calculator, a dashboard, a plain dataset) is a ledger claim citing the record's span, never a record-side tag.
 
     ## Faithfulness reminder
 
-    Cell values surfaced by xlrd are cached computed values — the same Excel would display. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's `spreadsheet/calculator` `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
+    Cell values surfaced by xlrd are cached computed values — the same Excel would display. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's own `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
 extended_fields:
   sheet_names:
     type: list[string]
