@@ -724,3 +724,283 @@ def test_verify_interpretation_proposes_inline_uri_without_need_warns(
     assert len(res.warnings) == 1
     assert "no enqueue/promote need" in res.warnings[0]
     assert f"corpus://{h[:12]}" in res.warnings[0]
+
+
+def _ingest_vcard(root: Path, raw: bytes, name: str = "contact.vcf") -> str:
+    """Ingest a real `.vcf` artifact (mirrors `test_resolver_vcard_prop.py`'s
+    `_ingest`) so `?prop=<N>` resolves against genuine bytes through
+    `corpus.resolver.resolve` — a formless record with NO stored segments, so
+    `scoped_text` reports `unchecked` and verification must reach the (1.5)
+    derived-surface resolution path rather than the record markdown."""
+    import shutil
+
+    from corpus import hashing
+    from corpus._cli import ingest as ingest_cli
+
+    (root / "records").mkdir(parents=True, exist_ok=True)
+    (root / "schema").mkdir(parents=True, exist_ok=True)
+    cap = root / "capture"
+    cap.mkdir(exist_ok=True, parents=True)
+    src = root / name
+    src.write_bytes(raw)
+    staged = cap / name
+    shutil.copy(src, staged)
+    assert ingest_cli._ingest_one(root, staged) == 0
+    rid = hashing.hash_file(src)["blake3"]
+    src.unlink()
+    return rid
+
+
+#: property order: 1=VERSION, 2=FN, 3=NOTE. FN's text is duplicated onto the
+#: drafter's embed `description:` (the card's display name, corpus §7.1's
+#: vcard-manifest strategy) — citable through the EXISTING record-wide
+#: fallback, so `?prop=2` alone wouldn't exercise the new resolver path.
+#: NOTE carries text found nowhere else in the record's stored markdown —
+#: `?prop=3` genuinely requires the (1.5) derived-surface resolution.
+_ADA_CARD = (
+    b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\n"
+    b"NOTE:Pioneer of computing\r\nEND:VCARD\r\n"
+)
+# a PHOTO-bearing card (property 4) whose property is binary-encoded — the
+# resolver's `prop=` transform refuses to render it as text (a clear error,
+# never a guessed rendering): the honest "op can't run here" case (1.5)
+_PHOTO_CARD = (
+    b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\n"
+    b"NOTE:Pioneer of computing\r\n"
+    b"PHOTO;ENCODING=b;TYPE=PNG:"
+    b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ"
+    b"/pLvAAAAAElFTkSuQmCC\r\n"
+    b"END:VCARD\r\n"
+)
+
+
+def test_verify_derived_surface_prop_anchor_resolves_via_resolver(tmp_path: Path) -> None:
+    """(1.5) A `?prop=` anchor into a record with NO stored segments — the
+    stored markdown can't scope it (`scoped_text` reports `unchecked`) and the
+    quote lives nowhere in the record's own body — resolves through the corpus
+    resolver as a library call (the same path `corpus resolve` uses) instead of
+    being declared unverifiable. `--stamp` additionally earns the source an
+    `ops` pin (§13.2, 1.5) keyed off the resolver's own engine-version
+    introspection, never hand-written."""
+    root = tmp_path / "corpus"
+    h = _ingest_vcard(root, _ADA_CARD)
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "person").mkdir(parents=True)
+    (ledger / "facts" / "person" / "ada.json").write_text(json.dumps({
+        "id": "ada", "type": "person", "name": "Ada",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "ada:note", "predicate": "described", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "prop=3",
+                                  "quote": "Pioneer of computing", "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-19")
+    assert res.verified == 1 and res.derived_resolved == 1
+    assert not res.errors and not res.warnings
+
+    fact = json.loads((ledger / "facts" / "person" / "ada.json").read_text())
+    verified = fact["sources"]["s1"]["verified"]
+    assert verified["at"] == "2026-07-19"
+    assert isinstance(verified["touch"], str)  # a raw ingest stub's `touch:` is a bare
+    # scalar, not the list form `load_record_content` reads — "" here is expected and
+    # pre-existing, orthogonal to what this test actually probes (the `ops` binding)
+    assert verified["ops"] == {"prop": "vcard-prop@1"}
+
+    # unchanged pin (and touch): a later-day re-run must NOT re-stamp
+    res2 = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-20")
+    assert res2.verified == 1 and res2.stamped == 0
+    fact2 = json.loads((ledger / "facts" / "person" / "ada.json").read_text())
+    assert fact2["sources"]["s1"]["verified"]["at"] == "2026-07-19"
+
+
+def test_verify_derived_surface_quote_mismatch_is_a_real_failure(tmp_path: Path) -> None:
+    """(1.5) The resolver DOES produce a textual surface, but the cited quote
+    isn't in it — a real failure at the claim's status severity, exactly like
+    any other quote miss, never a silent unverifiable."""
+    root = tmp_path / "corpus"
+    h = _ingest_vcard(root, _ADA_CARD)
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "person").mkdir(parents=True)
+    (ledger / "facts" / "person" / "ada.json").write_text(json.dumps({
+        "id": "ada", "type": "person", "name": "Ada",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "ada:name", "predicate": "named", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "prop=2",
+                                  "quote": "Someone Else Entirely",
+                                  "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 0 and res.derived_resolved == 0 and res.unverifiable == 0
+    assert len(res.errors) == 1  # confirmed status → error severity
+    assert "quote not found verbatim in the derived surface" in res.errors[0]
+
+
+def test_verify_derived_surface_honestly_unverifiable_when_op_cannot_run(
+    tmp_path: Path,
+) -> None:
+    """(1.5) The resolver op genuinely can't run here (a binary vCard property
+    the `prop=` transform refuses to render as text — a clear error, never a
+    guessed rendering) — the honest `unverifiable` path applies, never a
+    failure, and the note carries the resolver's own reason."""
+    root = tmp_path / "corpus"
+    h = _ingest_vcard(root, _PHOTO_CARD, name="photo.vcf")
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "person").mkdir(parents=True)
+    (ledger / "facts" / "person" / "ada.json").write_text(json.dumps({
+        "id": "ada", "type": "person", "name": "Ada",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "ada:photo", "predicate": "pictured", "value": "x",
+                    "status": "provisional", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "prop=4",
+                                  "quote": "anything", "kind": "incidental"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 0 and res.derived_resolved == 0
+    assert res.unverifiable == 1
+    assert not res.errors and not res.warnings
+    assert any("resolver:" in n and "binary" in n for n in res.notes)
+
+
+def test_verify_derived_surface_ops_pin_drift_warns(tmp_path: Path) -> None:
+    """(1.5) A source's `verified.ops` binding pins the engine current at the
+    LAST stamp; when the live engine has since moved (an op-pin upgrade),
+    verification — even without --stamp — flags it for re-verification, since
+    a passing quote re-check alone can't reveal that the pin itself is stale
+    (the resolver always runs the CURRENT engine)."""
+    import ledger.verify as verify_mod
+
+    root = tmp_path / "corpus"
+    h = _ingest_vcard(root, _ADA_CARD)
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "person").mkdir(parents=True)
+    (ledger / "facts" / "person" / "ada.json").write_text(json.dumps({
+        "id": "ada", "type": "person", "name": "Ada",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "ada:note", "predicate": "described", "value": "x",
+                    "status": "provisional", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "prop=3",
+                                  "quote": "Pioneer of computing", "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    stamp_res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-19")
+    assert stamp_res.stamped == 1
+
+    real_op_engine_map = verify_mod._op_engine_map
+
+    def _upgraded_engine(corpus_root: Path, media_type: str) -> dict[str, str]:
+        live = dict(real_op_engine_map(corpus_root, media_type))
+        if "prop" in live:
+            live["prop"] = "vcard-prop@2"
+        return live
+
+    verify_mod._op_engine_map = _upgraded_engine
+    try:
+        res = verify_ledger(ledger, join, set(), stamp=False)
+    finally:
+        verify_mod._op_engine_map = real_op_engine_map
+    assert any("derivation-op pin drifted" in w for w in res.warnings)
+    assert any("vcard-prop@1" in w and "vcard-prop@2" in w for w in res.warnings)
+
+
+def _ingest_zip(root: Path, members: dict[str, bytes], name: str = "bundle.zip") -> str:
+    """Ingest a real `.zip` archive (bare `application/zip`, corpus §7.1's
+    zip-manifest strategy) so `?path=<member>` resolves against genuine
+    container bytes through `corpus.resolver.resolve`. A bare zip's members
+    get no `description` field on their embed (unlike the vcard FN trap
+    above), so a citation into a member can ONLY verify through the (1.5)
+    derived-surface resolution path — never the record-wide fallback."""
+    import shutil
+    import zipfile
+
+    from corpus import hashing
+    from corpus._cli import ingest as ingest_cli
+
+    (root / "records").mkdir(parents=True, exist_ok=True)
+    (root / "schema").mkdir(parents=True, exist_ok=True)
+    cap = root / "capture"
+    cap.mkdir(parents=True, exist_ok=True)
+    zpath = root / name
+    with zipfile.ZipFile(zpath, "w") as zf:
+        for member_name, data in members.items():
+            zf.writestr(member_name, data)
+    staged = cap / name
+    shutil.copy(zpath, staged)
+    assert ingest_cli._ingest_one(root, staged) == 0
+    rid = hashing.hash_file(zpath)["blake3"]
+    zpath.unlink()
+    return rid
+
+
+def test_verify_derived_surface_path_member_reads_real_file_not_stringified_path(
+    tmp_path: Path,
+) -> None:
+    """(1.5 defect) `corpus.resolver.resolve()` returns a `pathlib.Path` — for a
+    large/binary-ish resolver output, a CACHE FILE PATH the caller must read,
+    never the text itself. Regression against matching the stringified path by
+    accident: the quote here (spaces, punctuation, prose) could never appear in
+    a cache file's path string, so it only verifies if the code genuinely reads
+    the file's bytes."""
+    root = tmp_path / "corpus"
+    member_text = "the shipment arrives Tuesday at the north dock, ask for Rosalind"
+    h = _ingest_zip(root, {"notes/log.txt": member_text.encode("utf-8")})
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:note", "predicate": "described", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "path=notes/log.txt",
+                                  "quote": "arrives Tuesday at the north dock",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1 and res.derived_resolved == 1
+    assert not res.errors and not res.warnings
+
+
+def test_verify_derived_surface_preserves_literal_markup_characters(tmp_path: Path) -> None:
+    """(1.5 defect, found live against the real ledger): derived-surface text is
+    raw resolver output — a Discord/chat export member, never normalizer-
+    authored markdown — so literal `<3`, `>`, `*`, `|` in it must compare
+    verbatim, not get stripped as markup. Before the fix, `_norm`'s HTML-tag
+    stripping (correct for record markdown, wrong here) treated an unmatched
+    `<` (a "<3" heart) as an opening tag and consumed everything up to the
+    NEXT unrelated `>` anywhere later in the text — against the real ledger
+    this silently deleted a 2 MB span that happened to include the cited
+    quote, reporting a real citation as a false failure."""
+    root = tmp_path / "corpus"
+    member_text = (
+        "sold out in <1 min\n"
+        "hey <3 Finland\n"
+        "> quoting an earlier message\n"
+        "dae going to see lynyrd skynyrd tonight\n"
+        "ranked: ba > noctis > mdf\n"
+    )
+    h = _ingest_zip(root, {"chat/log.txt": member_text.encode("utf-8")})
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:concert", "predicate": "described", "value": "x",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": "path=chat/log.txt",
+                                  "quote": "dae going to see lynyrd skynyrd tonight",
+                                  "kind": "direct"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1 and res.derived_resolved == 1
+    assert not res.errors and not res.warnings

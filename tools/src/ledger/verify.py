@@ -7,10 +7,16 @@ record's touch identity (snapshot binding) so a later authoring or migration
 pass — anything that moves the touch — flags them for re-verification
 instead of silently rotting.
 
-Verification reads record *markdown* only — segment bodies are the faithful
-text — so it works without artifact bytes. Anchor forms with no checkable
-text (time_range, frame, bbox, path, #fragment) and `ref://` citations
-(resolver deferred post-reforge) report `unverifiable`, never failure.
+Verification reads record *markdown* first — segment bodies are the faithful
+text — so most of it works without artifact bytes. *(1.5)* An anchor the
+stored markdown can't scope (a derivation-op axis: `?path=`, `time_range=`,
+`row=`/`col=`, `prop=`, …) is now additionally resolved through the corpus
+resolver itself (`corpus.resolver.resolve`, the same path `corpus resolve`
+uses) before falling back to `unverifiable` — the honestly-unverifiable
+residue narrows to ops the verifying environment genuinely can't run
+(artifact bytes absent, an optional extra missing, a non-textual result).
+`ref://` citations (resolver deferred post-reforge) still report
+`unverifiable`, never failure.
 
 A claim whose evidence FAILS is flagged at the severity of its status:
 `confirmed` failing is an error; lower rungs warn.
@@ -51,6 +57,7 @@ class RecordContent:
     # record-wide verbatim quotes are honest even on a formless record
     citation_surface: str = "raw"
     segment_count: int = 0  # addressable leaf segments the record actually persists
+    corpus_root: Path | None = None  # the holding corpus root — for resolver calls (1.5)
 
 
 @dataclass
@@ -65,6 +72,10 @@ class VerifyResult:
     # content the markdown can't scope (time_range, path, bbox …) — verified,
     # but honestly weaker than anchor-scoped
     record_scoped: int = 0
+    # *(1.5)* quotes verified against a surface the corpus RESOLVER derived
+    # mechanically (a derivation op the record markdown itself can't scope) —
+    # verified, at full anchor precision, via a library call to `corpus.resolver`
+    derived_resolved: int = 0
 
     @property
     def ok(self) -> bool:
@@ -72,33 +83,48 @@ class VerifyResult:
 
 
 _BLOCK_TAG_RE = re.compile(
-    r"</?(?:td|th|tr|p|div|li|ul|ol|h[1-6]|table|thead|tbody|blockquote|section)[^>]*>"
+    r"</?(?:td|th|tr|p|div|li|ul|ol|h[1-6]|table|thead|tbody|blockquote|section)[^<>]*>"
     r"|<br\s*/?>",
     re.I,
 )
-_TAG_RE = re.compile(r"<[^>]+>")
+# `[^<>]+` — NOT `[^>]+` (1.5 defect): a negated class also matches newlines, so on
+# arbitrary derived-surface text (raw JSON/chat member content, never HTML-authored)
+# a single stray unmatched `<` — a Discord "<3" heart, a bare "x < y" — greedily
+# consumed everything up to the NEXT unrelated `>` anywhere later in the document,
+# silently deleting spans of a multi-MB derived surface (§13.2, 1.5) including
+# whatever quote happened to fall inside. Requiring the run to stay bracket-free
+# still matches every well-formed tag `_norm` is meant to strip (`<td>`, `<u>`,
+# `<br>` never nest `<`/`>`) while leaving an unmatched stray bracket untouched.
+_TAG_RE = re.compile(r"<[^<>]+>")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _ELLIPSIS_RE = re.compile(r"\s*(?:\.\.\.|…|\|)\s*")
 _CHAR_FOLD = str.maketrans(  # the fold table IS the ambiguous chars — noqa: RUF001
     {"’": "'", "‘": "'", "“": '"', "”": '"', " ": " "})  # noqa: RUF001
 
 
-def _norm(s: str) -> str:
+def _norm(s: str, *, strip_markup: bool = True) -> str:
     """Markup-insensitive comparison form: entities decode, markdown links
     unwrap, markup becomes whitespace or vanishes (record bodies keep
     faithful HTML tables and inline markers; quotes cite the rendered text),
-    typographic quotes fold to straight, whitespace collapses."""
+    typographic quotes fold to straight, whitespace collapses.
+
+    *(1.5)* `strip_markup=False` for derived-surface text (a resolver op's
+    output — raw JSON/CSV/vcard/chat-export bytes, never normalizer-authored
+    markdown): a Discord export's literal `<3`, `>` blockquote prefixes, `*`
+    emphasis, or `[x]` brackets in ordinary message text are NOT markup to
+    strip — record bodies are the one surface where that assumption holds."""
     import html
 
     s = html.unescape(s).translate(_CHAR_FOLD)
-    # markdown links unwrap to their text; inline markers strip
-    s = _MD_LINK_RE.sub(r"\1", s)
-    s = s.replace("*", "").replace("`", "")
-    # structural tags (cells, breaks) become whitespace; inline tags vanish
-    # (an underline inside a word must not split it)
-    s = _BLOCK_TAG_RE.sub(" ", s)
-    s = _TAG_RE.sub("", s)
-    s = s.replace("|", " ")
+    if strip_markup:
+        # markdown links unwrap to their text; inline markers strip
+        s = _MD_LINK_RE.sub(r"\1", s)
+        s = s.replace("*", "").replace("`", "")
+        # structural tags (cells, breaks) become whitespace; inline tags vanish
+        # (an underline inside a word must not split it)
+        s = _BLOCK_TAG_RE.sub(" ", s)
+        s = _TAG_RE.sub("", s)
+        s = s.replace("|", " ")
     s = " ".join(s.split())
     return re.sub(r"\s+(['.,;:!?])", r"\1", s)
 
@@ -106,7 +132,7 @@ def _norm(s: str) -> str:
 _SEPARATORS_RE = re.compile(r"[\s\-]+")
 
 
-def _quote_found(quote: str, haystack: str) -> bool:
+def _quote_found(quote: str, haystack: str, *, strip_markup: bool = True) -> bool:
     """Verbatim modulo normalization. `...`/`…` inside a quote is elision, and
     `|` separates fragments across cell boundaries; every fragment must be
     found verbatim IN DOCUMENT ORDER — a quote is a reading of the record,
@@ -115,14 +141,17 @@ def _quote_found(quote: str, haystack: str) -> bool:
     — which column a table cell sits in — belongs in the evidence `note`,
     not the quote. A separator-squashed retry (whitespace and hyphens
     removed from both sides) absorbs list bullets, inline-markup word
-    splits, and soft-wrap artifacts — the characters stay verbatim."""
-    hay = _norm(haystack)
+    splits, and soft-wrap artifacts — the characters stay verbatim.
+
+    `strip_markup=False` (§13.2, 1.5) for matching against a derived-surface
+    resolver output — see `_norm`."""
+    hay = _norm(haystack, strip_markup=strip_markup)
     parts = [p for p in _ELLIPSIS_RE.split(quote) if p.strip()]
 
     def scan(h: str, squash: bool) -> bool:
         pos = 0
         for part in parts:
-            n = _norm(part)
+            n = _norm(part, strip_markup=strip_markup)
             if squash:
                 n = _SEPARATORS_RE.sub("", n)
             i = h.find(n, pos)
@@ -238,6 +267,7 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
     return RecordContent(
         spans=spans, full_text="\n".join(texts), touch=touch,
         media_type=media_type, citation_surface=surface, segment_count=segment_count,
+        corpus_root=corpus_root,
     )
 
 
@@ -268,6 +298,87 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
     return content.full_text, "ok"
 
 
+def _op_engine_map(corpus_root: Path, media_type: str) -> dict[str, str]:
+    """`{axis-param: engine-pin}` for every derivation-op axis reachable for
+    `media_type`'s resolver pipeline that carries a STATIC engine pin
+    (`ResolverOp.engine_version`) — read live off the resolver's own registry
+    introspection, never hand-written (§13.2, 1.5). An axis with no static pin
+    (an unpinned deterministic op, or a runtime-determined engine like
+    `transcribe`'s adapter or the ffmpeg muxing family) carries no entry — there
+    is nothing to pin against drift for it."""
+    from corpus.resolver import ops_for_media_type
+
+    return {op.param: op.engine_version
+            for op in ops_for_media_type(corpus_root, media_type)
+            if op.engine_version}
+
+
+def _derived_resolution(
+    corpus_root: Path,
+    uri: str,
+    media_type: str,
+    params: list[tuple[str, str]],
+    cache: dict[str, tuple[bool, str, str, dict[str, str]]],
+) -> tuple[bool, str, str, dict[str, str]]:
+    """Attempt to resolve `uri` (the record's evidence anchor) through the corpus
+    resolver — a library call to `corpus.resolver.resolve`, the same path
+    `corpus resolve` uses (§6.2) — before an anchor the record's own stored
+    markdown can't scope is declared unverifiable (§13.2, 1.5).
+
+    Returns `(resolved, text, reason, pins)`:
+    - `resolved=True`: the resolver produced a TEXTUAL surface. `text` holds it;
+      `pins` carries `{axis-param: engine-pin}` for every derivation-op axis in
+      `params` that carries a static pin — the binding this citation's source
+      earns at `--stamp`.
+    - `resolved=False`: the honest-unverifiable path applies. `reason` explains
+      why — no derivation-op axis in the anchor (never attempted), missing
+      artifact bytes, a missing optional extra, a non-textual result, or any
+      other resolver error. `text`/`pins` are empty.
+
+    Cached per URI within the run — resolver calls may be slow (container
+    extraction) — so the same (hash, anchor) pair is never resolved twice.
+    """
+    if uri in cache:
+        return cache[uri]
+    from corpus.resolver import ops_for_media_type
+
+    op_params = {op.param for op in ops_for_media_type(corpus_root, media_type)}
+    if not any(k in op_params for k, _ in params):
+        # never attempted for an anchor with no derivation-op axis at all — a
+        # plain `el=` against a record that already carries stored segments for
+        # that axis never reaches this path (it resolves or bad-anchors above);
+        # this guards the remaining honest gaps (unregistered/no-op params).
+        result = (False, "", "no derivation-op axis in the anchor", {})
+        cache[uri] = result
+        return result
+    op_engine = _op_engine_map(corpus_root, media_type)
+    from corpus import resolver as corpus_resolver
+
+    try:
+        out_path = corpus_resolver.resolve(uri, corpus_root)
+    except Exception as exc:  # tolerant by contract: the op genuinely can't run
+        # here (artifact bytes absent, an optional extra not installed, a
+        # malformed chain) — that stays honestly unverifiable, never a failure
+        result = (False, "", f"{exc.__class__.__name__}: {exc}", {})
+        cache[uri] = result
+        return result
+    if out_path.suffix not in (".txt", ".json"):
+        result = (False, "", f"derived surface is not textual "
+                             f"({out_path.suffix or 'no extension'})", {})
+        cache[uri] = result
+        return result
+    try:
+        text = out_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        result = (False, "", f"could not read derived output ({exc})", {})
+        cache[uri] = result
+        return result
+    used_pins = {k: op_engine[k] for k, _ in params if k in op_engine}
+    result = (True, text, "", used_pins)
+    cache[uri] = result
+    return result
+
+
 def verify_ledger(
     ledger_root: Path,
     join: CorpusJoin,
@@ -284,6 +395,10 @@ def verify_ledger(
         )
         return res
     cache: dict[str, RecordContent | None] = {}
+    # (1.5) derivation-op resolutions are cached per URI (hash + anchor params)
+    # for the whole run — resolver calls may be slow (container extraction) —
+    # shared across every fact/source that cites the same (hash, anchor) pair
+    derived_cache: dict[str, tuple[bool, str, str, dict[str, str]]] = {}
 
     def content_for(h: str) -> RecordContent | None:
         if h not in cache:
@@ -309,6 +424,11 @@ def verify_ledger(
         # not certify the record as freshly checked for the others.
         source_ok: dict[str, bool] = {}
         source_touch: dict[str, str] = {}
+        # (1.5) {skey: {axis-param: engine-pin}} — accumulated from every
+        # evidence entry this run that resolved through a derivation op;
+        # written into the source's `verified.ops` binding at --stamp
+        source_ops: dict[str, dict[str, str]] = {}
+        ops_drift_warned: set[str] = set()
         referenced: set[str] = set()
 
         def bad(skey: str, _map: dict[str, bool] = source_ok) -> None:
@@ -348,6 +468,26 @@ def verify_ledger(
                     bad(skey)
                     continue
                 source_touch[skey] = content.touch
+                # (1.5) a pinned derivation-op engine that has moved since the last
+                # stamp is a drift signal the anchor/quote re-check below can't see
+                # by itself (the resolver call below always runs the CURRENT engine,
+                # so a passing quote doesn't prove the pin is still accurate) —
+                # flag it explicitly, once per source per fact.
+                verified_block = entry.get("verified")
+                stored_ops = verified_block.get("ops") if isinstance(verified_block, dict) \
+                    else None
+                if isinstance(stored_ops, dict) and stored_ops and skey not in ops_drift_warned \
+                        and content.corpus_root is not None:
+                    live_ops = _op_engine_map(content.corpus_root, content.media_type)
+                    drifted = {p: (pin, live_ops[p]) for p, pin in stored_ops.items()
+                              if p in live_ops and live_ops[p] != pin}
+                    if drifted:
+                        ops_drift_warned.add(skey)
+                        detail = ", ".join(f"{p}: {old}→{new}"
+                                          for p, (old, new) in drifted.items())
+                        res.warnings.append(
+                            f"{where}: derivation-op pin drifted for corpus://{h[:12]}… "
+                            f"({detail}) — re-verification needed")
                 if content.citation_surface == "segments" and content.segment_count == 0:
                     # §13.2.4: a segments-surface record with no persisted segments has
                     # no citable surface at all — record-wide matching against its raw/
@@ -391,13 +531,52 @@ def verify_ledger(
                         continue
                     if status == "unchecked" and not _quote_found(str(quote),
                                                                   content.full_text):
-                        # the anchor addresses content the record markdown does
-                        # not carry (a zip member via ?path=, a time range) —
-                        # absence there is unverifiable, never refuted
+                        # (1.5) the anchor addresses content the record's own
+                        # markdown doesn't carry (a zip member via ?path=, a
+                        # time range, a `prop=`/`row=` derivation …) — before
+                        # calling that unverifiable, resolve it through the
+                        # corpus resolver itself (the same path `corpus
+                        # resolve` uses): a derivation-op axis in the anchor
+                        # may mechanically produce the cited text even though
+                        # the record's stored body never carries it.
+                        resolved, derived_text, reason, pins = False, "", "", {}
+                        if content.corpus_root is not None:
+                            resolved, derived_text, reason, pins = _derived_resolution(
+                                content.corpus_root, uri, content.media_type,
+                                params, derived_cache,
+                            )
+                        if resolved:
+                            # strip_markup=False: derived_text is raw resolver
+                            # output (JSON/CSV/vcard/chat-export bytes), never
+                            # normalizer-authored markdown — its literal `<3`,
+                            # `>`, `*`, `|` must compare verbatim, not as markup
+                            if _quote_found(str(quote), derived_text, strip_markup=False):
+                                res.verified += 1
+                                res.derived_resolved += 1
+                                if pins:
+                                    source_ops.setdefault(skey, {}).update(pins)
+                                ok(skey)
+                            else:
+                                sev.append(
+                                    f"{where}: quote not found verbatim in the "
+                                    f"derived surface resolved from "
+                                    f"corpus://{h[:12]}… ({anchor}) — "
+                                    f"«{str(quote)[:60]}…»")
+                                bad(skey)
+                            continue
+                        # unresolvable through the record markdown OR the
+                        # resolver — the honest gap the resolver call narrows
+                        # (§13.2, 1.5): artifact bytes absent, an optional
+                        # extra missing, a non-textual result, no derivation-op
+                        # axis in the anchor at all
                         res.unverifiable += 1
-                        res.notes.append(f"{where}: quote lives behind an anchor the "
-                                         f"record markdown cannot resolve "
-                                         f"(corpus://{h[:12]}…) — unverifiable")
+                        note = (f"{where}: quote lives behind an anchor the "
+                               f"record markdown cannot resolve "
+                               f"(corpus://{h[:12]}…)")
+                        if reason:
+                            note += f" — resolver: {reason}"
+                        note += " — unverifiable"
+                        res.notes.append(note)
                         bad(skey)
                         continue
                     if not _quote_found(str(quote), haystack):
@@ -424,20 +603,24 @@ def verify_ledger(
                     continue
                 entry = sources[skey]
                 touch = source_touch.get(skey, "")
+                # (1.5) the ops binding: one entry per derivation-op axis any of
+                # this source's evidence resolved through this run, pinned to the
+                # engine current at stamp time — {} when every citation resolved
+                # from the record's own stored body (nothing to pin)
+                current_ops = source_ops.get(skey) or {}
                 prev = entry.get("verified")
-                # re-stamp only when the snapshot identity moved — the `at`
-                # date alone must not rewrite the tree on every run
-                if isinstance(prev, dict) and prev.get("touch") == touch:
+                prev_touch = prev.get("touch") if isinstance(prev, dict) else None
+                prev_ops = (prev.get("ops") or {}) if isinstance(prev, dict) else {}
+                # re-stamp only when the snapshot identity OR the op pins moved —
+                # both touch- and pin-keyed (§13.2, 1.5): the `at` date alone
+                # must not rewrite the tree on every run
+                if prev_touch == touch and prev_ops == current_ops:
                     continue
-                # OPEN (1.1, spec/ledger.md §13.2; spec/corpus.md §12.19 open
-                # question 2): for evidence resolved through a derivation op
-                # rather than the stored record body, the binding also pins
-                # the op's version label here — format unsettled until the
-                # first derived-surface citation lands. Touch-keyed binding
-                # below is unaffected and needs no change for that case.
-                stamped: dict[str, str] = {"touch": touch}
+                stamped: dict[str, str | dict[str, str]] = {"touch": touch}
                 if today:
                     stamped["at"] = today
+                if current_ops:
+                    stamped["ops"] = current_ops
                 entry["verified"] = stamped
                 res.stamped += 1
                 dirty = True

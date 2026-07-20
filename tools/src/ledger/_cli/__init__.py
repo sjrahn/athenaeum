@@ -162,7 +162,9 @@ def _cmd_verify(argv: Sequence[str]) -> int:
         print(f"ERROR {e}")
     scoped = (f" ({res.record_scoped} record-scoped: anchor unresolvable, "
               "quote found record-wide)" if res.record_scoped else "")
-    print(f"\n{res.verified} verified{scoped}, {res.unverifiable} unverifiable, "
+    derived = (f" ({res.derived_resolved} derived-resolved via corpus resolver)"
+              if res.derived_resolved else "")
+    print(f"\n{res.verified} verified{scoped}{derived}, {res.unverifiable} unverifiable, "
           f"{res.stamped} stamped — {len(res.errors)} errors, "
           f"{len(res.warnings)} warnings")
     return 0 if res.ok else 1
