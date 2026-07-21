@@ -58,6 +58,51 @@ def _unstuff(line: bytes) -> bytes:
     return line[1:] if _STUFF_RE.match(line) else line
 
 
+def normalize_strip_headers(names: list[str] | tuple[str, ...] | None) -> frozenset[bytes] | None:
+    """Header names → the lowercase `name:`-prefixed byte forms `HeaderStrip` matches on,
+    or None when the list is empty/absent (no stripping)."""
+    if not names:
+        return None
+    return frozenset(n.strip().lower().encode() + b":" for n in names if n.strip())
+
+
+class HeaderStrip:
+    """Per-member filter dropping the declared headers (spec §12.3.13, the mailbox chrome
+    strip): a matching header line and its folded continuations are removed from the
+    HEADER ZONE ONLY — a body line that happens to start with the name is never touched.
+    Call `reset()` at each member's separator; `keep(data)` on each un-stuffed line."""
+
+    def __init__(self, names: frozenset[bytes]) -> None:
+        self._names = names
+        self._in_header = True
+        self._skipping = False
+        self.dropped = 0  # lines dropped for the CURRENT member (read before reset)
+
+    def reset(self) -> None:
+        self._in_header = True
+        self._skipping = False
+        self.dropped = 0
+
+    def keep(self, data: bytes) -> bool:
+        if not self._in_header:
+            return True
+        if data in (b"\r\n", b"\n"):
+            self._in_header = False
+            self._skipping = False
+            return True
+        if self._skipping and data[:1] in (b" ", b"\t"):
+            self.dropped += 1
+            return False
+        self._skipping = False
+        lowered = data.lower()
+        for name in self._names:
+            if lowered.startswith(name):
+                self._skipping = True
+                self.dropped += 1
+                return False
+        return True
+
+
 # ---------- streaming member access (containment / transform) ---------- #
 
 
@@ -129,17 +174,24 @@ def resolve_member(mbox_path: Path, ordinal: int) -> bytes:
 
 
 def extract_raw_members(
-    mbox_path: Path, ordinals: set[int] | frozenset[int], out: IO[bytes]
+    mbox_path: Path,
+    ordinals: set[int] | frozenset[int],
+    out: IO[bytes],
+    *,
+    strip: frozenset[bytes] | None = None,
 ) -> int:
     """Copy the 1-indexed `ordinals` members RAW — separator line plus stuffed message
     lines, verbatim, in file order — onto `out`, producing a valid mboxrd whose members
     keep byte-for-byte the identities the source held (spec §12.3.13: the window bundle's
-    emit path; un-stuffed member blake3 is unchanged by the copy). One streaming pass;
-    returns the number of members written. Raises `ValueError` when an ordinal doesn't
-    exist."""
+    emit path; un-stuffed member blake3 is unchanged by the copy). With `strip`
+    (`normalize_strip_headers` output), declared header lines are dropped from each
+    emitted member — the mailbox chrome strip; the keep-decision reads the un-stuffed
+    line, the emission writes the raw line. One streaming pass; returns the number of
+    members written. Raises `ValueError` when an ordinal doesn't exist."""
     wanted = frozenset(ordinals)
     if any(n < 1 for n in wanted):
         raise ValueError("ordinals are 1-indexed (>= 1)")
+    stripper = HeaderStrip(strip) if strip else None
     written = 0
     copying = False
     total = 0
@@ -150,7 +202,13 @@ def extract_raw_members(
                 copying = total in wanted
                 if copying:
                     written += 1
+                    if stripper:
+                        stripper.reset()
+                    out.write(line)
+                continue
             if copying:
+                if stripper and not stripper.keep(_unstuff(line)):
+                    continue
                 out.write(line)
     missing = sorted(n for n in wanted if n > total)
     if missing:
@@ -179,30 +237,45 @@ class MessageFacts:
 @dataclass
 class MboxScan:
     """The result of one streaming pass: the total message count, the per-ordinal facts for
-    the requested messages, and the first/last separator lines (for the mailbox date span)."""
+    the requested messages, and the first/last separator lines (for the mailbox date span).
+    `stripped_members` counts members the header strip touched (0 when no strip ran)."""
 
     count: int
     facts: dict[int, MessageFacts]
     first_sep: bytes | None
     last_sep: bytes | None
+    stripped_members: int = 0
 
 
-def scan(mbox_path: Path, ordinals: set[int] | frozenset[int] | None) -> MboxScan:
+def scan(
+    mbox_path: Path,
+    ordinals: set[int] | frozenset[int] | None,
+    *,
+    strip: frozenset[bytes] | None = None,
+) -> MboxScan:
     """One streaming pass over the mailbox: count every message, capture the first/last
     separator lines, and for each requested 1-indexed `ordinal` compute the un-stuffed
     member's blake3 + byte length and parse its Date / From / Subject headers. `None`
     requests facts for EVERY message — the full enumeration the window-reduction dedup
-    (spec §12.3.13) keys on. Never holds the mailbox (or a whole message) in RAM. Raises
-    `ValueError` when a requested ordinal exceeds the message count."""
+    (spec §12.3.13) keys on. With `strip` (`normalize_strip_headers` output), the declared
+    headers are dropped before hashing — facts describe the member AS-IF-STRIPPED, which
+    is how a pre-strip snapshot serves as lineage across the strip boundary. Never holds
+    the mailbox (or a whole message) in RAM. Raises `ValueError` when a requested ordinal
+    exceeds the message count."""
     wanted = None if ordinals is None else frozenset(ordinals)
+    stripper = HeaderStrip(strip) if strip else None
     facts: dict[int, MessageFacts] = {}
     total = 0
+    stripped_members = 0
     first_sep: bytes | None = None
     last_sep: bytes | None = None
     cur: dict | None = None
 
     def _close(acc: dict) -> None:
+        nonlocal stripped_members
         facts[acc["ordinal"]] = _finalize(acc)
+        if stripper and stripper.dropped:
+            stripped_members += 1
 
     with mbox_path.open("rb") as fh:
         for line in fh:
@@ -215,6 +288,8 @@ def scan(mbox_path: Path, ordinals: set[int] | frozenset[int] | None) -> MboxSca
                     first_sep = line
                 last_sep = line
                 if wanted is None or total in wanted:
+                    if stripper:
+                        stripper.reset()
                     cur = {
                         "ordinal": total,
                         "b3": blake3.blake3(),
@@ -225,6 +300,8 @@ def scan(mbox_path: Path, ordinals: set[int] | frozenset[int] | None) -> MboxSca
                 continue
             if cur is not None:
                 data = _unstuff(line)
+                if stripper and not stripper.keep(data):
+                    continue
                 cur["b3"].update(data)
                 cur["bytes"] += len(data)
                 if cur["header_open"]:
@@ -241,7 +318,13 @@ def scan(mbox_path: Path, ordinals: set[int] | frozenset[int] | None) -> MboxSca
             raise ValueError(
                 f"mbox holds {total} message(s); requested ordinal(s) out of range: {missing}"
             )
-    return MboxScan(count=total, facts=facts, first_sep=first_sep, last_sep=last_sep)
+    return MboxScan(
+        count=total,
+        facts=facts,
+        first_sep=first_sep,
+        last_sep=last_sep,
+        stripped_members=stripped_members,
+    )
 
 
 def _finalize(acc: dict) -> MessageFacts:

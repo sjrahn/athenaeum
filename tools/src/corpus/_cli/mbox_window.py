@@ -58,6 +58,18 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="origin overlay id to stamp on the sidecar (`origin_schema:`), as `assemble` takes it.",
     )
     parser.add_argument(
+        "--strip",
+        action="append",
+        default=None,
+        metavar="HEADER",
+        help=(
+            "mailbox chrome strip (§12.3.13): header name to drop from every member "
+            "(repeatable; comma lists accepted) — applied to the source, the emitted "
+            "bundle, AND lineage artifact enumeration, so a pre-strip snapshot still "
+            "serves as lineage. Must match the lineage's ingest-time strip convention."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="report the reduction (counts + would-be bundle name), writing nothing.",
@@ -93,29 +105,49 @@ def _expand_lineage(corpus_root: Path, targets: list[str]) -> list[tuple[str, ob
     return out
 
 
-def _exclusion_set(corpus_root: Path, lineage: list[tuple[str, object]]) -> set[str]:
+def _exclusion_set(
+    corpus_root: Path,
+    lineage: list[tuple[str, object]],
+    strip: frozenset[bytes] | None = None,
+) -> set[str]:
     """The union of member blake3 hashes already persisted: full artifact enumeration per
     lineage record where the bytes are locally present, declared `msg=` transports as the
-    warned fallback, plus every standalone `message/rfc822` record id."""
+    warned fallback, plus every standalone `message/rfc822` record id. With `strip`,
+    artifact enumeration hashes members as-if-stripped — a pre-strip snapshot serves as
+    lineage across the strip boundary; the declared-embed fallback cannot (its hashes
+    predate the strip), which its warning states."""
     excluded: set[str] = set()
     for rid, post in lineage:
         try:
             local = containment.ensure_local_bytes(
                 corpus_root, rid, mime.extension_for(_MBOX_MIME)
             )
-            scan = mboxfile.scan(local, None)
+            scan = mboxfile.scan(local, None, strip=strip)
+            note = (
+                f" ({scan.stripped_members} hashed as-if-stripped)"
+                if strip and scan.stripped_members
+                else ""
+            )
+            print(
+                f"  lineage {rid[:12]}: {scan.count} member(s) enumerated from artifact bytes{note}"
+            )
             excluded.update(f.blake3 for f in scan.facts.values())
-            print(f"  lineage {rid[:12]}: {scan.count} member(s) enumerated from artifact bytes")
         except ArtifactMissing:
             declared = mbox_manifest.declared_transports(post)
             hashes = {
                 t.split(":", 1)[1] for t in declared.values() if t.startswith("blake3:")
             }
             excluded.update(hashes)
+            boundary = (
+                " — and, with --strip active, embeds declared BEFORE the strip convention "
+                "will not match (under-exclusion risk)"
+                if strip
+                else ""
+            )
             print(
                 f"  lineage {rid[:12]}: artifact bytes unavailable — falling back to "
                 f"{len(hashes)} declared embed(s), a SUBSET of its members for a "
-                "selectively-declared mailbox",
+                f"selectively-declared mailbox{boundary}",
                 file=sys.stderr,
             )
     rfc822 = 0
@@ -156,10 +188,18 @@ def run(args: argparse.Namespace) -> int:
     if not source.is_file():
         sys.exit(f"source not found: {source}")
 
-    lineage = _expand_lineage(corpus_root, list(args.against))
-    excluded_set = _exclusion_set(corpus_root, lineage)
+    strip_names: list[str] | None = None
+    strip: frozenset[bytes] | None = None
+    if getattr(args, "strip", None):
+        from corpus._cli.mbox_strip import parse_strip_args
 
-    scan = mboxfile.scan(source, None)
+        strip_names = parse_strip_args(list(args.strip))
+        strip = mboxfile.normalize_strip_headers(strip_names)
+
+    lineage = _expand_lineage(corpus_root, list(args.against))
+    excluded_set = _exclusion_set(corpus_root, lineage, strip=strip)
+
+    scan = mboxfile.scan(source, None, strip=strip)
     selected: list[int] = []
     seen_in_source: set[str] = set()
     excluded = duplicates = 0
@@ -197,7 +237,7 @@ def run(args: argparse.Namespace) -> int:
     capture_dir.mkdir(exist_ok=True)
     tmp = bundle.with_suffix(".mbox.part")
     with tmp.open("wb") as out:
-        written = mboxfile.extract_raw_members(source, set(selected), out)
+        written = mboxfile.extract_raw_members(source, set(selected), out, strip=strip)
     tmp.rename(bundle)
 
     origin_fields: dict[str, object] = {
@@ -213,6 +253,9 @@ def run(args: argparse.Namespace) -> int:
     if bounds:
         origin_fields["window_start"] = bounds[0].isoformat()
         origin_fields["window_end"] = bounds[1].isoformat()
+    if strip_names:
+        origin_fields["stripped_headers"] = strip_names
+        origin_fields["stripped_members"] = scan.stripped_members
     sidecar: dict[str, object] = {"origin_fields": origin_fields}
     if args.origin:
         sidecar["origin_schema"] = args.origin
