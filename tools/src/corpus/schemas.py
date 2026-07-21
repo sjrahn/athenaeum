@@ -455,22 +455,40 @@ def pipeline_disposition(schema: dict[str, Any]) -> str:
     return "manifest" if strategy.endswith("-manifest") else "work"
 
 
+def _origin_overlay_ladder(id_: str, subtype: str | None) -> list[str]:
+    """The overlay lookup ladder for a qualified origin block (spec §4.3.1, §7.2):
+    subtype-qualified id FIRST (`<id>/<subtype>`, e.g. `google-takeout/gmail` — `gmail`
+    is a SUBTYPE of the `google-takeout` producer, not a distinct overlay id), then the
+    bare producer id as fallback. No subtype → a one-rung ladder. Mirrors
+    `records._origin_overlay_ladder` (kept as separate tiny helpers rather than a shared
+    import — each operates on this module's own block-field access shape)."""
+    if subtype:
+        return [f"{id_}/{subtype}", id_]
+    return [id_]
+
+
 def _origin_disposition(corpus_root: Path, post: Any) -> str | None:
     """The most-specific origin-overlay `disposition:` override (§7.2), or None when no
-    qualified origin block's overlay sets one. Mirrors `_origin_fingerprint`'s walk of
-    qualified origin blocks — first explicit value wins."""
+    qualified origin block's overlay ladder sets one. Mirrors `_origin_fingerprint`'s walk
+    of qualified origin blocks (each ladder tried subtype-first, id-fallback) — first
+    explicit value wins."""
     from corpus import records  # lazy: records imports schemas
 
-    seen: set[str] = set()
+    seen: set[tuple[str, str | None]] = set()
     for blk in records.iter_origin_blocks(post):
         id_ = str(blk.get("id") or "")
-        if not id_ or id_ in seen:
+        if not id_:
             continue
-        seen.add(id_)
-        sch = load_origin_overlay_by_id(corpus_root, id_)
-        value = str((sch or {}).get("disposition") or "").strip().lower()
-        if value in ("manifest", "work"):
-            return value
+        subtype = blk.get("subtype")
+        key = (id_, subtype)
+        if key in seen:
+            continue
+        seen.add(key)
+        for overlay_id in _origin_overlay_ladder(id_, subtype):
+            sch = load_origin_overlay_by_id(corpus_root, overlay_id)
+            value = str((sch or {}).get("disposition") or "").strip().lower()
+            if value in ("manifest", "work"):
+                return value
     return None
 
 
@@ -708,23 +726,31 @@ def _origin_fingerprint(
     corpus_root: Path, post: Any
 ) -> bool | str | list[str] | None:
     """The most-specific origin-overlay `fingerprint` value, or None when no overlay
-    sets it. Order: overlays named by the record's qualified origin blocks, then
-    overlays whose match predicate matches an origin URI. First explicit value wins
+    sets it. Order: for each of the record's qualified origin blocks, its overlay ladder
+    (subtype-qualified overlay first, id overlay fallback — `_origin_overlay_ladder`);
+    then overlays whose match predicate matches an origin URI. First explicit value wins
     (so a specific `false` overrides a broader `true`)."""
     from corpus import records  # lazy: records imports schemas
 
-    seen: set[str] = set()
+    seen: set[tuple[str, str | None]] = set()
+    overlay_ids_seen: set[str] = set()
     for blk in records.iter_origin_blocks(post):
         id_ = str(blk.get("id") or "")
-        if not id_ or id_ in seen:
+        if not id_:
             continue
-        seen.add(id_)
-        sch = load_origin_overlay_by_id(corpus_root, id_)
-        if isinstance(sch, dict) and "fingerprint" in sch:
-            return sch["fingerprint"]
+        subtype = blk.get("subtype")
+        key = (id_, subtype)
+        if key in seen:
+            continue
+        seen.add(key)
+        for overlay_id in _origin_overlay_ladder(id_, subtype):
+            overlay_ids_seen.add(overlay_id)
+            sch = load_origin_overlay_by_id(corpus_root, overlay_id)
+            if isinstance(sch, dict) and "fingerprint" in sch:
+                return sch["fingerprint"]
     uris = list(records.iter_origin_uris(post))
     for id_, sch in origin_overlays_for_uris(corpus_root, uris):
-        if id_ in seen:
+        if id_ in overlay_ids_seen:
             continue
         if isinstance(sch, dict) and "fingerprint" in sch:
             return sch["fingerprint"]
@@ -735,12 +761,15 @@ def _origin_fingerprint(
 
 
 def _iter_origin_overlay_paths(corpus_root: Path) -> list[str]:
-    """Discover origin per-host overlays from both sources.
+    """Discover origin overlays from both sources.
 
-    Flat layout (spec §12.3): `origin/<id>.yaml`. The reference's `web/<id>.yaml` and
-    `otherwise/<id>.yaml` are also walked as a back-compat read path. The universal
-    `origin/origin.yaml` (and the reference `web/web.yaml` / `otherwise/otherwise.yaml`
-    common files) are filtered out — universal layers in via `_read_yaml_layered`.
+    Flat layout (spec §12.3): `origin/<id>.yaml`. The reference's scheme-family
+    `web/<id>.yaml` and `otherwise/<id>.yaml` are also walked as a back-compat read
+    path. A producer NAMESPACE dir (any other nested dir under `origin/`, e.g.
+    `origin/google-takeout/gmail.yaml`) holds that producer's SUBTYPE overlays (spec
+    §4.3.1). The universal `origin/origin.yaml` (and the reference `web/web.yaml` /
+    `otherwise/otherwise.yaml` common files) are filtered out — universal layers in via
+    `_read_yaml_layered`.
     """
     sources = _sources(corpus_root)
     out: list[str] = []
@@ -756,9 +785,24 @@ def _iter_origin_overlay_paths(corpus_root: Path) -> list[str]:
     return out
 
 
+# Scheme-family directories (spec §7.2) whose nested files still resolve to a BARE stem
+# id — `web/<host>.yaml`, `otherwise/<id>.yaml` (the reference's back-compat layout). Any
+# OTHER nested dir under `origin/` is a PRODUCER namespace whose files are SUBTYPE
+# overlays (spec §4.3.1's `<id>/<subtype>` origin-opener grammar) — their overlay id is
+# the COMPOUND `<producer>/<subtype>`.
+_ORIGIN_SCHEME_FAMILY_DIRS = frozenset({"web", "otherwise"})
+
+
 def _origin_id_from_relpath(relpath: str) -> str:
-    """Map `origin/<id>.yaml` or `origin/web/<id>.yaml` → `<id>`."""
-    stem = relpath.rsplit("/", 1)[-1].removesuffix(".yaml")
+    """Map an origin-overlay relpath to its overlay id.
+
+    Flat (`origin/<id>.yaml`) → `<id>`. Scheme-family dirs (`origin/web/<id>.yaml`,
+    `origin/otherwise/<id>.yaml`) → the bare `<id>`. Any OTHER nested dir
+    (`origin/<producer>/<subtype>.yaml`) → the COMPOUND `<producer>/<subtype>`."""
+    parts = relpath.removeprefix("origin/").split("/")
+    stem = parts[-1].removesuffix(".yaml")
+    if len(parts) >= 2 and parts[0] not in _ORIGIN_SCHEME_FAMILY_DIRS:
+        return "/".join([*parts[:-1], stem])
     return stem
 
 
@@ -767,6 +811,8 @@ def load_origin_overlays(
     corpus_root: Path,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Return `[(id, merged-schema), ...]` for every origin overlay across both sources.
+    `id` is the bare id for a flat or scheme-family-dir overlay, or the COMPOUND
+    `<producer>/<subtype>` for a producer-namespace subtype overlay (spec §4.3.1).
 
     Each overlay is layered: `origin/origin.yaml` (universal) → per-host file. Per-host
     overlays are corpus-local only in normal usage (the package ships only the
@@ -796,7 +842,10 @@ def load_origin_overlays(
 def load_origin_overlay_by_id(
     corpus_root: Path, id_: str
 ) -> dict[str, Any] | None:
-    """Return the layered origin overlay for `id_`, or None."""
+    """Return the layered origin overlay for `id_`, or None. `id_` may be a bare id
+    (`origin/<id_>.yaml`, or a scheme-family-dir back-compat read) or a COMPOUND
+    `<producer>/<subtype>` (`origin/<producer>/<subtype>.yaml`, spec §4.3.1) — the
+    path join handles both shapes identically, no special-casing needed here."""
     sources = _sources(corpus_root)
     candidates = [
         f"origin/{id_}.yaml",

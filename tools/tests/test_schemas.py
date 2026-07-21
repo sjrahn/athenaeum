@@ -272,6 +272,57 @@ def test_resolve_fingerprint_origin_overlay_overrides_mime(tmp_path):
 # ---------- best_origin_overlay_for_uris (origin-block host qualification, spec §7.2) ---------- #
 
 
+def test_resolve_fingerprint_subtype_overlay_beats_parent(tmp_path):
+    """The block's overlay LADDER (spec §4.3.1, §7.2): a subtype-qualified block's
+    subtype overlay is more specific than its parent producer overlay — the subtype's
+    explicit value wins even when the parent ALSO sets one."""
+    root = _make_corpus(tmp_path)
+    _write_plain_mime(root, fingerprint=True)  # mime defaults ON
+    _write_yaml(root / "schema" / "origin" / "google-takeout.yaml", {"fingerprint": True})
+    _write_yaml(
+        root / "schema" / "origin" / "google-takeout" / "gmail.yaml", {"fingerprint": False}
+    )
+    schemas.cache_clear()
+    qualified = _bare_post([{"id": "google-takeout", "subtype": "gmail", "fields": {}}])
+    assert schemas.resolve_fingerprint(root, "text/plain", qualified, None) is False
+
+
+def test_resolve_fingerprint_subtype_missing_falls_to_parent(tmp_path):
+    """When the subtype overlay doesn't declare `fingerprint` at all (only the parent
+    does), the ladder falls through to the parent — the subtype doesn't have to restate
+    every knob."""
+    root = _make_corpus(tmp_path)
+    _write_plain_mime(root)  # no mime-level fingerprint at all
+    _write_yaml(root / "schema" / "origin" / "google-takeout.yaml", {"fingerprint": "simhash"})
+    _write_yaml(
+        root / "schema" / "origin" / "google-takeout" / "gmail.yaml",
+        {"description": "no fingerprint knob here"},
+    )
+    schemas.cache_clear()
+    qualified = _bare_post([{"id": "google-takeout", "subtype": "gmail", "fields": {}}])
+    assert schemas.resolve_fingerprint(root, "text/plain", qualified, None) == "simhash"
+
+
+# ---------- origin overlay enumeration (compound producer/subtype ids, §4.3.1) --------- #
+
+
+def test_load_origin_overlays_lists_compound_id_for_producer_namespace(tmp_path):
+    """A nested dir OTHER than a scheme-family dir (`web/`, `otherwise/`) is a producer
+    namespace — its files enumerate under the COMPOUND `<producer>/<subtype>` id."""
+    root = _make_corpus(tmp_path)
+    _write_yaml(root / "schema" / "origin" / "google-takeout.yaml", {"description": "producer"})
+    _write_yaml(
+        root / "schema" / "origin" / "google-takeout" / "gmail.yaml",
+        {"description": "subtype"},
+    )
+    _write_yaml(root / "schema" / "origin" / "web" / "example.com.yaml", {"description": "host"})
+    schemas.cache_clear()
+    ids = {id_ for id_, _ in schemas.load_origin_overlays(root)}
+    assert "google-takeout" in ids
+    assert "google-takeout/gmail" in ids
+    assert "example.com" in ids  # scheme-family dir → bare stem, not "web/example.com"
+
+
 def test_best_origin_overlay_for_uris_match_and_miss(tmp_path):
     root = _make_corpus(tmp_path)
     _write_yaml(

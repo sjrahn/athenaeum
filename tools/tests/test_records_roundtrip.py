@@ -216,6 +216,79 @@ def test_set_origin_schema_id_stamps_most_recent_block():
     assert records.set_origin_schema_id(post, "  ") is False  # empty/whitespace is a no-op
 
 
+def test_set_origin_schema_id_compound_splits_id_and_subtype_and_roundtrips(tmp_path):
+    """A compound `schema_id` (`<id>/<subtype>`) splits on the FIRST `/` (spec §4.3.1) —
+    `gmail` is a SUBTYPE of the `google-takeout` producer, not a distinct overlay id. The
+    split survives a dump/load round-trip: the opener reads
+    `<!--origin google-takeout/gmail-->`, and the derived classification carries both."""
+    p = tmp_path / "ab" / ("a" * 64 + ".md")
+    p.parent.mkdir(parents=True)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64})
+    records.append_origin_block(
+        post, uri=None, snapshot="2026-07-21T00:00:00Z", fields={"filename": "full.mbox"}
+    )
+    assert records.set_origin_schema_id(post, "google-takeout/gmail") is True
+    assert post.metadata["_origins"][-1]["id"] == "google-takeout"
+    assert post.metadata["_origins"][-1]["subtype"] == "gmail"
+
+    records.dump(post, p)
+    raw = p.read_text("utf-8")
+    assert "<!--origin google-takeout/gmail" in raw
+
+    loaded = records.load(p)
+    origin = next(iter(records.iter_origin_blocks(loaded)))
+    assert origin["id"] == "google-takeout"
+    assert origin["subtype"] == "gmail"
+    assert records.derived_classifications(loaded) == ["origin/google-takeout/gmail"]
+
+
+def test_set_origin_schema_id_bare_clears_stale_subtype():
+    """Re-stamping with a BARE id fully replaces the prior compound stamp — a stale
+    subtype from an earlier (wrong) stamp doesn't survive a corrective re-stamp."""
+    post = frontmatter.Post("")
+    records.append_origin_block(post, uri=None, snapshot="2026-07-21T00:00:00Z")
+    assert records.set_origin_schema_id(post, "google-takeout/gmail") is True
+    assert post.metadata["_origins"][-1]["subtype"] == "gmail"
+    assert records.set_origin_schema_id(post, "google-takeout") is True
+    assert post.metadata["_origins"][-1]["id"] == "google-takeout"
+    assert post.metadata["_origins"][-1]["subtype"] is None
+
+
+def test_append_origin_block_compound_schema_id_splits():
+    """The ingest-sidecar seam: `append_origin_block(schema_id="google-takeout/gmail")`
+    (what `_derive_capture_origin` feeds it verbatim from `origin_schema:`) splits the
+    same way `set_origin_schema_id` does — this is the actual fresh-ingest/re-encounter
+    stamping path, not `set_origin_schema_id`."""
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post,
+        uri=None,
+        snapshot="2026-07-21T00:00:00Z",
+        schema_id="google-takeout/gmail",
+        fields={"filename": "full.mbox"},
+    )
+    origin = post.metadata["_origins"][0]
+    assert origin["id"] == "google-takeout"
+    assert origin["subtype"] == "gmail"
+
+
+def test_append_origin_block_explicit_subtype_wins_over_schema_id_slash():
+    """An explicit `subtype=` kwarg (the `restub` replay path, passing an already-parsed
+    block's own `id`/`subtype` back in) wins over any slash embedded in `schema_id`."""
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post,
+        uri=None,
+        snapshot="2026-07-21T00:00:00Z",
+        schema_id="a/b",
+        subtype="explicit",
+    )
+    origin = post.metadata["_origins"][0]
+    assert origin["id"] == "a"
+    assert origin["subtype"] == "explicit"
+
+
 # ---------- qualify_origin_blocks (origin-block host qualification, spec §7.2) ---------- #
 
 

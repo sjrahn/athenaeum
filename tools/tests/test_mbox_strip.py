@@ -305,6 +305,37 @@ def test_origin_overlay_title_template_cascade_falls_through_to_role_mark(tmp_pa
     assert records.title_for(post, root) == "Fallback Title"
 
 
+def test_origin_subtype_overlay_editorial_wins_over_parent_without_editorial(tmp_path):
+    """The exact migration shape (spec §4.3.1, §7.2): the PARENT id overlay exists (it
+    declares something else — here, the mbox chrome strip) but carries no `editorial`
+    block at all; the SUBTYPE overlay's own `editorial` cascade resolves — the parent
+    must never eclipse the more-specific subtype overlay."""
+    root = _corpus(tmp_path)
+    parent = root / "schema/origin/google-takeout.yaml"
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    parent.write_text(
+        "description: producer overlay, no editorial\nstrip_headers:\n- X-Gmail-Labels\n"
+    )
+    subtype = root / "schema/origin/google-takeout/gmail.yaml"
+    subtype.parent.mkdir(parents=True, exist_ok=True)
+    subtype.write_text(
+        "description: gmail subtype overlay\n"
+        "editorial:\n"
+        "  title_template: \"Mail window — {window_start} → {window_end}\"\n"
+        "extended_fields:\n"
+        "  window_start: {type: string}\n"
+        "  window_end: {type: string}\n"
+    )
+    schemas.cache_clear()
+
+    source = _mbox(tmp_path, "m.mbox", _msg("one", None))
+    rid = _ingest(root, source)
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    records.merge_origin_fields(post, {"window_start": "2026-01-01", "window_end": "2026-07-21"})
+    assert records.set_origin_schema_id(post, "google-takeout/gmail")
+    assert records.title_for(post, root) == "Mail window — 2026-01-01 → 2026-07-21"
+
+
 # ---------- ingest auto-strip ---------- #
 
 
@@ -339,7 +370,10 @@ def test_ingest_sidecar_stamp_walks_to_parent_declaration(tmp_path):
     """A sidecar stamps the SUB-overlay id `google-takeout/gmail`, which has no overlay
     file of its own; the declaration sits on the namespace PARENT `google-takeout` — the
     walk finds it (one ancestor hop). No `default_origin` binding is set at all, so this
-    exercises the stamped-origin path in isolation."""
+    exercises the stamped-origin path in isolation. Also the compound-stamping check
+    (spec §4.3.1): the sidecar's `origin_schema: google-takeout/gmail` lands on the
+    record's origin block SPLIT into `id`/`subtype` — never the raw compound string —
+    and the derived classification composes `origin/<id>/<subtype>`."""
     root = _corpus(tmp_path)
     _origin_overlay(root, "google-takeout", ["X-Gmail-Labels"])
     source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
@@ -349,8 +383,15 @@ def test_ingest_sidecar_stamp_walks_to_parent_declaration(tmp_path):
     stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
     assert b"X-Gmail-Labels" not in stored.read_bytes()
     post = records.load(root / "records" / rid[:2] / f"{rid}.md")
-    fields = next(iter(records.iter_origin_blocks(post))).get("fields") or {}
+    origin = next(iter(records.iter_origin_blocks(post)))
+    fields = origin.get("fields") or {}
     assert fields["stripped_headers"] == ["X-Gmail-Labels"]
+    assert origin["id"] == "google-takeout"
+    assert origin["subtype"] == "gmail"
+    assert records.derived_classifications(post) == [
+        "mime/application/mbox",
+        "origin/google-takeout/gmail",
+    ]
 
 
 def test_ingest_sidecar_stamp_different_namespace_no_declaration_wins_over_default(tmp_path):

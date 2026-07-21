@@ -871,8 +871,13 @@ def append_origin_block(
     dropped-in *local-file* origin omits it — the staging path the bytes sat at is unlinked
     at ingest, so there is nothing to re-fetch — and carries `filename`/`source_modified`
     in `fields` instead (spec §7.2). `snapshot` is ISO-8601. `schema_id` and `subtype`
-    qualify the block opener (None → bare). `fields` carries any additional schema-declared
-    extended fields beyond the universal uri:/snapshot:.
+    qualify the block opener (None → bare): `schema_id` is split on the FIRST `/` when it
+    carries one (spec §4.3.1's `<id>[/<subtype>]` origin-opener grammar) — e.g. an ingest
+    sidecar's `origin_schema: google-takeout/gmail` names `gmail` as a SUBTYPE of the
+    `google-takeout` producer, not a distinct overlay id. A caller may instead pass an
+    already-split `subtype=` explicitly (e.g. `restub`, replaying a parsed block's own
+    `id`/`subtype`) — that wins over any slash embedded in `schema_id`. `fields` carries
+    any additional schema-declared extended fields beyond the universal uri:/snapshot:.
     """
     block_fields: dict[str, Any] = {}
     if uri:
@@ -880,8 +885,15 @@ def append_origin_block(
     block_fields["snapshot"] = snapshot
     if fields:
         block_fields.update(fields)
+    id_, inferred_subtype = _split_qualifier(schema_id) if schema_id else (None, None)
     origins = post.metadata.setdefault("_origins", [])
-    origins.append({"id": schema_id, "subtype": subtype, "fields": block_fields})
+    origins.append(
+        {
+            "id": id_,
+            "subtype": subtype if subtype is not None else inferred_subtype,
+            "fields": block_fields,
+        }
+    )
 
 
 def _alias_already_present(alias: str, existing: list[str], corpus_root: Path | None) -> bool:
@@ -959,21 +971,29 @@ def merge_origin_fields(post: frontmatter.Post, fields: dict[str, Any]) -> None:
 
 
 def set_origin_schema_id(post: frontmatter.Post, schema_id: str) -> bool:
-    """Stamp `schema_id` as the most-recent origin block's overlay id — promoting its opener
-    to `<!--origin <id>-->`. Returns True when set.
+    """Stamp `schema_id` as the most-recent origin block's overlay id[/subtype] —
+    promoting its opener to `<!--origin <id>[/<subtype>]-->`. Returns True when set.
 
     Producer-declared overlay binding (spec §7.2): a uri-less origin (e.g. an `imessage-export`
     local file) has no `uri:` to match, so the producer names the overlay directly — a capture
     sidecar's `origin_schema:` at ingest, or an injected `corpus-origin-schema` meta the drafter
-    folds in. The bound id drives the derived `origin/<id>` classification, overlay guidance, and
-    ledger harvest rules matching on `origin.id` (`ledger.md` §10) with no uri."""
+    folds in. A compound `schema_id` (`<id>/<subtype>`, e.g. `google-takeout/gmail`) splits on
+    the FIRST `/` (spec §4.3.1's origin-opener grammar) — `gmail` is a SUBTYPE of the
+    `google-takeout` producer, not a distinct overlay id; the split replaces BOTH the block's
+    `id` and `subtype`, so re-stamping with a bare id also clears a stale subtype. Block-side
+    overlay resolution then ladders subtype-qualified overlay first, id overlay fallback (see
+    `_origin_overlay_ladder`). The bound id drives the derived `origin/<id>[/<subtype>]`
+    classification, overlay guidance, and ledger harvest rules matching on `origin.id`
+    (`ledger.md` §10) with no uri."""
     schema_id = (schema_id or "").strip()
     if not schema_id:
         return False
     origins = post.metadata.get("_origins") or []
     if not origins:
         return False
-    origins[-1]["id"] = schema_id
+    id_, subtype = _split_qualifier(schema_id)
+    origins[-1]["id"] = id_
+    origins[-1]["subtype"] = subtype
     return True
 
 
@@ -986,8 +1006,11 @@ def qualify_origin_blocks(post: frontmatter.Post, corpus_root: Path) -> list[str
     Iterates EVERY origin block (a re-capture may carry more than one), never just the
     most-recent. **Never touches a block that already carries an id** — a producer-
     declared id (this function's own prior stamp, or `set_origin_schema_id`'s) is
-    sacrosanct: never re-stamped, never downgraded. A bare block with no `uri:`, or whose
-    `uri:` matches no overlay, is correctly left bare (no overlay, no id — spec §7.2).
+    sacrosanct: never re-stamped, never downgraded — and, since a `subtype` never rides
+    without an `id` (spec §4.3.1's `<id>[/<subtype>]` grammar), a block already carrying a
+    subtype is always skipped too, by the same id check. A bare block with no `uri:`, or
+    whose `uri:` matches no overlay, is correctly left bare (no overlay, no id — spec §7.2).
+    This function stamps a bare (host-matched) `id` only — it never sets `subtype`.
     Deterministic (`schemas.best_origin_overlay_for_uris` resolves ties) and idempotent —
     a second call finds nothing left unqualified to stamp.
 
@@ -1202,33 +1225,51 @@ def _artifact_editorial_candidate(post: frontmatter.Post, corpus_root: Path, rol
     return _first_non_empty(artifact.get("fields"), names)
 
 
+def _origin_overlay_ladder(origin: dict[str, Any]) -> list[str]:
+    """The overlay lookup ladder for one origin block (spec §4.3.1, §7.2): a subtype-
+    qualified block (`id`/`subtype` both set) tries its full `<id>/<subtype>` overlay
+    FIRST, falling back to the bare `<id>` producer overlay — `gmail` is a SUBTYPE of the
+    `google-takeout` producer, and an authored subtype overlay is more specific than the
+    producer's. An id-less block contributes no rungs; a subtype-less block is a
+    one-rung ladder."""
+    id_ = origin.get("id")
+    if not id_:
+        return []
+    subtype = origin.get("subtype")
+    if subtype:
+        return [f"{id_}/{subtype}", str(id_)]
+    return [str(id_)]
+
+
 def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
     """The origin layer's candidate (spec §4.2.3): the LATEST qualified origin block whose
-    overlay yields a non-empty value wins — origin blocks append in capture order, so a
-    re-capture's fields supersede. Per block the overlay's declared
-    `editorial.<role>_template` resolves first (a mechanical composition over the block's
-    fields, all-or-nothing), then its role-marked fields — the origin layer has no
-    implicit authored value, so the order is just template → marks. A bare (unqualified)
-    origin block matches no overlay and contributes nothing (spec §7.2)."""
+    overlay ladder yields a non-empty value wins — origin blocks append in capture order,
+    so a re-capture's fields supersede. Per block, each ladder rung (subtype-qualified
+    overlay first, id overlay fallback — `_origin_overlay_ladder`) tries its declared
+    `editorial.<role>_template` first (a mechanical composition over the block's fields,
+    all-or-nothing), then its role-marked fields, before the ladder moves to the next
+    (less specific) rung — the origin layer has no implicit authored value, so the order
+    is just template → marks. A bare (unqualified) origin block matches no overlay and
+    contributes nothing (spec §7.2)."""
     from . import schemas as _schemas
 
     for origin in reversed(list(iter_origin_blocks(post))):
-        schema_id = origin.get("id")
-        if not schema_id:
-            continue
-        schema = _schemas.load_origin_overlay_by_id(corpus_root, str(schema_id))
         fields = origin.get("fields")
-        editorial = schema.get("editorial") if isinstance(schema, dict) else None
-        template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
-        if template:
-            templated = _resolve_editorial_template_value(template, fields)
-            if templated:
-                return templated
-        names = _role_marked_fields(schema, role)
-        if names:
-            value = _first_non_empty(fields, names)
-            if value:
-                return value
+        for overlay_id in _origin_overlay_ladder(origin):
+            schema = _schemas.load_origin_overlay_by_id(corpus_root, overlay_id)
+            if not isinstance(schema, dict):
+                continue
+            editorial = schema.get("editorial")
+            template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
+            if template:
+                templated = _resolve_editorial_template_value(template, fields)
+                if templated:
+                    return templated
+            names = _role_marked_fields(schema, role)
+            if names:
+                value = _first_non_empty(fields, names)
+                if value:
+                    return value
     return ""
 
 
