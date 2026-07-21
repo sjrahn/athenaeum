@@ -1221,7 +1221,7 @@ def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role:
         editorial = schema.get("editorial") if isinstance(schema, dict) else None
         template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
         if template:
-            templated = _resolve_editorial_template(str(template), fields)
+            templated = _resolve_editorial_template_value(template, fields)
             if templated:
                 return templated
         names = _role_marked_fields(schema, role)
@@ -1275,6 +1275,24 @@ def _resolve_editorial_template(template: str, fields: dict[str, Any] | None) ->
     return template.format(**values).strip()
 
 
+def _resolve_editorial_template_value(value: Any, fields: dict[str, Any] | None) -> str:
+    """Resolve an `editorial.<role>_template` value that may be a single template string
+    OR an ordered LIST of template strings (the cascade form): try each entry in order,
+    returning the first whose `_resolve_editorial_template` resolution is non-empty
+    (still all-or-nothing PER entry — a partial composition never wins). A non-string
+    list entry is tolerantly skipped, like any other malformed overlay data. A plain
+    string behaves exactly as before."""
+    if isinstance(value, (list, tuple)):
+        for entry in value:
+            if not isinstance(entry, str):
+                continue
+            resolved = _resolve_editorial_template(entry, fields)
+            if resolved:
+                return resolved
+        return ""
+    return _resolve_editorial_template(str(value), fields)
+
+
 def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
     """The form layer's candidate (spec §4.2.3, strongest of the three schema-driven
     layers): only the WHOLE-RECORD form section contributes — a span-scope section
@@ -1300,7 +1318,7 @@ def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: s
     editorial = schema.get("editorial") if isinstance(schema, dict) else None
     template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
     if template:
-        templated = _resolve_editorial_template(str(template), section.extra)
+        templated = _resolve_editorial_template_value(template, section.extra)
         if templated:
             return templated
     names = [n for n in _role_marked_fields(schema, role) if n not in _EDITORIAL_ROLES]

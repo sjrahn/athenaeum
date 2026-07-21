@@ -8,10 +8,12 @@ container ingests as a zip-manifest record whose `<YYYY>.mbox` members are each
 promotable (§8.1) to a first-class mbox record; the current year's members emit as a
 residue mbox handed to `corpus mbox-window`, never to the container.
 
-The chrome strip resolves from the same schema declaration ingest applies
-(`strip_headers` on the corpus's application/mbox schema; `--strip` overrides), so a
-closed year's stripped mbox is byte-identical in every future full export — the next
-re-baseline's promoted year members re-encounter instead of re-minting.
+The chrome strip resolves the same chain ingest does (spec §12.3.13): `strip_headers`
+declared on the producer's origin overlay, namespace-walked from `--origin` (or, when
+`--origin` is omitted, from the mime schema's `default_origin` binding); `--strip`
+overrides either. So a closed year's stripped mbox is byte-identical in every future
+full export — the next re-baseline's promoted year members re-encounter instead of
+re-minting.
 """
 
 from __future__ import annotations
@@ -44,7 +46,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--origin",
         default=None,
         metavar="OVERLAY-ID",
-        help="origin overlay id to stamp on the container sidecar (`origin_schema:`).",
+        help=(
+            "origin overlay id to stamp on the container sidecar (`origin_schema:`) and "
+            "to namespace-walk for the chrome-strip declaration; when omitted, resolves "
+            "from the mime schema's `default_origin` binding and auto-stamps that instead."
+        ),
     )
     parser.add_argument(
         "--strip",
@@ -52,7 +58,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="HEADER",
         help="chrome-strip override (repeatable; comma lists) — normally resolved from "
-        "the corpus's application/mbox schema `strip_headers` declaration.",
+        "the producer's origin overlay (namespace-walked via --origin, or the mime "
+        "schema's `default_origin` binding).",
     )
     add_corpus_root_arg(parser)
 
@@ -84,7 +91,9 @@ def run(args: argparse.Namespace) -> int:
     cli_strip = None
     if getattr(args, "strip", None):
         cli_strip = [n.strip() for v in args.strip for n in v.split(",") if n.strip()]
-    strip_names = schemas.resolve_strip_headers(corpus_root, "application/mbox", cli_strip) or None
+    strip_names = schemas.resolve_strip_headers(
+        corpus_root, "application/mbox", cli_strip, origin_id=args.origin
+    ) or None
     strip = mboxfile.normalize_strip_headers(strip_names)
     if strip_names:
         print(f"  chrome-strip active: {', '.join(strip_names)}")
@@ -168,9 +177,14 @@ def run(args: argparse.Namespace) -> int:
         origin_fields["stripped_members"] = scan.stripped_members
     if mtime := _source_modified_iso(source):
         origin_fields["source_modified"] = mtime
+    effective_origin = args.origin or schemas.resolve_default_origin(
+        corpus_root, "application/mbox"
+    )
     sidecar: dict[str, object] = {"origin_fields": origin_fields}
-    if args.origin:
-        sidecar["origin_schema"] = args.origin
+    if effective_origin:
+        sidecar["origin_schema"] = effective_origin
+        if not args.origin:
+            print(f"  origin auto-stamped from default_origin: {effective_origin}")
     sidecar_path = container.with_suffix(container.suffix + ".capture.yaml")
     sidecar_path.write_text(yaml.safe_dump(sidecar, sort_keys=False), encoding="utf-8")
 

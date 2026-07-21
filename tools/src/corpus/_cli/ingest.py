@@ -62,9 +62,10 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
             f"Author schema/mime/<axis>/<axis>_<subtype>.yaml first, then re-run."
         )
 
-    # Mailbox chrome strip (spec §12.3.13): where the schema declares `strip_headers`,
-    # the staged bytes are canonicalized BEFORE identity — config-driven, so no operator
-    # verb ordering can leak provider workflow-state churn into member identity.
+    # Mailbox chrome strip (spec §12.3.13): where the origin chain declares
+    # `strip_headers`, the staged bytes are canonicalized BEFORE identity — config-driven,
+    # so no operator verb ordering can leak provider workflow-state churn into member
+    # identity.
     strip_provenance = _canonicalize_mbox(corpus_root, src, media_type)
 
     # Spec §1.2 (2.1): every transport is self-contained — there is no `artifact_kind`
@@ -236,23 +237,47 @@ def _append_origin_if_new(
     return True
 
 
+def _sidecar_origin_schema(src: Path) -> str | None:
+    """Best-effort, READ-ONLY peek at the staged sidecar's `origin_schema` value — used
+    only to namespace-walk the chrome-strip declaration (spec §12.3.13). Tolerant of an
+    absent or malformed sidecar (treated as no stamp); does NOT consume the sidecar —
+    `_read_sidecar` re-reads it moments later for the origin-block seed proper."""
+    sidecar_path = src.with_suffix(src.suffix + ".capture.yaml")
+    if not sidecar_path.is_file():
+        return None
+    try:
+        with sidecar_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = str(data.get("origin_schema") or "").strip()
+    return value or None
+
+
 def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:
-    """The mailbox chrome strip at ingest (spec §12.3.13). When the resolved schema
-    declares `strip_headers` for an `application/mbox` staged file, rewrite it in place
-    with those headers removed from every member's header zone — the stripped bytes are
-    the stored bytes, identity is computed over them — and return the origin-field
-    provenance (`stripped_headers`, `stripped_members`, and `source_transport`, the
-    delivered bytes' blake3, so the pre-strip identity is never silently lost). Returns
-    `{}` when no strip is declared, the file holds no messages (parse tolerance), or no
-    member carries a declared header (already canonical — e.g. a window bundle emitted
+    """The mailbox chrome strip at ingest (spec §12.3.13). Resolves `strip_headers`
+    through the ORIGIN chain — the staged file's sidecar `origin_schema` stamp (when
+    present) namespace-walked, else the mime schema's `default_origin` binding walked
+    the same way (`schemas.resolve_strip_headers`) — and, for an `application/mbox`
+    staged file with a non-empty result, rewrites it in place with those headers removed
+    from every member's header zone — the stripped bytes are the stored bytes, identity
+    is computed over them — and returns the origin-field provenance
+    (`stripped_headers`, `stripped_members`, and `source_transport`, the delivered
+    bytes' blake3, so the pre-strip identity is never silently lost). Returns `{}` when
+    no strip is declared, the file holds no messages (parse tolerance), or no member
+    carries a declared header (already canonical — e.g. a window bundle emitted
     stripped)."""
     if media_type != "application/mbox":
         return {}
     from corpus import hashing, mboxfile, records, schemas
 
-    names = schemas.resolve_strip_headers(corpus_root, media_type)
+    origin_id = _sidecar_origin_schema(src)
+    names = schemas.resolve_strip_headers(corpus_root, media_type, origin_id=origin_id)
     if not names:
         return {}
+    resolved_origin_id = origin_id or schemas.resolve_default_origin(corpus_root, media_type)
     strip = mboxfile.normalize_strip_headers(names)
     scan = mboxfile.scan(src, None, strip=strip)
     if not scan.count or not scan.stripped_members:
@@ -263,8 +288,9 @@ def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[st
         mboxfile.extract_raw_members(src, set(range(1, scan.count + 1)), out, strip=strip)
     tmp.replace(src)
     print(
-        f"  chrome-strip: {', '.join(names)} removed from "
-        f"{scan.stripped_members}/{scan.count} member(s) (delivered blake3:{delivered[:12]}…)"
+        f"  chrome-strip active (origin {resolved_origin_id}): {', '.join(names)} removed "
+        f"from {scan.stripped_members}/{scan.count} member(s) "
+        f"(delivered blake3:{delivered[:12]}…)"
     )
     return {
         "stripped_headers": list(names),

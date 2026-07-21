@@ -55,7 +55,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--origin",
         default=None,
         metavar="OVERLAY-ID",
-        help="origin overlay id to stamp on the sidecar (`origin_schema:`), as `assemble` takes it.",
+        help=(
+            "origin overlay id to stamp on the sidecar (`origin_schema:`), as `assemble` "
+            "takes it, and to namespace-walk for the chrome-strip declaration; when "
+            "omitted, resolves from the mime schema's `default_origin` binding and "
+            "auto-stamps that instead."
+        ),
     )
     parser.add_argument(
         "--strip",
@@ -64,10 +69,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         metavar="HEADER",
         help=(
             "mailbox chrome strip OVERRIDE (§12.3.13; repeatable, comma lists accepted). "
-            "Normally the corpus's application/mbox schema `strip_headers` declaration "
-            "resolves automatically (the same config ingest applies) — pass this only to "
-            "deviate from it. Applied to the source, the emitted bundle, AND lineage "
-            "artifact enumeration, so a pre-strip snapshot still serves as lineage."
+            "Normally resolves automatically from the producer's origin overlay "
+            "(namespace-walked via --origin, or the mime schema's `default_origin` "
+            "binding when --origin is omitted) — the same chain ingest applies — pass "
+            "this only to deviate from it. Applied to the source, the emitted bundle, "
+            "AND lineage artifact enumeration, so a pre-strip snapshot still serves as "
+            "lineage."
         ),
     )
     parser.add_argument(
@@ -196,7 +203,9 @@ def run(args: argparse.Namespace) -> int:
         cli_strip = [n.strip() for v in args.strip for n in v.split(",") if n.strip()]
         if not cli_strip:
             sys.exit("--strip: no header names given")
-    strip_names = schemas.resolve_strip_headers(corpus_root, _MBOX_MIME, cli_strip) or None
+    strip_names = schemas.resolve_strip_headers(
+        corpus_root, _MBOX_MIME, cli_strip, origin_id=getattr(args, "origin", None)
+    ) or None
     strip = mboxfile.normalize_strip_headers(strip_names)
     if strip_names:
         print(f"  chrome-strip active: {', '.join(strip_names)}")
@@ -263,9 +272,13 @@ def run(args: argparse.Namespace) -> int:
     if strip_names:
         origin_fields["stripped_headers"] = strip_names
         origin_fields["stripped_members"] = scan.stripped_members
+    cli_origin = getattr(args, "origin", None)
+    effective_origin = cli_origin or schemas.resolve_default_origin(corpus_root, _MBOX_MIME)
     sidecar: dict[str, object] = {"origin_fields": origin_fields}
-    if args.origin:
-        sidecar["origin_schema"] = args.origin
+    if effective_origin:
+        sidecar["origin_schema"] = effective_origin
+        if not cli_origin:
+            print(f"  origin auto-stamped from default_origin: {effective_origin}")
     sidecar_path = bundle.with_suffix(bundle.suffix + ".capture.yaml")
     sidecar_path.write_text(yaml.safe_dump(sidecar, sort_keys=False), encoding="utf-8")
 

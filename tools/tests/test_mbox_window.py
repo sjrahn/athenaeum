@@ -15,12 +15,18 @@ from pathlib import Path
 import blake3
 import yaml
 
+import corpus as corpus_pkg
 from corpus import hashing, mboxfile, paths, records, schemas
 from corpus._cli import ingest as ingest_cli
 from corpus._cli import mbox_window
 from tests._draftlib import draft_for_test
 
 CRLF = b"\r\n"
+
+_PACKAGED_MBOX_SCHEMA = (
+    Path(corpus_pkg.__file__).parent
+    / "schemas_default/mime/application/application_mbox.yaml"
+)
 
 
 def _b3(data: bytes) -> str:
@@ -70,6 +76,15 @@ def _corpus(tmp_path: Path) -> Path:
     (root / "schema").mkdir(parents=True)  # empty → packaged defaults
     schemas.cache_clear()
     return root
+
+
+def _bind_default_origin(root: Path, origin_id: str) -> None:
+    """(Re)write the corpus-local mbox mime shadow binding `default_origin: <id>` —
+    whole-file-wins, so it carries the full packaged text plus the binding."""
+    local = root / "schema/mime/application/application_mbox.yaml"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(_PACKAGED_MBOX_SCHEMA.read_text() + f"\ndefault_origin: {origin_id}\n")
+    schemas.cache_clear()
 
 
 def _ingest(root: Path, artifact: Path) -> str:
@@ -216,3 +231,34 @@ def test_dry_run_writes_nothing(tmp_path, capsys):
     assert _run(root, source, baseline_id, dry_run=True) == 0
     assert not list((root / "capture").glob("*-window-*.mbox"))
     assert "would write full-window-20240104-20240104.mbox" in capsys.readouterr().out
+
+
+def test_window_auto_stamps_sidecar_from_default_origin_binding(tmp_path):
+    root = _corpus(tmp_path)
+    baseline_id = _ingest(root, _mbox(tmp_path, "baseline.mbox", _M1))
+    _bind_default_origin(root, "google-takeout/gmail")
+    source = _mbox(tmp_path, "full.mbox", _M1, _M4)
+    assert _run(root, source, baseline_id) == 0
+    _bundle, sidecar = _bundle_and_sidecar(root)
+    assert sidecar["origin_schema"] == "google-takeout/gmail"
+
+
+def test_window_cli_origin_wins_over_default_binding(tmp_path):
+    root = _corpus(tmp_path)
+    baseline_id = _ingest(root, _mbox(tmp_path, "baseline.mbox", _M1))
+    _bind_default_origin(root, "google-takeout/gmail")
+    source = _mbox(tmp_path, "full.mbox", _M1, _M4)
+    assert (
+        mbox_window.run(
+            argparse.Namespace(
+                source=str(source),
+                against=[baseline_id],
+                origin="explicit-origin",
+                dry_run=False,
+                corpus_root=str(root),
+            )
+        )
+        == 0
+    )
+    _bundle, sidecar = _bundle_and_sidecar(root)
+    assert sidecar["origin_schema"] == "explicit-origin"

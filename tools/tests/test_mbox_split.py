@@ -1,7 +1,9 @@
 """Closed-year snapshot split — `corpus mbox-split` (spec §12.3.13): year bucketing
-(closed-only, undated-never-closes), chrome strip via the schema declaration, the
-deterministic container zip, sidecar provenance, and the live-critical integration path:
-container ingest → year-member promotion → msg= resolution of stripped bytes.
+(closed-only, undated-never-closes), chrome strip resolved via a `default_origin`
+binding + a namespace-walked origin-overlay declaration, the deterministic container
+zip, sidecar provenance (including the auto-stamped `origin_schema:`), and the
+live-critical integration path: container ingest → year-member promotion → msg=
+resolution of stripped bytes.
 """
 
 from __future__ import annotations
@@ -60,15 +62,28 @@ def _stripped(member: bytes) -> bytes:
     return CRLF.join(ln for ln in lines if not ln.startswith(b"X-Gmail-Labels:"))
 
 
-def _corpus(tmp_path: Path, declare_strip: bool = True) -> Path:
+_DEFAULT_ORIGIN_ID = "google-takeout/gmail"
+
+
+def _corpus(tmp_path: Path, default_origin: str | None = _DEFAULT_ORIGIN_ID) -> Path:
+    """A test corpus; with `default_origin` (the default), a corpus-local shadow of the
+    packaged application/mbox schema binds `default_origin: <id>` and an origin overlay
+    at that id declares `strip_headers` — the whole-file-wins rung rule (§3) means the
+    shadow must carry the full packaged content. Pass `default_origin=None` for a bare
+    corpus with no binding at all."""
     root = tmp_path / "c"
     (root / "records").mkdir(parents=True)
     (root / "schema").mkdir(parents=True)
-    if declare_strip:
+    if default_origin:
         local = root / "schema/mime/application/application_mbox.yaml"
         local.parent.mkdir(parents=True)
         local.write_text(
-            _PACKAGED_MBOX_SCHEMA.read_text() + "\nstrip_headers:\n- X-Gmail-Labels\n"
+            _PACKAGED_MBOX_SCHEMA.read_text() + f"\ndefault_origin: {default_origin}\n"
+        )
+        overlay = root / "schema" / "origin" / f"{default_origin}.yaml"
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        overlay.write_text(
+            "description: test origin overlay\nstrip_headers:\n- X-Gmail-Labels\n"
         )
     schemas.cache_clear()
     return root
@@ -133,6 +148,41 @@ def test_split_buckets_closed_years_and_residue(tmp_path):
     assert fields["undated_count"] == 1
     assert fields["stripped_headers"] == ["X-Gmail-Labels"]
     assert fields["source_export"] == "full.mbox"
+    # Auto-stamped from the binding it resolved through (no --origin given).
+    assert sidecar["origin_schema"] == _DEFAULT_ORIGIN_ID
+
+
+def test_split_auto_stamps_sidecar_from_default_origin_binding(tmp_path):
+    root = _corpus(tmp_path)  # binds default_origin (the fixture default)
+    source = _mbox(tmp_path, "full.mbox", M_2023A, M_CUR)
+    assert _run_split(root, source) == 0
+    container = root / "capture" / "full-years-2023-2023.zip"
+    sidecar = yaml.safe_load(
+        container.with_suffix(container.suffix + ".capture.yaml").read_text()
+    )
+    assert sidecar["origin_schema"] == _DEFAULT_ORIGIN_ID
+
+
+def test_split_cli_origin_wins_over_default_binding(tmp_path):
+    root = _corpus(tmp_path)  # binds default_origin (the fixture default)
+    source = _mbox(tmp_path, "full.mbox", M_2023A, M_CUR)
+    assert (
+        mbox_split.run(
+            argparse.Namespace(
+                source=str(source),
+                current_year=2025,
+                origin="explicit-origin",
+                strip=None,
+                corpus_root=str(root),
+            )
+        )
+        == 0
+    )
+    container = root / "capture" / "full-years-2023-2023.zip"
+    sidecar = yaml.safe_load(
+        container.with_suffix(container.suffix + ".capture.yaml").read_text()
+    )
+    assert sidecar["origin_schema"] == "explicit-origin"
 
 
 def test_split_is_deterministic(tmp_path):

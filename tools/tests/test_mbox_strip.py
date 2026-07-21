@@ -1,8 +1,11 @@
-"""Mailbox chrome strip (spec §12.3.13), config-driven: the HeaderStrip filter (folded
-continuations, header-zone-only, case-insensitive), schema-declared auto-strip at ingest
-(identity over stripped bytes + delivered-hash provenance), and `corpus mbox-window`
-resolving the same declaration — including a pre-strip (label-full) lineage crossed
-as-if-stripped, and the no-declaration negative control.
+"""Mailbox chrome strip (spec §12.3.13), origin-declared: the HeaderStrip filter (folded
+continuations, header-zone-only, case-insensitive), the strip ACTION declared on the
+producer's origin overlay (namespace-walked) with the mime schema carrying only the
+corpus-local `default_origin` BINDING, schema-declared auto-strip at ingest (identity
+over stripped bytes + delivered-hash provenance), and `corpus mbox-window` resolving the
+same chain — including a pre-strip (label-full) lineage crossed as-if-stripped, the
+no-declaration negative control, and the namespace-walk finality rule (a stamped origin's
+silence never falls through to the default binding).
 """
 
 from __future__ import annotations
@@ -61,22 +64,46 @@ def _stripped(member: bytes) -> bytes:
     return CRLF.join(ln for ln in lines if not ln.startswith(b"X-Gmail-Labels:"))
 
 
-def _corpus(tmp_path: Path, declare_strip: bool = False) -> Path:
-    """A test corpus; with `declare_strip`, a corpus-local shadow of the packaged
-    application/mbox schema declares `strip_headers: [X-Gmail-Labels]` — the whole-file-
-    wins rung rule (§3) means the shadow must carry the full packaged content."""
+def _corpus(tmp_path: Path, default_origin: str | None = None) -> Path:
+    """A test corpus; with `default_origin`, a corpus-local shadow of the packaged
+    application/mbox schema binds `default_origin: <id>` — the whole-file-wins rung
+    rule (§3) means the shadow must carry the full packaged content."""
     root = tmp_path / "c"
     (root / "records").mkdir(parents=True)
     (root / "schema").mkdir(parents=True)
-    if declare_strip:
-        local = root / "schema/mime/application/application_mbox.yaml"
-        local.parent.mkdir(parents=True)
-        local.write_text(
-            _PACKAGED_MBOX_SCHEMA.read_text()
-            + "\nstrip_headers:\n- X-Gmail-Labels\n"
-        )
+    if default_origin:
+        _mime_shadow(root, default_origin)
     schemas.cache_clear()
     return root
+
+
+def _mime_shadow(root: Path, default_origin: str) -> None:
+    """(Re)write the corpus-local mbox mime shadow binding `default_origin: <id>` —
+    whole-file-wins, so it carries the full packaged text plus the binding."""
+    local = root / "schema/mime/application/application_mbox.yaml"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(_PACKAGED_MBOX_SCHEMA.read_text() + f"\ndefault_origin: {default_origin}\n")
+    schemas.cache_clear()
+
+
+def _origin_overlay(root: Path, origin_id: str, strip_headers: list[str] | None) -> None:
+    """Write an origin overlay at `origin/<id>.yaml` (nested namespace dirs created as
+    needed) declaring `strip_headers` — a list, possibly empty (`[]` = declared off)."""
+    path = root / "schema" / "origin" / f"{origin_id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["description: test origin overlay"]
+    if strip_headers:
+        lines.append("strip_headers:")
+        lines.extend(f"- {h}" for h in strip_headers)
+    else:
+        lines.append("strip_headers: []")
+    path.write_text("\n".join(lines) + "\n")
+    schemas.cache_clear()
+
+
+def _write_sidecar(source: Path, origin_schema: str) -> None:
+    sidecar = source.with_suffix(source.suffix + ".capture.yaml")
+    sidecar.write_text(yaml.safe_dump({"origin_schema": origin_schema}))
 
 
 def _ingest(root: Path, artifact: Path) -> str:
@@ -141,11 +168,55 @@ def test_extract_emits_stripped_members(tmp_path):
 
 
 def test_resolve_strip_headers_precedence(tmp_path):
-    declared = _corpus(tmp_path / "a", declare_strip=True)
+    declared = _corpus(tmp_path / "a", default_origin="google-takeout/gmail")
+    _origin_overlay(declared, "google-takeout/gmail", ["X-Gmail-Labels"])
     assert schemas.resolve_strip_headers(declared, "application/mbox") == ["X-Gmail-Labels"]
+    # CLI override beats everything, including a declaring binding.
     assert schemas.resolve_strip_headers(declared, "application/mbox", ["X-Other"]) == ["X-Other"]
     bare = _corpus(tmp_path / "b")
     assert schemas.resolve_strip_headers(bare, "application/mbox") == []
+
+
+def test_resolve_default_origin_binding(tmp_path):
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    assert schemas.resolve_default_origin(root, "application/mbox") == "google-takeout/gmail"
+    bare = _corpus(tmp_path / "bare")
+    assert schemas.resolve_default_origin(bare, "application/mbox") is None
+
+
+def test_origin_id_walk_reaches_namespace_ancestor(tmp_path):
+    """The stamped id `google-takeout/gmail` has no overlay file of its own — only its
+    namespace PARENT `google-takeout` declares `strip_headers` — and the walk still
+    finds it (one ancestor hop)."""
+    root = _corpus(tmp_path)
+    _origin_overlay(root, "google-takeout", ["X-Gmail-Labels"])
+    assert schemas.resolve_strip_headers(
+        root, "application/mbox", origin_id="google-takeout/gmail"
+    ) == ["X-Gmail-Labels"]
+
+
+def test_origin_id_finality_no_cross_namespace_fallback(tmp_path):
+    """A stamped origin in a DIFFERENT namespace with no declaration anywhere on ITS
+    walk yields NO strip — even though `default_origin` exists and declares. Finality:
+    the default binding is consulted ONLY when no origin id was given at all."""
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
+    assert schemas.resolve_strip_headers(
+        root, "application/mbox", origin_id="imessage-export"
+    ) == []
+
+
+def test_origin_declared_empty_list_is_declared_off(tmp_path):
+    """`strip_headers: []` on the stamped overlay is a DECLARATION (off), distinct from
+    no overlay declaring at all — both read `[]` through `resolve_strip_headers`, but
+    the internal walk distinguishes "declared empty" (`[]`) from "undeclared" (`None`)."""
+    root = _corpus(tmp_path)
+    _origin_overlay(root, "quiet-origin", [])
+    assert schemas.resolve_strip_headers(
+        root, "application/mbox", origin_id="quiet-origin"
+    ) == []
+    assert schemas._origin_strip_declaration(root, "quiet-origin") == []
+    assert schemas._origin_strip_declaration(root, "no-such-origin") is None
 
 
 # ---------- origin-overlay editorial templates (§4.2.3, extended) ---------- #
@@ -176,11 +247,72 @@ def test_origin_overlay_title_template_resolves(tmp_path):
     assert records.title_for(post, root) == ""
 
 
+def test_origin_overlay_title_template_cascade_resolves_later_entry(tmp_path):
+    """A `title_template` LIST — the cascade form: the first entry needs a field the
+    record doesn't carry (falls through, all-or-nothing), so the SECOND entry wins."""
+    root = _corpus(tmp_path)
+    overlay = root / "schema/origin/mail-window-cascade.yaml"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text(
+        "description: test cascade overlay\n"
+        "editorial:\n"
+        "  title_template:\n"
+        "  - \"{unresolvable} — {window_start}\"\n"
+        "  - \"Mail window — {window_start} → {window_end}\"\n"
+        "extended_fields:\n"
+        "  window_start: {type: string}\n"
+        "  window_end: {type: string}\n"
+        "  title_fallback:\n"
+        "    type: string\n"
+        "    role: title\n"
+    )
+    schemas.cache_clear()
+
+    source = _mbox(tmp_path, "m.mbox", _msg("one", None))
+    rid = _ingest(root, source)
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    records.merge_origin_fields(post, {"window_start": "2026-01-01", "window_end": "2026-07-21"})
+    assert records.set_origin_schema_id(post, "mail-window-cascade")
+    assert records.title_for(post, root) == "Mail window — 2026-01-01 → 2026-07-21"
+
+
+def test_origin_overlay_title_template_cascade_falls_through_to_role_mark(tmp_path):
+    """When EVERY cascade entry fails to resolve, fall-through to a role-marked field is
+    preserved — the cascade is one candidate kind among the layer's usual precedence."""
+    root = _corpus(tmp_path)
+    overlay = root / "schema/origin/mail-window-cascade.yaml"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text(
+        "description: test cascade overlay\n"
+        "editorial:\n"
+        "  title_template:\n"
+        "  - \"{unresolvable} — {window_start}\"\n"
+        "  - \"Mail window — {window_start} → {window_end}\"\n"
+        "extended_fields:\n"
+        "  window_start: {type: string}\n"
+        "  window_end: {type: string}\n"
+        "  title_fallback:\n"
+        "    type: string\n"
+        "    role: title\n"
+    )
+    schemas.cache_clear()
+
+    source = _mbox(tmp_path, "m.mbox", _msg("one", None))
+    rid = _ingest(root, source)
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    records.merge_origin_fields(post, {"title_fallback": "Fallback Title"})
+    assert records.set_origin_schema_id(post, "mail-window-cascade")
+    assert records.title_for(post, root) == "Fallback Title"
+
+
 # ---------- ingest auto-strip ---------- #
 
 
-def test_ingest_auto_strips_when_schema_declares(tmp_path):
-    root = _corpus(tmp_path, declare_strip=True)
+def test_ingest_auto_strips_via_default_binding_no_sidecar(tmp_path):
+    """The unconditional-enforcement guarantee: with NO sidecar at all, the mime
+    schema's `default_origin` binding resolves and its declared strip auto-applies."""
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
     m1 = _msg("one", "Inbox,Category Updates,Unread")
     m2 = _msg("two", None)
     source = _mbox(tmp_path, "full.mbox", m1, m2)
@@ -203,6 +335,57 @@ def test_ingest_auto_strips_when_schema_declares(tmp_path):
     assert fields["source_transport"] == f"blake3:{delivered_b3}"
 
 
+def test_ingest_sidecar_stamp_walks_to_parent_declaration(tmp_path):
+    """A sidecar stamps the SUB-overlay id `google-takeout/gmail`, which has no overlay
+    file of its own; the declaration sits on the namespace PARENT `google-takeout` — the
+    walk finds it (one ancestor hop). No `default_origin` binding is set at all, so this
+    exercises the stamped-origin path in isolation."""
+    root = _corpus(tmp_path)
+    _origin_overlay(root, "google-takeout", ["X-Gmail-Labels"])
+    source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
+    _write_sidecar(source, "google-takeout/gmail")
+
+    rid = _ingest(root, source)
+    stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
+    assert b"X-Gmail-Labels" not in stored.read_bytes()
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    fields = next(iter(records.iter_origin_blocks(post))).get("fields") or {}
+    assert fields["stripped_headers"] == ["X-Gmail-Labels"]
+
+
+def test_ingest_sidecar_stamp_different_namespace_no_declaration_wins_over_default(tmp_path):
+    """Finality: a stamped origin in a namespace with NO declaration anywhere on its
+    walk gets NO strip — even though the corpus's `default_origin` binding exists and
+    DOES declare. The stamped id's silence is never overridden by the default."""
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
+    source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
+    _write_sidecar(source, "imessage-export")  # different namespace, no overlay at all
+    delivered_b3 = hashing.hash_file(source)["blake3"]
+
+    rid = _ingest(root, source)
+    assert rid == delivered_b3  # untouched
+    stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
+    assert b"X-Gmail-Labels" in stored.read_bytes()
+
+
+def test_ingest_stamped_overlay_explicit_empty_list_is_declared_off(tmp_path):
+    """`strip_headers: []` on the stamped overlay stops the walk and strips nothing —
+    even though the corpus's `default_origin` binding (a different, non-stamped path)
+    would otherwise declare a strip."""
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
+    _origin_overlay(root, "google-takeout/gmail-raw", [])  # explicit off
+    source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
+    _write_sidecar(source, "google-takeout/gmail-raw")
+    delivered_b3 = hashing.hash_file(source)["blake3"]
+
+    rid = _ingest(root, source)
+    assert rid == delivered_b3
+    stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
+    assert b"X-Gmail-Labels" in stored.read_bytes()
+
+
 def test_ingest_untouched_without_declaration(tmp_path):
     root = _corpus(tmp_path)
     source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
@@ -214,7 +397,8 @@ def test_ingest_untouched_without_declaration(tmp_path):
 
 
 def test_ingest_already_canonical_passes_through(tmp_path):
-    root = _corpus(tmp_path, declare_strip=True)
+    root = _corpus(tmp_path, default_origin="google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
     source = _mbox(tmp_path, "clean.mbox", _msg("one", None))
     delivered_b3 = hashing.hash_file(source)["blake3"]
     rid = _ingest(root, source)
@@ -228,10 +412,11 @@ def test_ingest_already_canonical_passes_through(tmp_path):
 
 
 def test_window_config_strip_crosses_prestrip_lineage(tmp_path):
-    """The lineage baseline is ingested LABEL-FULL in a corpus with no declaration; the
-    declaration is then added (the corpus adopts the strip), and a window run with NO
-    --strip flag resolves it from config: churned members are excluded as-if-stripped and
-    the emitted delta member is label-free."""
+    """The lineage baseline is ingested LABEL-FULL in a corpus with no binding/overlay;
+    the corpus then adopts the strip (binding + origin-overlay declaration), and a
+    window run with NO --strip/--origin flag resolves it from config: churned members
+    are excluded as-if-stripped, the emitted delta member is label-free, and the sidecar
+    is auto-stamped from the binding it resolved through."""
     root = _corpus(tmp_path)
     baseline_id = _ingest(
         root,
@@ -243,10 +428,8 @@ def test_window_config_strip_crosses_prestrip_lineage(tmp_path):
         ),
     )
     # The corpus adopts the strip AFTER the label-full baseline landed.
-    local = root / "schema/mime/application/application_mbox.yaml"
-    local.parent.mkdir(parents=True)
-    local.write_text(_PACKAGED_MBOX_SCHEMA.read_text() + "\nstrip_headers:\n- X-Gmail-Labels\n")
-    schemas.cache_clear()
+    _mime_shadow(root, "google-takeout/gmail")
+    _origin_overlay(root, "google-takeout/gmail", ["X-Gmail-Labels"])
 
     new_msg = _msg("three", "Archived")
     source = _mbox(
@@ -282,6 +465,8 @@ def test_window_config_strip_crosses_prestrip_lineage(tmp_path):
     fields = sidecar["origin_fields"]
     assert fields["excluded_count"] == 2
     assert fields["stripped_headers"] == ["X-Gmail-Labels"]
+    # Auto-stamped from the binding it resolved through (no --origin given).
+    assert sidecar["origin_schema"] == "google-takeout/gmail"
 
 
 def test_window_without_declaration_readmits_label_churn(tmp_path):

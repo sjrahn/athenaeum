@@ -35,13 +35,20 @@ applies_to:
 working_kind: mbox
 transport_algos:
 - sha256
-# strip_headers (optional — the mailbox chrome strip, spec §12.3.13): header names whose
-# lines (folded continuations included) are removed from every member's HEADER ZONE at
-# ingest, BEFORE identity — so provider workflow-state the exporter writes into the bytes
+# Mailbox chrome strip (spec §12.3.13): this mime schema provides INTERACTION POINTS
+# only — it does not itself declare the strip. Strip ACTIONS — header names whose lines
+# (folded continuations included) are removed from every member's HEADER ZONE at ingest,
+# BEFORE identity, so provider workflow-state the exporter writes into the bytes
 # (Gmail's `X-Gmail-Labels`: read state, categories, importance, user labels) can never
-# move a member's address. Absent here by default (the package ships no producer
-# knowledge); a corpus that wants it declares it on its corpus-local copy of this file,
-# and `corpus mbox-window` resolves the same key so windows and ingest agree by
+# move a member's address — are declared as `strip_headers` on the PRODUCER'S ORIGIN
+# OVERLAY (namespace-walked: the stamped/CLI origin id, then each id-prefix ancestor,
+# first declaration wins). The one mime-level key here is `default_origin: <overlay-id>`
+# — a corpus-local BINDING ("an unattributed mbox in this corpus is presumed produced
+# by this origin"), walked the same way when no origin id is otherwise known. Both keys
+# are absent here by default (the package ships neither producer knowledge nor a
+# presumption); a corpus states its own binding on its corpus-local copy of this file
+# and declares the strip on the relevant origin overlay(s). `corpus mbox-window` and
+# `mbox-split` resolve the same chain so windows/splits and ingest agree by
 # construction. Disclosure rides the origin fields (`stripped_headers`,
 # `stripped_members`, `source_transport` = the delivered bytes' blake3).
 draft:

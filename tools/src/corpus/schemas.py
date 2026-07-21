@@ -633,24 +633,75 @@ def resolve_fingerprint(
     return False
 
 
+def resolve_default_origin(corpus_root: Path, media_type: str) -> str | None:
+    """Return the mime schema's `default_origin` binding (spec §12.3.13): a corpus-local
+    presumption — "an unattributed mbox in this corpus is presumed produced by this
+    origin" — read from the resolved mime schema's `default_origin` key. `None` when the
+    key is absent/blank or no mime schema resolves for `media_type`. The packaged mbox
+    schema declares none (no producer knowledge ships with the package); a corpus states
+    its own binding on its corpus-local copy of the schema."""
+    schema = load_mime_schema(corpus_root, media_type)
+    if not isinstance(schema, dict):
+        return None
+    value = str(schema.get("default_origin") or "").strip()
+    return value or None
+
+
+def _origin_strip_declaration(corpus_root: Path, origin_id: str) -> list[str] | None:
+    """Namespace walk (spec §12.3.13) for the `strip_headers` DECLARATION: try
+    `origin_id`, then each id-prefix ancestor (`a/b/c` → `a/b` → `a`), via
+    `load_origin_overlay_by_id`. Returns the first ancestor's normalized declared list
+    the moment one DECLARES the key (present, list/tuple — an explicit empty list means
+    "declared off", and is returned as `[]`, ending the walk same as any other
+    declaration). Returns `None` when no overlay in the walk declares `strip_headers` at
+    all — the caller's cue to fall back (or not, per the finality rule) rather than
+    treat silence as an off declaration."""
+    parts = [p for p in (origin_id or "").split("/") if p]
+    if not parts:
+        return None
+    for i in range(len(parts), 0, -1):
+        candidate_id = "/".join(parts[:i])
+        overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
+        if not isinstance(overlay, dict):
+            continue
+        raw = overlay.get("strip_headers")
+        if isinstance(raw, (list, tuple)):
+            return [str(n).strip() for n in raw if str(n).strip()]
+    return None
+
+
 def resolve_strip_headers(
     corpus_root: Path,
     media_type: str,
     cli_override: list[str] | None = None,
+    *,
+    origin_id: str | None = None,
 ) -> list[str]:
-    """Resolve the mailbox chrome-strip header list (spec §12.3.13). Precedence, most
-    specific first: CLI override (`mbox-window --strip`) > mime schema `strip_headers` >
-    `[]` (off). Config-driven by design — ingest consults this so the strip can never
-    depend on an operator remembering a verb; a producer origin-overlay grain (§7.2)
-    joins the chain when one declares it (the fingerprint-knob pattern)."""
+    """Resolve the mailbox chrome-strip header list (spec §12.3.13).
+
+    The strip ACTION is a producer's knowledge, so it is declared on the producer's
+    ORIGIN overlay, namespace-walked (`_origin_strip_declaration`); the mime schema
+    carries only the corpus-local BINDING (`default_origin`) — "the corpus prescribes
+    the behaviour, the tooling executes it."
+
+    Precedence, most specific first:
+
+    - CLI override (`mbox-split`/`mbox-window --strip`) — final, whatever it says.
+    - `origin_id` given (a stamped origin: CLI `--origin`, or the ingest sidecar's
+      `origin_schema`): walk ITS namespace and take that result as FINAL —
+      `[]` when nothing in the walk declares. An origin id was given, so its silence is
+      a decision, not an unknown; the walk never falls through to `default_origin`.
+    - No `origin_id` given: resolve the mime schema's `default_origin` binding and walk
+      ITS namespace the same way, or `[]` when unbound or nothing declares.
+    """
     if cli_override is not None:
         return [str(n).strip() for n in cli_override if str(n).strip()]
-    schema = load_mime_schema(corpus_root, media_type)
-    if isinstance(schema, dict):
-        raw = schema.get("strip_headers")
-        if isinstance(raw, (list, tuple)):
-            return [str(n).strip() for n in raw if str(n).strip()]
-    return []
+    if origin_id is not None:
+        return _origin_strip_declaration(corpus_root, origin_id) or []
+    default_id = resolve_default_origin(corpus_root, media_type)
+    if default_id is None:
+        return []
+    return _origin_strip_declaration(corpus_root, default_id) or []
 
 
 def _origin_fingerprint(
