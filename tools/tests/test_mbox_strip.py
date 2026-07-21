@@ -1,6 +1,8 @@
-"""Mailbox chrome strip (spec §12.3.13): the HeaderStrip filter (folded continuations,
-header-zone-only, case-insensitive), scan/extract with strip, the `corpus mbox-strip`
-verb, and `corpus mbox-window --strip` crossing a pre-strip (label-full) lineage.
+"""Mailbox chrome strip (spec §12.3.13), config-driven: the HeaderStrip filter (folded
+continuations, header-zone-only, case-insensitive), schema-declared auto-strip at ingest
+(identity over stripped bytes + delivered-hash provenance), and `corpus mbox-window`
+resolving the same declaration — including a pre-strip (label-full) lineage crossed
+as-if-stripped, and the no-declaration negative control.
 """
 
 from __future__ import annotations
@@ -12,13 +14,19 @@ from pathlib import Path
 import blake3
 import yaml
 
-from corpus import hashing, mboxfile, schemas
+import corpus as corpus_pkg
+from corpus import hashing, mboxfile, records, schemas
 from corpus._cli import ingest as ingest_cli
-from corpus._cli import mbox_strip, mbox_window
+from corpus._cli import mbox_window
 
 CRLF = b"\r\n"
 
 STRIP = mboxfile.normalize_strip_headers(["X-Gmail-Labels"])
+
+_PACKAGED_MBOX_SCHEMA = (
+    Path(corpus_pkg.__file__).parent
+    / "schemas_default/mime/application/application_mbox.yaml"
+)
 
 
 def _b3(data: bytes) -> str:
@@ -53,6 +61,40 @@ def _stripped(member: bytes) -> bytes:
     return CRLF.join(ln for ln in lines if not ln.startswith(b"X-Gmail-Labels:"))
 
 
+def _corpus(tmp_path: Path, declare_strip: bool = False) -> Path:
+    """A test corpus; with `declare_strip`, a corpus-local shadow of the packaged
+    application/mbox schema declares `strip_headers: [X-Gmail-Labels]` — the whole-file-
+    wins rung rule (§3) means the shadow must carry the full packaged content."""
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    (root / "schema").mkdir(parents=True)
+    if declare_strip:
+        local = root / "schema/mime/application/application_mbox.yaml"
+        local.parent.mkdir(parents=True)
+        local.write_text(
+            _PACKAGED_MBOX_SCHEMA.read_text()
+            + "\nstrip_headers:\n- X-Gmail-Labels\n"
+        )
+    schemas.cache_clear()
+    return root
+
+
+def _ingest(root: Path, artifact: Path) -> str:
+    """Stage + ingest; returns the RESULTING record id (post-canonicalization)."""
+    cap = root / "capture"
+    cap.mkdir(exist_ok=True)
+    staged = cap / artifact.name
+    if staged != artifact:
+        shutil.copy(artifact, staged)
+        sidecar = artifact.with_suffix(artifact.suffix + ".capture.yaml")
+        if sidecar.is_file():
+            shutil.copy(sidecar, cap / sidecar.name)
+    assert ingest_cli._ingest_one(root, staged) == 0
+    recs = sorted((root / "records").rglob("*.md"))
+    by_mtime = max(recs, key=lambda p: p.stat().st_mtime)
+    return by_mtime.stem
+
+
 # ---------- the filter ---------- #
 
 
@@ -73,17 +115,14 @@ def test_strip_is_case_insensitive_and_header_zone_only():
     assert s.dropped == 1
 
 
-def test_scan_hashes_as_if_stripped():
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d:
-        labelled = _msg("one", "Inbox,Category Updates,Unread")
-        bare = _msg("two", None)
-        p = _mbox(Path(d), "m.mbox", labelled, bare)
-        scan = mboxfile.scan(p, None, strip=STRIP)
-        assert scan.facts[1].blake3 == _b3(_stripped(labelled))
-        assert scan.facts[2].blake3 == _b3(bare)
-        assert scan.stripped_members == 1
+def test_scan_hashes_as_if_stripped(tmp_path):
+    labelled = _msg("one", "Inbox,Category Updates,Unread")
+    bare = _msg("two", None)
+    p = _mbox(tmp_path, "m.mbox", labelled, bare)
+    scan = mboxfile.scan(p, None, strip=STRIP)
+    assert scan.facts[1].blake3 == _b3(_stripped(labelled))
+    assert scan.facts[2].blake3 == _b3(bare)
+    assert scan.stripped_members == 1
 
 
 def test_extract_emits_stripped_members(tmp_path):
@@ -94,71 +133,77 @@ def test_extract_emits_stripped_members(tmp_path):
         assert mboxfile.extract_raw_members(p, {1}, fh, strip=STRIP) == 1
     data = out.read_bytes()
     assert b"X-Gmail-Labels" not in data
-    # The emitted bundle re-scans (no strip needed) to the stripped identity.
     rescan = mboxfile.scan(out, None)
     assert rescan.facts[1].blake3 == _b3(_stripped(labelled))
 
 
-# ---------- the verbs ---------- #
+# ---------- schema resolution ---------- #
 
 
-def _corpus(tmp_path: Path) -> Path:
-    root = tmp_path / "c"
-    (root / "records").mkdir(parents=True)
-    (root / "schema").mkdir(parents=True)
-    schemas.cache_clear()
-    return root
+def test_resolve_strip_headers_precedence(tmp_path):
+    declared = _corpus(tmp_path / "a", declare_strip=True)
+    assert schemas.resolve_strip_headers(declared, "application/mbox") == ["X-Gmail-Labels"]
+    assert schemas.resolve_strip_headers(declared, "application/mbox", ["X-Other"]) == ["X-Other"]
+    bare = _corpus(tmp_path / "b")
+    assert schemas.resolve_strip_headers(bare, "application/mbox") == []
 
 
-def _ingest(root: Path, artifact: Path) -> str:
-    cap = root / "capture"
-    cap.mkdir(exist_ok=True)
-    staged = cap / artifact.name
-    if staged != artifact:
-        shutil.copy(artifact, staged)
-        sidecar = artifact.with_suffix(artifact.suffix + ".capture.yaml")
-        if sidecar.is_file():
-            shutil.copy(sidecar, cap / sidecar.name)
-    rid = hashing.hash_file(staged)["blake3"]
-    assert ingest_cli._ingest_one(root, staged) == 0
-    return rid
+# ---------- ingest auto-strip ---------- #
 
 
-def test_mbox_strip_verb_roundtrip(tmp_path):
-    root = _corpus(tmp_path)
+def test_ingest_auto_strips_when_schema_declares(tmp_path):
+    root = _corpus(tmp_path, declare_strip=True)
     m1 = _msg("one", "Inbox,Category Updates,Unread")
     m2 = _msg("two", None)
     source = _mbox(tmp_path, "full.mbox", m1, m2)
+    delivered_b3 = hashing.hash_file(source)["blake3"]
 
-    assert (
-        mbox_strip.run(
-            argparse.Namespace(
-                source=str(source),
-                strip=["X-Gmail-Labels"],
-                origin=None,
-                corpus_root=str(root),
-            )
-        )
-        == 0
-    )
-    out = root / "capture" / "full-stripped.mbox"
-    assert out.is_file()
-    scan = mboxfile.scan(out, None)
-    assert scan.count == 2
+    rid = _ingest(root, source)
+    assert rid != delivered_b3  # identity is over the CANONICALIZED bytes
+
+    stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
+    data = stored.read_bytes()
+    assert b"X-Gmail-Labels" not in data
+    assert hashing.hash_file(stored)["blake3"] == rid
+    scan = mboxfile.scan(stored, None)
     assert {f.blake3 for f in scan.facts.values()} == {_b3(_stripped(m1)), _b3(m2)}
 
-    sidecar = yaml.safe_load(out.with_suffix(out.suffix + ".capture.yaml").read_text())
-    fields = sidecar["origin_fields"]
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    fields = next(iter(records.iter_origin_blocks(post))).get("fields") or {}
     assert fields["stripped_headers"] == ["X-Gmail-Labels"]
     assert fields["stripped_members"] == 1
-    assert fields["source_export"] == "full.mbox"
-    assert fields["source_message_count"] == 2
+    assert fields["source_transport"] == f"blake3:{delivered_b3}"
 
 
-def test_window_strip_crosses_prestrip_lineage(tmp_path):
-    """A label-full baseline serves as lineage for a stripped window: the same message
-    re-exported with DIFFERENT labels is excluded (identity modulo the stripped header),
-    and the emitted delta member is label-free."""
+def test_ingest_untouched_without_declaration(tmp_path):
+    root = _corpus(tmp_path)
+    source = _mbox(tmp_path, "full.mbox", _msg("one", "Inbox,Unread"))
+    delivered_b3 = hashing.hash_file(source)["blake3"]
+    rid = _ingest(root, source)
+    assert rid == delivered_b3  # hash-what-staged holds when nothing is declared
+    stored = root / "artifacts" / rid[:2] / f"{rid}.mbox"
+    assert b"X-Gmail-Labels" in stored.read_bytes()
+
+
+def test_ingest_already_canonical_passes_through(tmp_path):
+    root = _corpus(tmp_path, declare_strip=True)
+    source = _mbox(tmp_path, "clean.mbox", _msg("one", None))
+    delivered_b3 = hashing.hash_file(source)["blake3"]
+    rid = _ingest(root, source)
+    assert rid == delivered_b3  # nothing to strip → no rewrite, no provenance
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    fields = next(iter(records.iter_origin_blocks(post))).get("fields") or {}
+    assert "stripped_headers" not in fields
+
+
+# ---------- mbox-window resolves the same config ---------- #
+
+
+def test_window_config_strip_crosses_prestrip_lineage(tmp_path):
+    """The lineage baseline is ingested LABEL-FULL in a corpus with no declaration; the
+    declaration is then added (the corpus adopts the strip), and a window run with NO
+    --strip flag resolves it from config: churned members are excluded as-if-stripped and
+    the emitted delta member is label-free."""
     root = _corpus(tmp_path)
     baseline_id = _ingest(
         root,
@@ -169,7 +214,12 @@ def test_window_strip_crosses_prestrip_lineage(tmp_path):
             _msg("two", "Inbox"),
         ),
     )
-    # New export: same two messages, labels churned by a de-labelling sweep + one new.
+    # The corpus adopts the strip AFTER the label-full baseline landed.
+    local = root / "schema/mime/application/application_mbox.yaml"
+    local.parent.mkdir(parents=True)
+    local.write_text(_PACKAGED_MBOX_SCHEMA.read_text() + "\nstrip_headers:\n- X-Gmail-Labels\n")
+    schemas.cache_clear()
+
     new_msg = _msg("three", "Archived")
     source = _mbox(
         tmp_path,
@@ -184,7 +234,7 @@ def test_window_strip_crosses_prestrip_lineage(tmp_path):
                 source=str(source),
                 against=[baseline_id],
                 origin=None,
-                strip=["X-Gmail-Labels"],
+                strip=None,  # ← resolved from the schema declaration, not the CLI
                 dry_run=False,
                 corpus_root=str(root),
             )
@@ -206,8 +256,8 @@ def test_window_strip_crosses_prestrip_lineage(tmp_path):
     assert fields["stripped_headers"] == ["X-Gmail-Labels"]
 
 
-def test_window_without_strip_readmits_label_churn(tmp_path):
-    """The negative control: same fixture WITHOUT --strip re-admits both churned members."""
+def test_window_without_declaration_readmits_label_churn(tmp_path):
+    """The negative control: no schema declaration, no --strip → label churn re-admits."""
     root = _corpus(tmp_path)
     baseline_id = _ingest(
         root, _mbox(tmp_path, "baseline.mbox", _msg("one", "Inbox,Unread"), _msg("two", "Inbox"))

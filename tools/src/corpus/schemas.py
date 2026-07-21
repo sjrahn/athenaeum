@@ -633,6 +633,26 @@ def resolve_fingerprint(
     return False
 
 
+def resolve_strip_headers(
+    corpus_root: Path,
+    media_type: str,
+    cli_override: list[str] | None = None,
+) -> list[str]:
+    """Resolve the mailbox chrome-strip header list (spec §12.3.13). Precedence, most
+    specific first: CLI override (`mbox-window --strip`) > mime schema `strip_headers` >
+    `[]` (off). Config-driven by design — ingest consults this so the strip can never
+    depend on an operator remembering a verb; a producer origin-overlay grain (§7.2)
+    joins the chain when one declares it (the fingerprint-knob pattern)."""
+    if cli_override is not None:
+        return [str(n).strip() for n in cli_override if str(n).strip()]
+    schema = load_mime_schema(corpus_root, media_type)
+    if isinstance(schema, dict):
+        raw = schema.get("strip_headers")
+        if isinstance(raw, (list, tuple)):
+            return [str(n).strip() for n in raw if str(n).strip()]
+    return []
+
+
 def _origin_fingerprint(
     corpus_root: Path, post: Any
 ) -> bool | str | list[str] | None:

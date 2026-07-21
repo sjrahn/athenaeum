@@ -62,6 +62,11 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
             f"Author schema/mime/<axis>/<axis>_<subtype>.yaml first, then re-run."
         )
 
+    # Mailbox chrome strip (spec §12.3.13): where the schema declares `strip_headers`,
+    # the staged bytes are canonicalized BEFORE identity — config-driven, so no operator
+    # verb ordering can leak provider workflow-state churn into member identity.
+    strip_provenance = _canonicalize_mbox(corpus_root, src, media_type)
+
     # Spec §1.2 (2.1): every transport is self-contained — there is no `artifact_kind`
     # disposition anymore, and no explode-at-ingest path. A raw archive is ingested as one
     # record and drafts as an embed manifest; a schema still declaring `artifact_kind` is
@@ -83,6 +88,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     origin_uri, origin_at, origin_fields, origin_schema = _derive_capture_origin(
         src, sidecar, media_type
     )
+    origin_fields.update(strip_provenance)
 
     if record_file.is_file():
         post = records.load(record_file)
@@ -228,6 +234,43 @@ def _append_origin_if_new(
         post, uri=uri, snapshot=snapshot, schema_id=schema_id, fields=fields or None
     )
     return True
+
+
+def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:
+    """The mailbox chrome strip at ingest (spec §12.3.13). When the resolved schema
+    declares `strip_headers` for an `application/mbox` staged file, rewrite it in place
+    with those headers removed from every member's header zone — the stripped bytes are
+    the stored bytes, identity is computed over them — and return the origin-field
+    provenance (`stripped_headers`, `stripped_members`, and `source_transport`, the
+    delivered bytes' blake3, so the pre-strip identity is never silently lost). Returns
+    `{}` when no strip is declared, the file holds no messages (parse tolerance), or no
+    member carries a declared header (already canonical — e.g. a window bundle emitted
+    stripped)."""
+    if media_type != "application/mbox":
+        return {}
+    from corpus import hashing, mboxfile, records, schemas
+
+    names = schemas.resolve_strip_headers(corpus_root, media_type)
+    if not names:
+        return {}
+    strip = mboxfile.normalize_strip_headers(names)
+    scan = mboxfile.scan(src, None, strip=strip)
+    if not scan.count or not scan.stripped_members:
+        return {}
+    delivered = hashing.hash_file(src)["blake3"]
+    tmp = src.with_name(src.name + ".canonical")
+    with tmp.open("wb") as out:
+        mboxfile.extract_raw_members(src, set(range(1, scan.count + 1)), out, strip=strip)
+    tmp.replace(src)
+    print(
+        f"  chrome-strip: {', '.join(names)} removed from "
+        f"{scan.stripped_members}/{scan.count} member(s) (delivered blake3:{delivered[:12]}…)"
+    )
+    return {
+        "stripped_headers": list(names),
+        "stripped_members": scan.stripped_members,
+        "source_transport": records.format_hash("blake3", delivered),
+    }
 
 
 def _read_sidecar(src: Path) -> dict:

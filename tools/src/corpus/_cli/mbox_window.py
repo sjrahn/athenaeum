@@ -63,10 +63,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="HEADER",
         help=(
-            "mailbox chrome strip (§12.3.13): header name to drop from every member "
-            "(repeatable; comma lists accepted) — applied to the source, the emitted "
-            "bundle, AND lineage artifact enumeration, so a pre-strip snapshot still "
-            "serves as lineage. Must match the lineage's ingest-time strip convention."
+            "mailbox chrome strip OVERRIDE (§12.3.13; repeatable, comma lists accepted). "
+            "Normally the corpus's application/mbox schema `strip_headers` declaration "
+            "resolves automatically (the same config ingest applies) — pass this only to "
+            "deviate from it. Applied to the source, the emitted bundle, AND lineage "
+            "artifact enumeration, so a pre-strip snapshot still serves as lineage."
         ),
     )
     parser.add_argument(
@@ -188,13 +189,17 @@ def run(args: argparse.Namespace) -> int:
     if not source.is_file():
         sys.exit(f"source not found: {source}")
 
-    strip_names: list[str] | None = None
-    strip: frozenset[bytes] | None = None
-    if getattr(args, "strip", None):
-        from corpus._cli.mbox_strip import parse_strip_args
+    from corpus import schemas
 
-        strip_names = parse_strip_args(list(args.strip))
-        strip = mboxfile.normalize_strip_headers(strip_names)
+    cli_strip = None
+    if getattr(args, "strip", None):
+        cli_strip = [n.strip() for v in args.strip for n in v.split(",") if n.strip()]
+        if not cli_strip:
+            sys.exit("--strip: no header names given")
+    strip_names = schemas.resolve_strip_headers(corpus_root, _MBOX_MIME, cli_strip) or None
+    strip = mboxfile.normalize_strip_headers(strip_names)
+    if strip_names:
+        print(f"  chrome-strip active: {', '.join(strip_names)}")
 
     lineage = _expand_lineage(corpus_root, list(args.against))
     excluded_set = _exclusion_set(corpus_root, lineage, strip=strip)
