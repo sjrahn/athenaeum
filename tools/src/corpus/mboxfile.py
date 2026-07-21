@@ -218,6 +218,38 @@ def extract_raw_members(
     return written
 
 
+def demux_raw_members(
+    mbox_path: Path,
+    sinks: dict[int, IO[bytes]],
+    *,
+    strip: frozenset[bytes] | None = None,
+) -> int:
+    """Route each 1-indexed member — separator line plus raw lines, with `strip` applied
+    exactly as in `extract_raw_members` — to its ordinal's sink, in ONE streaming pass:
+    the year-split demux (spec §12.3.13). Ordinals absent from `sinks` are skipped.
+    Returns the number of members written."""
+    stripper = HeaderStrip(strip) if strip else None
+    out: IO[bytes] | None = None
+    total = 0
+    written = 0
+    with mbox_path.open("rb") as fh:
+        for line in fh:
+            if _SEP_RE.match(line):
+                total += 1
+                out = sinks.get(total)
+                if out is not None:
+                    written += 1
+                    if stripper:
+                        stripper.reset()
+                    out.write(line)
+                continue
+            if out is not None:
+                if stripper and not stripper.keep(_unstuff(line)):
+                    continue
+                out.write(line)
+    return written
+
+
 # ---------- single-pass scan (drafter) ---------- #
 
 
