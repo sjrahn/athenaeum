@@ -148,6 +148,34 @@ def test_resolve_strip_headers_precedence(tmp_path):
     assert schemas.resolve_strip_headers(bare, "application/mbox") == []
 
 
+# ---------- origin-overlay editorial templates (§4.2.3, extended) ---------- #
+
+
+def test_origin_overlay_title_template_resolves(tmp_path):
+    root = _corpus(tmp_path)
+    overlay = root / "schema/origin/mail-window.yaml"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text(
+        "description: test mail-window overlay\n"
+        "editorial:\n"
+        "  title_template: \"Mail window — {window_start} → {window_end}\"\n"
+        "extended_fields:\n"
+        "  window_start: {type: string}\n"
+        "  window_end: {type: string}\n"
+    )
+    schemas.cache_clear()
+
+    source = _mbox(tmp_path, "m.mbox", _msg("one", None))
+    rid = _ingest(root, source)
+    post = records.load(root / "records" / rid[:2] / f"{rid}.md")
+    records.merge_origin_fields(post, {"window_start": "2026-01-01", "window_end": "2026-07-21"})
+    assert records.set_origin_schema_id(post, "mail-window")
+    assert records.title_for(post, root) == "Mail window — 2026-01-01 → 2026-07-21"
+    # All-or-nothing: an unresolvable placeholder falls the template through.
+    post.metadata["_origins"][-1]["fields"].pop("window_end")
+    assert records.title_for(post, root) == ""
+
+
 # ---------- ingest auto-strip ---------- #
 
 

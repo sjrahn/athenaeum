@@ -214,7 +214,7 @@ A record's display **title** and **description** are **derived, never stored** �
 - an **origin** overlay marks origin-block fields (§7.2) — `ytdlp_title`, `ytdlp_description`;
 - a **form** contract's section-header fields are the **interpretive** candidates: the universal header fields `title:`/`description:` (§4.3.2.1) are implicitly role-marked on every form, and a contract may mark others explicitly.
 
-**Form-level templates** *(3.3)*. A form contract may additionally declare a top-level `editorial:` block naming a **mechanical composition** over more than one header field (§7.8):
+**Editorial templates** *(3.3; extended to origin overlays in the same arc)*. A form contract — and, on the same grammar, an **origin overlay** (§7.2) — may additionally declare a top-level `editorial:` block naming a **mechanical composition** over more than one field (§7.8):
 
 ```yaml
 editorial:
@@ -222,6 +222,8 @@ editorial:
 ```
 
 `{name}` placeholders substitute the whole-record form section's own `extended_fields` values, read exactly as a role-marked field is (§7.8's `extended_fields` — a list-valued field joins its non-empty items with `, `); static text passes through unchanged. Resolution is **all or nothing**: the template resolves only when **every** placeholder names a field holding a non-empty value on the record's own section — one unresolved placeholder falls the **entire** template through, never a partial composition. (`description_template` is a natural sibling on the same block, undeclared until a contract needs it.)
+
+On an **origin overlay** the placeholders read the origin **block's** fields instead, resolving per block exactly as the overlay's role marks do (§7.2: latest qualified block wins; a bare block contributes nothing). The origin layer carries no implicit authored value, so its within-layer order is just **template → role-marked fields** — e.g. a mail window bundle's overlay composing `"Mail window — {window_start} → {window_end}"` from the fields its producing verb stamped (§12.3.13).
 
 Within the form layer, three candidate kinds resolve in a fixed order, each checked only when the one before is empty: the section header's own **implicit** `title:`/`description:` (the interpretive vouch — an authored value always wins where present) → the contract's declared **template**, above (a mechanical composition, reached only absent an authored value) → the contract's explicitly **role-marked** `extended_fields` (a single verbatim field, checked last of the three). This ordering is internal to the form layer alone — the cross-layer precedence below (artifact → origin → form) is unchanged.
 

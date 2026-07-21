@@ -256,8 +256,10 @@ def run(args: argparse.Namespace) -> int:
     if mtime := _source_modified_iso(source):
         origin_fields["source_modified"] = mtime
     if bounds:
-        origin_fields["window_start"] = bounds[0].isoformat()
-        origin_fields["window_end"] = bounds[1].isoformat()
+        # Date grain — the window's natural grain (the bundle filename agrees), and the
+        # display grain the mail-window overlay's title template composes (§4.2.3).
+        origin_fields["window_start"] = bounds[0].date().isoformat()
+        origin_fields["window_end"] = bounds[1].date().isoformat()
     if strip_names:
         origin_fields["stripped_headers"] = strip_names
         origin_fields["stripped_members"] = scan.stripped_members

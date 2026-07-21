@@ -1203,10 +1203,13 @@ def _artifact_editorial_candidate(post: frontmatter.Post, corpus_root: Path, rol
 
 
 def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
-    """The origin layer's role-marked candidate (spec §4.2.3): the LATEST qualified origin
-    block whose overlay marks a non-empty `role: <role>` field wins — origin blocks append
-    in capture order, so a re-capture's fields supersede. A bare (unqualified) origin block
-    matches no overlay and contributes nothing (spec §7.2)."""
+    """The origin layer's candidate (spec §4.2.3): the LATEST qualified origin block whose
+    overlay yields a non-empty value wins — origin blocks append in capture order, so a
+    re-capture's fields supersede. Per block the overlay's declared
+    `editorial.<role>_template` resolves first (a mechanical composition over the block's
+    fields, all-or-nothing), then its role-marked fields — the origin layer has no
+    implicit authored value, so the order is just template → marks. A bare (unqualified)
+    origin block matches no overlay and contributes nothing (spec §7.2)."""
     from . import schemas as _schemas
 
     for origin in reversed(list(iter_origin_blocks(post))):
@@ -1214,12 +1217,18 @@ def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role:
         if not schema_id:
             continue
         schema = _schemas.load_origin_overlay_by_id(corpus_root, str(schema_id))
+        fields = origin.get("fields")
+        editorial = schema.get("editorial") if isinstance(schema, dict) else None
+        template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
+        if template:
+            templated = _resolve_editorial_template(str(template), fields)
+            if templated:
+                return templated
         names = _role_marked_fields(schema, role)
-        if not names:
-            continue
-        value = _first_non_empty(origin.get("fields"), names)
-        if value:
-            return value
+        if names:
+            value = _first_non_empty(fields, names)
+            if value:
+                return value
     return ""
 
 
