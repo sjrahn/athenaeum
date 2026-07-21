@@ -73,11 +73,12 @@ def declared_ordinals(post: Any) -> list[int]:
     """The 1-indexed ordinals already declared on a record's `msg=<N>` embeds, sorted. Empty
     for a record that declares none (or any non-mbox record) — the way `redraft` recovers the
     selection to re-declare it (the ordinals are user intent, not derivable from the bytes)."""
-    return sorted(_declared_transports(post))
+    return sorted(declared_transports(post))
 
 
-def _declared_transports(post: Any) -> dict[int, str]:
-    """Map already-declared ordinal → its embed `transport:` string (for conflict detection)."""
+def declared_transports(post: Any) -> dict[int, str]:
+    """Map already-declared ordinal → its embed `transport:` string — conflict detection
+    here, and the declared-set fallback for window-reduction dedup (spec §12.3.13)."""
     meta = post.metadata if hasattr(post, "metadata") else post
     out: dict[int, str] = {}
     for embed in (meta.get("_embeds") or []):
@@ -102,7 +103,7 @@ def draft(
     mime_schema: dict[str, Any] | None = None,
     messages: list[int] | None = None,
 ) -> DrafterResult:
-    existing = _declared_transports(record_metadata or {})
+    existing = declared_transports(record_metadata or {})
     requested = sorted(set(messages or []))
 
     # One streaming pass: total count + first/last separator (date span) + per-ordinal facts

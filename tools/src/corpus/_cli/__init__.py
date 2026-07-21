@@ -27,6 +27,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "promote":         ("Capture & ingest",       "Mint a record for a container member (corpus://<id>?<member-address>)"),
     "assemble":        ("Capture & ingest",       "Repackage delivered export archives into one containment-friendly bundle"),
+    "mbox-window":     ("Capture & ingest",       "Reduce a full-mailbox export to a window bundle of not-yet-persisted messages"),
     "draft":           ("Capture & ingest",       "(retired 3.0) → ingest attests · `body` op · `reattest`"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),
     "re-stub":         ("Capture & ingest",       "Reset a record to its attested baseline, preserving byte + provenance"),

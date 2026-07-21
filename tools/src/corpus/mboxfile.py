@@ -128,6 +128,38 @@ def resolve_member(mbox_path: Path, ordinal: int) -> bytes:
         return fp.read()
 
 
+def extract_raw_members(
+    mbox_path: Path, ordinals: set[int] | frozenset[int], out: IO[bytes]
+) -> int:
+    """Copy the 1-indexed `ordinals` members RAW — separator line plus stuffed message
+    lines, verbatim, in file order — onto `out`, producing a valid mboxrd whose members
+    keep byte-for-byte the identities the source held (spec §12.3.13: the window bundle's
+    emit path; un-stuffed member blake3 is unchanged by the copy). One streaming pass;
+    returns the number of members written. Raises `ValueError` when an ordinal doesn't
+    exist."""
+    wanted = frozenset(ordinals)
+    if any(n < 1 for n in wanted):
+        raise ValueError("ordinals are 1-indexed (>= 1)")
+    written = 0
+    copying = False
+    total = 0
+    with mbox_path.open("rb") as fh:
+        for line in fh:
+            if _SEP_RE.match(line):
+                total += 1
+                copying = total in wanted
+                if copying:
+                    written += 1
+            if copying:
+                out.write(line)
+    missing = sorted(n for n in wanted if n > total)
+    if missing:
+        raise ValueError(
+            f"mbox holds {total} message(s); requested ordinal(s) out of range: {missing}"
+        )
+    return written
+
+
 # ---------- single-pass scan (drafter) ---------- #
 
 
@@ -155,13 +187,14 @@ class MboxScan:
     last_sep: bytes | None
 
 
-def scan(mbox_path: Path, ordinals: set[int] | frozenset[int]) -> MboxScan:
+def scan(mbox_path: Path, ordinals: set[int] | frozenset[int] | None) -> MboxScan:
     """One streaming pass over the mailbox: count every message, capture the first/last
     separator lines, and for each requested 1-indexed `ordinal` compute the un-stuffed
-    member's blake3 + byte length and parse its Date / From / Subject headers. Never holds
-    the mailbox (or a whole message) in RAM. Raises `ValueError` when a requested ordinal
-    exceeds the message count."""
-    wanted = frozenset(ordinals)
+    member's blake3 + byte length and parse its Date / From / Subject headers. `None`
+    requests facts for EVERY message — the full enumeration the window-reduction dedup
+    (spec §12.3.13) keys on. Never holds the mailbox (or a whole message) in RAM. Raises
+    `ValueError` when a requested ordinal exceeds the message count."""
+    wanted = None if ordinals is None else frozenset(ordinals)
     facts: dict[int, MessageFacts] = {}
     total = 0
     first_sep: bytes | None = None
@@ -181,7 +214,7 @@ def scan(mbox_path: Path, ordinals: set[int] | frozenset[int]) -> MboxScan:
                 if first_sep is None:
                     first_sep = line
                 last_sep = line
-                if total in wanted:
+                if wanted is None or total in wanted:
                     cur = {
                         "ordinal": total,
                         "b3": blake3.blake3(),
@@ -202,11 +235,12 @@ def scan(mbox_path: Path, ordinals: set[int] | frozenset[int]) -> MboxScan:
         if cur is not None:
             _close(cur)
 
-    missing = sorted(n for n in wanted if n not in facts)
-    if missing:
-        raise ValueError(
-            f"mbox holds {total} message(s); requested ordinal(s) out of range: {missing}"
-        )
+    if wanted is not None:
+        missing = sorted(n for n in wanted if n not in facts)
+        if missing:
+            raise ValueError(
+                f"mbox holds {total} message(s); requested ordinal(s) out of range: {missing}"
+            )
     return MboxScan(count=total, facts=facts, first_sep=first_sep, last_sep=last_sep)
 
 
