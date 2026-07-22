@@ -29,6 +29,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "assemble":        ("Capture & ingest",       "Repackage delivered export archives into one containment-friendly bundle"),
     "mbox-split":      ("Capture & ingest",       "Split a full-mailbox export into a closed-years container + current-year residue"),
     "mbox-window":     ("Capture & ingest",       "Reduce a full-mailbox export to a window bundle of not-yet-persisted messages"),
+    "period-split":    ("Capture & ingest",       "Split a file-grain temporal export (dir or zip) into closed-period + rolling/undated zips"),
     "export-diff":     ("Capture & ingest",       "Diff two exports of the same closed period — churn histogram + chrome-strip candidate measurement"),
     "draft":           ("Capture & ingest",       "(retired 3.0) → ingest attests · `body` op · `reattest`"),
     "resolve":         ("Capture & ingest",       "Materialise a corpus:// functional URI → cached file path"),

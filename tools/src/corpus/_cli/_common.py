@@ -47,6 +47,23 @@ def add_corpus_root_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def parse_current_period(raw: str | None) -> tuple[int, int]:
+    """Parse a `--current-period YYYY-MM` value into `(year, month)`, defaulting to the
+    current UTC year-month when absent. Shared by every schedule-driven splitter
+    (`mbox-split`, `period-split`, spec §12.3.14) that needs a deterministic "what counts
+    as the open month" boundary for testing, rather than always reading the real clock."""
+    from datetime import UTC, datetime
+
+    if not raw:
+        now = datetime.now(UTC)
+        return now.year, now.month
+    year_s, _, month_s = raw.partition("-")
+    try:
+        return int(year_s), int(month_s)
+    except ValueError:
+        sys.exit(f"--current-period: expected YYYY-MM, got {raw!r}")
+
+
 # The functional-URI transform grammar (spec §6.2), shown in `corpus resolve`/`preview`
 # --help. Authoritative one-liners so an agent never has to guess a param's shape — in
 # particular that bbox/crop are x,y,WIDTH,HEIGHT (position + size), not corners.

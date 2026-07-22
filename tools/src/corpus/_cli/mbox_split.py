@@ -41,7 +41,7 @@ from typing import Any
 import yaml
 
 from corpus import hashing, mboxfile, schemas
-from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
+from corpus._cli._common import add_corpus_root_arg, parse_current_period, resolved_corpus_root
 
 # The pre-schedule (no partition declared) behavior, expressed as a schedule: pure
 # year grain, no historical eras, undated rides the current residue.
@@ -108,28 +108,6 @@ def _source_modified_iso(src: Path) -> str | None:
     return datetime.fromtimestamp(ts, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _grain_for_year(eras: list[dict[str, Any]], default_grain: str, year: int) -> str:
-    """The grain a member's YEAR resolves to (spec §12.3.14): the first era (sorted by
-    `until` ascending) whose boundary the year is at-or-before wins; past every era, the
-    schedule's top-level `grain` applies."""
-    for era in sorted(eras, key=lambda e: int(e["until"])):
-        if year <= int(era["until"]):
-            return str(era["grain"])
-    return default_grain
-
-
-def _parse_current_period(raw: str | None) -> tuple[int, int]:
-    """Parse `--current-period` (`YYYY-MM`), defaulting to the current UTC year-month."""
-    if not raw:
-        now = datetime.now(UTC)
-        return now.year, now.month
-    year_s, _, month_s = raw.partition("-")
-    try:
-        return int(year_s), int(month_s)
-    except ValueError:
-        sys.exit(f"--current-period: expected YYYY-MM, got {raw!r}")
-
-
 def _write_split_sidecar(
     path: Path, origin_fields: dict[str, Any], effective_origin: str | None
 ) -> None:
@@ -146,7 +124,7 @@ def run(args: argparse.Namespace) -> int:
     if not source.is_file():
         sys.exit(f"source not found: {source}")
     current_year = args.current_year or datetime.now(UTC).year
-    current_period = _parse_current_period(getattr(args, "current_period", None))
+    current_period = parse_current_period(getattr(args, "current_period", None))
 
     cli_strip = None
     if getattr(args, "strip", None):
@@ -184,7 +162,7 @@ def run(args: argparse.Namespace) -> int:
             bucket_of[n] = "undated" if undated_mode == "standing" else "current"
             continue
         year, month = parts
-        grain = _grain_for_year(eras, grain_default, year)
+        grain = schemas.grain_for_year(eras, grain_default, year)
         if grain == "month":
             is_current = (year, month) >= current_period
             key = f"{year:04d}-{month:02d}"

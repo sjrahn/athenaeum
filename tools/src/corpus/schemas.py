@@ -844,6 +844,18 @@ def resolve_partition(
     return _origin_partition_declaration(corpus_root, default_id)
 
 
+def grain_for_year(eras: list[dict[str, Any]], default_grain: str, year: int) -> str:
+    """The grain a member's YEAR resolves to under a `partition:` schedule (spec
+    §12.3.14): the first era (sorted by `until` ascending) whose boundary the year is
+    at-or-before wins; past every era, the schedule's top-level `grain` applies. Shared
+    by every schedule-driven splitter (`mbox-split`, `period-split`) — the era-selection
+    rule is one mechanism regardless of what's being partitioned (mbox members, files)."""
+    for era in sorted(eras, key=lambda e: int(e["until"])):
+        if year <= int(era["until"]):
+            return str(era["grain"])
+    return default_grain
+
+
 def _origin_fingerprint(
     corpus_root: Path, post: Any
 ) -> bool | str | list[str] | None:
