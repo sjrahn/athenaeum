@@ -722,6 +722,88 @@ def resolve_strip_headers(
     return _origin_strip_declaration(corpus_root, default_id) or []
 
 
+_VALID_PARTITION_GRAINS = ("month", "year")
+
+
+def _validate_partition(raw: Any) -> dict[str, Any] | None:
+    """Light structural validation of a `partition:` block (spec §12.3.14). Tolerant of
+    unknown keys (e.g. `assemble:`, informational-only today) — only `grain` and, when
+    present, each `eras` entry's `until`/`grain` are checked. An invalid block is logged
+    and treated as NOT a declaration (the namespace walk keeps climbing past it) rather
+    than raised — one corpus's bad overlay can't break `mbox-split` for an unrelated
+    stream (parse-tolerant, like every other schema read in this module)."""
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("grain") not in _VALID_PARTITION_GRAINS:
+        log.warning("partition: block has invalid/missing grain %r — ignoring", raw.get("grain"))
+        return None
+    eras = raw.get("eras")
+    if eras is not None:
+        if not isinstance(eras, list):
+            log.warning("partition.eras must be a list — ignoring partition block")
+            return None
+        for era in eras:
+            if (
+                not isinstance(era, dict)
+                or "until" not in era
+                or era.get("grain") not in _VALID_PARTITION_GRAINS
+            ):
+                log.warning(
+                    "partition.eras entry %r missing until/grain — ignoring partition block",
+                    era,
+                )
+                return None
+    if raw.get("undated", "standing") not in ("standing", "rolling"):
+        log.warning(
+            "partition.undated must be standing|rolling — ignoring partition block",
+        )
+        return None
+    return raw
+
+
+def _origin_partition_declaration(corpus_root: Path, origin_id: str) -> dict[str, Any] | None:
+    """Namespace walk (mirrors `_origin_strip_declaration`) for the `partition:` block:
+    try `origin_id`, then each id-prefix ancestor, first overlay whose `partition:` value
+    validates (`_validate_partition`) wins. Unlike the strip's empty-list-is-a-declaration
+    rule, there is no "declared off" partition state — an invalid or absent `partition:`
+    key simply keeps the walk climbing."""
+    parts = [p for p in (origin_id or "").split("/") if p]
+    if not parts:
+        return None
+    for i in range(len(parts), 0, -1):
+        candidate_id = "/".join(parts[:i])
+        overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
+        if not isinstance(overlay, dict) or "partition" not in overlay:
+            continue
+        validated = _validate_partition(overlay["partition"])
+        if validated is not None:
+            return validated
+    return None
+
+
+def resolve_partition(
+    corpus_root: Path,
+    media_type: str,
+    *,
+    origin_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve the mailbox PARTITION SCHEDULE (spec §12.3.14) — the month/year temporal
+    stratification a producer declares for its exports (`grain`, optional `eras` at their
+    own grain, `undated` standing/rolling). Same resolution chain as
+    `resolve_strip_headers`, minus the CLI override point (there is no `--partition`
+    flag): `origin_id` given (a stamped origin) walks ITS namespace and that is FINAL —
+    `None` when nothing in the walk declares, no fallback to the default binding; no
+    `origin_id` resolves the mime schema's `default_origin` binding and walks THAT
+    namespace instead. Returns the declared (validated) `partition:` dict, or `None` when
+    nothing declares one — callers fall back to the pre-schedule year-grain behavior."""
+    if origin_id is not None:
+        return _origin_partition_declaration(corpus_root, origin_id)
+    default_id = resolve_default_origin(corpus_root, media_type)
+    if default_id is None:
+        return None
+    return _origin_partition_declaration(corpus_root, default_id)
+
+
 def _origin_fingerprint(
     corpus_root: Path, post: Any
 ) -> bool | str | list[str] | None:
