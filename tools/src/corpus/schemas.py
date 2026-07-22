@@ -665,15 +665,17 @@ def resolve_default_origin(corpus_root: Path, media_type: str) -> str | None:
     return value or None
 
 
-def _origin_strip_declaration(corpus_root: Path, origin_id: str) -> list[str] | None:
-    """Namespace walk (spec §12.3.13) for the `strip_headers` DECLARATION: try
-    `origin_id`, then each id-prefix ancestor (`a/b/c` → `a/b` → `a`), via
-    `load_origin_overlay_by_id`. Returns the first ancestor's normalized declared list
-    the moment one DECLARES the key (present, list/tuple — an explicit empty list means
-    "declared off", and is returned as `[]`, ending the walk same as any other
-    declaration). Returns `None` when no overlay in the walk declares `strip_headers` at
-    all — the caller's cue to fall back (or not, per the finality rule) rather than
-    treat silence as an off declaration."""
+def _origin_declared_string_list(
+    corpus_root: Path, origin_id: str, key: str
+) -> list[str] | None:
+    """Namespace walk (spec §12.3.13/§12.3.14) for a producer-declared STRING-LIST key
+    (`strip_headers`, `strip_fields`): try `origin_id`, then each id-prefix ancestor
+    (`a/b/c` → `a/b` → `a`), via `load_origin_overlay_by_id`. Returns the first
+    ancestor's normalized declared list the moment one DECLARES `key` (present,
+    list/tuple — an explicit empty list means "declared off", and is returned as `[]`,
+    ending the walk same as any other declaration). Returns `None` when no overlay in the
+    walk declares `key` at all — the caller's cue to fall back (or not, per the finality
+    rule) rather than treat silence as an off declaration."""
     parts = [p for p in (origin_id or "").split("/") if p]
     if not parts:
         return None
@@ -682,10 +684,20 @@ def _origin_strip_declaration(corpus_root: Path, origin_id: str) -> list[str] | 
         overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
         if not isinstance(overlay, dict):
             continue
-        raw = overlay.get("strip_headers")
+        raw = overlay.get(key)
         if isinstance(raw, (list, tuple)):
             return [str(n).strip() for n in raw if str(n).strip()]
     return None
+
+
+def _origin_strip_declaration(corpus_root: Path, origin_id: str) -> list[str] | None:
+    """The `strip_headers` walk (spec §12.3.13) — see `_origin_declared_string_list`."""
+    return _origin_declared_string_list(corpus_root, origin_id, "strip_headers")
+
+
+def _origin_strip_fields_declaration(corpus_root: Path, origin_id: str) -> list[str] | None:
+    """The `strip_fields` walk (spec §12.3.14) — see `_origin_declared_string_list`."""
+    return _origin_declared_string_list(corpus_root, origin_id, "strip_fields")
 
 
 def resolve_strip_headers(
@@ -720,6 +732,34 @@ def resolve_strip_headers(
     if default_id is None:
         return []
     return _origin_strip_declaration(corpus_root, default_id) or []
+
+
+def resolve_strip_fields(
+    corpus_root: Path,
+    media_type: str,
+    cli_override: list[str] | None = None,
+    *,
+    origin_id: str | None = None,
+) -> list[str]:
+    """Resolve the JSON-family field-strip dotted-path list (spec §12.3.14) — the mailbox
+    chrome strip's amendment to any JSON-family export. EXACTLY the `resolve_strip_headers`
+    chain (`_origin_strip_fields_declaration` in place of the headers' walk):
+
+    - CLI override — final, whatever it says.
+    - `origin_id` given (a stamped origin): walk ITS namespace and take that result as
+      FINAL — `[]` when nothing in the walk declares. No fallback to `default_origin`
+      when an origin id was actually given — same finality as the header strip.
+    - No `origin_id`: resolve the mime schema's `default_origin` binding and walk ITS
+      namespace the same way, or `[]` when unbound or nothing declares.
+    """
+    if cli_override is not None:
+        return [str(n).strip() for n in cli_override if str(n).strip()]
+    if origin_id is not None:
+        return _origin_strip_fields_declaration(corpus_root, origin_id) or []
+    default_id = resolve_default_origin(corpus_root, media_type)
+    if default_id is None:
+        return []
+    return _origin_strip_fields_declaration(corpus_root, default_id) or []
 
 
 _VALID_PARTITION_GRAINS = ("month", "year")

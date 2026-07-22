@@ -62,11 +62,14 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
             f"Author schema/mime/<axis>/<axis>_<subtype>.yaml first, then re-run."
         )
 
-    # Mailbox chrome strip (spec §12.3.13): where the origin chain declares
-    # `strip_headers`, the staged bytes are canonicalized BEFORE identity — config-driven,
-    # so no operator verb ordering can leak provider workflow-state churn into member
-    # identity.
-    strip_provenance = _canonicalize_mbox(corpus_root, src, media_type)
+    # Mailbox chrome strip (spec §12.3.13) / JSON-family field strip (spec §12.3.14):
+    # where the origin chain declares `strip_headers` (mbox) or `strip_fields` (json),
+    # the staged bytes are canonicalized BEFORE identity — config-driven, so no operator
+    # verb ordering can leak provider workflow-state churn into member identity. Each
+    # helper no-ops immediately for the wrong media type, so exactly one ever does work.
+    strip_provenance = _canonicalize_mbox(corpus_root, src, media_type) or _canonicalize_json(
+        corpus_root, src, media_type
+    )
 
     # Spec §1.2 (2.1): every transport is self-contained — there is no `artifact_kind`
     # disposition anymore, and no explode-at-ingest path. A raw archive is ingested as one
@@ -295,6 +298,63 @@ def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[st
     return {
         "stripped_headers": list(names),
         "stripped_members": scan.stripped_members,
+        "source_transport": records.format_hash("blake3", delivered),
+    }
+
+
+def _canonicalize_json(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:
+    """The JSON-family field strip at ingest (spec §12.3.14) — the mailbox chrome strip's
+    amendment, for a STANDALONE `application/json` staged file. Mirrors
+    `_canonicalize_mbox` exactly: resolves `strip_fields` through the same origin chain
+    (the staged file's sidecar `origin_schema` stamp namespace-walked, else the mime
+    schema's `default_origin` binding walked the same way,
+    `schemas.resolve_strip_fields`), and for a non-empty result rewrites the file in
+    place with those dotted-path key spans removed SPAN-SURGICALLY (`jsonfields.
+    strip_spans`) — the stripped bytes are the stored bytes, identity is computed over
+    them — returning the origin-field provenance (`stripped_fields`,
+    `stripped_field_count`, and `source_transport`, the delivered bytes' blake3, so the
+    pre-strip identity is never silently lost). Returns `{}` when no strip is declared,
+    the staged file isn't valid JSON at all (parse tolerance — a malformed document is
+    left byte-identical, never repaired; ordinary ingest still proceeds against it), or
+    nothing in the document matches (already canonical — e.g. a re-drop of already-
+    stripped bytes).
+
+    Container members are NOT touched here — extraction/staging is where canonicalization
+    happens (carried over verbatim from the mbox caveat, §12.3.13): a JSON document
+    living inside an ingested archive stays byte-identical to its container route;
+    assemble-time wiring for a JSON-family container (the real Discord/Meta export tree
+    shape) lands with that onboarding."""
+    if media_type != "application/json":
+        return {}
+    from corpus import hashing, jsonfields, records, schemas
+
+    origin_id = _sidecar_origin_schema(src)
+    paths = schemas.resolve_strip_fields(corpus_root, media_type, origin_id=origin_id)
+    if not paths:
+        return {}
+    matchers = jsonfields.normalize_strip_fields(paths)
+    if not matchers:
+        return {}
+    resolved_origin_id = origin_id or schemas.resolve_default_origin(corpus_root, media_type)
+    try:
+        data = src.read_bytes()
+        stripped, removed = jsonfields.strip_spans(data, matchers)
+    except jsonfields.JSONParseError as exc:
+        print(f"  strip-fields: {src.name} is not valid JSON ({exc}) — left as-is", file=sys.stderr)
+        return {}
+    if not removed:
+        return {}
+    delivered = hashing.hash_file(src)["blake3"]
+    tmp = src.with_name(src.name + ".canonical")
+    tmp.write_bytes(stripped)
+    tmp.replace(src)
+    print(
+        f"  strip-fields active (origin {resolved_origin_id}): {', '.join(paths)} — "
+        f"{removed} field(s) removed (delivered blake3:{delivered[:12]}…)"
+    )
+    return {
+        "stripped_fields": list(paths),
+        "stripped_field_count": removed,
         "source_transport": records.format_hash("blake3", delivered),
     }
 
