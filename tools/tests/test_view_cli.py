@@ -128,14 +128,63 @@ def test_image_surface_has_no_anchor_wrapper(tmp_path):
     assert "<img src=\"data:" in page  # the surface still renders, just unwrapped
 
 
-def test_view_renders_segment_and_embed_surfaces(tmp_path):
-    """Smoke test: the page carries the record id, an embeds section (this record has
-    embeds), and a content section (the drafted body segment)."""
+def test_view_renders_segment_and_member_surfaces(tmp_path):
+    """Smoke test: the page carries the record id, a members roster, and a content section."""
     root, rid = _stage(tmp_path, "article.html", mime="text/html", ext="html")
     out = tmp_path / "v.html"
     rc = dispatch(["view", rid, "-o", str(out), "--corpus-root", str(root)])
     assert rc == 0
     page = out.read_text(encoding="utf-8")
     assert rid in page
-    assert "embeds (3)" in page
+    assert "members (3)" in page
     assert "segment (formless)" in page  # article.html drafts to one wrapping text segment
+
+
+def test_placed_members_are_not_rendered_twice(tmp_path):
+    """*(3.4)* The roster is an index, so it renders as metadata — a member the body already
+    places is listed, never re-inlined. Before this, a page showed each asset twice: once raw
+    at the top and once in the body at the derivation the record actually chose. On a record
+    whose crops cover page chrome the raw copy is the LESS faithful of the two, and it was the
+    first thing the eye landed on."""
+    root, rid = _stage_two_image_html(tmp_path)
+    out = tmp_path / "v.html"
+    assert dispatch(["view", rid, "-o", str(out), "--corpus-root", str(root)]) == 0
+    page = out.read_text(encoding="utf-8")
+
+    post = records.load(paths.record_path(root, rid))
+    members = list(records.iter_members(post))
+    assert len(members) == 2
+    assert f"members ({len(members)})" in page
+
+    # Whatever the body places renders exactly once; the roster adds no further copies.
+    placed = {str(m["address"]) for m in members}
+    body_placed = sum(1 for a in placed if f'address: {a}' in (post.content or ""))
+    assert page.count("data:image") == body_placed + page.count("UNPLACED")
+
+    # And the roster row offers the recovery command instead of the bytes.
+    assert "corpus resolve" in page
+
+
+def test_page_budget_withholds_and_declares(tmp_path):
+    """A truncated page that reads as exhaustive is the failure mode here, so the count of
+    withheld surfaces is stated on the page rather than left to be inferred from its absence.
+    The budget is charged in PAGE bytes (base64 is 4/3 of source), so the number the flag names
+    is the number the output approaches."""
+    root, rid = _stage_two_image_html(tmp_path)
+    out = tmp_path / "v.html"
+    # A budget of 1 byte withholds everything.
+    assert dispatch(
+        ["view", rid, "-o", str(out), "--max-inline", "1", "--corpus-root", str(root)]
+    ) == 0
+    page = out.read_text(encoding="utf-8")
+    assert "data:image" not in page
+    assert "withheld to keep the page openable" in page
+    assert "surface(s) were not inlined" in page
+
+    # 0 means unlimited — the escape hatch, and the A/B against the default.
+    assert dispatch(
+        ["view", rid, "-o", str(out), "--max-inline", "0", "--corpus-root", str(root)]
+    ) == 0
+    unlimited = out.read_text(encoding="utf-8")
+    assert "data:image" in unlimited
+    assert "surface(s) were not inlined" not in unlimited

@@ -5,8 +5,11 @@ schemas: the `terminal: true` overlay marker (`schemas.is_terminal_form`), the m
 `form:` default and its terminal-only validation (`schemas.resolve_mime_terminal_form`),
 per-record disposition resolution (`schemas.resolved_disposition_for_record`), the full
 governing-contract precedence (`shape.governing_form`), the fourth `derived_state` value,
-the pass gate's terminal no-op (`shape.declared_form_unmet`), and the two lint changes
+the pass gate's terminal no-op (`shape.declared_form_unmet`), and the lint changes
 (the inverted `terminal-stored-rendering` rule; the body-empty-family exemption).
+*(3.4: the embed-description exemption pair retired alongside
+`embed-description-empty-on-normalized` itself, §12.26 — the per-asset `description:`
+field it gated on no longer exists.)*
 
 The two packaged terminal contracts (`form/passthrough`, `form/manifest`) are exercised
 directly — they ship in `schemas_default/form/`, so a tmp corpus with an empty `schema/`
@@ -592,32 +595,6 @@ def test_body_empty_normalized_still_fires_for_non_terminal(tmp_path):
     post.metadata["title"] = "Something"
     records.set_artifact_block(post, mime="text/plain", fields={})
     assert "body-empty-normalized" in _fired(post, root)
-
-
-def test_embed_description_empty_exempt_for_terminal_manifest_record(tmp_path):
-    """A `form/manifest`-governed container's un-described image/audio/video member embeds
-    are the licensed residue of a describe pass, never demand — exempt outright (§12.20)."""
-    root = _corpus(tmp_path)
-    _zip_manifest_mime_schema(root)
-    post = _base_post()
-    post.metadata["title"] = "A bundle"
-    records.set_artifact_block(post, mime="application/zip", fields={})
-    records.append_embed_block(
-        post, media_type="image/jpeg", address="path=photo.jpg", transport="blake3:" + "a" * 64
-    )
-    assert "embed-description-empty-on-normalized" not in _fired(post, root)
-
-
-def test_embed_description_empty_still_fires_for_non_terminal(tmp_path):
-    """Regression: the same shape without a terminal contract still fires."""
-    root = _corpus(tmp_path)
-    post = _base_post()
-    post.metadata["title"] = "Something"
-    records.set_artifact_block(post, mime="text/plain", fields={})
-    records.append_embed_block(
-        post, media_type="image/jpeg", address="el=1", transport="blake3:" + "a" * 64
-    )
-    assert "embed-description-empty-on-normalized" in _fired(post, root)
 
 
 # ---------- health: layer_presence + unshaped (§4.1, 3.3) ---------- #

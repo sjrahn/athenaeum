@@ -7,9 +7,9 @@ ops, so `compile` is just "parse the manifest, run the ops". `decompose` is the
 exact inverse — it serializes a record back into that command script plus the
 body/description sidecar files.
 
-Reconciliation #1: `embed` ops route to the metadata zone (`records.append_embed_block`)
-rather than the content-zone block list. Decompose reads embeds from
-`post.metadata["_embeds"]` rather than walking the content `blocks` for embed-typed
+Reconciliation #1: `member` ops route to the metadata zone (`records.append_member`)
+rather than the content-zone block list. Decompose reads the roster from
+`post.metadata["_embeds"]` rather than walking the content `blocks` for roster-typed
 entries.
 
 Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
@@ -23,7 +23,7 @@ Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
 Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 
     record  id=<hex>
-    embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]
+    member  <mime> addr=<a|[a|b…]> transport=<algo:hex> [bytes=<n>]
     section addr=<a> [entry="..."] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [perceptual=..] [k=v ...]
     issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]
@@ -74,7 +74,7 @@ _MANIFEST_HEADER = [
     "# manifest.corpus — one op per line; `#` comments; shlex-tokenised.",
     "# Grammar:",
     "#   record  id=<hex>",
-    "#   embed   <mime> addr=<a|[a|b…]> transport=<algo:hex> [desc=@desc/..] [k=v ...]",
+    "#   member  <mime> addr=<a|[a|b…]> transport=<algo:hex> [bytes=<n>]",
     "#   section [form=<form-id>] [addr=<a>] [entry=\"...\"] [desc=@desc/..] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [k=v ...]",
     "#   seg     structural addr=<a> level=<int> [entry=\"...\"]   # §4.3.2.3 byte-mark",
@@ -83,7 +83,7 @@ _MANIFEST_HEADER = [
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
     "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
     "# record state is derived (spec §4.1), never authored — no `status=` on the record line.",
-    "# Spec §4.3: embed lives in the METADATA zone (reconciliation #1 vs the v0.x reference).",
+    "# Spec §4.3: the members roster lives in the METADATA zone (reconciliation #1).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
     "#   text/data-table, text/transcript, …). image/audio/video and non-lossless text",
     "#   overlays (e.g. text/data-table-dynamic) take `desc=` only — run `corpus atoms`.",
@@ -112,7 +112,8 @@ def begin(meta: dict, corpus_root: Path | None) -> Build:
     post.metadata["_artifact"] = meta.get("artifact")
     post.metadata["_origins"] = list(meta.get("origins") or [])
     post.metadata["_classifies"] = list(meta.get("classifies") or [])
-    post.metadata["_embeds"] = []  # populated by add_embed (reconciliation #1)
+    post.metadata["_embeds"] = []  # populated by add_member (reconciliation #1)
+    post.metadata["_members_block"] = True  # a compiled record writes the 3.4 grammar
     post.metadata["_contexts"] = []
     return Build(post=post, blocks=[], corpus_root=corpus_root)
 
@@ -123,40 +124,41 @@ def begin_from_post(post: frontmatter.Post, corpus_root: Path | None) -> Build:
     Unlike `begin` (which reconstructs a post from a decomposed `meta.yaml`), this
     wraps the live stub post so a drafter can populate the content zone through the
     same ops and `finish` re-emits it. Byte/provenance + metadata-zone frontmatter
-    already on the post are preserved; the embed / issue lists default in place (a
+    already on the post are preserved; the roster / issue lists default in place (a
     fresh stub carries none; a re-stubbed record has them cleared)."""
     post.metadata.setdefault("_embeds", [])
     post.metadata.setdefault("_contexts", [])
     return Build(post=post, blocks=[], corpus_root=corpus_root)
 
 
-def add_embed(
+def add_member(
     b: Build,
     *,
     media_type: str,
     address,
     transport: str,
-    description: str | None = None,
     extra: dict | None = None,
 ) -> None:
-    """Append a metadata-zone `<!--embed-->` block (reconciliation #1).
+    """Append a row to the metadata-zone members roster (reconciliation #1, spec §4.3.1.4).
 
-    Routes through `records.append_embed_block` so embeds live alongside artifact /
-    origin / classify in `post.metadata["_embeds"]`, NOT in the content-zone
-    `b.blocks` list.
+    Routes through `records.append_member` so the roster lives alongside artifact / origin /
+    classify in `post.metadata["_embeds"]`, NOT in the content-zone `b.blocks` list. Anything
+    in `extra` beyond `bytes` is dropped there: the row is closed, and a decomposed manifest
+    that names more must not be able to widen it back open.
     """
-    ex = dict(extra or {})
-    if description is not None:
-        ex["description"] = description
-    records.append_embed_block(
+    records.append_member(
         b.post,
         media_type=media_type,
         address=address,
         transport=transport,
-        fields=ex,
+        fields=dict(extra or {}),
     )
-    # Embed is metadata-zone; an embed op does NOT close an open section in the
+    # The roster is metadata-zone; a member op does NOT close an open section in the
     # content zone (sections track their own children).
+
+
+# The pre-3.4 name, for any caller still spelling it that way.
+add_embed = add_member
 
 
 def open_section(
@@ -337,7 +339,7 @@ def add_blocks(b: Build, blocks: list) -> None:
 def finish(b: Build) -> frontmatter.Post:
     """Emit the content zone and validate grammar.
 
-    Embeds are NOT emitted here — they live in `b.post.metadata["_embeds"]` and are
+    The roster is NOT emitted here — it lives in `b.post.metadata["_embeds"]` and is
     serialized by `records.dump()` as part of the metadata zone.
     """
     b.post.content = segments.emit(b.blocks)
@@ -481,7 +483,7 @@ def write_workdir(
 ) -> None:
     """Serialize `post` + content-zone `blocks` into a working dir.
 
-    Reads embeds from `post.metadata["_embeds"]` (metadata zone, reconciliation #1).
+    Reads the roster from `post.metadata["_embeds"]` (metadata zone, reconciliation #1).
     `blocks` is the content-zone Section/Segment list from `segments.iter_blocks`.
 
     `derived_body` — when set (to the `body` op's touch id), the content zone was DERIVED at
@@ -539,21 +541,20 @@ def write_workdir(
         "",
     ]
 
-    # ----- Embeds (metadata zone, reconciliation #1) ----- #
-    for emit_i, embed in enumerate(post.metadata.get("_embeds") or [], start=1):
+    # ----- The members roster (metadata zone, reconciliation #1) ----- #
+    # *(3.4)* One `member` line per row, carrying only the closed four-key shape (spec
+    # §4.3.1.4). No `desc=` spill file: the roster is wholly attested, so a description here
+    # would be prose in a zone the normalize pass may not write — and the substrate must not
+    # offer an edit the grammar forbids.
+    for member in post.metadata.get("_embeds") or []:
         parts = [
-            f"embed {embed.get('media_type', '')}",
-            f"addr={_fmt_addr(embed.get('address'))}",
-            f"transport={embed.get('transport', '')}",
+            f"member {member.get('media_type', '')}",
+            f"addr={_fmt_addr(member.get('address'))}",
+            f"transport={member.get('transport', '')}",
         ]
-        ex = dict(embed.get("fields") or {})
-        desc = ex.pop("description", None)
-        if desc:
-            parts.append(
-                "desc=" + _desc_ref(f"emit{emit_i}", embed.get("address"), str(desc))
-            )
-        for k, v in ex.items():
-            parts.append(f"{k}={_fmt_scalar(v)}")
+        size = (member.get("fields") or {}).get("bytes")
+        if size is not None:
+            parts.append(f"bytes={_fmt_scalar(size)}")
         lines.append(" ".join(parts))
 
     # ----- Content zone (sections + segments) ----- #
@@ -676,14 +677,16 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 continue
             if not seen_record:
                 raise ValueError("first op must be `record`")
-            if verb == "embed":
+            if verb in ("member", "embed"):
+                # `member` is the 3.4 spelling; `embed` reads tolerantly so a manifest
+                # decomposed by an older tool still compiles. Either way only the closed
+                # four-key shape survives — `add_member` drops the rest (spec §4.3.1.4).
                 kv = _kv(toks[2:])
-                add_embed(
+                add_member(
                     b,
                     media_type=toks[1],
                     address=_parse_addr(kv["addr"]),
                     transport=kv["transport"],
-                    description=_filetext(work, kv.get("desc")),
                     extra=_rest(kv, {"addr", "transport", "desc"}),
                 )
             elif verb == "section":

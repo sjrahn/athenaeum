@@ -1,7 +1,8 @@
 """`corpus reattest` (spec §12.4.6, §8.3) — re-derives the attested layer (artifact fields,
-embeds, drafter issues) from the artifact, never touching the authored layer (content zone,
-embed descriptions, editorial fields). Idempotent: an unchanged record re-derives byte-for-
-byte and appends no touch."""
+the members roster, drafter issues) from the artifact, never touching the authored layer
+(content zone, editorial fields). Idempotent: an unchanged record re-derives byte-for-byte and
+appends no touch. *(3.4: the roster carries no authored field at all, so nothing is carried
+across the strip; a pre-3.4 record still holding member descriptions is refused — §12.26.)*"""
 
 from __future__ import annotations
 
@@ -9,9 +10,10 @@ import zipfile
 from pathlib import Path
 
 import frontmatter
+import pytest
 import yaml
 
-from corpus import hashing, paths, records, schemas
+from corpus import derive, hashing, paths, records, schemas
 from corpus._cli import reattest as reattest_cli
 from corpus.store import LocalArtifactStore
 
@@ -90,8 +92,10 @@ def test_reattest_preserves_authored_layer(tmp_path):
     post = records.load(rf)
     post.metadata["title"] = "My Bundle"
     post.metadata["description"] = "An authored summary."
-    post.metadata["_embeds"][0]["fields"]["description"] = "the first member, described"
-    post.content = "<!--segment text\naddress: path=a/one.txt\n-->\n\nauthored body\n"
+    post.content = (
+        "<!--segment text\naddress: path=a/one.txt\n"
+        "description: the first member, described\n-->\n\nauthored body\n"
+    )
     records.dump(post, rf)
 
     # Re-attest must NOT clobber the authored layer.
@@ -101,10 +105,73 @@ def test_reattest_preserves_authored_layer(tmp_path):
     assert after.metadata["title"] == "My Bundle"
     assert after.metadata["description"] == "An authored summary."
     assert "authored body" in (after.content or "")
-    descs = {e["address"] if isinstance(e["address"], str) else e["address"][0]:
-             (e.get("fields") or {}).get("description")
-             for e in records.iter_embed_blocks(after)}
-    assert descs.get("path=a/one.txt") == "the first member, described"
+    # *(3.4)* A member's narration lives on the block that PLACES it, which is in the content
+    # zone — so re-attestation cannot touch it. That is the point of moving it there: the
+    # pre-3.4 home was inside the attested roster, carried across the strip by transport hash,
+    # which lost the text outright whenever the member itself had been pruned (§12.26).
+    assert "the first member, described" in (after.content or "")
+
+
+def test_members_roster_cannot_hold_a_description(tmp_path):
+    """The roster is closed to four keys (spec §4.3.1.4), enforced at the emitter.
+
+    A caller handing over a `description` gets it dropped rather than written, so no producer
+    can widen the block by passing extra fields — the closed shape holds without every drafter
+    having to know about it."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+    rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
+
+    post = records.load(rf)
+    post.metadata["_embeds"][0]["fields"]["description"] = "not a home for this"
+    records.dump(post, rf)
+
+    text = rf.read_text(encoding="utf-8")
+    assert "<!--members" in text
+    assert "not a home for this" not in text
+    after = records.load(rf)
+    assert (after.metadata["_embeds"][0].get("fields") or {}).get("description") is None
+    # Nothing is pending: the record is already 3.4, so there is no legacy text to re-home.
+    assert records.pending_member_descriptions(after) == []
+
+
+def test_reattest_refuses_a_legacy_record_with_authored_descriptions(tmp_path):
+    """The migration's safety property (§12.26): re-attestation rebuilds the roster wholesale,
+    so a pre-3.4 record whose per-asset blocks still carry authored prose must be refused rather
+    than converted — otherwise the text is destroyed by an operation nobody asked to be
+    destructive. The same shape of defect as §12.25's: a correct operation performed before a
+    cheap check."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+    rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
+
+    # Rewrite the roster in the LEGACY per-asset form, carrying a description.
+    post = records.load(rf)
+    post.metadata["_members_block"] = False
+    post.metadata["_embeds"][0]["fields"]["description"] = "the first member, described"
+    records.dump(post, rf)
+    assert "<!--embed " in rf.read_text(encoding="utf-8")
+
+    legacy = records.load(rf)
+    assert records.pending_member_descriptions(legacy) == [
+        ("path=a/one.txt", "the first member, described")
+    ]
+
+    with pytest.raises(derive.PendingMemberDescriptions) as exc:
+        reattest_cli.reattest_record(rf, root)
+    assert "path=a/one.txt" in str(exc.value)
+    # And the record on disk is untouched — a refusal that had already written would be no gate.
+    assert "the first member, described" in rf.read_text(encoding="utf-8")
+
+    # The deliberate override converts and drops, for members with no content zone to move to.
+    post = records.load(rf)
+    derive.attest(post, root, strip=True, discard_member_descriptions=True)
+    records.dump(post, rf)
+    text = rf.read_text(encoding="utf-8")
+    assert "<!--members" in text
+    assert "the first member, described" not in text
 
 
 def _write_origin_overlay(root: Path, filename: str, applies_to: dict) -> None:

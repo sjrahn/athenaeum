@@ -205,24 +205,25 @@ def test_part_embeds(tmp_path):
     assert set(embeds) == {"part=3", "part=4", "part=5", "part=6"}  # body parts 1,2 skipped
 
     assert embeds["part=3"]["media_type"] == "image/png"
-    assert embeds["part=3"]["fields"]["disposition"] == "inline"
-    assert embeds["part=3"]["fields"]["content_id"] == "inline-img-1"
-
     assert embeds["part=4"]["media_type"] == "application/pdf"
-    assert embeds["part=4"]["fields"]["filename"] == "contract.pdf"
-    assert embeds["part=4"]["fields"]["disposition"] == "attachment"
     assert embeds["part=4"]["transport"] == records.format_hash("blake3", _b3(_PDF))
 
     assert embeds["part=5"]["media_type"] == "text/plain"  # QP attachment
-    assert embeds["part=5"]["fields"]["filename"] == "notes.txt"
-    # QP round-trip: the embed transport is blake3 of the CTE-decoded bytes the transform yields
+    # QP round-trip: the member transport is blake3 of the CTE-decoded bytes the transform yields
     # (email normalizes a text part's line endings to CRLF on serialization).
     out5 = resolver.resolve(f"corpus://{eid}?part=5", root).read_bytes()
     assert b"attached notes line one" in out5
     assert embeds["part=5"]["transport"] == records.format_hash("blake3", _b3(out5))
 
     assert embeds["part=6"]["media_type"] == "message/rfc822"  # nested message
-    assert embeds["part=6"]["fields"]["filename"] == "forwarded.eml"
+
+    # *(3.4)* The roster row is closed to address / media_type / transport / bytes (spec
+    # §4.3.1.4), so a part's `filename`, `disposition`, and `content_id` are NOT stored — they
+    # are readings of the part's headers, supplied by the `members` derivation. `promote` reads
+    # the filename it needs from the container itself (`containment.member_source_metadata`),
+    # which is authoritative where a cached copy could only agree or go stale.
+    for addr, row in embeds.items():
+        assert set(row["fields"]) <= {"bytes"}, f"{addr} stored more than the closed shape"
 
 
 def test_part_addresses_are_deterministic(tmp_path):

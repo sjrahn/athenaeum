@@ -47,10 +47,29 @@ Block grammar (spec §4.3):
     Metadata zone:    <!--artifact <mime-type>-->     (exactly 1)
                       <!--origin [<id>[/<subtype>]]--> (1..N)
                       <!--classify <ns>/<id>[/<sub>]-->    (legacy 1.0; tolerated, lint-flagged)
-                      <!--embed <mime-type>-->         (0..N)
+                      <!--members-->                   (0..1)  — YAML list of member rows
+                      <!--embed <mime-type>-->         (0..N)  (legacy pre-3.4; read, never written)
     Content zone:     <!--section [<ns>/<id>]-->       (0..N)  or
                       <!--segment <atom>[/<id>]-->     (0..N) sectionless
     Annotations zone: <!--issue <id>[/<subtype>]-->    (0..N)
+
+The members block (3.4, spec §4.3.1.4) is the record's unabridged roster of embedded
+assets: ONE block, a YAML list of rows closed to `address` / `media_type` / `transport` /
+`bytes`. It is wholly attested — re-derived from the artifact, never authored — so it holds
+no `description` and no `alt`; those descriptors come from the `members` derivation op, and
+an asset's narration rides the section/segment that places it.
+
+**The in-memory shape is unchanged from the retired per-asset block** — each row is still
+`{media_type, address, transport, fields}` — so every reader that walked embeds keeps
+working through `iter_members` (of which `iter_embed_blocks` is an alias). What narrowed is
+what may appear in `fields`: `bytes` and nothing else.
+
+Reading is dual-form and writing is form-preserving: a record parsed from legacy
+`<!--embed-->` blocks keeps its full legacy `fields` in memory and is re-emitted as legacy
+blocks, so no unrelated write path can silently convert a record and drop the authored
+descriptions those blocks carry. Conversion happens exactly where the attested layer is
+rebuilt from the artifact (`derive.attest`), which is gated on `pending_member_descriptions`
+being empty — see §12.26.
 """
 
 from __future__ import annotations
@@ -91,6 +110,22 @@ _ARTIFACT_OPENER = "<!--artifact"
 _ORIGIN_OPENER = "<!--origin"
 _CLASSIFY_OPENER = "<!--classify"
 _EMBED_OPENER = "<!--embed"
+_MEMBERS_OPENER = "<!--members"
+
+# PyYAML's C loader when the build provides it (it usually does), else the pure-Python one.
+# Block payloads are the hottest parse in the system — `load_all` walks every record — and the
+# C loader is ~5-8x faster on them. It matters most where the 3.4 members block concentrates a
+# record's whole roster into ONE document: on the 22,293-member container, one big list under
+# the pure-Python loader parsed SLOWER than 22,293 small ones (3.0s vs 2.1s), which would have
+# made the new grammar a regression on exactly the records it helps most; under the C loader the
+# same list parses in 0.40s. Measured, not assumed.
+_Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+# The members row is a CLOSED shape (spec §4.3.1.4). A closed shape needs a closed check, or
+# the block silently re-accumulates the descriptive payload 3.4 moved out of it — which is
+# exactly how the retired per-asset block came to carry an authored `description` beside its
+# byte-facts in the first place.
+_MEMBER_ROW_KEYS = frozenset({"address", "media_type", "transport", "bytes"})
 _SECTION_OPENER = "<!--section"
 _SEGMENT_OPENER = "<!--segment"
 _CONTEXT_OPENER = "<!--context"
@@ -104,7 +139,13 @@ _BLOCK_CLOSER = "-->"
 
 # Metadata-zone block openers (the openers that live before the content zone).
 # Reconciliation #1: embed is here, NOT in the content zone (spec §4.3 4/2/1).
-_METADATA_OPENERS = (_ARTIFACT_OPENER, _ORIGIN_OPENER, _CLASSIFY_OPENER, _EMBED_OPENER)
+_METADATA_OPENERS = (
+    _ARTIFACT_OPENER,
+    _ORIGIN_OPENER,
+    _CLASSIFY_OPENER,
+    _MEMBERS_OPENER,
+    _EMBED_OPENER,
+)
 
 
 # ---------- hash helpers ---------- #
@@ -143,6 +184,11 @@ def load(path: Path) -> frontmatter.Post:
     post.metadata["_origins"] = metadata_blocks.get("origins", [])
     post.metadata["_classifies"] = metadata_blocks.get("classifies", [])
     post.metadata["_embeds"] = metadata_blocks.get("embeds", [])
+    # Which roster form this record was read from, so `dumps()` round-trips it (3.4, §12.26).
+    # Form-preserving on write is the safety property: a record still carrying legacy
+    # per-asset blocks holds authored `description`s that only the re-homing pass may move,
+    # so no unrelated read-modify-write may convert it and drop them in passing.
+    post.metadata["_members_block"] = metadata_blocks.get("members_block", True)
     post.metadata["_contexts"] = context_blocks
 
     post.content = content_body
@@ -189,7 +235,7 @@ def dumps(post: frontmatter.Post) -> str:
         core[key] = value
     fm_text = _dump_yaml_block(core)
 
-    # Build the metadata zone — artifact, origins, classifies, embeds.
+    # Build the metadata zone — artifact, origins, classifies, the roster.
     metadata_parts: list[str] = []
     if artifact:
         metadata_parts.append(_emit_artifact_block(artifact))
@@ -197,8 +243,14 @@ def dumps(post: frontmatter.Post) -> str:
         metadata_parts.append(_emit_origin_block(origin))
     for classify in classifies:
         metadata_parts.append(_emit_classify_block(classify))
-    for embed in embeds:
-        metadata_parts.append(_emit_embed_block(embed))
+    if embeds:
+        if post.metadata.get("_members_block", True):
+            metadata_parts.append(_emit_members_block(embeds))
+        else:
+            # Legacy per-asset blocks round-trip verbatim until the re-homing pass converts
+            # the record (3.4, §12.26) — see `_members_block` in `load()`.
+            for embed in embeds:
+                metadata_parts.append(_emit_embed_block(embed))
     metadata_zone = "\n\n".join(metadata_parts)
 
     # Content zone — verbatim from post.content (segments.py owns this).
@@ -305,6 +357,29 @@ def _emit_embed_block(embed: dict[str, Any]) -> str:
     return f"<!--embed {media_type}\n{body_yaml}\n-->"
 
 
+def _emit_members_block(rows: list[dict[str, Any]]) -> str:
+    """Emit the single `<!--members-->` block: a YAML list of closed four-key rows (§4.3.1.4).
+
+    Only the four admitted keys are written, in a fixed order, and `bytes` is the one thing
+    `fields` may contribute. Any other field a caller hands over is DROPPED here rather than
+    carried: a descriptor belongs to the `members` derivation, and dropping at the one emitter
+    is what keeps the on-disk roster closed no matter which producer filled it.
+    """
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        fields = row.get("fields") or {}
+        entry: dict[str, Any] = {
+            "address": row.get("address"),
+            "media_type": row.get("media_type", ""),
+            "transport": row.get("transport", ""),
+        }
+        if fields.get("bytes") is not None:
+            entry["bytes"] = fields["bytes"]
+        payload.append(entry)
+    body_yaml = _dump_yaml_block(payload).rstrip("\n")
+    return f"<!--members\n{body_yaml}\n-->"
+
+
 def _emit_context_block(ctx: dict[str, Any]) -> str:
     """Emit `<!--context <namespace>/<id>[/<subtype>]\n<yaml>\n-->`.
 
@@ -326,9 +401,9 @@ def _emit_context_block(ctx: dict[str, Any]) -> str:
     return _emit_block(f"<!--context {qualified}", fields)
 
 
-def _dump_yaml_block(block: dict[str, Any]) -> str:
+def _dump_yaml_block(block: dict[str, Any] | list[Any]) -> str:
     """Render `block` as YAML using the dump conventions (block-style sequences, no
-    key sorting, full-width)."""
+    key sorting, full-width). A LIST payload is the members block (3.4, §4.3.1.4)."""
     if not block:
         return ""
     return yaml.dump(
@@ -346,12 +421,17 @@ def _dump_yaml_block(block: dict[str, Any]) -> str:
 
 def _parse_block(
     lines: list[str], start: int
-) -> tuple[str, dict[str, Any] | None, int]:
+) -> tuple[str, dict[str, Any] | list[Any] | None, int]:
     """Parse a single HTML-comment block starting at `lines[start]`.
 
-    Returns `(opener_line, body_dict, next_index)`. `opener_line` is the full opener
-    (e.g. `<!--artifact application/pdf`); `body_dict` is the parsed YAML payload (or
-    None for empty blocks); `next_index` is the line index after the closer.
+    Returns `(opener_line, body, next_index)`. `opener_line` is the full opener
+    (e.g. `<!--artifact application/pdf`); `body` is the parsed YAML payload (or None for
+    empty blocks); `next_index` is the line index after the closer.
+
+    A payload is a mapping for every block but `<!--members-->` (3.4), whose payload is a
+    LIST of member rows. The mapping requirement therefore moved to the callers that need
+    it — `_require_mapping` below — rather than being enforced here, so a list payload is a
+    grammar error only where a list is not the grammar.
     """
     opener = lines[start].rstrip()
     j = start + 1
@@ -360,18 +440,27 @@ def _parse_block(
     if j >= len(lines):
         raise ValueError(f"unterminated block at line {start + 1}: {opener!r}")
     yaml_text = "\n".join(lines[start + 1 : j]).strip()
-    body: dict[str, Any] | None
+    body: dict[str, Any] | list[Any] | None
     if yaml_text:
         try:
-            data = yaml.safe_load(yaml_text)
+            data = yaml.load(yaml_text, Loader=_Loader)
         except yaml.YAMLError as e:
             raise ValueError(f"malformed YAML in block at line {start + 1}: {e}") from e
-        if data is not None and not isinstance(data, dict):
-            raise ValueError(f"block at line {start + 1} body is not a mapping")
-        body = data or {}
+        if data is not None and not isinstance(data, (dict, list)):
+            raise ValueError(f"block at line {start + 1} body is neither a mapping nor a list")
+        body = data if data is not None else {}
     else:
         body = None
     return opener, body, j + 1
+
+
+def _require_mapping(body: Any, *, line_no: int, opener: str) -> dict[str, Any]:
+    """The payload of every block but `<!--members-->` is a YAML mapping."""
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise ValueError(f"block at line {line_no} ({opener}) body is not a mapping")
+    return body
 
 
 def _extract_metadata_blocks(
@@ -383,18 +472,29 @@ def _extract_metadata_blocks(
         ({artifact: {mime, fields} | None,
           origins: [{id, subtype, fields}, ...],
           classifies: [{namespace, id, subtype, fields}, ...],
-          embeds: [{media_type, address, transport, fields}, ...]},
+          embeds: [{media_type, address, transport, fields}, ...],
+          members_block: bool},
          remaining_body)
 
-    Recognizes the four spec-§4.3.1 openers: <!--artifact, <!--origin, <!--classify,
-    <!--embed. Within the metadata zone, only blank lines may separate blocks.
+    Recognizes the spec-§4.3.1 openers: <!--artifact, <!--origin, <!--classify, <!--members,
+    and the legacy <!--embed. Within the metadata zone, only blank lines may separate blocks.
+
+    Both roster forms land in `embeds` — the one in-memory shape (§4.3.1.4) — with
+    `members_block` recording WHICH form the record was read from, so `dumps()` can round-trip
+    it. It is True unless legacy per-asset blocks were actually read, so a record with no
+    roster at all (and any record built fresh) writes the current grammar. A record carrying
+    both forms is a grammar error: the roster is single by construction, and two rosters cannot
+    be reconciled without guessing which one is current.
     """
     result: dict[str, Any] = {
         "artifact": None,
         "origins": [],
         "classifies": [],
         "embeds": [],
+        "members_block": True,
     }
+    saw_members_block = False
+    saw_legacy_embed = False
     lines = body.splitlines()
     i = 0
     while i < len(lines):
@@ -405,7 +505,19 @@ def _extract_metadata_blocks(
         if not _is_metadata_opener(stripped):
             break
         opener, block_body, next_i = _parse_block(lines, i)
-        fields = block_body or {}
+        if opener.startswith(_MEMBERS_OPENER):
+            if saw_members_block:
+                raise ValueError(f"second members block at line {i + 1}: the roster is one block")
+            if saw_legacy_embed:
+                raise ValueError(
+                    f"record carries both a members block (line {i + 1}) and legacy embed "
+                    f"blocks; the roster is single — one form or the other, never both"
+                )
+            saw_members_block = True
+            result["embeds"].extend(_structure_member_rows(block_body, line_no=i + 1))
+            i = next_i
+            continue
+        fields = _require_mapping(block_body, line_no=i + 1, opener=opener)
 
         if opener.startswith(_ARTIFACT_OPENER):
             mime = opener.removeprefix(_ARTIFACT_OPENER).strip()
@@ -421,41 +533,105 @@ def _extract_metadata_blocks(
                 {"namespace": namespace, "id": id_, "subtype": subtype, "fields": fields}
             )
         elif opener.startswith(_EMBED_OPENER):
+            if saw_members_block:
+                raise ValueError(
+                    f"legacy embed block at line {i + 1} follows a members block; the roster "
+                    f"is single — one form or the other, never both"
+                )
+            saw_legacy_embed = True
             media_type = opener.removeprefix(_EMBED_OPENER).strip()
             embed = _structure_embed_fields(media_type, fields, line_no=i + 1)
             result["embeds"].append(embed)
         i = next_i
+
+    result["members_block"] = not saw_legacy_embed
 
     while i < len(lines) and lines[i].strip() == "":
         i += 1
     return result, "\n".join(lines[i:])
 
 
+def _structure_member_rows(
+    payload: dict[str, Any] | list[Any] | None, *, line_no: int
+) -> list[dict[str, Any]]:
+    """Structure a `<!--members-->` payload into the in-memory row shape (spec §4.3.1.4).
+
+    The payload is a YAML list of rows; each row is validated against the CLOSED four-key
+    shape and returned as `{media_type, address, transport, fields}` — the same shape the
+    retired per-asset block produced, so every existing reader is unaffected. `bytes` is the
+    only key that may ride `fields`.
+    """
+    if payload is None or payload == {}:
+        return []
+    if not isinstance(payload, list):
+        raise ValueError(
+            f"members block at line {line_no}: payload is a YAML list of member rows, "
+            f"got {type(payload).__name__}"
+        )
+    rows: list[dict[str, Any]] = []
+    for n, raw in enumerate(payload, 1):
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"members block at line {line_no}, row {n}: each row is a mapping, "
+                f"got {type(raw).__name__}"
+            )
+        unknown = sorted(set(raw) - _MEMBER_ROW_KEYS)
+        if unknown:
+            raise ValueError(
+                f"members block at line {line_no}, row {n}: unknown key(s) {unknown} — the "
+                f"row is closed to {sorted(_MEMBER_ROW_KEYS)} (spec §4.3.1.4). A descriptive "
+                f"field belongs to the `members` derivation; an asset's description belongs "
+                f"to the block that places it."
+            )
+        media_type = str(raw.get("media_type") or "").strip()
+        if not media_type:
+            raise ValueError(f"members block at line {line_no}, row {n} missing media_type")
+        rows.append(
+            _structure_embed_fields(
+                media_type,
+                {k: v for k, v in raw.items() if k != "media_type"},
+                line_no=line_no,
+                what=f"members block at line {line_no}, row {n}",
+            )
+        )
+    return rows
+
+
 def _structure_embed_fields(
-    media_type: str, fields: dict[str, Any], *, line_no: int
+    media_type: str,
+    fields: dict[str, Any],
+    *,
+    line_no: int,
+    what: str | None = None,
 ) -> dict[str, Any]:
-    """Pop address+transport off the embed YAML payload and return the structured
-    dict `{media_type, address, transport, fields}`."""
+    """Pop address+transport off a roster row's YAML payload and return the structured
+    dict `{media_type, address, transport, fields}`.
+
+    Shared by the 3.4 members block and the legacy per-asset block, so the address/transport
+    validation both forms must satisfy has exactly one implementation. `what` names the site
+    in errors; it defaults to the legacy phrasing so existing messages are unchanged.
+    """
+    what = what or f"embed at line {line_no}"
     if "/" not in media_type:
         raise ValueError(
-            f"embed at line {line_no}: media_type {media_type!r} is not a "
+            f"{what}: media_type {media_type!r} is not a "
             f"`type/subtype` MIME (e.g. `image/png`)"
         )
     body_fields = dict(fields)
     address_raw = body_fields.pop("address", None)
     if address_raw is None:
-        raise ValueError(f"embed at line {line_no} missing required address")
+        raise ValueError(f"{what}: missing required address")
     if isinstance(address_raw, list):
         address: str | list[str] = [str(x).strip() for x in address_raw if str(x).strip()]
         if not address:
-            raise ValueError(f"embed at line {line_no} has empty address list")
+            raise ValueError(f"{what}: empty address list")
     elif isinstance(address_raw, str):
         address = address_raw.strip()
         if not address:
-            raise ValueError(f"embed at line {line_no} missing required address")
+            raise ValueError(f"{what}: missing required address")
     else:
         raise ValueError(
-            f"embed at line {line_no} has invalid address type: {type(address_raw).__name__}"
+            f"{what}: invalid address type: {type(address_raw).__name__}"
         )
     # Prefer v1.0 `transport:` (str); accept v0.3 `byte_hash:` (dict) for back-compat read.
     transport_raw = body_fields.pop("transport", None)
@@ -464,17 +640,17 @@ def _structure_embed_fields(
         transport = transport_raw.strip()
         if ":" not in transport:
             raise ValueError(
-                f"embed at line {line_no} transport {transport!r} missing `<algo>:` prefix"
+                f"{what}: transport {transport!r} missing `<algo>:` prefix"
             )
     elif isinstance(byte_hash_raw, dict):
         algo = str(byte_hash_raw.get("algo") or "").strip()
         value = str(byte_hash_raw.get("value") or "").strip()
         if not algo or not value:
-            raise ValueError(f"embed at line {line_no} byte_hash missing algo or value")
+            raise ValueError(f"{what}: byte_hash missing algo or value")
         transport = f"{algo}:{value}"
     else:
         raise ValueError(
-            f"embed at line {line_no} missing transport (expected `transport: <algo>:<hex>`)"
+            f"{what}: missing transport (expected `transport: <algo>:<hex>`)"
         )
     return {
         "media_type": media_type,
@@ -619,13 +795,49 @@ def iter_classify_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
     yield from (post.metadata.get("_classifies") or [])
 
 
-def iter_embed_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
-    """Yield each `<!--embed-->` block as `{media_type, address, transport, fields}`.
+def iter_members(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
+    """Yield each member row as `{media_type, address, transport, fields}` (spec §4.3.1.4).
 
-    Embeds live in the metadata zone (reconciliation #1, spec §4.3.1.4) — they are
-    parsed from there by `load()` and emitted in the metadata zone by `dump()`.
+    **The dual reader.** Rows come from the 3.4 `<!--members-->` block or from legacy
+    per-asset `<!--embed-->` blocks, in one shape either way, so a caller never asks which
+    form the record is in. The roster lives in the metadata zone — parsed by `load()`,
+    emitted by `dumps()` in whichever form the record arrived in (§12.26).
+
+    On a 3.4 record `fields` carries `bytes` and nothing else. On a legacy record it still
+    carries whatever that record stored (`width`/`height`/`alt`/`description`/…), because
+    reading must not lose what the re-homing pass has yet to move — see
+    `pending_member_descriptions`.
     """
     yield from (post.metadata.get("_embeds") or [])
+
+
+# The pre-3.4 name. Kept as an alias rather than swept: the reader's contract did not change
+# (same shape, same ordering), so ~20 call sites across containment / resolver / promote /
+# health / lint / tokens need no edit, and a rename would churn them for nothing.
+iter_embed_blocks = iter_members
+
+
+def pending_member_descriptions(post: frontmatter.Post) -> list[tuple[str, str]]:
+    """Legacy per-asset `description`s this record still carries, as `(address, description)`.
+
+    Non-empty means the record predates 3.4 and holds authored prose that the members block
+    has no room for (§4.3.1.4). Those descriptions must be re-homed onto the section or
+    segment that places the asset — or deliberately discarded — BEFORE the roster is rewritten
+    in the new form. `derive.attest` refuses on a non-empty result for exactly that reason:
+    re-attestation rebuilds the roster wholesale, so converting first and re-homing later would
+    mean re-homing from a record that no longer has the text.
+    """
+    if post.metadata.get("_members_block", True):
+        return []  # already 3.4 — the block cannot carry a description
+    pending: list[tuple[str, str]] = []
+    for row in post.metadata.get("_embeds") or []:
+        description = str((row.get("fields") or {}).get("description") or "").strip()
+        if not description:
+            continue
+        address = row.get("address")
+        first = address[0] if isinstance(address, list) else address
+        pending.append((str(first or ""), description))
+    return pending
 
 
 def iter_context_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
@@ -1036,7 +1248,7 @@ def qualify_origin_blocks(post: frontmatter.Post, corpus_root: Path) -> list[str
     return stamped
 
 
-def append_embed_block(
+def append_member(
     post: frontmatter.Post,
     *,
     media_type: str,
@@ -1044,20 +1256,30 @@ def append_embed_block(
     transport: str,
     fields: dict[str, Any] | None = None,
 ) -> None:
-    """Append a new `<!--embed-->` block to the record.
+    """Append a member row to the record's roster (spec §4.3.1.4).
 
-    Per spec §4.3.1.4 the required fields are `address` and `transport`. Extended
-    fields (`alt`, `description`, `width`/`height`, etc.) ride on `fields`.
+    Callers are the attesting drafters, which compute the FULL descriptor set for the
+    `members` derivation. Only `bytes` is retained here; every other field is dropped, because
+    the stored roster is closed to four keys and the descriptors are re-derived on demand.
+    Dropping at this seam (and again at the emitter) means no producer can widen the block by
+    handing over extra fields — the closed shape holds without every drafter having to know it.
     """
-    embeds = post.metadata.setdefault("_embeds", [])
-    embeds.append(
+    given = fields or {}
+    kept = {"bytes": given["bytes"]} if given.get("bytes") is not None else {}
+    rows = post.metadata.setdefault("_embeds", [])
+    rows.append(
         {
             "media_type": media_type,
             "address": address,
             "transport": transport,
-            "fields": fields or {},
+            "fields": kept,
         }
     )
+
+
+# The pre-3.4 name, kept for the drafters and compile ops that call it. Same behaviour: the
+# descriptive fields they pass are now dropped rather than stored.
+append_embed_block = append_member
 
 
 def append_context_block(

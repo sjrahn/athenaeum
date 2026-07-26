@@ -503,13 +503,12 @@ def test_entry_missing(tmp_path):
 def test_body_sanity_rules(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    post.content = "hi <script>x</script>\n```\n<!--TODO-->\nsee ![[broken"
+    post.content = "hi <script>x</script>\n```\n<!--TODO-->\n"
     fired = _fired(post, root)
     assert {
         "body-html-residue",
         "body-codefence-unbalanced",
         "body-unknown-comment",
-        "body-wikilink-malformed",
     } <= fired
     # empty body on a record carrying an editorial override (title + description both set
     # → has_editorial_override)
@@ -520,15 +519,69 @@ def test_body_sanity_rules(tmp_path):
     assert "body-empty-normalized" in _fired(norm, root)
 
 
-def test_embed_description_empty_on_normalized(tmp_path):
+def test_body_corpus_link_forbidden_flags_corpus_uri(tmp_path):
+    """A segment body carrying a `corpus://` reference is a spec violation (§4.3.2.2, 3.4)
+    — the retired body-link grammar's replacement rule."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
-    post.metadata["title"] = "T"
-    post.metadata["description"] = "d"  # override present → the embed-description gate applies
-    records.append_embed_block(
-        post, media_type="image/png", address="el=4", transport="blake3:" + "0" * 64
+    seg = segments.Segment(atom="text", address="el=1", body="see corpus://" + "a" * 64)
+    findings = [
+        f for f in lint.lint(post, [seg], root) if f.rule_id == "body-corpus-link-forbidden"
+    ]
+    assert findings and findings[0].severity == "error"
+
+
+def test_body_corpus_link_forbidden_flags_raw_blake3_wikilink(tmp_path):
+    """A raw-blake3 `[[<hash>]]` wikilink in a segment body is equally forbidden,
+    `corpus://`-scheme or not — both stored forms retired together (§12.26)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(atom="text", address="el=1", body="see [[" + "c" * 64 + "]]")
+    assert "body-corpus-link-forbidden" in {
+        f.rule_id for f in lint.lint(post, [seg], root)
+    }
+
+
+def test_body_corpus_link_forbidden_flags_embed_wikilink(tmp_path):
+    """The `![[corpus://...]]` embed form is forbidden too."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(
+        atom="text", address="el=1", body="![[corpus://" + "d" * 64 + "?el=1]]"
     )
-    assert "embed-description-empty-on-normalized" in _fired(post, root)
+    assert "body-corpus-link-forbidden" in {
+        f.rule_id for f in lint.lint(post, [seg], root)
+    }
+
+
+def test_body_corpus_link_forbidden_silent_on_clean_body(tmp_path):
+    """A bare `[[` with no corpus-reference grammar behind it is innocent — e.g. faithfully
+    transcribed source carrying Swift's `[[Foo]]` nested-array type syntax, caught live as a
+    false positive during 3.4 verification. Only `[[`/`![[` opening directly onto
+    `corpus://` or a raw 64-hex hash counts."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    seg = segments.Segment(
+        atom="text", address="el=1", body="plain prose, no links, and `[[Foo]]` is a type"
+    )
+    assert "body-corpus-link-forbidden" not in {
+        f.rule_id for f in lint.lint(post, [seg], root)
+    }
+
+
+def test_body_corpus_link_forbidden_ignores_origin_lineage_uri(tmp_path):
+    """The origin block's lineage `uri: corpus://...` (capture history, §8.1/§12.15) lives
+    in the metadata zone, not a segment body — the rule must never see it, no matter how
+    many origins a promoted record carries."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    records.append_origin_block(
+        post, uri="corpus://" + "b" * 64 + "?el=1", snapshot="2026-05-31T00:00:00Z"
+    )
+    seg = segments.Segment(atom="text", address="el=1", body="clean")
+    assert "body-corpus-link-forbidden" not in {
+        f.rule_id for f in lint.lint(post, [seg], root)
+    }
 
 
 def test_issue_on_draft_rule_dropped(tmp_path):
@@ -631,3 +684,155 @@ def test_address_region_grammar_covers_embeds_and_sections(tmp_path):
 
 def _lint_blocks(post, root, blocks):
     return lint.lint(post, blocks, root)
+
+
+# ---------- embed-unreferenced / embed-missing-target (pinned pre-refactor) ---------- #
+
+
+def _embed(post, address, media_type="image/png"):
+    records.append_embed_block(
+        post, media_type=media_type, address=address, transport="blake3:" + "0" * 64
+    )
+
+
+def test_embed_unreferenced_exact_segment_match(tmp_path):
+    """A segment at exactly the embed's address is a reference — the baseline case."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=3")
+    seg = segments.Segment(atom="text", address="el=3", body="x")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-unreferenced"]
+    assert findings == []
+
+
+def test_embed_unreferenced_chain_counts_as_reference(tmp_path):
+    """A segment address that CHAINS INTO the embed (`el=3&bbox=...`) counts as a reference —
+    the base address split off before `&` is folded into the referenced set (lint.py:987-992);
+    a lossless transcription cites the bytes it read this way, and treating only exact matches
+    as references would call such an embed an orphan."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=3")
+    seg = segments.Segment(atom="text", address="el=3&bbox=0,0,1,1", body="x")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-unreferenced"]
+    assert findings == []
+
+
+def test_embed_unreferenced_section_address_does_not_count(tmp_path):
+    """A section's own span address is NOT counted as an embed reference (lint.py:978-980) —
+    only child SEGMENT addresses are; a 3.0 section is a form span, not an embed-referencing
+    grouping, and the 2.x leniency that counted it masked latent orphans. This is the
+    non-obvious decision the rule pins."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=3")
+    child = segments.Segment(atom="text", address="el=1", body="x")
+    sec = segments.Section(address="el=3", entry="A", segments=[child])
+    findings = [f for f in lint.lint(post, [sec], root) if f.rule_id == "embed-unreferenced"]
+    assert findings and findings[0].severity == "warning"
+
+
+def test_embed_unreferenced_list_address_any_match_suffices(tmp_path):
+    """An embed's `address` may be a list; a segment matching ANY one member of that list is
+    enough to count as a reference — the finding only fires when NONE match."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, ["el=3", "el=6"])
+    seg = segments.Segment(atom="text", address="el=6", body="x")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-unreferenced"]
+    assert findings == []
+
+
+def test_embed_unreferenced_skipped_for_rfc822(tmp_path):
+    """`message/rfc822` records skip the rule entirely — its `part=<N>` embeds are the
+    email's MIME members declared for promotion, not body-flow assets a mechanical draft can
+    position (lint.py:964-967)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    records.set_artifact_block(post, mime="message/rfc822", fields={})
+    _embed(post, "part=2")
+    seg = segments.Segment(atom="text", address="part=1", body="x")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-unreferenced"]
+    assert findings == []
+
+
+def test_embed_unreferenced_skipped_for_manifest_no_segments(tmp_path):
+    """A record with embeds and NO content-zone segments at all (the manifest shape) is
+    skipped outright — the embeds ARE the content, not flow-assets positioned within it, so
+    "unreferenced" is not a defect."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=3")
+    findings = [f for f in lint.lint(post, [], root) if f.rule_id == "embed-unreferenced"]
+    assert findings == []
+
+
+def test_embed_unreferenced_fires_with_ordinal_and_media_type(tmp_path):
+    """An orphaned embed fires as a `warning`, and the message names its 1-based ordinal and
+    media type (the second embed here is unreferenced; the first is not)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=1", media_type="image/jpeg")
+    _embed(post, "el=9", media_type="image/png")
+    seg = segments.Segment(atom="text", address="el=1", body="x")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-unreferenced"]
+    assert len(findings) == 1
+    assert findings[0].severity == "warning"
+    assert "embed 2" in findings[0].message
+    assert "image/png" in findings[0].message
+
+
+def test_embed_missing_target_image_segment_without_embed_errors(tmp_path):
+    """An `image/*` segment at an address no embed carries is an `error` — nothing in the
+    record can resolve it."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()  # application/pdf artifact
+    seg = segments.Segment(atom="image", address="el=7", body="")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-missing-target"]
+    assert findings and findings[0].severity == "error"
+
+
+def test_embed_missing_target_matched_by_embed_is_silent(tmp_path):
+    """A segment whose address DOES appear on an embed in the record is not flagged."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    _embed(post, "el=7")
+    seg = segments.Segment(atom="image", address="el=7", body="")
+    findings = [f for f in lint.lint(post, [seg], root) if f.rule_id == "embed-missing-target"]
+    assert findings == []
+
+
+def test_embed_missing_target_self_slice_exemptions(tmp_path):
+    """Self-slice addresses need no embed — the resolver materializes them on demand
+    (`_self_slice`, lint.py:1020-1031). Covers every branch of that predicate: an
+    `att=`-chained lineage reference (exempt regardless of artifact mime), `frame=`/`time=`/
+    `time_range=` on a `video/*` record, `page=` on an `application/pdf` record, and `bbox=`
+    on an `image/*` record."""
+    root = _make_corpus(tmp_path)
+
+    # att= is exempt on ANY artifact mime — it's resolver-materializable through
+    # containment lineage, not tied to a particular artifact type.
+    post = _clean_post()  # application/pdf
+    seg = segments.Segment(atom="image", address="turn=1&att=2", body="")
+    assert "embed-missing-target" not in {f.rule_id for f in lint.lint(post, [seg], root)}
+
+    video_post = _clean_post()
+    records.set_artifact_block(video_post, mime="video/mp4", fields={})
+    for addr in ["frame=00:00:05", "time=00:00:05", "time_range=00:00:00-00:00:05"]:
+        seg = segments.Segment(atom="image", address=addr, body="")
+        fired = {f.rule_id for f in lint.lint(video_post, [seg], root)}
+        assert "embed-missing-target" not in fired, addr
+
+    pdf_post = _clean_post()  # application/pdf
+    seg = segments.Segment(atom="image", address="page=3", body="")
+    assert "embed-missing-target" not in {f.rule_id for f in lint.lint(pdf_post, [seg], root)}
+
+    image_post = _clean_post()
+    records.set_artifact_block(image_post, mime="image/jpeg", fields={})
+    seg = segments.Segment(atom="image", address="bbox=0.1,0.1,0.5,0.5", body="")
+    assert "embed-missing-target" not in {f.rule_id for f in lint.lint(image_post, [seg], root)}
+
+    # The exemptions are artifact-mime-specific: a `page=` address is NOT self-slicing on a
+    # video record, so it still requires an embed.
+    seg = segments.Segment(atom="image", address="page=3", body="")
+    assert "embed-missing-target" in {f.rule_id for f in lint.lint(video_post, [seg], root)}

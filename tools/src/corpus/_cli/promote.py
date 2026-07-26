@@ -95,13 +95,18 @@ def run(args: argparse.Namespace) -> int:
     except ArtifactMissing as e:
         sys.exit(str(e))
 
-    # 3. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
-    #    transport_algos). Never loads the member whole (spec §8.1 / §12.9). The sniff name
-    #    prefers the embed's declared `filename` — an ordinal address (`part=3`) carries no
-    #    extension, and the extension is what refines a zip-magic member within its family.
-    basename = (embed.get("fields") or {}).get("filename") or member_address.rsplit(
-        "=", 1
-    )[-1].rsplit("/", 1)[-1]
+    # 3. The member's durable provenance, read from the CONTAINER (§7.2, §8.1). Taken before
+    #    the sniff because its `filename` is also the sniff name: an ordinal address (`part=3`)
+    #    carries no extension, and the extension is what refines a zip-magic member within its
+    #    family (a docx part sniffs as bare `application/zip` without it).
+    #    *(3.4)* This used to read a `filename` cached on the roster row. The container is the
+    #    authoritative source — a cached copy can only ever agree with it or be stale — and the
+    #    3.4 roster is closed to four keys (spec §4.3.1.4), so the hint comes from the bytes.
+    meta = containment.member_source_metadata(container_path, container_media_type, member_address)
+    basename = meta.get("filename") or member_address.rsplit("=", 1)[-1].rsplit("/", 1)[-1]
+
+    # 4. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
+    #    transport_algos). Never loads the member whole (spec §8.1 / §12.9).
     try:
         media_type, computed_id, aux = _sniff_and_hash(
             corpus_root, container_path, container_media_type, member_address, basename
@@ -109,16 +114,25 @@ def run(args: argparse.Namespace) -> int:
     except (ValueError, OSError) as e:
         sys.exit(f"could not read member {member_address!r} from container: {e}")
 
-    # 4. Verify: a promoted id MUST equal the embed's recorded byte identity (spec §8.1).
+    # A member whose bytes name no type — a raw elementary media stream is the case, having
+    # neither magic nor a filename (`stream_id=` is a position, so `member_source_metadata`
+    # deliberately yields none) — takes the type the roster already attested for it. The sniff
+    # still wins wherever it concludes: it read the actual bytes, where the row is a record of
+    # what attestation found in the container's own tables.
+    if media_type == "unknown":
+        declared = str(embed.get("media_type") or "").strip()
+        if declared:
+            media_type = declared
+
+    # 5. Verify: a promoted id MUST equal the roster's recorded byte identity (spec §8.1).
     if computed_id != expected_hex:
         sys.exit(
-            f"hash mismatch: streamed member blake3 {computed_id} != embed transport "
+            f"hash mismatch: streamed member blake3 {computed_id} != member transport "
             f"{expected_hex} — the container's declaration is stale or the bytes differ; "
             f"refusing to mint a record with a wrong id."
         )
 
-    # 5. The containment-lineage origin block (history — never consulted for lookup, §12.9).
-    meta = containment.member_source_metadata(container_path, container_media_type, member_address)
+    # 6. The containment-lineage origin block (history — never consulted for lookup, §12.9).
     origin_fields: dict[str, Any] = {}
     if meta.get("filename"):
         origin_fields["filename"] = meta["filename"]

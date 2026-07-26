@@ -4,20 +4,21 @@ terminal: true
 description: |
   The CONTAINER specialization of the terminal contract (spec §7.8, 3.3): the members ARE
   the content (`disposition: manifest`, §1.2), so conformance binds the record's attested
-  member embeds — the roster IS the attestation, nothing re-stated in a content-zone
-  rendering — and the editorial header, where written, vouches the CONTAINER (what this
-  bundle is, what its members span), never a per-member summary (that is each promoted
-  member's own record, formed or terminal in its own right). One derivation keeps the
-  judgment single: a `disposition: manifest` record with no rendering contract declared
-  for it stands under this contract automatically (§7.8) — the disposition already IS the
-  terminal judgment, zero overlay edits required. An overlay MAY still bind a genuine
-  rendering contract over a manifest-disposition record where one applies; the explicit
-  declaration wins over this derivation.
+  `<!--members-->` block — the roster IS the attestation, nothing re-stated in a
+  content-zone rendering (spec §4.3.1.4/§12.26) — and the editorial header, where written,
+  vouches the CONTAINER (what this bundle is, what its members span), never a per-member
+  summary (that is each promoted member's own record, formed or terminal in its own
+  right). One derivation keeps the judgment single: a `disposition: manifest` record with
+  no rendering contract declared for it stands under this contract automatically (§7.8) —
+  the disposition already IS the terminal judgment, zero overlay edits required. An
+  overlay MAY still bind a genuine rendering contract over a manifest-disposition record
+  where one applies; the explicit declaration wins over this derivation.
 extended_fields: {}
 decomposition: |
   None — a terminal contract prescribes the ABSENCE of a stored rendering, so there is no
-  decomposition to declare. Conformance binds the attested MEMBER EMBEDS already carried
-  in the metadata zone (the manifest embeds ingest/attest stamped, §8.1), not a
+  decomposition to declare. Conformance binds the attested MEMBERS BLOCK already carried
+  in the metadata zone (the roster ingest/attest stamps, §8.1) — the closed four-key row
+  shape, wholly attested and never touched by a normalizer (§4.3.1.4/§12.26) — not a
   content-zone rendering; the content zone holds container byte-marks only (or nothing).
 checks: {}
 normalization:

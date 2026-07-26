@@ -98,15 +98,20 @@ def _body_text(post: Any) -> str:
 
 
 def _image_token_total(post: Any) -> int:
-    """Sum image-token estimates over image embeds plus an image artifact (no double count)."""
+    """Image-token estimate for an image ARTIFACT (spec §9.6's `full` tier).
+
+    *(3.4)* Image **members** no longer contribute. Their pixel dimensions are not stored — the
+    members roster is closed to `address`/`media_type`/`transport`/`bytes` (spec §4.3.1.4) — so
+    the only honest sources are the `members` derivation (§6.2) or decoding the bytes, and
+    neither is a thing this pure `post`-only function may reach. `full` is declared an estimate
+    precisely so it may degrade here rather than lie or fail; the alternative considered and
+    rejected was scoring members from `bytes`, which for a compressed image says nothing about
+    pixel count and would read as authoritative while being arbitrary.
+
+    When this needs to be exact, take it from the `members` derivation behind the resolver
+    cache — `token_counts` already accepts a `corpus_root` for exactly that kind of widening.
+    """
     total = 0
-    try:
-        for embed in records.iter_embed_blocks(post):
-            if str(embed.get("media_type") or "").startswith("image/"):
-                fields = embed.get("fields") or {}
-                total += image_tokens(fields.get("width"), fields.get("height"))
-    except Exception:
-        pass
     try:
         artifact = records.artifact_block(post)
         if artifact and str(artifact.get("mime") or "").startswith("image/"):

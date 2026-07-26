@@ -1,5 +1,5 @@
 description: |
-  HyperText Markup Language — web pages, captured as SingleFile-style snapshots with CSS, fonts, and images inlined as `data:` URIs. Covers the single canonical MIME `text/html`. The drafter is purely mechanical: it removes only non-rendered infrastructure (`<script>`/`<style>`/`<noscript>`/`<template>`/`<link>` + HTML comments), assigns positional `el=N` indices to every addressable element in the raw artifact, emits dedup'd-by-content image embeds, and emits a single wrapping text segment containing the cleaned unstyled HTML (the page `<body>`) annotated with `data-el="N"` attributes. It does NOT strip page chrome — removing chrome (nav/header/footer/ads/cookie notices) is a capture-time, per-host concern (origin overlay `capture.interactions[].remove`), because a universal tool cannot reliably tell chrome from content and a wrong guess drops content silently. That wrapper's address is `el=1-<max>` (a range across every addressable element in the artifact). `<img>` tags in the cleaned HTML have their `src` stripped — `data-el="N"` IS the address, and consumers construct `corpus://<hash>?el=N` from it when they need the bytes. The normalizer parses that HTML, decides section/segment structure, skips any leaked chrome, and emits markdown segments addressed by `el=N` (or `el=N-M` for aggregated prose). Image positioning segments link to top-of-body embed blocks by address membership. Structural recovery (heading hierarchy, table reconstruction, list rendering, equation extraction, link preservation) is the normalizer's job.
+  HyperText Markup Language — web pages, captured as SingleFile-style snapshots with CSS, fonts, and images inlined as `data:` URIs. Covers the single canonical MIME `text/html`. The drafter is purely mechanical: it removes only non-rendered infrastructure (`<script>`/`<style>`/`<noscript>`/`<template>`/`<link>` + HTML comments), assigns positional `el=N` indices to every addressable element in the raw artifact, attests a dedup'd-by-content `<!--members-->` roster of images, and emits a single wrapping text segment containing the cleaned unstyled HTML (the page `<body>`) annotated with `data-el="N"` attributes. It does NOT strip page chrome — removing chrome (nav/header/footer/ads/cookie notices) is a capture-time, per-host concern (origin overlay `capture.interactions[].remove`), because a universal tool cannot reliably tell chrome from content and a wrong guess drops content silently. That wrapper's address is `el=1-<max>` (a range across every addressable element in the artifact). `<img>` tags in the cleaned HTML have their `src` stripped — `data-el="N"` IS the address, and consumers construct `corpus://<hash>?el=N` from it when they need the bytes. The normalizer parses that HTML, decides section/segment structure, skips any leaked chrome, and emits markdown segments addressed by `el=N` (or `el=N-M` for aggregated prose). Image positioning segments link to the roster's member rows by address membership. Structural recovery (heading hierarchy, table reconstruction, list rendering, equation extraction, link preservation) is the normalizer's job.
 applies_to:
   content_types:
   - text/html
@@ -28,28 +28,24 @@ embeds:
   - image/webp
   - image/gif
   description: |-
-    One `<!--embed <media-type>-->` block per unique-content image in the cleaned-HTML root, deduplicated by `transport` (the `blake3:<hex>` hash of the decoded image bytes). The opener carries the full MIME type (`<!--embed image/png-->` etc.) — read from the source `data:image/<type>;base64,...` URI prefix. When an `<img>` carries a `srcset`, the embed (and the `el=` resolver) use the largest inlined variant, not the displayed thumbnail `src` — so embeds are full-resolution. The body never carries the bytes — only metadata; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`.
+    One row per unique-content image in the cleaned-HTML root, attested into the record's single `<!--members-->` block (spec §4.3.1.4; replaces the pre-3.4 per-asset `<!--embed <media-type>-->` block, §12.26), deduplicated by `transport` (the `blake3:<hex>` hash of the decoded image bytes). `media_type` rides the row itself as of 3.4 (moved off the retired block's opener line, since one `<!--members-->` block now carries mixed types) — read from the source `data:image/<type>;base64,...` URI prefix. When an `<img>` carries a `srcset`, the row (and the `el=` resolver) use the largest inlined variant, not the displayed thumbnail `src` — so members are full-resolution. The body never carries the bytes — only the roster; the actual image data lives in the artifact and is resolved on demand via `corpus://<hash>?el=N`. Pixel dimensions and verbatim `alt` text are NOT row fields — 3.4 retires both from storage; read them on demand from the `members` derivation op (`corpus://<hash>?members`, spec §6.2/§12.26) instead.
   fields:
     address:
       type: string-or-list
       required: true
       description: "Artifact address(es) where these bytes appear. Scalar (`address: el=12`) when bytes appear once; YAML list (`address: [el=78, el=145]`) when at multiple equivalent positions. Same polymorphic shape as Segment.address (SPECv2 §4.3)."
+    media_type:
+      type: string
+      required: true
+      description: "The member's full MIME type, e.g. `image/png`. Moved onto the row in 3.4 — formerly the retired per-asset block's opener line."
     transport:
       type: string
       required: true
-      description: "`<algo>:<hex>` content hash of the decoded image bytes (`blake3:<64-hex>`). The embed's content id and dedup key — identical bytes at multiple positions collapse to one embed. Universal embed field per spec §4.3.1.4 (handled by `records.append_embed_block`)."
-    width:
+      description: "`<algo>:<hex>` content hash of the decoded image bytes (`blake3:<64-hex>`). The member's content id and dedup key — identical bytes at multiple positions collapse to one row. Universal member field per spec §4.3.1.4 (handled by `records.append_member`)."
+    bytes:
       type: integer
       required: true
-      description: "pixel width (decoded). 0 for SVGs when the SVG XML doesn't declare width=."
-    height:
-      type: integer
-      required: true
-      description: "pixel height (decoded). 0 for SVGs when the SVG XML doesn't declare height=."
-    alt:
-      type: string
-      required: false
-      description: "Original `<img alt>` text, verbatim. Omitted when empty."
+      description: "The member's size in bytes, uncompressed. Present so size accounting over a corpus of containers costs one pass over records and no artifact reads (spec §4.3.1.4)."
 transport_algos:
 - sha256
 canonical_strategy:
@@ -72,17 +68,17 @@ canonical_strategy:
 normalization:
   method: refinement
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The HTML drafter (`tools/src/corpus/draft/html.py`; older drafts at v0.7.x used `selector=` addressing and have no embed manifest) is mechanical: it removes only non-rendered infrastructure (scripts/styles/comments), runs the `_convert_field_pairs` rewrite, collapses KaTeX to LaTeX, assigns 1-indexed `el=N` positions to every addressable element in the raw artifact, emits dedup'd-by-content `<!--embed image/<format>-->` blocks, and emits ONE `<!--segment text-->` whose body is the cleaned page `<body>` annotated with `data-el="N"` on every addressable element. It does NOT remove page chrome — that is a capture-time, per-host concern (origin overlay `capture.interactions[].remove`), so expect chrome to leak into the body unless the capture step deleted it. Every structural decision is the normalizer's job.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The HTML drafter (`tools/src/corpus/draft/html.py`; older drafts at v0.7.x used `selector=` addressing and have no members roster at all) is mechanical: it removes only non-rendered infrastructure (scripts/styles/comments), runs the `_convert_field_pairs` rewrite, collapses KaTeX to LaTeX, assigns 1-indexed `el=N` positions to every addressable element in the raw artifact, attests a dedup'd-by-content `<!--members-->` roster of images, and emits ONE `<!--segment text-->` whose body is the cleaned page `<body>` annotated with `data-el="N"` on every addressable element. It does NOT remove page chrome — that is a capture-time, per-host concern (origin overlay `capture.interactions[].remove`), so expect chrome to leak into the body unless the capture step deleted it. Every structural decision is the normalizer's job.
 
     ## Drafter contract
 
     The drafted body contains:
 
     1. An `<!--artifact text/html-->` metadata block with the document fields (title, description, lang, og_site_name). The page's canonical (`<link rel=canonical>`) and post-redirect final URL are folded into the origin block's `uri:` list as aliases, and the capture time is the origin's `snapshot:` — none of these are artifact fields.
-    2. Zero or more `<!--embed <media-type>-->` blocks — one per unique-content image in the cleaned-HTML root, dedup'd by `transport`. Each carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `transport` (`blake3:<hex>` of the decoded bytes), `width`, `height`, `alt`. The media type sits on the opener line (`<!--embed image/png-->`, `<!--embed image/svg+xml-->`).
+    2. One `<!--members-->` block — one row per unique-content image in the cleaned-HTML root, dedup'd by `transport`. Each row carries `address` (scalar or list, polymorphic per SPECv2 §4.3), `media_type`, `transport` (`blake3:<hex>` of the decoded bytes), `bytes` — the closed four-key shape (spec §4.3.1.4). It is wholly attested: re-derived from the artifact on every attestation, and not yours to edit. Pixel dimensions and `alt` text are NOT on the row — read them on demand from the `members` derivation op (`corpus://<hash>?members`) when you need them.
     3. One `<!--segment text-->` block whose body is the cleaned HTML. Every addressable element (`section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`, `figure`, `h1`–`h6`, `img`) carries `data-el="N"` where N is the element's position in the **raw artifact**. `<img>` tags have NO `src` — the addressing scheme (`data-el`) is the address; construct `corpus://<hash>?el=N` from the `data-el` value when you need to resolve the bytes.
 
-    Treat the cleaned HTML as your input. You'll be replacing the single `<!--segment text-->` block with N segments (text + image), optionally grouped into sections. Embeds at the top of the body stay where they are — you just reference them implicitly by addresses your segments emit.
+    Treat the cleaned HTML as your input. You'll be replacing the single `<!--segment text-->` block with N segments (text + image), optionally grouped into sections. The members block at the top of the body stays where it is — you just reference its rows implicitly by addresses your segments emit.
 
     When you need ground-truth drafter output (what a fresh draft pass would emit), invoke the drafter ephemerally:
 
@@ -149,16 +145,16 @@ normalization:
 
     **Do NOT use `selector=`** — that's the deprecated address scheme for pre-v0.8.0 records. New records use `el=N`. The legacy `selector=` resolver stays registered for backward compatibility but no new addresses should use it.
 
-    ## Image segments — link to embeds by address
+    ## Image segments — link to members by address
 
-    The drafter emits a top-of-body `<!--embed <media-type>-->` block per unique-content image. Each embed carries `address` (the artifact-position(s) where the image appears), `transport`, `width`, `height`, `alt`. Use the embeds as your menu of available imagery.
+    The drafter attests a `<!--members-->` roster row per unique-content image (spec §4.3.1.4). Each row carries `address` (the artifact-position(s) where the image appears), `media_type`, `transport`, `bytes` — nothing else; pixel dimensions and `alt` live in the `members` derivation (`corpus://<hash>?members`), not the row. Use the roster as your menu of available imagery, resolving `?members` when you need a row's dimensions or original `alt` to decide whether to surface it.
 
-    For each `<img alt="..." data-el="N">` you decide to surface as an image segment:
+    For each image you decide to surface as an image segment:
 
-    - `address: el=N` (the `data-el` value on the `<img>`)
-    - `body:` — start empty; refine via the resolve + describe pass below.
+    - `address: el=N` (the `data-el` value on the `<img>`, matching the row's address)
+    - `body:` — stays empty (a positioning marker); the faithful description goes on this segment's own `desc=`, not the row (see "Images — resolve and describe on the segment" below).
 
-    No `embed:` reference field on the segment. The link from segment to embed is purely positional: the segment's `address: el=N` is described by whichever embed has `el=N` in its `address` field (scalar match for unique-occurrence; list membership for repeated). For unique images, segment-address and embed-address are equal (scalar match). For repeated images, the embed has a list like `address: [el=78, el=145]`, and you emit one segment per address you want to surface (typically all of them; you may surface fewer if some occurrences are obviously decorative even when the bytes are substantive).
+    No reference field linking the segment to the row. The link is purely positional: the segment's `address: el=N` is placed by whichever row has `el=N` in its `address` field (scalar match for unique-occurrence; list membership for repeated). For unique images, segment-address and row-address are equal (scalar match). For repeated images, the row has a list like `address: [el=78, el=145]`, and you emit one segment per address you want to surface (typically all of them; you may surface fewer if some occurrences are obviously decorative even when the bytes are substantive).
 
     ## Leaked chrome drops silently
 
@@ -192,39 +188,39 @@ normalization:
 
     ## Choosing which images to surface
 
-    The drafter emits one embed per unique-content image plus its address(es). Most of them you'll want to surface as segments; some you should drop:
+    The drafter attests one members-block row per unique-content image plus its address(es); resolve `?members` to see each row's dimensions and original `alt` when deciding. Most of them you'll want to surface as segments; some you should drop:
 
-    - **Substantive imagery** — Figure / Diagram / Chart in alt text, larger dimensions (≥ 100×100 typically), appears once or in a small number of places, has a meaningful figcaption nearby. Surface as segments (one per `address` in the embed; for a single-occurrence embed that's one segment, for repeated bytes that's N segments).
-    - **Decorative chrome** — small dimensions (< 32×32 per the embed's `width`/`height`), empty alt + no surrounding figure context, the same icon repeated many times across UI cards. Skip — emit no segment. The embed stays in the body as a manifest entry (or you may prune unreferenced embeds — both defensible).
+    - **Substantive imagery** — Figure / Diagram / Chart in alt text, larger dimensions (≥ 100×100 typically), appears once or in a small number of places, has a meaningful figcaption nearby. Surface as segments (one per `address` on the row; for a single-occurrence row that's one segment, for repeated bytes that's N segments).
+    - **Decorative chrome** — small dimensions (< 32×32 per the `members` derivation's `width`/`height`), empty alt + no surrounding figure context, the same icon repeated many times across UI cards. Skip — emit no segment. The row stays in the roster either way: the roster is unabridged and wholly attested, so there is no pruning choice to make here — declining to place the asset IS the pruning decision (spec §4.3.1.4).
 
-    Scan the embed list once to plan; then walk the cleaned HTML emitting text and image segments together so reading order is preserved.
+    Scan the `?members` inventory once to plan; then walk the cleaned HTML emitting text and image segments together so reading order is preserved.
 
-    ## Image embeds — resolve and describe
+    ## Images — resolve and describe on the segment
 
-    Image segments are **body-empty positioning markers** (SPEC §4.3.2.3) — they mark where the image falls in reading order and carry no body. The faithful description of what the image SHOWS lives on the matching `<!--embed image/...-->` block's `description:` field, keyed by the embed's `address`. Don't paste the alt text in verbatim — it's a hint, not the description; describe what the image actually shows.
+    Image segments are **body-empty positioning markers** (SPEC §4.3.2.3) — they mark where the image falls in reading order and carry no body. The faithful description of what the image SHOWS lives on the placing segment's own `description:` field (`desc=` in the manifest op) — NOT on the members-block row, which is wholly attested and carries no `description` field at all (spec §4.3.1.4/§12.26). Don't paste the alt text in verbatim — it's a hint, not the description; describe what the image actually shows.
 
-    Resolve via the embed's `address`:
+    Resolve via the segment's own address (the same address that places it against the row):
 
-        uv run --directory scripts corpus resolve 'corpus://<hash>?<embed.address>'
+        uv run --directory scripts corpus resolve 'corpus://<hash>?<address>'
 
-    The command prints the cache PNG path to stdout. Read that file with the standard Read tool — you see the image — then write a faithful visible-content description into the embed's `description:` field. Per SPEC §4.3: describe what's *visible* in the image (shapes, text labels, axes, colors, structural elements, captions inside the image itself), not what the surrounding article text says about it. Don't editorialize image content. Don't infer photographer, location, or subject identity unless the image itself shows a caption that names them.
+    The command prints the cache PNG path to stdout. Read that file with the standard Read tool — you see the image — then write a faithful visible-content description onto the segment. Per SPEC §4.3: describe what's *visible* in the image (shapes, text labels, axes, colors, structural elements, captions inside the image itself), not what the surrounding article text says about it. Don't editorialize image content. Don't infer photographer, location, or subject identity unless the image itself shows a caption that names them.
 
-    When a region of the image is losslessly transcribable text (a data table, OCR-able prose, code, an equation), emit a SEPARATE text segment with the matching atom overlay on its opener (`text/data-table`, `text/ocr`, `text/code`, `text/equation`) at the chained sub-address — that lossless transcription is a text body, distinct from the embed's whole-image description.
+    When a region of the image is losslessly transcribable text (a data table, OCR-able prose, code, an equation), emit a SEPARATE text segment with the matching atom overlay on its opener (`text/data-table`, `text/ocr`, `text/code`, `text/equation`) at the chained sub-address — that lossless transcription is a text body, distinct from the image segment's own whole-image description.
 
     For survival-relevant images (in-body figures, charts, diagrams), this resolve + describe pass is the main interpretive lift.
 
-    When the resolver fails (corrupt data URI, unrecognized format, decode error) it raises a `ValueError`. Leave the embed `description:` empty and add a segment-scope `partial-content` issue (addressed at the image segment) naming the failure mode, then move on.
+    When the resolver fails (corrupt data URI, unrecognized format, decode error) it raises a `ValueError`. Leave the segment's `description:` empty and add a segment-scope `partial-content` issue (addressed at the image segment) naming the failure mode, then move on.
 
     ## Verification
 
-    - Top-level body order: frontmatter → fields blocks → embed blocks → sections/segments. No embeds between segments.
+    - Top-level body order: frontmatter → fields blocks → the `<!--members-->` block → sections/segments. No member rows interleaved between segments.
     - Top-level structure matches the rule above: H1-rooted sections, H2-rooted sections, or sectionless. No fabricated section breaks; no merged-across-natural-boundary sections.
     - Every top-level section carries a descriptive `entry:` label (the heading text at the section-bounding level).
     - No segment inside a section carries an `entry:` (segments are not TOC units when nested; the parser rejects it).
     - **No segment body is a single heading line** — heading text at the section-bounding level promotes to section entries; deeper headings stay inline at the start of segment bodies.
     - Segment addresses are `el=N` or `el=N-M` referencing addressable elements in the raw artifact (lifted from `data-el` annotations). No `selector=` addresses on new emissions.
-    - Every image segment's `address` appears in some embed's `address` field (scalar match or list membership). Orphan embeds (no segment surfaces them) MAY be pruned.
-    - Every image segment is body-empty; the visible-content description lives on the matching embed's `description:` field and describes what's *visible* in the image, not what the surrounding text says about it.
+    - Every image segment's `address` appears in some row's `address` field (scalar match or list membership) — except resolver-materializable addresses (an artifact self-slice or a lineage-chained reference), which need no row at all (spec §4.3.1.4). An unplaced row (no segment surfaces it) is tolerated, never pruned — the roster is unabridged by design.
+    - Every image segment is body-empty; the visible-content description lives on the segment's OWN `description:` field (never the row) and describes what's *visible* in the image, not what the surrounding text says about it.
     - `description` is a single physical line in frontmatter, populated for every normalized record.
     - Drafter-emitted issues (e.g. bot-block `partial-content`) are preserved. The normalizer may ADD issues (e.g. paywall) but doesn't remove or modify the drafter's.
 extended_fields:

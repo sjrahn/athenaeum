@@ -192,10 +192,12 @@ def test_ingest_attests_one_card_embed_per_wellformed_card(tmp_path):
         assert e["media_type"] == "text/vcard"
         assert e["transport"] == records.format_hash("blake3", _b3(member))
         assert e["fields"]["bytes"] == len(member)
-    # The display name rides the embed description: (FN, formed N, FN).
-    assert by_addr["card=1"]["fields"]["description"] == "Ada Lovelace"
-    assert by_addr["card=2"]["fields"]["description"] == "Alan Turing"
-    assert by_addr["card=3"]["fields"]["description"] == "With Photo"
+    # *(3.4)* The card's display name (FN) is NOT stored. It is a reading of the member's
+    # content, so the roster's closed four-key row has no place for it (spec §4.3.1.4) — it
+    # comes from the `members` derivation instead. `bytes` survives because size accounting is
+    # a cross-record question the roster exists to answer without opening artifacts.
+    for n in (1, 2, 3):
+        assert set(by_addr[f"card={n}"]["fields"]) == {"bytes"}
 
 
 def test_manifest_content_zone_is_empty_and_lints_clean(tmp_path):

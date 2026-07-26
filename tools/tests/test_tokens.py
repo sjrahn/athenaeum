@@ -43,12 +43,26 @@ def test_tiers_are_cumulative() -> None:
     assert tc["full"] == tc["blocks"]
 
 
-def test_images_add_to_full_only() -> None:
+def test_image_members_do_not_add_to_full() -> None:
+    """*(3.4)* Image members contribute nothing to `full`: the roster stores no pixel
+    dimensions (spec §4.3.1.4), so there is no honest number to add from `post` alone. `full`
+    is a declared estimate, and degrading is preferable to scoring members off `bytes` — which
+    for a compressed image says nothing about pixel count while reading as authoritative."""
     post = _post(body="short body", embeds=[(2080, 1831), (800, 600)])
     tc = tokens.token_counts(post)
-    expected_img = tokens.image_tokens(2080, 1831) + tokens.image_tokens(800, 600)
-    assert tc["full"] == tc["blocks"] + expected_img
-    assert expected_img > 0
+    assert tc["full"] == tc["blocks"]
+
+
+def test_an_image_artifact_still_adds_to_full() -> None:
+    """The artifact's OWN dimensions are attested on its artifact block, so they survive."""
+    post = _post(body="")
+    post.metadata["_artifact"] = {
+        "mime": "image/png",
+        "fields": {"width": 2080, "height": 1831},
+    }
+    tc = tokens.token_counts(post)
+    assert tc["full"] == tc["blocks"] + tokens.image_tokens(2080, 1831)
+    assert tokens.image_tokens(2080, 1831) > 0
 
 
 def test_image_tokens_formula_cap_and_unknown() -> None:

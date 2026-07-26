@@ -51,16 +51,53 @@ def run(args: argparse.Namespace) -> int:
     if classifies:
         print(f"\nclassifies ({len(classifies)}): LEGACY — retired in ATH-CORPUS 2.0; see `corpus lint`")
 
-    embeds = list(records.iter_embed_blocks(post))
-    if embeds:
-        print(f"\nembeds ({len(embeds)}):")
-        for em in embeds:
+    blocks = segments.iter_blocks(post.content or "")
+
+    members = list(records.iter_members(post))
+    if members:
+        # Whether the body PLACES a member is the fact a reader wants from this listing — an
+        # unplaced member is an asset the record declares and does not show. Same reference
+        # semantics as lint's `embed-unreferenced`: segment addresses plus the chain closure,
+        # so a crop at `el=3&bbox=…` counts as placing `el=3`.
+        placed: set[str] = set()
+        for blk in blocks:
+            children = blk.segments if isinstance(blk, segments.Section) else [blk]
+            for seg in children:
+                raw = getattr(seg, "address", None)
+                for addr in (raw if isinstance(raw, list) else [raw] if raw else []):
+                    placed.add(str(addr))
+                    if "&" in str(addr):
+                        placed.add(str(addr).split("&", 1)[0])
+
+        def _addrs(raw):
+            return [str(a) for a in (raw if isinstance(raw, list) else [raw]) if a]
+
+        unplaced = [m for m in members if not any(a in placed for a in _addrs(m.get("address")))]
+        total_bytes = sum(int((m.get("fields") or {}).get("bytes") or 0) for m in members)
+        # A record with no content zone is a container: the roster IS the content (§7.8
+        # `form/manifest`), so there is nothing for a member to be "unplaced" relative to —
+        # which is why lint's `embed-unreferenced` skips these records too.
+        is_roster_as_content = not blocks
+        if is_roster_as_content:
+            summary = "the roster is the content"
+        else:
+            summary = f"{len(members) - len(unplaced)} placed, {len(unplaced)} unplaced"
+        if total_bytes:
+            summary += f", {total_bytes:,} bytes"
+        print(f"\nmembers ({len(members)}): {summary}")
+        for em in members:
+            size = (em.get("fields") or {}).get("bytes")
+            where = (
+                "member  " if is_roster_as_content
+                else "placed  " if em not in unplaced
+                else "UNPLACED"
+            )
             print(
-                f"  {em.get('media_type')}  address={em.get('address')}  "
+                f"  [{where}] {em.get('media_type')}  address={em.get('address')}  "
                 f"transport={em.get('transport')}"
+                + (f"  bytes={int(size):,}" if size is not None else "")
             )
 
-    blocks = segments.iter_blocks(post.content or "")
     seg_count = sum(
         len(b.segments) if isinstance(b, segments.Section) else 1 for b in blocks
     )

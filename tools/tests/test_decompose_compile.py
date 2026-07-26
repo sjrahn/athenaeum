@@ -1,4 +1,4 @@
-"""Decompose ↔ compile round-trip tests, including embed-in-metadata-zone routing."""
+"""Decompose ↔ compile round-trip tests, including roster-in-metadata-zone routing."""
 
 from __future__ import annotations
 
@@ -42,12 +42,12 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
     post.metadata.setdefault("_classifies", []).append(
         {"namespace": "document", "id": "document", "subtype": None, "fields": {}}
     )
-    records.append_embed_block(
+    records.append_member(
         post,
         media_type="image/png",
         address="page=1&bbox=0.1,0.1,0.5,0.5",
         transport="blake3:" + "c" * 64,
-        fields={"alt": "Cover"},
+        fields={"bytes": 4118, "alt": "Cover"},
     )
     sec = segments.Section(
         address="pages=1-2",
@@ -86,12 +86,18 @@ def test_decompose_compile_roundtrip_preserves_every_block(tmp_path):
         post, blocks, workdir, source=str(rec), orig_sha256=f"sha256:{original_sha}"
     )
 
-    # Manifest must list the embed (metadata zone) before any section/seg.
+    # Manifest must list the roster (metadata zone) before any section/seg.
     manifest = (workdir / "manifest.corpus").read_text("utf-8")
-    embed_pos = manifest.index("\nembed ")
+    member_pos = manifest.index("\nmember ")
     section_pos = manifest.index("\nsection ")
     seg_pos = manifest.index("\nseg ")
-    assert embed_pos < section_pos < seg_pos
+    assert member_pos < section_pos < seg_pos
+    # *(3.4)* The manifest line carries only the closed shape — no `desc=` spill, and none of
+    # the descriptive fields the caller passed (spec §4.3.1.4). The substrate must not offer an
+    # edit the grammar forbids.
+    member_line = manifest[member_pos + 1 : manifest.index("\n", member_pos + 1)]
+    assert "bytes=4118" in member_line
+    assert "alt=" not in member_line and "desc=" not in member_line
 
     # Compile.
     rebuilt = recordbuild.read_workdir(workdir, root)
@@ -209,8 +215,8 @@ def test_multiline_description_round_trips_as_block_literal(tmp_path):
     assert rec.read_text("utf-8") == original_text  # full round-trip byte-identical
 
 
-def test_compile_routes_embed_to_metadata_zone(tmp_path):
-    """Reconciliation #1: `embed` ops produce metadata-zone embeds; the content
+def test_compile_routes_members_to_metadata_zone(tmp_path):
+    """Reconciliation #1: `member` ops produce the metadata-zone roster; the content
     body holds only sections/segments."""
     root = _make_corpus(tmp_path)
     rec = _make_golden_record_file(root)
@@ -222,8 +228,8 @@ def test_compile_routes_embed_to_metadata_zone(tmp_path):
         post, blocks, workdir, source=str(rec), orig_sha256="sha256:x"
     )
     rebuilt = recordbuild.read_workdir(workdir, root)
-    assert len(list(records.iter_embed_blocks(rebuilt))) == 1
-    assert "<!--embed" not in (rebuilt.content or "")
+    assert len(list(records.iter_members(rebuilt))) == 1
+    assert "<!--members" not in (rebuilt.content or "")
 
 
 def test_restub_preserves_byte_and_provenance_state(tmp_path):
@@ -250,7 +256,7 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     assert (records.artifact_block(re_loaded).get("fields") or {}) == {}
     assert records.title_for(re_loaded, root) == ""
     assert list(records.iter_classify_blocks(re_loaded)) == []
-    assert list(records.iter_embed_blocks(re_loaded)) == []
+    assert list(records.iter_members(re_loaded)) == []
     assert list(records.iter_issue_blocks(re_loaded)) == []
     assert (re_loaded.content or "").strip() == ""
     # Touch chain: first entry kept + re-stub touch appended.

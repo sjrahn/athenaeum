@@ -28,6 +28,34 @@ from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"}
 _TEXT_SUFFIXES = {".txt", ".md", ".json", ".csv", ".html", ".xml", ".yaml", ".yml"}
 _INLINE_CAP = 12 * 1024 * 1024  # per-asset ceiling; a bigger surface is linked, not inlined
+_PAGE_BUDGET = 64 * 1024 * 1024  # whole-page ceiling; see `_Budget`
+
+
+class _Budget:
+    """The page's aggregate inline ceiling, and the count of what it turned away.
+
+    The per-asset `_INLINE_CAP` says nothing about totals, so a record with many large
+    surfaces produced a page too big to open: one 43 MB artifact of full-page scans renders
+    57 addressed surfaces and reached ~132 MB. Past the ceiling a surface is reported with its
+    resolver path instead of its bytes, and the count of what was withheld is DECLARED on the
+    page — a truncated view that looks complete is worse than one that is visibly partial.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.spent = 0
+        self.withheld = 0
+
+    def take(self, size: int) -> bool:
+        """Charge a surface's PAGE cost, not its byte size — base64 inflates by 4/3, so a
+        budget spent in source bytes under-reports the file it produces by a third. The number
+        the flag names is the number the output approaches."""
+        cost = size * 4 // 3
+        if self.limit and self.spent + cost > self.limit:
+            self.withheld += 1
+            return False
+        self.spent += cost
+        return True
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -43,6 +71,16 @@ def configure(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Bypass the resolver cache when materializing each surface.",
     )
+    parser.add_argument(
+        "--max-inline",
+        type=int,
+        default=_PAGE_BUDGET,
+        metavar="BYTES",
+        help=(
+            "Whole-page ceiling on inlined surface bytes (default 64 MiB; 0 = unlimited). "
+            "Surfaces past it are reported with their resolver path, and the count is declared."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
@@ -54,7 +92,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"corpus view: {exc}", file=sys.stderr)
         return 1
     post = records.load(path)
-    page = _render(root, record_id, post, regenerate=args.regenerate)
+    budget = _Budget(max(0, int(getattr(args, "max_inline", _PAGE_BUDGET) or 0)))
+    page = _render(root, record_id, post, regenerate=args.regenerate, budget=budget)
     out = (
         Path(args.out).expanduser()
         if args.out
@@ -92,13 +131,19 @@ def _data_uri(path: Path) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 
 
-def _surface_html(path: Path) -> str:
+def _surface_html(path: Path, budget: _Budget) -> str:
     """An inlined surface: image as <img>, small text as <pre>, anything else as a note."""
     suffix = path.suffix.lower()
     if suffix in _IMAGE_SUFFIXES:
+        size = path.stat().st_size
+        if not budget.take(size):
+            return _note(
+                f"withheld to keep the page openable ({size / 1e6:.1f} MB would exceed the "
+                f"page budget) — resolve it directly: {path}"
+            )
         uri = _data_uri(path)
         if uri is None:
-            return _note(f"image too large to inline ({path.stat().st_size / 1e6:.1f} MB) — {path}")
+            return _note(f"image too large to inline ({size / 1e6:.1f} MB) — {path}")
         # No <a href> wrapper: that duplicated the same base64 blob a second time (once in
         # href, once in src), doubling every image's contribution to the page's footprint
         # for a "open in new tab" that a right-click on the <img> already gives you.
@@ -177,7 +222,7 @@ def _segment_id(seg: segments.Segment) -> str:
     return str(seg.overlay or seg.atom)
 
 
-def _render(root: Path, record_id: str, post: Any, *, regenerate: bool) -> str:
+def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: _Budget) -> str:
     media_type = records.media_type_for(post)
     try:
         title = records.title_for(post, root) or "(untitled)"
@@ -205,24 +250,20 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool) -> str:
         parts.append(_kv(f"origin {origin.get('id') or ''}", fields.get("uri") or fields))
     parts.append("</section>")
 
-    embeds = list(records.iter_embed_blocks(post))
-    if embeds:
-        parts.append(f"<section><h2>embeds ({len(embeds)})</h2>")
-        for embed in embeds:
-            address = embed.get("address")
-            fields = embed.get("fields") or {}
-            parts.append(f"<div class=block><h3>{html.escape(str(address))} "
-                         f"<span class=tag>{html.escape(str(embed.get('media_type') or ''))}"
-                         "</span></h3>")
-            desc = fields.get("description")
-            if desc:
-                parts.append(f"<p class=desc>{html.escape(str(desc))}</p>")
-            path, err = _resolve_surface(root, record_id, address, regenerate=regenerate)
-            parts.append(_surface_html(path) if path else _note(err or "no address"))
-            parts.append("</div>")
-        parts.append("</section>")
-
+    members = list(records.iter_members(post))
     blocks = segments.iter_blocks(post.content or "")
+    placed = _placed_addresses(blocks)
+
+    # The roster IS the content when there is no content zone to place anything in — a
+    # container record (`form/manifest`, §7.8). There, render every member, up front.
+    if members and not blocks:
+        parts.append(f"<section><h2>members ({len(members)}) — the content</h2>")
+        for member in members:
+            parts.append(_member_html(root, record_id, member, regenerate=regenerate,
+                                      budget=budget))
+        parts.append("</section>")
+        members = []
+
     if not blocks:
         parts.append("<section><h2>content</h2>" + _note(
             "no stored rendering — this record's body is the `body` derivation op"
@@ -238,12 +279,50 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool) -> str:
             for key, value in (block.to_header_dict() or {}).items():
                 parts.append(_kv(key, value))
             for seg in block.segments:
-                parts.append(_segment_html(root, record_id, seg, regenerate=regenerate))
+                parts.append(_segment_html(root, record_id, seg, regenerate=regenerate,
+                                           budget=budget))
             parts.append("</section>")
         else:
             parts.append("<section><h2>segment (formless)</h2>")
-            parts.append(_segment_html(root, record_id, block, regenerate=regenerate))
+            parts.append(_segment_html(root, record_id, block, regenerate=regenerate,
+                                       budget=budget))
             parts.append("</section>")
+
+    if members:
+        unplaced = [m for m in members if not _is_placed(m, placed)]
+        parts.append(f"<section><h2>members ({len(members)})</h2>")
+        parts.append(_note(
+            f"{len(members) - len(unplaced)} placed in the body above; "
+            f"{len(unplaced)} unplaced. A placed member is NOT re-rendered here — the body "
+            f"already shows it at the derivation the record chose, which for a covered or "
+            f"cropped asset is the faithful one and the whole asset is not."
+        ))
+        parts.append(_members_table(record_id, members, placed))
+        if unplaced:
+            parts.append(f"<h2>unplaced members ({len(unplaced)})</h2>")
+            parts.append(_note(
+                "Declared by the record, placed by no segment. Rendered here because this is "
+                "the only surface that shows them — and because an unplaced photo usually "
+                "means imagery was missed, not that it is chrome."
+            ))
+            for member in unplaced:
+                parts.append(_member_html(root, record_id, member, regenerate=regenerate,
+                                          budget=budget))
+        parts.append("</section>")
+
+    if budget.withheld:
+        # Declared, not silent: a truncated page that reads as exhaustive is the failure mode
+        # this guards against (the same honesty the lint layer applies to capped findings).
+        parts.append(
+            "<section><h2>withheld</h2>"
+            + _note(
+                f"{budget.withheld} surface(s) were not inlined — the page reached its "
+                f"{budget.limit / 1e6:.0f} MB budget after {budget.spent / 1e6:.0f} MB. "
+                f"Raise it with `--max-inline BYTES` (0 = unlimited), or resolve those "
+                f"surfaces individually."
+            )
+            + "</section>"
+        )
 
     contexts = list(records.iter_context_blocks(post))
     if contexts:
@@ -259,8 +338,87 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool) -> str:
     return "\n".join(parts)
 
 
+def _addr_list(raw: Any) -> list[str]:
+    """A block's address(es) as strings — scalar or list (spec §4.3.1.4)."""
+    if isinstance(raw, list):
+        return [str(a) for a in raw if a]
+    return [str(raw)] if raw else []
+
+
+def _placed_addresses(blocks: list[Any]) -> set[str]:
+    """Every address the content zone places an asset at, plus the leading axis of each chain.
+
+    Deliberately the same semantics as lint's `embed-unreferenced` reference set: SEGMENT
+    addresses only — a section's span address is a form span, not a placement — plus the
+    chain closure, so a crop at `el=3&cover=…&bbox=…` counts as placing the `el=3` asset. That
+    equivalence is the point: what the viewer declines to re-render must be exactly what lint
+    considers placed, or the two disagree about the same record.
+    """
+    placed: set[str] = set()
+    for block in blocks:
+        children = block.segments if isinstance(block, segments.Section) else [block]
+        for seg in children:
+            for addr in _addr_list(getattr(seg, "address", None)):
+                placed.add(addr)
+                if "&" in addr:
+                    placed.add(addr.split("&", 1)[0])
+    return placed
+
+
+def _is_placed(member: dict[str, Any], placed: set[str]) -> bool:
+    return any(a in placed for a in _addr_list(member.get("address")))
+
+
+def _members_table(record_id: str, members: list[dict[str, Any]], placed: set[str]) -> str:
+    """The roster as metadata — no bytes resolved, no pixels inlined.
+
+    This is the whole shape of the change: the roster is an index (spec §4.3.1.4), so the
+    viewer presents it as one. Rendering every member up front meant a page showed each asset
+    twice — once raw at the top, once again in the body at the derivation the record actually
+    chose — and on a record whose crops cover page chrome, the raw copy was the LESS faithful
+    of the two while being the first thing the eye landed on.
+    """
+    rows = [
+        "<div class=scroll><table><thead><tr>"
+        "<th>address</th><th>media type</th><th>bytes</th><th>placed</th><th>resolve</th>"
+        "</tr></thead><tbody>"
+    ]
+    for member in members:
+        addrs = _addr_list(member.get("address"))
+        size = (member.get("fields") or {}).get("bytes")
+        where = "placed" if _is_placed(member, placed) else "UNPLACED"
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(', '.join(addrs))}</td>"
+            f"<td>{html.escape(str(member.get('media_type') or ''))}</td>"
+            f"<td>{'' if size is None else f'{int(size):,}'}</td>"
+            f"<td>{where}</td>"
+            f"<td><code>corpus resolve 'corpus://{html.escape(record_id[:12])}…"
+            f"?{html.escape(addrs[0] if addrs else '')}'</code></td>"
+            "</tr>"
+        )
+    rows.append("</tbody></table></div>")
+    return "".join(rows)
+
+
+def _member_html(
+    root: Path, record_id: str, member: dict[str, Any], *, regenerate: bool, budget: _Budget
+) -> str:
+    """One member rendered with its bytes — for the two cases that have nowhere else to show:
+    a container whose roster IS its content, and an unplaced asset."""
+    address = member.get("address")
+    out = [
+        f"<div class=block><h3>{html.escape(str(address))} "
+        f"<span class=tag>{html.escape(str(member.get('media_type') or ''))}</span></h3>"
+    ]
+    path, err = _resolve_surface(root, record_id, address, regenerate=regenerate)
+    out.append(_surface_html(path, budget) if path else _note(err or "no address"))
+    out.append("</div>")
+    return "\n".join(out)
+
+
 def _segment_html(
-    root: Path, record_id: str, seg: segments.Segment, *, regenerate: bool
+    root: Path, record_id: str, seg: segments.Segment, *, regenerate: bool, budget: _Budget
 ) -> str:
     if seg.is_structural:
         return (f"<div class=block><h3>structural mark "
@@ -277,7 +435,7 @@ def _segment_html(
     # was read off it. Resolve FIRST so the eye lands on the source before the reading.
     path, err = _resolve_surface(root, record_id, seg.address, regenerate=regenerate)
     if path:
-        parts.append(_surface_html(path))
+        parts.append(_surface_html(path, budget))
     elif err:
         # Surfaced loudly either way: a marker that will not resolve is a broken record, and
         # a TRANSCRIPTION whose address will not resolve has lost its provenance — which is

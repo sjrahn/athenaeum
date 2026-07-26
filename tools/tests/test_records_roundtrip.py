@@ -1,4 +1,4 @@
-"""Records round-trip + embed-in-metadata-zone (reconciliation #1) tests."""
+"""Records round-trip + roster-in-metadata-zone (reconciliation #1) tests."""
 
 from __future__ import annotations
 
@@ -39,13 +39,13 @@ def _make_golden(tmp_path):
     post.metadata.setdefault("_classifies", []).append(
         {"namespace": "document", "id": "document", "subtype": None, "fields": {}}
     )
-    # Reconciliation #1: embed lives in the METADATA zone.
-    records.append_embed_block(
+    # Reconciliation #1: the members roster lives in the METADATA zone.
+    records.append_member(
         post,
         media_type="image/png",
         address="page=1&bbox=0.1,0.1,0.5,0.5",
         transport="blake3:" + "c" * 64,
-        fields={"alt": "Cover figure"},
+        fields={"bytes": 4118, "alt": "Cover figure"},
     )
     # Content zone — one sectionless segment.
     seg = segments.Segment(atom="text", address="page=1", body="First page text.")
@@ -66,10 +66,10 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     records.dump(post, p)
     raw = p.read_text("utf-8")
 
-    # Sanity: embed line appears BEFORE any section/segment line (metadata zone).
-    embed_pos = raw.index("<!--embed")
+    # Sanity: the members block appears BEFORE any section/segment line (metadata zone).
+    members_pos = raw.index("<!--members")
     segment_pos = raw.index("<!--segment")
-    assert embed_pos < segment_pos, "embed must precede content zone (reconciliation #1)"
+    assert members_pos < segment_pos, "roster must precede content zone (reconciliation #1)"
     # And the issue (now an `issue`-namespace context block) is in the annotation zone.
     issue_pos = raw.index("<!--context issue/")
     assert segment_pos < issue_pos
@@ -96,17 +96,20 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     assert classifies[0]["namespace"] == "document"
     assert classifies[0]["id"] == "document"
 
-    # The embed re-homing: embed is parsed FROM the metadata zone.
-    embeds = list(records.iter_embed_blocks(loaded))
-    assert len(embeds) == 1
-    e = embeds[0]
-    assert e["media_type"] == "image/png"
-    assert e["address"] == "page=1&bbox=0.1,0.1,0.5,0.5"
-    assert e["transport"].startswith("blake3:")
-    assert e["fields"]["alt"] == "Cover figure"
+    # The roster is parsed FROM the metadata zone.
+    members = list(records.iter_members(loaded))
+    assert len(members) == 1
+    m = members[0]
+    assert m["media_type"] == "image/png"
+    assert m["address"] == "page=1&bbox=0.1,0.1,0.5,0.5"
+    assert m["transport"].startswith("blake3:")
+    # *(3.4)* The row is closed to four keys: `bytes` survives, the `alt` the caller passed does
+    # not. Dropping at the append/emit seams is what keeps the shape closed without every
+    # producer having to know about it (spec §4.3.1.4).
+    assert m["fields"] == {"bytes": 4118}
 
-    # Content zone is segments only — no embed leaked into it.
-    assert "<!--embed" not in (loaded.content or "")
+    # Content zone is segments only — no roster block leaked into it.
+    assert "<!--members" not in (loaded.content or "")
     content_blocks = segments.iter_blocks(loaded.content or "")
     assert len(content_blocks) == 1
     assert isinstance(content_blocks[0], segments.Segment)
@@ -127,7 +130,7 @@ def test_derived_classifications_view(tmp_path):
     loaded = records.load(p)
     derived = records.derived_classifications(loaded)
     # Per spec §9.1 (2.0): mime + origin contribute; legacy classify blocks,
-    # embeds, and issues do not.
+    # the members roster, and issues do not.
     assert derived == [
         "mime/application/pdf",
         "origin/example.com",
@@ -437,7 +440,7 @@ def test_local_origin_dedups_by_filename():
 
 
 def test_segments_module_does_not_recognize_embed_openers():
-    """Reconciliation #1: embeds belong to records.py, not segments.py."""
+    """Reconciliation #1: the roster belongs to records.py, not segments.py."""
     body = "<!--embed image/png\naddress: page=1\ntransport: blake3:abc\n-->\n"
     blocks = segments.iter_blocks(body)
     # The embed line isn't an opener in the content-zone grammar — nothing parses.

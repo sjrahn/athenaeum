@@ -498,29 +498,58 @@ def _resolve_members(
     *,
     regenerate: bool,
 ) -> Path:
-    """Materialize the `members` derivation op (§6.2): the container's member manifest as
-    JSON, derived from the record's attested embed blocks (each a member transport — its
-    address in the container's own axis, its blake3 `transport`, size, and sniffed MIME).
-    Cached like any resolver result."""
+    """Materialize the `members` derivation op (§6.2): the record's member roster as JSON,
+    **with its full descriptors** — the address in the transport's own axis, the member's blake3
+    `transport`, its size and MIME, plus every mechanically-readable per-member fact the format
+    exposes (pixel dimensions, verbatim `alt`, member filename, an email member's
+    `from`/`subject`/`date`, a vCard's display name).
+
+    *(3.4)* This is where those descriptors LIVE now. The stored roster is a four-key index
+    (spec §4.3.1.4) precisely so the cross-record questions stay cheap, which leaves this op as
+    the surface a normalize pass consults to see what an artifact carries — the block by design
+    says less. So the op re-runs the drafter's member extraction over the artifact rather than
+    projecting the stored rows: **one extractor, two projections.** Attestation keeps the four
+    keys; this keeps everything. Both read the same function, so they cannot drift.
+
+    Falls back to the stored rows when the artifact cannot be read (bytes not resident, no
+    drafter for the type). The fallback is lossy — four keys, no descriptors — and says so in
+    the payload, because a caller that silently got less than it asked for is worse than one
+    told the surface was degraded. Cached like any resolver result."""
     urihash_value = furi.urihash(canonical_uri)
     cache_p = furi.cache_path(corpus_root, urihash_value, "json")
     if cache_p.is_file() and not regenerate:
         return cache_p.resolve()
 
+    rows: list[dict[str, Any]] = []
+    derived_from = "artifact"
+    try:
+        from corpus import derive as _derive
+
+        _build, result, _mt, _bin, _sid = _derive.build_content_zone(
+            artifact_record, corpus_root
+        )
+        rows = list(result.get("embeds") or [])
+    except Exception as exc:  # parse tolerantly (spec §3): report the degradation, never fail
+        derived_from = f"stored-roster ({type(exc).__name__})"
+        rows = list(records.iter_members(artifact_record))
+
     members: list[dict[str, Any]] = []
-    for embed in records.iter_embed_blocks(artifact_record):
-        addr = embed.get("address")
-        fields = embed.get("fields") or {}
+    for row in rows:
+        addr = row.get("address")
+        fields = dict(row.get("fields") or {})
+        size = fields.pop("bytes", None)
         for one in addr if isinstance(addr, list) else [addr]:
-            members.append(
-                {
-                    "address": one,
-                    "transport": embed.get("transport"),
-                    "media_type": embed.get("media_type"),
-                    "bytes": fields.get("bytes"),
-                }
-            )
-    payload = {"count": len(members), "members": members}
+            entry = {
+                "address": one,
+                "transport": row.get("transport"),
+                "media_type": row.get("media_type"),
+                "bytes": size,
+            }
+            # Descriptors keep their own names, after the four so the shape a reader already
+            # knows stays at the front of every object.
+            entry.update({k: v for k, v in fields.items() if v is not None})
+            members.append(entry)
+    payload = {"count": len(members), "derived_from": derived_from, "members": members}
 
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -84,7 +84,7 @@ def derive_record(
     stored rendering yet. The transitional core shared by `corpus draft` and the
     `redraft_record` test helper (§12.19). Raises `DraftError` (missing schema / drafter) or
     `ArtifactMissing` (artifact not local)."""
-    from corpus.derive import produces_body, reattach_descriptions, strip_attested_layer
+    from corpus.derive import produces_body, strip_attested_layer
 
     build, result, mt_schema, binary_file, mime_schema_id = build_content_zone(
         post, corpus_root, fingerprint_cli=fingerprint_cli, messages=messages
@@ -93,17 +93,18 @@ def derive_record(
     canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
 
     # Idempotent attest: strip any attested layer already present (a 3.0 ingest attests at
-    # stub time) before re-applying, so a transitional draft never doubles embeds/issues.
+    # stub time) before re-applying, so a transitional draft never doubles the roster/issues.
     # The mbox manifest is EXEMPT — it is cumulative by design (its result is the delta over
-    # the already-declared embeds; §12.11), and ingest attests it with no messages (an empty
+    # the already-declared members; §12.11), and ingest attests it with no messages (an empty
     # manifest), so there is nothing to double.
+    # No description carry (3.4): the roster is wholly attested, so there is nothing to preserve
+    # across the strip. This path is the RETIRED draft core (§12.19) and runs only on records it
+    # is handed directly, so it carries no `PendingMemberDescriptions` gate — `derive.attest` is
+    # the live re-attestation path and holds it.
     strategy = str((mt_schema.get("draft") or {}).get("strategy") or "")
     if strategy != "mbox-manifest":
-        authored_desc = strip_attested_layer(post)
-        _apply_drafter_result(post, result, mime_schema_id, corpus_root)
-        reattach_descriptions(post, authored_desc)
-    else:
-        _apply_drafter_result(post, result, mime_schema_id, corpus_root)
+        strip_attested_layer(post)
+    _apply_drafter_result(post, result, mime_schema_id, corpus_root)
 
     # Emit the content zone the drafter built on the Build — body-draft schemas only
     # (spec §7.1). `finish` re-parses to surface grammar errors before any write.

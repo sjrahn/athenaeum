@@ -527,11 +527,12 @@ def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
     address that materializes nothing is a citation pointing at no bytes — an error, not
     a cosmetic defect.
 
-    Covers sections, segments, metadata-zone embeds, and body wikilinks — every place a
-    record stores an address. The judgement itself is `functional_uri.region_errors`,
-    which is the same grammar the transform renders through, and which deliberately
-    declines to judge a non-numeric value (a spreadsheet's `bbox=A1:D20` is a different
-    grammar wearing the same key)."""
+    Covers sections, segments, and metadata-zone embeds — every place a record stores an
+    address. *(3.4: body wikilinks are gone — segment bodies carry no stored addresses at
+    all, §4.3.2.2 — so this no longer covers them.)* The judgement itself is
+    `functional_uri.region_errors`, which is the same grammar the transform renders
+    through, and which deliberately declines to judge a non-numeric value (a
+    spreadsheet's `bbox=A1:D20` is a different grammar wearing the same key)."""
 
     def _check(addr: str, where: str) -> Iterator[Finding]:
         for param, problem in _region_problems(addr):
@@ -556,8 +557,6 @@ def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         for addr in _addresses(eb.get("address")):
             yield from _check(addr, f"embed {i}")
-    for addr in sorted(_wikilink_addresses(post)):
-        yield from _check(addr, "body wikilink")
 
 
 # ---------- annotation-zone (issue) rules ---------- #
@@ -883,49 +882,6 @@ def _rule_segment_mode_deprecated(post, blocks, root) -> Iterator[Finding]:
 
 # ---------- embeds (metadata zone) ---------- #
 
-_EMBED_ADDRESS_KEYS = {"el", "time", "page", "frame", "time_range"}
-
-
-def _rule_embed_description_empty_on_normalized(post, blocks, root) -> Iterator[Finding]:
-    """An embed carried by a record past the attested-only baseline — carrying a deliberate
-    editorial override (spec §4.2.1 — the 3.2 analog of "the vouch is written" for a record
-    with no content zone to hold a form-section vouch) or already rendering stored content —
-    whose image/audio/video embed has no `description` is missing the normalizer's
-    whole-asset summary (info — persist an issue if intentionally undescribed). Unlike the
-    3.0 `status == "normalized"` gate (which implied BOTH halves), either half alone is
-    enough signal that this embed should have been looked at by now.
-
-    *(3.3)* A TERMINAL-governed record (§7.8) is exempt outright — its members (a
-    manifest's attested member embeds, most visibly) are the licensed residue of a
-    deliberate describe pass, never demand (§8.5): the roster IS the attestation, and
-    per-member descriptions are each promoted member's own concern, not a nag on the
-    container. §12.20 anticipated this: its "body-empty" lint warning dissolves with its
-    embeds, exactly as a zip's would."""
-    governing = _shape.governing_form(post, root)
-    if governing is not None and governing[1]:
-        return
-    if not (_records.has_editorial_override(post) or _records.has_stored_rendering(post)):
-        return
-    for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
-        top_type = str(eb.get("media_type") or "").split("/", 1)[0]
-        if top_type not in ("image", "audio", "video"):
-            continue
-        desc = (eb.get("fields") or {}).get("description")
-        if isinstance(desc, str) and desc.strip():
-            continue
-        yield Finding(
-            rule_id="embed-description-empty-on-normalized",
-            severity="info",
-            message=(
-                f"embed {i} (`{eb.get('media_type')}` at `{_addr_str(eb.get('address'))}`) carries "
-                f"no `description` on a record past the attested-only baseline. Populate the "
-                f"whole-asset summary, or persist an issue if the asset is intentionally "
-                f"undescribed (chrome, logo)."
-            ),
-            address=_addr_str(eb.get("address")),
-            fields={"media_type": eb.get("media_type")},
-        )
-
 
 def _embed_address_set(post) -> set[str]:
     out: set[str] = set()
@@ -934,27 +890,11 @@ def _embed_address_set(post) -> set[str]:
     return out
 
 
-def _wikilink_addresses(post) -> set[str]:
-    from corpus import embeds as _embeds
-    from corpus import functional_uri as _furi
-
-    record_id = post.metadata.get("id") or ""
-    out: set[str] = set()
-    for wk in _embeds.find_wiki_embeds(post.content or ""):
-        try:
-            parsed = _furi.parse(wk.uri)
-        except Exception:
-            continue
-        if parsed.hash != record_id:
-            continue
-        for k, v in parsed.params:
-            if v is not None:
-                out.add(f"{k}={v}")
-    return out
-
-
 def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
-    """A metadata-zone embed whose address is referenced by no segment and no body wikilink.
+    """A metadata-zone embed whose address is referenced by no segment.
+
+    *(3.4: body wikilinks are gone, §4.3.2.2 — a segment address is the only kind of
+    reference left to check.)*
 
     Skipped for a **manifest** record — one with no content-zone segments at all (e.g. a
     self_contained archive recorded as embeds, where each member is an embedded transport).
@@ -974,7 +914,7 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
     )
     if not has_segment:
         return
-    referenced: set[str] = _wikilink_addresses(post)
+    referenced: set[str] = set()
     # Only SEGMENT addresses reference embeds (§4.3.1.4 — address membership on segments).
     # A section's span address does not: a 3.0 section is a form span, not an
     # embed-referencing grouping, and the 2.x leniency that counted it masked latent orphans.
@@ -998,7 +938,7 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
                 severity="warning",
                 message=(
                     f"embed {i} (`{eb.get('media_type')}` at `{','.join(addrs)}`) is not "
-                    f"referenced by any segment or body wikilink."
+                    f"referenced by any segment."
                 ),
                 address=",".join(addrs),
                 fields={"media_type": eb.get("media_type")},
@@ -1006,14 +946,13 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
-    """An image segment (or body wikilink) at an address that no embed in this record carries.
+    """An image segment at an address that no embed in this record carries.
     Artifact-self-slices (`frame=`/`page=`/`bbox=` rendered from the artifact) and
     lineage-chained references (`turn=N&att=M`, §4.3.1.4) need no embed — the resolver
-    materializes them on demand."""
-    from corpus import embeds as _embeds
-    from corpus import functional_uri as _furi
+    materializes them on demand.
 
-    record_id = post.metadata.get("id") or ""
+    *(3.4: the body-wikilink half is gone — segment bodies carry no stored addresses at
+    all, §4.3.2.2 — so this rule now checks image segments only.)*"""
     artifact_mime = _records.media_type_for(post)
     known = _embed_address_set(post)
 
@@ -1050,34 +989,11 @@ def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
                     ),
                     address=",".join(ext),
                 )
-    for wk in _embeds.find_wiki_embeds(post.content or ""):
-        try:
-            parsed = _furi.parse(wk.uri)
-        except Exception:
-            continue
-        if parsed.hash != record_id:
-            continue
-        addr_params = [
-            f"{k}={v}" for k, v in parsed.params if v is not None and k in _EMBED_ADDRESS_KEYS
-        ]
-        ext = [a for a in addr_params if not _self_slice(a)]
-        if ext and not any(a in known for a in ext):
-            yield Finding(
-                rule_id="embed-missing-target",
-                severity="error",
-                message=(
-                    f"wikilink `{wk.uri}` references address `{','.join(ext)}` but no embed in "
-                    f"this record carries that address."
-                ),
-                address=",".join(ext),
-            )
 
 
 # ---------- body sanity (markdown) ---------- #
 
 _HTML_RESIDUE_RE = re.compile(r"<\s*(script|style|iframe)\b", re.IGNORECASE)
-_WIKILINK_WELLFORMED_RE = re.compile(r"!?\[\[(?:(?!\[\[|\]\]).)*?\]\]", re.DOTALL)
-_WIKILINK_OPEN_RE = re.compile(r"\[\[")
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 # Verbatim-transcript atoms (§12.18 step 4): a chat user genuinely typing an unpaired ``` is
 # faithful content, not a truncation artifact, so those bodies are exempt from fence-balance
@@ -1134,19 +1050,43 @@ def _rule_body_html_residue(post, blocks, root) -> Iterator[Finding]:
         )
 
 
-def _rule_body_wikilink_malformed(post, blocks, root) -> Iterator[Finding]:
-    residual = _WIKILINK_WELLFORMED_RE.sub("", post.content or "")
-    dangling = len(_WIKILINK_OPEN_RE.findall(residual))
-    if dangling:
-        yield Finding(
-            rule_id="body-wikilink-malformed",
-            severity="warning",
-            message=(
-                f"body has {dangling} unclosed `[[` wikilink opener(s) after removing "
-                f"well-formed links."
-            ),
-            fields={"dangling_openers": dangling},
-        )
+_BODY_WIKILINK_RE = re.compile(r"!?\[\[\s*(?:corpus://|[0-9a-f]{64})", re.IGNORECASE)
+
+
+def _rule_body_corpus_link_forbidden(post, blocks, root) -> Iterator[Finding]:
+    """A segment body carries **no intra-corpus links** (spec §4.3.2.2, §5.1 — the 3.4
+    body-link retirement, §12.26). Both stored forms are gone: a bare `corpus://`
+    functional URI, and a `[[`/`![[` wikilink opening onto either a `corpus://` URI or a
+    raw 64-hex blake3 hash. The resolution either would name is derivable at read time
+    from the record's own bytes plus its lineage (§12.4.7), so storing it duplicates a
+    derivation and can disagree with it. Nothing inside one transport ever needed a link
+    either — an inline asset is its own positioning segment, addressed on the artifact's
+    own axis.
+
+    A bare `[[` alone is NOT the signal — plenty of faithfully-transcribed source carries
+    it innocently (Swift's `[[Foo]]` nested-array type syntax, for one, caught live during
+    verification). Only a `[[`/`![[` opening directly onto the corpus-reference grammar
+    counts.
+
+    Scoped to **segment bodies in the content zone only**, via `_iter_all_segments` —
+    never the metadata zone. A promoted record's origin-block lineage `uri:
+    corpus://<container>?<address>` (present on thousands of records) is capture
+    history, not a lookup route (§8.1, §12.15), and lives in `post.metadata`, not in any
+    segment body, so it is structurally out of this rule's reach."""
+    for seg in _iter_all_segments(blocks):
+        body = seg.body or ""
+        if "corpus://" in body or _BODY_WIKILINK_RE.search(body):
+            yield Finding(
+                rule_id="body-corpus-link-forbidden",
+                severity="error",
+                message=(
+                    "segment body carries a `corpus://` reference or a `[[`/`![[` "
+                    "wikilink onto one — segment bodies carry no intra-corpus links "
+                    "(spec §4.3.2.2); express cross-artifact connection via the "
+                    "source's own URL instead."
+                ),
+                address=_addr_str(seg.address),
+            )
 
 
 def _rule_body_codefence_unbalanced(post, blocks, root) -> Iterator[Finding]:
@@ -1489,12 +1429,11 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-description-required", _rule_segment_body_lossless_contract),
     ("section-description-redundant", _rule_section_description_redundant),
     ("segment-mode-deprecated", _rule_segment_mode_deprecated),
-    ("embed-description-empty-on-normalized", _rule_embed_description_empty_on_normalized),
     ("embed-unreferenced", _rule_embed_unreferenced),
     ("embed-missing-target", _rule_embed_missing_target),
     ("body-empty-normalized", _rule_body_empty_normalized),
     ("body-html-residue", _rule_body_html_residue),
-    ("body-wikilink-malformed", _rule_body_wikilink_malformed),
+    ("body-corpus-link-forbidden", _rule_body_corpus_link_forbidden),
     ("body-codefence-unbalanced", _rule_body_codefence_unbalanced),
     ("body-unknown-comment", _rule_body_unknown_comment),
     # 3.0 byte-mark + form-coherence (§4.3.2.1, §4.3.2.3, §7.8).
@@ -1662,8 +1601,6 @@ def _iter_stored_addresses(post, blocks) -> Iterator[tuple[str, str]]:
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         for addr in _addresses(eb.get("address")):
             yield addr, f"embed {i}"
-    for addr in sorted(_wikilink_addresses(post)):
-        yield addr, "body wikilink"
 
 
 def _one_line(exc: Exception) -> str:

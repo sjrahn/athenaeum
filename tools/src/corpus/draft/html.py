@@ -643,7 +643,16 @@ def compute_embed_metadata(tag: Tag) -> dict[str, Any] | None:
         meta = _compute_img_embed_metadata(tag)
         if meta is None:
             return None
-        fields: dict[str, Any] = {"width": meta["width"], "height": meta["height"]}
+        # `bytes` is one of the four keys the stored roster keeps (spec §4.3.1.4), so it must
+        # be attested here — the decoded length is free, since these bytes were just decoded to
+        # hash them. Without it 19,592 inline-image rows would carry no size and the roster
+        # could not answer "how much does this hold" without opening every artifact, which is
+        # the whole reason the field is admitted.
+        fields: dict[str, Any] = {
+            "bytes": meta["bytes"],
+            "width": meta["width"],
+            "height": meta["height"],
+        }
         if meta.get("alt"):
             fields["alt"] = meta["alt"]
         return {"media_type": meta["media_type"], "byte_hash": meta["byte_hash"], "fields": fields}
@@ -656,7 +665,7 @@ def compute_embed_metadata(tag: Tag) -> dict[str, Any] | None:
         return None
     media_type, raw = parsed
     byte_hash = _blake3.blake3(raw).hexdigest()
-    carrier_fields: dict[str, Any] = {}
+    carrier_fields: dict[str, Any] = {"bytes": len(raw)}
     if tag.name == "a":
         filename = attachment_filename(tag)
         if filename:
@@ -720,6 +729,7 @@ def _compute_img_embed_metadata(img: Tag) -> dict[str, Any] | None:
     return {
         "media_type": media_type,
         "byte_hash": byte_hash,
+        "bytes": len(raw),
         "width": width,
         "height": height,
         "alt": alt,
