@@ -639,3 +639,35 @@ def test_text_element_raises_not_materializable_not_a_plain_error():
     with pytest.raises(ValueError) as exc:
         thtml.extract_el(soup, "99", {})
     assert not isinstance(exc.value, NotMaterializable)
+
+
+def test_inline_svg_is_not_materializable_not_undecodable():
+    """PIL has no SVG rasterizer, so a perfectly valid inline SVG reaches the decode path
+    and fails there. That is a capability gap, NOT corrupt bytes — and calling it "failed
+    to decode" made two records read as broken provenance for a whole arc while their
+    bytes were fine (spec §12.24). Valid `<svg>` root → NotMaterializable; real garbage
+    stays an ordinary error."""
+    import base64
+
+    import pytest
+    from bs4 import BeautifulSoup
+
+    from corpus.transforms import NotMaterializable
+    from corpus.transforms import html as thtml
+
+    def _img(payload: bytes, media_type: str) -> str:
+        b64 = base64.b64encode(payload).decode()
+        return f'<html><body><img src="data:{media_type};base64,{b64}"></body></html>'
+
+    svg = b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" '
+    svg += b'width="320" height="296" viewBox="0 0 600 135"><rect width="10" height="10"/></svg>'
+    soup = BeautifulSoup(_img(svg, "image/svg+xml"), "html.parser")
+    ref = thtml.extract_el(soup, "1", {})
+    with pytest.raises(NotMaterializable, match="SVG"):
+        thtml.render_htmlel_image(ref, {})
+
+    junk = BeautifulSoup(_img(b"\x00\x01not an image at all", "image/png"), "html.parser")
+    ref2 = thtml.extract_el(junk, "1", {})
+    with pytest.raises(ValueError) as exc:
+        thtml.render_htmlel_image(ref2, {})
+    assert not isinstance(exc.value, NotMaterializable)

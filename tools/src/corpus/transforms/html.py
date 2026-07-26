@@ -327,7 +327,29 @@ def _img_tag_to_pil(tag: Tag, selector_for_error: str) -> Image.Image:
         img = Image.open(io.BytesIO(raw))
         img.load()
     except Exception as exc:
+        # A VECTOR image is not a broken image. PIL has no SVG rasterizer, so a perfectly
+        # valid inline SVG lands here — and calling that "failed to decode" made two
+        # records read as corrupt provenance for a whole arc when the bytes were fine
+        # and the gap was ours. Distinguish by looking: a valid `<svg>` root means the
+        # address names exactly what it says and only rasterization is missing
+        # (NotMaterializable — declared coverage, not a defect); anything else really is
+        # undecodable bytes and stays an error.
+        if _is_svg_payload(raw):
+            raise NotMaterializable(
+                f"{selector_for_error}: the element is an inline SVG, which has no raster "
+                f"rendering in this toolchain (no SVG rasterizer) — the bytes are valid "
+                f"and the address names them correctly"
+            ) from exc
         raise ValueError(
             f"failed to decode image bytes from data URI for {selector_for_error!r}: {exc}"
         ) from exc
     return img.convert("RGBA") if img.mode == "P" else img
+
+
+def _is_svg_payload(raw: bytes) -> bool:
+    """True when `raw` is a valid-looking SVG document — an `<svg` root within the leading
+    bytes, tolerating an XML declaration, a DOCTYPE, comments, and a BOM."""
+    head = raw[:4096].lstrip(b"\xef\xbb\xbf").lstrip()
+    if not head.startswith(b"<"):
+        return False
+    return b"<svg" in head[:4096].lower()
