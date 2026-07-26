@@ -8,3 +8,17 @@ description: |
 applies_to:
   atom: image
 enables_lossless: false
+normalization:
+  guidance: |
+    A figure whose payload is a relation the drawing *states* — a wiring
+    schematic's conductors, a block diagram's links — carries that relation in
+    a sibling `text/data-table` from-to list stacked at this same address
+    (§4.3.2; see that overlay's graph-shaped note). The pair is the complete
+    rendering: the table holds the relation losslessly, this figure holds the
+    geometry and the drawing chrome.
+
+    Prefer the pair over a description that narrates connectivity in prose. A
+    description is the normalizer's reading, not the artifact's bytes, so a
+    fact quoted from it cites at `kind: incidental` and can never be
+    authoritative (`ledger.md` §13.2) — the from-to list is what makes the same
+    fact citable at full strength.

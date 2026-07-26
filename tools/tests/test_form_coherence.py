@@ -319,3 +319,71 @@ def test_statement_pages_axis_nonmonotonic_still_flagged(tmp_path):
     )
     post.content = segments.emit([sec])
     assert "form-address-nonmonotonic" in _fired(post, root)
+
+
+# ---------- co-addressed segment pairings (§7.8 `checks.paired_segments`) ---------- #
+
+
+def _schematic_sheet(*, with_table: bool) -> segments.Section:
+    """A `form/schematic` sheet: the figure marker, optionally its from-to sibling."""
+    segs = [segments.Segment(atom="image", overlay="image/figure", address="el=3")]
+    if with_table:
+        segs.append(
+            segments.Segment(
+                atom="text",
+                overlay="text/data-table",
+                address="el=3&bbox=0,0,2700,1920",
+                body="| From component | To component |\n|---|---|\n| B+ | Fuse F5 |\n",
+            )
+        )
+    return segments.Section(form="schematic", segments=segs)
+
+
+def test_schematic_figure_with_from_to_sibling_is_clean(tmp_path):
+    root = _root(tmp_path)
+    post = _post()
+    post.content = segments.emit([_schematic_sheet(with_table=True)])
+    assert not any(f.startswith("form-") for f in _fired(post, root))
+
+
+def test_schematic_figure_without_from_to_sibling_errors(tmp_path):
+    """The pair IS the contract: a sheet whose relation was never transcribed is a gate
+    failure, not a record that merely looks finished."""
+    root = _root(tmp_path)
+    post = _post()
+    post.content = segments.emit([_schematic_sheet(with_table=False)])
+    findings = lint.lint(post, segments.iter_blocks(post.content), root)
+    pair = [f for f in findings if f.rule_id == "form-segment-pair-missing"]
+    assert len(pair) == 1
+    assert pair[0].severity == "error"
+    assert "el=3" in (pair[0].address or "")
+
+
+def test_schematic_pair_must_share_the_address(tmp_path):
+    """A from-to table addressing a DIFFERENT region does not satisfy the figure's
+    obligation — the pairing is co-addressed (§4.3.2.2 same-region stacking)."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="schematic",
+        segments=[
+            segments.Segment(atom="image", overlay="image/figure", address="el=3"),
+            segments.Segment(atom="text", overlay="text/data-table",
+                             address="el=9&bbox=0,0,10,10", body="| a |\n|---|\n| b |\n"),
+        ],
+    )
+    post.content = segments.emit([sec])
+    assert "form-segment-pair-missing" in _fired(post, root)
+
+
+def test_document_figure_needs_no_pairing(tmp_path):
+    """The obligation is `schematic`'s alone — a `document` page's figures (a component
+    photo, a location illustration) stand alone exactly as before."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="document",
+        segments=[segments.Segment(atom="image", overlay="image/figure", address="el=3")],
+    )
+    post.content = segments.emit([sec])
+    assert "form-segment-pair-missing" not in _fired(post, root)

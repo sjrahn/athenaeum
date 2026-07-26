@@ -1,16 +1,18 @@
 class_id: text/data-table
 kind: atomic
 description: |
-  The segment body is a lossless markdown-table transcription of a tabular
-  region in the addressed content. The address chain must reach a region
-  capable of containing a table — a `bbox=` over an image, a region within
-  a PDF/HTML page, etc.
+  The segment body is a lossless markdown-table transcription of a
+  relation-bearing region in the addressed content. The address chain must
+  reach a region capable of carrying that relation — a `bbox=` over an image,
+  a region within a PDF/HTML page, etc.
 
-  Use this overlay when the source data is genuinely tabular and the cells
-  can be transcribed verbatim. If a "table" is actually a layout artifact
-  (key-value pairs styled with table HTML, code blocks dressed up as tables),
-  use a more appropriate overlay (`text/code` for code, plain text for k-v
-  prose).
+  Use this overlay when the source content is a **relation set whose tuples
+  the source itself fully determines** and whose cells can be transcribed
+  verbatim. A region drawn as a grid is the common case, but grid geometry is
+  incidental — see the graph-shaped note under `normalization`. If a "table"
+  is actually a layout artifact (key-value pairs styled with table HTML, code
+  blocks dressed up as tables), use a more appropriate overlay (`text/code`
+  for code, plain text for k-v prose).
 applies_to:
   atom: text
 enables_lossless: true
@@ -43,3 +45,24 @@ normalization:
 
     Footnotes / table notes that sit alongside the table go in a separate
     segment, not in the table cells.
+
+    **Graph-shaped sources.** A source may state its relation as a drawing
+    rather than as a grid — a wiring schematic states a conductor set, a block
+    diagram states a link set. Tracing a drawn connection is *transcription*:
+    the tuple is on the page, read the same way a printed grid's cell is read.
+    Transcribe such a region as a **from-to list** — one row per relation,
+    carrying the source's own identifiers verbatim in the cells. For a wiring
+    diagram that is: from component + cavity, to component + cavity, circuit
+    number, colour, and any gauge/rating the drawing prints; an off-page
+    reference (`Data Communication Schematics`) is a termination point like any
+    other, named as printed. Where a label is unreadable, mark the cell
+    `[unclear: <best guess>]` rather than dropping the row.
+
+    Two boundaries hold. **Geometry is not relation content** — where a box
+    sits on the page, and drawing chrome (navigation icons, sheet borders),
+    stay with the sibling `image/figure` and its description; the table carries
+    the relation only. And **a connection the drawing does not show is an
+    inference**, which belongs to the ledger as a claim over this segment's
+    span, never to a cell: transcribe the printed termination even when a
+    downstream one is obvious. The figure and the from-to list stack at the
+    same address (§4.3.2) and are jointly the complete rendering.

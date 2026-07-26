@@ -32,6 +32,12 @@ def run(args: argparse.Namespace) -> int:
     for slash in _schemas.list_atomic_overlays(root):
         print(f"  {slash}")
     print()
+    print("Form contracts (the shape-contract library — these files ARE the registry):")
+    for form_id in _schemas.list_form_ids(root):
+        overlay = _schemas.load_form_overlay(root, form_id) or {}
+        first_line = (overlay.get("description") or "").strip().split("\n")[0]
+        print(f"  {form_id:<16} {first_line[:96]}")
+    print()
     print("Issue ids:")
     for iid in _schemas.list_issue_ids(root):
         print(f"  {iid}")

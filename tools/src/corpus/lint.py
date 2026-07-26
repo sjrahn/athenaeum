@@ -1176,6 +1176,13 @@ def _leading_axis(addr: Any) -> tuple[str, str]:
     return param.strip(), value.strip()
 
 
+def _segment_id(seg: Any) -> str:
+    """A segment's opener id — the atomic-overlay id where one is named (already the full
+    `<atom>/<id>`, e.g. `image/figure`), else the bare atom. `checks.paired_segments` keys
+    on it."""
+    return str(getattr(seg, "overlay", None) or seg.atom)
+
+
 def _axis_low(value: str) -> int | None:
     """The low integer of an axis value (`3` → 3, `2-6` → 2), or None when non-numeric.
 
@@ -1249,6 +1256,28 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                             f"section {top_i} (form `{blk.form}`): `{seg_field}: {idx!r}` does "
                             f"not index the `{book_field}` codebook "
                             f"(size {book_len if book_len is not None else 'absent'})."
+                        ),
+                        address=_addr_str(seg.address),
+                    )
+
+        for rule in checks.get("paired_segments") or []:
+            atom_id, requires = rule.get("atom"), rule.get("requires")
+            if not atom_id or not requires:
+                continue
+            at_address: dict[tuple[str, str], set[str]] = {}
+            for seg in blk.segments:
+                at_address.setdefault(_leading_axis(seg.address), set()).add(_segment_id(seg))
+            for seg in blk.segments:
+                if _segment_id(seg) != atom_id:
+                    continue
+                if requires not in at_address.get(_leading_axis(seg.address), set()):
+                    yield Finding(
+                        rule_id="form-segment-pair-missing",
+                        severity="error",
+                        message=(
+                            f"section {top_i} (form `{blk.form}`): `{atom_id}` segment carries no "
+                            f"sibling `{requires}` segment at its address — this form binds the "
+                            f"pair (spec §7.8)."
                         ),
                         address=_addr_str(seg.address),
                     )

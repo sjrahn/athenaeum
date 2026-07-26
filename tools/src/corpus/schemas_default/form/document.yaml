@@ -22,10 +22,15 @@ decomposition: |
   legend) ALSO as a sibling `text/ocr` or `text/data-table` segment at the chained
   address (`el=N&bbox=…`), cells verbatim — the image positioning-marker and the lossless
   transcription coexist. Machine-readable tables render directly as `text/data-table`
-  (markdown grid, or literal HTML `<table>` where structure demands). The schematic
-  topology of a drawing is NOT losslessly textualizable and gets no fabricated
-  transcription — the described embed and any discrete text legend are its faithful
-  rendering.
+  (markdown grid, or literal HTML `<table>` where structure demands). A drawing whose
+  payload is a relation the drawing STATES — a wiring, vacuum, or hydraulic circuit, a
+  block diagram — is not a document page: it is `form/schematic`, whose contract binds the
+  figure to a from-to transcription of that relation (2026-07-26, reversing this
+  contract's earlier ruling that schematic topology is not losslessly textualizable —
+  tracing a drawn connection is transcription; fabricating an unshown one, which that
+  ruling rightly refused, still is not). A drawing with no relation to state — a component
+  photo, an exploded parts view, a location illustration — stays here, and its described
+  embed plus any discrete text legend are its faithful rendering.
 
   A spreadsheet workbook (xlsx/xls) decomposes the same way at the mime's own axis: one
   section per worksheet, addressed `sheet=<tab-name>` (its child `text/data-table` /

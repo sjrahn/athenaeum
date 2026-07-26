@@ -1179,3 +1179,19 @@ def load_issue_schema(corpus_root: Path, id_: str) -> dict[str, Any] | None:
 def list_issue_ids(corpus_root: Path) -> list[str]:
     """All issue ids under `context/issue/` (the `issue.yaml` universal excluded)."""
     return list_context_ids(corpus_root, "issue")
+
+
+def list_form_ids(corpus_root: Path) -> list[str]:
+    """All rendering/terminal contract ids under `form/`, sorted — the shape-contract
+    library's membership (spec §7.8). The universal `form/form.yaml` is excluded.
+
+    These files ARE the registry: the spec deliberately carries no roster of them, so
+    this is the discovery surface for what contracts a corpus can actually bind."""
+    sources = _sources(corpus_root)
+    seen: dict[str, None] = {}
+    for relpath in _discover_yaml(sources, "form"):
+        stem = relpath.removeprefix("form/").removesuffix(".yaml")
+        if not stem or "/" in stem or stem == "form":
+            continue
+        seen.setdefault(stem, None)
+    return sorted(seen)

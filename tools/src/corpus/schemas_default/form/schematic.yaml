@@ -1,0 +1,98 @@
+form_id: schematic
+kind: form
+description: |
+  A drawn-relation sheet: a diagram whose payload is a relation the drawing itself
+  STATES — a wiring schematic's conductor set, a vacuum or hydraulic circuit, a block
+  diagram's link set (spec §7.8). Names a SHAPE, never a subject: which system a sheet
+  draws is the origin block and the ledger's business, never this contract's.
+
+  The contract is the PAIR — the sheet figure and the relation it states, each as its own
+  segment at the same address. That is the whole reason this is a form and not a page-like
+  `form/document`: the pairing is a mechanical obligation lint enforces, so a sheet whose
+  relation was never transcribed is a gate failure rather than a record that merely looks
+  finished. A drawing whose payload is NOT a relation — a component photo, an exploded
+  parts view, a torque plate, a location illustration — is not a schematic; that page is a
+  `form/document` and its figures stand alone.
+
+  Reversal note (2026-07-26): `form/document` previously ruled that "the schematic
+  topology of a drawing is NOT losslessly textualizable and gets no fabricated
+  transcription". The owner's ruling reverses it — tracing a drawn connection is
+  TRANSCRIPTION, the tuple is on the page and is read the same way a printed grid's cell
+  is read. What the old prose correctly refused was FABRICATION: a connection the drawing
+  does not show. That refusal survives here as the second boundary, below.
+extended_fields:
+  diagram_type:
+    type: string
+    required: false
+    description: |
+      The sheet's own printed subtitle naming which circuit it draws, verbatim
+      (`Low Speed Bus`, `High Speed Bus`, `Accessory Wakeup Serial Data`) — present only
+      where the sheet prints one. Not a classification of our own.
+  off_page_references:
+    type: list
+    required: false
+    description: |
+      The printed labels of endpoints that are sheet pointers rather than components
+      (`Data Communication Schematics`), verbatim as drawn. The relation table cannot
+      express this distinction without inventing a column, but the drawing makes it
+      plainly — an off-page reference is drawn as a bracketed label, a component as a
+      box. This is the surface that stitches sheets into one graph mechanically, with no
+      inference.
+decomposition: |
+  One section per SHEET — a page carrying three diagrams carries three sections, not one
+  section with three figures, because the pairing obligation binds per sheet. A page that
+  is a single sheet may carry the form at record scope.
+
+  Each sheet decomposes into two co-addressed segments (§4.3.2.2 same-region stacking):
+
+  1. An `image/figure` positioning marker for the drawing, whose matching embed
+     `description:` carries the LOSSY half — layout, symbol glyphs, sheet chrome
+     (navigation icons, borders, revision blocks).
+  2. A `text/data-table` from-to list at the chained address (`el=N&bbox=…`) carrying the
+     LOSSLESS half: one row per relation the drawing states. For a wiring sheet the
+     columns are the harness-industry ones — from component, from cavity, to component, to
+     cavity, circuit, colour, and any direction/terminal marking the drawing prints —
+     cells verbatim in the source's own identifiers. See the `text/data-table` overlay's
+     graph-shaped note for the fill discipline.
+
+  Discrete printed matter that is not part of the relation — a legend, a note block, a
+  connector table — is its own segment at its own region, exactly as under
+  `form/document`.
+
+  Two boundaries are normative to this contract. **Geometry is not relation content**:
+  where a box sits on the sheet, and the sheet's chrome, stay with the figure and its
+  description; the table carries the relation only. **An unshown connection is an
+  inference**: transcribe the printed termination even when the downstream one is
+  obvious — a conductor the drawing does not draw belongs to the ledger as a claim over
+  this segment's span, never to a cell.
+checks:
+  address_axes: [el, page, pages, block]
+  paired_segments:
+    - atom: image/figure
+      requires: text/data-table
+normalization:
+  guidance: |
+    Read the drawing from the resolved bytes — never transcribe a sheet from its own
+    description or from a sibling record's. Work endpoint to endpoint: one row per
+    conductor segment between two termination points, so a wire passing through a
+    connector or an inline splice yields a row on each side of it rather than one row that
+    silently swallows the connector.
+
+    Cells are verbatim. An identifier the sheet does not print is an EMPTY cell, not a
+    guess and not a borrowed value from a sibling sheet (an unnumbered coax terminal stays
+    unnumbered). Where a label is present but unreadable, write
+    `[unclear: <best guess>]` and persist a `partial-content` issue naming the cell —
+    never drop the row, and never drop a row because its circuit number is missing.
+
+    Fill the figure's embed `description:` with the geometry, the terminal glyphs, and the
+    page chrome, and let it point at the sibling table for the relation. Do NOT narrate
+    connectivity in the description: a description is the normalizer's reading, so a fact
+    quoted from it can only ever cite at `kind: incidental` (`ledger.md` §13.2), while the
+    same fact read from the table cites at full strength. Prose that duplicates the table
+    buys nothing and rots independently.
+
+    The acceptance test is regeneration: a sheet redrawn from the table plus the ledger's
+    facts should be ELECTRICALLY identical to the original — same endpoints, same
+    cavities, same circuits — though never pixel-identical, since geometry deliberately
+    does not survive into the relation. A mismatch is a finding to investigate, in either
+    direction: a transcription error, or a fact that outran its evidence.
