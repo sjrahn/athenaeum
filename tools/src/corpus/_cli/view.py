@@ -99,7 +99,10 @@ def _surface_html(path: Path) -> str:
         uri = _data_uri(path)
         if uri is None:
             return _note(f"image too large to inline ({path.stat().st_size / 1e6:.1f} MB) — {path}")
-        return f'<a href="{uri}" target="_blank"><img src="{uri}" alt=""></a>'
+        # No <a href> wrapper: that duplicated the same base64 blob a second time (once in
+        # href, once in src), doubling every image's contribution to the page's footprint
+        # for a "open in new tab" that a right-click on the <img> already gives you.
+        return f'<img src="{uri}" alt="">'
     if suffix in _TEXT_SUFFIXES and path.stat().st_size <= 256 * 1024:
         return f"<pre class=surface>{html.escape(path.read_text(errors='replace'))}</pre>"
     return _note(f"resolved to {path.name} ({path.stat().st_size / 1024:.0f} KB) — not inlined")
