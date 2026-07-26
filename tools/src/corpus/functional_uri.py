@@ -151,6 +151,97 @@ def cache_sidecar_path(cache_path: Path) -> Path:
     return cache_path.with_name(cache_path.name + ".json")
 
 
+# ---------- region grammar ---------- #
+
+# The ops whose value is a RELATIVE region — `x,y,WIDTH,HEIGHT` as fractions of the
+# image, origin top-left. `mark=`/`cover=` take a `;`-separated list of them.
+# Declared here, beside the URI grammar, rather than inside the image transform: the
+# grammar is a property of the ADDRESS, so lint must be able to hold an authored
+# address to it without importing the render path (which is where the whole
+# pixel-vs-fraction drift got in — the op raised correctly and nothing ever asked it).
+REGION_PARAMS: frozenset[str] = frozenset({"bbox", "crop", "mark", "cover"})
+_MULTI_REGION_PARAMS: frozenset[str] = frozenset({"mark", "cover"})
+_REGION_EPS = 1e-9
+
+
+def parse_region(value: str) -> tuple[float, float, float, float]:
+    """Parse ONE `x,y,w,h` region of relative floats in [0, 1], bounds-checked so the
+    region stays inside the image. Raises `ValueError` with a message that names the
+    actual mistake — the two live ones being pixel values in a fractional grammar and
+    corner coordinates in a position+size grammar.
+
+    The single definition of the region grammar: `transforms.image` renders through it
+    and `lint` validates through it, so an authored address cannot be legal to one and
+    illegal to the other."""
+    parts = value.split(",")
+    if len(parts) != 4:
+        raise ValueError(f"region must have 4 comma-separated values, got {value!r}")
+    try:
+        x, y, w, h = (float(p) for p in parts)
+    except ValueError as exc:
+        raise ValueError(f"region values must be floats, got {value!r}") from exc
+    for label, val in (("x", x), ("y", y), ("w", w), ("h", h)):
+        if val < 0.0 or val > 1.0:
+            raise ValueError(
+                f"region {label}={val} out of [0.0, 1.0] in {value!r} — bbox is "
+                "x,y,WIDTH,HEIGHT (fractions of the image), not corners x0,y0,x1,y1"
+            )
+    if x + w > 1.0 + _REGION_EPS or y + h > 1.0 + _REGION_EPS:
+        over = []
+        if x + w > 1.0 + _REGION_EPS:
+            over.append(f"x+w={x + w:.4g}>1")
+        if y + h > 1.0 + _REGION_EPS:
+            over.append(f"y+h={y + h:.4g}>1")
+        raise ValueError(
+            f"region {value!r} extends past the image ({', '.join(over)}). bbox is "
+            "x,y,WIDTH,HEIGHT (a position plus a size), NOT corners x0,y0,x1,y1 — the "
+            "3rd/4th values are width/height, so x+w and y+h must each be <= 1.0"
+        )
+    return x, y, w, h
+
+
+def region_errors(key: str, value: str | None) -> list[str]:
+    """Validate one authored `key=value` param as a region, returning zero or more
+    human-readable problems. Non-region keys return `[]`.
+
+    Deliberately CONSERVATIVE about which values it judges. `bbox=` is overloaded: on a
+    spreadsheet it addresses an A1 range (`sheet=Data&bbox=A1:D20`), which is a different
+    grammar entirely — so a chunk whose comma-parts are not all numeric is left alone
+    rather than guessed at. What remains — four numbers where fractions were required —
+    is unambiguous, and is exactly the drift this exists to catch."""
+    if key not in REGION_PARAMS:
+        return []
+    if value is None or not value.strip():
+        return [f"{key}= requires at least one x,y,w,h region (fractions in [0,1])"]
+    chunks = value.split(";") if key in _MULTI_REGION_PARAMS else [value]
+    out: list[str] = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if not _looks_numeric(chunk):
+            continue  # a different grammar under the same key (A1 range) — not ours to judge
+        try:
+            parse_region(chunk)
+        except ValueError as exc:
+            out.append(str(exc))
+    return out
+
+
+def _looks_numeric(chunk: str) -> bool:
+    """True when every comma-separated part parses as a float — the signal that this
+    chunk is meant as a relative region at all."""
+    parts = chunk.split(",")
+    if len(parts) < 2:
+        return False
+    for p in parts:
+        try:
+            float(p)
+        except ValueError:
+            return False
+    return True
+
+
 # ---------- ergonomics ---------- #
 
 

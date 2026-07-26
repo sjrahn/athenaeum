@@ -567,3 +567,67 @@ def test_section_description_redundant_spares_whole_record_vouch(tmp_path):
         extra={"participants": ["Andy <a@x>"]},
     )
     assert "section-description-redundant" not in _fired(post, root, [whole])
+
+
+def test_address_region_grammar(tmp_path):
+    """`bbox=` is x,y,WIDTH,HEIGHT as FRACTIONS in [0,1] — the grammar 1,778 authored
+    addresses broke by writing pixels into it, unnoticed because nothing validated a
+    STORED address (only the render path did, and only when someone resolved it)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+
+    pixels = segments.Segment(
+        atom="text", overlay="text/data-table", address="el=3&bbox=0,0,2700,1920", body="| a |"
+    )
+    fired = [f for f in _lint_blocks(post, root, [pixels]) if f.rule_id == "address-region-invalid"]
+    assert fired and fired[0].severity == "error"
+    assert "fractions of the image" in fired[0].message
+
+    # Corners instead of position+size — the other way the grammar gets misread.
+    corners = segments.Segment(
+        atom="text", overlay="text/data-table", address="bbox=0.5,0.5,0.8,0.2", body="| a |"
+    )
+    assert "address-region-invalid" in {
+        f.rule_id for f in _lint_blocks(post, root, [corners])
+    }
+
+    # A correct fractional crop, and a multi-region `cover=` chain, stay silent.
+    good = segments.Segment(
+        atom="text", overlay="text/data-table",
+        address="el=5&cover=0.955,0,0.045,0.32;0.24,0.8,0.045,0.2&bbox=0.24,0,0.76,1",
+        body="| a |",
+    )
+    assert "address-region-invalid" not in {
+        f.rule_id for f in _lint_blocks(post, root, [good])
+    }
+
+    # `bbox=` on a spreadsheet is an A1 RANGE — a different grammar under the same key,
+    # which the rule declines to judge rather than guessing.
+    a1 = segments.Segment(
+        atom="text", overlay="text/data-table", address="sheet=Data&bbox=A1:D20", body="| a |"
+    )
+    assert "address-region-invalid" not in {
+        f.rule_id for f in _lint_blocks(post, root, [a1])
+    }
+
+
+def test_address_region_grammar_covers_embeds_and_sections(tmp_path):
+    """Every surface that STORES an address is checked — not just segments."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    records.append_embed_block(
+        post,
+        media_type="image/png",
+        address="el=2&bbox=0,0,1200,800",
+        transport=f"blake3:{'b' * 64}",
+        fields={"description": "a figure"},
+    )
+    seg = segments.Segment(atom="text", address="el=1", body="hi")
+    fired = [
+        f for f in _lint_blocks(post, root, [seg]) if f.rule_id == "address-region-invalid"
+    ]
+    assert fired and "embed 1" in fired[0].message
+
+
+def _lint_blocks(post, root, blocks):
+    return lint.lint(post, blocks, root)

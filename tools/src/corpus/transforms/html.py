@@ -31,7 +31,7 @@ import pillow_avif  # noqa: F401
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
-from . import RenderContext, register
+from . import NotMaterializable, RenderContext, register
 
 #: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the LIVE `el=` element-
 #: scoping op materialized here (the htmlel working-kind path — `extract_el` below) — folded
@@ -218,7 +218,9 @@ def extract_el(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> Ht
         raise ValueError("el= requires an integer index")
     raw = value.strip()
     if "-" in raw:
-        raise ValueError(
+        # A span address (`el=1-8`) names a real envelope of elements; it just has no
+        # single byte surface. Not a defect — see `NotMaterializable`.
+        raise NotMaterializable(
             f"el={raw}: range form not supported by the materialization transform; "
             f"single index expected"
         )
@@ -240,6 +242,9 @@ def render_htmlel_image(ref: HtmlElRef, ctx: RenderContext) -> Image.Image:
     the terminal `el=N`-on-`<img>` case and for promotion before an image-output op."""
     tag = ref.tag
     if tag.name != "img":
+        # Deliberately NOT NotMaterializable: an image-output op was CHAINED onto this
+        # element, so the address claims a crop of an image that isn't there. That is a
+        # real authoring defect, and lint should say so.
         raise ValueError(
             f"el={ref.index} resolved to <{tag.name}>, which has no image rendering; "
             f"image-output ops (bbox/mark/fit/…) apply only to <img> carriers"
@@ -254,7 +259,10 @@ def htmlel_bytes(ref: HtmlElRef) -> tuple[str, bytes]:
     tag = ref.tag
     uri = carrier_data_uri(tag)
     if uri is None:
-        raise ValueError(
+        # The element IS there and is exactly what the address said — a heading, a
+        # table, a list. Its content is text, so there are no bytes to materialize; a
+        # text segment citing it is complete as it stands.
+        raise NotMaterializable(
             f"el={ref.index} resolved to <{tag.name}>, which carries no inline data: URI "
             f"to materialize"
         )

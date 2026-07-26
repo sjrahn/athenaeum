@@ -109,3 +109,34 @@ def test_clean_values_unchanged_by_encoding_round_trip():
     cache-key drift for every existing URI in the wild."""
     uri = "corpus://" + "a" * 64 + "?path=Takeout/Mail/a.txt&page=3"
     assert fu.canonical(fu.parse(uri)) == uri
+
+
+def test_parse_region_rejects_pixels_and_corners():
+    """The region grammar is `x,y,WIDTH,HEIGHT` as FRACTIONS in [0,1]. One definition,
+    used by the render path AND by lint, so an address cannot be legal to one and
+    illegal to the other."""
+    assert fu.parse_region("0,0,1,1") == (0.0, 0.0, 1.0, 1.0)
+    assert fu.parse_region("0.24,0,0.76,1") == (0.24, 0.0, 0.76, 1.0)
+
+    with pytest.raises(ValueError, match="fractions of the image"):
+        fu.parse_region("0,0,2700,1920")  # pixels — the drift this catches
+    with pytest.raises(ValueError, match="position plus a size"):
+        fu.parse_region("0.5,0.5,0.8,0.2")  # corners x0,y0,x1,y1
+    with pytest.raises(ValueError, match="4 comma-separated"):
+        fu.parse_region("0,0,1")
+
+
+def test_region_errors_declines_foreign_grammars():
+    """`bbox=` is overloaded: on a spreadsheet it addresses an A1 range. A value whose
+    parts are not all numeric is left alone rather than guessed at — the check reports
+    only the unambiguous case (numbers where fractions were required)."""
+    assert fu.region_errors("bbox", "A1:D20") == []
+    assert fu.region_errors("el", "3") == []  # not a region param at all
+    assert fu.region_errors("bbox", "0,0,1,1") == []
+    assert fu.region_errors("cover", "0.9,0,0.1,0.3;0.2,0.8,0.05,0.2") == []
+
+    assert fu.region_errors("bbox", "0,0,2700,1920")
+    # A bad chunk anywhere in a multi-region value is reported.
+    assert fu.region_errors("cover", "0.9,0,0.1,0.3;0,0,2700,1920")
+    # A region param with no value at all cannot address anything.
+    assert fu.region_errors("bbox", None)

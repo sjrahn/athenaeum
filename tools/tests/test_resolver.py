@@ -606,3 +606,36 @@ def test_autocontrast_and_contrast_render(tmp_path):
 
     with pytest.raises(ValueError):
         resolver.resolve(f"corpus://{rid}?contrast=abc", root)
+
+
+def test_text_element_raises_not_materializable_not_a_plain_error():
+    """A text element (`el=3` → `<table>`) names EXACTLY what the address said — the
+    element is there and its content is text, so there are no bytes to render. That is
+    reported as `NotMaterializable`, distinct from `el=99` naming nothing at all.
+
+    The distinction is load-bearing for `corpus lint --resolve`: without it, every
+    correct text citation in the corpus reads as broken provenance (measured: 26 such
+    false positives in a 30-record sample before this type existed). Asserted on the
+    TYPE so no caller has to match on message text."""
+    import pytest
+    from bs4 import BeautifulSoup
+
+    from corpus.transforms import NotMaterializable
+    from corpus.transforms import html as thtml
+
+    soup = BeautifulSoup(
+        "<html><body><h3>Heading</h3><table><tr><td>x</td></tr></table></body></html>",
+        "html.parser",
+    )
+    ref = thtml.extract_el(soup, "1", {})
+    with pytest.raises(NotMaterializable):
+        thtml.htmlel_bytes(ref)
+
+    # A span address names a real envelope of elements — same class, not a defect.
+    with pytest.raises(NotMaterializable):
+        thtml.extract_el(soup, "1-3", {})
+
+    # Naming NOTHING stays an ordinary error: the address is wrong, not byte-less.
+    with pytest.raises(ValueError) as exc:
+        thtml.extract_el(soup, "99", {})
+    assert not isinstance(exc.value, NotMaterializable)

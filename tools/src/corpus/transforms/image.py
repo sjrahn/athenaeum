@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
+from corpus import functional_uri as furi
+
 from . import RenderContext, register
 
 # ---- fit= presets ---------------------------------------------------------- #
@@ -269,33 +271,13 @@ def contrast(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.I
 
 
 def _parse_box(value: str) -> tuple[float, float, float, float]:
-    """Parse one `x,y,w,h` region of relative floats in [0, 1], bounds-checked so
-    the region stays inside the image. Shared by `crop=` and `mark=`."""
-    parts = value.split(",")
-    if len(parts) != 4:
-        raise ValueError(f"region must have 4 comma-separated values, got {value!r}")
-    try:
-        x, y, w, h = (float(p) for p in parts)
-    except ValueError as exc:
-        raise ValueError(f"region values must be floats, got {value!r}") from exc
-    for label, val in (("x", x), ("y", y), ("w", w), ("h", h)):
-        if val < 0.0 or val > 1.0:
-            raise ValueError(
-                f"region {label}={val} out of [0.0, 1.0] in {value!r} — bbox is "
-                "x,y,WIDTH,HEIGHT (fractions of the image), not corners x0,y0,x1,y1"
-            )
-    if x + w > 1.0 + 1e-9 or y + h > 1.0 + 1e-9:
-        over = []
-        if x + w > 1.0 + 1e-9:
-            over.append(f"x+w={x + w:.4g}>1")
-        if y + h > 1.0 + 1e-9:
-            over.append(f"y+h={y + h:.4g}>1")
-        raise ValueError(
-            f"region {value!r} extends past the image ({', '.join(over)}). bbox is "
-            "x,y,WIDTH,HEIGHT (a position plus a size), NOT corners x0,y0,x1,y1 — the "
-            "3rd/4th values are width/height, so x+w and y+h must each be <= 1.0"
-        )
-    return x, y, w, h
+    """Parse one `x,y,w,h` region of relative floats in [0, 1]. Shared by `crop=`,
+    `mark=`, and `cover=`.
+
+    Delegates to `functional_uri.parse_region` — the ONE definition of the region
+    grammar, so the render path and `corpus lint` cannot drift apart on what an
+    authored address is allowed to say."""
+    return furi.parse_region(value)
 
 
 def _parse_dims(value: str, prefix: str) -> tuple[int, int]:

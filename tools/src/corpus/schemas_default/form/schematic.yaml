@@ -143,7 +143,10 @@ normalization:
     caption — it is the claim about which bytes were read, and it is the only provenance the
     table has. Writing one without resolving it is how a whole fleet ended up carrying
     addresses that materialize nothing; the check costs one call and it also proves the crop
-    you transcribed is the crop you addressed.
+    you transcribed is the crop you addressed. `corpus lint <id> --resolve` does the
+    mechanical half — it materializes every address the record stores and fails the ones that
+    resolve to nothing — but it cannot tell you a well-formed crop is the WRONG region. Only
+    your eyes on the resolved image do that, so run both: the gate, and the look.
 
     **The description is the LAST thing you write.** Not "late" — last. Do not draft it, do
     not sketch it, do not carry a sentence for it in your head while transcribing: the whole

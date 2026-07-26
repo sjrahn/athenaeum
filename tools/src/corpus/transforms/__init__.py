@@ -58,6 +58,23 @@ class RenderContext(TypedDict, total=False):
     csv_dialect: dict
 
 
+class NotMaterializable(ValueError):
+    """The address names something REAL that has no byte surface to materialize.
+
+    The distinction this type exists to make: `el=99` on a 12-element artifact names
+    nothing and is a defect, while `el=3` naming a `<table>` names exactly what it says
+    — the element is there, its content is text, and there is simply no file to render.
+    A `text/data-table` segment citing that element is correct and complete; only the
+    byte-materialization step has nothing to do.
+
+    A ValueError subclass so every existing `except ValueError` / `except Exception`
+    caller (the resolver's error surface, the ledger's tolerant anchor check) behaves
+    exactly as before. Callers that need to tell a naming failure from a
+    materialization gap — `corpus lint --resolve`, which would otherwise report a
+    perfectly good text citation as broken provenance — catch this type instead of
+    matching on message text."""
+
+
 HandlerFunc = Callable[[Any, str | None, RenderContext], Any]
 
 

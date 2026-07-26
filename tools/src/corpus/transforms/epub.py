@@ -27,7 +27,7 @@ from pathlib import Path
 from PIL import Image
 
 from .. import epub as epub_mod
-from . import RenderContext, register
+from . import NotMaterializable, RenderContext, register
 
 
 @dataclass
@@ -74,7 +74,8 @@ def extract_el(doc: EpubDoc, value: str | None, ctx: RenderContext) -> Image.Ima
         raise ValueError("el= requires an integer index")
     raw = value.strip()
     if "-" in raw:
-        raise ValueError(
+        # A span address names a real envelope, not a single byte surface.
+        raise NotMaterializable(
             f"el={raw}: range form not supported by the image-output transform; "
             f"single index expected"
         )

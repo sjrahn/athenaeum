@@ -514,6 +514,52 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
                     seen[key] = seg
 
 
+def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
+    """Every region-op value in every authored address conforms to the region grammar:
+    `x,y,WIDTH,HEIGHT` as FRACTIONS of the image in [0,1], origin top-left (spec §6.2).
+
+    This rule exists because nothing else in the system ever held a STORED address to
+    the grammar it is written in. The render path validated correctly and raised a clear
+    error — but only when someone resolved the address, and nobody did: 1,778 addresses
+    on one origin carried PIXEL values (`bbox=0,0,2700,1920`), resolving to nothing at
+    all, while lint, health, and compile every one of them read green. A record's
+    address is the only provenance a lossless transcription has (§4.3.2.2), so an
+    address that materializes nothing is a citation pointing at no bytes — an error, not
+    a cosmetic defect.
+
+    Covers sections, segments, metadata-zone embeds, and body wikilinks — every place a
+    record stores an address. The judgement itself is `functional_uri.region_errors`,
+    which is the same grammar the transform renders through, and which deliberately
+    declines to judge a non-numeric value (a spreadsheet's `bbox=A1:D20` is a different
+    grammar wearing the same key)."""
+
+    def _check(addr: str, where: str) -> Iterator[Finding]:
+        for param, problem in _region_problems(addr):
+            yield Finding(
+                rule_id="address-region-invalid",
+                severity="error",
+                message=f"{where} address `{addr}`: {problem}",
+                address=addr,
+                fields={"param": param},
+            )
+
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            for addr in _addresses(blk.address):
+                yield from _check(addr, "section")
+            for seg in blk.segments:
+                for addr in _addresses(getattr(seg, "address", None)):
+                    yield from _check(addr, "segment")
+        elif isinstance(blk, _segments.Segment):
+            for addr in _addresses(getattr(blk, "address", None)):
+                yield from _check(addr, "segment")
+    for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
+        for addr in _addresses(eb.get("address")):
+            yield from _check(addr, f"embed {i}")
+    for addr in sorted(_wikilink_addresses(post)):
+        yield from _check(addr, "body wikilink")
+
+
 # ---------- annotation-zone (issue) rules ---------- #
 
 
@@ -1431,6 +1477,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-empty", _rule_section_empty),
     ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
+    ("address-region-invalid", _rule_address_region_grammar),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),
@@ -1507,7 +1554,143 @@ def lint(
     return out
 
 
+# ---------- the resolve pass (opt-in; needs artifact bytes) ---------- #
+
+
+def resolve_addresses(
+    post: frontmatter.Post,
+    blocks: list[_segments.Block],
+    corpus_root: Path,
+) -> list[Finding]:
+    """Materialize every address this record stores and report the ones that fail.
+
+    NOT part of `_REGISTRY`: every other rule is a pure inspector over the record text,
+    while this one reads artifact bytes and runs the render chain, so it is opt-in
+    (`corpus lint --resolve`) rather than part of the default gate.
+
+    It is, however, the only mechanical proof that a stored address means anything. The
+    grammar rule catches a fractional bbox written in pixels; this catches everything
+    else that resolves to nothing — an `el=` past the end of the element list, an op the
+    media type has no handler for, a chained address whose parent never materializes,
+    artifact bytes absent from the store. Together they close the class that let 974
+    records carry provenance pointing at no bytes while three gates read green.
+
+    What it CANNOT do is judge whether a well-formed crop is the RIGHT region — that
+    stays an authoring obligation (resolve it and look at it), which is why the
+    normalizer's rule is "read it back", not "lint it"."""
+    from corpus import resolver as _resolver
+    from corpus.transforms import NotMaterializable
+
+    record_id = str(post.metadata.get("id") or "")
+    if not record_id:
+        return []
+    seen: set[str] = set()
+    out: list[Finding] = []
+    spans: list[str] = []
+    for addr, where in _iter_stored_addresses(post, blocks):
+        if addr in seen:
+            continue
+        seen.add(addr)
+        if _region_problems(addr):
+            continue  # `address-region-invalid` already reports it; don't say it twice
+        uri = f"corpus://{record_id}?{addr}"
+        try:
+            path = _resolver.resolve(uri, corpus_root)
+        except NotMaterializable:
+            # The address names something REAL with no byte surface — a span envelope
+            # (`el=1-8`), or a text element (`el=3` → `<table>`) whose content is the
+            # record's own rendering. Not a defect; counted and declared below rather
+            # than reported, because a text citation that resolves to no FILE is still
+            # a correct citation. The render path says so by type, so lint does not have
+            # to guess from a message.
+            spans.append(addr)
+            continue
+        except Exception as exc:  # any other failure IS the finding — never swallowed
+            out.append(
+                Finding(
+                    rule_id="address-unresolvable",
+                    severity="error",
+                    message=f"{where} address `{addr}` does not resolve: {_one_line(exc)}",
+                    address=addr,
+                    fields={"uri": uri, "error_type": type(exc).__name__},
+                )
+            )
+            continue
+        if not path.exists() or path.stat().st_size == 0:
+            out.append(
+                Finding(
+                    rule_id="address-resolves-empty",
+                    severity="error",
+                    message=f"{where} address `{addr}` resolves to an empty surface.",
+                    address=addr,
+                    fields={"uri": uri},
+                )
+            )
+    if spans:
+        # Declare the coverage gap rather than leaving the pass looking exhaustive: a
+        # silently-skipped address reads as a verified one.
+        out.append(
+            Finding(
+                rule_id="address-not-materializable",
+                severity="info",
+                message=(
+                    f"{len(spans)} address(es) name a real surface with no bytes to "
+                    f"materialize (a span envelope, or a text element) and were not "
+                    f"resolved: {', '.join(spans[:4])}"
+                    f"{', …' if len(spans) > 4 else ''}. The region grammar still "
+                    f"checked them."
+                ),
+                fields={"addresses": spans},
+            )
+        )
+    return out
+
+
+def _iter_stored_addresses(post, blocks) -> Iterator[tuple[str, str]]:
+    """Every address the record stores, as `(address, where)` — the same surfaces the
+    grammar rule walks, in the same order."""
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            for addr in _addresses(blk.address):
+                yield addr, "section"
+            for seg in blk.segments:
+                for addr in _addresses(getattr(seg, "address", None)):
+                    yield addr, "segment"
+        elif isinstance(blk, _segments.Segment):
+            for addr in _addresses(getattr(blk, "address", None)):
+                yield addr, "segment"
+    for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
+        for addr in _addresses(eb.get("address")):
+            yield addr, f"embed {i}"
+    for addr in sorted(_wikilink_addresses(post)):
+        yield addr, "body wikilink"
+
+
+def _one_line(exc: Exception) -> str:
+    """First line of an exception message, trimmed — resolver errors can be paragraphs
+    (the region grammar's own is three sentences) and a finding wants one line."""
+    text = str(exc).strip().splitlines()
+    first = text[0].strip() if text else type(exc).__name__
+    return first if len(first) <= 240 else first[:237] + "…"
+
+
 # ---------- helpers ---------- #
+
+
+def _region_problems(addr: str) -> list[tuple[str, str]]:
+    """`(param, problem)` for every region-op value in `addr` that breaks the region
+    grammar. Empty when the address is fine — or when its region params speak a
+    different grammar (a spreadsheet's `bbox=A1:D20`), which `region_errors` declines
+    to judge."""
+    from corpus import functional_uri as _furi
+
+    out: list[tuple[str, str]] = []
+    for part in addr.split("&"):
+        key, sep, value = part.partition("=")
+        key = key.strip()
+        for problem in _furi.region_errors(key, value if sep else None):
+            out.append((key, problem))
+    return out
 
 
 def _addresses(raw: Any) -> list[str]:

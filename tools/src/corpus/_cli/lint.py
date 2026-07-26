@@ -28,15 +28,26 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="emit findings as a single JSON array (each: the Finding fields + record_id) — "
         "the normalizer maps these to issues.",
     )
+    parser.add_argument(
+        "--resolve",
+        action="store_true",
+        help=(
+            "also MATERIALIZE every address the record stores and fail the ones that "
+            "resolve to nothing (`address-unresolvable` / `address-resolves-empty`). "
+            "Reads artifact bytes and runs the render chain, so it is slower than the "
+            "text-only rules — but it is the only mechanical proof that a stored "
+            "address points at real bytes. Run it after authoring any new address."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
 def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     if args.target is None:
-        return _lint_all(root, json_out=args.json)
+        return _lint_all(root, json_out=args.json, resolve=args.resolve)
     record_id, record_file = paths.resolve_record(root, args.target)
-    return _lint_one(root, record_id, record_file, json_out=args.json)
+    return _lint_one(root, record_id, record_file, json_out=args.json, resolve=args.resolve)
 
 
 def _payloads(record_id: str, findings) -> list[dict]:
@@ -49,10 +60,12 @@ def _dump_json(payloads: list[dict]) -> None:
     sys.stdout.write(json.dumps(payloads, ensure_ascii=False, indent=2) + "\n")
 
 
-def _lint_one(root, record_id, record_file, *, json_out: bool = False) -> int:
+def _lint_one(root, record_id, record_file, *, json_out: bool = False, resolve: bool = False) -> int:
     post = records.load(record_file)
     blocks = segments.iter_blocks(post.content or "")
     findings = _lint.lint(post, blocks, root)
+    if resolve:
+        findings = findings + _lint.resolve_addresses(post, blocks, root)
     if json_out:
         _dump_json(_payloads(record_id, findings))
         return 1 if any(f.severity == "error" for f in findings) else 0
@@ -68,7 +81,7 @@ def _lint_one(root, record_id, record_file, *, json_out: bool = False) -> int:
     return 1 if err else 0
 
 
-def _lint_all(root, *, json_out: bool = False) -> int:
+def _lint_all(root, *, json_out: bool = False, resolve: bool = False) -> int:
     records_dir = root / "records"
     if not records_dir.is_dir():
         print("no records/ dir")
@@ -82,6 +95,8 @@ def _lint_all(root, *, json_out: bool = False) -> int:
             post = records.load(md)
             blocks = segments.iter_blocks(post.content or "")
             findings = _lint.lint(post, blocks, root)
+            if resolve:
+                findings = findings + _lint.resolve_addresses(post, blocks, root)
         except Exception as e:
             print(f"{md.stem}: ERROR loading: {e}", file=sys.stderr)
             any_err = 1
