@@ -1285,13 +1285,17 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                         address=_addr_str(seg.address),
                     )
 
-        # `embed_transcribed` — a form whose content IS a lossless rendering of its assets
-        # binds the ATTESTED EMBED, not a positioning marker: every embed addressed inside the
-        # span must carry the declared lossless segment at its address. Keying on the embed is
-        # what lets such a form drop the marker entirely (§4.3.2.2) — the transcription's own
-        # address is the crop into the embed, which IS its provenance.
-        want = checks.get("embed_transcribed")
-        if want:
+        # `embed_rendered` — the form names a SHAPE, and that shape admits two faithful
+        # renderings: the `lossless` one where the asset's content can be transcribed, and the
+        # body-empty `marker` (plus the embed's description) where it currently cannot. The
+        # check binds the ATTESTED EMBED and asks only that ONE of them be present — never
+        # that the lossless one exist, which the form has no standing to demand. Where the
+        # lossless rendering IS present it SUPERSEDES the marker at that address: the marker
+        # extracts nothing, so keeping both renders the region twice (§4.3.2.2 — two segments
+        # on one region are earned only by extracting different information).
+        alts = checks.get("embed_rendered") or {}
+        want, marker_atom = alts.get("lossless"), alts.get("marker")
+        if alts:
             present = {
                 _leading_axis(seg.address) for seg in blk.segments if _segment_id(seg) == want
             }
@@ -1309,36 +1313,36 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                 ):
                     continue
                 key = (axis, value)
-                if key not in present:
-                    yield Finding(
-                        rule_id="form-embed-not-transcribed",
-                        severity="error",
-                        message=(
-                            f"section {top_i} (form `{blk.form}`): embed at "
-                            f"`{_addr_str(embed.get('address'))}` carries no `{want}` segment at "
-                            f"its address — this form's content IS the lossless rendering of its "
-                            f"assets (spec §7.8)."
-                        ),
-                        address=_addr_str(embed.get("address")),
-                    )
-
-        # `no_markers` — the same forms forbid the body-empty positioning marker they replaced.
-        # Keeping both renders the identical region twice and asserts a shape the form already
-        # names; the embed (metadata zone) remains the asset's home and its lossy disclosure.
-        forbidden = set(checks.get("no_markers") or [])
-        if forbidden:
-            for seg in blk.segments:
-                if seg.atom in forbidden and not seg.is_structural:
+                marked = marker_atom and any(
+                    seg.atom == marker_atom
+                    and not seg.is_structural
+                    and _leading_axis(seg.address) == key
+                    for seg in blk.segments
+                )
+                if key in present and marked:
                     yield Finding(
                         rule_id="form-marker-superseded",
                         severity="error",
                         message=(
-                            f"section {top_i} (form `{blk.form}`): `{_segment_id(seg)}` marker is "
-                            f"superseded by this form's lossless rendering — drop it; the embed "
-                            f"holds the asset and the transcription's address is the crop into it "
+                            f"section {top_i} (form `{blk.form}`): the `{marker_atom}` marker at "
+                            f"`{_addr_str(embed.get('address'))}` is superseded by the `{want}` "
+                            f"rendering at the same address — drop the marker; the embed holds the "
+                            f"asset and the transcription's address is the crop into it "
                             f"(spec §4.3.2.2, §7.8)."
                         ),
-                        address=_addr_str(seg.address),
+                        address=_addr_str(embed.get("address")),
+                    )
+                elif key not in present and not marked:
+                    yield Finding(
+                        rule_id="form-embed-not-rendered",
+                        severity="error",
+                        message=(
+                            f"section {top_i} (form `{blk.form}`): embed at "
+                            f"`{_addr_str(embed.get('address'))}` carries neither a `{want}` "
+                            f"rendering nor a `{marker_atom}` marker — this form's assets are its "
+                            f"content, so each owes one or the other (spec §7.8)."
+                        ),
+                        address=_addr_str(embed.get("address")),
                     )
 
         axes = set(checks.get("address_axes") or [])

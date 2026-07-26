@@ -6,19 +6,31 @@ description: |
   diagram's link set (spec §7.8). Names a SHAPE, never a subject: which system a sheet
   draws is the origin block and the ledger's business, never this contract's.
 
-  Declaring this form IS declaring that the sheet is represented by a **from-to table**, so
-  the table is not a companion to a figure — it REPLACES it. The drawing's provenance rides
-  the address: the attested embed is the asset, and the transcription's own `bbox=` is the
-  crop into that embed. A body-empty `image/figure` marker beside it would render the same
-  region twice and re-assert a shape this form already names, so `no_markers` forbids it
-  (two segments at one address are earned only where they extract genuinely DIFFERENT
-  information, which is rare — §4.3.2.2). Conformance therefore binds the **embed**, not a
-  marker: every embed inside the span owes a from-to table at its address, so a sheet whose
-  relation was never transcribed is a gate failure rather than a record that merely looks
-  finished. A drawing whose payload is NOT a relation — a component photo, an exploded
-  parts view, a torque plate, a location illustration — is not a schematic; that page is a
-  `form/document`, where a figure marker and a sub-region transcription legitimately
-  coexist because they address different regions.
+  This form names the SHAPE — *this thing is a schematic* — and nothing more. It does NOT
+  prescribe a from-to table: a schematic is a drawing that **could** be losslessly
+  represented as one, and whether it actually is depends on whether the relation can be read
+  off these bytes. Both renderings are conforming, and the contract has no standing to demand
+  the better one:
+
+  - **Transcribed** — a `text/data-table` from-to list where the drawing is legible enough to
+    trace endpoint to endpoint. This is the goal, because it is the only rendering a claim can
+    cite at full strength.
+  - **A figure** — the body-empty `image` marker plus the embed's description, where the
+    relation currently cannot be faithfully textualized (illegible scan, a topology the
+    from-to shape cannot hold, a sheet nobody has read yet). Honest, and valid indefinitely.
+
+  What the contract DOES bind is that the two never double up: where the from-to rendering
+  exists it **supersedes** the marker at that address, because the marker extracts nothing and
+  keeping both renders the region twice (§4.3.2.2 — two segments on one region are earned only
+  where they extract genuinely DIFFERENT information, which is rare). So `embed_rendered` asks
+  each embed in the span for one or the other, never for both and never specifically for the
+  table. The drawing's provenance rides the address either way: the attested embed is the
+  asset, and a transcription's own `bbox=` is the crop into it.
+
+  A drawing whose payload is NOT a relation — a component photo, an exploded parts view, a
+  torque plate, a location illustration — is not a schematic at all; that page is a
+  `form/document`, where a figure marker and a sub-region transcription legitimately coexist
+  because they address different regions.
 
   Reversal note (2026-07-26): `form/document` previously ruled that "the schematic
   topology of a drawing is NOT losslessly textualizable and gets no fabricated
@@ -49,12 +61,17 @@ decomposition: |
   verbatim move, never a re-authoring. Where the page prints no per-sheet headings, keep
   one record-scope section: the check binds each embed, so it works either way.
 
-  Each sheet decomposes into ONE segment — a `text/data-table` from-to list, addressed as a
-  `bbox=` crop into the sheet's embed (`el=N&bbox=x,y,w,h`), carrying one row per relation
-  the drawing states. That address is the transcription's provenance: it names the asset and
-  the region of it that was read. The `bbox=` grammar is `x,y,WIDTH,HEIGHT` as **fractions
-  of the image** (`0,0,1,1` is the whole sheet) — a pixel-valued bbox does NOT resolve, so
-  resolve every address you write and read it back before you trust it.
+  Each sheet decomposes into ONE segment — whichever of the two renderings applies. Where the
+  relation is legible that is a `text/data-table` from-to list, addressed as a `bbox=` crop
+  into the sheet's embed (`el=N&bbox=x,y,w,h`), carrying one row per relation the drawing
+  states; the address is the transcription's provenance, naming the asset and the region of it
+  that was read. Where it is not, that is the `image` marker at the sheet's own address, and
+  the reason belongs on the embed's description or a `partial-content` issue — never a
+  half-transcription that quietly drops what could not be read.
+
+  The `bbox=` grammar is `x,y,WIDTH,HEIGHT` as **fractions of the image** (`0,0,1,1` is the
+  whole sheet) — a pixel-valued bbox does NOT resolve, so resolve every address you write and
+  read it back before you trust it.
 
   Crop the DRAWING, not the page. Where the capture baked a viewer's own controls into the
   image — the AllData sheets carry a column of navigation icons at the top right — the crop
@@ -80,8 +97,9 @@ decomposition: |
   never to a cell.
 checks:
   address_axes: [el, page, pages, block]
-  embed_transcribed: text/data-table
-  no_markers: [image]
+  embed_rendered:
+    lossless: text/data-table
+    marker: image
 normalization:
   guidance: |
     Read the drawing from the resolved bytes — never transcribe a sheet from its own
@@ -100,6 +118,14 @@ normalization:
     unnumbered). Where a label is present but unreadable, write
     `[unclear: <best guess>]` and persist a `partial-content` issue naming the cell —
     never drop the row, and never drop a row because its circuit number is missing.
+
+    Know when to stop and leave it a figure. If the drawing will not yield its relation —
+    a scan too degraded to trace, a topology the from-to shape cannot hold — the honest
+    rendering is the marker plus a described embed, with the reason recorded. A table
+    reconstructed past what the bytes support is worse than no table at all: it reads as
+    transcription and cites at full strength, so an invented row is laundered into
+    authoritative evidence. Half a sheet transcribed with the illegible half silently
+    absent is the same failure wearing a better coat.
 
     **Resolve every address you write and read it back.** A transcription's `bbox=` is not a
     caption — it is the claim about which bytes were read, and it is the only provenance the

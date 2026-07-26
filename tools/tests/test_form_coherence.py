@@ -357,15 +357,30 @@ def test_schematic_table_alone_is_clean(tmp_path):
     assert not any(f.startswith("form-") for f in _fired(post, root))
 
 
-def test_schematic_untranscribed_embed_errors(tmp_path):
-    """Conformance binds the EMBED, so a sheet whose relation was never transcribed fails
-    even though no marker is present to hang the check on."""
+def test_schematic_figure_only_is_clean(tmp_path):
+    """The form names a SHAPE, not a mandate to transcribe: a schematic whose relation cannot
+    (yet) be faithfully textualized renders as the marker plus its described embed, and that
+    is conforming — the contract has no standing to demand the better rendering."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     post.content = segments.emit([_schematic(table=False, marker=True)])
+    assert not any(f.startswith("form-") for f in _fired(post, root))
+
+
+def test_schematic_embed_with_neither_rendering_errors(tmp_path):
+    """One or the other is owed, though — an embed with no rendering at all is not a
+    judgment, it is an omission."""
+    root = _root(tmp_path)
+    post = _post()
+    _with_embed(post)
+    sec = segments.Section(
+        form="schematic",
+        segments=[segments.Segment(atom="text", address="el=9", body="unrelated prose")],
+    )
+    post.content = segments.emit([sec])
     findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    missing = [f for f in findings if f.rule_id == "form-embed-not-transcribed"]
+    missing = [f for f in findings if f.rule_id == "form-embed-not-rendered"]
     assert len(missing) == 1
     assert missing[0].severity == "error"
 
