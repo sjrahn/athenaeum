@@ -145,12 +145,21 @@ normalization:
     addresses that materialize nothing; the check costs one call and it also proves the crop
     you transcribed is the crop you addressed.
 
-    Fill the embed's `description:` with the geometry, the terminal glyphs, and the page
-    chrome, and let it point at the table for the relation. Do NOT narrate connectivity in
-    the description: a description is the normalizer's reading, so a fact quoted from it can
-    only ever cite at `kind: incidental` (`ledger.md` §13.2), while the same fact read from
-    the table cites at full strength. Prose that duplicates the table buys nothing and rots
-    independently.
+    **The embed's `description:` carries only what the chosen rendering does not**, and the
+    two branches are lopsided:
+
+    - Transcribed → ONE LINE. Name the sheet, and disclose what the address covered out.
+      Nothing else: the relation is in the table at full strength, and a description can
+      only ever cite at `kind: incidental` (`ledger.md` §13.2), so narrating connectivity
+      buys nothing and rots independently — correct a row and the prose beside it silently
+      goes stale. No element lists, no tracing, no restating the table in sentences.
+    - Figure-only → the description IS the rendering, so it is full and careful: what the
+      sheet draws, its layout, its symbol conventions, and WHY the relation could not be
+      transcribed, so the next pass inherits the judgment instead of re-deriving it.
+
+    Do not leave it empty in either branch. An undescribed image embed raises
+    `embed-description-empty-on-normalized`, and silencing that with a persisted
+    "intentionally undescribed" issue is more ceremony than the one line it replaces.
 
     The acceptance test is regeneration: a sheet redrawn from the table plus the ledger's
     facts should be ELECTRICALLY identical to the original — same endpoints, same
