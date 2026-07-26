@@ -73,10 +73,22 @@ decomposition: |
   whole sheet) — a pixel-valued bbox does NOT resolve, so resolve every address you write and
   read it back before you trust it.
 
-  Crop the DRAWING, not the page. Where the capture baked a viewer's own controls into the
-  image — the AllData sheets carry a column of navigation icons at the top right — the crop
-  excludes them: they are website chrome that never belonged to the drawing. Measure the
-  margin per sheet with a crop; never assume a constant.
+  Address the DRAWING, not the page. Where the capture baked a viewer's own controls into
+  the image — the AllData sheets carry a column of navigation icons at the top right — get
+  rid of them with `cover=`, which paints a region out with the sampled local background
+  and leaves the frame intact. Prefer it to cropping them off: a crop only works when
+  nothing real shares the chrome's x-range, and on a wide drawing the sheet's own labels
+  usually do at some other height.
+
+  Where ONE sheet image carries several independent circuits (they share devices but no
+  drawn conductor), each is its own segment at its own crop — and `cover=` the neighbours
+  before cropping, so a circuit's surface holds only its own content. Without that, each
+  crop leaks fragments of the drawing beside it and the provenance stops being exact.
+
+  Make the address EXPLICIT. State the crop even when it is the whole frame
+  (`bbox=0,0,1,1`) rather than leaning on an implied full-image default: the address is the
+  claim about what was read, and a reader should not have to know a default to know what
+  the claim is. Measure every region per sheet with a crop; never assume a constant.
 
   Columns are the harness-industry ones — from component, from cavity, to component, to
   cavity, circuit, colour, and any direction/terminal marking the drawing prints — cells

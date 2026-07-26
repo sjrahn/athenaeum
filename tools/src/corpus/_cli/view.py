@@ -268,23 +268,18 @@ def _segment_html(
         parts.append(_kv(key, value))
     if seg.description:
         parts.append(f"<p class=desc>{html.escape(seg.description)}</p>")
-    # A `bbox=`-narrowed text segment (an OCR or from-to transcription of a region) is the
-    # case worth seeing side by side: the crop the address points at, then what was read off
-    # it. Resolve the crop FIRST so the eye lands on the source before the transcription.
-    addr_str = str(seg.address[0] if isinstance(seg.address, list) else seg.address or "")
-    wants_crop = seg.atom in {"image", "audio", "video"} or not seg.body.strip() or (
-        "bbox=" in addr_str
-    )
-    if wants_crop:
-        path, err = _resolve_surface(root, record_id, seg.address, regenerate=regenerate)
-        if path:
-            parts.append(_surface_html(path))
-        elif seg.atom in {"image", "audio", "video"} or not seg.body.strip():
-            parts.append(_note(err or "no address"))
-        elif err:
-            # A transcription whose own address will not resolve — worth surfacing loudly,
-            # since the pixel-vs-fraction `bbox=` drift is exactly this shape.
-            parts.append(_note(f"address does not resolve — {err}"))
+    # EVERY segment's address gets resolved, not just the ones carrying a `bbox=`. A
+    # transcription's address is its provenance whatever ops it chains — `cover=` alone, a
+    # crop, or a bare axis — and the point of this page is to put that surface next to what
+    # was read off it. Resolve FIRST so the eye lands on the source before the reading.
+    path, err = _resolve_surface(root, record_id, seg.address, regenerate=regenerate)
+    if path:
+        parts.append(_surface_html(path))
+    elif err:
+        # Surfaced loudly either way: a marker that will not resolve is a broken record, and
+        # a TRANSCRIPTION whose address will not resolve has lost its provenance — which is
+        # exactly the shape of the pixel-vs-fraction `bbox=` drift.
+        parts.append(_note(f"address does not resolve — {err}"))
     if seg.body.strip():
         parts.append(_body_html(seg.body))
     parts.append("</div>")
