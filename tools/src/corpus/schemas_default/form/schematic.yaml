@@ -145,6 +145,16 @@ normalization:
     addresses that materialize nothing; the check costs one call and it also proves the crop
     you transcribed is the crop you addressed.
 
+    **The description is the LAST thing you write.** Not "late" — last. Do not draft it, do
+    not sketch it, do not carry a sentence for it in your head while transcribing: the whole
+    rule is that it carries only what the rendering does not, so until the body is final and
+    checked you cannot know what that remainder is. Written any earlier it describes a body
+    that no longer exists — and nothing catches the drift, because a description is prose no
+    gate can verify. The correct order is: read the bytes → author the rendering → resolve
+    every address you wrote and read it back → lint clean → and only THEN look at what is
+    left over and write the line. If you find yourself writing description prose before the
+    last row is settled, you are describing an intention rather than a record.
+
     **The embed's `description:` carries only what the chosen rendering does not**, and the
     two branches are lopsided:
 
@@ -160,6 +170,10 @@ normalization:
     Do not leave it empty in either branch. An undescribed image embed raises
     `embed-description-empty-on-normalized`, and silencing that with a persisted
     "intentionally undescribed" issue is more ceremony than the one line it replaces.
+
+    If a correction later changes the body — a row re-read, a crop re-measured — the
+    description is re-derived from the new remainder, never patched around the edit. It is
+    downstream of the rendering, so it is rewritten with it.
 
     The acceptance test is regeneration: a sheet redrawn from the table plus the ledger's
     facts should be ELECTRICALLY identical to the original — same endpoints, same

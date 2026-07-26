@@ -421,3 +421,34 @@ def test_document_figure_marker_still_allowed(tmp_path):
     fired = _fired(post, root)
     assert "form-marker-superseded" not in fired
     assert "form-embed-not-transcribed" not in fired
+
+
+# ---------- `corpus guidance` carries the governing contract ---------- #
+
+
+def test_guidance_prints_the_governing_form_contract(tmp_path, capsys):
+    """Regression: a form overlay is where a shape's authoring law lives (§7.8), and
+    `guidance` is the one command the normalize pass is told to consult — but it printed
+    only mime + origin, leaving the form's decomposition, checks and guidance reachable
+    solely by hand-reading a schema yaml, which the pass is told never to do."""
+    import argparse
+
+    from corpus import records as _records
+    from corpus._cli import guidance as _guidance
+
+    root = _root(tmp_path)
+    (root / "records" / "aa").mkdir(parents=True, exist_ok=True)
+    post = _post()
+    post.content = segments.emit([_schematic()])
+    _with_embed(post)
+    _records.dump(post, root / "records" / "aa" / f"{'a' * 64}.md")
+
+    args = argparse.Namespace(hash="a" * 64, mime_only=False, corpus_root=str(root))
+    assert _guidance.run(args) == 0
+    out = capsys.readouterr().out
+    assert "governing contract — form/schematic" in out
+    assert "checks lint will run" in out
+    assert "embed_rendered" in out
+    assert "authoring guidance" in out
+    # the sequencing rule the whole section exists to deliver
+    assert "LAST thing you write" in out

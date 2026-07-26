@@ -45,10 +45,17 @@ normalization:
     The lossless extraction IS the value of this form: transcribe every readable table,
     legend, and callout region exactly (fastener | value | unit | condition; pin | wire
     color | circuit | function), never summarize, and leave a genuinely unreadable cell
-    blank with a `partial-content` issue naming it — never guess a value. Fill every
-    embed's `description:` from the resolved bytes, concrete and short. Where the page
+    blank with a `partial-content` issue naming it — never guess a value. Where the page
     promises content that was never captured, persist a `missing-media` issue — never
     fabricate.
+
+    **Descriptions come LAST, after the extraction is finished.** Each embed's
+    `description:` is filled from the resolved bytes, concrete and short — and how much it
+    owes depends on how much of the asset the transcription ended up carrying, so it cannot
+    be written until the segments are settled. A description drafted alongside the body
+    restates what the body already holds at full strength (a description cites only at
+    `kind: incidental`, `ledger.md` §13.2) and then rots when a cell is corrected, with no
+    gate able to notice. Extract, settle the addresses, then describe the remainder.
 
     On a whole-record span, the section header's `title:`/`description:` fields are the
     vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
