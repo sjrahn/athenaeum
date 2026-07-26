@@ -523,10 +523,25 @@ def _resolve_members(
     rows: list[dict[str, Any]] = []
     derived_from = "artifact"
     try:
-        from corpus import derive as _derive
+        import copy
 
+        from corpus import derive as _derive
+        from corpus.draft import mbox_manifest as _mbox
+
+        # Derive on a SCRATCH copy with the roster cleared, and hand the mailbox its declared
+        # ordinals. Both halves are needed, and the mbox manifest is why: it is selective AND
+        # cumulative (§12.11), so its drafter returns the DELTA over what the record already
+        # declares — deriving against the live record yielded an empty roster for a mailbox with
+        # 153 declared messages, and deriving from a cleared record without the ordinals yields
+        # an empty one too, since nothing asks for any message. Clearing + re-declaring is what
+        # makes this op return the FULL roster for every format uniformly. (`derive_body` clears
+        # the same way for the same reason.) Caught by the parity battery against the real
+        # corpus, not by reading the code.
+        scratch = copy.deepcopy(artifact_record)
+        declared = _mbox.declared_ordinals(artifact_record) or None
+        scratch.metadata["_embeds"] = []
         _build, result, _mt, _bin, _sid = _derive.build_content_zone(
-            artifact_record, corpus_root
+            scratch, corpus_root, messages=declared
         )
         rows = list(result.get("embeds") or [])
     except Exception as exc:  # parse tolerantly (spec §3): report the degradation, never fail

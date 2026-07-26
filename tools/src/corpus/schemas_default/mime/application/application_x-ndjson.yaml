@@ -95,14 +95,17 @@ normalization:
     - Identify each distinct target hash referenced in the body (grep for
       64-char hex strings under `records/`, bare hash mentions in the task
       prompt, or `corpus://` URI prefixes).
-    - For each, look up the corresponding record. If it exists, write a
-      Markdown cross-reference into the frontmatter `description` (e.g.
-      `...full normalize pass on [[corpus://<hash>|<target-title>]] (...)`),
-      using the target record's `title` as the wikilink display text.
+    - For each, look up the corresponding record. If it exists, record the
+      pairing as a `<!--context reference/…-->` block (spec §4.3.3) — the
+      designed home for a citation. Do NOT write a `[[corpus://<hash>|…]]`
+      wikilink: 3.4 retires that form (§4.3.2.2, §5.1), and `description` is
+      the wrong home for it besides — a description is verbatim-quotable by
+      ledger verification, so a stored address there becomes citable
+      "evidence" that is really a rendering instruction.
     - The body itself stays faithful — paths, hashes, and URIs the agent
-      actually typed or saw remain verbatim in segment bodies. Cross-
-      referencing happens in `description` only. Faithfulness lives in the
-      body; machine linkability lives in the frontmatter.
+      actually typed or saw remain verbatim in segment bodies. Faithfulness
+      lives in the body; the pairing is an annotation, and the URL→id mapping
+      it records is recomputable from the URI index at any time (§12.4.7).
 
     **Verification.**
     - Every top-level section carries a descriptive `entry:` label.

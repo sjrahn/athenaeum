@@ -20,7 +20,7 @@ address_scheme:
   type: string
   description: |-
     XPath expression identifying the source DOM element. Alternative to `selector` for cases CSS can't express. Legacy.
-embeds:
+members:
   media_types:
   - image/png
   - image/jpeg

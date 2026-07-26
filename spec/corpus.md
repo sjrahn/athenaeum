@@ -1551,13 +1551,15 @@ Pipeline-state provenance is the `touch[]` chain (§4.2.2): each pass appends a 
 
 #### 12.4.7 Cross-reference resolution
 
-Cross-reference reconciliation is a read-time/sweep concern. Once a stored body exists (normalize, §12.5), scan segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already a member row + segment (§12.4.1). For each hyperlink:
+Cross-reference reconciliation is a **read-time derived view, never a stored rewrite** *(3.4)*. Segment bodies carry the source's own hyperlinks verbatim and nothing else (§4.3.2.2, §5.1); the mapping from those URLs to corpus ids is computed when asked and never written back. Given a record's stored body, the view scans its segment bodies for **hyperlinks** (`<a href>` → other resources) — *not* same-transport inline media, which is already a member row + segment (§12.4.1) — and for each:
 
-1. Map the URL → `id` by querying the corpus's URI index (`records.build_uri_index` — every record's origin `uri:` list keyed by identity, §12.3.9).
-2. If matched, rewrite as a raw intra-corpus wikilink `[[<id>|original link text]]` — no URI scheme prefix; these are layer-local cross-artifact references (§4.3.2.2 / §5.1).
-3. If unmatched, leave the plain markdown URL. The target is outside the corpus and may resolve on a later re-resolution pass once it is captured.
+1. Maps the URL → `id` by querying the corpus's URI index (`records.build_uri_index` — every record's origin `uri:` list keyed by identity, §12.3.9).
+2. If matched, **reports** the pairing `(href, id)`. The body is not touched.
+3. If unmatched, the URL stands as what it is: a reference to something outside the corpus, which the same view will pair automatically once that target is captured.
 
-This is purely mechanical: the pipeline does not invent links the original content didn't contain. A lightweight sweep re-runs just this pass against existing bodies — useful after a batch of captures resolves URLs left as plain markdown in older records.
+*(3.4: steps 1–3 previously **rewrote** the body in place, substituting a raw intra-corpus wikilink `[[<id>|original link text]]` — the form §5.1 now retires. Three reasons it had to go, beyond consistency. It is a **stored derivation**: the pairing is recomputable from the URI index at any moment, so writing it down creates a second copy that can disagree with the first — and does, the instant a target is re-captured or an origin gains a `uri:`. It **damaged faithfulness**: the body is a lossless rendering of the addressed content (§4.3.2.2), and a substituted wikilink is neither what the source said nor recoverable from it. And it **polluted the ledger's citable surface**, since verification reads segment bodies as verbatim quotable text — an anchor text severed from its href, or a bare hash, is not something a claim should be able to quote. No record in either hub ever carried the rewritten form, so nothing is migrated.)*
+
+This is purely mechanical: the view reports links the original content contained and never invents one. Being a view rather than a sweep, it needs no re-run after a batch of captures — the next read simply pairs more of them.
 
 **Reconciliation tooling.** The on-demand counterpart ships as `corpus links` (per-record) and `corpus crawl` (frontier BFS): both extract a record's `<a href>`, resolve relatives against its origin URI, normalize, and look each up in the URI index. A hit means the reference is already captured; a miss is the crawl frontier. `corpus links --show-captured` annotates which is which. Link extraction filters hrefs through `urls.is_crawlable_href`, which keeps client-side routing fragments (`#/route`, `#!/route` — on a hash-routed SPA the fragment *is* the resource identity) while dropping bare anchors (`#section`) and the `javascript:`/`mailto:`/`tel:` schemes.
 

@@ -159,38 +159,62 @@ def test_axis_field_vocabulary_is_covered() -> None:
         )
 
 
-@pytest.mark.skip(
-    reason="the `members` derivation does not exist yet — unskip when "
-    "`corpus://<id>?members` derives fields from the artifact (plan step 4)"
-)
 @pytest.mark.skipif(not _HAVE_CORPORA, reason=_NO_CORPORA_REASON)
 @pytest.mark.parametrize("fixture_path", _FIXTURE_PATHS, ids=lambda p: p.stem)
-def test_derivation_reproduces_stored_fields(fixture_path: Path) -> None:
-    """The `members` derivation must reproduce, field-for-field, what is stored today.
+def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
+    """The `members` derivation reproduces every MECHANICAL field the retired block stored.
 
-    Written now so it works the moment `corpus://<id>?members` (or whatever the derivation's
-    entry point turns out to be named) lands — swap `_derive_members` below for the real call.
+    This is the proof the 3.4 collapse rests on: the four-key row (spec §4.3.1.4) drops
+    dimensions, `alt`, filenames and header facts on the argument that they are re-derivable,
+    and this test holds that argument to the real corpus rather than taking it on trust.
+
+    `description` is deliberately EXCLUDED, and the exclusion is the other half of the finding.
+    Census of the stored values showed it is interpretive, normalizer-authored prose on the
+    `el=`/`part=`/`path=` axes ("Page 5: Issue #1 (after Gen 9.4 CDMA EOL upgrade…)") — not in
+    the bytes, not reproducible by any mechanical pass, and not idempotent if an LLM re-ran it.
+    That is exactly why 3.4 RE-HOMES those descriptions onto the block that places the asset
+    (authored layer) instead of expecting a derivation to bring them back. `card=` is the one
+    axis whose `description` IS mechanical — the vCard `FN` property — so it is asserted, not
+    excluded.
     """
-    from corpus import derive  # local import: module may not exist yet on this branch
+    from corpus import resolver
 
     fixture = _load_fixture(fixture_path)
     corpus_root = _CORPUS_ROOTS[fixture["hub"]]
     record_path = corpus_root / fixture["relpath"]
-    post = records.load(record_path)
-    live = list(records.iter_embed_blocks(post))
-    chosen_live = [live[i] for i in fixture["source_indices"]]
+    record_id = records.load(record_path).metadata["id"]
 
-    for stored in chosen_live:
-        derived = derive.members_for_address(  # placeholder entry point — adjust to the real API
-            post,
-            corpus_root=corpus_root,
-            address=stored["address"],
+    try:
+        out = resolver.resolve(f"corpus://{record_id}?members", corpus_root, regenerate=True)
+    except Exception as exc:  # bytes not resident / no drafter — the documented degradation
+        pytest.skip(f"members derivation unavailable for {fixture['relpath']}: {exc}")
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    if payload.get("derived_from", "").startswith("stored-roster"):
+        pytest.skip(f"derivation fell back to the stored roster: {payload['derived_from']}")
+
+    by_addr: dict[str, dict] = {}
+    for entry in payload["members"]:
+        by_addr.setdefault(str(entry["address"]), entry)
+
+    checked = 0
+    for stored in fixture["embeds"]:
+        addrs = stored["address"]
+        first = str(addrs[0] if isinstance(addrs, list) else addrs)
+        derived = by_addr.get(first)
+        assert derived is not None, f"{fixture_path.name}: derivation omitted {first!r}"
+        assert derived["transport"] == stored["transport"], (
+            f"{fixture_path.name} {first}: transport drift — the extractor is not deterministic"
         )
-        assert derived["media_type"] == stored["media_type"]
-        assert derived["transport"] == stored["transport"]
-        for field_key, expected_value in stored["fields"].items():
-            assert derived["fields"].get(field_key) == expected_value, (
-                f"{fixture_path.name} address={stored['address']!r}: "
-                f"derived {field_key}={derived['fields'].get(field_key)!r}, "
-                f"stored {field_key}={expected_value!r}"
+        assert derived["media_type"] == stored["media_type"], f"{fixture_path.name} {first}: mime"
+        checked += 2  # transport + media_type are themselves parity assertions
+        for key, expected in (stored.get("fields") or {}).items():
+            if key == "description" and fixture["axis"] != "card":
+                # Authored prose — see the docstring. Its absence is the point.
+                assert "description" not in derived or derived["description"] != expected
+                continue
+            assert derived.get(key) == expected, (
+                f"{fixture_path.name} {first}: derived {key}={derived.get(key)!r}, "
+                f"stored {key}={expected!r}"
             )
+            checked += 1
+    assert checked or not fixture["embeds"], f"{fixture_path.name}: nothing was actually compared"
