@@ -938,6 +938,12 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
                 referenced.update(_addresses(getattr(child, "address", None)))
         elif isinstance(blk, _segments.Segment):
             referenced.update(_addresses(getattr(blk, "address", None)))
+    # A segment that CHAINS INTO an embed references it: `el=3&bbox=…` is a crop of the
+    # `el=3` asset, which is precisely how a lossless transcription cites the bytes it read
+    # (§4.3.2.2). Matching only whole address strings would call such an embed an orphan and
+    # push authors back toward a redundant positioning marker.
+    chained = {a.split("&", 1)[0] for a in referenced if "&" in a}
+    referenced |= chained
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         addrs = _addresses(eb.get("address"))
         if addrs and not any(a in referenced for a in addrs):
@@ -1176,6 +1182,25 @@ def _leading_axis(addr: Any) -> tuple[str, str]:
     return param.strip(), value.strip()
 
 
+def _span_bounds(section: Any) -> tuple[str | None, int | None, int | None]:
+    """A section's own address envelope as `(axis, lo, hi)` — the span an embed must fall in
+    to be that span's obligation. A whole-record section (no `address`, §4.3.2.1) returns
+    `(None, None, None)`: it owns the record's whole content zone, so every embed is in scope.
+    Falls back to the axis alone when the value is not an integer span."""
+    addr = section.address
+    if not addr:
+        # Whole-record span: scope to the axes its own children actually use, so an embed on
+        # an unrelated axis stays another contract's business rather than this span's orphan.
+        axes = {_leading_axis(s.address)[0] for s in getattr(section, "segments", [])}
+        return (axes.pop() if len(axes) == 1 else None), None, None
+    axis, value = _leading_axis(addr)
+    m = re.match(r"^(\d+)(?:-(\d+))?$", value or "")
+    if not m:
+        return (axis or None), None, None
+    lo = int(m.group(1))
+    return (axis or None), lo, int(m.group(2)) if m.group(2) else lo
+
+
 def _segment_id(seg: Any) -> str:
     """A segment's opener id — the atomic-overlay id where one is named (already the full
     `<atom>/<id>`, e.g. `image/figure`), else the bare atom. `checks.paired_segments` keys
@@ -1260,24 +1285,58 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                         address=_addr_str(seg.address),
                     )
 
-        for rule in checks.get("paired_segments") or []:
-            atom_id, requires = rule.get("atom"), rule.get("requires")
-            if not atom_id or not requires:
-                continue
-            at_address: dict[tuple[str, str], set[str]] = {}
-            for seg in blk.segments:
-                at_address.setdefault(_leading_axis(seg.address), set()).add(_segment_id(seg))
-            for seg in blk.segments:
-                if _segment_id(seg) != atom_id:
+        # `embed_transcribed` — a form whose content IS a lossless rendering of its assets
+        # binds the ATTESTED EMBED, not a positioning marker: every embed addressed inside the
+        # span must carry the declared lossless segment at its address. Keying on the embed is
+        # what lets such a form drop the marker entirely (§4.3.2.2) — the transcription's own
+        # address is the crop into the embed, which IS its provenance.
+        want = checks.get("embed_transcribed")
+        if want:
+            present = {
+                _leading_axis(seg.address) for seg in blk.segments if _segment_id(seg) == want
+            }
+            # Scope to THIS span, off the section's own address envelope (§4.3.2.1) — a
+            # sibling span's embed is that span's obligation, not this one's. A whole-record
+            # section (no address) owns every embed on an axis its children use.
+            span_axis, span_lo, span_hi = _span_bounds(blk)
+            for embed in _records.iter_embed_blocks(post):
+                axis, value = _leading_axis(embed.get("address"))
+                if not value or (span_axis and axis != span_axis):
                     continue
-                if requires not in at_address.get(_leading_axis(seg.address), set()):
+                low = _axis_low(value)
+                if span_lo is not None and (
+                    low is None or low < span_lo or (span_hi is not None and low > span_hi)
+                ):
+                    continue
+                key = (axis, value)
+                if key not in present:
                     yield Finding(
-                        rule_id="form-segment-pair-missing",
+                        rule_id="form-embed-not-transcribed",
                         severity="error",
                         message=(
-                            f"section {top_i} (form `{blk.form}`): `{atom_id}` segment carries no "
-                            f"sibling `{requires}` segment at its address — this form binds the "
-                            f"pair (spec §7.8)."
+                            f"section {top_i} (form `{blk.form}`): embed at "
+                            f"`{_addr_str(embed.get('address'))}` carries no `{want}` segment at "
+                            f"its address — this form's content IS the lossless rendering of its "
+                            f"assets (spec §7.8)."
+                        ),
+                        address=_addr_str(embed.get("address")),
+                    )
+
+        # `no_markers` — the same forms forbid the body-empty positioning marker they replaced.
+        # Keeping both renders the identical region twice and asserts a shape the form already
+        # names; the embed (metadata zone) remains the asset's home and its lossy disclosure.
+        forbidden = set(checks.get("no_markers") or [])
+        if forbidden:
+            for seg in blk.segments:
+                if seg.atom in forbidden and not seg.is_structural:
+                    yield Finding(
+                        rule_id="form-marker-superseded",
+                        severity="error",
+                        message=(
+                            f"section {top_i} (form `{blk.form}`): `{_segment_id(seg)}` marker is "
+                            f"superseded by this form's lossless rendering — drop it; the embed "
+                            f"holds the asset and the transcription's address is the crop into it "
+                            f"(spec §4.3.2.2, §7.8)."
                         ),
                         address=_addr_str(seg.address),
                     )

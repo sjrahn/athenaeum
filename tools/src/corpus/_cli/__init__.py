@@ -55,6 +55,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "workflow":        ("Inspect",                "Operating-mode runbooks for the tooling (loop modes, queue lifecycle)"),
     "overlay":         ("Inspect",                "Show an origin overlay's declarations + normalization tactics"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
+    "view":            ("Inspect",                "Render one record as a single self-contained HTML page — every addressed surface resolved and inlined (the human's eyes)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream a record's body (stored, else the derived `body` op)"),
     "lint":            ("Inspect",                "Conformance check (the verification gate)"),

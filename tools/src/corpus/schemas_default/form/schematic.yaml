@@ -6,13 +6,19 @@ description: |
   diagram's link set (spec §7.8). Names a SHAPE, never a subject: which system a sheet
   draws is the origin block and the ledger's business, never this contract's.
 
-  The contract is the PAIR — the sheet figure and the relation it states, each as its own
-  segment at the same address. That is the whole reason this is a form and not a page-like
-  `form/document`: the pairing is a mechanical obligation lint enforces, so a sheet whose
+  Declaring this form IS declaring that the sheet is represented by a **from-to table**, so
+  the table is not a companion to a figure — it REPLACES it. The drawing's provenance rides
+  the address: the attested embed is the asset, and the transcription's own `bbox=` is the
+  crop into that embed. A body-empty `image/figure` marker beside it would render the same
+  region twice and re-assert a shape this form already names, so `no_markers` forbids it
+  (two segments at one address are earned only where they extract genuinely DIFFERENT
+  information, which is rare — §4.3.2.2). Conformance therefore binds the **embed**, not a
+  marker: every embed inside the span owes a from-to table at its address, so a sheet whose
   relation was never transcribed is a gate failure rather than a record that merely looks
   finished. A drawing whose payload is NOT a relation — a component photo, an exploded
   parts view, a torque plate, a location illustration — is not a schematic; that page is a
-  `form/document` and its figures stand alone.
+  `form/document`, where a figure marker and a sub-region transcription legitimately
+  coexist because they address different regions.
 
   Reversal note (2026-07-26): `form/document` previously ruled that "the schematic
   topology of a drawing is NOT losslessly textualizable and gets no fabricated
@@ -21,13 +27,6 @@ description: |
   is read. What the old prose correctly refused was FABRICATION: a connection the drawing
   does not show. That refusal survives here as the second boundary, below.
 extended_fields:
-  diagram_type:
-    type: string
-    required: false
-    description: |
-      The sheet's own printed subtitle naming which circuit it draws, verbatim
-      (`Low Speed Bus`, `High Speed Bus`, `Accessory Wakeup Serial Data`) — present only
-      where the sheet prints one. Not a classification of our own.
   off_page_references:
     type: list
     required: false
@@ -39,41 +38,59 @@ extended_fields:
       box. This is the surface that stitches sheets into one graph mechanically, with no
       inference.
 decomposition: |
-  One section per SHEET — a page carrying three diagrams carries three sections, not one
-  section with three figures, because the pairing obligation binds per sheet. A page that
-  is a single sheet may carry the form at record scope.
+  The pairing obligation is **address-keyed**, so the form binds correctly at either
+  scope, and the scope is chosen by where the sheets' names are printed. A page carrying
+  ONE sheet takes the form at record scope. A multi-sheet page takes **one span section
+  per sheet** where the page prints a heading for each (that heading is the span's
+  `title:` — §4.3.2.1's designated home, and the sheet's identity then sits on a citable
+  surface rather than inside a figure description); mind the consequence, since sections
+  never nest — span sections leave the record with no whole-record header, so a record
+  whose vouch lives there needs it relocated to the frontmatter override (§4.2.1) as a
+  verbatim move, never a re-authoring. Where the page prints no per-sheet headings, keep
+  one record-scope section: the check binds each embed, so it works either way.
 
-  Each sheet decomposes into two co-addressed segments (§4.3.2.2 same-region stacking):
+  Each sheet decomposes into ONE segment — a `text/data-table` from-to list, addressed as a
+  `bbox=` crop into the sheet's embed (`el=N&bbox=x,y,w,h`), carrying one row per relation
+  the drawing states. That address is the transcription's provenance: it names the asset and
+  the region of it that was read. The `bbox=` grammar is `x,y,WIDTH,HEIGHT` as **fractions
+  of the image** (`0,0,1,1` is the whole sheet) — a pixel-valued bbox does NOT resolve, so
+  resolve every address you write and read it back before you trust it.
 
-  1. An `image/figure` positioning marker for the drawing, whose matching embed
-     `description:` carries the LOSSY half — layout, symbol glyphs, sheet chrome
-     (navigation icons, borders, revision blocks).
-  2. A `text/data-table` from-to list at the chained address (`el=N&bbox=…`) carrying the
-     LOSSLESS half: one row per relation the drawing states. For a wiring sheet the
-     columns are the harness-industry ones — from component, from cavity, to component, to
-     cavity, circuit, colour, and any direction/terminal marking the drawing prints —
-     cells verbatim in the source's own identifiers. See the `text/data-table` overlay's
-     graph-shaped note for the fill discipline.
+  Crop the DRAWING, not the page. Where the capture baked a viewer's own controls into the
+  image — the AllData sheets carry a column of navigation icons at the top right — the crop
+  excludes them: they are website chrome that never belonged to the drawing. Measure the
+  margin per sheet with a crop; never assume a constant.
 
-  Discrete printed matter that is not part of the relation — a legend, a note block, a
-  connector table — is its own segment at its own region, exactly as under
+  Columns are the harness-industry ones — from component, from cavity, to component, to
+  cavity, circuit, colour, and any direction/terminal marking the drawing prints — cells
+  verbatim in the source's own identifiers, plus an option/device-code column where the
+  sheet gates branches by build code. See the `text/data-table` overlay's graph-shaped note
+  for the fill discipline.
+
+  The attested embed keeps the LOSSY half on its `description:` — layout, symbol glyphs,
+  sheet chrome. Discrete printed matter that is not part of the relation — a legend, a note
+  block, a connector table — is its own segment at its own region, exactly as under
   `form/document`.
 
   Two boundaries are normative to this contract. **Geometry is not relation content**:
-  where a box sits on the sheet, and the sheet's chrome, stay with the figure and its
-  description; the table carries the relation only. **An unshown connection is an
-  inference**: transcribe the printed termination even when the downstream one is
-  obvious — a conductor the drawing does not draw belongs to the ledger as a claim over
-  this segment's span, never to a cell.
+  where a box sits on the sheet, and the sheet's chrome, stay with the embed's description;
+  the table carries the relation only. **An unshown connection is an inference**:
+  transcribe the printed termination even when the downstream one is obvious — a conductor
+  the drawing does not draw belongs to the ledger as a claim over this segment's span,
+  never to a cell.
 checks:
   address_axes: [el, page, pages, block]
-  paired_segments:
-    - atom: image/figure
-      requires: text/data-table
+  embed_transcribed: text/data-table
+  no_markers: [image]
 normalization:
   guidance: |
     Read the drawing from the resolved bytes — never transcribe a sheet from its own
-    description or from a sibling record's. Work endpoint to endpoint: one row per
+    description or from a sibling record's. On a dense sheet, read the whole sheet once for
+    topology, then **crop-and-upscale every region you are not certain of** and read it
+    again (`?el=N&bbox=x,y,w,h&resize=WxH`, bbox fractional): a plausible-looking reading
+    of a junction, an internal jumper, or a two-digit cavity is exactly the error this
+    contract exists to catch, and it costs one resolver call to settle. Work endpoint to
+    endpoint: one row per
     conductor segment between two termination points, so a wire passing through a
     connector or an inline splice yields a row on each side of it rather than one row that
     silently swallows the connector.
@@ -84,12 +101,18 @@ normalization:
     `[unclear: <best guess>]` and persist a `partial-content` issue naming the cell —
     never drop the row, and never drop a row because its circuit number is missing.
 
-    Fill the figure's embed `description:` with the geometry, the terminal glyphs, and the
-    page chrome, and let it point at the sibling table for the relation. Do NOT narrate
-    connectivity in the description: a description is the normalizer's reading, so a fact
-    quoted from it can only ever cite at `kind: incidental` (`ledger.md` §13.2), while the
-    same fact read from the table cites at full strength. Prose that duplicates the table
-    buys nothing and rots independently.
+    **Resolve every address you write and read it back.** A transcription's `bbox=` is not a
+    caption — it is the claim about which bytes were read, and it is the only provenance the
+    table has. Writing one without resolving it is how a whole fleet ended up carrying
+    addresses that materialize nothing; the check costs one call and it also proves the crop
+    you transcribed is the crop you addressed.
+
+    Fill the embed's `description:` with the geometry, the terminal glyphs, and the page
+    chrome, and let it point at the table for the relation. Do NOT narrate connectivity in
+    the description: a description is the normalizer's reading, so a fact quoted from it can
+    only ever cite at `kind: incidental` (`ledger.md` §13.2), while the same fact read from
+    the table cites at full strength. Prose that duplicates the table buys nothing and rots
+    independently.
 
     The acceptance test is regeneration: a sheet redrawn from the table plus the ledger's
     facts should be ELECTRICALLY identical to the original — same endpoints, same

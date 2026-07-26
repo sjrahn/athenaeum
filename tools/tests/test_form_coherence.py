@@ -321,69 +321,88 @@ def test_statement_pages_axis_nonmonotonic_still_flagged(tmp_path):
     assert "form-address-nonmonotonic" in _fired(post, root)
 
 
-# ---------- co-addressed segment pairings (§7.8 `checks.paired_segments`) ---------- #
+# ---------- embed-keyed transcription + superseded markers (§7.8) ---------- #
 
 
-def _schematic_sheet(*, with_table: bool) -> segments.Section:
-    """A `form/schematic` sheet: the figure marker, optionally its from-to sibling."""
-    segs = [segments.Segment(atom="image", overlay="image/figure", address="el=3")]
-    if with_table:
+def _schematic(*, table: bool = True, marker: bool = False) -> segments.Section:
+    """A `form/schematic` sheet. Its content IS the lossless table; the embed is the asset."""
+    segs = []
+    if marker:
+        segs.append(segments.Segment(atom="image", overlay="image/figure", address="el=3"))
+    if table:
         segs.append(
             segments.Segment(
                 atom="text",
                 overlay="text/data-table",
-                address="el=3&bbox=0,0,2700,1920",
+                address="el=3&bbox=0,0,0.96,1",
                 body="| From component | To component |\n|---|---|\n| B+ | Fuse F5 |\n",
             )
         )
     return segments.Section(form="schematic", segments=segs)
 
 
-def test_schematic_figure_with_from_to_sibling_is_clean(tmp_path):
+def _with_embed(post, address: str = "el=3") -> None:
+    post.metadata["_embeds"] = [
+        {"media_type": "image/png", "address": address, "transport": "blake3:" + "0" * 8,
+         "fields": {"width": 2700, "height": 1920}}
+    ]
+
+
+def test_schematic_table_alone_is_clean(tmp_path):
+    """The table replaces the figure: no marker, embed transcribed, nothing fires."""
     root = _root(tmp_path)
     post = _post()
-    post.content = segments.emit([_schematic_sheet(with_table=True)])
+    _with_embed(post)
+    post.content = segments.emit([_schematic()])
     assert not any(f.startswith("form-") for f in _fired(post, root))
 
 
-def test_schematic_figure_without_from_to_sibling_errors(tmp_path):
-    """The pair IS the contract: a sheet whose relation was never transcribed is a gate
-    failure, not a record that merely looks finished."""
+def test_schematic_untranscribed_embed_errors(tmp_path):
+    """Conformance binds the EMBED, so a sheet whose relation was never transcribed fails
+    even though no marker is present to hang the check on."""
     root = _root(tmp_path)
     post = _post()
-    post.content = segments.emit([_schematic_sheet(with_table=False)])
+    _with_embed(post)
+    post.content = segments.emit([_schematic(table=False, marker=True)])
     findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    pair = [f for f in findings if f.rule_id == "form-segment-pair-missing"]
-    assert len(pair) == 1
-    assert pair[0].severity == "error"
-    assert "el=3" in (pair[0].address or "")
+    missing = [f for f in findings if f.rule_id == "form-embed-not-transcribed"]
+    assert len(missing) == 1
+    assert missing[0].severity == "error"
 
 
-def test_schematic_pair_must_share_the_address(tmp_path):
-    """A from-to table addressing a DIFFERENT region does not satisfy the figure's
-    obligation — the pairing is co-addressed (§4.3.2.2 same-region stacking)."""
+def test_schematic_image_marker_is_superseded(tmp_path):
+    """Two segments at one address are earned only when they extract DIFFERENT information;
+    a body-empty marker beside its own transcription renders the region twice."""
     root = _root(tmp_path)
     post = _post()
-    sec = segments.Section(
-        form="schematic",
-        segments=[
-            segments.Segment(atom="image", overlay="image/figure", address="el=3"),
-            segments.Segment(atom="text", overlay="text/data-table",
-                             address="el=9&bbox=0,0,10,10", body="| a |\n|---|\n| b |\n"),
-        ],
-    )
-    post.content = segments.emit([sec])
-    assert "form-segment-pair-missing" in _fired(post, root)
+    _with_embed(post)
+    post.content = segments.emit([_schematic(marker=True)])
+    findings = lint.lint(post, segments.iter_blocks(post.content), root)
+    superseded = [f for f in findings if f.rule_id == "form-marker-superseded"]
+    assert len(superseded) == 1
+    assert superseded[0].severity == "error"
 
 
-def test_document_figure_needs_no_pairing(tmp_path):
-    """The obligation is `schematic`'s alone — a `document` page's figures (a component
-    photo, a location illustration) stand alone exactly as before."""
+def test_schematic_embed_on_another_axis_is_not_this_spans_business(tmp_path):
+    """An embed addressed on an axis the span does not carry belongs to another span."""
     root = _root(tmp_path)
     post = _post()
+    _with_embed(post, address="page=2")
+    post.content = segments.emit([_schematic()])
+    assert "form-embed-not-transcribed" not in _fired(post, root)
+
+
+def test_document_figure_marker_still_allowed(tmp_path):
+    """`document` declares neither check — a page's figure marker and a sub-region
+    transcription legitimately coexist there, addressing different regions."""
+    root = _root(tmp_path)
+    post = _post()
+    _with_embed(post)
     sec = segments.Section(
         form="document",
         segments=[segments.Segment(atom="image", overlay="image/figure", address="el=3")],
     )
     post.content = segments.emit([sec])
-    assert "form-segment-pair-missing" not in _fired(post, root)
+    fired = _fired(post, root)
+    assert "form-marker-superseded" not in fired
+    assert "form-embed-not-transcribed" not in fired
