@@ -99,6 +99,74 @@ def mark(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image
     return out
 
 
+@register("image", "cover", "image")
+def cover(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`cover=x,y,w,h[;x,y,w,h...]` — paint the region(s) OUT, filling each with the
+    background colour sampled from the pixels immediately around it. Does not crop.
+
+    The chrome remover. Where a capture baked a viewer's own controls into the artifact
+    (AllData's schematic sheets carry a column of navigation icons at the top right), the
+    obvious fix is to crop them off — but a rectangle only works when nothing real shares
+    the chrome's x-range, and on a wide drawing the sheet's own labels usually do, at some
+    other height. Covering removes the chrome *in place*, so content that merely sits
+    beside it survives; chain a `crop=`/`bbox=` afterwards when a crop is also wanted.
+
+    The fill is SAMPLED, never assumed white: the modal colour of a one-region-thick ring
+    just outside the box, so a tinted or scanned background stays consistent and the patch
+    does not announce itself. Each value is a float in [0, 1] (a fraction of the image),
+    origin top-left; multiple regions are `;`-separated.
+
+    This is a lossy op by nature — it deletes pixels. It rides the address, so the
+    deletion is disclosed wherever the surface is cited (§6.2): a reader sees the region
+    was covered and can resolve the same address without the op to see what was removed.
+    Use it for chrome, never to make an inconvenient part of the artifact go away."""
+    if value is None:
+        raise ValueError("cover= requires at least one x,y,w,h region (fractions in [0,1])")
+    boxes = [_parse_box(chunk) for chunk in value.split(";") if chunk]
+    if not boxes:
+        raise ValueError("cover= requires at least one x,y,w,h region (fractions in [0,1])")
+
+    out = img.convert("RGB")
+    draw = ImageDraw.Draw(out)
+    iw, ih = out.size
+    for x, y, w, h in boxes:
+        left, top = round(x * iw), round(y * ih)
+        right, bottom = round((x + w) * iw), round((y + h) * ih)
+        if right <= left or bottom <= top:
+            continue
+        fill = _ring_modal_colour(out, left, top, right, bottom)
+        draw.rectangle((left, top, right - 1, bottom - 1), fill=fill)
+    return out
+
+
+def _ring_modal_colour(
+    img: Image.Image, left: int, top: int, right: int, bottom: int
+) -> tuple[int, int, int]:
+    """The modal colour of a thin ring just OUTSIDE the box — the local background.
+
+    Sampling around the region rather than globally is what keeps the patch invisible on a
+    page whose background is not uniform. A box flush against the image edge simply has
+    less ring to sample; an empty ring (the box covers everything) falls back to white,
+    which is the only defensible guess left."""
+    iw, ih = img.size
+    pad = max(2, round(min(iw, ih) * 0.004))
+    counts: dict[tuple[int, int, int], int] = {}
+    px = img.load()
+    ring_x = range(max(0, left - pad), min(iw, right + pad))
+    ring_y = range(max(0, top - pad), min(ih, bottom + pad))
+    for yy in (range(max(0, top - pad), top), range(bottom, min(ih, bottom + pad))):
+        for y in yy:
+            for x in ring_x:
+                counts[px[x, y]] = counts.get(px[x, y], 0) + 1
+    for xx in (range(max(0, left - pad), left), range(right, min(iw, right + pad))):
+        for x in xx:
+            for y in ring_y:
+                counts[px[x, y]] = counts.get(px[x, y], 0) + 1
+    if not counts:
+        return (255, 255, 255)
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
 @register("image", "resize", "image")
 def resize(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
     """Resize to absolute pixel dimensions: `resize=WxH`. Forces both dimensions
