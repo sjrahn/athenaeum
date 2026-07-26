@@ -200,6 +200,62 @@ def parse_region(value: str) -> tuple[float, float, float, float]:
     return x, y, w, h
 
 
+# ---------- integer index-span grammar ---------- #
+
+
+def parse_index_span(
+    key: str, value: str | None, *, count: int | None = None, noun: str = "the artifact"
+) -> tuple[int, int]:
+    """Parse a 1-indexed integer address axis — `N` (one unit) or `N-M` (an inclusive
+    span) — into `(low, high)`, bounds-checked against `count` when one is given.
+
+    `count=None` checks grammar and the lower bound only, for a caller that reaches the
+    upper bound anyway as part of work it must do regardless (the EPUB single-index path
+    materializes through `addressable_image_bytes`, which counts elements itself and
+    raises the same message). Supplying a count there would mean parsing the spine
+    document twice per address — 22,293 of them on one record. A SPAN, by contrast,
+    never reaches materialization, so its caller MUST supply the count; that is the
+    whole point of this function.
+
+    The single definition of the index-span grammar, for the same reason `parse_region`
+    is: the SPAN form was the hole. A span envelope has no single byte surface, so the
+    materialization transforms used to short-circuit it to `NotMaterializable` before
+    ever looking at the numbers — which meant `el=94-102` on a nine-element artifact
+    was waved through as declared coverage while the bare `el=145` beside it errored.
+    Eight of the seventeen out-of-range addresses in the corpus were invisible that way.
+    Bounds are a property of the ADDRESS, not of whether it happens to materialize, so
+    they are checked here, before the caller decides which of the two it is."""
+    if value is None or not value.strip():
+        raise ValueError(f"{key}= requires an integer index")
+    raw = value.strip()
+    if "-" in raw:
+        start, _, end = raw.partition("-")
+        try:
+            low, high = int(start), int(end)
+        except ValueError as exc:
+            raise ValueError(
+                f"{key}={raw}: span endpoints must be integers"
+            ) from exc
+        if high < low:
+            raise ValueError(
+                f"{key}={raw}: span end {high} precedes its start {low}"
+            )
+    else:
+        try:
+            low = high = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{key}={raw}: not an integer") from exc
+    if low < 1:
+        raise ValueError(f"{key}={raw}: indices are 1-based, got {low}")
+    if count is not None and high > count:
+        # Message shape kept identical to the pre-existing single-index error, so the
+        # finding text a reader already knows does not change under the span form.
+        raise ValueError(
+            f"{key}={high} out of range ({noun} has {count} addressable elements)"
+        )
+    return low, high
+
+
 def region_errors(key: str, value: str | None) -> list[str]:
     """Validate one authored `key=value` param as a region, returning zero or more
     human-readable problems. Non-region keys return `[]`.

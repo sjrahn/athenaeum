@@ -405,6 +405,36 @@ def draft(
             # `el=N` or `el=N-M` per the html schema's structural-recovery
             # guidance.
             wrapper_address = f"el=1-{max_el}" if max_el >= 1 else "el=1"
+            if max_el == 0:
+                # Visible content, but the `el=` axis has NO members — every block is a
+                # layout `<div>`/`<span>`, so the fallback address above names an element
+                # that does not exist and cannot resolve. Say so at draft time: the
+                # address is required by the segment grammar and there is no whole-
+                # document form to put there instead, so the only honest thing the
+                # mechanical layer can do is flag what it was forced to write. Found via
+                # a record that carried this silently from draft through normalize, with
+                # `corpus lint`, `health`, and compile all reading green.
+                issues.append(
+                    {
+                        "id": "partial-content",
+                        "subtype": "unaddressable-content",
+                        "severity": "warning",
+                        "resolution": "open",
+                        "detector": _DRAFTER_DETECTOR_ID,
+                        "fields": {
+                            "description": (
+                                "Artifact carries visible content but ZERO addressable "
+                                "elements (layout <div>/<span> only), so the `el=` axis "
+                                "has no members. The wrapping segment's required "
+                                "`address: el=1` therefore does not resolve — it is a "
+                                "grammar-mandated placeholder, not a citation. Any "
+                                "segment the normalize pass derives inherits the same "
+                                "gap; `corpus lint --resolve` reports it."
+                            ),
+                            "remediation": "recapture_with_structural_markup",
+                        },
+                    }
+                )
             blocks = [
                 Segment(
                     atom="text",

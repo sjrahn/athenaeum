@@ -31,6 +31,7 @@ import pillow_avif  # noqa: F401
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
+from .. import functional_uri as furi
 from . import NotMaterializable, RenderContext, register
 
 #: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the LIVE `el=` element-
@@ -213,28 +214,24 @@ class HtmlElRef:
 def extract_el(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> HtmlElRef:
     """`?el=N` — select the Nth addressable element in document order as an `HtmlElRef`.
     The concrete materialization (image vs raw bytes) is decided terminally by the
-    resolver, since it depends on which element `N` names."""
-    if value is None or not value.strip():
-        raise ValueError("el= requires an integer index")
-    raw = value.strip()
-    if "-" in raw:
-        # A span address (`el=1-8`) names a real envelope of elements; it just has no
-        # single byte surface. Not a defect — see `NotMaterializable`.
-        raise NotMaterializable(
-            f"el={raw}: range form not supported by the materialization transform; "
-            f"single index expected"
-        )
-    try:
-        n = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"el={raw}: not an integer") from exc
+    resolver, since it depends on which element `N` names.
+
+    A span (`el=1-8`) is bounds-checked exactly like a single index and only THEN
+    declared unmaterializable: an envelope that runs past the element list names
+    nothing, and reporting it as declared coverage is how confabulated span addresses
+    stayed invisible to the gate."""
     elements = soup.find_all(is_addressable)
-    if n < 1 or n > len(elements):
-        raise ValueError(
-            f"el={n} out of range (artifact has {len(elements)} addressable elements)"
+    low, high = furi.parse_index_span(
+        "el", value, count=len(elements), noun="artifact"
+    )
+    if low != high:
+        # An in-bounds span names a real envelope of elements; it just has no single
+        # byte surface. Not a defect — see `NotMaterializable`.
+        raise NotMaterializable(
+            f"el={low}-{high}: span envelope has no single byte surface to "
+            f"materialize; a single index is required for that"
         )
-    tag = elements[n - 1]
-    return HtmlElRef(tag=tag, index=n)
+    return HtmlElRef(tag=elements[low - 1], index=low)
 
 
 def render_htmlel_image(ref: HtmlElRef, ctx: RenderContext) -> Image.Image:

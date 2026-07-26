@@ -567,6 +567,54 @@ def test_html_drafter_flags_empty_body(tmp_path, run_drafter):
     assert issue["detector"].startswith("corpus.draft.text/text_html@")
 
 
+def test_html_drafter_flags_unaddressable_content(tmp_path, run_drafter):
+    """A page whose blocks are all layout `<div>`/`<span>` has visible content but ZERO
+    `el=` members, so the wrapping segment's required address (`el=1`) names an element
+    that does not exist.
+
+    The segment grammar requires an address and there is no whole-document form to put
+    there, so the drafter cannot avoid writing the placeholder — but it must not write it
+    silently. One real record carried exactly this from draft through normalize with lint,
+    health, and compile all green; only `--resolve` ever saw it. `empty-body` does not
+    cover the case, since the text is present."""
+    p = tmp_path / "dialog.html"
+    p.write_text(
+        "<!DOCTYPE html><html><head><title>Article Not Found</title></head>"
+        "<body><div id='overlay'><span>Article Not Found</span>"
+        "<div>The article you are trying to view could not be found.</div>"
+        "</div></body></html>",
+        encoding="utf-8",
+    )
+    drafter = draft.get_drafter("text/text_html")
+    result, _ = run_drafter(drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+
+    flagged = [
+        i for i in result.get("issues") or []
+        if i["id"] == "partial-content" and i.get("subtype") == "unaddressable-content"
+    ]
+    assert len(flagged) == 1, "a zero-element artifact must announce its unnameable address"
+    assert flagged[0]["severity"] == "warning"
+    assert flagged[0]["detector"].startswith("corpus.draft.text/text_html@")
+    # ...and NOT as empty-body, which requires the text to be absent.
+    assert not [
+        i for i in result.get("issues") or []
+        if i.get("subtype") == "empty-body"
+    ]
+
+    # A page WITH addressable elements stays quiet.
+    q = tmp_path / "article.html"
+    q.write_text(
+        "<!DOCTYPE html><html><head><title>t</title></head>"
+        "<body><h1>Heading</h1><p>Body text.</p></body></html>",
+        encoding="utf-8",
+    )
+    ok, _ = run_drafter(drafter, q, record_id="1" * 64, canonical_algo="blake3-canonical-html")
+    assert not [
+        i for i in ok.get("issues") or []
+        if i.get("subtype") == "unaddressable-content"
+    ]
+
+
 def test_html_draft_cli_pipeline_and_lint(tmp_path):
     """End-to-end `corpus draft` against an ingested HTML snapshot, then lint."""
     root = _make_corpus(tmp_path)

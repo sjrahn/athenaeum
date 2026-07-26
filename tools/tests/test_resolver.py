@@ -631,14 +631,46 @@ def test_text_element_raises_not_materializable_not_a_plain_error():
     with pytest.raises(NotMaterializable):
         thtml.htmlel_bytes(ref)
 
-    # A span address names a real envelope of elements — same class, not a defect.
+    # An IN-BOUNDS span names a real envelope of elements — same class, not a defect.
     with pytest.raises(NotMaterializable):
-        thtml.extract_el(soup, "1-3", {})
+        thtml.extract_el(soup, "1-2", {})
 
     # Naming NOTHING stays an ordinary error: the address is wrong, not byte-less.
     with pytest.raises(ValueError) as exc:
         thtml.extract_el(soup, "99", {})
     assert not isinstance(exc.value, NotMaterializable)
+
+
+def test_out_of_range_span_is_an_error_not_declared_coverage():
+    """A span envelope past the end of the element list names NOTHING, so it must fail
+    like any other bad address — not pass as `NotMaterializable`.
+
+    This was the hole: the transforms short-circuited every range form to
+    `NotMaterializable` before looking at the numbers, so `el=94-102` on a nine-element
+    artifact read as declared coverage. Eight of the seventeen out-of-range addresses in
+    the corpus hid behind it, including three whole records the single-index check never
+    saw. Asserted in BOTH directions so the fix cannot regress into over-reporting."""
+    import pytest
+    from bs4 import BeautifulSoup
+
+    from corpus.transforms import NotMaterializable
+    from corpus.transforms import html as thtml
+
+    soup = BeautifulSoup("<body><h3>a</h3><p>b</p></body>", "html.parser")
+
+    with pytest.raises(ValueError) as exc:
+        thtml.extract_el(soup, "1-3", {})
+    assert not isinstance(exc.value, NotMaterializable)
+    assert "out of range" in str(exc.value)
+
+    # A reversed span is likewise nonsense, and says so.
+    with pytest.raises(ValueError) as rev:
+        thtml.extract_el(soup, "2-1", {})
+    assert "precedes" in str(rev.value)
+
+    # ...while the in-bounds envelope still reads as declared coverage.
+    with pytest.raises(NotMaterializable):
+        thtml.extract_el(soup, "1-2", {})
 
 
 def test_inline_svg_is_not_materializable_not_undecodable():

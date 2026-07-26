@@ -27,6 +27,7 @@ from pathlib import Path
 from PIL import Image
 
 from .. import epub as epub_mod
+from .. import functional_uri as furi
 from . import NotMaterializable, RenderContext, register
 
 
@@ -69,20 +70,31 @@ def select_spine(path: Path, value: str | None, ctx: RenderContext) -> EpubDoc:
 @register("epub_doc", "el", "image")
 def extract_el(doc: EpubDoc, value: str | None, ctx: RenderContext) -> Image.Image:
     """`?el=K` — the Kth addressable element in the selected spine document; expects an
-    `<img>`, resolves its zip member, and returns the decoded PIL image."""
-    if value is None or not value.strip():
-        raise ValueError("el= requires an integer index")
-    raw = value.strip()
-    if "-" in raw:
-        # A span address names a real envelope, not a single byte surface.
-        raise NotMaterializable(
-            f"el={raw}: range form not supported by the image-output transform; "
-            f"single index expected"
+    `<img>`, resolves its zip member, and returns the decoded PIL image.
+
+    A span is bounds-checked against the spine document's element list before being
+    declared unmaterializable — same reason as the HTML axis (`functional_uri
+    .parse_index_span`): an envelope past the end names nothing and must not pass as
+    declared coverage."""
+    low, high = furi.parse_index_span("el", value)
+    if low != high:
+        # A span never reaches `addressable_image_bytes`, so THIS is the only place its
+        # bounds can be checked — and it must be, before the envelope is reported as
+        # declared coverage. The element count is taken only on this branch: the single
+        # -index path gets the identical check for free inside materialization, and
+        # paying for it here too would parse the spine document twice on every one of
+        # the 22,293 addresses one record carries.
+        furi.parse_index_span(
+            "el",
+            value,
+            count=epub_mod.addressable_element_count(doc.data),
+            noun="spine document",
         )
-    try:
-        k = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"el={raw}: not an integer") from exc
+        raise NotMaterializable(
+            f"el={low}-{high}: span envelope has no single byte surface to "
+            f"materialize; a single index is required for that"
+        )
+    k = low
     data = epub_mod.addressable_image_bytes(doc.data, k, doc.resolve_img)
     try:
         img = Image.open(io.BytesIO(data))

@@ -230,6 +230,16 @@ def make_image_resolver(
     return resolve
 
 
+def addressable_element_count(raw: bytes) -> int:
+    """How many `el=K` positions a spine document's raw XHTML has — the same strip and
+    the same tag set `addressable_image_bytes` counts, so a bounds check taken from here
+    agrees with the one materialization applies. Exists so a SPAN address (`el=4-9`) can
+    be held to the element list even though it never materializes."""
+    soup = _soup(raw)
+    _strip_non_addressable(soup)
+    return len([t for t in soup.find_all(_ADDRESSABLE_TAGS) if isinstance(t, Tag)])
+
+
 def addressable_image_bytes(
     raw: bytes, el: int, resolve_img: Callable[[str], bytes | None]
 ) -> bytes:
