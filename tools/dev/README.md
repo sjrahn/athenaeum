@@ -17,6 +17,10 @@ findpath.py    <root> <record> <snippet> # tightest element containing a snippet
                                          #   "which element IS this prose?" question.
 kids.py        <root> <record> <path> [lo] [hi]   # element children of a path, with previews;
                                          #   how a sibling range's endpoints get chosen.
+pixeltest.py   <root> [record…]          # for a text segment sitting at a member's address:
+                                         #   pixels or borrowed page prose? Asks the artifact
+                                         #   whether the text is in the DOM. Separates #73's
+                                         #   dropped markers from #88's mis-addressed prose.
 ```
 
 **Delete this directory when #85 closes.** It is scaffolding for one migration, not part of

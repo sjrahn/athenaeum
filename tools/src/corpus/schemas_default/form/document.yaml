@@ -21,7 +21,13 @@ decomposition: |
   losslessly-transcribable figure region (a spec table, a pin-out, a parts list, a
   legend) ALSO as a sibling `text/ocr` or `text/data-table` segment at the chained
   address (`el=N&bbox=…`), cells verbatim — the image positioning-marker and the lossless
-  transcription coexist. Machine-readable tables render directly as `text/data-table`
+  transcription coexist. **They coexist even when the transcription covers the whole
+  figure**, and that is the case worth stating because it is the one that looks like it
+  should be an exception: a table read entirely off a screenshot does not make the
+  screenshot's marker redundant, because the marker is where the bytes are and the table is
+  what they say (§4.3.2.2 — a marker and a faithful extraction of one region coexist,
+  always). Dropping it leaves the member unplaced in the body, which is a hole in the
+  rendering, not a tidier record. Machine-readable tables render directly as `text/data-table`
   (markdown grid, or literal HTML `<table>` where structure demands). A drawing whose
   payload is a relation the drawing STATES — a wiring, vacuum, or hydraulic circuit, a
   block diagram — is not a document page: it is `form/schematic`, whose contract binds the

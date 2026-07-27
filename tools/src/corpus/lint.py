@@ -929,8 +929,10 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
             referenced.update(_addresses(getattr(blk, "address", None)))
     # A segment that CHAINS INTO an embed references it: `el=3&bbox=…` is a crop of the
     # `el=3` asset, which is precisely how a lossless transcription cites the bytes it read
-    # (§4.3.2.2). Matching only whole address strings would call such an embed an orphan and
-    # push authors back toward a redundant positioning marker.
+    # (§4.3.2.2). Matching only whole address strings would call such an embed an orphan on
+    # the strength of a crop that plainly names it. (Whether the member also carries its
+    # positioning marker is `member-marker-replaced`'s question, not this rule's — the two
+    # were once entangled, when a full-region transcription was held to REPLACE the marker.)
     chained = {a.split("&", 1)[0] for a in referenced if "&" in a}
     referenced |= chained
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
@@ -946,6 +948,69 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
                 address=",".join(addrs),
                 fields={"media_type": eb.get("media_type")},
             )
+
+
+def _rule_member_marker_replaced(post, blocks, root) -> Iterator[Finding]:
+    """A member whose address carries a transcription but no positioning marker.
+
+    *(3.5, §4.3.2.2)* A marker and a faithful extraction of one region **coexist, always**:
+    they are different representations at one address, the marker saying where the bytes are
+    and the extraction saying what they say, and the pixels are never fully reduced to the
+    words. So a text segment sitting alone at a member's own address is the one shape the
+    coexistence rule forbids — the transcription was written *in place of* the marker, and
+    the asset has dropped out of the body's reading order.
+
+    Deliberately narrower than `embed-unreferenced`, which asks whether anything at all
+    places the member. Here a transcription IS present, which is why this is an error and
+    that is a warning: an unplaced member can be a curatorial choice (page chrome nobody
+    wants in the body), but a *replaced* marker is a rendering the spec does not admit.
+
+    A member placed only by a CHAINED sub-region (`el=3&bbox=…`) counts the same. The crop
+    reads part of the asset and still leaves the asset itself unplaced, and it is what the
+    retired XOR produced on `form/schematic`, where the transcription addresses a bbox into
+    the sheet. This is not a common legitimate shape being swept up: at the amendment the
+    whole public hub held 1,810 members carrying both a marker and a chained transcription
+    against **five** carrying the chained transcription alone."""
+    known: dict[str, str] = {}
+    for eb in _records.iter_embed_blocks(post):
+        for a in _addresses(eb.get("address")):
+            known[a] = str(eb.get("media_type") or "")
+    if not known:
+        return
+    transcribed: dict[str, str] = {}
+    marked: set[str] = set()
+    for blk in blocks:
+        segs = (
+            blk.segments
+            if isinstance(blk, _segments.Section)
+            else ([blk] if isinstance(blk, _segments.Segment) else [])
+        )
+        for seg in segs:
+            if seg.is_structural:
+                continue
+            for a in _addresses(seg.address):
+                # A crop of a member (`el=3&bbox=…`) is a rendering OF that member.
+                base = a.split("&", 1)[0]
+                key = a if a in known else (base if base in known else None)
+                if key is None:
+                    continue
+                if seg.atom == "text":
+                    transcribed.setdefault(key, _segment_id(seg))
+                elif a == key:
+                    marked.add(key)
+    for a in sorted(set(transcribed) - marked):
+        yield Finding(
+            rule_id="member-marker-replaced",
+            severity="error",
+            message=(
+                f"member `{known[a]}` at `{a}` carries a `{transcribed[a]}` transcription but "
+                f"no positioning marker — the transcription was written in place of the "
+                f"marker, and the two coexist (spec §4.3.2.2). Restore the body-empty marker "
+                f"at this address; the transcription stays as its co-addressed sibling."
+            ),
+            address=a,
+            fields={"media_type": known[a]},
+        )
 
 
 def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
@@ -1171,6 +1236,26 @@ def _leading_axis(addr: Any) -> tuple[str, str]:
     return param.strip(), value.strip()
 
 
+def _el_span(post: Any, addr: Any) -> Any:
+    """A §6.1.1 `ElPath` for an `el=` address, or None.
+
+    *(3.6)* Dispatched on the record's `addressing:` stamp, never on the value's shape —
+    a bare `el=5` is valid under BOTH grammars and names different elements, so only the
+    record can say which axis it is on (the same rule the resolver and `ledger verify`
+    follow). Unstamped records keep the frozen legacy enumeration and its integer spans."""
+    if not _records.el_addressing(post):
+        return None
+    axis, value = _leading_axis(addr)
+    if axis != "el" or not value:
+        return None
+    from corpus import functional_uri as _furi
+
+    try:
+        return _furi.parse_el_path(value)
+    except ValueError:
+        return None
+
+
 def _span_bounds(section: Any) -> tuple[str | None, int | None, int | None]:
     """A section's own address envelope as `(axis, lo, hi)` — the span an embed must fall in
     to be that span's obligation. A whole-record section (no `address`, §4.3.2.1) returns
@@ -1274,62 +1359,65 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                         address=_addr_str(seg.address),
                     )
 
-        # `embed_rendered` — the form names a SHAPE, and that shape admits two faithful
-        # renderings: the `lossless` one where the asset's content can be transcribed, and the
-        # body-empty `marker` (plus the embed's description) where it currently cannot. The
-        # check binds the ATTESTED EMBED and asks only that ONE of them be present — never
-        # that the lossless one exist, which the form has no standing to demand. Where the
-        # lossless rendering IS present it SUPERSEDES the marker at that address: the marker
-        # extracts nothing, so keeping both renders the region twice (§4.3.2.2 — two segments
-        # on one region are earned only by extracting different information).
-        alts = checks.get("embed_rendered") or {}
-        want, marker_atom = alts.get("lossless"), alts.get("marker")
-        if alts:
-            present = {
-                _leading_axis(seg.address) for seg in blk.segments if _segment_id(seg) == want
-            }
+        # `embed_marked` — every member the span covers owes its positioning marker, and the
+        # form makes that an ERROR rather than the corpus-wide `embed-unreferenced` warning
+        # because on THIS shape the assets are the content: an unplaced member is a hole in
+        # the rendering, not a curatorial preference.
+        #
+        # *(3.5)* This check was `embed_rendered`, an XOR: marker OR lossless transcription,
+        # never both, on the reasoning that a marker beside its own full-region transcription
+        # renders the region twice. §4.3.2.2 retired that reading — a marker and a faithful
+        # extraction of one region **coexist, always**, because they are different
+        # representations at one address and the pixels are never fully reduced to the words.
+        # For a schematic that is the sharpest case: the contract's own boundary puts the
+        # sheet's geometry outside the from-to table, so without the marker the geometry has
+        # no home at all. So the XOR is gone, `form-marker-superseded` with it, and what
+        # survives is the half that was always true — the marker is owed.
+        alts = checks.get("embed_marked") or {}
+        marker_atom = alts.get("marker")
+        if marker_atom:
             # Scope to THIS span, off the section's own address envelope (§4.3.2.1) — a
             # sibling span's embed is that span's obligation, not this one's. A whole-record
             # section (no address) owns every embed on an axis its children use.
             span_axis, span_lo, span_hi = _span_bounds(blk)
+            # *(3.6)* On the path axis a span owns the members its address CONTAINS — the
+            # §6.1.1 prefix test. The integer lo/hi below cannot express that: a dotted path
+            # fails its `^\d+(-\d+)?$` match, so every span silently widened to the whole
+            # record and each sheet of a multi-sheet page claimed its siblings' members.
+            span_path = _el_span(post, blk.address) if blk.address else None
+            from corpus import functional_uri as _furi
+
             for embed in _records.iter_embed_blocks(post):
                 axis, value = _leading_axis(embed.get("address"))
                 if not value or (span_axis and axis != span_axis):
                     continue
-                low = _axis_low(value)
-                if span_lo is not None and (
-                    low is None or low < span_lo or (span_hi is not None and low > span_hi)
-                ):
-                    continue
+                if span_path is not None:
+                    member_path = _el_span(post, embed.get("address"))
+                    if member_path is None or not _furi.el_path_contains(
+                        span_path, member_path
+                    ):
+                        continue
+                elif span_lo is not None:
+                    low = _axis_low(value)
+                    if low is None or low < span_lo or (span_hi is not None and low > span_hi):
+                        continue
                 key = (axis, value)
-                marked = marker_atom and any(
+                marked = any(
                     seg.atom == marker_atom
                     and not seg.is_structural
                     and _leading_axis(seg.address) == key
                     for seg in blk.segments
                 )
-                if key in present and marked:
+                if not marked:
                     yield Finding(
-                        rule_id="form-marker-superseded",
+                        rule_id="form-embed-not-marked",
                         severity="error",
                         message=(
-                            f"section {top_i} (form `{blk.form}`): the `{marker_atom}` marker at "
-                            f"`{_addr_str(embed.get('address'))}` is superseded by the `{want}` "
-                            f"rendering at the same address — drop the marker; the embed holds the "
-                            f"asset and the transcription's address is the crop into it "
-                            f"(spec §4.3.2.2, §7.8)."
-                        ),
-                        address=_addr_str(embed.get("address")),
-                    )
-                elif key not in present and not marked:
-                    yield Finding(
-                        rule_id="form-embed-not-rendered",
-                        severity="error",
-                        message=(
-                            f"section {top_i} (form `{blk.form}`): embed at "
-                            f"`{_addr_str(embed.get('address'))}` carries neither a `{want}` "
-                            f"rendering nor a `{marker_atom}` marker — this form's assets are its "
-                            f"content, so each owes one or the other (spec §7.8)."
+                            f"section {top_i} (form `{blk.form}`): member at "
+                            f"`{_addr_str(embed.get('address'))}` carries no `{marker_atom}` "
+                            f"marker — this form's assets are its content, so each owes the "
+                            f"marker that places it. A transcription does not stand in for it: "
+                            f"the two coexist (spec §4.3.2.2, §7.8)."
                         ),
                         address=_addr_str(embed.get("address")),
                     )
@@ -1433,6 +1521,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-description-redundant", _rule_section_description_redundant),
     ("segment-mode-deprecated", _rule_segment_mode_deprecated),
     ("embed-unreferenced", _rule_embed_unreferenced),
+    ("member-marker-replaced", _rule_member_marker_replaced),
     ("embed-missing-target", _rule_embed_missing_target),
     ("body-empty-normalized", _rule_body_empty_normalized),
     ("body-html-residue", _rule_body_html_residue),

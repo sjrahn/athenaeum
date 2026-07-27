@@ -321,11 +321,11 @@ def test_statement_pages_axis_nonmonotonic_still_flagged(tmp_path):
     assert "form-address-nonmonotonic" in _fired(post, root)
 
 
-# ---------- embed-keyed transcription + superseded markers (§7.8) ---------- #
+# ---------- every member owes its marker: `embed_marked` (§7.8, §4.3.2.2) ---------- #
 
 
 def _schematic(*, table: bool = True, marker: bool = False) -> segments.Section:
-    """A `form/schematic` sheet. Its content IS the lossless table; the embed is the asset."""
+    """A `form/schematic` sheet: the marker places the drawing, the table states its relation."""
     segs = []
     if marker:
         segs.append(segments.Segment(atom="image", overlay="image/figure", address="el=3"))
@@ -348,19 +348,25 @@ def _with_embed(post, address: str = "el=3") -> None:
     ]
 
 
-def test_schematic_table_alone_is_clean(tmp_path):
-    """The table replaces the figure: no marker, embed transcribed, nothing fires."""
+def test_schematic_table_without_a_marker_errors(tmp_path):
+    """*(3.5, #73)* The transcription does NOT stand in for the marker. This test asserted the
+    opposite through 3.4 — a table alone was the clean shape and a marker beside it was the
+    error — and §4.3.2.2 settled it the other way: a marker and a faithful extraction of one
+    region coexist, always. Dropping the marker leaves the drawing unplaced in the body."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     post.content = segments.emit([_schematic()])
-    assert not any(f.startswith("form-") for f in _fired(post, root))
+    findings = lint.lint(post, segments.iter_blocks(post.content), root)
+    missing = [f for f in findings if f.rule_id == "form-embed-not-marked"]
+    assert len(missing) == 1
+    assert missing[0].severity == "error"
 
 
 def test_schematic_figure_only_is_clean(tmp_path):
     """The form names a SHAPE, not a mandate to transcribe: a schematic whose relation cannot
-    (yet) be faithfully textualized renders as the marker plus its described embed, and that
-    is conforming — the contract has no standing to demand the better rendering."""
+    (yet) be faithfully textualized renders as the marker alone, and that is conforming — the
+    contract has no standing to demand the better rendering."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
@@ -368,9 +374,9 @@ def test_schematic_figure_only_is_clean(tmp_path):
     assert not any(f.startswith("form-") for f in _fired(post, root))
 
 
-def test_schematic_embed_with_neither_rendering_errors(tmp_path):
-    """One or the other is owed, though — an embed with no rendering at all is not a
-    judgment, it is an omission."""
+def test_schematic_embed_with_no_rendering_at_all_errors(tmp_path):
+    """The marker is owed — a member with nothing placing it is not a judgment, it is an
+    omission, and on this form the assets ARE the content."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
@@ -380,22 +386,22 @@ def test_schematic_embed_with_neither_rendering_errors(tmp_path):
     )
     post.content = segments.emit([sec])
     findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    missing = [f for f in findings if f.rule_id == "form-embed-not-rendered"]
+    missing = [f for f in findings if f.rule_id == "form-embed-not-marked"]
     assert len(missing) == 1
     assert missing[0].severity == "error"
 
 
-def test_schematic_image_marker_is_superseded(tmp_path):
-    """Two segments at one address are earned only when they extract DIFFERENT information;
-    a body-empty marker beside its own transcription renders the region twice."""
+def test_schematic_marker_and_table_coexist(tmp_path):
+    """The shape the retired XOR called an error is the conforming one: the marker is where
+    the bytes are, the table is what they say, and on a schematic the drawing's GEOMETRY —
+    which this contract explicitly keeps out of the table — has no other home."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     post.content = segments.emit([_schematic(marker=True)])
-    findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    superseded = [f for f in findings if f.rule_id == "form-marker-superseded"]
-    assert len(superseded) == 1
-    assert superseded[0].severity == "error"
+    fired = _fired(post, root)
+    assert not any(f.startswith("form-") for f in fired)
+    assert "form-marker-superseded" not in fired  # the rule is gone, not merely quiet
 
 
 def test_schematic_embed_on_another_axis_is_not_this_spans_business(tmp_path):
@@ -404,12 +410,12 @@ def test_schematic_embed_on_another_axis_is_not_this_spans_business(tmp_path):
     post = _post()
     _with_embed(post, address="page=2")
     post.content = segments.emit([_schematic()])
-    assert "form-embed-not-transcribed" not in _fired(post, root)
+    assert "form-embed-not-marked" not in _fired(post, root)
 
 
 def test_document_figure_marker_still_allowed(tmp_path):
-    """`document` declares neither check — a page's figure marker and a sub-region
-    transcription legitimately coexist there, addressing different regions."""
+    """`document` declares no member check at all — coexistence is the corpus-wide rule
+    (§4.3.2.2), and this form states it without enforcing it."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
@@ -420,7 +426,7 @@ def test_document_figure_marker_still_allowed(tmp_path):
     post.content = segments.emit([sec])
     fired = _fired(post, root)
     assert "form-marker-superseded" not in fired
-    assert "form-embed-not-transcribed" not in fired
+    assert "form-embed-not-marked" not in fired
 
 
 # ---------- `corpus guidance` carries the governing contract ---------- #
@@ -448,7 +454,7 @@ def test_guidance_prints_the_governing_form_contract(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "governing contract — form/schematic" in out
     assert "checks lint will run" in out
-    assert "embed_rendered" in out
+    assert "embed_marked" in out
     assert "authoring guidance" in out
     # the sequencing rule the whole section exists to deliver
     assert "LAST thing you write" in out
