@@ -66,10 +66,11 @@ what may appear in `fields`: `bytes` and nothing else.
 
 Reading is dual-form and writing is form-preserving: a record parsed from legacy
 `<!--embed-->` blocks keeps its full legacy `fields` in memory and is re-emitted as legacy
-blocks, so no unrelated write path can silently convert a record and drop the authored
-descriptions those blocks carry. Conversion happens exactly where the attested layer is
-rebuilt from the artifact (`derive.attest`), which is gated on `pending_member_descriptions`
-being empty — see §12.26.
+blocks, so no unrelated write path converts a record as a side effect of touching it.
+Conversion happens exactly where the attested layer is rebuilt from the artifact
+(`derive.attest`), and it DROPS the retired per-asset `description` — the field is abolished,
+so there is nothing to migrate it to (§12.26). `pending_member_descriptions` reports what a
+conversion will shed, so `corpus reattest` can say it out loud.
 """
 
 from __future__ import annotations
@@ -820,12 +821,12 @@ iter_embed_blocks = iter_members
 def pending_member_descriptions(post: frontmatter.Post) -> list[tuple[str, str]]:
     """Legacy per-asset `description`s this record still carries, as `(address, description)`.
 
-    Non-empty means the record predates 3.4 and holds authored prose that the members block
-    has no room for (§4.3.1.4). Those descriptions must be re-homed onto the section or
-    segment that places the asset — or deliberately discarded — BEFORE the roster is rewritten
-    in the new form. `derive.attest` refuses on a non-empty result for exactly that reason:
-    re-attestation rebuilds the roster wholesale, so converting first and re-homing later would
-    mean re-homing from a record that no longer has the text.
+    Non-empty means the record predates 3.4 and still carries prose in the retired per-asset
+    `description` field (§4.3.1.4). Conversion **drops** it: the old blocks are deleted and the
+    members block replaces them, and an abolished field has no successor to migrate into. This
+    function exists so the drop can be REPORTED — `corpus reattest` prints what each record
+    sheds, because a record silently losing 52 descriptions is the kind of thing an operator
+    should watch happen (§12.26).
     """
     if post.metadata.get("_members_block", True):
         return []  # already 3.4 — the block cannot carry a description

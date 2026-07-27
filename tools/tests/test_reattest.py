@@ -10,10 +10,9 @@ import zipfile
 from pathlib import Path
 
 import frontmatter
-import pytest
 import yaml
 
-from corpus import derive, hashing, paths, records, schemas
+from corpus import hashing, paths, records, schemas
 from corpus._cli import reattest as reattest_cli
 from corpus.store import LocalArtifactStore
 
@@ -136,12 +135,14 @@ def test_members_roster_cannot_hold_a_description(tmp_path):
     assert records.pending_member_descriptions(after) == []
 
 
-def test_reattest_refuses_a_legacy_record_with_authored_descriptions(tmp_path):
-    """The migration's safety property (§12.26): re-attestation rebuilds the roster wholesale,
-    so a pre-3.4 record whose per-asset blocks still carry authored prose must be refused rather
-    than converted — otherwise the text is destroyed by an operation nobody asked to be
-    destructive. The same shape of defect as §12.25's: a correct operation performed before a
-    cheap check."""
+def test_reattest_drops_retired_member_descriptions(tmp_path):
+    """*(3.4)* Conversion deletes the per-asset blocks and the members block replaces them, so
+    the `description`s they carried are DROPPED. Nothing migrates, and no obligation falls on a
+    member as a result — it need not be placed in the body or promoted (§4.3.1.4, §12.26).
+
+    Reported, not blocked. The earlier shape of this test asserted a REFUSAL, from reading an
+    obligation into the instruction that was never there; it blocked 3,488 records on a
+    migration that was not supposed to exist."""
     root = _make_corpus(tmp_path)
     rid = _ingest_zip(root)
     rf = paths.record_path(root, rid)
@@ -159,19 +160,19 @@ def test_reattest_refuses_a_legacy_record_with_authored_descriptions(tmp_path):
         ("path=a/one.txt", "the first member, described")
     ]
 
-    with pytest.raises(derive.PendingMemberDescriptions) as exc:
-        reattest_cli.reattest_record(rf, root)
-    assert "path=a/one.txt" in str(exc.value)
-    # And the record on disk is untouched — a refusal that had already written would be no gate.
-    assert "the first member, described" in rf.read_text(encoding="utf-8")
-
-    # The deliberate override converts and drops, for members with no content zone to move to.
-    post = records.load(rf)
-    derive.attest(post, root, strip=True, discard_member_descriptions=True)
-    records.dump(post, rf)
+    # Re-attest converts and drops — no refusal, no override flag needed.
+    rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
     text = rf.read_text(encoding="utf-8")
     assert "<!--members" in text
+    assert "<!--embed " not in text
     assert "the first member, described" not in text
+    after = records.load(rf)
+    assert records.pending_member_descriptions(after) == []
+    # The roster itself survived intact — only the retired field went.
+    assert {m["address"] for m in records.iter_members(after)} == {
+        "path=a/one.txt",
+        "path=b/two.txt",
+    }
 
 
 def _write_origin_overlay(root: Path, filename: str, applies_to: dict) -> None:

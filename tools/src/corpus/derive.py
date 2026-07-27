@@ -199,18 +199,6 @@ def _is_drafter_issue(ctx: dict) -> bool:
     return detector.startswith("corpus.draft.")
 
 
-class PendingMemberDescriptions(DeriveError):
-    """A pre-3.4 record still carrying authored member `description`s is asked to re-attest.
-
-    Re-attestation rebuilds the roster wholesale, and the 3.4 members block has no room for a
-    description (spec §4.3.1.4), so proceeding would destroy authored prose that only the
-    re-homing pass may move — onto the section or segment that places the asset, or onto the
-    member's own promoted record (§12.26). Refusing here is the whole safety property of the
-    migration: the pre-3.4 shape carried these forward by transport hash, which silently lost
-    every description whose member had been pruned, and did so with no gate able to see it.
-    """
-
-
 def strip_attested_layer(post: frontmatter.Post) -> None:
     """Clear the attested layer of `post` in place — the members roster, the `corpus.draft.*`
     issues, and the artifact block's extended fields (the opener MIME stays; it is
@@ -220,7 +208,7 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
     *(3.4)* Nothing is carried across any more. The roster is wholly attested — re-derived from
     the artifact, holding no authored field — so there is nothing to preserve, and the
     description-by-transport-hash carry this used to perform is deleted along with the trap it
-    contained (see `PendingMemberDescriptions`). The record is also flipped to the 3.4 form
+    contained. The record is also flipped to the 3.4 form
     here, since what follows rebuilds the roster under the current grammar.
 
     Content-zone structural byte-marks (§4.3.2.3) are deliberately NOT stripped here: the
@@ -243,7 +231,6 @@ def attest(
     fingerprint_cli: bool | None = None,
     strip: bool = False,
     messages: list[int] | None = None,
-    discard_member_descriptions: bool = False,
 ) -> str:
     """Derive + apply the **attested layer** onto `post` in place (§8.1, §12.4): run the mime
     drafter and apply its metadata result (artifact fields, the members roster, drafter issues),
@@ -254,10 +241,10 @@ def attest(
     `corpus.draft.*` issues, and the artifact block's extended fields — and rebuilds it under the
     3.4 grammar. `strip=False` (a fresh ingest stub) applies onto a record that carries none yet.
 
-    **Refuses** a pre-3.4 record that still carries authored member `description`s, since the
-    rebuild would destroy them (`PendingMemberDescriptions`, §12.26). `discard_member_descriptions`
-    is the deliberate override for the case where the text is genuinely being dropped — the
-    container members with no content zone to move a description into.
+    A pre-3.4 record's per-asset `description`s are **dropped**, not carried: the old blocks are
+    deleted and the members block replaces them (§4.3.1.4, §12.26). Nothing migrates and no
+    obligation falls on a member as a result. `records.pending_member_descriptions` reports what
+    a given conversion will drop so the caller can say so out loud (`corpus reattest` does).
 
     `messages` are the mbox selective declaration (§12.11, the re-homed `--messages`): the
     1-indexed ordinals to manifest as `message/rfc822` embeds; None reads the record's already-
@@ -272,18 +259,6 @@ def attest(
     eff_messages = (
         messages if messages is not None else (mbox_manifest.declared_ordinals(post) or None)
     )
-
-    if strip and not discard_member_descriptions:
-        pending = records.pending_member_descriptions(post)
-        if pending:
-            shown = ", ".join(f"{addr}" for addr, _ in pending[:5])
-            more = f" (+{len(pending) - 5} more)" if len(pending) > 5 else ""
-            raise PendingMemberDescriptions(
-                f"record carries {len(pending)} authored member description(s) at {shown}{more} "
-                f"that the 3.4 members block cannot hold (spec §4.3.1.4). Re-home them onto the "
-                f"section/segment that places each asset — or pass the explicit discard — before "
-                f"re-attesting; re-attestation rebuilds the roster and the text would be lost."
-            )
 
     if strip and not is_mbox:
         strip_attested_layer(post)

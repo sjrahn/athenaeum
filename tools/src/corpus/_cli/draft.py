@@ -98,9 +98,9 @@ def derive_record(
     # the already-declared members; §12.11), and ingest attests it with no messages (an empty
     # manifest), so there is nothing to double.
     # No description carry (3.4): the roster is wholly attested, so there is nothing to preserve
-    # across the strip. This path is the RETIRED draft core (§12.19) and runs only on records it
-    # is handed directly, so it carries no `PendingMemberDescriptions` gate — `derive.attest` is
-    # the live re-attestation path and holds it.
+    # across the strip — the retired per-asset `description` is dropped with the field it rode
+    # on (§4.3.1.4, §12.26). This path is the RETIRED draft core (§12.19); `derive.attest` is the
+    # live re-attestation path and reports the drop.
     strategy = str((mt_schema.get("draft") or {}).get("strategy") or "")
     if strategy != "mbox-manifest":
         strip_attested_layer(post)

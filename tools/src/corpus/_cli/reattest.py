@@ -43,8 +43,20 @@ def reattest_record(
     preserving the authored layer (`derive.attest(strip=True)`). `messages` is the mbox
     selective declaration (§12.11, the re-homed `--messages`). Idempotent: when the attested
     facts re-derive identically the original text is returned unchanged — no touch appended,
-    no rewrite. Raises `DeriveError` / `ArtifactMissing`."""
+    no rewrite. Raises `DeriveError` / `ArtifactMissing`.
+
+    A pre-3.4 record converts here: its per-asset blocks are deleted and the members block
+    replaces them, so the `description`s they carried are **dropped** (§4.3.1.4, §12.26).
+    Reported, not blocked — nothing migrates, but a record silently shedding 52 descriptions is
+    the kind of thing an operator should see happen."""
     post = records.load(record_file)
+    dropped = records.pending_member_descriptions(post)
+    if dropped:
+        print(
+            f"  note {record_file.stem[:12]}: dropping {len(dropped)} retired member "
+            f"description(s) at {', '.join(a for a, _ in dropped[:5])}"
+            f"{f' (+{len(dropped) - 5} more)' if len(dropped) > 5 else ''}"
+        )
     before = records.dumps(post)
     mime_schema_id = derive.attest(
         post, corpus_root, fingerprint_cli=fingerprint_cli, strip=True, messages=messages
