@@ -336,3 +336,81 @@ def test_pending_retired_fields_is_empty_on_a_conformant_record():
         ]
     )
     assert records.pending_retired_fields(post) == {}
+
+
+# ---------- 3.5: several form spans in one record (§4.3.2.1) ---------- #
+
+
+def test_a_record_may_carry_several_span_scope_sections():
+    """*(3.5)* The shape the whole amendment is for: a page that is an article AND an index
+    of sibling links. Before 3.5 a record held one form, so the second half had nowhere to go
+    and 77,310 alldata rail links were exiled to the annotations zone (§12.27)."""
+    blocks = [
+        segments.Section(
+            address="el=1-7",
+            form="document",
+            segments=[segments.Segment(atom="text", address="el=1-7", body="the article")],
+        ),
+        segments.Section(
+            address="el=8-9",
+            form="index",
+            segments=[segments.Segment(atom="text", address="el=8-9", body="- [Sibling](#/x)")],
+        ),
+    ]
+    text = segments.emit(blocks)
+    parsed = segments.iter_blocks(text)
+    assert [b.form for b in parsed] == ["document", "index"]
+    assert [b.address for b in parsed] == ["el=1-7", "el=8-9"]
+    assert segments.emit(parsed) == text
+
+
+def test_whole_record_section_still_admits_no_sibling():
+    """The narrowing is precise: `address: None` claims the ENTIRE zone, and two blocks
+    cannot both be true of that. Several span-scope sections are fine; a whole-record one
+    beside anything is not."""
+    text = segments.emit(
+        [
+            segments.Section(
+                form="document",
+                segments=[segments.Segment(atom="text", address="el=1", body="a")],
+            )
+        ]
+    ) + segments.emit(
+        [
+            segments.Section(
+                address="el=2",
+                form="index",
+                segments=[segments.Segment(atom="text", address="el=2", body="b")],
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="entire content zone"):
+        segments.iter_blocks(text)
+
+
+def test_section_address_derives_el_and_turn_envelopes():
+    """`el` and `turn` had no span strategy until a record needed more than one span —
+    invisible while every formed record carried a single whole-record section, which omits
+    its envelope by definition."""
+    el_kids = [
+        segments.Segment(atom="text", address="el=3", body="a"),
+        segments.Segment(atom="image", address="el=9"),
+    ]
+    assert segments.section_address(el_kids) == "el=3-9"
+
+    turn_kids = [
+        segments.Segment(atom="text", address="turn=1", body="hi"),
+        segments.Segment(atom="text", address="turn=74", body="bye"),
+    ]
+    assert segments.section_address(turn_kids) == "turn=1-74"
+
+    # a single child collapses rather than emitting a degenerate range
+    one = [segments.Segment(atom="text", address="el=5", body="x")]
+    assert segments.section_address(one) == "el=5"
+
+    # a heterogeneous mix is still underivable — the envelope has no single scheme
+    mixed = [
+        segments.Segment(atom="text", address="el=1", body="a"),
+        segments.Segment(atom="text", address="page=2", body="b"),
+    ]
+    assert segments.section_address(mixed) is None

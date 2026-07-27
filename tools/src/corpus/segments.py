@@ -41,8 +41,9 @@ the mixed-artifact case (§4.3.2.1) — formless top-level segments BEFORE the f
 opener, then the section(s) (a statement PDF's page-1 cover letter as bare segments, then a
 `statement` section over pages 2-6). A segment after a section opener is that section's child
 (the positional span), never a top-level sibling — so top-level mixing is admissible only in
-the before-only direction. A whole-record section (no `address`) admits no sibling of either
-kind. Nesting depth = 1: sections contain segments; segments contain nothing; sections don't nest.
+the before-only direction. *(3.5)* A record MAY carry several span-scope sections; only a
+WHOLE-RECORD section (no `address`, claiming the entire zone) must stand alone.
+Nesting depth = 1: sections contain segments; segments contain nothing; sections don't nest.
 """
 
 from __future__ import annotations
@@ -313,6 +314,19 @@ _SPAN_STRATEGIES: dict[str, Any] = {
     "spine": _IntSpan("spines"),
     "block": _IntSpan("block"),
     "sheet": _NameSpan("sheet"),
+    # *(3.5)* `el` and `turn` — the two dominant families in the fleet, and both unsupported
+    # until a record needed MORE THAN ONE span (§4.3.2.1). While every formed record carried a
+    # single whole-record section the omission was invisible: that section omits its envelope
+    # by definition, so nothing ever asked for one. Narrowing those sections to span scope, and
+    # placing a second span beside them, both require it.
+    #
+    # `el=` is an EXTRACTION index, not a reading order (§12.22 measured 634 records whose
+    # faithful bodies present content out of `el=` order), so min-max is the right envelope but
+    # a WRONG one is easy to produce: a child whose stored address is over-wide drags the
+    # envelope across content it does not hold. That is a real defect in the fleet today, not a
+    # hypothetical — it is what `section-address-span` re-derives to catch.
+    "el": _IntSpan("el"),
+    "turn": _IntSpan("turn"),
 }
 
 
@@ -497,8 +511,9 @@ def iter_blocks(body: str) -> list[Block]:
       the between/after case is genuinely ambiguous in the spec text — §4.3.2.1 line 379 names
       only the before case — and no real record needs it). In practice this reject is a guard:
       a post-section segment is consumed as a child before the top level sees it.
-    - A whole-record section (`address` omitted, one section over the entire zone) with ANY
-      sibling block, of either kind (§4.3.2.2: it admits no siblings).
+    - A whole-record section (`address` omitted) alongside ANY sibling block. *(3.5: several
+      SPAN-scope sections are fine — what cannot coexist with a sibling is a section claiming
+      the whole zone, §4.3.2.1.)*
     - Prose between a section's closer and its first child segment opener.
     - `entry:` field on a segment inside a section.
     - Unknown atom.
@@ -570,13 +585,25 @@ def iter_blocks(body: str) -> list[Block]:
             seg, i = _parse_segment_block(lines, i, line_no=i + 1)
             blocks.append(seg)
 
-    # A whole-record section (address omitted) spans the entire content zone, so it admits no
-    # sibling of either kind — no formless segments before it, no other section (§4.3.2.2).
-    if any(isinstance(b, Section) and b.address is None for b in blocks) and len(blocks) > 1:
-        raise ValueError(
-            "a whole-record section (no `address`) admits no sibling blocks (§4.3.2.2); "
-            f"found {len(blocks)} top-level blocks"
-        )
+    # *(3.5)* A record MAY carry several form spans — an article followed by the index of
+    # sibling links the page also renders; a procedure span followed by its parts table
+    # (§4.3.2.1). What stays illegal is a section claiming the WHOLE zone while something else
+    # sits beside it: `address: None` means "this form governs everything here", which two
+    # blocks cannot both be true of. So the check narrows from "no siblings" to "then it must
+    # be alone" — the same words, but now the constraint is on the claim rather than on the
+    # count of sections. The prohibition existed because the whole-record section held the
+    # record's editorial identity and two of them would have been two answers to one question;
+    # with those fields retired it holds only a shape judgment, and a document that changes
+    # shape partway through is an ordinary document.
+    if len(blocks) > 1:
+        for b in blocks:
+            if isinstance(b, Section) and b.address is None:
+                raise ValueError(
+                    "a whole-record section (no `address`) claims the entire content zone and "
+                    f"cannot have siblings (§4.3.2.1); found {len(blocks)} top-level blocks. "
+                    "Give each span its own `address:` envelope — `section_address(children)` "
+                    "derives it."
+                )
 
     return blocks
 
