@@ -143,7 +143,7 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
     exactly like the `ytdlp_*` origin fields it rides alongside. A re-attest therefore sees no
     chapters at all (`chapters=None` → `marks=[]` → this function isn't even called, per its
     caller's `if marks:` guard) and must never strip what ingest already attested — there is
-    nothing left to regenerate it from. A mark already present (matched on `(address, entry)`)
+    nothing left to regenerate it from. A mark already present (matched on `(address, mark)`)
     is skipped rather than duplicated, so a future re-derivable source (the mp4 chapter-atom
     path, a named gap — §12.20 item 2) can call this safely too.
 
@@ -171,7 +171,7 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
         )
         return
     already = {
-        (b.address, b.entry)
+        (b.address, b.mark)
         for b in existing
         if isinstance(b, segs_mod.Segment) and b.is_structural
     }
@@ -180,10 +180,10 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
             atom=segs_mod._STRUCTURAL,
             address=str(m["address"]),
             level=int(m.get("level") or 1),
-            entry=(str(m["entry"]) if m.get("entry") else None),
+            mark=(str(m["mark"]) if m.get("mark") else None),
         )
         for m in marks
-        if (str(m["address"]), (str(m["entry"]) if m.get("entry") else None)) not in already
+        if (str(m["address"]), (str(m["mark"]) if m.get("mark") else None)) not in already
     ]
     if not new_blocks:
         return

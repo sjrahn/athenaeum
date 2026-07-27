@@ -839,9 +839,9 @@ def _segment_html(
 ) -> str:
     anchor, aliases = _anchor_targets(_addr_list(getattr(seg, "address", None)), claimed)
     if seg.is_structural:
-        # A byte-mark's `entry:` is the SOURCE's own heading text (§4.3.2.3) — the most
-        # informative thing about the mark, so it leads rather than being dropped.
-        label = f" {html.escape(str(seg.entry))}" if getattr(seg, "entry", None) else ""
+        # A byte-mark's `mark:` is the SOURCE's own heading text (§4.3.2.3, 3.5 — `entry:`
+        # before the rename) — the most informative thing about the mark, so it leads.
+        label = f" {html.escape(str(seg.mark))}" if getattr(seg, "mark", None) else ""
         level = f" <span class=tag>level {seg.level}</span>" if getattr(seg, "level", None) else ""
         return (f"<div class=block{anchor}>{aliases}<h3>structural mark{label} "
                 f"<span class=tag>{html.escape(str(seg.address))}</span>{level}</h3></div>")

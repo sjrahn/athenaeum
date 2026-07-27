@@ -191,6 +191,7 @@ def add_segment(
     body: str | None = None,
     description: str | None = None,
     entry: str | None = None,
+    mark: str | None = None,
     perceptual: str | None = None,
     level: int | None = None,
     extra: dict | None = None,
@@ -203,6 +204,7 @@ def add_segment(
         address=address,
         perceptual=perceptual,
         entry=entry,
+        mark=mark,
         description=description,
         body="" if structural else (body or ""),
         extra=dict(extra or {}),
@@ -226,17 +228,18 @@ def add_structural(
     *,
     address,
     level: int = 1,
-    entry: str | None = None,
+    mark: str | None = None,
     extra: dict | None = None,
 ) -> segments.Segment:
     """Append a structural byte-mark segment (§4.3.2.3) — the record that the source itself
-    declares a boundary at `address`, with a `level` and optional `entry` (the mark's own
-    text). Body-empty; takes no atom overlay."""
+    declares a boundary at `address`, with a `level` and optional `mark` (the mark's own
+    text, verbatim from the source; spelled `entry` before 3.5). Body-empty; takes no atom
+    overlay."""
     return add_segment(
         b,
         atom=segments._STRUCTURAL,
         address=address,
-        entry=entry,
+        mark=mark,
         level=level,
         extra=extra,
     )
@@ -311,8 +314,11 @@ def add_blocks(b: Build, blocks: list) -> None:
                     address=seg.address,
                     body=seg.body or None,
                     description=seg.description,
-                    # A structural mark's `entry:` is valid inside a form span (§4.3.2.3).
+                    # A structural mark's `mark:` rides inside a form span (§4.3.2.3).
+                    # `entry` stays exactly as it was — a content segment's authored label
+                    # is dropped on this path today, and retiring it is its own step (3.5).
                     entry=seg.entry if seg.is_structural else None,
+                    mark=seg.mark if seg.is_structural else None,
                     perceptual=seg.perceptual,
                     level=seg.level,
                     extra=seg.extra,
@@ -567,6 +573,8 @@ def write_workdir(
             parts.append("body=" + _body_ref(loc, seg.address, seg.body.rstrip("\n")))
         if seg.description:
             parts.append("desc=" + _desc_ref(loc, seg.address, seg.description))
+        if seg.mark:
+            parts.append("mark=" + shlex.quote(seg.mark))
         if seg.entry:
             parts.append("entry=" + shlex.quote(seg.entry))
         if seg.perceptual:
@@ -713,10 +721,19 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                     address=_parse_addr(kv["addr"]),
                     body=_filetext(work, kv.get("body")),
                     description=_filetext(work, kv.get("desc")),
-                    entry=kv.get("entry"),
+                    # A structural block's label is `mark=` (3.5); `entry=` reads as its
+                    # 3.4 spelling, so a decompose dir written before the rename recompiles.
+                    entry=(None if atom == segments._STRUCTURAL else kv.get("entry")),
+                    mark=(
+                        (kv.get("mark") or kv.get("entry"))
+                        if atom == segments._STRUCTURAL
+                        else kv.get("mark")
+                    ),
                     perceptual=kv.get("perceptual"),
                     level=(int(kv["level"]) if "level" in kv else None),
-                    extra=_rest(kv, {"addr", "body", "desc", "entry", "perceptual", "level"}),
+                    extra=_rest(
+                        kv, {"addr", "body", "desc", "entry", "mark", "perceptual", "level"}
+                    ),
                 )
             elif verb == "issue":
                 opener = toks[1]

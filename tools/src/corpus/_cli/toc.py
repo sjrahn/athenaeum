@@ -30,6 +30,7 @@ def run(args: argparse.Namespace) -> int:
                 print(f"  {ord_:>3}.   seg {opener}  addr={child.address}")
         else:
             opener = blk.overlay or blk.atom
-            entry = blk.entry or ""
-            print(f"  {ord_:>3}. seg {opener}  addr={blk.address}  entry={entry!r}")
+            label = blk.mark if blk.is_structural else blk.entry
+            key = "mark" if blk.is_structural else "entry"
+            print(f"  {ord_:>3}. seg {opener}  addr={blk.address}  {key}={label or ''!r}")
     return 0

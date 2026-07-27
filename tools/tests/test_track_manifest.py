@@ -131,8 +131,8 @@ def test_chapter_structural_segments_maps_start_and_title():
         [{"start": 0.0, "end": 30.0, "title": "Opening"}, {"start": 751.4, "title": "The heist"}]
     )
     assert marks == [
-        {"address": "time=00:00:00", "level": 1, "entry": "Opening"},
-        {"address": "time=00:12:31", "level": 1, "entry": "The heist"},
+        {"address": "time=00:00:00", "level": 1, "mark": "Opening"},
+        {"address": "time=00:12:31", "level": 1, "mark": "The heist"},
     ]
 
 
@@ -493,7 +493,7 @@ def test_sidecar_chapters_land_as_structural_segments(h264_aac_clip):
             b for b in blocks
             if isinstance(b, segs_mod.Segment) and b.is_structural
         ]
-        assert [(m.address, m.entry) for m in marks] == [
+        assert [(m.address, m.mark) for m in marks] == [
             ("time=00:00:00", "Intro"),
             ("time=00:00:01", "Outro"),
         ]
@@ -517,7 +517,7 @@ def test_sidecar_chapters_land_as_structural_segments(h264_aac_clip):
             b for b in segs_mod.iter_blocks(reloaded.content or "")
             if isinstance(b, segs_mod.Segment) and b.is_structural
         ]
-        assert [(m.address, m.entry) for m in reloaded_marks] == [
+        assert [(m.address, m.mark) for m in reloaded_marks] == [
             ("time=00:00:00", "Intro"),
             ("time=00:00:01", "Outro"),
         ]

@@ -36,7 +36,7 @@ addition, not per-consumer logic):
   `kind:` field (a reply is already expressed by `reply_to`).
 - `topic` (dotted path): the source's own topic/thread id (Google Chat's `topic_id`). At the
   first unit carrying a topic value NOT seen earlier in the record, a `<!--segment structural-->`
-  byte-mark (level 1, `entry:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
+  byte-mark (level 1, `mark:` = the verbatim topic value) is emitted at that unit's `turn=<N>`
   address — a producer-declared boundary (§4.3.2.3), the TOC unit for a topic directory. Emitted
   ONLY for a non-trivial partition (see below); a partition into singletons emits none.
 - `timestamp_style` (optional mapping scalar): absent = the timestamp is kept VERBATIM (the DCE
@@ -232,7 +232,7 @@ def shape_conversation(
             tkey = str(topic)
             if tkey not in seen_topics:
                 seen_topics.add(tkey)
-                recordbuild.add_structural(build, address=f"turn={n}", level=1, entry=tkey)
+                recordbuild.add_structural(build, address=f"turn={n}", level=1, mark=tkey)
 
         envelope: dict[str, Any] = {}
         if is_event:
@@ -327,10 +327,11 @@ def adopt_flat(
             address=seg.address,
             body=seg.body or None,
             description=seg.description,
-            # A structural byte-mark's `entry:` rides inside a form span; a content
-            # segment's authored leaf `entry:` does not (none exist in this fleet — the
-            # historical sub-drafter never wrote one — so this never triggers today).
+            # A structural byte-mark's `mark:` (3.5; `entry:` before it) rides inside a
+            # form span; a content segment's authored leaf `entry:` does not (none exist in
+            # this fleet — the historical sub-drafter never wrote one).
             entry=seg.entry if seg.is_structural else None,
+            mark=seg.mark if seg.is_structural else None,
             perceptual=seg.perceptual,
             level=seg.level,
             extra=seg.extra,

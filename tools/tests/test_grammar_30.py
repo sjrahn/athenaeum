@@ -11,6 +11,7 @@ import hashlib
 from pathlib import Path
 
 import frontmatter
+import pytest
 
 from corpus import recordbuild, records, segments
 
@@ -18,18 +19,53 @@ from corpus import recordbuild, records, segments
 
 
 def test_structural_segment_emit_parse_roundtrip():
-    mark = segments.Segment(atom="structural", address="el=3", level=2, entry="Chapter 2")
+    mark = segments.Segment(atom="structural", address="el=3", level=2, mark="Chapter 2")
     text = segments.emit([mark])
     assert "<!--segment structural" in text
     assert "level: 2" in text
-    assert "entry: Chapter 2" in text
+    assert "mark: Chapter 2" in text
     (parsed,) = segments.iter_blocks(text)
     assert parsed.is_structural
     assert parsed.atom == "structural"
     assert parsed.address == "el=3"
     assert parsed.level == 2
-    assert parsed.entry == "Chapter 2"
+    assert parsed.mark == "Chapter 2"
+    assert parsed.entry is None
     assert parsed.body == ""
+
+
+def test_legacy_structural_entry_reads_as_mark_and_converts_on_write():
+    """*(3.5)* `entry:` was the byte-mark's spelling through 3.4. It still READS — the 61
+    structural blocks carrying it must not become unparseable — but `emit` writes only
+    `mark:`, so a record converts the moment its content zone is reconstructed. One-way,
+    and deliberately not incidental: `records.dumps` passes the zone through (§12.27)."""
+    legacy = "<!--segment structural\naddress: el=7\nlevel: 1\nentry: Diagnostic Aids\n-->\n"
+    (parsed,) = segments.iter_blocks(legacy)
+    assert parsed.mark == "Diagnostic Aids"
+    assert parsed.entry is None, "the legacy spelling must not also land on the content field"
+
+    out = segments.emit([parsed])
+    assert "mark: Diagnostic Aids" in out
+    assert "entry:" not in out
+    # ...and the converted form re-reads identically: the conversion is idempotent.
+    (again,) = segments.iter_blocks(out)
+    assert (again.address, again.level, again.mark) == ("el=7", 1, "Diagnostic Aids")
+
+
+def test_mark_on_a_content_segment_is_refused():
+    """`mark:` asserts *the source said this, verbatim* and is checkable against the
+    artifact; a content segment offers no such guarantee. Refused rather than tolerated —
+    the whole point of the rename is that the two fields are not interchangeable."""
+    bad = "<!--segment text\naddress: el=1\nmark: not a byte-mark\n-->\n\nbody\n"
+    with pytest.raises(ValueError, match="mark"):
+        segments.iter_blocks(bad)
+
+
+def test_both_spellings_present_prefers_mark():
+    """Defensive: a hand-edited record carrying both takes the current field."""
+    both = "<!--segment structural\naddress: el=2\nlevel: 1\nmark: New\nentry: Old\n-->\n"
+    (parsed,) = segments.iter_blocks(both)
+    assert parsed.mark == "New"
 
 
 def test_structural_segment_default_level_one():
@@ -56,7 +92,7 @@ def test_structural_excluded_from_body_tokens():
     post = frontmatter.Post("")
     post.metadata.update({"id": "a" * 64, "description": "d", "status": "stub"})
     blocks = [
-        segments.Segment(atom="structural", address="el=1", level=1, entry="Heading"),
+        segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
         segments.Segment(atom="text", address="el=2", body="the body text"),
     ]
     post.content = segments.emit(blocks)
@@ -111,15 +147,15 @@ def test_bare_2x_section_reads_tolerantly():
     assert sec.address == "page=1-2"
 
 
-def test_structural_mark_inside_form_section_carries_entry():
-    """A structural byte-mark inside a form span MAY carry `entry:` (the source's own
+def test_structural_mark_inside_form_section_carries_mark():
+    """A structural byte-mark inside a form span MAY carry `mark:` (the source's own
     mark text) — unlike a content segment (§4.3.2.3)."""
     blocks_in = [
         segments.Section(
             address="turn=1",
             form="conversation",
             segments=[
-                segments.Segment(atom="structural", address="turn=1", level=1, entry="Topic A"),
+                segments.Segment(atom="structural", address="turn=1", level=1, mark="Topic A"),
                 segments.Segment(atom="text", address="turn=1", body="msg"),
             ],
         )
@@ -127,7 +163,7 @@ def test_structural_mark_inside_form_section_carries_entry():
     text = segments.emit(blocks_in)
     (sec,) = segments.iter_blocks(text)
     assert sec.segments[0].is_structural
-    assert sec.segments[0].entry == "Topic A"
+    assert sec.segments[0].mark == "Topic A"
 
 
 def test_content_segment_inside_form_section_carries_entry():
@@ -193,7 +229,7 @@ def test_decompose_compile_roundtrips_form_and_structural(tmp_path):
         segments.Section(
             form="conversation",
             segments=[
-                segments.Segment(atom="structural", address="turn=1", level=1, entry="Start"),
+                segments.Segment(atom="structural", address="turn=1", level=1, mark="Start"),
                 segments.Segment(atom="text", address="turn=1", body="first message"),
                 segments.Segment(atom="text", address="turn=2", body="second message"),
             ],
