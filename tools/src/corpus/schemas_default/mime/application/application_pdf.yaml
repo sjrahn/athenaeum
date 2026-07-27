@@ -223,11 +223,11 @@ normalization:
 
     - `address: page=N&bbox=<x>,<y>,<w>,<h>` — the page region.
     - `description:` — a faithful description of what the crop **shows** (composition, on-screen text verbatim, chart/diagram structure), written after resolving and looking at the crop. **Lead it with the figure's identifying label** ("Figure 2 — WAG operation schematic. …"): the label lives here, NOT in `entry:`. (`entry:` is a section / top-level-segment field; a figure segment *inside a section* that carries `entry:` is a **hard compile error** — see "Sections". Only a figure that is itself a sectionless top-level segment may use `entry:`.) Body stays **empty** (image atoms are body-empty per SPEC §4.3.2.3).
-    - **No `<!--embed-->` block, and no `transport:` hash.** The `embed-missing-target` lint rule carves out `page=` addresses on PDF records precisely because no separate asset exists. Never compute a blake3 of a rendered crop and present it as an embed transport — that fabricates an asset the corpus doesn't store.
+    - **No `<!--members-->` row, and no `transport:` hash.** The `embed-missing-target` lint rule carves out `page=` addresses on PDF records precisely because no separate asset exists. Never compute a blake3 of a rendered crop and present it as a member transport — that fabricates an asset the corpus doesn't store.
 
     A losslessly-transcribable region inside a figure (a data table, an equation, OCR-able caption text) is a **separate** `text/<overlay>` segment (`text/data-table`, `text/equation`, `text/ocr`) at a chained `page=N&bbox=...` address — sibling to the image marker, carrying the lossless body.
 
-    **Embeds are the drafter's job, not yours.** Genuine embeds exist only for assets the drafter extracted as distinct byte-streams (e.g. an inline `<img>` decoded from an HTML page — `schema/mime/text/text_html.yaml`). The PDF drafter extracts none, so on a PDF record you never create one. If you believe the source contains a genuinely separable embedded asset the drafter failed to extract, **persist an `<!--issue missing-media-->`** describing it rather than fabricating an embed.
+    **The members roster is attestation's job, not yours.** Genuine member rows exist only for assets attestation extracted as distinct byte-streams (e.g. an inline `<img>` decoded from an HTML page — `schema/mime/text/text_html.yaml`). A PDF yields none, so on a PDF record you never create one — and never edit the roster on any record. If you believe the source contains a genuinely separable embedded asset attestation failed to extract, **persist an `<!--issue missing-media-->`** describing it rather than fabricating a row.
 
     ### Multi-page tables
 

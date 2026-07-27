@@ -14,20 +14,21 @@ description: |
   manifest member, and the labeled per-property rendering the 2.x drafter wrote is now a
   read-time `body`-derivation / normalize concern, never the attested layer.
 
-  **Attest (ingest / reattest) — eager, complete, byte-exact.** ONE `text/vcard` embed per card
-  at `card=<N>`. Unlike an mbox (10^5 messages → selective `--messages` declaration, §12.11), a
-  `.vcf` is small, so ALL cards attest **eagerly** — no mbox-style selectivity. Each embed's
-  `transport` is the blake3 over the card's EXACT member bytes (the verbatim byte span from the
-  `BEGIN:VCARD` line start through the `END:VCARD` line end incl. its terminator — pinned in
-  `corpus.vcardfile`, the mbox precedent on the contact axis), `bytes` its length, and the card's
+  **Attest (ingest / reattest) — eager, complete, byte-exact.** ONE `text/vcard` member row per
+  card at `card=<N>`. Unlike an mbox (10^5 messages → selective `--messages` declaration,
+  §12.11), a `.vcf` is small, so ALL cards attest **eagerly** — no mbox-style selectivity. Each
+  row's `transport` is the blake3 over the card's EXACT member bytes (the verbatim byte span from
+  the `BEGIN:VCARD` line start through the `END:VCARD` line end incl. its terminator — pinned in
+  `corpus.vcardfile`, the mbox precedent on the contact axis), and `bytes` its length. The card's
   display name (FN, else a formed N, else ORG / NICKNAME / EMAIL / TEL — the 2.x fallback chain)
-  rides the embed `description:`.
+  is **stored nowhere**: 3.4 closed the row to four keys, and the display name is read on demand
+  from the `members` derivation (`corpus resolve "corpus://<id>?members"`, spec §6.2/§12.26).
 
   **Bytes are verbatim.** A card's member bytes are the raw `.vcf` bytes of its span — folded
   RFC 6350 continuation lines, CRLF-or-LF terminators, and QUOTED-PRINTABLE payloads all
   preserved. RFC 6350 line-unfolding is a READ-time concern of a consumer, NEVER applied to the
   member bytes: identity is bytes (§2). A `card=<N>` resolve (`transforms/vcard.py`) round-trips
-  to the byte-identical member the embed's `transport` records, and `corpus promote` mints it.
+  to the byte-identical member the row's `transport` records, and `corpus promote` mints it.
 
   **PHOTO bytes stay inside the card.** An embedded-bytes `PHOTO` (`ENCODING=b`, or an inline
   `data:` URI) is part of its card's member bytes and is NOT lifted to a separate image embed at
@@ -68,10 +69,11 @@ normalization:
 
     ## What the drafter already did — leave it alone
 
-    - Emitted **one `text/vcard` embed per card** at `address: card=<N>` (1-indexed card order),
-      `transport:` = the blake3 over the card's exact member bytes, `bytes:` its length, and the
-      card's display name on the embed `description:`. The content zone is **empty** — the cards
-      ARE the manifest (the members), not body-flow content. Do NOT invent body segments.
+    - Emitted **one `text/vcard` member row per card** at `address: card=<N>` (1-indexed card
+      order), `transport:` = the blake3 over the card's exact member bytes, `bytes:` its length.
+      The display name is not stored — read it from the `members` derivation. The content zone is
+      **empty** — the cards ARE the manifest (the members), not body-flow content. Do NOT invent
+      body segments.
     - Recorded `card_count`, `vcard_version`, and (when uniform) `product_id` on the artifact
       block. A malformed card is skipped and counted in a `partial-content` issue — preserve it.
 

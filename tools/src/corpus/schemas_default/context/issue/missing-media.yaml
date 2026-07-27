@@ -1,11 +1,11 @@
 # Missing-media issues — a cross-reference in the body points at content that is no
-# longer addressable (a segment that has been re-segmented; an embed that was pruned;
-# an external resource that 404s).
+# longer addressable (a segment that has been re-segmented; an asset the source promises
+# that was never captured; an external resource that 404s).
 
 description: |
   A reference in the body points at content that is no longer addressable. Typical
-  cause: re-segmentation invalidated a prior address; an embed was pruned; an
-  external resource is gone. The reference is left in place and surfaced via this
-  issue for later repair.
+  cause: re-segmentation invalidated a prior address; the source promises an asset the
+  capture never got; an external resource is gone. The reference is left in place and
+  surfaced via this issue for later repair.
 
 applies_at: [record, segment]

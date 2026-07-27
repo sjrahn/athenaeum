@@ -3,8 +3,8 @@ kind: atomic
 description: |
   Motion-bearing video — live action footage, animation, or any content
   where the temporal sequence carries meaning beyond a still frame. The
-  embed's `description` reads the scene (what's happening, who/what
-  appears, how it changes over time).
+  placing segment's own `description:` reads the scene (what's happening,
+  who/what appears, how it changes over time).
 applies_to:
   atom: video
 enables_lossless: false

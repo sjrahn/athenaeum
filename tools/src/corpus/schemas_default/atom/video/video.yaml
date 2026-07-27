@@ -8,7 +8,9 @@ description: |
   specific kind isn't (yet) declared.
 
   Video-atom segments are positioning markers in document flow: their
-  body must be empty. The asset's description lives on the matching embed.
+  body must be empty. The asset's description lives on the placing segment's
+  own `description:` header field — never on the record's `<!--members-->`
+  row, which is wholly attested and carries no `description` (spec §4.3.1.4).
 
   Video-atom overlays never set `enables_lossless: true`. A video's
   closed-caption stream or scene transcript lives on a separate text-atom

@@ -21,7 +21,7 @@ extended_fields:
     role: title
     description: |
       The card's display name, mechanically derived by the same fallback chain the
-      vcard-manifest drafter's embed `description:` already uses (spec §12.11): `FN`, else
+      vcard `members` derivation already uses (spec §12.11): `FN`, else
       a formed `N` (`Prefixes Given Additional Family Suffixes`), else `ORG` / `NICKNAME` /
       `EMAIL` / `TEL`, else a positional fallback. Always present (the chain never returns
       empty) — every contact-card record derives an honest title with NO editorial pass

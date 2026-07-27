@@ -113,13 +113,16 @@ normalization:
 
     ## Attachments and inline images
 
-    Embeds are message members. Author a `description:` on notable embeds — from filename,
-    MIME, and size when identity is evident; resolve `corpus://<id>?part=<N>` and view the
-    bytes when it isn't and the member matters. Anything deeper belongs on the member's own
-    record after promotion (§8.1), never transcribed here. Link an inline image into the
-    body (an image segment at its `part=` address, description on the embed) only when the
-    author is SHOWING it as part of the message flow; signature logos, banners, and
-    tracking pixels stay unreferenced (`embed-unreferenced` is relaxed for this mime).
+    Attachments are message members — rows of the record's `<!--members-->` block, wholly
+    attested and carrying no `description` of their own (spec §4.3.1.4). A member is described
+    only where a segment PLACES it: link an inline image into the body (an image segment at its
+    `part=` address, the description on that segment's own `description:`) when the author is
+    SHOWING it as part of the message flow. Resolve `corpus://<id>?part=<N>` and view the bytes
+    before describing. Signature logos, banners, and tracking pixels stay unplaced
+    (`embed-unreferenced` is relaxed for this mime) — and an unplaced member gets no
+    description anywhere, which is correct: filename/MIME/size are already on its row, and
+    anything deeper belongs on the member's own record after promotion (§8.1), never
+    transcribed here.
 
     Surface faithfulness problems as issue blocks in the annotations zone; author the two
     editorial fields; set `status: normalized`.

@@ -15,7 +15,7 @@ description: |
   - **Transcribed** — a `text/data-table` from-to list where the drawing is legible enough to
     trace endpoint to endpoint. This is the goal, because it is the only rendering a claim can
     cite at full strength.
-  - **A figure** — the body-empty `image` marker plus the embed's description, where the
+  - **A figure** — the body-empty `image` marker plus that marker's own `description:`, where the
     relation currently cannot be faithfully textualized (illegible scan, a topology the
     from-to shape cannot hold, a sheet nobody has read yet). Honest, and valid indefinitely.
 
@@ -23,8 +23,8 @@ description: |
   exists it **supersedes** the marker at that address, because the marker extracts nothing and
   keeping both renders the region twice (§4.3.2.2 — two segments on one region are earned only
   where they extract genuinely DIFFERENT information, which is rare). So `embed_rendered` asks
-  each embed in the span for one or the other, never for both and never specifically for the
-  table. The drawing's provenance rides the address either way: the attested embed is the
+  each member in the span for one or the other, never for both and never specifically for the
+  table. The drawing's provenance rides the address either way: the attested member row is the
   asset, and a transcription's own `bbox=` is the crop into it.
 
   A drawing whose payload is NOT a relation — a component photo, an exploded parts view, a
@@ -59,14 +59,14 @@ decomposition: |
   never nest — span sections leave the record with no whole-record header, so a record
   whose vouch lives there needs it relocated to the frontmatter override (§4.2.1) as a
   verbatim move, never a re-authoring. Where the page prints no per-sheet headings, keep
-  one record-scope section: the check binds each embed, so it works either way.
+  one record-scope section: the check binds each member, so it works either way.
 
   Each sheet decomposes into ONE segment — whichever of the two renderings applies. Where the
   relation is legible that is a `text/data-table` from-to list, addressed as a `bbox=` crop
-  into the sheet's embed (`el=N&bbox=x,y,w,h`), carrying one row per relation the drawing
+  into the sheet's own address (`el=N&bbox=x,y,w,h`), carrying one row per relation the drawing
   states; the address is the transcription's provenance, naming the asset and the region of it
   that was read. Where it is not, that is the `image` marker at the sheet's own address, and
-  the reason belongs on the embed's description or a `partial-content` issue — never a
+  the reason belongs on that marker's `description:` or a `partial-content` issue — never a
   half-transcription that quietly drops what could not be read.
 
   The `bbox=` grammar is `x,y,WIDTH,HEIGHT` as **fractions of the image** (`0,0,1,1` is the
@@ -102,7 +102,8 @@ decomposition: |
   `form/document`.
 
   Two boundaries are normative to this contract. **Geometry is not relation content**:
-  where a box sits on the sheet, and the sheet's chrome, stay with the embed's description;
+  where a box sits on the sheet, and the sheet's chrome, stay with the figure marker's
+  `description:`;
   the table carries the relation only. **An unshown connection is an inference**:
   transcribe the printed termination even when the downstream one is obvious — a conductor
   the drawing does not draw belongs to the ledger as a claim over this segment's span,
@@ -158,8 +159,8 @@ normalization:
     left over and write the line. If you find yourself writing description prose before the
     last row is settled, you are describing an intention rather than a record.
 
-    **The embed's `description:` carries only what the chosen rendering does not**, and the
-    two branches are lopsided:
+    **The placing segment's `description:` carries only what the chosen rendering does not**,
+    and the two branches are lopsided:
 
     - Transcribed → ONE LINE. Name the sheet, and disclose what the address covered out.
       Nothing else: the relation is in the table at full strength, and a description can

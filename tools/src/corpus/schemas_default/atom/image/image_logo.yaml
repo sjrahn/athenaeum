@@ -2,8 +2,8 @@ class_id: image/logo
 kind: atomic
 description: |
   A logo, brand mark, or icon. Identifies an organization or product.
-  Typically descriptive chrome rather than content-bearing; the embed's
-  `description` names the entity.
+  Typically descriptive chrome rather than content-bearing; the placing
+  segment's own `description:` names the entity.
 applies_to:
   atom: image
 enables_lossless: false

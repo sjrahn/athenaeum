@@ -9,7 +9,7 @@ description: |
   `spine=<N>`, and groups them into `<!--section-->` blocks along the book's navigation
   document (EPUB 3 nav / EPUB 2 NCX table of contents) — the EPUB analogue of how the PDF
   drafter wraps pages by the outline. The book's images are separately-stored zip members,
-  so each `<img>` becomes an `<!--embed-->` (addressed `spine=<N>&el=<K>`, transport = the
+  so each `<img>` becomes a `<!--members-->` row (addressed `spine=<N>&el=<K>`, transport = the
   blake3 of the member bytes) — the same model as an HTML page's inline images, not a PDF's
   bare image segments.
 applies_to:
@@ -61,7 +61,7 @@ normalization:
     with a mechanically-cleaned structural-HTML body (headings, prose, lists, tables; non-
     rendered infrastructure stripped), grouped into `<!--section-->` blocks along the book's
     navigation document. Each `<img>` is kept as a src-stripped `<img data-el="K">`
-    placeholder and emitted as an `<!--embed-->`.
+    placeholder and rostered as a `<!--members-->` row.
 
     The body is already faithful cleaned HTML. Don't re-extract from the artifact with an
     external EPUB tool and call it done — you'd be at parity with the drafter. Your work is
@@ -69,16 +69,17 @@ normalization:
     artifacts (tables, code, equations) into their own atom-prefixed segments, and turn each
     `<img data-el="K">` into a proper `<!--segment image-->` (below).
 
-    ## Images — embeds the drafter extracted; promote to image segments
+    ## Images — members the drafter rostered; promote to image segments
 
-    The drafter has already extracted every `<img>` as an `<!--embed-->` (addressed
+    Attestation has already rostered every `<img>` as a `<!--members-->` row (addressed
     `spine=<N>&el=<K>`, transport = the blake3 of the zip-member bytes) — EPUB images are
     separately-stored assets, exactly like an HTML page's inline images (NOT a PDF's bare
-    image segments, which crop a rendered page). Don't fabricate or recompute embeds; they
-    exist. In the body each image is a `<img data-el="K">` placeholder at its reading
-    position. During normalization, replace the placeholder with a bare `<!--segment image-->`
-    addressed `spine=<N>&el=<K>` (matching the embed by address membership) and write its
-    `description:` from what the image shows; the embed supplies the bytes/dimensions. An
+    image segments, which crop a rendered page). Don't fabricate or recompute member rows; they
+    exist, and they are not yours to touch. In the body each image is a `<img data-el="K">`
+    placeholder at its reading position. During normalization, replace the placeholder with a
+    bare `<!--segment image-->` addressed `spine=<N>&el=<K>` (matching the member row by address
+    membership) and write **that segment's own** `description:` from what the image shows; the
+    row supplies the bytes, and pixel dimensions come from the `members` derivation. An
     image carrying losslessly-transcribable content (a diagram's labels, a code screenshot)
     also gets a sibling `text/<overlay>` segment.
 

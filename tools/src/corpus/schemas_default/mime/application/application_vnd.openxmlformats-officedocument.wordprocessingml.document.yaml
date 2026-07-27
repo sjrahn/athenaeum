@@ -107,7 +107,7 @@ normalization:
 
     ## Images and embedded objects
 
-    `has_images: true` means the zip carries `word/media/` parts. **The v1 drafter does not emit `atom: image` segments or embeds for docx** — inline figures (CDM "Figure 1 / Figure 2" project-boundary diagrams, often stored as `word/media/*` images or `<w:object>` OLE embeds) are not yet surfaced as image segments. If a docx genuinely centers on figures, note the gap in your report (and a record-scope `partial-content` issue if a figure is load-bearing and absent from the body) — surfacing the limitation is correct; do not invent alt text for an image you can't see. Drafter image support for docx is a deferred enhancement.
+    `has_images: true` means the zip carries `word/media/` parts. **The v1 drafter does not emit `atom: image` segments or member rows for docx** — inline figures (CDM "Figure 1 / Figure 2" project-boundary diagrams, often stored as `word/media/*` images or `<w:object>` OLE embeds) are not yet surfaced as image segments. If a docx genuinely centers on figures, note the gap in your report (and a record-scope `partial-content` issue if a figure is load-bearing and absent from the body) — surfacing the limitation is correct; do not invent alt text for an image you can't see. Drafter image support for docx is a deferred enhancement.
 
     ## Faithfulness
 

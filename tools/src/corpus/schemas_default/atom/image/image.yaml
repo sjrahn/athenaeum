@@ -8,24 +8,26 @@ description: |
   specific kind isn't (yet) declared.
 
   Image-atom segments are positioning markers in document flow: their
-  body must be empty. The image's description goes in one of two places,
-  depending on whether a separate asset exists:
+  body must be empty. The image's description lives in exactly ONE place:
+  the **segment's own `description:` header field** — the block that places
+  the asset in the reading order. That holds whether or not a separate
+  asset exists:
 
-  - **Artifact-self-slice (no embed)** — when the address is a crop of the
+  - **Artifact-self-slice (no member row)** — the address is a crop of the
     record's own artifact bytes (a `page=N&bbox=...` region of a PDF, a
-    `bbox=` of a single-image record, a `frame=`/`time=` of a video), there
-    is no separate asset to embed; the resolver renders the slice on demand.
-    The description lives on the **segment's own `description:` header
-    field**. This is the common case for figures/diagrams on a document
-    page and slides grabbed from a video.
-  - **Separate embedded asset (has embed)** — when the segment points at a
-    genuinely distinct asset the drafter extracted (e.g. an inline `<img>`
-    decoded from an HTML page, addressed `el=N`), the matching `<!--embed-->`
-    block carries the whole-asset description.
+    `bbox=` of a single-image record, a `frame=`/`time=` of a video). There
+    is no separate asset; the resolver renders the slice on demand.
+  - **Separate embedded asset (a member row)** — the segment points at a
+    genuinely distinct asset (e.g. an inline `<img>` decoded from an HTML
+    page, addressed `el=N`), which the record rosters as a row of its
+    `<!--members-->` block. The row supplies the asset's byte identity and
+    nothing else: it is wholly attested and carries no `description` field
+    at all (spec §4.3.1.4, §12.26). The description still goes on the
+    placing segment.
 
-  Normalizers do not create embeds — those are drafter output. For a
-  self-slice, write the segment `description:`; never fabricate an embed or
-  a transport hash from a rendered crop.
+  Normalizers never touch the members block — it is re-derived from the
+  artifact on every attestation. Write the segment `description:`; never
+  fabricate a member row or a transport hash from a rendered crop.
 
   Image-atom overlays never set `enables_lossless: true` — they are
   purely descriptive of an image kind. A lossless transcription of image

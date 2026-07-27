@@ -2,8 +2,8 @@ class_id: image/chart
 kind: atomic
 description: |
   A chart or data visualization (bar chart, line chart, scatter plot,
-  pie chart, etc.). The embed's `description` carries the LLM's reading
-  of what the chart conveys (axes, key trends, callouts).
+  pie chart, etc.). The placing segment's own `description:` carries the
+  reading of what the chart conveys (axes, key trends, callouts).
 
   When the chart's underlying data can be losslessly transcribed, pair
   this overlay with a sibling `text/data-table` segment at the same

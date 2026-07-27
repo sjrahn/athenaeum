@@ -8,7 +8,8 @@ description: |
 
   The text atom is the only atom whose segments carry bodies. Image, audio,
   and video segments are body-empty positioning markers; their descriptions
-  live on the matching embeds. See SPEC §4.3.2.3.
+  live on their own `description:` header field — the block that places the
+  asset — never on the record's `<!--members-->` roster. See SPEC §4.3.2.3.
 
   Subtype overlays whose declaring schema sets `enables_lossless: true`
   certify that the body losslessly transcribes the addressed content. A
