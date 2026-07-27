@@ -32,11 +32,13 @@ without a matching `enqueue`/`promote` need naming the same hash.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from corpus import functional_uri as furi
 from ledger.corpora import CorpusJoin
 from ledger.model import CORPUS_URI_RE, derived_uri
 
@@ -51,6 +53,13 @@ class RecordContent:
     spans: dict[str, list[tuple[int, int, str]]]  # axis -> [(lo, hi, text)]
     full_text: str
     touch: str  # the latest touch identity ("" when the record carries none)
+    # (3.6, corpus §6.1.1) `el=` child-index paths, when the RECORD is stamped with
+    # `addressing:` — [(path, text)]. Which grammar this record's el= values speak is
+    # decided by the record, never by the value's shape: `el=5` is legal under both and
+    # means different elements, so the stamp is the only honest discriminator. Integer
+    # axes (page/msg/turn/part/…) and unstamped records keep `spans` untouched.
+    el_paths: list[tuple[object, str]] = field(default_factory=list)
+    el_stamped: bool = False
     media_type: str = ""
     # the format's honest citation-surface class (corpus §7.1, ledger.md §6.3/§13.2.4):
     # "segments" — citable only once persisted segments exist; "raw" — the default,
@@ -163,23 +172,41 @@ def _quote_found(quote: str, haystack: str, *, strip_markup: bool = True) -> boo
     return scan(hay, squash=False) or scan(_SEPARATORS_RE.sub("", hay), squash=True)
 
 
-def _parse_axis_values(addr: str | list[str]) -> list[tuple[str, int, int]]:
-    """Address strings → [(axis, lo, hi)] for integer-span axes. An address
-    may carry several params (`el=5&bbox=0,0,2272,1234`); every int-span
-    param registers its axis."""
-    out = []
+def _parse_axis_values(
+    addr: str | list[str], *, el_stamped: bool = False
+) -> tuple[list[tuple[str, int, int]], list[object]]:
+    """Address strings → `(integer spans, el paths)`. An address may carry several
+    params (`el=5&bbox=0,0,2272,1234`); every int-span param registers its axis.
+
+    On a record stamped with `addressing:` the `el` axis is a §6.1.1 child-index path
+    and is returned separately — parsed, not regex-matched, so a malformed value is
+    simply not registered rather than being mistaken for an integer span."""
+    out: list[tuple[str, int, int]] = []
+    paths: list[object] = []
     addrs = addr if isinstance(addr, list) else [addr]
     for a in addrs:
         if not isinstance(a, str) or "=" not in a:
             continue
         for part in a.split("&"):
             axis, _, value = part.partition("=")
-            m = _SPAN_RE.match(value.strip())
+            axis, value = axis.strip(), value.strip()
+            if axis == "el" and el_stamped:
+                with contextlib.suppress(ValueError):
+                    paths.append(furi.parse_el_path(value))
+                continue
+            m = _SPAN_RE.match(value)
             if m:
                 lo = int(m.group(1))
                 hi = int(m.group(2)) if m.group(2) else lo
-                out.append((axis.strip(), lo, hi))
-    return out
+                out.append((axis, lo, hi))
+    return out, paths
+
+
+def _el_paths_overlap(a, b) -> bool:
+    """Two §6.1.1 addresses intersect when either contains the other — a segment at
+    `el=1.3` holds a quote anchored at `el=1.3.2`, and an anchored envelope
+    `el=1.[2-9]` holds a segment at `el=1.4`."""
+    return furi.el_path_contains(a, b) or furi.el_path_contains(b, a)
 
 
 def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
@@ -197,14 +224,19 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
     except Exception:  # tolerant by contract: unparseable → no content
         return None
     spans: dict[str, list[tuple[int, int, str]]] = {}
+    el_paths: list[tuple[object, str]] = []
+    el_stamped = records.el_addressing(post) is not None
     texts: list[str] = []
 
     def add(addr, *parts):
         text = "\n".join(p for p in parts if p)
         if text:
             texts.append(text)
-        for axis, lo, hi in _parse_axis_values(addr):
+        int_spans, paths = _parse_axis_values(addr, el_stamped=el_stamped)
+        for axis, lo, hi in int_spans:
             spans.setdefault(axis, []).append((lo, hi, text))
+        for p in paths:
+            el_paths.append((p, text))
 
     def block_texts(b) -> tuple[str, ...]:
         # a block's citable text: body + normalizer-written prose (descriptions,
@@ -267,7 +299,7 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
     return RecordContent(
         spans=spans, full_text="\n".join(texts), touch=touch,
         media_type=media_type, citation_surface=surface, segment_count=segment_count,
-        corpus_root=corpus_root,
+        corpus_root=corpus_root, el_paths=el_paths, el_stamped=el_stamped,
     )
 
 
@@ -281,6 +313,22 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
     for key, value in params:
         if key in _UNCHECKED_PARAMS:
             return None, "unchecked"
+        if key == "el" and content.el_stamped:
+            # (3.6) The record speaks §6.1.1, so the anchor does too: scope by path
+            # intersection rather than numeric interval. An anchor that names nothing
+            # the record persists is a BAD anchor, exactly as on the integer axes —
+            # falling back to a record-wide quote search would let a confabulated
+            # address read as verified evidence.
+            try:
+                anchor_path = furi.parse_el_path((value or "").strip())
+            except ValueError:
+                return None, "unchecked"
+            if not content.el_paths:
+                return None, "unchecked"
+            hit = [t for (p, t) in content.el_paths if _el_paths_overlap(anchor_path, p)]
+            if not hit:
+                return None, "bad-anchor"
+            return "\n".join(hit), "ok"
         m = _SPAN_RE.match((value or "").strip())
         if not m:
             return None, "unchecked"

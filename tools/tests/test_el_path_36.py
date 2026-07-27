@@ -257,6 +257,49 @@ def test_remap_engine_rewrites_verifies_and_stamps(tmp_path):
     assert derive._content_zone_has_el(post2)  # addresses present, stamped — no refusal
 
 
+_ALIASING_DOC = (
+    "<html><head><title>Alias</title></head><body><main>"
+    "<div><p>One.</p><p>Two.</p></div>"
+    "<div><p>Three.</p></div>"
+    "</main></body></html>"
+)
+
+
+def test_remap_holds_when_legacy_intervals_alias_to_one_address(tmp_path):
+    """The neutrality gate. A flat interval could claim a span wider than the content it
+    held, and two such intervals on one record can name the SAME §6.1.1 container — the
+    truth about them, and a duplicate claim. §6.1.1 cannot represent the over-claim,
+    which is the point; the record stays on the legacy grammar (unstamped resolves
+    exactly as before) and goes to a worklist, rather than migrating into a red gate."""
+    from corpus import hashing
+
+    root = _make_corpus(tmp_path)
+    src = root / "alias.html"
+    src.write_text(_ALIASING_DOC, encoding="utf-8")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(root).put(rid, "html", src)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "transport": f"sha256:{h['sha256']}"})
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, uri="https://x.test/a", snapshot="2026-01-01T00:00:00Z")
+    # Legacy enumeration: p(1), p(2), p(3). Both intervals span from inside div one to
+    # inside div two, so both collapse onto <main> — one address, claimed twice.
+    post.content = segments.emit([
+        Segment(atom="text", address="el=1-3", body="One. Two. Three."),
+        Segment(atom="text", address="el=2-3", body="Two. Three."),
+    ])
+    rf = paths.record_path(root, rid)
+    records.dump(post, rf)
+
+    report = remap_el.remap_record(rf, root)
+    assert report.hold is not None
+    assert "segment-address-duplicate" in report.hold
+    assert not report.changed and report.new_text is None
+    # And the record on disk is untouched — a hold writes nothing.
+    assert records.el_addressing(records.load(rf)) is None
+
+
 def test_remap_engine_holds_on_out_of_range(tmp_path):
     root, rf, _rid = _ingest_legacy_record(tmp_path)
     post = records.load(rf)

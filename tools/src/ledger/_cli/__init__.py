@@ -277,11 +277,37 @@ def _cmd_remap_el(argv: Sequence[str]) -> int:
         "remap uses (dry-run by default).",
     )
     ap.add_argument("--apply", action="store_true", help="write the rewrites")
+    ap.add_argument(
+        "--manifest",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="corpus `remap-el` run manifest (repeat once per hub). REQUIRED: it is the "
+        "eligibility set — only records the corpus remap actually rewrote may have "
+        "their anchors rewritten, since a record it HELD keeps the legacy grammar.",
+    )
     ns = ap.parse_args(list(argv))
     ledger_root, join, _ = _system(ns.root)
-    from ledger.remap_el import remap_ledger_el
+    from ledger.remap_el import load_migrated_ids, remap_ledger_el
 
-    res = remap_ledger_el(ledger_root, join, apply=ns.apply)
+    if not ns.manifest:
+        print(
+            "ath ledger remap-el: --manifest is required (one per hub, from `corpus "
+            "remap-el`). Without it no record is eligible: an anchor rewritten to a "
+            "path on a record the corpus remap held would point a §6.1.1 address at a "
+            "record that still reads legacy integers.",
+            file=sys.stderr,
+        )
+        return 2
+    paths_in = [Path(p) for p in ns.manifest]
+    missing = [str(p) for p in paths_in if not p.is_file()]
+    if missing:
+        print(f"ath ledger remap-el: manifest not found: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    migrated = load_migrated_ids(paths_in)
+    print(f"eligibility: {len(migrated)} record(s) migrated by the corpus remap")
+
+    res = remap_ledger_el(ledger_root, join, apply=ns.apply, migrated=migrated)
     for h in res.holds:
         print(f"HOLD {h.fact}: {h.anchor[:60]} — {h.reason}", file=sys.stderr)
     verb = "rewrote" if ns.apply else "would rewrite"
@@ -289,7 +315,7 @@ def _cmd_remap_el(argv: Sequence[str]) -> int:
     print(
         f"{verb} {len(res.rewrites)} anchor(s)/citation(s) across "
         f"{len(res.facts_touched)} file(s) ({forms}); {len(res.holds)} held, "
-        f"{res.skipped_stamped} on already-stamped records"
+        f"{res.skipped_not_migrated} on records the corpus remap did not migrate"
     )
     if ns.apply:
         print("run `ath ledger check && ath ledger verify` — the gates must be green "

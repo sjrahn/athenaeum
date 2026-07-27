@@ -237,36 +237,45 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
         by_addr.setdefault(str(entry["address"]), entry)
         by_transport.setdefault(str(entry["transport"]), []).append(entry)
 
-    # *(3.6)* el-axis fixtures freeze LEGACY filtered-index addresses, while the
-    # drafter-backed derivation now emits child-index paths (§6.1.1). Rows are matched
-    # by transport instead (the roster's dedupe key — unique per row by construction),
-    # and the derived address must equal the §12.28 remap of the stored one — which
-    # makes every el fixture double as a live proof of the migration mapping.
-    remap_of: dict[str, list[str]] = {}
-    if fixture["axis"] == "el" and _HAVE_CORPORA:
+    # *(3.6)* el-axis rows are matched by TRANSPORT rather than by address — the
+    # roster's dedupe key, unique per row by construction — because the derivation
+    # explodes a list address into one entry per address.
+    #
+    # The derivation always speaks §6.1.1 (it re-runs the drafter over the artifact),
+    # so which comparison is right depends on the RECORD, exactly as resolution does:
+    #   - stamped (migrated): stored and derived addresses must match outright;
+    #   - unstamped: the record is one the §12.28 remap HELD, so its stored rows keep
+    #     legacy integers while the derivation emits paths, and what must hold is that
+    #     the derived addresses are the §12.28 MAPPING of the stored ones. That pins
+    #     held records as consistent-under-mapping — the property that makes the
+    #     attest guard (`derive.attest` refusing to stamp them) a freeze rather than a
+    #     silent divergence — and this branch retires when the last one is re-addressed.
+    remapper = None
+    if fixture["axis"] == "el" and records.el_addressing(records.load(record_path)) is None:
         from bs4 import BeautifulSoup
 
         from corpus import containment, remap_el
         from corpus import mime as mime_mod
         from corpus.transforms.html import legacy_is_addressable, path_root
 
-        post = records.load(record_path)
+        held_post = records.load(record_path)
         binary = containment.ensure_local_bytes(
-            corpus_root, record_id, mime_mod.extension_for(records.media_type_for(post))
+            corpus_root, record_id, mime_mod.extension_for(records.media_type_for(held_post))
         )
         soup = BeautifulSoup(binary.read_bytes(), "html.parser")
         old_elements = list(soup.find_all(legacy_is_addressable))
-        root = path_root(soup)
+        path_rt = path_root(soup)
+        cache: dict[str, list[str]] = {}
 
-        def _remap(addr: str) -> list[str]:
-            if addr not in remap_of:
+        def remapper(addr: str) -> list[str]:
+            if addr not in cache:
                 new, _form = remap_el.map_el_value(
-                    str(addr).split("=", 1)[1], old_elements, root
+                    str(addr).split("=", 1)[1], old_elements, path_rt
                 )
-                remap_of[addr] = (
+                cache[addr] = (
                     [f"el={v}" for v in new] if isinstance(new, list) else [f"el={new}"]
                 )
-            return remap_of[addr]
+            return cache[addr]
 
     checked = 0
     for stored in fixture["embeds"]:
@@ -281,10 +290,13 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
             # The derivation explodes a list address into one entry per address
             # (resolver `_resolve_members`); gather them back in payload order.
             d_list = [str(e["address"]) for e in entries]
-            expected = [p for a in addr_list for p in _remap(a)]
+            expected = (
+                [p for a in addr_list for p in remapper(a)] if remapper else addr_list
+            )
             assert d_list == expected, (
-                f"{fixture_path.name} {first}: derived addresses {d_list} are not the "
-                f"§12.28 remap of the stored ones ({expected})"
+                f"{fixture_path.name} {first}: derived addresses {d_list} do not match "
+                f"the expected ones ({expected})"
+                + ("" if remapper is None else " — the §12.28 mapping of a HELD record")
             )
             derived = entries[0]  # descriptor fields are identical across the entries
         else:

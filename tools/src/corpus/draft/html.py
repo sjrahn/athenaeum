@@ -1111,8 +1111,17 @@ def _css_selector(tag: Tag) -> str:
             s for s in cur.parent.find_all(cur.name, recursive=False)
         ] if cur.parent else [cur]
         if len(siblings_same_tag) > 1:
-            idx = siblings_same_tag.index(cur) + 1
-            parts.append(f"{cur.name}:nth-of-type({idx})")
+            # By identity: bs4 Tag equality is STRUCTURAL, so `.index()` among
+            # interchangeable siblings (`<br/>`, repeated wrappers) returns the first
+            # look-alike and the selector then names the wrong element.
+            idx = next(
+                (i for i, s in enumerate(siblings_same_tag, start=1) if s is cur),
+                None,
+            )
+            if idx is None:  # not reachable via find_all on its own parent
+                parts.append(cur.name)
+            else:
+                parts.append(f"{cur.name}:nth-of-type({idx})")
         else:
             parts.append(cur.name)
         cur = cur.parent if isinstance(cur.parent, Tag) else None

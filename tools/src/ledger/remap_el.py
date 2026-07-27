@@ -8,10 +8,25 @@ function the corpus remap uses (`corpus.remap_el.map_el_value`): walk the frozen
 enumeration and the total tree over the same bytes, pair positionally, verify by
 identity. One engine, two layers, zero drift.
 
-An anchor is a single string, so a flat range whose §6.1.1 mapping is an address LIST
-(a region crossing subtree boundaries) has no mechanical rewrite — it is HELD and
-reported for interpretive re-anchoring (the #65 pattern: a span that was never one
-structural thing needs a judgment about what it actually cites). Nothing is guessed.
+**Ordering is part of the contract.** This pass runs AFTER `corpus remap-el --apply` and
+is driven by its run manifest (`--manifest`, one per hub), because only that manifest
+knows which records actually migrated: the corpus remap holds the records whose legacy
+addresses alias under §6.1.1, and a held record keeps the legacy grammar forever until
+someone re-addresses it deliberately. So the manifest is the eligibility set, and a
+record absent from it — held, skipped, or in no corpus — keeps its legacy anchors, which
+is exactly right, since its stored addresses are legacy too. Run in the other order (or
+with no manifest) and the two layers can disagree about which grammar a record speaks,
+which is the one way this migration silently breaks a citation.
+
+A flat range rewrites to the tightest §6.1.1 address CONTAINING it — a subtree path or a
+sibling range, always one string — so crossing subtree boundaries is ordinary here and
+not a hold. What still holds is the interval whose endpoints' nearest common ancestor is
+the path root itself: it covers the whole body, and §6.1.1 spells a sibling range
+`el=<parent>.[a-b]`, so there is no address for it. Re-scoping such an anchor (usually to
+a whole-record citation, which is the same extent) is a judgment, so it is reported
+rather than guessed at — the #65 pattern. Span precision is unchanged either way: a
+legacy flat range and a 3.6 sibling range are both unmaterializable, so `verify` treated
+these anchors as record-scoped before the migration and treats them the same after.
 
 Anchors on the EPUB axis (`spine=N&el=K`) are untouched — that axis keeps its own
 enumeration (zero exist today, measured 2026-07-27). `ref://` citations are untouched.
@@ -56,15 +71,27 @@ class LedgerRemapResult:
     holds: list[AnchorHold] = field(default_factory=list)
     facts_touched: list[str] = field(default_factory=list)
     forms: dict[str, int] = field(default_factory=dict)
-    skipped_stamped: int = 0  # anchors on records already carrying 3.6 addresses
+    skipped_not_migrated: int = 0  # anchors on records the corpus remap did not rewrite
 
 
 class _Pairing:
     """Per-record parse cache: the frozen legacy enumeration + the path root, or the
-    reason the record cannot be paired (missing bytes, non-HTML, already stamped)."""
+    reason the record cannot be paired (missing bytes, non-HTML, not migrated).
 
-    def __init__(self, join: CorpusJoin) -> None:
+    `migrated` is the eligibility set — the record ids the corpus remap actually
+    rewrote, read from its run manifest. It is what keeps the two layers consistent:
+    the corpus remap HOLDS the records whose legacy addresses alias under §6.1.1, those
+    records keep the legacy grammar (their `addressing:` stamp is never written, so the
+    resolver still reads their integers the old way), and their anchors must therefore
+    keep the legacy spelling too. Rewriting an anchor on a held record would point a
+    path at a record that reads integers — the one way this migration can silently
+    break a citation. Without a manifest, no record is eligible: there is no safe
+    default, because the stamp alone cannot distinguish "migrated" from "was never in
+    scope"."""
+
+    def __init__(self, join: CorpusJoin, migrated: set[str] | None = None) -> None:
         self._join = join
+        self._migrated = migrated or set()
         self._cache: dict[str, tuple[list[Tag], Tag] | str] = {}
 
     def get(self, record_hash: str) -> tuple[list[Tag], Tag] | str:
@@ -75,6 +102,8 @@ class _Pairing:
             holders = self._join.holders(record_hash)
             if not holders:
                 result = "record resolves in no registered corpus"
+            elif record_hash not in self._migrated:
+                result = "NOT-MIGRATED"
             else:
                 root_dir = holders[0].root
                 from corpus import paths as corpus_paths
@@ -84,8 +113,6 @@ class _Pairing:
                 media_type = corpus_records.media_type_for(post)
                 if not media_type.startswith("text/html"):
                     result = f"non-HTML mime ({media_type or 'none'})"
-                elif corpus_records.el_addressing(post) is not None:
-                    result = "STAMPED"  # already 3.6-addressed: anchors must not re-map
                 else:
                     binary = containment.ensure_local_bytes(
                         root_dir, record_hash, mime_mod.extension_for(media_type)
@@ -165,8 +192,8 @@ def _rewrite_uri_string(
         tail, frag = tail.split("#", 1)
         fragment = f"#{frag}"
     pairing = pairings.get(record_hash)
-    if pairing == "STAMPED":
-        result.skipped_stamped += 1
+    if pairing == "NOT-MIGRATED":
+        result.skipped_not_migrated += 1
         return value, False
     if isinstance(pairing, str):
         result.holds.append(AnchorHold(rel, record_hash, value, pairing))
@@ -187,14 +214,36 @@ def _rewrite_uri_string(
     return new_uri, True
 
 
+def load_migrated_ids(manifest_paths: list[Path]) -> set[str]:
+    """The eligibility set: record ids the corpus remap actually REWROTE, read from its
+    run manifest(s) — one per hub. Held and skipped records are deliberately absent."""
+    migrated: set[str] = set()
+    for path in manifest_paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("changed") and row.get("record"):
+                migrated.add(str(row["record"]))
+    return migrated
+
+
 def remap_ledger_el(
-    ledger_root: Path, join: CorpusJoin, *, apply: bool = False
+    ledger_root: Path,
+    join: CorpusJoin,
+    *,
+    apply: bool = False,
+    migrated: set[str] | None = None,
 ) -> LedgerRemapResult:
     """Sweep every fact/interpretation file, rewriting el-leading anchors and
     `corpus://…?el=…` citation strings through the §12.28 mapping. Dry-run unless
     `apply`. Every hold carries its reason; nothing is guessed."""
     result = LedgerRemapResult()
-    pairings = _Pairing(join)
+    pairings = _Pairing(join, migrated)
 
     def tally(form: str) -> None:
         result.forms[form] = result.forms.get(form, 0) + 1
@@ -227,8 +276,8 @@ def remap_ledger_el(
                 if not record_hash:
                     continue
                 pairing = pairings.get(str(record_hash))
-                if pairing == "STAMPED":
-                    result.skipped_stamped += 1
+                if pairing == "NOT-MIGRATED":
+                    result.skipped_not_migrated += 1
                     continue
                 if isinstance(pairing, str):
                     result.holds.append(AnchorHold(rel, str(record_hash), anchor, pairing))

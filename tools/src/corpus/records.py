@@ -175,7 +175,14 @@ def load(path: Path) -> frontmatter.Post:
 
     After load, `post.content` carries the content zone only.
     """
-    post = frontmatter.load(path)
+    return loads(path.read_text(encoding="utf-8"))
+
+
+def loads(text: str) -> frontmatter.Post:
+    """`load`, from a record's TEXT rather than its path — the same unified metadata
+    view. Used where a record exists only as a string (a proposed rewrite being checked
+    before it is written)."""
+    post = frontmatter.loads(text)
     body = post.content or ""
     metadata_blocks, after_metadata = _extract_metadata_blocks(body)
     content_body, annotations_body = _split_annotations(after_metadata)

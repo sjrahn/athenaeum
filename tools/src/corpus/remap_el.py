@@ -25,16 +25,23 @@ description drop — the diff a remap writes is addresses + the stamp + a touch,
 else, so the fleet review reads as exactly the migration and the 3.4 lazy conversion
 stays lazy.
 
-Range mapping (the retired flat `el=<lo>-<hi>`) follows §6.1.1's preference order: the
-range's top-level members (nested ones drop — a subtree is one address) collapse to a
-single subtree path when one contains the rest, to a sibling range
-`el=<parent>.[<a>-<b>]` when they are a contiguous, complete run of one parent's element
-children, else to the ordered address list.
+Range mapping (the retired flat `el=<lo>-<hi>`) maps to **the tightest §6.1.1 address
+that contains the interval**: a subtree path when one endpoint holds the other or both
+land in one child of their nearest common ancestor, else the sibling range
+`el=<parent>.[<a>-<b>]` over the endpoints' slots in that ancestor. Never a list of the
+endpoints — the flat form was an interval over the document, not a set of its bounds
+(§12.28.1). The two forms differ exactly where it matters: the interval's whole reason
+for existing was to cover prose with no element of its own, which lives BETWEEN the
+bounds, so a list would name the two landmarks the prose is not in, alias the point
+addresses those landmarks already carry, and narrow the claim. Parity is exact on the
+resolution axis too — a legacy range and a 3.6 sibling range are both
+`NotMaterializable`, so no address gains or loses a byte surface in the migration.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
@@ -42,7 +49,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
-from corpus import containment, records, segments, touches
+from corpus import containment, lint, records, segments, touches
 from corpus import functional_uri as furi
 from corpus import mime as mime_mod
 from corpus.transforms.html import (
@@ -92,10 +99,12 @@ def map_el_value(
     value: str, old_elements: list[Tag], root: Tag
 ) -> tuple[str | list[str], str]:
     """Map one old `el=` VALUE (`"5"` / `"3-7"`) to its §6.1.1 replacement, returning
-    `(new_value_or_values, form)` where form ∈ point | subtree | sibling | list. Every
-    produced path is verified by resolving it back to the IDENTICAL element the old
-    enumeration named — the §12.28 self-proof. Raises `RemapHold` on anything that does
-    not verify (out-of-range index, element outside the path root, identity miss)."""
+    `(new_value_or_values, form)` where form ∈ point | subtree | sibling |
+    fallback-wrapper. Every produced point path is verified by resolving it back to the
+    IDENTICAL element the old enumeration named, and every produced envelope by proving
+    it CONTAINS both of the interval's endpoints — the §12.28 self-proof. Raises
+    `RemapHold` on anything that does not verify (out-of-range index, element outside
+    the path root, identity miss, an envelope with no §6.1.1 spelling)."""
 
     def path_of(tag: Tag, label: str) -> str:
         p = element_path(tag, root)
@@ -139,25 +148,72 @@ def map_el_value(
             f"el={value}: range out of bounds (the legacy enumeration has "
             f"{len(old_elements)} elements)"
         )
-    members = old_elements[lo - 1 : hi]
-    member_ids = {id(t) for t in members}
-    tops = [
-        t for t in members
-        if not any(id(p) in member_ids for p in t.parents)
-    ]
-    if len(tops) == 1:
-        return path_of(tops[0], value), "subtree"
-    parents = {id(t.parent) for t in tops}
-    if len(parents) == 1 and tops[0].parent is not None:
-        parent = tops[0].parent
-        kids = iter_element_children(parent)
-        idxs = [kids.index(t) + 1 for t in tops]
-        a, b = min(idxs), max(idxs)
-        if sorted(idxs) == list(range(a, b + 1)) and kids[a - 1 : b] == tops:
-            parent_path = element_path(parent, root)
-            if parent_path is not None:
-                return f"{parent_path}.[{a}-{b}]", "sibling"
-    return [path_of(t, f"{value}[member]") for t in tops], "list"
+    first, last = old_elements[lo - 1], old_elements[hi - 1]
+    first_path, last_path = path_of(first, value), path_of(last, value)
+
+    # The retired flat form was an INTERVAL over the document — first element through
+    # last, inclusive of whatever lay between, which is precisely why normalizers
+    # reached for it to cover prose with no element of its own. So its §6.1.1
+    # replacement is the tightest address that CONTAINS that interval, never a set of
+    # its endpoints: an ancestor's subtree when one endpoint holds the other or both
+    # sit in one child, else the sibling range over the endpoints' slots in their
+    # nearest common ancestor.
+    if first is last or furi.el_path_contains(
+        furi.parse_el_path(first_path), furi.parse_el_path(last_path)
+    ):
+        return first_path, "subtree"
+    if furi.el_path_contains(
+        furi.parse_el_path(last_path), furi.parse_el_path(first_path)
+    ):
+        return last_path, "subtree"
+
+    ancestors = {id(t): t for t in first.parents}
+    anc = next((p for p in last.parents if id(p) in ancestors), None)
+    if anc is None:
+        raise RemapHold(f"el={value}: the range's endpoints share no common ancestor")
+
+    def slot_of(tag: Tag, kids: list[Tag]) -> int:
+        branch = tag
+        while branch.parent is not None and branch.parent is not anc:
+            branch = branch.parent
+        # By IDENTITY, never `.index()`: bs4's Tag equality is structural, and these
+        # documents are full of interchangeable siblings (`<br/>`, repeated wrapper
+        # `<div>`s), so a value search silently returns the first look-alike's slot.
+        slot = next((i for i, k in enumerate(kids, start=1) if k is branch), None)
+        if slot is None:
+            raise RemapHold(
+                f"el={value}: endpoint's branch is not a child of the common ancestor"
+            )
+        return slot
+
+    kids = iter_element_children(anc)
+    a, b = slot_of(first, kids), slot_of(last, kids)
+    if a == b:  # both endpoints inside one child of the ancestor: that child's subtree
+        return path_of(kids[a - 1], value), "subtree"
+    anc_path = element_path(anc, root)
+    if a == 1 and b == len(kids) and anc_path is not None:
+        # The interval spans every child of the ancestor, so the ancestor's own path
+        # covers it exactly — and §6.1.1 is emphatic that a span which IS a subtree is
+        # spelled as that subtree, not as a range over its full child list. One extent,
+        # one spelling; it also keeps the address shorter.
+        return anc_path, "subtree"
+    if anc_path is None:
+        # The nearest common ancestor is the path root itself, and §6.1.1's sibling
+        # range is spelled `el=<parent>.[a-b]` — a root-level envelope has no address.
+        # The interval covers the whole body, so re-scoping it is a judgment, not a
+        # rewrite.
+        raise RemapHold(
+            f"el={value}: the range spans the path root's own children, which has no "
+            f"§6.1.1 sibling-range spelling — re-scope this address deliberately"
+        )
+    new = f"{anc_path}.[{a}-{b}]"
+    envelope = furi.parse_el_path(new)
+    for label, p in (("first", first_path), ("last", last_path)):
+        if not furi.el_path_contains(envelope, furi.parse_el_path(p)):
+            raise RemapHold(
+                f"el={value}: {new} does not contain its {label} element ({p})"
+            )
+    return new, "sibling"
 
 
 def _map_address_strings(
@@ -202,6 +258,33 @@ def _fold(addrs: list[str], was_list: bool) -> str | list[str]:
     if len(addrs) == 1 and not was_list:
         return addrs[0]
     return addrs
+
+
+def _lint_tally(findings: list[lint.Finding]) -> Counter[str]:
+    return Counter(f.rule_id for f in findings)
+
+
+def _lint_neutrality_hold(
+    new_text: str, before: Counter[str], corpus_root: Path
+) -> str | None:
+    """Return a hold reason when the rewritten record would lint WORSE than the original
+    — any rule whose finding count rises — else None. Counts, not addresses: every
+    address changes by design, so only the rules' verdicts are comparable."""
+    try:
+        after_post = records.loads(new_text)
+        after = _lint_tally(
+            lint.lint(after_post, segments.iter_blocks(after_post.content or ""), corpus_root)
+        )
+    except Exception as exc:  # a record whose rewrite cannot even be linted is a hold
+        return f"post-remap lint did not run: {exc}"
+    risen = {r: (before.get(r, 0), c) for r, c in after.items() if c > before.get(r, 0)}
+    if not risen:
+        return None
+    detail = ", ".join(f"{r} {b}→{a}" for r, (b, a) in sorted(risen.items()))
+    return (
+        f"the rewrite would introduce new lint findings ({detail}) — the legacy "
+        f"addresses alias under §6.1.1; re-address this record deliberately"
+    )
 
 
 def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
@@ -288,6 +371,9 @@ def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
     root = path_root(soup)
     report.elements = total_element_count(soup)
 
+    # Baseline for the neutrality gate below — taken BEFORE any address mutates.
+    before_findings = _lint_tally(lint.lint(post, blocks, corpus_root))
+
     try:
         # Content zone.
         zone_changed = False
@@ -368,7 +454,28 @@ def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
     records.set_artifact_block(post, mime=artifact.get("mime") or media_type, fields=fields)
 
     touches.record_touch(post, touches.script_identifier(TOUCH_ID))
-    report.new_text = records.dumps(post)
+    new_text = records.dumps(post)
+
+    # THE NEUTRALITY GATE. A migration of addresses must not make the gate say anything
+    # it did not say before: the record is linted before and after, and any rule whose
+    # count RISES holds the record. This is deliberately the whole rule set rather than
+    # a hand-picked few — the failure it exists to catch is the one nobody predicted.
+    #
+    # What it catches is real and pre-existing: a legacy flat interval could claim a
+    # span wider than the content it held (§12.24 / §12.25 / §12.27's over-wide
+    # addresses), and several such intervals on one record collapse onto the single
+    # container that actually holds them — so `el=1-14` and `el=2-11` become the same
+    # address, which is the truth about them and a duplicate-claim error. §6.1.1 cannot
+    # represent the over-claim, which is the point; it also cannot represent it
+    # SILENTLY, which is why those records stay on the legacy grammar (unstamped
+    # records resolve exactly as before) and go to a worklist for deliberate
+    # re-addressing instead of being migrated into a red gate.
+    lint_hold = _lint_neutrality_hold(new_text, before_findings, corpus_root)
+    if lint_hold is not None:
+        report.hold = lint_hold
+        return report
+
+    report.new_text = new_text
     report.changed = True
 
     # Final self-check: every address the remap produced is grammar-valid under §6.1.1
