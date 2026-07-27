@@ -46,13 +46,45 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="stop after this many CHANGED records (a staged fleet run).",
     )
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        metavar="OLD::NEW",
+        help="re-address one stored legacy address deliberately, e.g. "
+             "'el=1-4::el=1.2.1.[18-71]'. Repeatable; requires a single target. This is "
+             "how a HELD record is resolved: the engine holds when legacy addresses alias "
+             "under §6.1.1, and what the over-wide interval actually covered is a reading "
+             "of the document, not a mapping. Everything else still migrates mechanically.",
+    )
     add_corpus_root_arg(parser)
+
+
+def _parse_overrides(raw: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in raw:
+        old, sep, new = item.partition("::")
+        if not sep or not old.strip() or not new.strip():
+            raise ValueError(f"--override {item!r} is not OLD::NEW")
+        out[old.strip()] = new.strip()
+    return out
 
 
 def run(args: argparse.Namespace) -> int:
     from corpus import paths
 
     corpus_root = resolved_corpus_root(args)
+    try:
+        overrides = _parse_overrides(args.override)
+    except ValueError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 2
+    if overrides and not args.target:
+        print(
+            "--override re-addresses ONE record deliberately; name the target.",
+            file=sys.stderr,
+        )
+        return 2
     if args.target:
         _, rf = paths.resolve_record(corpus_root, args.target)
         candidates = [rf]
@@ -71,7 +103,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         for rf in candidates:
             try:
-                report = remap_el.remap_record(rf, corpus_root)
+                report = remap_el.remap_record(rf, corpus_root, overrides)
             except Exception as exc:  # tolerant sweep: one bad record never stops the fleet
                 print(f"  ERROR {rf.stem[:12]}: {exc}", file=sys.stderr)
                 held += 1
@@ -92,6 +124,7 @@ def run(args: argparse.Namespace) -> int:
                     "emit_normalized": report.emit_normalized,
                     "forms": report.forms,
                     "mappings": report.mappings,
+                    "overrides": overrides or None,
                 }) + "\n")
 
             if report.hold:

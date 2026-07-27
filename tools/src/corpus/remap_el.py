@@ -216,12 +216,46 @@ def map_el_value(
     return new, "sibling"
 
 
+def check_override(new: str, root: Tag) -> None:
+    """Validate a deliberate re-address before it enters a record.
+
+    An override is a judgment the engine cannot make, but it is not exempt from being an
+    ADDRESS: it must parse as §6.1.1 and name something that exists in this document. A
+    sibling range is unmaterializable by design, so what is checked is its parent — the
+    slots must be real children, which is what catches a range copied from another record.
+    """
+    value = new[3:] if new.startswith("el=") else new
+    value = value.split("&", 1)[0].split("/", 1)[0]
+    try:
+        path = furi.parse_el_path(value)
+    except ValueError as exc:
+        raise RemapHold(f"override {new!r} is not a §6.1.1 address: {exc}") from exc
+    try:
+        node = resolve_element_path(root, furi.ElPath(path.components))
+    except ValueError as exc:
+        # The walk names the exact component that ran past its parent — a better message
+        # than anything reconstructed here.
+        raise RemapHold(f"override {new!r}: resolves to no element — {exc}") from exc
+    if node is None:
+        dotted = ".".join(str(c) for c in path.components)
+        raise RemapHold(f"override {new!r}: {dotted} resolves to no element")
+    if path.sibling_range is not None:
+        kids = iter_element_children(node)
+        lo, hi = path.sibling_range
+        if not (1 <= lo < hi <= len(kids)):
+            raise RemapHold(
+                f"override {new!r}: the sibling range [{lo}-{hi}] is not within its "
+                f"parent's {len(kids)} children"
+            )
+
+
 def _map_address_strings(
     addrs: list[str],
     old_elements: list[Tag],
     root: Tag,
     report: RecordRemap,
     where: str,
+    overrides: dict[str, str] | None = None,
 ) -> tuple[list[str], bool]:
     """Map every `el=`-leading string in an address's string list, leaving other axes
     untouched. Chained ops after the el value (`el=4&bbox=…` on two issue blocks;
@@ -233,6 +267,16 @@ def _map_address_strings(
     for a in addrs:
         if not a.startswith("el="):
             out.append(a)
+            continue
+        if overrides and a in overrides:
+            # A deliberate re-address: the legacy form could not express this region (it is
+            # why the record held), so the engine has nothing to map and the operator says
+            # what it is. Verified as an address, then subject to the same neutrality gate.
+            deliberate = overrides[a]
+            check_override(deliberate, root)
+            out.append(deliberate)
+            _tally(report, where, a, deliberate, "override")
+            changed = True
             continue
         rest = a[3:]
         for sep in ("&", "/"):
@@ -287,10 +331,22 @@ def _lint_neutrality_hold(
     )
 
 
-def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
+def remap_record(
+    record_file: Path, corpus_root: Path, overrides: dict[str, str] | None = None
+) -> RecordRemap:
     """Compute (never write) the remap of one record. The caller applies
     `report.new_text` when `report.changed`; a `hold` means hands off. Raises nothing
-    remap-specific — every refusal lands in the report."""
+    remap-specific — every refusal lands in the report.
+
+    `overrides` maps a stored legacy address string to the §6.1.1 address it should BECOME
+    — the deliberate re-addressing a held record needs. The engine holds a record whose
+    legacy addresses alias under §6.1.1, and it is right to: an over-wide interval that
+    collapses onto its container is a claim the legacy grammar could not state precisely,
+    so no mapping recovers what it meant. What it covers is a reading of the document, and
+    a reading is the operator's to supply. Everything else about the record still migrates
+    mechanically, through this same function, so a deliberately re-addressed record differs
+    from a swept one only in the addresses a human chose — and the neutrality gate runs
+    afterwards either way, so a bad override still holds."""
     original = record_file.read_text(encoding="utf-8")
     post = records.load(record_file)
     rid = str(post.metadata.get("id") or record_file.stem)
@@ -387,6 +443,7 @@ def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
                     _addr_strings(t.address), old_elements, root, report,
                     "section" if isinstance(t, segments.Section) else
                     ("structural" if getattr(t, "is_structural", False) else "segment"),
+                    overrides,
                 )
                 if ch:
                     t.address = _fold(mapped, was_list)
@@ -400,7 +457,7 @@ def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
                 continue
             was_list = isinstance(value, list)
             mapped, ch = _map_address_strings(
-                _addr_strings(value), old_elements, root, report, "member"
+                _addr_strings(value), old_elements, root, report, "member", overrides
             )
             if ch:
                 row["address"] = _fold(mapped, was_list)
@@ -414,7 +471,7 @@ def remap_record(record_file: Path, corpus_root: Path) -> RecordRemap:
             was_list = isinstance(value, list)
             mapped, ch = _map_address_strings(
                 _addr_strings(value), old_elements, root, report,
-                f"context:{ctx.get('namespace') or 'issue'}",
+                f"context:{ctx.get('namespace') or 'issue'}", overrides,
             )
             if ch:
                 fields["address"] = _fold(mapped, was_list)

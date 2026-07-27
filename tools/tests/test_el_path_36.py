@@ -300,6 +300,72 @@ def test_remap_holds_when_legacy_intervals_alias_to_one_address(tmp_path):
     assert records.el_addressing(records.load(rf)) is None
 
 
+def _aliasing_record(tmp_path):
+    """The held record of the test above, returned for the override tests to resolve."""
+    from corpus import hashing
+
+    root = _make_corpus(tmp_path)
+    src = root / "alias.html"
+    src.write_text(_ALIASING_DOC, encoding="utf-8")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(root).put(rid, "html", src)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "transport": f"sha256:{h['sha256']}"})
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, uri="https://x.test/a", snapshot="2026-01-01T00:00:00Z")
+    post.content = segments.emit([
+        Segment(atom="text", address="el=1-3", body="One. Two. Three."),
+        Segment(atom="text", address="el=2-3", body="Two. Three."),
+    ])
+    rf = paths.record_path(root, rid)
+    records.dump(post, rf)
+    return root, rf
+
+
+def test_an_override_resolves_a_held_record_and_the_rest_still_maps(tmp_path):
+    """The #65 pattern for §12.28: the engine cannot know what an over-wide interval
+    covered, so the operator says — and everything else about the record still migrates
+    through the same mechanical path, including the stamp."""
+    root, rf = _aliasing_record(tmp_path)
+    # The second interval's prose is the second div; the first spans both divs.
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=1.[1-2]"})
+    assert report.hold is None
+    assert report.changed
+    forms = report.forms
+    assert forms.get("override") == 1
+    assert sum(v for k, v in forms.items() if k != "override") >= 1  # the rest is mechanical
+    assert "el=1.[1-2]" in report.new_text
+    # The stamp lands exactly as it does on a swept record.
+    rf.write_text(report.new_text, encoding="utf-8")
+    assert records.el_addressing(records.load(rf)) is not None
+
+
+def test_an_override_that_is_not_an_address_is_refused(tmp_path):
+    root, rf = _aliasing_record(tmp_path)
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=1-2"})  # a retired flat range
+    assert report.hold is not None and "not a §6.1.1 address" in report.hold
+    assert not report.changed
+
+
+def test_an_override_naming_nothing_in_this_document_is_refused(tmp_path):
+    """A range copied from another record must not land — the parent's real children are
+    what a sibling range is checked against, since the range itself is unmaterializable."""
+    root, rf = _aliasing_record(tmp_path)
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=1.[1-9]"})
+    assert report.hold is not None and "not within its parent" in report.hold
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=7.4.2"})
+    assert report.hold is not None and "resolves to no element" in report.hold
+
+
+def test_an_override_that_does_not_clear_the_collision_still_holds(tmp_path):
+    """The neutrality gate is not bypassed by a deliberate re-address — it runs after."""
+    root, rf = _aliasing_record(tmp_path)
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=1"})  # still <main>, still a dupe
+    assert report.hold is not None and "segment-address-duplicate" in report.hold
+    assert not report.changed
+
+
 def test_remap_engine_holds_on_out_of_range(tmp_path):
     root, rf, _rid = _ingest_legacy_record(tmp_path)
     post = records.load(rf)
