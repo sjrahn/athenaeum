@@ -87,8 +87,13 @@ class Segment:
     `<algo>:<hex>` (e.g. `simhash:a4f1c9...`, `phash:...`, `chromaprint:...`).
     Production may be suspended in a given pipeline; existing values still round-trip.
 
-    `entry` is a short TOC label, only valid on top-level segments (sectionless
-    records). In-section segments don't carry it (the section is the TOC unit).
+    `entry` is a short authored leaf label — for a top-level segment in a multi-block
+    record, OR for a segment inside a form section's span (spec §4.3.2.2; nesting
+    admitted 2026-07-17, and the `segment-entry-in-section` lint rule retired with it,
+    because a generic form span wraps an already-labeled rendering whole and the label's
+    meaning never depended on being top-level). A record whose content zone is a single
+    block carries none. Distinct from a structural segment's `entry:`, which is the
+    SOURCE's own mark text rather than an authored label (§4.3.2.3).
 
     `body` is the segment body. Only `text`-atom segments may carry a non-empty body;
     that body is a faithful, lossless rendering of the addressed content. Image,

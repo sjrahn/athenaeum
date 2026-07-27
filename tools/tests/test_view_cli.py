@@ -13,7 +13,7 @@ from pathlib import Path
 import frontmatter
 from PIL import Image
 
-from corpus import hashing, paths, records
+from corpus import hashing, paths, records, segments
 from corpus._cli import dispatch
 from corpus._cli import view as view_mod
 from corpus.store import LocalArtifactStore
@@ -373,3 +373,28 @@ def test_html_suffix_and_flag_both_yield_a_page(tmp_path):
     assert by_flag.read_text(encoding="utf-8").startswith("<!doctype html>")
     # A page alone carries no sibling files, so it must not advertise them.
     assert 'href="record.md"' not in by_flag.read_text(encoding="utf-8")
+
+
+def test_reading_view_surfaces_segment_entry_labels(tmp_path):
+    """`entry:` is a DEDICATED Segment field, not part of `extra` — so a renderer iterating
+    `extra` alone showed nothing for it. It is this corpus's only way to label a block inside a
+    whole-record form span (spec §4.3.2.2, nesting admitted 2026-07-17), carried by 11,516
+    segments across 4,380 records. A reading view blind to it shows a run of anonymous tables
+    and silently contradicts the authoring it exists to display."""
+    root, rid = _stage(tmp_path, "article.html", mime="text/html", ext="html")
+    record = paths.record_path(root, rid)
+    post = records.load(record)
+    blocks = segments.iter_blocks(post.content or "")
+    target = next(
+        b for b in (blocks if not isinstance(blocks[0], segments.Section) else blocks[0].segments)
+        if not b.is_structural
+    )
+    target.entry = "Torque Specifications"
+    post.content = segments.emit(blocks)
+    records.dump(post, record)
+
+    _, zf = _bundle(tmp_path, root, rid)
+    reading_view = _page_of(zf).split("id=view-src", 1)[0]
+    assert "Torque Specifications" in reading_view, (
+        "the entry label never reached the reading view"
+    )

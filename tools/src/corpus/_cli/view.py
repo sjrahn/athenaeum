@@ -839,11 +839,23 @@ def _segment_html(
 ) -> str:
     anchor, aliases = _anchor_targets(_addr_list(getattr(seg, "address", None)), claimed)
     if seg.is_structural:
-        return (f"<div class=block{anchor}>{aliases}<h3>structural mark "
-                f"<span class=tag>{html.escape(str(seg.address))}</span></h3></div>")
+        # A byte-mark's `entry:` is the SOURCE's own heading text (§4.3.2.3) — the most
+        # informative thing about the mark, so it leads rather than being dropped.
+        label = f" {html.escape(str(seg.entry))}" if getattr(seg, "entry", None) else ""
+        level = f" <span class=tag>level {seg.level}</span>" if getattr(seg, "level", None) else ""
+        return (f"<div class=block{anchor}>{aliases}<h3>structural mark{label} "
+                f"<span class=tag>{html.escape(str(seg.address))}</span>{level}</h3></div>")
     parts = [f"<div class=block{anchor}>{aliases}"
              f"<h3>{html.escape(_segment_id(seg))} "
-             f"<span class=tag>{html.escape(str(seg.address))}</span></h3>"]
+             f"<span class=tag>{html.escape(str(seg.address))}</span>"
+             # `entry` is a DEDICATED field, not part of `extra`, so iterating `extra` alone
+             # rendered nothing for it. It is this corpus's only way to label a block inside a
+             # whole-record form span (spec §4.3.2.2) — 11,516 segments across 4,380 records
+             # carry one — so a reading view blind to it shows a run of anonymous tables and
+             # silently contradicts the authoring it is meant to display.
+             + (f' <span class="tag entry">{html.escape(str(seg.entry))}</span>'
+                if getattr(seg, "entry", None) else "")
+             + "</h3>"]
     for key, value in (seg.extra or {}).items():
         parts.append(_kv(key, value))
     if seg.description:

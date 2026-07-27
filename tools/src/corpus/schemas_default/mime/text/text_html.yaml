@@ -80,24 +80,30 @@ normalization:
 
     Treat the cleaned HTML as your input. You'll be replacing the single `<!--segment text-->` block with N segments (text + image), optionally grouped into sections. The members block at the top of the body stays where it is — you just reference its rows implicitly by addresses your segments emit.
 
-    When you need ground-truth drafter output (what a fresh draft pass would emit), invoke the drafter ephemerally:
+    When you need ground-truth drafter output — above all **which element each `el=N` actually is**, the one question worth answering before you write a single address — invoke the drafter ephemerally. Run this FROM the corpus root (`paths.find_corpus_root()` walks up from the cwd, so it fails anywhere above it):
 
-        uv run --directory scripts python -c "
-        from corpus import paths
+        uv run --project <path-to>/tools --no-sync python -c "
+        from bs4 import BeautifulSoup
+        from corpus import paths, recordbuild
         from corpus.draft import html
         corpus_root = paths.find_corpus_root()
         record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
         artifact = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.html'
-        result = html.draft(artifact, record_id=record_id)
-        print('fields:', result['fields'])
-        print('embeds:', len(result['embeds']))
-        for e in result['embeds'][:3]:
-            print(' ', e['media_type'], e['address'], e['transport'], e['fields'])
-        print('issues:', result['issues'])
-        seg = result['segments'][0]
-        print('segment address:', seg.address)
-        print('segment body length:', len(seg.body))
+        build = recordbuild.begin({}, corpus_root)          # REQUIRED keyword-only arg
+        result = html.draft(artifact, build=build, record_id=record_id)
+        print('fields:', result.get('fields'))
+        print('members:', [(m['address'], m['media_type']) for m in result.get('embeds') or []])
+        print('issues:', result.get('issues'))
+        for blk in build.blocks:                            # the CONTENT zone lands here
+            print(f'block {blk.atom} @ {blk.address}')
+            for el in BeautifulSoup(blk.body or '', 'html.parser').select('[data-el]'):
+                text = ' '.join((el.get_text(' ', strip=True) or '').split())
+                print(f'  el={el[\"data-el\"]:<4} <{el.name}> {text[:72]}')
         "
+
+    That last loop is the `el=` → element map, and it is the difference between an address you verified and one you guessed. It answers the questions this overlay's "Addressing reality" note raises: which `el=` is the breadcrumb, which are images, where the Related-Information rail starts, and — crucially — that prose sitting between two indexed elements has NO address of its own, so it takes the tightest true interval rather than borrowing a neighbouring image's `el=N`.
+
+    Two API facts the older version of this snippet got wrong, both of which fail loudly: `html.draft()` takes a **keyword-only `build=`** (a `recordbuild.Build` from `recordbuild.begin`), and the drafted content zone lands on **`build.blocks`** — there is no `result['segments']`. `result` carries the metadata zone only (`fields` / `embeds` / `issues` / `canonical` / `origin_*`).
 
     ## `description` is the summary surface
 
