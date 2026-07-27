@@ -520,12 +520,12 @@ def write_bundle(
 
 def _member_stored(m: BundleMember) -> bool:
     """Whether a member is stored (uncompressed): an explicit `store`/`zstd` hint wins, else
-    the extension-based `_is_stored` routing (already-compressed bytes → stored)."""
+    the extension-based `is_stored_name` routing (already-compressed bytes → stored)."""
     if m.compression == "store":
         return True
     if m.compression == "zstd":
         return False
-    return _is_stored(m.path)
+    return is_stored_name(m.path)
 
 
 def epoch_to_dostuple(epoch: float) -> tuple[int, int, int, int, int, int]:
@@ -537,7 +537,10 @@ def epoch_to_dostuple(epoch: float) -> tuple[int, int, int, int, int, int]:
     return (year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
 
-def _is_stored(out_path: str) -> bool:
+def is_stored_name(out_path: str) -> bool:
+    """Whether a member path's extension names already-compressed bytes, so it should be
+    STORED rather than re-compressed. Public because `corpus view`'s bundle writer needs the
+    same judgment: two writers disagreeing about what compresses is a bug waiting to happen."""
     base = out_path.rsplit("/", 1)[-1]
     ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
     return ext in _ALREADY_COMPRESSED

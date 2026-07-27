@@ -1,11 +1,26 @@
-"""Render one record as a single self-contained HTML page — every addressed surface
-materialized and inlined.
+"""Bundle one record for human eyes — `<record-id>.zip` carrying the artifact, the record,
+and a self-contained HTML page that shows both.
 
 The stop-gap for having no web front end: when you are working a corpus over ssh and want
-to check a record with your own eyes — the original artifact, each embed, the exact crop a
+to check a record with your own eyes — the original artifact, each member, the exact crop a
 `bbox=` segment addresses, and the transcription that sits beside it — this resolves the
-record's whole surface set through the resolver and inlines the results as `data:` URIs, so
-the output is ONE file to move and nothing to serve.
+record's whole surface set through the resolver and inlines the results as `data:` URIs.
+
+The bundle is three files, named for what they are rather than for their hash, because inside
+a container named by the id the id adds nothing:
+
+    <record-id>.zip
+      ├── artifact.<ext>   the original captured bytes, verbatim
+      ├── record.md        the record file, verbatim
+      └── index.html       the page: reading view + record source, cross-linked
+
+`index.html` stays **self-contained** — every surface inlined, exactly as before — so it still
+works pulled out of the bundle on its own; the sibling files are an addition, not a dependency.
+It carries two views of one record: the **reading view** (the record's own rendering, each
+address resolved and materialized beside what was read off it) and the **record source** (the
+`.md` verbatim, line-numbered, with every address a link into the reading view). The pairing is
+the point — the friendly view is a projection, and the projection is easy to trust too far, so
+the bytes that produced it sit one click away in the same file.
 
 It is deliberately a read-only projection: it resolves what the record already declares and
 never writes to the record, so it can be pointed at anything, at any state, without risk.
@@ -18,17 +33,46 @@ import base64
 import html
 import mimetypes
 import re
+import shutil
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
-from corpus import paths, records, resolver, schemas, segments
+from corpus import assembly, containment, paths, records, resolver, schemas, segments
+from corpus import mime as mime_mod
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"}
 _TEXT_SUFFIXES = {".txt", ".md", ".json", ".csv", ".html", ".xml", ".yaml", ".yml"}
 _INLINE_CAP = 12 * 1024 * 1024  # per-asset ceiling; a bigger surface is linked, not inlined
 _PAGE_BUDGET = 64 * 1024 * 1024  # whole-page ceiling; see `_Budget`
+
+_RECORD_MEMBER = "record.md"
+_PAGE_MEMBER = "index.html"
+
+# Bundle members are pinned to a fixed DOS timestamp so rebuilding the same record's bundle
+# produces the same bytes. Nothing here is content-addressed by its own hash — the name comes
+# from the RECORD's id — but a viewer that wobbles with filesystem mtimes invites "why did my
+# bundle change" for no gain, and reproducibility is free at this size.
+_BUNDLE_EPOCH = (1980, 1, 1, 0, 0, 0)
+_CREATE_SYSTEM_UNIX = 3  # pinned like `assembly.write_bundle`: bytes must not depend on the OS
+
+# DEFLATE, deliberately — not the zstd routing `assembly.write_bundle` uses. That writer serves
+# archival bundles whose reader is the corpus itself; this bundle's reader is a person's unzip,
+# Finder, or Explorer, none of which open a zstd-compressed zip. Universal readability IS the
+# requirement here, so the compression choice differs from the archival path on purpose.
+_BUNDLE_COMPRESSION = zipfile.ZIP_DEFLATED
+
+# The artifact's own ceiling, separate from the page's. Without it the bundle is the one part of
+# this command with no bound at all: a 97 MB zip container yields a 95 MB bundle and the 2.1 GB
+# mailbox tar yields nothing openable. Past the ceiling the artifact is LEFT OUT and said so —
+# the page keeps working (its surfaces are inlined and its record is verbatim), and the honest
+# failure is a missing member you were told about, not a bundle nobody can open.
+_ARTIFACT_BUDGET = 256 * 1024 * 1024
+
+_CHUNK = 1024 * 1024  # artifact streaming chunk
+_ZIP64_LIMIT = (1 << 32) - 1  # forced per-member from the known size, never guessed
 
 
 class _Budget:
@@ -64,7 +108,18 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "-o",
         "--out",
         default=None,
-        help="Output HTML path (default: <corpus-root>/export/view-<hash12>.html).",
+        help=(
+            "Output path (default: <corpus-root>/export/<record-id>.zip, "
+            "or view-<hash12>.html under --html)."
+        ),
+    )
+    parser.add_argument(
+        "--html",
+        action="store_true",
+        help=(
+            "Write the page alone instead of the bundle — no artifact, no record.md. "
+            "The page is self-contained either way; this just skips the zip."
+        ),
     )
     parser.add_argument(
         "--regenerate",
@@ -81,6 +136,16 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "Surfaces past it are reported with their resolver path, and the count is declared."
         ),
     )
+    parser.add_argument(
+        "--max-artifact",
+        type=int,
+        default=_ARTIFACT_BUDGET,
+        metavar="BYTES",
+        help=(
+            "Ceiling on the bundled artifact (default 256 MiB; 0 = unlimited). A bigger "
+            "artifact is left out of the bundle and the omission is declared on the page."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
@@ -93,17 +158,167 @@ def run(args: argparse.Namespace) -> int:
         return 1
     post = records.load(path)
     budget = _Budget(max(0, int(getattr(args, "max_inline", _PAGE_BUDGET) or 0)))
-    page = _render(root, record_id, post, regenerate=args.regenerate, budget=budget)
-    out = (
-        Path(args.out).expanduser()
-        if args.out
-        else root / "export" / f"view-{record_id[:12]}.html"
+    # `--html` forces the page. Otherwise an explicit `--out` decides by suffix, because
+    # `-o page.html` writing a zip named `page.html` is a lie the filesystem then repeats to
+    # every tool downstream. Absent both, the bundle is the default.
+    bundle = not getattr(args, "html", False)
+    if bundle and args.out:
+        suffix = Path(args.out).suffix.lower()
+        if suffix in (".html", ".htm"):
+            bundle = False
+
+    # The artifact is located BEFORE rendering, because the page states what it found: a
+    # bundle whose artifact could not be materialized says so on its face rather than
+    # shipping a page that links a member which isn't there.
+    artifact = (
+        _artifact_source(
+            root,
+            record_id,
+            post,
+            limit=max(0, int(getattr(args, "max_artifact", _ARTIFACT_BUDGET) or 0)),
+        )
+        if bundle
+        else None
     )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(page, encoding="utf-8")
-    size = out.stat().st_size
+
+    page = _render(
+        root,
+        record_id,
+        post,
+        regenerate=args.regenerate,
+        budget=budget,
+        source=path.read_text(encoding="utf-8", errors="replace") if bundle else None,
+        artifact=artifact,
+    )
+
+    if not bundle:
+        out = (
+            Path(args.out).expanduser()
+            if args.out
+            else root / "export" / f"view-{record_id[:12]}.html"
+        )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(page, encoding="utf-8")
+        print(f"{out}  ({out.stat().st_size / 1024:.0f} KB)")
+        return 0
+
+    out = Path(args.out).expanduser() if args.out else root / "export" / f"{record_id}.zip"
+    size = _write_bundle(out, page=page, record=path, artifact=artifact)
+    members = [_PAGE_MEMBER, _RECORD_MEMBER] + ([artifact.name] if artifact and artifact.path
+                                                else [])
     print(f"{out}  ({size / 1024:.0f} KB)")
+    print(f"  {', '.join(sorted(members))}")
+    if artifact and not artifact.path:
+        # Declared, never silent — same discipline as the page budget: a bundle missing its
+        # artifact must be visibly incomplete, on stdout and on the page.
+        print(f"  artifact NOT bundled — {artifact.note}", file=sys.stderr)
     return 0
+
+
+# ---------- the bundle ---------- #
+
+
+class _Artifact:
+    """Where the record's own bytes are, and what to call them in the bundle.
+
+    `path` is None when the bytes are unreachable by any route, and `note` says why — the
+    "durable artifact-byte storage unconfirmed" case, or a promoted record whose container is
+    gone. The bundle is still written; it is just visibly one member short.
+    """
+
+    def __init__(self, name: str, path: Path | None, note: str = "") -> None:
+        self.name = name
+        self.path = path
+        self.note = note
+
+    @property
+    def size(self) -> int:
+        return self.path.stat().st_size if self.path else 0
+
+
+def _artifact_source(root: Path, record_id: str, post: Any, *, limit: int) -> _Artifact:
+    """Locate the record's artifact bytes, containment-aware, and apply the size ceiling.
+
+    A standalone file in `artifacts/<shard>/` wins and lends its own extension — ingest chose
+    that name, so it beats re-deriving one from the media type. Otherwise the bytes are
+    materialized the way every derivation reaches them: `containment.ensure_local_bytes`,
+    which streams a promoted record's bytes out of its container (spec §2, §12.9).
+    """
+    media_type = records.media_type_for(post) or "application/octet-stream"
+    ext = mime_mod.extension_for(media_type)
+    found: Path | None = None
+
+    shard_dir = root / "artifacts" / paths.shard(record_id)
+    if shard_dir.is_dir():
+        for candidate in sorted(shard_dir.iterdir()):
+            if candidate.is_file() and candidate.name.split(".", 1)[0] == record_id:
+                ext = candidate.name.split(".", 1)[1] if "." in candidate.name else ext
+                found = candidate
+                break
+
+    if found is None:
+        try:
+            found = containment.ensure_local_bytes(root, record_id, ext)
+        except Exception as exc:
+            return _Artifact(f"artifact.{ext}", None, f"{type(exc).__name__}: {exc}")
+
+    name = f"artifact.{ext}"
+    size = found.stat().st_size
+    if limit and size > limit:
+        return _Artifact(
+            name,
+            None,
+            f"{size / 1e6:.0f} MB exceeds the {limit / 1e6:.0f} MB artifact ceiling "
+            f"(raise it with --max-artifact BYTES, 0 = unlimited); the bytes are at {found}",
+        )
+    return _Artifact(name, found)
+
+
+def _write_bundle(out: Path, *, page: str, record: Path, artifact: _Artifact | None) -> int:
+    """Write the bundle deterministically, atomically, and without holding the artifact.
+
+    Atomic for the same reason `paths.atomic_write_text` is: a bundle is something you hand to
+    someone, and a truncated zip that exists is worse than one that doesn't. The artifact is
+    STREAMED rather than read whole — the ceiling admits members up to 256 MB by default, and
+    a viewer has no business allocating that.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    partial = out.with_name(out.name + ".partial")
+    # (name, inline-bytes-or-None, path-or-None) — sorted, because member order is not an input.
+    members: list[tuple[str, bytes | None, Path | None]] = [
+        (_PAGE_MEMBER, page.encode("utf-8"), None),
+        (_RECORD_MEMBER, None, record),
+    ]
+    if artifact and artifact.path:
+        members.append((artifact.name, None, artifact.path))
+    try:
+        with zipfile.ZipFile(partial, "w", compression=_BUNDLE_COMPRESSION, allowZip64=True) as zf:
+            for name, payload, src in sorted(members, key=lambda m: m[0]):
+                info = zipfile.ZipInfo(name, date_time=_BUNDLE_EPOCH)
+                # Already-compressed bytes are STORED, reusing assembly's extension table so the
+                # two writers agree on what compresses. Deflating a zip/jpg/mp4 artifact burns a
+                # pass over every byte to save ~2%: on a 97 MB container that is the whole cost
+                # of the command. `index.html` (base64) and `record.md` deflate well.
+                info.compress_type = (
+                    zipfile.ZIP_STORED if assembly.is_stored_name(name) else _BUNDLE_COMPRESSION
+                )
+                info.create_system = _CREATE_SYSTEM_UNIX
+                info.external_attr = 0o644 << 16
+                if payload is not None:
+                    zf.writestr(info, payload)
+                    continue
+                assert src is not None
+                size = src.stat().st_size
+                info.file_size = size
+                with src.open("rb") as fh, zf.open(
+                    info, "w", force_zip64=size >= _ZIP64_LIMIT
+                ) as dst:
+                    shutil.copyfileobj(fh, dst, _CHUNK)
+        partial.replace(out)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return out.stat().st_size
 
 
 # ---------- surface materialization ---------- #
@@ -202,6 +417,97 @@ def _table_html(rows: list[str]) -> str:
     return "".join(parts)
 
 
+# ---------- the record source view ---------- #
+
+_ANCHOR_UNSAFE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _anchor_targets(addrs: list[str], claimed: set[str]) -> tuple[str, str]:
+    """`(id_attr, alias_spans)` for a rendered block, given the ids already handed out.
+
+    An element carries one id, but a block may answer to several addresses — a list address is
+    one asset at several positions, and the source view links every occurrence. The extras
+    become empty `<span id=…>` jump targets inside the block, so no declared address links
+    nowhere.
+
+    `claimed` makes the ids unique even on a record that shouldn't exist: two segments sharing
+    an address is a lint violation (`segment-address-duplicate`), but this viewer is pointed at
+    records in any state, and emitting a duplicate id would silently send both links to the
+    first one.
+    """
+    ids: list[str] = []
+    for addr in addrs:
+        anchor = _anchor(addr)
+        if anchor not in claimed:
+            claimed.add(anchor)
+            ids.append(anchor)
+    if not ids:
+        return "", ""
+    aliases = "".join(f'<span class=alias id="{a}"></span>' for a in ids[1:])
+    return f' id="{ids[0]}"', aliases
+
+
+def _anchor(address: str) -> str:
+    """A stable DOM id for an address. Pure, so the reading view and the source view derive the
+    same id independently — no id map has to be threaded between them."""
+    return "at-" + _ANCHOR_UNSAFE.sub("-", str(address)).strip("-").lower()
+
+
+def _known_addresses(blocks: list[Any], members: list[dict[str, Any]]) -> list[str]:
+    """Every address that has a rendered target in the reading view — segments and member rows.
+
+    A section's own span address is deliberately excluded: it is a form span, not a placement,
+    and it materializes no surface. Same distinction `_placed_addresses` draws, kept identical
+    on purpose — the two must not disagree about what an address means.
+    """
+    found: list[str] = []
+    for block in blocks:
+        children = block.segments if isinstance(block, segments.Section) else [block]
+        for seg in children:
+            found += _addr_list(getattr(seg, "address", None))
+    for member in members:
+        found += _addr_list(member.get("address"))
+    return sorted(set(found))
+
+
+def _source_html(source: str, known: list[str]) -> str:
+    """The record verbatim, line-numbered, with each address a link into the reading view.
+
+    Escaped FIRST, then marked up — the record is full of `<!--` block openers, so any other
+    order would either double-escape the markup we insert or emit the record's own angle
+    brackets as live HTML.
+
+    Address linking is ONE regex pass over an alternation sorted longest-first. Two passes would
+    corrupt the output: after `el=3&bbox=0,0,1,1` became an anchor, a second pass for `el=3`
+    would match inside that anchor's own link text.
+    """
+    escaped_to_anchor = {html.escape(a): _anchor(a) for a in known}
+    pattern = (
+        re.compile("|".join(re.escape(e) for e in sorted(escaped_to_anchor, key=len, reverse=True)))
+        if escaped_to_anchor
+        else None
+    )
+
+    def link(match: re.Match[str]) -> str:
+        text = match.group(0)
+        return f'<a class=addr href="#{escaped_to_anchor[text]}">{text}</a>'
+
+    out: list[str] = ['<pre class=src>']
+    for number, line in enumerate(source.splitlines(), 1):
+        body = html.escape(line)
+        if pattern is not None:
+            body = pattern.sub(link, body)
+        stripped = line.strip()
+        cls = "ln"
+        if stripped.startswith("<!--") or stripped == "-->" or stripped == "---":
+            cls += " cm"
+        # No newline between spans: `.ln` is display:block, so a literal newline inside the
+        # <pre> would render a second blank line for every line of the record.
+        out.append(f'<span class="{cls}" data-n="{number}">{body or " "}</span>')
+    out.append("</pre>")
+    return "".join(out)
+
+
 # ---------- page ---------- #
 
 
@@ -222,7 +528,16 @@ def _segment_id(seg: segments.Segment) -> str:
     return str(seg.overlay or seg.atom)
 
 
-def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: _Budget) -> str:
+def _render(
+    root: Path,
+    record_id: str,
+    post: Any,
+    *,
+    regenerate: bool,
+    budget: _Budget,
+    source: str | None = None,
+    artifact: _Artifact | None = None,
+) -> str:
     media_type = records.media_type_for(post)
     try:
         title = records.title_for(post, root) or "(untitled)"
@@ -231,6 +546,13 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
         title, description = "(untitled)", ""
 
     parts: list[str] = [
+        # Doctype + charset, declared rather than inferred. The page is UTF-8 throughout (record
+        # titles are full of em-dashes, °, µ) and it is now opened from a `file://` path after
+        # someone unzips the bundle — where a browser with no declared encoding falls back to a
+        # locale default and renders mojibake. Standards mode also keeps the CSS predictable.
+        "<!doctype html>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
         "<title>", html.escape(f"{title} — {record_id[:12]}"), "</title>",
         _CSS,
         f"<h1>{html.escape(title)}</h1>",
@@ -238,6 +560,10 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
     ]
     if description:
         parts.append(f"<p class=desc>{html.escape(description)}</p>")
+
+    if source is not None:
+        parts.append(_tabs_html(artifact))
+    parts.append("<div id=view-read>")
 
     parts.append("<section><h2>identity</h2>")
     parts.append(_kv("media type", media_type))
@@ -248,8 +574,18 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
     for origin in records.iter_origin_blocks(post):
         fields = origin.get("fields") or {}
         parts.append(_kv(f"origin {origin.get('id') or ''}", fields.get("uri") or fields))
+    if artifact is not None:
+        if artifact.path:
+            parts.append(
+                f"<div class=kv><span class=k>artifact</span><span class=v>"
+                f'<a href="{html.escape(artifact.name)}" download>{html.escape(artifact.name)}</a>'
+                f" &middot; {artifact.size:,} bytes</span></div>"
+            )
+        else:
+            parts.append(_kv("artifact", f"NOT bundled — {artifact.note}"))
     parts.append("</section>")
 
+    claimed: set[str] = set()  # DOM ids handed out, so no address gets two targets
     members = list(records.iter_members(post))
     blocks = segments.iter_blocks(post.content or "")
     placed = _placed_addresses(blocks)
@@ -260,7 +596,7 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
         parts.append(f"<section><h2>members ({len(members)}) — the content</h2>")
         for member in members:
             parts.append(_member_html(root, record_id, member, regenerate=regenerate,
-                                      budget=budget))
+                                      budget=budget, claimed=claimed))
         parts.append("</section>")
         members = []
 
@@ -280,12 +616,12 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
                 parts.append(_kv(key, value))
             for seg in block.segments:
                 parts.append(_segment_html(root, record_id, seg, regenerate=regenerate,
-                                           budget=budget))
+                                           budget=budget, claimed=claimed))
             parts.append("</section>")
         else:
             parts.append("<section><h2>segment (formless)</h2>")
             parts.append(_segment_html(root, record_id, block, regenerate=regenerate,
-                                       budget=budget))
+                                       budget=budget, claimed=claimed))
             parts.append("</section>")
 
     if members:
@@ -307,7 +643,7 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
             ))
             for member in unplaced:
                 parts.append(_member_html(root, record_id, member, regenerate=regenerate,
-                                          budget=budget))
+                                          budget=budget, claimed=claimed))
         parts.append("</section>")
 
     if budget.withheld:
@@ -335,7 +671,74 @@ def _render(root: Path, record_id: str, post: Any, *, regenerate: bool, budget: 
                 parts.append(_kv(key, value))
             parts.append("</div>")
         parts.append("</section>")
+
+    parts.append("</div>")  # /view-read
+
+    if source is not None:
+        all_members = list(records.iter_members(post))
+        parts.append("<div id=view-src>")
+        parts.append(f"<section><h2>record source &mdash; {html.escape(_RECORD_MEMBER)}</h2>")
+        parts.append(_note(
+            "The record file verbatim. Every address is a link to where the reading view "
+            "materialized it — which is the one cross-check the friendly view cannot give you "
+            "about itself."
+        ))
+        parts.append(_source_html(source, _known_addresses(blocks, all_members)))
+        parts.append("</section></div>")
+        parts.append(_TABS_JS)
     return "\n".join(parts)
+
+
+def _tabs_html(artifact: _Artifact | None) -> str:
+    """View switch + the sibling-file links.
+
+    Without JS both views render stacked, which is a complete page rather than a broken one —
+    the switch is an enhancement, not the mechanism.
+    """
+    links = [
+        f'<a class=file href="{html.escape(_RECORD_MEMBER)}" download>'
+        f"{html.escape(_RECORD_MEMBER)}</a>"
+    ]
+    if artifact and artifact.path:
+        links.insert(
+            0,
+            f'<a class=file href="{html.escape(artifact.name)}" download>'
+            f"{html.escape(artifact.name)}</a>",
+        )
+    return (
+        "<nav class=tabs>"
+        '<button type=button class="tab on" data-view=read>reading view</button>'
+        '<button type=button class=tab data-view=src>record source</button>'
+        f"<span class=spacer></span>{''.join(links)}"
+        "</nav>"
+    )
+
+
+# Enhancement only: without it, `body` carries no `data-view` and the CSS leaves both views
+# visible. An in-page jump from a source-view address has to switch back to the reading view
+# first, or the link would silently scroll a hidden element — hence the hashchange handler.
+_TABS_JS = """<script>
+(function () {
+  var body = document.body, tabs = document.querySelectorAll('.tab');
+  function show(view) {
+    body.setAttribute('data-view', view);
+    tabs.forEach(function (t) { t.classList.toggle('on', t.dataset.view === view); });
+  }
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () { show(t.dataset.view); });
+  });
+  function follow() {
+    if (!location.hash) return;
+    var target = document.querySelector(location.hash);
+    if (!target) return;
+    show(target.closest('#view-src') ? 'src' : 'read');
+    target.scrollIntoView();
+  }
+  window.addEventListener('hashchange', follow);
+  show('read');
+  follow();
+})();
+</script>"""
 
 
 def _addr_list(raw: Any) -> list[str]:
@@ -402,13 +805,21 @@ def _members_table(record_id: str, members: list[dict[str, Any]], placed: set[st
 
 
 def _member_html(
-    root: Path, record_id: str, member: dict[str, Any], *, regenerate: bool, budget: _Budget
+    root: Path,
+    record_id: str,
+    member: dict[str, Any],
+    *,
+    regenerate: bool,
+    budget: _Budget,
+    claimed: set[str],
 ) -> str:
     """One member rendered with its bytes — for the two cases that have nowhere else to show:
     a container whose roster IS its content, and an unplaced asset."""
     address = member.get("address")
+    anchor, aliases = _anchor_targets(_addr_list(address), claimed)
     out = [
-        f"<div class=block><h3>{html.escape(str(address))} "
+        f"<div class=block{anchor}>{aliases}"
+        f"<h3>{html.escape(str(address))} "
         f"<span class=tag>{html.escape(str(member.get('media_type') or ''))}</span></h3>"
     ]
     path, err = _resolve_surface(root, record_id, address, regenerate=regenerate)
@@ -418,12 +829,20 @@ def _member_html(
 
 
 def _segment_html(
-    root: Path, record_id: str, seg: segments.Segment, *, regenerate: bool, budget: _Budget
+    root: Path,
+    record_id: str,
+    seg: segments.Segment,
+    *,
+    regenerate: bool,
+    budget: _Budget,
+    claimed: set[str],
 ) -> str:
+    anchor, aliases = _anchor_targets(_addr_list(getattr(seg, "address", None)), claimed)
     if seg.is_structural:
-        return (f"<div class=block><h3>structural mark "
+        return (f"<div class=block{anchor}>{aliases}<h3>structural mark "
                 f"<span class=tag>{html.escape(str(seg.address))}</span></h3></div>")
-    parts = [f"<div class=block><h3>{html.escape(_segment_id(seg))} "
+    parts = [f"<div class=block{anchor}>{aliases}"
+             f"<h3>{html.escape(_segment_id(seg))} "
              f"<span class=tag>{html.escape(str(seg.address))}</span></h3>"]
     for key, value in (seg.extra or {}).items():
         parts.append(_kv(key, value))
@@ -485,4 +904,33 @@ th { background:var(--card); font-weight:600; }
 pre.surface { background:var(--card); border:1px solid var(--line); border-radius:4px;
   padding:.7rem .85rem; overflow-x:auto; font-size:.83rem; white-space:pre-wrap; }
 code { font-family:ui-monospace, SFMono-Regular, monospace; font-size:.85em; }
+
+/* view switch. No `data-view` on <body> (script absent/blocked) leaves BOTH views visible —
+   a complete page, just not a tabbed one. */
+.tabs { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; margin:1rem 0 0;
+  padding-bottom:.6rem; border-bottom:1px solid var(--line); }
+.tabs .spacer { flex:1 1 auto; }
+button.tab { font:inherit; font-size:.8rem; color:var(--mut); background:transparent;
+  border:1px solid var(--line); border-radius:4px; padding:.3rem .7rem; cursor:pointer; }
+button.tab.on { color:var(--bg); background:var(--acc); border-color:var(--acc); }
+a.file { font-size:.78rem; font-family:ui-monospace, SFMono-Regular, monospace;
+  color:var(--acc); text-decoration:none; border:1px solid var(--line);
+  border-radius:4px; padding:.3rem .55rem; }
+a.file:hover { border-color:var(--acc); }
+body[data-view=read] #view-src, body[data-view=src] #view-read { display:none; }
+
+/* record source. `.ln` is display:block so the line number can hang in ::before — which also
+   keeps it OUT of a copy-paste of the record, unlike a real column would be. */
+pre.src { background:var(--card); border:1px solid var(--line); border-radius:4px;
+  padding:.7rem 0; overflow-x:auto; font-size:.82rem; line-height:1.5; margin:.75rem 0; }
+pre.src .ln { display:block; position:relative; padding:0 .9rem 0 4.4rem;
+  white-space:pre-wrap; word-break:break-word; }
+pre.src .ln::before { content:attr(data-n); position:absolute; left:0; width:3.4rem;
+  text-align:right; color:var(--mut); opacity:.6; user-select:none; }
+pre.src .ln:target { background:color-mix(in srgb, var(--acc) 16%, transparent); }
+pre.src .cm { color:var(--mut); }
+pre.src a.addr { color:var(--acc); text-decoration:underline;
+  text-decoration-style:dotted; text-underline-offset:2px; }
+.alias { display:block; height:0; }
+.block:target, .alias:target + h3 { outline:2px solid var(--acc); outline-offset:3px; }
 </style>"""
