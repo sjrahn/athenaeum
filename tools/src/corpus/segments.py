@@ -218,18 +218,21 @@ class Section:
         form: str | None = None,
         description: str | None = None,
         fields: dict[str, Any] | None = None,
+        el_paths: bool = False,
     ) -> Section:
-        """Build a Section whose `address` is DERIVED as the envelope (min-max span)
-        of `segments`' own addresses, in their discrete-index scheme (`page=`→`pages=`,
-        `spine=`→`spines=`, `block=`, `sheet=`). The single place a section span is computed:
-        drafters build sections this way instead of hand-formatting the range, and the
-        `section-address-span` lint rule re-derives the same value to guard drift.
+        """Build a Section whose `address` is DERIVED as the envelope of `segments`' own
+        addresses, in their discrete-index scheme (`page=`→`pages=`, `spine=`→`spines=`,
+        `block=`, `sheet=`; `el=` under the 3.6 path algebra when `el_paths` is True — the
+        caller reads the record's `addressing:` stamp, §6.1.1). The single place a section
+        span is computed: drafters build sections this way instead of hand-formatting the
+        range, and the `section-address-span` lint rule re-derives the same value to guard
+        drift.
 
         `segments` must be non-empty and share one registered scheme. Raises ValueError when
         the span can't be derived (empty, heterogeneous, or an unrecognized/temporal scheme)
         — temporal (`time_range=`) sections are structural intervals, not content envelopes,
         and are built directly, not via this factory."""
-        address = section_address(segments)
+        address = section_address(segments, el_paths=el_paths)
         if address is None:
             raise ValueError(
                 "cannot derive a section address from these segments' addresses "
@@ -320,20 +323,63 @@ _SPAN_STRATEGIES: dict[str, Any] = {
     # by definition, so nothing ever asked for one. Narrowing those sections to span scope, and
     # placing a second span beside them, both require it.
     #
-    # `el=` is an EXTRACTION index, not a reading order (§12.22 measured 634 records whose
-    # faithful bodies present content out of `el=` order), so min-max is the right envelope but
-    # a WRONG one is easy to produce: a child whose stored address is over-wide drags the
-    # envelope across content it does not hold. That is a real defect in the fleet today, not a
-    # hypothetical — it is what `section-address-span` re-derives to catch.
+    # *(3.6)* The `el` entry below is the LEGACY (pre-remap) form only: min-max over the
+    # retired filtered index, kept for unstamped records. A record stamped with `addressing:`
+    # derives through the path algebra instead (`_el_path_envelope` — subtree / sibling range /
+    # list, §6.1.1), which a caller selects via `section_address(..., el_paths=True)`. The
+    # min-max form is exactly the over-claiming envelope the amendment retires: a child whose
+    # stored address is over-wide drags the envelope across content it does not hold.
     "el": _IntSpan("el"),
     "turn": _IntSpan("turn"),
 }
 
 
-def section_address(children: list[Segment]) -> str | list[str] | None:
+def _el_path_envelope(values: list[str]) -> str | list[str] | None:
+    """The §6.1.1 envelope over children's `el=` path values, by pure address algebra —
+    no artifact access. Claims contained in another claim drop (a subtree is one
+    address); one surviving claim IS the envelope; contiguous point-siblings of one
+    parent collapse to the sibling-range form; anything else is the ordered list, which
+    is what a region crossing subtree boundaries structurally is. Returns None when any
+    value fails the path grammar (the caller treats None as not-derivable)."""
+    from corpus import functional_uri as furi
+
+    try:
+        claims = [furi.parse_el_path(v) for v in values]
+    except ValueError:
+        return None
+    unique: list[Any] = []
+    for c in claims:
+        if c not in unique:
+            unique.append(c)
+    tops = [
+        c for c in unique
+        if not any(o != c and furi.el_path_contains(o, c) for o in unique)
+    ]
+    tops.sort(key=furi.el_path_sort_key)
+    if len(tops) == 1:
+        return f"el={furi.format_el_path(tops[0])}"
+    if all(t.sibling_range is None for t in tops):
+        parents = {t.components[:-1] for t in tops}
+        if len(parents) == 1:
+            parent = tops[0].components[:-1]
+            idxs = sorted(t.components[-1] for t in tops)
+            if parent and idxs == list(range(idxs[0], idxs[-1] + 1)):
+                stem = ".".join(str(c) for c in parent)
+                return f"el={stem}.[{idxs[0]}-{idxs[-1]}]"
+    return [f"el={furi.format_el_path(t)}" for t in tops]
+
+
+def section_address(
+    children: list[Segment], *, el_paths: bool = False
+) -> str | list[str] | None:
     """Derive a section's address as the envelope of `children`'s addresses, in their own
     discrete-index scheme. Returns None when it can't be derived — no children, a
     heterogeneous mix of address families, or an unrecognized/temporal scheme.
+
+    `el_paths` selects the 3.6 path algebra for the `el` family (§6.1.1); the caller
+    reads it off the record's `addressing:` stamp (`records.el_addressing`) — a bare
+    integer value means different things under the two grammars, so the record, never
+    the value, decides.
 
     The single source of truth for a section span: `Section.spanning` builds with it and the
     `section-address-span` lint rule re-derives with it to catch drift."""
@@ -345,6 +391,8 @@ def section_address(children: list[Segment]) -> str | list[str] | None:
     if len(families) != 1:
         return None
     ((param, values),) = families.items()
+    if param == "el" and el_paths:
+        return _el_path_envelope(values)
     strategy = _SPAN_STRATEGIES.get(param)
     if strategy is None:
         return None

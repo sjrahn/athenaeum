@@ -84,11 +84,15 @@ from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.segments import Segment
 from corpus.transforms.html import (
+    EL_PARSER_ID,
     attachment_filename,
     carrier_data_uri,
-    is_addressable,
+    element_path,
+    iter_element_children,
     largest_img_src,
     parse_data_uri,
+    path_root,
+    total_element_count,
 )
 
 # Tags whose entire subtree is removed before serialization — non-rendered
@@ -126,25 +130,47 @@ _KEEP_ATTRS: dict[str, set[str]] = {
 # reads it as the address of each emitted segment.
 _GLOBAL_KEEP_ATTRS = {"id", "data-el"}
 
-# The structural / image axis for `el=N` addressing (spec §4.3): structural containers
-# (`section`, `article`), prose blocks (`p`, `ul`, `ol`, `dl`, `blockquote`), structured
-# content (`table`, `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`).
-# `dl` is the definition list — a content-bearing block, the peer of `ul`/`ol`; its
-# `dt`/`dd` items stay non-addressable, exactly as `li` does. Layout-only wrappers
-# (`div`, `span`) are NOT addressable — they're chrome the drafter unwraps anyway.
+# The drafter's EMIT HEURISTIC *(3.6, §6.1.1/§12.28)*: which elements get a `data-el`
+# annotation (and, for media carriers, a members-roster row). This is authoring TASTE,
+# free to change in any release — under the total path space it no longer decides what
+# any address MEANS, which is the amendment's substance. (Pre-3.6 this tuple was half of
+# the shared `is_addressable` membership predicate, whose whitelist edits silently
+# re-pointed stored addresses; the frozen legacy copy lives in `corpus.transforms.html`
+# for unstamped records and the §12.28 remap, deliberately unshared with this one.)
 #
-# This tuple MUST equal `corpus.transforms.html._ADDRESSABLE_TAGS` (the structural axis the
-# EPUB `spine=N&el=K` resolver also shares) — `test_drafters.py` asserts that lockstep.
-# Actual `el=N` membership, however, goes through the shared `is_addressable` predicate
-# (imported above), which extends this structural axis with the inline-media carriers
-# (`<video>`/`<audio>`, `<a href="data:…">`); the drafter and the HTML resolver both call
-# it, so they name the same elements `el=N` by construction.
+# Current taste: structural containers (`section`, `article`), prose blocks (`p`, `ul`,
+# `ol`, `dl`, `blockquote`), structured content (`table`, `pre`, `figure`), headings
+# (`h1`-`h6`), and inline images (`img`). Layout wrappers (`div`, `span`) get no
+# annotation — they're chrome the cleaned body unwraps anyway, though their PATHS are
+# perfectly valid addresses now for anyone who needs to cite one.
 _ADDRESSABLE_TAGS = (
     "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "img",
 )
+
+# Inline media carriers beyond `<img>` the emit heuristic admits: `<video>`/`<audio>`,
+# and an `<a href="data:…">` attachment link. Mirrors the shape of the frozen legacy
+# predicate today — by taste, not by contract.
+_MEDIA_CARRIER_TAGS = ("video", "audio")
+
+
+def _annotates(tag: object) -> bool:
+    """The emit heuristic as a predicate: True for the elements this drafter annotates
+    with `data-el` and considers for the members roster. Free to change; changing it
+    changes which elements get segments/markers, never what an address means."""
+    if not isinstance(tag, Tag):
+        return False
+    name = tag.name
+    if name in _ADDRESSABLE_TAGS:
+        return True
+    if name in _MEDIA_CARRIER_TAGS:
+        return True
+    if name == "a":
+        href = tag.get("href")
+        return isinstance(href, str) and href.startswith("data:")
+    return False
 
 # data URI parser for `<img src="data:image/png;base64,XXX">` shapes.
 _DATA_URI_RE = re.compile(
@@ -274,8 +300,8 @@ _DRAFTER_DETECTOR_ID = touches.script_identifier("draft.text/text_html")
 #     fn(soup: BeautifulSoup, *, text_algos: list[str]) -> (blocks, embeds, issues)
 # returning the content-zone blocks (Section/Segment), the embed dicts, and drafter issues —
 # the same trio the generic path produces. It may reuse this module's public
-# `compute_embed_metadata` and `corpus.transforms.html.is_addressable` so its `el=N`
-# addresses line up with the resolver.
+# `compute_embed_metadata` and the shared path walk (`corpus.transforms.html.element_path`
+# / `path_root`, §6.1.1) so its `el=` addresses line up with the resolver.
 HtmlSubdrafter = Callable[..., tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]]]]
 _HTML_SUBDRAFTERS: dict[str, HtmlSubdrafter] = {}
 
@@ -389,60 +415,70 @@ def draft(
         # A corpus-local HTML sub-drafter claims this record's origin: hand off the whole
         # content zone to it (e.g. a per-message chat transcript) instead of the single
         # wrapping segment the generic path leaves for the normalizer. It returns the same
-        # (blocks, embeds, issues) trio, built from the same materializer so addresses /
-        # transports still line up with the resolver.
+        # (blocks, embeds, issues) trio, built from the same path walk so addresses /
+        # transports still line up with the resolver. The `addressing:` stamp (§7.1)
+        # counts THIS parse — the tree the sub-drafter computed its paths against.
+        fields["addressing"] = {
+            "parser": EL_PARSER_ID,
+            "elements": total_element_count(soup),
+        }
         blocks, embeds, sub_issues = subdrafter(soup, text_algos=text_algos)
         issues.extend(sub_issues)
     else:
-        cleaned_html, _root_selector, embeds, max_el = _clean_html(
+        cleaned_html, _root_selector, embeds, wrapper_addrs, total_elements = _clean_html(
             soup, record_id=record_id
         )
+        # The attested `addressing:` stamp (§7.1): the parser identity the paths were
+        # computed under, and the total element count of the tree they were computed ON —
+        # so a resolver whose own parse disagrees refuses loudly instead of walking paths
+        # through a different tree (§6.1.1).
+        fields["addressing"] = {"parser": EL_PARSER_ID, "elements": total_elements}
         if cleaned_html:
-            # The wrapping cleaned-HTML segment spans every addressable
-            # element in the source artifact (some may have been chrome-
-            # stripped — gaps in the range are expected). The normalizer
-            # later breaks this into precise sub-ranges addressed by
-            # `el=N` or `el=N-M` per the html schema's structural-recovery
-            # guidance.
-            wrapper_address = f"el=1-{max_el}" if max_el >= 1 else "el=1"
-            if max_el == 0:
-                # Visible content, but the `el=` axis has NO members — every block is a
-                # layout `<div>`/`<span>`, so the fallback address above names an element
-                # that does not exist and cannot resolve. Say so at draft time: the
-                # address is required by the segment grammar and there is no whole-
-                # document form to put there instead, so the only honest thing the
-                # mechanical layer can do is flag what it was forced to write. Found via
-                # a record that carried this silently from draft through normalize, with
-                # `corpus lint`, `health`, and compile all reading green.
+            if wrapper_addrs:
+                # The wrapping cleaned-HTML segment claims the body's element children —
+                # their subtrees ARE the document's content (§6.1.1: a subtree is one
+                # address). The normalizer later breaks this into precise per-element
+                # paths per the html schema's structural-recovery guidance.
+                blocks = [
+                    Segment(
+                        atom="text",
+                        address=(
+                            wrapper_addrs[0]
+                            if len(wrapper_addrs) == 1
+                            else list(wrapper_addrs)
+                        ),
+                        perceptual=text_fingerprints(cleaned_html, text_algos),
+                        body=cleaned_html,
+                    )
+                ]
+            else:
+                # Degenerate: the body carries visible content but ZERO element children
+                # (bare text nodes directly under <body>). Only elements are addressable
+                # (§6.1.1), so there is no honest address for a wrapping segment — emit
+                # none, flag it, and leave the content readable through the `body` op.
+                # (The pre-3.6 `unaddressable-content` issue and its guaranteed-broken
+                # `el=1` fallback retired with the whitelist, §12.28 — div-soup pages
+                # now address fine; this remnant case is text with no element at all.)
+                blocks = []
                 issues.append(
                     {
                         "id": "partial-content",
-                        "subtype": "unaddressable-content",
+                        "subtype": "elementless-body",
                         "severity": "warning",
                         "resolution": "open",
                         "detector": _DRAFTER_DETECTOR_ID,
                         "fields": {
                             "description": (
-                                "Artifact carries visible content but ZERO addressable "
-                                "elements (layout <div>/<span> only), so the `el=` axis "
-                                "has no members. The wrapping segment's required "
-                                "`address: el=1` therefore does not resolve — it is a "
-                                "grammar-mandated placeholder, not a citation. Any "
-                                "segment the normalize pass derives inherits the same "
-                                "gap; `corpus lint --resolve` reports it."
+                                "The artifact's <body> carries visible content as bare "
+                                "text nodes with no element children, so no el= path "
+                                "exists to address it (§6.1.1 addresses elements). No "
+                                "wrapping segment is emitted; the content remains "
+                                "readable through the `body` derivation op."
                             ),
                             "remediation": "recapture_with_structural_markup",
                         },
                     }
                 )
-            blocks = [
-                Segment(
-                    atom="text",
-                    address=wrapper_address,
-                    perceptual=text_fingerprints(cleaned_html, text_algos),
-                    body=cleaned_html,
-                )
-            ]
         else:
             blocks = []
 
@@ -473,49 +509,54 @@ def draft(
 
 def _clean_html(
     soup: BeautifulSoup, *, record_id: str | None = None
-) -> tuple[str, str, list[dict[str, Any]], int]:
-    """Strip chrome from a fresh parse of `soup`, serialize the chosen
-    root, and return (cleaned_html, root_selector, embeds, max_el).
+) -> tuple[str, str, list[dict[str, Any]], list[str], int]:
+    """Strip chrome from a fresh parse of `soup`, serialize the chosen root, and return
+    (cleaned_html, root_selector, embeds, wrapper_addresses, total_elements).
 
-    `max_el` is the highest `data-el="N"` index assigned (== the count
-    of addressable elements in the original artifact). The wrapping
-    text segment's address is `el=1-<max_el>` — a range that spans
-    every addressable element so the normalizer can later break it
-    into precise sub-ranges.
+    `wrapper_addresses` are the `el=` paths of the body's element children in the raw
+    artifact — the wrapping text segment's address claim (each child's subtree, which
+    together are the document's content; §6.1.1). `total_elements` is the tree's total
+    element count, computed on the SAME parse the paths were, for the `addressing:`
+    stamp (§7.1) — if a resolver's own parse ever disagrees, the count makes it refuse
+    loudly rather than walk paths through a different tree.
 
     Operates on a fresh re-parse so the caller's `soup` (used for block-
     page detection) is unaffected. When `record_id` is provided:
 
-    - Every addressable element gets a `data-el="N"` annotation with its
-      1-indexed position in the raw artifact (assigned BEFORE chrome
-      strip, so positions are stable against the immutable artifact).
+    - Every element the emit heuristic (`_annotates`) admits gets a `data-el="<path>"`
+      annotation with its child-index path in the raw artifact (computed BEFORE chrome
+      strip, so paths are stable against the immutable artifact).
     - `<img>` tags additionally have their bloated base64 `data:` URIs
-      stripped — the addressing scheme (`data-el="N"`) is all a consumer
-      needs to construct a `corpus://<hash>?el=N` URI on demand.
+      stripped — the addressing scheme (`data-el`) is all a consumer
+      needs to construct a `corpus://<hash>?el=<path>` URI on demand.
     - A dedup'd image-embed manifest is returned: one embed dict per
-      unique content (byte_hash), with `address` listing every `el=N`
+      unique content (byte_hash), with `address` listing every `el=` path
       where those bytes appear (scalar when 1, list when 2+).
     """
     work = BeautifulSoup(str(soup), "html.parser")
+    root_el = path_root(work)
+    total_elements = total_element_count(work)
 
-    # Pre-pass against pre-strip work: assign el-indices to every
-    # addressable element, and compute embed metadata for every <img>
-    # with a usable base64 data URI. The work DOM is identical to the
-    # source artifact at this point — positions are stable. Chrome
-    # strip below removes some elements (decomposed addressable tags
-    # lose their indices); annotation walks surviving tags by id().
-    el_index_by_id: dict[int, int] = {}
+    # Pre-pass against pre-strip work: compute the el path of every element the emit
+    # heuristic admits, and embed metadata for every carrier with a usable base64 data
+    # URI. The work DOM is identical to the source artifact at this point — paths are
+    # stable. Chrome strip below removes some elements (decomposed tags lose their
+    # annotation); annotation walks surviving tags by id().
+    el_path_by_id: dict[int, str] = {}
     embed_by_hash: dict[str, dict[str, Any]] = {}
     if record_id:
-        for n, tag in enumerate(work.find_all(is_addressable), start=1):
+        for tag in work.find_all(_annotates):
             if not isinstance(tag, Tag):
                 continue
-            el_index_by_id[id(tag)] = n
+            p = element_path(tag, root_el)
+            if p is None:
+                continue  # outside the path root (e.g. an <img> in <head>) — unaddressable
+            el_path_by_id[id(tag)] = p
             meta = compute_embed_metadata(tag)
             if meta is None:
                 continue
             byte_hash = meta["byte_hash"]
-            addr = f"el={n}"
+            addr = f"el={p}"
             if byte_hash in embed_by_hash:
                 embed_by_hash[byte_hash]["addresses"].append(addr)
             else:
@@ -524,6 +565,11 @@ def _clean_html(
                     "addresses": [addr],
                     "fields": meta["fields"],
                 }
+
+    # The wrapper's claim: the body's element children in the RAW artifact (computed
+    # pre-strip — chrome-stripped children still belong to the claim; the artifact is
+    # what the address addresses).
+    wrapper_addresses = [f"el={i}" for i in range(1, len(iter_element_children(root_el)) + 1)]
 
     # Strip non-rendered infrastructure only (script/style/noscript/template/
     # link). No chrome/role/class heuristics — chrome removal is a capture-time,
@@ -535,48 +581,47 @@ def _clean_html(
     _collapse_katex(work)
     _strip_comments(work)
     if record_id:
-        _annotate_addressable(work, el_index_by_id)
+        _annotate_addressable(work, el_path_by_id)
     _strip_attrs(work)
     _unwrap_empty_wrappers(work)
 
     # Root is always <body> — the drafter does not guess a content root.
     root = work.find("body") or work
     if not isinstance(root, Tag):
-        return "", "", [], 0
+        return "", "", [], [], total_elements
 
-    max_el = max(el_index_by_id.values()) if el_index_by_id else 0
     embeds = _materialize_embeds(work, embed_by_hash) if record_id else []
     return (
         _collapse_excess_newlines(str(root)),
         _css_selector(root),
         embeds,
-        max_el,
+        wrapper_addresses,
+        total_elements,
     )
 
 
 def _annotate_addressable(
-    work: BeautifulSoup, el_index_by_id: dict[int, int]
+    work: BeautifulSoup, el_path_by_id: dict[int, str]
 ) -> None:
-    """In-place: add `data-el="N"` to every surviving addressable
-    element. N is the element's pre-strip artifact-order index, looked
-    up from `el_index_by_id` by `id(tag)` — stable through chrome
-    strip for surviving tags.
+    """In-place: add `data-el="<path>"` to every surviving annotated element. The path
+    is the element's pre-strip child-index path in the raw artifact (§6.1.1), looked up
+    from `el_path_by_id` by `id(tag)` — stable through chrome strip for surviving tags.
 
     For every inline-media carrier, also drop the base64 `data:` URI it
     carries — huge dead weight in the cleaned body (a single inline video
-    can be hundreds of MB), and the addressing scheme (`data-el="N"`) is
-    all a consumer needs to construct a `corpus://<hash>?el=N` URI to
+    can be hundreds of MB), and the addressing scheme (`data-el`) is
+    all a consumer needs to construct a `corpus://<hash>?el=<path>` URI to
     fetch the bytes: `<img>` loses `src`/`srcset`; `<video>`/`<audio>`
     lose their own `src` and their `<source>` children are removed; an
     `<a href="data:…">` attachment loses its `href` (its label text
     stays). The carrier survives as a body-empty positioning marker."""
-    for tag in work.find_all(is_addressable):
+    for tag in work.find_all(_annotates):
         if not isinstance(tag, Tag):
             continue
-        idx = el_index_by_id.get(id(tag))
-        if not idx:
+        p = el_path_by_id.get(id(tag))
+        if not p:
             continue
-        tag["data-el"] = str(idx)
+        tag["data-el"] = p
         if tag.name == "img":
             tag.attrs.pop("src", None)
             tag.attrs.pop("srcset", None)

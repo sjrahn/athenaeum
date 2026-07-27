@@ -337,7 +337,7 @@ def test_ops_for_media_type_html_pins_engine_on_el(tmp_path):
     ops = {op.param: op for op in resolver.ops_for_media_type(root, "text/html")}
     assert ops["el"].from_kind == "html"
     assert ops["el"].output_kind == "htmlel"
-    assert ops["el"].engine_version == "html-el@1"
+    assert ops["el"].engine_version == "html-el@2"
     # `selector=` is a distinct back-compat op, never pinned by the `el=` id.
     assert ops["selector"].engine_version is None
 

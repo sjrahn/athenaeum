@@ -66,6 +66,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Storage (P3)
     "store":           ("Storage",                "Status / push / pull / fetch against the configured ArtifactStore"),
     # Maintenance — derived-data hygiene + deliberate record removal
+    "remap-el":        ("Maintenance",            "§12.28 migration: rewrite legacy el=N addresses to child-index paths + stamp addressing (dry-run by default)"),
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),

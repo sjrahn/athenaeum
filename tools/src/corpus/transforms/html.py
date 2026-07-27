@@ -1,20 +1,24 @@
 """HTML transforms.
 
-- `el=<N>` (HTML → htmlel) — Nth addressable element in document order, selected as
-  an `HtmlElRef`. A *terminal* `el=N` materializes the element's inline bytes:
-  an `<img>` decodes + renders to a PIL image (cache: PNG); a `<video>`/`<audio>`
-  or `<a href="data:…">` attachment decodes to raw bytes (cache: the media's native
-  extension). An image-output op after `el=N` (`bbox`/`mark`/`fit`/…) auto-promotes the
-  `<img>` to an image first (non-image carriers cannot promote).
+- `el=<path>` (HTML → htmlel) *(3.6, §6.1.1)* — the element named by a dotted
+  child-index path walked from the artifact's body, selected as an `HtmlElRef`. A
+  *terminal* `el=` materializes the element's inline bytes: an `<img>` decodes +
+  renders to a PIL image (cache: PNG); a `<video>`/`<audio>` or `<a href="data:…">`
+  attachment decodes to raw bytes (cache: the media's native extension). An
+  image-output op after `el=` (`bbox`/`mark`/`fit`/…) auto-promotes the `<img>` to an
+  image first (non-image carriers cannot promote). A record not yet stamped with
+  `addressing:` (§7.1) resolves through the FROZEN pre-3.6 filtered index instead —
+  `legacy_is_addressable`, below.
 - `selector=<css>` (HTML → image) — CSS selector identifying a single `<img>`;
   decodes its data URI. Back-compat with earlier records.
 
 Inline media (every carrier) lives in the HTML as a base64 `data:` URI — `<img src>` /
 `srcset`, a `<video>`/`<audio>`'s `<source src>` (or own `src`), or an attachment
-`<a href>`. The drafter (`corpus.draft.html`) addresses each carrier by `el=N` and the
-resolver re-materializes its bytes here; the two MUST agree on which elements `el=N`
-names, so the membership predicate (`is_addressable`) and the carrier→data-URI map
-(`carrier_data_uri`) are defined here and imported by the drafter.
+`<a href>`. The drafter (`corpus.draft.html`) addresses each carrier by its `el=` path
+and the resolver re-materializes its bytes here. What the two share is the path walk
+itself (`element_path` / `resolve_element_path`) and the carrier→data-URI map
+(`carrier_data_uri`) — there is no membership predicate to drift, which is the 3.6
+amendment's substance (§12.28).
 
 AVIF support depends on `pillow-avif-plugin` (declared as a base dependency).
 """
@@ -37,13 +41,21 @@ from . import NotMaterializable, RenderContext, register
 #: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) for the LIVE `el=` element-
 #: scoping op materialized here (the htmlel working-kind path — `extract_el` below) — folded
 #: into the resolver's cache key exactly like `transforms.csv.ENGINE_VERSION`. Scope: this pin
-#: covers only the resolver's live re-materialization of `corpus://<hash>?el=N` from the
-#: artifact bytes; a PERSISTED-SEGMENT `address: el=N` read (matching a citation's quote
+#: covers only the resolver's live re-materialization of `corpus://<hash>?el=…` from the
+#: artifact bytes; a PERSISTED-SEGMENT `address: el=…` read (matching a citation's quote
 #: against the record's already-STORED body text) is a distinct, unversioned surface and never
-#: folds this in. A later change to element addressing (`is_addressable`) or carrier
-#: materialization (`carrier_data_uri`) is a NEW id, never a silent reinterpretation of an
-#: already-resolved (and potentially already-cited) result.
-ENGINE_VERSION = "html-el@1"
+#: folds this in. A later change to element addressing or carrier materialization
+#: (`carrier_data_uri`) is a NEW id, never a silent reinterpretation of an
+#: already-resolved (and potentially already-cited) result — `@2` is the 3.6 path space
+#: (§6.1.1) replacing the `@1` whitelist counter, exactly that rule applied to itself.
+ENGINE_VERSION = "html-el@2"
+
+#: The pinned parser identity (spec §6.1.1 / §7.1's `addressing` key): the stdlib-backed
+#: `html.parser` tree BeautifulSoup builds. Error recovery and implied-tag insertion
+#: differ BETWEEN parsers (lxml, html5lib), so the choice is part of the address
+#: contract, not an implementation detail — the drafter stamps this identity beside the
+#: attested element count, and the resolver refuses a record stamped under any other.
+EL_PARSER_ID = "html.parser"
 
 # Image-only data URI (the `<img>` / `selector=` path keeps its strict shape).
 _DATA_URI_RE = re.compile(
@@ -56,19 +68,18 @@ _ANY_DATA_URI_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# Structural / image elements that get an `el=N` index for spec §4.3 addressing.
-# Single shared index axis across structural containers (`section`, `article`),
-# prose blocks (`p`, `ul`, `ol`, `dl`, `blockquote`), structured content (`table`,
-# `pre`, `figure`), headings (`h1`-`h6`), and inline images (`img`). `dl` is the
-# definition list — a content-bearing block, the peer of `ul`/`ol`; its `dt`/`dd`
-# items stay non-addressable, exactly as `li` does. Layout-only wrappers
-# (`div`, `span`) are NOT addressable — they're chrome the drafter unwraps anyway.
+# ---------- the LEGACY (pre-3.6) filtered index ---------- #
 #
-# This tuple is the structural axis shared with the EPUB `spine=N&el=K` resolver
-# (`corpus.transforms.epub`); `test_drafters.py` asserts that lockstep. The HTML
-# `el=N` axis is a SUPERSET — `is_addressable` additionally admits the inline media
-# carriers below (EPUB has no inline-media carriers, so its axis stays structural).
-_ADDRESSABLE_TAGS = (
+# Until 3.6 the `el=N` axis was a 1-based counter over a WHITELIST of tags — a versioned
+# contract in disguise (§12.28: adding `<dl>` on 2026-06-25 silently re-pointed stored
+# addresses on 455 of 458 artifacts carrying one). The whitelist below is FROZEN as of
+# ATH-CORPUS 3.5 and must never change again: its only remaining consumers are the
+# resolver's legacy branch for records not yet stamped with `addressing:` (§7.1) and the
+# §12.28 remap, both of which need the exact enumeration the stored addresses were
+# written under. New addressing goes through the total path space (§6.1.1, below);
+# which elements a drafter chooses to EMIT for is now a free heuristic owned by
+# `corpus.draft.html`, deliberately unshared.
+_LEGACY_ADDRESSABLE_TAGS = (
     "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",
     "h1", "h2", "h3", "h4", "h5", "h6",
@@ -77,21 +88,21 @@ _ADDRESSABLE_TAGS = (
 
 # Inline media carriers beyond `<img>`. `<video>`/`<audio>` are containers whose bytes
 # live in a child `<source data:…>` (or their own `src`); an `<a href="data:…">` is an
-# attachment link (vCard, file, …). A bare `<a>`/`<source>` is NOT addressable — only a
+# attachment link (vCard, file, …). A bare `<a>`/`<source>` is NOT a carrier — only a
 # `data:`-bearing one is — so the per-message `<a href="sms://…">` timestamp links the
-# imessage exporter emits stay off the index. `<source>` is never addressed independently;
-# it is reached through its parent `<video>`/`<audio>`.
+# imessage exporter emits stay off the legacy index. `<source>` is never addressed
+# independently; it is reached through its parent `<video>`/`<audio>`.
 _MEDIA_CARRIER_TAGS = ("video", "audio")
 
 
-def is_addressable(tag: object) -> bool:
-    """`el=N` membership predicate, shared by the drafter and the resolver so the two
-    stay in lockstep. True for the structural/image axis (`_ADDRESSABLE_TAGS`) plus the
-    inline media carriers: `<video>`/`<audio>`, and `<a href="data:…">` attachment links."""
+def legacy_is_addressable(tag: object) -> bool:
+    """The FROZEN pre-3.6 `el=N` membership predicate (see `_LEGACY_ADDRESSABLE_TAGS`).
+    True for the structural/image axis plus the inline media carriers:
+    `<video>`/`<audio>`, and `<a href="data:…">` attachment links."""
     if not isinstance(tag, Tag):
         return False
     name = tag.name
-    if name in _ADDRESSABLE_TAGS:
+    if name in _LEGACY_ADDRESSABLE_TAGS:
         return True
     if name in _MEDIA_CARRIER_TAGS:
         return True
@@ -99,6 +110,88 @@ def is_addressable(tag: object) -> bool:
         href = tag.get("href")
         return isinstance(href, str) and href.startswith("data:")
     return False
+
+
+# ---------- the el= path walk (3.6, spec §6.1.1) ---------- #
+#
+# The one shared implementation of the total address space: the drafter computes paths
+# with it, the resolver walks them back with it, and the §12.28 remap pairs old→new
+# through it. It has no configuration to drift — that is the amendment's point.
+
+
+def path_root(soup: BeautifulSoup) -> Tag:
+    """The element the path walk is rooted at: the artifact's `<body>` (§6.1.1). A
+    body-less fragment roots at the document itself — the parse has no narrower
+    container, so the document root IS the effective body; the attested element count
+    keeps both sides honest about which tree they walked."""
+    body = soup.body
+    return body if body is not None else soup  # type: ignore[return-value]
+
+
+def iter_element_children(tag: Tag) -> list[Tag]:
+    """`tag`'s ELEMENT children in document order — the siblings a path component
+    indexes into. Text nodes and comments are invisible to the walk."""
+    return [c for c in tag.children if isinstance(c, Tag)]
+
+
+def element_path(tag: Tag, root: Tag) -> str | None:
+    """The §6.1.1 child-index path of `tag` walked up to `root`, as the canonical
+    dotted string (no `el=` key). None when `tag` is not under `root` (or IS `root`:
+    the root itself has no path — a whole-content claim is the §4.3.2.1 addressless
+    whole-record section, never an address)."""
+    parts: list[int] = []
+    node = tag
+    while node is not root:
+        parent = node.parent
+        if parent is None:
+            return None
+        index = 0
+        for child in parent.children:
+            if isinstance(child, Tag):
+                index += 1
+                if child is node:
+                    break
+        else:
+            return None
+        parts.append(index)
+        node = parent
+    if not parts:
+        return None
+    return ".".join(str(i) for i in reversed(parts))
+
+
+def resolve_element_path(root: Tag, path: furi.ElPath) -> Tag:
+    """Walk `path`'s components down from `root` to the element it names. Raises
+    `ValueError` naming the first component that runs past its parent's element-child
+    count — bounds are a property of the ADDRESS (the `parse_index_span` lesson), so a
+    sibling-range address bounds-checks its endpoints here too, BEFORE the caller
+    decides whether there is anything to materialize."""
+    node = root
+    for depth, want in enumerate(path.components, start=1):
+        children = iter_element_children(node)
+        if want > len(children):
+            walked = ".".join(str(c) for c in path.components[:depth])
+            raise ValueError(
+                f"el={furi.format_el_path(path)}: component {depth} ({walked}) walks to "
+                f"child {want}, but <{node.name}> has {len(children)} element children"
+            )
+        node = children[want - 1]
+    if path.sibling_range is not None:
+        _a, b = path.sibling_range
+        children = iter_element_children(node)
+        if b > len(children):
+            raise ValueError(
+                f"el={furi.format_el_path(path)}: sibling range runs to child {b}, but "
+                f"<{node.name}> has {len(children)} element children"
+            )
+    return node
+
+
+def total_element_count(soup: BeautifulSoup) -> int:
+    """The artifact's total element count over the WHOLE document — the attested
+    self-check (§6.1.1/§7.1): a consumer whose parse yields a different number knows its
+    tree disagrees with the one the addresses were computed under, and says so."""
+    return len(soup.find_all(True))
 
 
 _SRCSET_CANDIDATE_RE = re.compile(r"(\S+)\s+(\d+(?:\.\d+)?)[wx]", re.IGNORECASE)
@@ -202,31 +295,72 @@ def parse_data_uri(uri: str) -> tuple[str, bytes] | None:
 
 @dataclass(frozen=True)
 class HtmlElRef:
-    """A selected `el=N` element (intermediate `htmlel` working kind). The resolver
+    """A selected `el=` element (intermediate `htmlel` working kind). The resolver
     materializes it terminally — an `<img>` to a PIL image, a media/attachment carrier
-    to raw bytes — or promotes an `<img>` to an image for a following image-output op."""
+    to raw bytes — or promotes an `<img>` to an image for a following image-output op.
+    `index` is the address's own spelling (a 3.6 path string, or a legacy integer on an
+    unstamped record) — used only to name the element in error messages."""
 
     tag: Tag
-    index: int
+    index: int | str
 
 
 @register("html", "el", "htmlel")
 def extract_el(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> HtmlElRef:
-    """`?el=N` — select the Nth addressable element in document order as an `HtmlElRef`.
-    The concrete materialization (image vs raw bytes) is decided terminally by the
-    resolver, since it depends on which element `N` names.
+    """`?el=<path>` — walk the child-index path (§6.1.1) to its element as an
+    `HtmlElRef`. The concrete materialization (image vs raw bytes) is decided terminally
+    by the resolver, since it depends on which element the path names.
 
-    A span (`el=1-8`) is bounds-checked exactly like a single index and only THEN
-    declared unmaterializable: an envelope that runs past the element list names
+    Which grammar the value is read under is decided by the RECORD, not the value: a
+    record stamped with `addressing:` (§7.1) carries path addresses; an unstamped record
+    still carries the pre-3.6 filtered index and resolves through the frozen legacy
+    enumeration, unchanged. The bare-integer spelling is valid under BOTH grammars with
+    different meanings (`el=5` = 5th whitelisted element vs body's 5th element child),
+    so sniffing the value would resolve silently to the wrong element — the exact
+    failure this amendment exists to end.
+
+    On the stamped branch the two attested facts are checked FIRST: a foreign parser
+    identity or a diverging element count is a hard error, never a silent walk of the
+    wrong tree. A sibling range (`el=1.3.[2-9]`) is bounds-checked exactly like a point
+    and only THEN declared unmaterializable — an envelope that runs past the tree names
     nothing, and reporting it as declared coverage is how confabulated span addresses
-    stayed invisible to the gate."""
-    elements = soup.find_all(is_addressable)
+    stayed invisible to the gate (the `parse_index_span` lesson, kept)."""
+    addressing = ctx.get("el_addressing")
+    if addressing:
+        parser = str(addressing.get("parser") or "")
+        if parser and parser != EL_PARSER_ID:
+            raise ValueError(
+                f"record's el= addresses were computed under parser {parser!r}; this "
+                f"toolchain resolves with {EL_PARSER_ID!r} and their trees may disagree "
+                f"(§6.1.1) — re-attest to re-stamp before resolving"
+            )
+        stamped = addressing.get("elements")
+        if stamped is not None:
+            actual = total_element_count(soup)
+            if int(stamped) != actual:
+                raise ValueError(
+                    f"element-count mismatch: the record attests {stamped} elements, "
+                    f"this parse yields {actual} — the trees disagree, so el= paths "
+                    f"would resolve to the wrong elements (§6.1.1); re-attest to "
+                    f"re-derive addresses against the current parse"
+                )
+        path = furi.parse_el_path(value)
+        tag = resolve_element_path(path_root(soup), path)
+        if not path.is_point:
+            # An in-bounds sibling range names a real envelope of elements; it just has
+            # no single byte surface. Not a defect — see `NotMaterializable`.
+            raise NotMaterializable(
+                f"el={furi.format_el_path(path)}: sibling-range envelope has no single "
+                f"byte surface to materialize; a point path is required for that"
+            )
+        return HtmlElRef(tag=tag, index=furi.format_el_path(path))
+
+    # Legacy branch — an unstamped (pre-3.6) record: the frozen filtered index.
+    elements = soup.find_all(legacy_is_addressable)
     low, high = furi.parse_index_span(
         "el", value, count=len(elements), noun="artifact"
     )
     if low != high:
-        # An in-bounds span names a real envelope of elements; it just has no single
-        # byte surface. Not a defect — see `NotMaterializable`.
         raise NotMaterializable(
             f"el={low}-{high}: span envelope has no single byte surface to "
             f"materialize; a single index is required for that"

@@ -232,15 +232,64 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
         pytest.skip(f"derivation fell back to the stored roster: {payload['derived_from']}")
 
     by_addr: dict[str, dict] = {}
+    by_transport: dict[str, list[dict]] = {}
     for entry in payload["members"]:
         by_addr.setdefault(str(entry["address"]), entry)
+        by_transport.setdefault(str(entry["transport"]), []).append(entry)
+
+    # *(3.6)* el-axis fixtures freeze LEGACY filtered-index addresses, while the
+    # drafter-backed derivation now emits child-index paths (§6.1.1). Rows are matched
+    # by transport instead (the roster's dedupe key — unique per row by construction),
+    # and the derived address must equal the §12.28 remap of the stored one — which
+    # makes every el fixture double as a live proof of the migration mapping.
+    remap_of: dict[str, list[str]] = {}
+    if fixture["axis"] == "el" and _HAVE_CORPORA:
+        from bs4 import BeautifulSoup
+
+        from corpus import containment, remap_el
+        from corpus import mime as mime_mod
+        from corpus.transforms.html import legacy_is_addressable, path_root
+
+        post = records.load(record_path)
+        binary = containment.ensure_local_bytes(
+            corpus_root, record_id, mime_mod.extension_for(records.media_type_for(post))
+        )
+        soup = BeautifulSoup(binary.read_bytes(), "html.parser")
+        old_elements = list(soup.find_all(legacy_is_addressable))
+        root = path_root(soup)
+
+        def _remap(addr: str) -> list[str]:
+            if addr not in remap_of:
+                new, _form = remap_el.map_el_value(
+                    str(addr).split("=", 1)[1], old_elements, root
+                )
+                remap_of[addr] = (
+                    [f"el={v}" for v in new] if isinstance(new, list) else [f"el={new}"]
+                )
+            return remap_of[addr]
 
     checked = 0
     for stored in fixture["embeds"]:
         addrs = stored["address"]
-        first = str(addrs[0] if isinstance(addrs, list) else addrs)
-        derived = by_addr.get(first)
-        assert derived is not None, f"{fixture_path.name}: derivation omitted {first!r}"
+        addr_list = [str(a) for a in (addrs if isinstance(addrs, list) else [addrs])]
+        first = addr_list[0]
+        if fixture["axis"] == "el":
+            entries = by_transport.get(str(stored["transport"]))
+            assert entries, (
+                f"{fixture_path.name}: derivation omitted transport for {first!r}"
+            )
+            # The derivation explodes a list address into one entry per address
+            # (resolver `_resolve_members`); gather them back in payload order.
+            d_list = [str(e["address"]) for e in entries]
+            expected = [p for a in addr_list for p in _remap(a)]
+            assert d_list == expected, (
+                f"{fixture_path.name} {first}: derived addresses {d_list} are not the "
+                f"§12.28 remap of the stored ones ({expected})"
+            )
+            derived = entries[0]  # descriptor fields are identical across the entries
+        else:
+            derived = by_addr.get(first)
+            assert derived is not None, f"{fixture_path.name}: derivation omitted {first!r}"
         assert derived["transport"] == stored["transport"], (
             f"{fixture_path.name} {first}: transport drift — the extractor is not deterministic"
         )

@@ -63,9 +63,14 @@ _KEEP_ATTRS: dict[str, set[str]] = {
 _GLOBAL_KEEP_ATTRS = {"id", "data-el"}
 _EXCESS_NEWLINE_RE = re.compile(r"\n{3,}")
 
-# Addressable elements get a 1-indexed `el` position in document order — the same axis the
-# HTML drafter uses, so an image's address (`spine=<N>&el=<K>`) is consistent across formats.
-# Kept identical to `corpus.draft.html._ADDRESSABLE_TAGS`; `test_drafters.py` asserts lockstep.
+# Addressable elements get a 1-indexed `el` position in document order within their spine
+# document (`spine=<N>&el=<K>`). *(3.6)* This is EPUB'S OWN axis and its own contract now:
+# the HTML `el=` axis moved to the total child-index path space (spec §6.1.1) and its
+# whitelist was frozen as legacy, so the historical lockstep with the HTML drafter is
+# deliberately severed. This tuple must not change either — it is a versioned contract in
+# the same way the HTML whitelist was (§12.28), held stable until the EPUB axis gets the
+# same amendment. Zero stored `spine=…el=…` addresses exist in either hub today
+# (measured 2026-07-27), so the exposure is the live drafter/resolver behavior only.
 _ADDRESSABLE_TAGS = (
     "section", "article", "p", "ul", "ol", "dl", "table",
     "pre", "blockquote", "figure",

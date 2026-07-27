@@ -468,16 +468,19 @@ def _rule_section_empty(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_section_address_span(post, blocks, root) -> Iterator[Finding]:
-    """A section's address is the envelope (min-max span) of its child segments' addresses,
-    in their discrete-index scheme (spec §4.3.2.1) — the same value `Section.spanning`
-    derives at draft time. Skips sections whose scheme has no span strategy: temporal
+    """A section's address is the envelope of its child segments' addresses, in their
+    discrete-index scheme (spec §4.3.2.1) — the same value `Section.spanning` derives at
+    draft time. The `el=` family derives under whichever grammar the record's
+    `addressing:` stamp selects (§6.1.1 path algebra when stamped, the legacy min-max
+    span otherwise). Skips sections whose scheme has no span strategy: temporal
     (`time_range=`) sections are structurally bounded intervals, not content envelopes."""
+    el_paths = _records.el_addressing(post) is not None
     for blk in blocks:
         if not isinstance(blk, _segments.Section) or not blk.segments:
             continue
         if blk.address is None:  # whole-record form section — envelope deliberately omitted
             continue
-        expected = _segments.section_address(blk.segments)
+        expected = _segments.section_address(blk.segments, el_paths=el_paths)
         if expected is None or expected == blk.address:
             continue
         yield Finding(

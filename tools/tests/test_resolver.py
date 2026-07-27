@@ -230,7 +230,7 @@ def test_html_el_sidecar_records_engine_version(tmp_path):
     out = resolver.resolve(f"corpus://{rid}?el=4", root)
     sidecar = furi.cache_sidecar_path(out)
     data = json.loads(sidecar.read_text("utf-8"))
-    assert data["engine"] == "html-el@1"
+    assert data["engine"] == "html-el@2"
 
 
 def test_html_el_cache_key_includes_engine_version(tmp_path, monkeypatch):

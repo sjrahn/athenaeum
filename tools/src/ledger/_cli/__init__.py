@@ -33,6 +33,9 @@ Commands:
   stamp ID      (re-)pin a correction's challenge to the claim state (§7.3)
   supersede OLD NEW  rewrite corpus citations old→new on re-capture, gated by
                 content continuity; --retire reclaims the old bytes (§13.3)
+  remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
+                child-index paths, mapped against the artifacts (dry-run by
+                default; --apply writes)
   worklist REF  dependents to revisit — REF is a fact id, a corpus hash,
                 or an invariant id
   regen         rewrite the generated views (VOCAB.md, the open-questions
@@ -266,6 +269,34 @@ def _cmd_supersede(argv: Sequence[str]) -> int:
     return 1 if res.divergences else 0
 
 
+def _cmd_remap_el(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger remap-el",
+        "§12.28 addressing remap for evidence anchors: legacy el=N → child-index "
+        "paths, mapped against the artifacts through the same engine the corpus "
+        "remap uses (dry-run by default).",
+    )
+    ap.add_argument("--apply", action="store_true", help="write the rewrites")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, _ = _system(ns.root)
+    from ledger.remap_el import remap_ledger_el
+
+    res = remap_ledger_el(ledger_root, join, apply=ns.apply)
+    for h in res.holds:
+        print(f"HOLD {h.fact}: {h.anchor[:60]} — {h.reason}", file=sys.stderr)
+    verb = "rewrote" if ns.apply else "would rewrite"
+    forms = ", ".join(f"{k}={v}" for k, v in sorted(res.forms.items())) or "none"
+    print(
+        f"{verb} {len(res.rewrites)} anchor(s)/citation(s) across "
+        f"{len(res.facts_touched)} file(s) ({forms}); {len(res.holds)} held, "
+        f"{res.skipped_stamped} on already-stamped records"
+    )
+    if ns.apply:
+        print("run `ath ledger check && ath ledger verify` — the gates must be green "
+              "in the same change (spec/ledger.md §13)")
+    return 1 if res.holds else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
@@ -281,6 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stamp": _cmd_stamp,
         "worklist": _cmd_worklist,
         "supersede": _cmd_supersede,
+        "remap-el": _cmd_remap_el,
     }
     try:
         if cmd in handlers:

@@ -771,6 +771,19 @@ def media_type_for(post: frontmatter.Post) -> str:
     return str(artifact.get("mime") or "")
 
 
+def el_addressing(post: frontmatter.Post) -> dict[str, Any] | None:
+    """Return the record's attested `addressing:` stamp (§7.1) — `{parser, elements}`
+    from the artifact block — or None when absent. Presence is the 3.6 el= grammar
+    dispatch: a stamped record carries child-index PATH addresses (§6.1.1); an
+    unstamped one still carries the pre-3.6 filtered index, and every consumer that
+    reads an `el=` value must ask this before deciding what a bare integer means."""
+    artifact = artifact_block(post)
+    if not artifact:
+        return None
+    value = (artifact.get("fields") or {}).get("addressing")
+    return value if isinstance(value, dict) else None
+
+
 def title_for(post: frontmatter.Post, corpus_root: Path) -> str:
     """Return the record's derived display title (spec §4.2.3). See `derived_editorial`."""
     return derived_editorial_field(post, corpus_root, "title").value

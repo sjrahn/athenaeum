@@ -190,6 +190,32 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
     post.content = segs_mod.emit(new_blocks + list(existing))
 
 
+def _content_zone_has_el(post: frontmatter.Post) -> bool:
+    """Whether the record's AUTHORED content zone (sections, segments, structural marks)
+    stores any `el=`-leading address. The members roster is deliberately not consulted —
+    it is attested, stripped and rebuilt right here, so only the authored layer can carry
+    a legacy address across an attest. Parses tolerantly: an unparseable zone reads as
+    False (attest will surface the parse problem itself)."""
+    from corpus import segments as segs_mod
+
+    try:
+        blocks = segs_mod.iter_blocks(post.content or "")
+    except ValueError:
+        return False
+    for blk in blocks:
+        if isinstance(blk, segs_mod.Section):
+            addressed = ([blk.address] if blk.address is not None else []) + [
+                s.address for s in blk.segments
+            ]
+        else:
+            addressed = [blk.address]
+        for address in addressed:
+            for addr in segs_mod._iter_addr_strings(address):
+                if segs_mod._leading_param(addr)[0] == "el":
+                    return True
+    return False
+
+
 def _is_drafter_issue(ctx: dict) -> bool:
     """A mechanical drafter-emitted issue — the attested layer's issue half. Identified by
     the `corpus.draft.*` detector family (a capturer's issue detector is preserved)."""
@@ -252,6 +278,23 @@ def attest(
     result is the delta over the already-declared embeds), so stripping would drop them.
     Raises `DeriveError` / `ArtifactMissing`."""
     from corpus.draft import mbox_manifest
+
+    # *(3.6)* The el= grammar dispatch is the artifact block's `addressing:` stamp (§7.1):
+    # stamped records carry child-index PATHS, unstamped ones the pre-3.6 filtered index.
+    # Attesting stamps it (the HTML drafter emits it as an attested fact) — which would
+    # silently flip the reading of any LEGACY integer address still stored on the
+    # authored layer. A bare `el=5` is valid under BOTH grammars with different meanings,
+    # so nothing downstream could detect the flip. Refuse loudly instead: the §12.28
+    # remap rewrites the authored addresses and stamps the record, THEN re-attests
+    # through this same gate (stamped → passes).
+    if records.el_addressing(post) is None and _content_zone_has_el(post):
+        raise DeriveError(
+            "record's authored layer carries pre-3.6 `el=` addresses but no `addressing:` "
+            "stamp — attesting would stamp the record and re-read those integers as "
+            "child-index paths (spec §6.1.1), silently re-pointing every one. Run the "
+            "§12.28 remap (`corpus remap-el`) first; it rewrites the addresses and "
+            "re-attests in the same pass."
+        )
 
     media_type = records.media_type_for(post)
     mt = schemas.normalize_pipeline_keys(schemas.load_mime_schema(corpus_root, media_type) or {})

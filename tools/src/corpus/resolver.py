@@ -352,6 +352,13 @@ def resolve(
     # PDF text/probe ops read the source from disk via pypdf (the working value is a
     # pypdfium2 document); hand them the artifact path.
     ctx["artifact_path"] = artifact_binary
+    # The record's attested `addressing:` stamp (§7.1): presence dispatches `el=` to the
+    # 3.6 path grammar; absence keeps the frozen legacy filtered index (§12.28's
+    # transition rule — the bare-integer spelling means different elements under the two
+    # grammars, so the RECORD, never the value, decides which one reads it).
+    el_addressing = records.el_addressing(artifact_record)
+    if el_addressing is not None:
+        ctx["el_addressing"] = el_addressing
     # `row=`/`col=` (§6.2, §7.1): the mime schema's declared `csv_dialect:` — the engine's
     # only source of delimiter/quoting/header-presence knowledge (`transforms.csv`).
     if initial_kind == "csv":

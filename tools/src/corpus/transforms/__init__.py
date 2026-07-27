@@ -56,6 +56,11 @@ class RenderContext(TypedDict, total=False):
     # by the resolver for every `csv`-working-kind resolve so `row=`/`col=` never hardcode
     # delimiter/quoting/header-presence knowledge (`transforms.csv`).
     csv_dialect: dict
+    # The record's attested `addressing:` stamp (§7.1 — `{parser, elements}`), plumbed in
+    # by the resolver from the artifact block. Its PRESENCE is the el= grammar dispatch
+    # (3.6 path space vs the frozen legacy filtered index — `transforms.html.extract_el`);
+    # its fields are the drift check (parser identity + element count).
+    el_addressing: dict
 
 
 class NotMaterializable(ValueError):

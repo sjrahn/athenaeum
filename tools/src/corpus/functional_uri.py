@@ -200,6 +200,122 @@ def parse_region(value: str) -> tuple[float, float, float, float]:
     return x, y, w, h
 
 
+# ---------- element-path grammar (3.6, spec §6.1.1) ---------- #
+
+# One dotted component: a 1-based child index among ELEMENT siblings. Leading zeros are
+# rejected — the space is permanent, so there is exactly one spelling per address.
+_EL_COMPONENT_RE = re.compile(r"^[1-9]\d*$")
+_EL_SIBLING_RANGE_RE = re.compile(r"^\[([1-9]\d*)-([1-9]\d*)\]$")
+
+
+@dataclass(frozen=True)
+class ElPath:
+    """A parsed 3.6 `el=` value (spec §6.1.1): a dotted child-index path walked from the
+    artifact's body — `el=1.3.2` is the body's first element child's third element
+    child's second — optionally ending in a sibling range (`el=1.3.[2-9]`: children 2
+    through 9 of `el=1.3`, inclusive, and their subtrees).
+
+    Components count ELEMENTS only (text nodes, comments, and attributes are invisible
+    to the walk). A point path names the element AND its whole subtree — which is why an
+    envelope under this grammar cannot over-claim, and why the retired flat `el=<N>-<M>`
+    form has no successor spelling: a region crossing subtree boundaries is an ordered
+    address LIST (§4.3.2.2), never a single value."""
+
+    components: tuple[int, ...]
+    sibling_range: tuple[int, int] | None = None
+
+    @property
+    def is_point(self) -> bool:
+        return self.sibling_range is None
+
+
+def parse_el_path(value: str | None) -> ElPath:
+    """Parse a 3.6 `el=` value into an `ElPath`. Raises `ValueError` naming the actual
+    mistake — including the one live confusion, a retired 3.5 flat range (`el=1-8`),
+    which gets its own message because every pre-migration record carried them.
+
+    The single definition of the path grammar: the resolver walks through it, lint
+    validates through it, and the section-envelope derivation composes through it, so an
+    authored address cannot be legal to one and illegal to another (the `parse_region`
+    precedent)."""
+    if value is None or not value.strip():
+        raise ValueError("el= requires a child-index path (spec §6.1.1), e.g. el=1.3.2")
+    raw = value.strip()
+    pieces = raw.split(".")
+    sibling_range: tuple[int, int] | None = None
+    tail = _EL_SIBLING_RANGE_RE.match(pieces[-1])
+    if tail:
+        a, b = int(tail.group(1)), int(tail.group(2))
+        if a >= b:
+            raise ValueError(
+                f"el={raw}: sibling range [{a}-{b}] must run low-to-high across at "
+                f"least two children (a single child is its own point path)"
+            )
+        sibling_range = (a, b)
+        pieces = pieces[:-1]
+        if not pieces:
+            raise ValueError(
+                f"el={raw}: a sibling range needs a parent path before it "
+                f"(el=<parent>.[{a}-{b}]) — there is no whole-body range form"
+            )
+    components: list[int] = []
+    for piece in pieces:
+        if not _EL_COMPONENT_RE.match(piece):
+            if re.match(r"^\d+-\d+$", raw):
+                raise ValueError(
+                    f"el={raw}: the flat min-max range is the retired 3.5 form "
+                    f"(spec §6.1.1) — a subtree is its container's own path, a sibling "
+                    f"run is el=<parent>.[<a>-<b>], and a region crossing subtree "
+                    f"boundaries is an address list"
+                )
+            raise ValueError(
+                f"el={raw}: path components are dot-separated 1-based child indices "
+                f"(got {piece!r})"
+            )
+        components.append(int(piece))
+    if not components:
+        raise ValueError(f"el={raw}: empty path")
+    return ElPath(components=tuple(components), sibling_range=sibling_range)
+
+
+def format_el_path(path: ElPath) -> str:
+    """Canonical string form of an `ElPath` (the value only, no `el=` key)."""
+    base = ".".join(str(c) for c in path.components)
+    if path.sibling_range is not None:
+        a, b = path.sibling_range
+        return f"{base}.[{a}-{b}]"
+    return base
+
+
+def el_path_contains(a: ElPath, b: ElPath) -> bool:
+    """Whether `a`'s claim contains `b`'s — the §6.1.1 component-wise prefix test,
+    extended over sibling ranges on either side. `el=1.3` contains `el=1.3.2` and does
+    NOT contain `el=1.30`; `el=1.3.[2-4]` contains `el=1.3.2.5` and not `el=1.3.5`.
+    Containment is inclusive: every path contains itself."""
+    ac, bc = a.components, b.components
+    if a.sibling_range is None:
+        # A point claims its whole subtree; a target point inside it, or a target range
+        # over children anywhere inside it, both reduce to the same prefix test.
+        return len(ac) <= len(bc) and bc[: len(ac)] == ac
+    # `a` is a sibling range: its claim is children a1..a2 of a.components.
+    a1, a2 = a.sibling_range
+    if b.sibling_range is not None and bc == ac:
+        b1, b2 = b.sibling_range
+        return a1 <= b1 and b2 <= a2
+    if len(bc) <= len(ac) or bc[: len(ac)] != ac:
+        return False
+    return a1 <= bc[len(ac)] <= a2
+
+
+def el_path_sort_key(path: ElPath) -> tuple[int, ...]:
+    """Document-order sort key: component-wise NUMERIC comparison, so `el=1.10` sorts
+    after `el=1.9` — the lexical-string trap §6.1.1 warns about. A sibling range sorts
+    at its first child's position."""
+    if path.sibling_range is None:
+        return path.components
+    return (*path.components, path.sibling_range[0])
+
+
 # ---------- integer index-span grammar ---------- #
 
 

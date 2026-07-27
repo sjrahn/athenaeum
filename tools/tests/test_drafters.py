@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from corpus import draft, lint, paths, records, resolver, schemas, segments
+from corpus import functional_uri as furi
 from corpus.draft import html as draft_html
 from corpus.store import LocalArtifactStore
 from corpus.transforms import html as transforms_html
@@ -306,25 +307,34 @@ def test_draft_is_idempotent_on_rerun(tmp_path):
 
 def test_html_drafter_registered_and_axis_aligned():
     assert "text/text_html" in draft.REGISTRY
-    # The structural `el=N` axis MUST match the resolver's addressable-tag set, or
-    # `corpus://<hash>?el=N` resolves to the wrong element (or out of range).
-    assert draft_html._ADDRESSABLE_TAGS == transforms_html._ADDRESSABLE_TAGS
-    # Actual HTML `el=N` membership goes through the shared `is_addressable` predicate —
-    # the drafter imports the resolver's, so they name the same elements by construction
-    # (the predicate extends the structural axis with inline-media carriers).
-    assert draft_html.is_addressable is transforms_html.is_addressable
-    # The EPUB drafter/resolver carry a third copy of the structural axis (spine=<N>&el=<K>
-    # image addresses must be consistent across formats) — keep all three in lockstep.
+    # *(3.6)* The historical drafter/resolver lockstep is deliberately SEVERED (§12.28):
+    # the address space is the total child-index path (§6.1.1) with no membership
+    # predicate, and the drafter's tag tuple is a free emit heuristic. What must now hold
+    # instead is that the two FROZEN whitelists never change again — the resolver's
+    # legacy copy reads pre-remap records, and the EPUB axis is its own contract until it
+    # gets the same amendment. Pin both to literals so any edit screams.
+    frozen = (
+        "section", "article", "p", "ul", "ol", "dl", "table",
+        "pre", "blockquote", "figure",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "img",
+    )
+    assert frozen == transforms_html._LEGACY_ADDRESSABLE_TAGS
     from corpus import epub as epub_mod
 
-    assert epub_mod._ADDRESSABLE_TAGS == draft_html._ADDRESSABLE_TAGS
+    assert frozen == epub_mod._ADDRESSABLE_TAGS
+    # The shared surface is now the path walk itself — importable by drafters and
+    # resolvable by the transform, with nothing to configure.
+    assert transforms_html.element_path is not None
+    assert transforms_html.resolve_element_path is not None
 
 
 def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
-    """A `<dl>` is a content-bearing block — the peer of `<ul>`/`<ol>` — so it gets its
-    own `el=N` address; its `<dt>`/`<dd>` items do not, exactly as `<li>` doesn't.
-    Regression: `<dl>` was absent from `_ADDRESSABLE_TAGS`, so the list was unaddressable
-    and its text was silently absorbed into a neighbouring segment's range."""
+    """A `<dl>` is a content-bearing block — the peer of `<ul>`/`<ol>` — so the emit
+    heuristic annotates it; its `<dt>`/`<dd>` items get no annotation, exactly as `<li>`
+    doesn't. *(3.6)* Under the total path space its ADDRESS never depended on the tuple:
+    it is the element's child-index path (§6.1.1), so a heuristic edit like the one that
+    motivated this test (§12.28's `<dl>` incident) can no longer move any address."""
     assert "dl" in draft_html._ADDRESSABLE_TAGS
     assert "dt" not in draft_html._ADDRESSABLE_TAGS
     assert "dd" not in draft_html._ADDRESSABLE_TAGS
@@ -342,25 +352,32 @@ def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
     drafter = draft.get_drafter("text/text_html")
     assert drafter is not None
     binary = LocalArtifactStore(root).local_path(rid, "html")
-    _, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
+    result, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
 
-    # Four addressable elements in document order: h1(1), p(2), dl(3), p(4). The dl
-    # consumes an index, so the trailing <p> is el=4 (it would be el=3 without the fix).
+    # The wrapper claims the body's element children: h1(1), p(2), dl(3), p(4).
     assert len(segs) == 1
     seg = segs[0]
     assert isinstance(seg, segments.Segment)
-    assert seg.address == "el=1-4"
+    assert seg.address == ["el=1", "el=2", "el=3", "el=4"]
 
     body = BeautifulSoup(seg.body, "html.parser")
     dl = body.find("dl")
     assert dl is not None and dl.get("data-el") == "3"
-    # The dl's items carry no address of their own (peers of <li>).
+    # The dl's items carry no annotation of their own (peers of <li>).
     assert body.find("dt").get("data-el") is None
     assert body.find("dd").get("data-el") is None
-    # The trailing <p> was pushed to el=4 by the dl — proves the dl is in the axis.
+    # The trailing <p> is the body's 4th element child — its own path, owed to nothing.
     assert body.find_all("p")[-1].get("data-el") == "4"
-    # Resolver side: the dl is the 3rd addressable element, in lockstep with the drafter.
-    assert body.find_all(transforms_html._ADDRESSABLE_TAGS)[2].name == "dl"
+    # Resolver side: walking the annotated path in the RAW artifact reaches the same dl.
+    raw_soup = BeautifulSoup(binary.read_bytes(), "html.parser")
+    reached = transforms_html.resolve_element_path(
+        transforms_html.path_root(raw_soup), furi.parse_el_path("3")
+    )
+    assert reached.name == "dl"
+    # The attested stamp (§7.1) rides the artifact fields: pinned parser + total count.
+    stamp = (result.get("fields") or {})["addressing"]
+    assert stamp["parser"] == "html.parser"
+    assert stamp["elements"] == len(raw_soup.find_all(True))
 
 
 def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
@@ -390,12 +407,13 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     assert canonical.startswith("blake3:")
     assert len(canonical.split(":", 1)[1]) == 64
 
-    # Exactly one wrapping text segment spanning every addressable element (1..11).
+    # Exactly one wrapping text segment claiming the body's element children (§6.1.1 —
+    # each child's subtree; nav/div/main/footer/script in this fixture).
     assert len(segs) == 1
     seg = segs[0]
     assert isinstance(seg, segments.Segment)
     assert seg.atom == "text"
-    assert seg.address == "el=1-11"
+    assert seg.address == ["el=1", "el=2", "el=3", "el=4", "el=5"]
     assert seg.perceptual is None  # fingerprinting is opt-in — off by default
 
     # Mechanical drafter output: data-el annotations present; <img src> dropped
@@ -417,16 +435,17 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     for e in embeds:
         assert e["transport"].startswith("blake3:")
         assert len(e["transport"].split(":", 1)[1]) == 64
-    # The PNG appears twice (el=4 and el=7) → one embed with a list address.
+    # The PNG appears twice (inside the first <figure>, then directly under <main>) →
+    # one embed with a list of paths (§6.1.1).
     png = by_type["image/png"]
-    assert png["address"] == ["el=4", "el=7"]
+    assert png["address"] == ["el=3.3.1", "el=3.6"]
     assert png["fields"]["width"] == 8 and png["fields"]["height"] == 6
     assert png["fields"]["alt"] == "Diagram one"
-    # GIF appears once → scalar address.
-    assert by_type["image/gif"]["address"] == "el=9"
+    # GIF appears once → scalar path.
+    assert by_type["image/gif"]["address"] == "el=3.8"
     # SVG: PIL can't open it, so dimensions come from the SVG width=/height= attrs.
     svg = by_type["image/svg+xml"]
-    assert svg["address"] == "el=11"
+    assert svg["address"] == "el=3.9.1"
     assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
 
 
@@ -567,16 +586,14 @@ def test_html_drafter_flags_empty_body(tmp_path, run_drafter):
     assert issue["detector"].startswith("corpus.draft.text/text_html@")
 
 
-def test_html_drafter_flags_unaddressable_content(tmp_path, run_drafter):
-    """A page whose blocks are all layout `<div>`/`<span>` has visible content but ZERO
-    `el=` members, so the wrapping segment's required address (`el=1`) names an element
-    that does not exist.
-
-    The segment grammar requires an address and there is no whole-document form to put
-    there, so the drafter cannot avoid writing the placeholder — but it must not write it
-    silently. One real record carried exactly this from draft through normalize with lint,
-    health, and compile all green; only `--resolve` ever saw it. `empty-body` does not
-    cover the case, since the text is present."""
+def test_html_drafter_div_soup_addresses_fine_now(tmp_path, run_drafter):
+    """*(3.6, §12.28)* The `unaddressable-content` issue and the guaranteed-broken
+    `el=1` fallback are RETIRED: under the total path space a `<div>`-soup page is
+    addressable like anything else. The exact page shape that forced the old fallback
+    now drafts quietly, its wrapper address names the real overlay div, and the address
+    resolves. The one remnant degenerate — visible content as bare text nodes with no
+    element under <body> at all — gets the new `elementless-body` flag and NO segment
+    (there is no honest address to give one)."""
     p = tmp_path / "dialog.html"
     p.write_text(
         "<!DOCTYPE html><html><head><title>Article Not Found</title></head>"
@@ -586,33 +603,40 @@ def test_html_drafter_flags_unaddressable_content(tmp_path, run_drafter):
         encoding="utf-8",
     )
     drafter = draft.get_drafter("text/text_html")
-    result, _ = run_drafter(drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html")
+    result, segs = run_drafter(
+        drafter, p, record_id="0" * 64, canonical_algo="blake3-canonical-html"
+    )
 
-    flagged = [
-        i for i in result.get("issues") or []
-        if i["id"] == "partial-content" and i.get("subtype") == "unaddressable-content"
-    ]
-    assert len(flagged) == 1, "a zero-element artifact must announce its unnameable address"
-    assert flagged[0]["severity"] == "warning"
-    assert flagged[0]["detector"].startswith("corpus.draft.text/text_html@")
-    # ...and NOT as empty-body, which requires the text to be absent.
     assert not [
         i for i in result.get("issues") or []
-        if i.get("subtype") == "empty-body"
+        if i.get("subtype") in ("unaddressable-content", "elementless-body")
     ]
+    assert len(segs) == 1
+    assert segs[0].address == "el=1"  # the overlay div IS the body's first element child
+    raw_soup = BeautifulSoup(p.read_bytes(), "html.parser")
+    reached = transforms_html.resolve_element_path(
+        transforms_html.path_root(raw_soup), furi.parse_el_path("1")
+    )
+    assert reached.name == "div" and reached.get("id") == "overlay"
 
-    # A page WITH addressable elements stays quiet.
-    q = tmp_path / "article.html"
+    # The remnant degenerate: bare text directly under <body>, no element children.
+    q = tmp_path / "baretext.html"
     q.write_text(
         "<!DOCTYPE html><html><head><title>t</title></head>"
-        "<body><h1>Heading</h1><p>Body text.</p></body></html>",
+        "<body>Just some words, no markup at all.</body></html>",
         encoding="utf-8",
     )
-    ok, _ = run_drafter(drafter, q, record_id="1" * 64, canonical_algo="blake3-canonical-html")
-    assert not [
-        i for i in ok.get("issues") or []
-        if i.get("subtype") == "unaddressable-content"
+    bare, bare_segs = run_drafter(
+        drafter, q, record_id="1" * 64, canonical_algo="blake3-canonical-html"
+    )
+    flagged = [
+        i for i in bare.get("issues") or []
+        if i["id"] == "partial-content" and i.get("subtype") == "elementless-body"
     ]
+    assert len(flagged) == 1
+    assert flagged[0]["severity"] == "warning"
+    assert flagged[0]["detector"].startswith("corpus.draft.text/text_html@")
+    assert bare_segs == []
 
 
 def test_html_draft_cli_pipeline_and_lint(tmp_path):
@@ -657,8 +681,9 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
 
 
 def test_html_el_addressing_round_trips(tmp_path):
-    """The drafter's pre-strip `el=N` indices align with the resolver's raw-artifact
-    walk: resolving an embed's `el=N` returns the decoded image at the right size."""
+    """The drafter's pre-strip `el=` paths align with the resolver's raw-artifact walk:
+    resolving an embed's path returns the decoded image at the right size. The drafted
+    record carries the `addressing:` stamp, so the resolver reads the path grammar."""
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "article.html", "text/html", "html")
 
@@ -669,13 +694,28 @@ def test_html_el_addressing_round_trips(tmp_path):
     from tests._draftlib import draft_for_test
     assert draft_for_test(root, rid) == 0
 
-    # el=4 is the first PNG occurrence (8x6); el=9 is the GIF (4x4).
-    png_path = resolver.resolve(f"corpus://{rid}?el=4", root)
+    post = records.load(paths.record_path(root, rid))
+    assert records.el_addressing(post) is not None  # the §7.1 stamp landed
+    # el=3.3.1 is the first PNG occurrence (8x6); el=3.8 is the GIF (4x4).
+    png_path = resolver.resolve(f"corpus://{rid}?el=3.3.1", root)
     with Image.open(png_path) as im:
         assert im.size == (8, 6)
-    gif_path = resolver.resolve(f"corpus://{rid}?el=9", root)
+    gif_path = resolver.resolve(f"corpus://{rid}?el=3.8", root)
     with Image.open(gif_path) as im:
         assert im.size == (4, 4)
+    # And the LEGACY spelling of the same element no longer resolves silently to a
+    # different element: on a stamped record `el=4` is a path (body's 4th child, the
+    # <footer>) — a text element with no bytes — never the old whitelist's 4th entry.
+    from corpus.transforms import NotMaterializable
+
+    with pytest.raises(NotMaterializable):
+        raw_soup = BeautifulSoup(
+            LocalArtifactStore(root).local_path(rid, "html").read_bytes(), "html.parser"
+        )
+        ref = transforms_html.extract_el(
+            raw_soup, "4", {"el_addressing": records.el_addressing(post)}
+        )
+        transforms_html.htmlel_bytes(ref)
 
 
 def test_html_drafter_prefers_largest_srcset(tmp_path, run_drafter):
@@ -706,8 +746,12 @@ def test_html_drafter_prefers_largest_srcset(tmp_path, run_drafter):
     assert emb["fields"]["width"] == 40 and emb["fields"]["height"] == 32
     # the el= resolver materialises the same largest variant (drafter/resolver agree).
     # `el=` now yields an HtmlElRef; an <img> ref renders to a PIL image terminally.
-    n = str(emb["address"]).split("=", 1)[1]
-    ref = transforms_html.extract_el(BeautifulSoup(p.read_bytes(), "html.parser"), n, {})
+    # The value is a §6.1.1 path, read under the stamp the drafter emitted.
+    stamp = (result.get("fields") or {})["addressing"]
+    value = str(emb["address"]).split("=", 1)[1]
+    ref = transforms_html.extract_el(
+        BeautifulSoup(p.read_bytes(), "html.parser"), value, {"el_addressing": stamp}
+    )
     img = transforms_html.render_htmlel_image(ref, {})
     assert img.size == (40, 32)
 
@@ -724,11 +768,13 @@ def _bytes_data_uri(media_type: str, raw: bytes) -> str:
     return f"data:{media_type};base64," + base64.b64encode(raw).decode()
 
 
-def test_is_addressable_extends_structural_axis_with_media_carriers():
-    """`is_addressable` is the shared `el=N` membership predicate. It admits the structural
-    axis plus inline-media carriers (`<video>`/`<audio>`, `<a href="data:…">`), but NOT a
-    bare `<a>` / `<source>` — so the per-message `<a href="sms://…">` deep links the
-    imessage exporter emits never consume an `el=` index."""
+def test_legacy_predicate_is_frozen_with_media_carriers():
+    """`legacy_is_addressable` is the FROZEN pre-3.6 membership predicate — the exact
+    enumeration every unstamped record's stored addresses were written under, kept so the
+    resolver's legacy branch and the §12.28 remap read them unchanged. It admits the
+    structural whitelist plus inline-media carriers (`<video>`/`<audio>`,
+    `<a href="data:…">`), but NOT a bare `<a>` / `<source>` — so the per-message
+    `<a href="sms://…">` deep links the imessage exporter emits never consumed an index."""
     soup = BeautifulSoup(
         "<p>x</p>"
         '<img src="data:image/png;base64,AA==">'
@@ -739,12 +785,12 @@ def test_is_addressable_extends_structural_axis_with_media_carriers():
         '<source src="data:video/mp4;base64,AA==">',
         "html.parser",
     )
-    addressable = [t.name for t in soup.find_all(transforms_html.is_addressable)]
+    addressable = [t.name for t in soup.find_all(transforms_html.legacy_is_addressable)]
     # p, img, video, audio, a[data:] — in document order. The sms:// <a> and the bare
     # <source> are excluded.
     assert addressable == ["p", "img", "video", "audio", "a"]
     sms_a = soup.find("a", href=lambda h: h and h.startswith("sms://"))
-    assert transforms_html.is_addressable(sms_a) is False
+    assert transforms_html.legacy_is_addressable(sms_a) is False
 
 
 def test_html_drafter_materializes_video_audio_attachment_embeds(tmp_path, run_drafter):
