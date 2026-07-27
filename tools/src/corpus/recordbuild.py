@@ -20,6 +20,17 @@ Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
     desc/<ord>-<loc>-<slug>.txt    # one file per description
     .corpus-decompose.json     # lock {record_id, source, orig_sha256, version}
 
+The lock's `orig_sha256` is the BASE STAMP: the sha256 of the record file decompose read.
+`check_base` measures it against the record a compile would overwrite, so a working dir whose
+base has moved on is refused instead of silently rewriting the record backward (#76).
+
+`meta.yaml` also carries `roster_form` / `roster_retired_fields` on a pre-3.4 record, so the
+round trip is FORM-PRESERVING (§12.26): a legacy per-asset roster compiles back to legacy
+blocks with its retired fields intact. The manifest's `member` op still carries only the
+closed four-key row, because a member's narration is withdrawn and the substrate must not
+offer an edit the grammar forbids — preserving what a record stores is a different obligation
+from letting an author write it.
+
 Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 
     record  id=<hex>
@@ -113,9 +124,35 @@ def begin(meta: dict, corpus_root: Path | None) -> Build:
     post.metadata["_origins"] = list(meta.get("origins") or [])
     post.metadata["_classifies"] = list(meta.get("classifies") or [])
     post.metadata["_embeds"] = []  # populated by add_member (reconciliation #1)
-    post.metadata["_members_block"] = True  # a compiled record writes the 3.4 grammar
+    # A compiled record writes the 3.4 roster grammar UNLESS the working dir came from a
+    # legacy-roster record, in which case the round trip preserves that form (§12.26) —
+    # `restore_legacy_roster` puts the retired fields back after the members are added.
+    post.metadata["_members_block"] = (meta.get("roster_form") or "") != "legacy"
     post.metadata["_contexts"] = []
     return Build(post=post, blocks=[], corpus_root=corpus_root)
+
+
+def restore_legacy_roster(post: frontmatter.Post, meta: dict) -> None:
+    """Re-attach a legacy roster's retired per-asset fields, keyed by `(address, transport)`.
+
+    Keying is safe in a way the retired `reattach_descriptions` was not: both sides come from
+    ONE record's stored roster inside a single round trip, not from an artifact re-derivation
+    that could legitimately produce a different member set. A row with no match simply gets no
+    retired fields — the roster's four keys are already whole without them.
+    """
+    retired = meta.get("roster_retired_fields") or []
+    if not retired:
+        return
+    by_key = {
+        (_fmt_addr(entry.get("address")), str(entry.get("transport") or "")): entry.get("fields")
+        for entry in retired
+        if isinstance(entry, dict)
+    }
+    for row in post.metadata.get("_embeds") or []:
+        fields = by_key.get((_fmt_addr(row.get("address")), str(row.get("transport") or "")))
+        if fields:
+            # The manifest is authoritative for the four keys; these only fill what it dropped.
+            row["fields"] = {**fields, **(row.get("fields") or {})}
 
 
 def begin_from_post(post: frontmatter.Post, corpus_root: Path | None) -> Build:
@@ -513,6 +550,22 @@ def write_workdir(
         "origins": post.metadata.get("_origins") or [],
         "classifies": post.metadata.get("_classifies") or [],
     }
+    # Form-preserving round trip (§12.26). A record read from legacy per-asset `<!--embed-->`
+    # blocks must be written back as legacy blocks: conversion to the members block belongs to
+    # re-attestation, which reports what it sheds, and must never be a side effect of touching
+    # a record to author something else. The manifest's `member` op carries only the closed
+    # four-key row — deliberately, since a member's narration is withdrawn and the substrate
+    # must not offer an edit the grammar forbids — so the retired fields ride HERE instead, as
+    # opaque carry-through rather than an editable constituent.
+    if not post.metadata.get("_members_block", True):
+        meta["roster_form"] = "legacy"
+        retired = [
+            {"address": row.get("address"), "transport": row.get("transport"), "fields": fields}
+            for row in (post.metadata.get("_embeds") or [])
+            if (fields := {k: v for k, v in (row.get("fields") or {}).items() if k != "bytes"})
+        ]
+        if retired:
+            meta["roster_retired_fields"] = retired
     (out / META_NAME).write_text(
         yaml.dump(meta, Dumper=_MetaDumper, sort_keys=False, allow_unicode=True, width=10**9),
         encoding="utf-8",
@@ -665,6 +718,68 @@ def write_workdir(
 # ====================================================================== #
 
 
+@dataclass
+class BaseCheck:
+    """The decompose lock's base stamp, measured against the live record.
+
+    `decompose` has always stamped `orig_sha256` — the sha256 of the record file it read —
+    and until now nothing ever consulted it, which is exactly what made `compile` a clobber
+    trap (#76): a working dir whose base has moved on writes the record BACKWARD, in full,
+    with no confirmation and `git diff` as the only evidence. The stamp is the fix because it
+    catches the real failure mode, which is a STALE BASE rather than a wrong target — the
+    destination path was always right; the content was old.
+
+    `stamped` is False for a pre-stamp or hand-built working dir. That is not drift and must
+    not refuse: the edits in such a dir are unrecoverable if we make re-decomposing the only
+    way forward, so it warns and proceeds (no worse than the behaviour it replaces).
+    """
+
+    stamped: bool
+    drift: str | None
+
+
+def read_lock(in_dir: Path) -> dict[str, Any] | None:
+    """The decompose lock, or None when absent/unreadable — parse-tolerantly, since a
+    missing lock is a working dir we simply know less about, not a failure."""
+    try:
+        loaded = json.loads((Path(in_dir) / LOCK_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _bare_sha(value: str) -> str:
+    """The hex of a `sha256:<hex>` stamp, tolerating a bare hex digest (older locks and
+    hand-built working dirs write it unprefixed)."""
+    return value.split(":", 1)[-1].strip().lower()
+
+
+def check_base(in_dir: Path, record_file: Path) -> BaseCheck:
+    """Compare the working dir's base stamp against the record `compile` would overwrite."""
+    stamp = str((read_lock(in_dir) or {}).get("orig_sha256") or "")
+    if not stamp:
+        return BaseCheck(stamped=False, drift=None)
+    if not record_file.exists():
+        return BaseCheck(
+            stamped=True,
+            drift=(
+                f"the record this working dir was decomposed from is not at {record_file} — "
+                f"this is a different corpus root, or the record has been moved or removed"
+            ),
+        )
+    live = sha256_file(record_file)
+    if _bare_sha(live) != _bare_sha(stamp):
+        return BaseCheck(
+            stamped=True,
+            drift=(
+                f"the live record changed after this working dir was decomposed "
+                f"(decomposed from {_bare_sha(stamp)[:12]}, live is now {_bare_sha(live)[:12]}) "
+                f"— compiling would overwrite those changes with this dir's older base"
+            ),
+        )
+    return BaseCheck(stamped=True, drift=None)
+
+
 def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
     work = Path(in_dir)
     meta = yaml.safe_load((work / META_NAME).read_text(encoding="utf-8")) or {}
@@ -797,6 +912,7 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
 
     if not seen_record:
         raise ValueError("manifest has no `record` op")
+    restore_legacy_roster(b.post, meta)
     return finish(b)
 
 
