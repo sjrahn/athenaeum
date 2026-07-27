@@ -202,10 +202,14 @@ def save_regions(
         page = r.get("page")
         addr = region_address(r.get("box"), page if paged else None, paged=paged)
         addresses.append(addr)
-        entry = (r.get("entry") or "").strip() or None
+        # Region segments are born unlabeled — the region declaration carries a box and an
+        # atom, not a name. (Until now an `entry` in the region dict was read here and then
+        # silently discarded downstream by `add_blocks`; with that replay fixed, dropping it
+        # has to be stated HERE, where it is this function's own policy rather than an
+        # accident of the construction path.)
         new_segments.append(
             (int(page) if (paged and page is not None) else None,
-             segments.Segment(atom=atom, address=addr, overlay=overlay, entry=entry))
+             segments.Segment(atom=atom, address=addr, overlay=overlay))
         )
 
     existing = segments.iter_blocks(post.content or "")

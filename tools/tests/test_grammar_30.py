@@ -258,3 +258,81 @@ def test_decompose_compile_roundtrips_form_and_structural(tmp_path):
     rebuilt = recordbuild.read_workdir(work, root)
     records.dump(rebuilt, md)
     assert md.read_text("utf-8") == orig  # byte-identical decompose → compile
+
+
+# ---------- 3.5: replay fidelity + the retired-field census ---------- #
+
+
+def test_add_blocks_replays_every_field():
+    """`add_blocks` claims byte-identical replay — pin it, because a field-by-field replay
+    loop is exactly the shape that loses a field silently when a rule changes.
+
+    This caught a live one: the loop carried `entry=seg.entry if seg.is_structural else None`
+    — the top-level-only rule §4.3.2.2 retired on 2026-07-17, surviving in this one path and
+    destroying every in-span authored label written through it (`regions.save_regions` is a
+    real caller). Nothing failed; the labels were simply gone from the next write."""
+    blocks = [
+        segments.Section(
+            address="el=1-6",
+            form="document",
+            entry="Span label",
+            description="what this span is",
+            segments=[
+                segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
+                segments.Segment(atom="text", address="el=2", entry="Inspect", body="a"),
+                segments.Segment(
+                    atom="image", address="el=3", entry="Fig 1", description="a diagram"
+                ),
+                segments.Segment(atom="text", address="el=4", perceptual="simhash:ab", body="b"),
+            ],
+        ),
+        segments.Segment(atom="text", address="el=9", entry="Top-level", body="c"),
+    ]
+    expected = segments.emit(blocks)
+
+    build = recordbuild.begin_from_post(frontmatter.Post(""), None)
+    recordbuild.add_blocks(build, blocks)
+    assert segments.emit(build.blocks) == expected
+
+
+def test_pending_retired_fields_finds_each_concern():
+    """The one census the 3.5 sweeps count against and health reads — so *what a sweep is
+    about to remove* and *what remains unswept* can never be two disagreeing computations."""
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64, "title": "override", "canonical": "blake3:ab"})
+    post.content = segments.emit(
+        [
+            segments.Section(
+                form="index",
+                description="a summary of this record",
+                extra={"title": "A Title"},
+                segments=[
+                    segments.Segment(atom="structural", address="el=1", level=1, mark="H"),
+                    segments.Segment(atom="image", address="el=2", description="a logo"),
+                    segments.Segment(atom="text", address="el=3", entry="Label", body="x"),
+                ],
+            )
+        ]
+    )
+    pending = records.pending_retired_fields(post)
+
+    assert sorted(pending["frontmatter"]) == ["canonical", "title"]
+    assert pending["section_description"] == ["whole-record"]
+    assert pending["section_title"] == ["whole-record"]
+    assert pending["segment_description"] == ["el=2"]
+    assert pending["segment_entry"] == ["el=3"]
+    # a byte-mark already on the current spelling is NOT pending — nothing to sweep
+    assert "structural_entry" not in pending
+
+
+def test_pending_retired_fields_is_empty_on_a_conformant_record():
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "a" * 64})
+    post.content = segments.emit(
+        [
+            segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
+            segments.Segment(atom="text", address="el=2", body="faithful text"),
+            segments.Segment(atom="image", address="el=3"),
+        ]
+    )
+    assert records.pending_retired_fields(post) == {}

@@ -295,7 +295,9 @@ def add_blocks(b: Build, blocks: list) -> None:
     via the SAME validated construction path as `compile` (per-segment body⟺lossless
     enforcement via `add_segment`, section nesting) instead of a parallel
     `segments.emit`. Faithful: every Segment / Section field is replayed, so
-    `finish(b)` re-emits byte-identically to `segments.emit(blocks)`."""
+    `finish(b)` re-emits byte-identically to `segments.emit(blocks)` — an invariant
+    `test_add_blocks_replays_every_field` pins, because it is exactly the property a
+    field-by-field replay loop loses silently when a field is added or a rule changes."""
     for blk in blocks:
         if isinstance(blk, segments.Section):
             open_section(
@@ -314,10 +316,13 @@ def add_blocks(b: Build, blocks: list) -> None:
                     address=seg.address,
                     body=seg.body or None,
                     description=seg.description,
-                    # A structural mark's `mark:` rides inside a form span (§4.3.2.3).
-                    # `entry` stays exactly as it was — a content segment's authored label
-                    # is dropped on this path today, and retiring it is its own step (3.5).
-                    entry=seg.entry if seg.is_structural else None,
+                    # Both labels replay verbatim. A structural mark's `mark:` is the
+                    # source's own text (§4.3.2.3); a content segment's `entry:` is an
+                    # authored leaf label, admitted inside a span since 2026-07-17 (§12.22).
+                    # This line used to read `entry=seg.entry if seg.is_structural else None`
+                    # — the retired top-level-only rule, surviving in one code path and
+                    # silently destroying every in-span label that came through here.
+                    entry=seg.entry,
                     mark=seg.mark if seg.is_structural else None,
                     perceptual=seg.perceptual,
                     level=seg.level,

@@ -841,6 +841,82 @@ def pending_member_descriptions(post: frontmatter.Post) -> list[tuple[str, str]]
     return pending
 
 
+#: Frontmatter keys ATH-CORPUS 3.5 retires (§4.2.1) — reported by `pending_retired_fields`.
+_RETIRED_FRONTMATTER: tuple[str, ...] = ("title", "description", "canonical")
+
+
+def pending_retired_fields(post: frontmatter.Post) -> dict[str, list[str]]:
+    """What this record still carries that ATH-CORPUS 3.5 retires (§12.27).
+
+    Returns a dict of concern → human-readable locators, empty keys omitted:
+
+    - `frontmatter` — the retired core fields (`title`, `description`, `canonical`, §4.2.1)
+    - `section_description` / `section_entry` / `section_title` — universal header fields
+      no form declares (§4.3.2.1)
+    - `segment_description` — a marker narrating its own region (§4.3.2.2)
+    - `segment_entry` — the 1.0-2.x TOC fossil (§4.3.2.2); a value that is verbatim in the
+      artifact is a byte-mark wanting `mark:` on a structural segment instead (§4.3.2.3)
+    - `structural_entry` — a byte-mark still on the pre-3.5 spelling
+    - `context_prose` — an `issue` block carrying a `description` (§4.3.3.2)
+    - `context_retired_ns` — a `reference` / `relation` block (§4.3.3.3, §4.3.3.5)
+
+    Reporting only — this never edits. It is the primitive the sweeps count against and the
+    one health reads, so *what a sweep is about to remove* and *what remains unswept* are the
+    same computation rather than two that can disagree.
+    """
+    from corpus import segments as segs_mod
+
+    out: dict[str, list[str]] = {}
+
+    def note(key: str, locator: str) -> None:
+        out.setdefault(key, []).append(locator)
+
+    for key in _RETIRED_FRONTMATTER:
+        if str(post.metadata.get(key) or "").strip():
+            note("frontmatter", key)
+
+    for ctx in iter_context_blocks(post):
+        ns = str(ctx.get("namespace") or "")
+        addr = str((ctx.get("fields") or {}).get("address") or "record")
+        if ns in ("reference", "relation"):
+            note("context_retired_ns", f"{ns}@{addr}")
+        elif ns == "issue" and str((ctx.get("fields") or {}).get("description") or "").strip():
+            note("context_prose", f"{ctx.get('id')}@{addr}")
+
+    try:
+        blocks = segs_mod.iter_blocks(post.content or "")
+    except ValueError:
+        return out  # unparseable content zone: report what the metadata zone showed (§1.5)
+
+    def visit(seg: segs_mod.Segment) -> None:
+        addr = seg.address if isinstance(seg.address, str) else ",".join(seg.address or [])
+        if seg.is_structural:
+            if seg.entry:
+                note("structural_entry", str(addr))
+            return
+        if seg.description:
+            note("segment_description", str(addr))
+        if seg.entry:
+            note("segment_entry", str(addr))
+
+    for blk in blocks:
+        if isinstance(blk, segs_mod.Section):
+            scope = "whole-record" if blk.address is None else str(blk.address)
+            if blk.description:
+                note("section_description", scope)
+            if blk.entry:
+                note("section_entry", scope)
+            # `title:` has no dataclass field of its own — it lands in `extra` alongside the
+            # form's declared fields, which is precisely why a universal slot is hard to see.
+            if str((blk.extra or {}).get("title") or "").strip():
+                note("section_title", scope)
+            for seg in blk.segments:
+                visit(seg)
+        else:
+            visit(blk)
+    return out
+
+
 def iter_context_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
     """Yield each `<!--context-->` block as `{namespace, id, subtype, fields}` (spec §4.3.3)."""
     yield from (post.metadata.get("_contexts") or [])
