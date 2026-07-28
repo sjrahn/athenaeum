@@ -71,6 +71,12 @@ _BUNDLE_COMPRESSION = zipfile.ZIP_DEFLATED
 # failure is a missing member you were told about, not a bundle nobody can open.
 _ARTIFACT_BUDGET = 256 * 1024 * 1024
 
+# *(3.8)* How many placed members' pages ride in a bundle before it stops. A record placing
+# 214 members would otherwise produce 214 pages, each re-inlining its own pixels. Past the
+# cap the placement still names its member and prints the recovery line; the omission is
+# declared on stderr, never silent.
+_MEMBER_PAGE_CAP = 25
+
 _CHUNK = 1024 * 1024  # artifact streaming chunk
 _ZIP64_LIMIT = (1 << 32) - 1  # forced per-member from the known size, never guessed
 
@@ -137,6 +143,17 @@ def configure(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--max-members",
+        type=int,
+        default=_MEMBER_PAGE_CAP,
+        metavar="N",
+        help=(
+            "How many placed members' records + pages ride in the bundle under members/ "
+            f"(default {_MEMBER_PAGE_CAP}; 0 = unlimited). Past it a placement names its "
+            "member and prints the recovery line instead of linking."
+        ),
+    )
+    parser.add_argument(
         "--max-artifact",
         type=int,
         default=_ARTIFACT_BUDGET,
@@ -181,6 +198,29 @@ def run(args: argparse.Namespace) -> int:
         else None
     )
 
+    # *(3.8)* The members this record PLACES (§4.3.2.4). In a bundle each one's own page and
+    # record ride alongside under `members/`, and the placement links to it — because a
+    # placement's whole meaning is "the reading lives over there," and a viewer that names the
+    # destination without going there makes the reader do the resolver's job by hand. In
+    # `--html` mode there are no sibling files, so the placement names the member and prints
+    # the recovery line instead: a link that goes nowhere would be worse than none.
+    leaves = placed_members(root, post)
+    cap = max(0, int(getattr(args, "max_members", _MEMBER_PAGE_CAP) or 0))
+    bundled: list[_PlacedMember] = []
+    if bundle:
+        for member in leaves.values():
+            if member.record is None or any(b.hex == member.hex for b in bundled):
+                continue
+            if cap and len(bundled) >= cap:
+                break
+            member.href = f"members/{member.hex[:12]}.html"
+            bundled.append(member)
+        # A member placed at several addresses shares one page.
+        for member in leaves.values():
+            match = next((b for b in bundled if b.hex == member.hex), None)
+            if match is not None:
+                member.href = match.href
+
     page = _render(
         root,
         record_id,
@@ -189,6 +229,7 @@ def run(args: argparse.Namespace) -> int:
         budget=budget,
         source=path.read_text(encoding="utf-8", errors="replace") if bundle else None,
         artifact=artifact,
+        leaves=leaves,
     )
 
     if not bundle:
@@ -202,12 +243,38 @@ def run(args: argparse.Namespace) -> int:
         print(f"{out}  ({out.stat().st_size / 1024:.0f} KB)")
         return 0
 
+    # Each placed member's own page, rendered exactly as `corpus view` would render it
+    # standalone — depth one: a member's own placements name their members but do not recurse,
+    # or a container would bundle the corpus.
+    extra: list[tuple[str, bytes | None, Path | None]] = []
+    for member in bundled:
+        assert member.record is not None and member.href is not None
+        member_post = records.load(member.record)
+        member_page = _render(
+            root,
+            member.hex,
+            member_post,
+            regenerate=args.regenerate,
+            budget=_Budget(budget.limit),
+            source=member.record.read_text(encoding="utf-8", errors="replace"),
+            artifact=None,
+            leaves=placed_members(root, member_post),
+        )
+        extra.append((member.href, member_page.encode("utf-8"), None))
+        extra.append((f"members/{member.hex[:12]}.md", None, member.record))
+
     out = Path(args.out).expanduser() if args.out else root / "export" / f"{record_id}.zip"
-    size = _write_bundle(out, page=page, record=path, artifact=artifact)
+    size = _write_bundle(out, page=page, record=path, artifact=artifact, extra=extra)
     members = [_PAGE_MEMBER, _RECORD_MEMBER] + ([artifact.name] if artifact and artifact.path
                                                 else [])
     print(f"{out}  ({size / 1024:.0f} KB)")
     print(f"  {', '.join(sorted(members))}")
+    if bundled:
+        print(f"  members/ — {len(bundled)} placed member record(s) + page(s)")
+    withheld = sum(1 for m in leaves.values() if m.record is not None and not m.href)
+    if withheld:
+        # Declared, never silent — same discipline as every other ceiling here.
+        print(f"  {withheld} placed member(s) NOT bundled (--max-members {cap})", file=sys.stderr)
     if artifact and not artifact.path:
         # Declared, never silent — same discipline as the page budget: a bundle missing its
         # artifact must be visibly incomplete, on stdout and on the page.
@@ -274,7 +341,14 @@ def _artifact_source(root: Path, record_id: str, post: Any, *, limit: int) -> _A
     return _Artifact(name, found)
 
 
-def _write_bundle(out: Path, *, page: str, record: Path, artifact: _Artifact | None) -> int:
+def _write_bundle(
+    out: Path,
+    *,
+    page: str,
+    record: Path,
+    artifact: _Artifact | None,
+    extra: list[tuple[str, bytes | None, Path | None]] | None = None,
+) -> int:
     """Write the bundle deterministically, atomically, and without holding the artifact.
 
     Atomic for the same reason `paths.atomic_write_text` is: a bundle is something you hand to
@@ -291,6 +365,7 @@ def _write_bundle(out: Path, *, page: str, record: Path, artifact: _Artifact | N
     ]
     if artifact and artifact.path:
         members.append((artifact.name, None, artifact.path))
+    members.extend(extra or [])
     try:
         with zipfile.ZipFile(partial, "w", compression=_BUNDLE_COMPRESSION, allowZip64=True) as zf:
             for name, payload, src in sorted(members, key=lambda m: m[0]):
@@ -537,6 +612,7 @@ def _render(
     budget: _Budget,
     source: str | None = None,
     artifact: _Artifact | None = None,
+    leaves: dict[str, _PlacedMember] | None = None,
 ) -> str:
     media_type = records.media_type_for(post)
     try:
@@ -616,12 +692,12 @@ def _render(
                 parts.append(_kv(key, value))
             for seg in block.segments:
                 parts.append(_segment_html(root, record_id, seg, regenerate=regenerate,
-                                           budget=budget, claimed=claimed))
+                                           budget=budget, claimed=claimed, leaves=leaves))
             parts.append("</section>")
         else:
             parts.append("<section><h2>segment (formless)</h2>")
             parts.append(_segment_html(root, record_id, block, regenerate=regenerate,
-                                       budget=budget, claimed=claimed))
+                                       budget=budget, claimed=claimed, leaves=leaves))
             parts.append("</section>")
 
     if members:
@@ -828,31 +904,63 @@ def _member_html(
     return "\n".join(out)
 
 
-def _placement_member(root: Path, record_id: str, seg: segments.Segment) -> str:
-    """*(3.8)* The member a placement names, and its record's state — derived, never stored:
-    the address matches one roster row, that row's `transport:` IS the member's record id
-    (§2, §4.3.2.4). Returns a short label, or "" when the roster does not carry the address
-    (which `placement-without-member` reports as the error it is)."""
+class _PlacedMember:
+    """*(3.8)* One member a record places, and where a reader goes to read it.
+
+    The whole chain is derived (§4.3.2.4): the placement's address matches exactly one roster
+    row, that row's `transport:` IS the member's record id (§2), and the record's path is a
+    pure function of the id. Nothing here is stored on either record — which is the point, and
+    also why the page can show it: it shows what a reader would follow.
+    """
+
+    def __init__(self, address: str, hexval: str, record: Path | None, state: str) -> None:
+        self.address = address
+        self.hex = hexval
+        self.record = record
+        self.state = state
+        #: Relative href into the bundle, set when the member's page is bundled alongside.
+        self.href: str | None = None
+
+    @property
+    def label(self) -> str:
+        if self.record is None:
+            return f"member {self.hex[:12]}… — NO RECORD"
+        return f"member {self.hex[:12]}… ({self.state})"
+
+
+def placed_members(root: Path, post: Any) -> dict[str, _PlacedMember]:
+    """*(3.8)* `placement address → the member it names`, for every placement in the content
+    zone. Ordered by first appearance, so a bundle's member pages come in reading order."""
     try:
-        post = records.load(paths.record_path(root, record_id))
+        blocks = segments.iter_blocks(post.content or "")
     except Exception:
-        return ""
+        return {}
+    rows: dict[str, str] = {}
     for row in records.iter_members(post):
-        addrs = _addr_list(row.get("address"))
-        if not any(a in addrs for a in _addr_list(seg.address)):
-            continue
         hexval = str(row.get("transport") or "").partition(":")[2]
-        if not hexval:
-            return ""
-        leaf = paths.record_path(root, hexval)
-        if not leaf.is_file():
-            return f"member {hexval[:12]}… — NO RECORD"
-        try:
-            state = records.derived_state(records.load(leaf), root)
-        except Exception:
-            state = "?"
-        return f"member {hexval[:12]}… ({state})"
-    return ""
+        for addr in _addr_list(row.get("address")):
+            if hexval:
+                rows[addr] = hexval
+    out: dict[str, _PlacedMember] = {}
+    for blk in blocks:
+        kids = blk.segments if isinstance(blk, segments.Section) else [blk]
+        for seg in kids:
+            if not isinstance(seg, segments.Segment) or not seg.is_placement:
+                continue
+            for addr in _addr_list(seg.address):
+                hexval = rows.get(addr)
+                if not hexval or addr in out:
+                    continue
+                leaf = paths.record_path(root, hexval)
+                if not leaf.is_file():
+                    out[addr] = _PlacedMember(addr, hexval, None, "")
+                    continue
+                try:
+                    state = records.derived_state(records.load(leaf), root)
+                except Exception:
+                    state = "?"
+                out[addr] = _PlacedMember(addr, hexval, leaf, state)
+    return out
 
 
 def _placement_surface(
@@ -877,6 +985,7 @@ def _segment_html(
     regenerate: bool,
     budget: _Budget,
     claimed: set[str],
+    leaves: dict[str, _PlacedMember] | None = None,
 ) -> str:
     anchor, aliases = _anchor_targets(_addr_list(getattr(seg, "address", None)), claimed)
     if seg.is_structural:
@@ -892,14 +1001,32 @@ def _segment_html(
         # before, and the member's own record is named as the place its reading lives. The link
         # is DERIVED here exactly as everywhere — address → roster row → blake3 → record — so
         # the page shows what a reader would follow, never a stored pointer.
-        member = _placement_member(root, record_id, seg)
+        member = None
+        for addr in _addr_list(seg.address):
+            member = (leaves or {}).get(addr)
+            if member:
+                break
+        tag = ""
+        if member:
+            body = html.escape(member.label)
+            # Linked when the member's page rides in the same bundle; named-only otherwise,
+            # with the recovery line below saying how to reach it. Never a dead href.
+            tag = (
+                f' <a class="tag member" href="{html.escape(member.href)}">{body}</a>'
+                if member.href
+                else f" <span class=tag>{body}</span>"
+            )
+        recovery = ""
+        if member and member.record is not None and not member.href:
+            recovery = _note(f"read it: corpus view {member.hex}")
         return "\n".join(
             [
                 f"<div class=block{anchor}>{aliases}",
                 f"<h3>placement <span class=tag>{html.escape(str(seg.address))}</span>"
-                + (f" <span class=tag>{html.escape(member)}</span>" if member else "")
+                + tag
                 + "</h3>",
                 _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
+                recovery,
                 "</div>",
             ]
         )

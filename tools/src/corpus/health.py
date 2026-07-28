@@ -396,6 +396,17 @@ def normalization_pressure(
 
     A member with no record at all is deliberately absent: that is the parent's error
     (`placed-member-not-promoted`), not demand on a record that does not exist.
+
+    **What counts as awaiting is not the derived state**, and the first cut got this exactly
+    backwards. `image/*` declares `form: passthrough` at the mime grain, so a promoted image
+    with no rendering resolves as `terminal` — "complete, never enters the queue" — while one
+    that HAS been transcribed resolves as `rendered`. Reading the enum therefore put all the
+    demand on the members already read and none on the ones waiting. The distinction that
+    matters is §7.8's own: a **declared default** at the mime grain is not a judgment about
+    *this* PNG, whereas a **per-record assertion** (a `<!--section passthrough-->` in its
+    content zone) is. So a leaf carries pressure when it stores no rendering AND asserts no
+    form — an unread table image counts, a deliberately-judged photo does not, and the judgment
+    is what silences it rather than the media type it happens to share.
     """
     pressure: dict[str, int] = {}
     placed_by: dict[str, set[str]] = {}
@@ -429,10 +440,13 @@ def normalization_pressure(
         if not leaf.is_file():
             continue  # the parent's error, reported by lint — not demand
         try:
-            state = records.derived_state(records.load(leaf), corpus_root)
+            leaf_post = records.load(leaf)
+            waiting = not records.has_stored_rendering(leaf_post) and not records.is_formed(
+                leaf_post
+            )
         except Exception:
             continue
-        if state in ("proxy", "rendered"):
+        if waiting:
             pressure[hexval] = len(parents)
 
     ranked = sorted(pressure.items(), key=lambda kv: (-kv[1], kv[0]))
