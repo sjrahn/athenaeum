@@ -118,12 +118,34 @@ def _archive_family(media_type: str) -> str | None:
 
 @contextmanager
 def open_member_stream(
-    container_path: Path, container_media_type: str, address: str
+    container_path: Path,
+    container_media_type: str,
+    address: str,
+    *,
+    el_addressing: dict | None = None,
 ) -> Iterator[IO[bytes]]:
     """Stream a container member's bytes (spec §12.9), dispatching on the container's media
     type. Yields a binary file-like for the life of the `with`; raises `ValueError` for an
-    address scheme / container type this can't materialize."""
+    address scheme / container type this can't materialize.
+
+    `el_addressing` is the CONTAINER record's attested `addressing:` stamp (§7.1) — required
+    for an `el=` member, since the stamp's presence is what dispatches the address between the
+    3.6 path space and the frozen legacy index (§6.1.1). Ignored by every other family."""
     key, _, value = str(address).partition("=")
+    # *(3.8)* An HTML page is a container whose members are the assets its bytes inline —
+    # addressed `el=<path>` at the carrier element (§4.3.1.4, §12.30). This is the family
+    # promotion could not reach, and it holds 9,109 of the placed members across both hubs.
+    # The bytes are the carrier's base64 `data:` payload decoded, which is exactly what
+    # attestation hashed into the roster row — so it round-trips to the declared blake3.
+    # Bounded by construction (a data URI is already resident in the parsed document), hence
+    # a BytesIO rather than a stream, like the eml/vcard members.
+    if container_media_type == "text/html" and key == "el":
+        from .transforms import html as html_tf
+
+        yield io.BytesIO(
+            html_tf.el_member_bytes(container_path, value, el_addressing=el_addressing)[1]
+        )
+        return
     # An mbox is a container whose members are addressed `msg=<N>` (spec §12.11) — a
     # streaming scan yields the un-stuffed message bytes, never loading the mailbox whole.
     if container_media_type == "application/mbox" and key == "msg":
@@ -188,11 +210,25 @@ def open_member_stream(
 
 
 def member_source_metadata(
-    container_path: Path, container_media_type: str, address: str
+    container_path: Path,
+    container_media_type: str,
+    address: str,
+    *,
+    el_addressing: dict | None = None,
 ) -> dict[str, str]:
     """The member's durable provenance for a promoted record's origin block (spec §7.2, §8.1):
     `filename` (member basename) and, when the archive records it, `source_modified` (mtime)."""
     key, _, value = str(address).partition("=")
+    # *(3.8)* An asset inlined in an HTML page has no mtime — its `el=` path is a position in
+    # a document tree, exactly like `msg=`/`card=`/`stream_id=`. It may still name itself: an
+    # attachment link renders `Click to download <name> (<size>)`, and that name is a byte-fact
+    # worth keeping — and is also the sniff hint that refines a zip-magic member within its
+    # family (a docx inlined as `data:` sniffs as bare `application/zip` without it).
+    if container_media_type == "text/html" and key == "el":
+        from .transforms import html as html_tf
+
+        name = html_tf.el_member_filename(container_path, value, el_addressing=el_addressing)
+        return {"filename": name} if name else {}
     # An mbox message has no member filename and no meaningful per-member mtime (its ordinal
     # is a position, not a name) — a promoted message's origin carries the lineage uri only.
     if container_media_type == "application/mbox" and key == "msg":
@@ -287,7 +323,13 @@ def ensure_local_bytes(
         _seen=_seen | {record_id},
     )
     return _materialize_member(
-        corpus_root, record_id, ext, container_path, container_media_type, address
+        corpus_root,
+        record_id,
+        ext,
+        container_path,
+        container_media_type,
+        address,
+        el_addressing=records.el_addressing(container_post),
     )
 
 
@@ -313,6 +355,8 @@ def _materialize_member(
     container_path: Path,
     container_media_type: str,
     address: str,
+    *,
+    el_addressing: dict | None = None,
 ) -> Path:
     """Stream the member out of its container into the resolver cache and return that path.
     Content-addressed bytes are immutable, so a warm cache file is authoritative (§12.9)."""
@@ -322,9 +366,9 @@ def _materialize_member(
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_p.with_name(f"{cache_p.name}.tmp.{os.getpid()}")
     try:
-        with open_member_stream(container_path, container_media_type, address) as fp, tmp.open(
-            "wb"
-        ) as out:
+        with open_member_stream(
+            container_path, container_media_type, address, el_addressing=el_addressing
+        ) as fp, tmp.open("wb") as out:
             shutil.copyfileobj(fp, out, _CHUNK)
         os.replace(tmp, cache_p)
     finally:

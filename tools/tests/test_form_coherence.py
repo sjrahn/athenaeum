@@ -9,7 +9,7 @@ from pathlib import Path
 
 import frontmatter
 
-from corpus import lint, records, schemas, segments
+from corpus import lint, paths, records, schemas, segments
 
 
 def _root(tmp_path: Path) -> Path:
@@ -356,79 +356,107 @@ def _with_embed(post, address: str = "el=3") -> None:
     ]
 
 
-def test_schematic_table_alone_is_clean(tmp_path):
-    """The table replaces the figure: no marker, embed transcribed, nothing fires."""
+def test_schematic_table_on_the_parent_is_the_violation_now(tmp_path):
+    """*(3.8)* A schematic sheet inlined in an HTML page is a MEMBER, so its transcription
+    belongs on the sheet's own record (§4.3.2.4). What used to be the model answer — the
+    `text/data-table` sitting in the page's own span — is the defect the amendment names, and
+    it is one error rather than a form-conformance question: `embed_rendered` retired because
+    both of its branches say the same thing now."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     post.content = segments.emit([_schematic()])
-    assert not any(f.startswith("form-") for f in _fired(post, root))
+    fired = _fired(post, root)
+    assert "member-rendered-on-parent" in fired
+    # The retired check's findings are gone, not merely quiet.
+    assert "form-embed-not-rendered" not in fired
+    assert "form-marker-superseded" not in fired
 
 
-def test_schematic_figure_only_is_clean(tmp_path):
-    """The form names a SHAPE, not a mandate to transcribe: a schematic whose relation cannot
-    (yet) be faithfully textualized renders as the marker plus its described embed, and that
-    is conforming — the contract has no standing to demand the better rendering."""
+def test_schematic_marker_on_the_parent_is_the_same_violation(tmp_path):
+    """Marker or transcription, the defect is identical in kind: both claim something about
+    bytes the record does not own. The old XOR treated one as the honest fallback."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     post.content = segments.emit([_schematic(table=False, marker=True)])
-    assert not any(f.startswith("form-") for f in _fired(post, root))
+    findings = lint.lint(post, segments.iter_blocks(post.content), root)
+    hits = [f for f in findings if f.rule_id == "member-rendered-on-parent"]
+    assert len(hits) == 1 and hits[0].severity == "error"
 
 
-def test_schematic_embed_with_neither_rendering_errors(tmp_path):
-    """One or the other is owed, though — an embed with no rendering at all is not a
-    judgment, it is an omission."""
+def test_schematic_placements_are_the_conforming_shape(tmp_path):
+    """The span's children are placements, one per sheet — and the record they name must
+    exist, which is the one half of *placement means promotion* that can live on the parent."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     sec = segments.Section(
         form="schematic",
-        segments=[segments.Segment(atom="text", address="el=9", body="unrelated prose")],
+        segments=[segments.Segment(atom="placement", address="el=3")],
     )
     post.content = segments.emit([sec])
-    findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    missing = [f for f in findings if f.rule_id == "form-embed-not-rendered"]
-    assert len(missing) == 1
-    assert missing[0].severity == "error"
+    fired = _fired(post, root)
+    assert "member-rendered-on-parent" not in fired
+    assert "placed-member-not-promoted" in fired  # no leaf on disk yet
+
+    # Mint the leaf; the parent goes clean with nothing else changing.
+    leaf = paths.record_path(root, "0" * 8)
+    leaf.parent.mkdir(parents=True, exist_ok=True)
+    leaf.write_text("---\nid: " + "0" * 8 + "\n---\n", encoding="utf-8")
+    assert "placed-member-not-promoted" not in _fired(post, root)
 
 
-def test_schematic_image_marker_is_superseded(tmp_path):
-    """Two segments at one address are earned only when they extract DIFFERENT information;
-    a body-empty marker beside its own transcription renders the region twice."""
+def test_a_placement_naming_no_member_is_unresolvable(tmp_path):
     root = _root(tmp_path)
     post = _post()
-    _with_embed(post)
-    post.content = segments.emit([_schematic(marker=True)])
-    findings = lint.lint(post, segments.iter_blocks(post.content), root)
-    superseded = [f for f in findings if f.rule_id == "form-marker-superseded"]
-    assert len(superseded) == 1
-    assert superseded[0].severity == "error"
+    _with_embed(post, address="el=3")
+    sec = segments.Section(
+        form="schematic",
+        segments=[segments.Segment(atom="placement", address="el=99")],
+    )
+    post.content = segments.emit([sec])
+    fired = _fired(post, root)
+    assert "placement-without-member" in fired
 
 
-def test_schematic_embed_on_another_axis_is_not_this_spans_business(tmp_path):
-    """An embed addressed on an axis the span does not carry belongs to another span."""
-    root = _root(tmp_path)
-    post = _post()
-    _with_embed(post, address="page=2")
-    post.content = segments.emit([_schematic()])
-    assert "form-embed-not-transcribed" not in _fired(post, root)
-
-
-def test_document_figure_marker_still_allowed(tmp_path):
-    """`document` declares neither check — a page's figure marker and a sub-region
-    transcription legitimately coexist there, addressing different regions."""
+def test_a_chained_crop_of_a_member_is_the_members_rendering(tmp_path):
+    """`el=3&bbox=…` crops the MEMBER's pixels, so it is a rendering of the member's bytes
+    wearing the container's address — caught, and re-homed with the crop kept (§4.3.1.4)."""
     root = _root(tmp_path)
     post = _post()
     _with_embed(post)
     sec = segments.Section(
+        form="schematic",
+        segments=[
+            segments.Segment(
+                atom="text", overlay="text/ocr", address="el=3&bbox=0,0.8,1,0.2", body="LEGEND"
+            )
+        ],
+    )
+    post.content = segments.emit([sec])
+    assert "member-rendered-on-parent" in _fired(post, root)
+
+
+def test_a_region_of_the_records_own_transport_is_untouched(tmp_path):
+    """The exempt case, and the line sjrahn drew himself: a `page=`/`bbox=` region of the
+    record's OWN transport has no member row, no blake3, and no leaf — its marker and its
+    transcriptions stay exactly where they are."""
+    root = _root(tmp_path)
+    post = _post()  # no members at all
+    sec = segments.Section(
         form="document",
-        segments=[segments.Segment(atom="image", overlay="image/figure", address="el=3")],
+        segments=[
+            segments.Segment(atom="image", overlay="image/figure", address="page=2"),
+            segments.Segment(
+                atom="text", overlay="text/ocr", address="page=2&bbox=0,0,1,0.5", body="TOP"
+            ),
+        ],
     )
     post.content = segments.emit([sec])
     fired = _fired(post, root)
-    assert "form-marker-superseded" not in fired
-    assert "form-embed-not-transcribed" not in fired
+    assert "member-rendered-on-parent" not in fired
+    assert "placement-without-member" not in fired
 
 
 # ---------- `corpus guidance` carries the governing contract ---------- #

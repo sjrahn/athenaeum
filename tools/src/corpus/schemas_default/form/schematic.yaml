@@ -15,17 +15,22 @@ description: |
   - **Transcribed** — a `text/data-table` from-to list where the drawing is legible enough to
     trace endpoint to endpoint. This is the goal, because it is the only rendering a claim can
     cite at full strength.
-  - **A figure** — the body-empty `image` marker plus that marker's own `description:`, where the
-    relation currently cannot be faithfully textualized (illegible scan, a topology the
-    from-to shape cannot hold, a sheet nobody has read yet). Honest, and valid indefinitely.
+  - **Unread** — no rendering yet, where the relation currently cannot be faithfully
+    textualized (illegible scan, a topology the from-to shape cannot hold, a sheet nobody has
+    read yet). Honest, and valid indefinitely: the sheet record stands as its artifact's proxy
+    and `corpus resolve` reaches the pixels.
 
-  What the contract DOES bind is that the two never double up: where the from-to rendering
-  exists it **supersedes** the marker at that address, because the marker extracts nothing and
-  keeping both renders the region twice (§4.3.2.2 — two segments on one region are earned only
-  where they extract genuinely DIFFERENT information, which is rare). So `embed_rendered` asks
-  each member in the span for one or the other, never for both and never specifically for the
-  table. The drawing's provenance rides the address either way: the attested member row is the
-  asset, and a transcription's own `bbox=` is the crop into it.
+  *(3.8)* **Where the rendering lives is settled, and it is not here.** A schematic sheet
+  inlined in an HTML page is a MEMBER — bytes with their own blake3 — so its transcription
+  belongs on its own promoted record and the page carries a `placement` (§4.3.2.4). This span's
+  children are therefore placements, one per sheet, in the source's order. The `embed_rendered`
+  check that used to bind each member in the span to exactly one of {`text/data-table`,
+  `image` marker} is **retired with the arrangement it policed**: both of its branches are now
+  `member-rendered-on-parent` violations, and whether a sheet's own record has been read yet is
+  demand on that record (normalization pressure, §8.5), never this page's conformance failure.
+  A sheet that IS the whole artifact — a standalone PDF page raster, a schematic captured on its
+  own — renders here directly, at the whole-transport address, and that is the case this
+  contract now describes.
 
   A drawing whose payload is NOT a relation — a component photo, an exploded parts view, a
   torque plate, a location illustration — is not a schematic at all; that page is a
@@ -110,9 +115,6 @@ decomposition: |
   never to a cell.
 checks:
   address_axes: [el, page, pages, block]
-  embed_rendered:
-    lossless: text/data-table
-    marker: image
 normalization:
   guidance: |
     Read the drawing from the resolved bytes — never transcribe a sheet from its own

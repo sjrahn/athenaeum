@@ -28,6 +28,7 @@ from typing import Any
 
 import frontmatter
 
+from corpus import paths as _paths
 from corpus import records as _records
 from corpus import schemas as _schemas
 from corpus import segments as _segments
@@ -387,7 +388,9 @@ def _rule_atom_invalid(post, blocks, root) -> Iterator[Finding]:
 
 
 def _check_atom(seg: _segments.Segment) -> Iterator[Finding]:
-    if seg.is_structural:  # the fifth kind — a byte-mark, not an atom (§4.3.2.3)
+    # The fifth and sixth kinds carry no atom at all (§4.3.2.3, §4.3.2.4) — a byte-mark and a
+    # placement are positions, and the atom vocabulary does not apply to either.
+    if not seg.is_content:
         return
     if seg.atom not in _VALID_ATOMS:
         yield Finding(
@@ -922,6 +925,131 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
             )
 
 
+def _member_address_transports(post) -> dict[str, str]:
+    """*(3.8)* `member address → member transport hex` over every roster row (§4.3.1.4). The
+    dedup rule makes this well-defined: identical content collapses to one row, so an address
+    belongs to at most one member. The map is what a placement resolves through — address to
+    row to blake3 to record — and what tells a content-atom segment it is standing on bytes
+    that are not its record's to claim."""
+    out: dict[str, str] = {}
+    for row in _records.iter_members(post):
+        hexval = str(row.get("transport") or "").partition(":")[2]
+        for addr in _addresses(row.get("address")):
+            out[addr] = hexval
+    return out
+
+
+def _rule_member_rendered_on_parent(post, blocks, root) -> Iterator[Finding]:
+    """*(3.8, §4.3.2.4)* A content-atom segment standing at a **member's** address.
+
+    A member is a transport with its own blake3, its own roster row, and — once positioned —
+    its own record. The containing record positions it with a `placement` and says nothing
+    else: an `image` marker there would claim residue in bytes it does not own, and a
+    `text/<id>` transcription there is a rendering of someone else's bytes in the one place
+    where it cannot be shared. Both are the same defect at different volumes, so both are one
+    error with one repair: promote the member, move the rendering to the leaf, place it here.
+
+    A CHAINED address counts: `el=<path>&bbox=…` crops the member's own pixels, so it is a
+    rendering of the member's bytes wearing the container's address (§4.3.1.4). It re-homes onto
+    the leaf with the crop kept and the `el=` prefix dropped — the fractions were always
+    relative to the member's extent — except a whole-frame crop, which is not a region at all
+    and takes the whole-transport address (§4.3.2.2).
+
+    Structural byte-marks are exempt: a boundary the source declares at a position is a fact
+    about this transport whatever sits there (§4.3.2.3)."""
+    members = _member_address_transports(post)
+    if not members:
+        return
+    for top_i, blk in enumerate(blocks, 1):
+        segs = (
+            [(f"section {top_i}/segment {j}", s) for j, s in enumerate(blk.segments, 1)]
+            if isinstance(blk, _segments.Section)
+            else ([(f"segment {top_i}", blk)] if isinstance(blk, _segments.Segment) else [])
+        )
+        for label, seg in segs:
+            if not seg.is_content:
+                continue
+            hit = [a for a in _addresses(seg.address) if a.split("&", 1)[0] in members]
+            if not hit:
+                continue
+            what = "renders" if (seg.body or "").strip() else "marks"
+            yield Finding(
+                rule_id="member-rendered-on-parent",
+                severity="error",
+                message=(
+                    f"{label} ({seg.overlay or seg.atom}) {what} the member at "
+                    f"`{','.join(hit)}`, whose bytes are their own record's to represent: "
+                    f"promote the member and place it here instead (spec §4.3.2.4)."
+                ),
+                address=",".join(hit),
+                fields={"member": f"blake3:{members[hit[0].split('&', 1)[0]]}"},
+            )
+
+
+def _rule_placement_without_member(post, blocks, root) -> Iterator[Finding]:
+    """*(3.8, §4.3.2.4)* A placement whose address appears in no roster row.
+
+    A placement's entire content is the member it names, and it names it by the address they
+    share. One naming nothing is not a weak statement — it is an unresolvable one, and no
+    reader can tell whether the roster lost a row or the address is wrong."""
+    members = _member_address_transports(post)
+    for seg in _iter_all_segments(blocks):
+        if not seg.is_placement:
+            continue
+        addrs = _addresses(seg.address)
+        if addrs and not any(a in members for a in addrs):
+            yield Finding(
+                rule_id="placement-without-member",
+                severity="error",
+                message=(
+                    f"placement at `{','.join(addrs)}` names no member — no roster row "
+                    f"carries that address (spec §4.3.2.4/§4.3.1.4)."
+                ),
+                address=",".join(addrs),
+            )
+
+
+def _rule_placed_member_not_promoted(post, blocks, root) -> Iterator[Finding]:
+    """*(3.8, §4.3.2.4)* A placed member with no record of its own — **placement means
+    promotion**, and this is the half of that rule that can only live on the parent.
+
+    The complement — a promoted member awaiting its rendering pass — is deliberately NOT here.
+    That is demand, not a defect, it belongs on the leaf, and it is measured as normalization
+    pressure (§8.5). What this rule catches is a record that positioned bytes and left nothing
+    to reach: the placement resolves to a hash with no record behind it.
+
+    Cheap by construction, which is why it can run in the default gate on a record with 214
+    members: the leaf's path is a pure function of the roster hash (§12.1's sharding), so
+    existence is a `stat` and no record is loaded. The state of a leaf that DOES exist is
+    never read here — that read is what would have made this the perf class §12.25 warns
+    about."""
+    if root is None:
+        return
+    members = _member_address_transports(post)
+    reported: set[str] = set()
+    for seg in _iter_all_segments(blocks):
+        if not seg.is_placement:
+            continue
+        for addr in _addresses(seg.address):
+            hexval = members.get(addr)
+            if not hexval or hexval in reported:
+                continue
+            if _paths.record_path(root, hexval).is_file():
+                continue
+            reported.add(hexval)
+            yield Finding(
+                rule_id="placed-member-not-promoted",
+                severity="error",
+                message=(
+                    f"the member placed at `{addr}` (`blake3:{hexval[:12]}…`) has no record: "
+                    f"placing a member obliges promoting it, or nothing carries its "
+                    f"representation (spec §4.3.2.4, §8.1)."
+                ),
+                address=addr,
+                fields={"member": f"blake3:{hexval}"},
+            )
+
+
 def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
     """An image segment at an address that no embed in this record carries.
     Artifact-self-slices (`frame=`/`page=`/`bbox=` rendered from the artifact) and
@@ -929,7 +1057,12 @@ def _rule_embed_missing_target(post, blocks, root) -> Iterator[Finding]:
     materializes them on demand.
 
     *(3.4: the body-wikilink half is gone — segment bodies carry no stored addresses at
-    all, §4.3.2.2 — so this rule now checks image segments only.)*"""
+    all, §4.3.2.2 — so this rule now checks image segments only.)*
+
+    *(3.8: and the rule's meaning inverts with §4.3.2.4 — a marker at a member's address is
+    now `member-rendered-on-parent`'s error, so what remains here is the complement, and
+    together the two say the one thing §4.3.2.2 requires: a content-atom marker addresses a
+    region of its OWN transport. This half catches the marker that addresses nothing at all.)*"""
     artifact_mime = _records.media_type_for(post)
     known = _embed_address_set(post)
 
@@ -1145,52 +1278,6 @@ def _leading_axis(addr: Any) -> tuple[str, str]:
     return param.strip(), value.strip()
 
 
-def _el_span(post: Any, addr: Any) -> Any:
-    """A §6.1.1 `ElPath` for an `el=` address, or None.
-
-    *(3.6)* Dispatched on the record's `addressing:` stamp, never on the value's shape —
-    a bare `el=5` is valid under BOTH grammars and names different elements, so only the
-    record can say which axis it is on (the same rule the resolver and `ledger verify`
-    follow). Unstamped records keep the frozen legacy enumeration and its integer spans."""
-    if not _records.el_addressing(post):
-        return None
-    axis, value = _leading_axis(addr)
-    if axis != "el" or not value:
-        return None
-    from corpus import functional_uri as _furi
-
-    try:
-        return _furi.parse_el_path(value)
-    except ValueError:
-        return None
-
-
-def _span_bounds(section: Any) -> tuple[str | None, int | None, int | None]:
-    """A section's own address envelope as `(axis, lo, hi)` — the span an embed must fall in
-    to be that span's obligation. A whole-record section (no `address`, §4.3.2.1) returns
-    `(None, None, None)`: it owns the record's whole content zone, so every embed is in scope.
-    Falls back to the axis alone when the value is not an integer span."""
-    addr = section.address
-    if not addr:
-        # Whole-record span: scope to the axes its own children actually use, so an embed on
-        # an unrelated axis stays another contract's business rather than this span's orphan.
-        axes = {_leading_axis(s.address)[0] for s in getattr(section, "segments", [])}
-        return (axes.pop() if len(axes) == 1 else None), None, None
-    axis, value = _leading_axis(addr)
-    m = re.match(r"^(\d+)(?:-(\d+))?$", value or "")
-    if not m:
-        return (axis or None), None, None
-    lo = int(m.group(1))
-    return (axis or None), lo, int(m.group(2)) if m.group(2) else lo
-
-
-def _segment_id(seg: Any) -> str:
-    """A segment's opener id — the atomic-overlay id where one is named (already the full
-    `<atom>/<id>`, e.g. `image/figure`), else the bare atom. `checks.paired_segments` keys
-    on it."""
-    return str(getattr(seg, "overlay", None) or seg.atom)
-
-
 def _axis_low(value: str) -> int | None:
     """The low integer of an axis value (`3` → 3, `2-6` → 2), or None when non-numeric.
 
@@ -1209,33 +1296,6 @@ def _axis_low(value: str) -> int | None:
         return int(str(value).split("-", 1)[0])
     except (TypeError, ValueError):
         return None
-
-
-def _member_keys_claimed_by_spans(post, blocks) -> set[tuple[str, str]]:
-    """The `(axis, value)` keys of members some form span's derived envelope CONTAINS
-    (§6.1.1 prefix test on the path axis, integer bounds otherwise). Its complement is the
-    orphan set the first span answers for — see `_rule_form_coherence`'s scoping."""
-    from corpus import functional_uri as _furi
-
-    claimed: set[tuple[str, str]] = set()
-    for blk in blocks:
-        if not isinstance(blk, _segments.Section) or blk.address is None:
-            continue
-        span_axis, span_lo, span_hi = _span_bounds(blk)
-        span_path = _el_span(post, blk.address)
-        for embed in _records.iter_embed_blocks(post):
-            axis, value = _leading_axis(embed.get("address"))
-            if not value or (span_axis and axis != span_axis):
-                continue
-            if span_path is not None:
-                member_path = _el_span(post, embed.get("address"))
-                if member_path is not None and _furi.el_path_contains(span_path, member_path):
-                    claimed.add((axis, value))
-            elif span_lo is not None:
-                low = _axis_low(value)
-                if low is not None and low >= span_lo and (span_hi is None or low <= span_hi):
-                    claimed.add((axis, value))
-    return claimed
 
 
 def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
@@ -1295,106 +1355,22 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
                         address=_addr_str(seg.address),
                     )
 
-        # `embed_rendered` — the form names a SHAPE, and that shape admits two faithful
-        # renderings: the `lossless` one where the asset's content can be transcribed, and the
-        # body-empty `marker` where it currently cannot. The check binds the ATTESTED MEMBER
-        # and asks that exactly ONE be present — never that the lossless one exist, which the
-        # form has no standing to demand.
+        # `embed_rendered` — RETIRED in 3.8 (§4.3.2.4, §12.30), and retired rather than
+        # re-keyed, because the amendment answers its question structurally instead of by
+        # conformance. The check bound an attested member and asked that the span carry exactly
+        # one of {a `lossless` rendering, a body-empty `marker`} for it — an XOR that was
+        # sjrahn's 2026-07-26 ruling and correct for as long as a parent was where a member's
+        # rendering lived. Under 3.8 it never is: a member is either **placed**, in which case
+        # its own record renders it and the parent carries a placement, or **unplaced**, in
+        # which case nothing is owed at all. So both branches of the XOR are now violations of
+        # a stronger rule (`member-rendered-on-parent`), and the residual question — has the
+        # leaf rendered yet — is DEMAND on the leaf (normalization pressure, §8.5), not a
+        # conformance failure of the parent's form. A form has no standing to demand a
+        # rendering; that was already the check's own caveat, and 3.8 makes it structural.
         #
-        # The XOR is the point, and it is sjrahn's ruling (2026-07-26): a faithful rendering
-        # REPLACES the bytes marker, and if it cannot faithfully replace, it is not a faithful
-        # rendering. The bytes are never at risk — the member row addresses them directly, so
-        # `corpus resolve` reaches the pixels whether or not a marker sits in the body. What a
-        # marker adds beside a complete transcription is a second, contradictory ruling about
-        # one region: the atom is how a segment declares whether anything is left over
-        # (§7.3, `enables_lossless`), and a region cannot both have residue and not.
-        #
-        # *(A 2026-07-27 pass briefly inverted this to `embed_marked` — "the marker is owed
-        # either way" — citing a §4.3.2.2 paragraph drafted the same day. The paragraph was
-        # not the spec speaking; the ruling stands. #93.)*
-        alts = checks.get("embed_rendered") or {}
-        want, marker_atom = alts.get("lossless"), alts.get("marker")
-        if alts:
-            present = {
-                _leading_axis(seg.address) for seg in blk.segments if _segment_id(seg) == want
-            }
-            # Scope to THIS span, off the section's own derived envelope (§4.3.2.1) — a
-            # sibling span's embed is that span's obligation, not this one's.
-            #
-            # *(3.7)* A member NO span contains falls to the FIRST section, and that clause is
-            # load-bearing rather than tidy. Ownership used to have a catch-all: a whole-record
-            # section (`address: None`) owned every embed on an axis its children used. With
-            # the stored envelope retired, every span's extent is exactly its children's, so an
-            # unplaced member would belong to nobody and `form-embed-not-rendered` — the rule
-            # that says an asset with no rendering at all is an omission, not a judgment —
-            # would silently stop firing on the one case it exists for. Attributing the
-            # orphan to the first span is the same answer the old catch-all gave on a
-            # single-section record, without reinstating whole-record ownership (§12.29).
-            span_axis, span_lo, span_hi = _span_bounds(blk)
-            # *(3.6)* On the path axis a span owns the members its address CONTAINS — the
-            # §6.1.1 prefix test. The integer lo/hi below cannot express that: a dotted path
-            # fails its `^\d+(-\d+)?$` match, so every span silently widened to the whole
-            # record and each sheet of a multi-sheet page claimed its siblings' members.
-            span_path = _el_span(post, blk.address) if blk.address else None
-            from corpus import functional_uri as _furi
-
-            is_first_section = blk is next(
-                (b for b in blocks if isinstance(b, _segments.Section)), None
-            )
-            claimed_elsewhere = _member_keys_claimed_by_spans(post, blocks)
-            for embed in _records.iter_embed_blocks(post):
-                axis, value = _leading_axis(embed.get("address"))
-                if not value or (span_axis and axis != span_axis):
-                    continue
-                orphan = (axis, value) not in claimed_elsewhere
-                contained = True
-                if span_path is not None:
-                    member_path = _el_span(post, embed.get("address"))
-                    contained = member_path is not None and _furi.el_path_contains(
-                        span_path, member_path
-                    )
-                elif span_lo is not None:
-                    low = _axis_low(value)
-                    contained = (
-                        low is not None
-                        and low >= span_lo
-                        and (span_hi is None or low <= span_hi)
-                    )
-                if not contained and not (orphan and is_first_section):
-                    continue
-                key = (axis, value)
-                marked = marker_atom and any(
-                    seg.atom == marker_atom
-                    and not seg.is_structural
-                    and _leading_axis(seg.address) == key
-                    for seg in blk.segments
-                )
-                if key in present and marked:
-                    yield Finding(
-                        rule_id="form-marker-superseded",
-                        severity="error",
-                        message=(
-                            f"section {top_i} (form `{blk.form}`): the `{marker_atom}` marker at "
-                            f"`{_addr_str(embed.get('address'))}` is superseded by the `{want}` "
-                            f"rendering at the same address — drop the marker. The member row "
-                            f"holds the asset and `corpus resolve` reaches the bytes, so the "
-                            f"marker adds only a second ruling about one region (spec §7.8)."
-                        ),
-                        address=_addr_str(embed.get("address")),
-                    )
-                elif key not in present and not marked:
-                    yield Finding(
-                        rule_id="form-embed-not-rendered",
-                        severity="error",
-                        message=(
-                            f"section {top_i} (form `{blk.form}`): embed at "
-                            f"`{_addr_str(embed.get('address'))}` carries neither a `{want}` "
-                            f"rendering nor a `{marker_atom}` marker — this form's assets are its "
-                            f"content, so each owes one or the other (spec §7.8)."
-                        ),
-                        address=_addr_str(embed.get("address")),
-                    )
-
+        # *(A 2026-07-27 pass briefly inverted the XOR to `embed_marked` — "the marker is owed
+        # either way" — citing a §4.3.2.2 paragraph drafted the same day. The paragraph was not
+        # the spec speaking; the ruling stood, and now the whole check goes. #93, #101.)*
         axes = set(checks.get("address_axes") or [])
         monotonic = bool(checks.get("monotonic"))
         prev_low: int | None = None
@@ -1494,6 +1470,12 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-mode-deprecated", _rule_segment_mode_deprecated),
     ("embed-unreferenced", _rule_embed_unreferenced),
     ("embed-missing-target", _rule_embed_missing_target),
+    # *(3.8)* The placement contract, §4.3.2.4 — three errors at the two grains the amendment
+    # separates: what the parent may say about a member, what a placement must name, and
+    # whether the named member exists at all.
+    ("member-rendered-on-parent", _rule_member_rendered_on_parent),
+    ("placement-without-member", _rule_placement_without_member),
+    ("placed-member-not-promoted", _rule_placed_member_not_promoted),
     ("body-empty-normalized", _rule_body_empty_normalized),
     ("body-html-residue", _rule_body_html_residue),
     ("body-corpus-link-forbidden", _rule_body_corpus_link_forbidden),

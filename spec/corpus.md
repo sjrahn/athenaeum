@@ -1,7 +1,7 @@
 ---
 spec_id: ATH-CORPUS
 title: "Corpus Specification"
-version: 3.7
+version: 3.8
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
@@ -34,6 +34,8 @@ The corpus sits beneath the ledger layer, which interprets it through `corpus://
 
 **Version 3.7** — the **derived-envelope amendment** — removes the last stored fact a record was keeping a second copy of: the **section's `address`**. A span's envelope was always *defined* as the min–max span of its children's addresses, and the conformance rule proved the redundancy by re-deriving the identical value and comparing it against the stored one — a fact written down and then checked against itself, which is the shape of every drift bug the previous amendments removed. It is now **derived, never stored** (§4.3.2.1): a section opener carries only the fields its form declares, and a form that declares none takes the bare opener that 3.5 already called complete. Two consequences fall out and both are simplifications. The **whole-record section ceases to be expressible** — it was spelled by the *absence* of `address`, and absence is no longer a signal — so every span's claim is exactly its children's envelope and cannot be anything else; the "claims the entire content zone" special case retires with the spelling, and with it the sibling prohibition's last remnant (§4.3.2.1). And the derived-editorial ladder loses the code path 3.5 had already retired in text: §4.2.3 stated that *a form contract marks nothing* and that *no section, at any scope, contributes to a record's display identity*, while the implementation still read a whole-record section's fields and three bundled form overlays still declared editorial marks — a divergence the stored envelope was quietly holding up. Both go. What remains of the section block is what 3.0 created it for: a span, a form id, and the contract's own declared fields. Migration: §12.29.
 
+**Version 3.8** — the **placement amendment** — settles where a **member's** representation lives, and the answer is: on the member's own record, never on the record that contains it. A member is bytes with their own blake3, already rostered and already promotable (§4.3.1.4, §8.1); a containing record that transcribes one is authoring content about *someone else's* bytes, in a place where it can only ever be duplicated. The measurement is the argument: on the public hub 1,573 member transports appear in more than one record, 558 were transcribed in more than one record already, and 1,481 transcription passes had been spent producing renderings of bytes that had already been rendered. So **placement means promotion** (§8.1): a member positioned in a body must have a record of its own, and the containing record positions it with a new sixth segment kind — the **placement** (§4.3.2.4) — which carries an address and withholds every claim. What the member *is* stays where the bytes are. Three things follow. The parent's rendering of a member becomes a **violation**, not a style (§4.3.2.2), which is what makes the dedup sound: one leaf serves every parent, and *context is an input to the normalize pass, never to its output* — a member shared by 668 records has 668 contexts and one faithful rendering. The **import is derived** — the leaf is found by blake3 from the roster, so nothing is stored that could rot, exactly as §12.26 refuses a stored residence marker and 3.4 refused a stored body link. And a segment's `address` becomes **optional, with absence meaning the whole transport** (§4.3.2.2) — the record-side mirror of the bare `corpus://<id>` that has always named an artifact whole — which is what a promoted member's own rendering addresses, and which closes §12.25's open question by removing the fabricated value it was about rather than by inventing a better one. Demand splits to match the two failure modes: a placed member with no record is the **parent's** defect and lints there; a promoted member awaiting its pass carries **normalization pressure** on the leaf, N-fold in the number of parents placing it, joining the ledger's demand on one mechanism (§8.5). Migration: §12.30.
+
 ---
 
 # Part I — The contract (normative)
@@ -63,11 +65,13 @@ Every captured file is a **transport** — a media-type-shaped container — tha
 
 A record body's content zone is a sequence of **sections** (form spans, §4.3.2.1 — rare; present only where a form is declared) and **segments** (the read-order rendering). Each content segment carries:
 
-- One **content atom**: `text`, `image`, `audio`, or `video`. Only `text` segments carry a segment body. Segments of the other three atoms are positioning markers — they declare where in the reading order an asset appears, and link to a matching member row (by address membership, §4.3.1.4) or materialize through the resolver — and their segment body is empty.
-- An **address** specifying the segment's location inside the transport, in a scheme determined by the media-type schema. Addresses compose, so that chains can form from transport to atom to region (a region within a frame within a video).
+- One **content atom**: `text`, `image`, `audio`, or `video`. Only `text` segments carry a segment body. Segments of the other three atoms are positioning markers — they declare where in the reading order a region of *this* transport appears, materialized on demand through the resolver — and their segment body is empty. *(3.8: an asset that is itself a transport, and so has a member row, is positioned by a **placement** instead — below.)*
+- An **address** specifying the segment's location inside the transport, in a scheme determined by the media-type schema. Addresses compose, so that chains can form from transport to atom to region (a region within a frame within a video). *(3.8: **optional** — an absent address names the whole transport, §4.3.2.2.)*
 - Exactly one **atomic classification**, declared on the opener line in the form `<!--segment <atom>/<id>-->` (or bare `<!--segment <atom>-->` for unclassified-but-typed segments). Text-atom overlays may declare lossless-shaping behavior — those overlays shape the segment body into a specific lossless form (a markdown table, a transcript, a chat message). When multiple representations apply to the same source region, each becomes its own segment.
 
 *(3.0)* A fifth segment kind — the **structural segment**, `<!--segment structural-->` (§4.3.2.3) — carries no content atom and no body: it is a **byte-mark**, the faithful record that the source itself declares a structural boundary at an address (a heading, an outline entry, a chapter mark, a topic boundary), with a `level:` and an optional `mark:`. The table of contents is a **derived rendering** over these marks — arbitrary depth, zero nesting grammar — never a stored grouping. *(The 1.0–2.x stored TOC — sections as grouping blocks — retires; §4.3.2.1.)*
+
+*(3.8)* A sixth — the **placement**, `<!--segment placement-->` (§4.3.2.4) — likewise carries no atom and no body: it records that a **member** (§4.3.1.4) sits at this position, and nothing else. What the member contains is its own record's to say, reached by the blake3 its roster row already carries; placing one is what obliges promoting it (§8.1). The two content-less kinds are symmetric — a mark points at a boundary the source declares, a placement at bytes the roster names — and both exist for what they withhold.
 
 Two segments may share an address as long as their opener-id differs — same-region stacking is how a record represents multiple valid lossless representations of one source region (a structural mark stacks with the content segment at its address the same way). Segments are addressable from outside the record via functional URIs that carry the segment's address in their query string (§5).
 
@@ -377,12 +381,14 @@ Members are deduplicated by `transport` — identical content collapses to one r
 
 Segments link to members by **address membership**, not by an explicit reference field. A segment whose address appears (scalar or list-member) in a member's `address` is the place where that asset sits in the record's representation. Unplaced members — rows no segment points at — are tolerated as a record of available assets: the roster is unabridged by design, and declining to *place* a favicon is the pruning decision, never editing the roster.
 
-Every image, audio, and video segment's address must appear in some member's address — **except resolver-materializable addresses**. When the resolver can materialize the segment's address on demand, no member row is required — the functional URI (§6) produces the bytes. Two cases qualify:
+*(3.8)* The segment that does the linking is a **placement** (§4.3.2.4), and it is the only kind admitted at a member's address. The correspondence is exact in both directions: **a placement's address MUST appear in some member's address** — a placement naming no member names nothing — and **no content-atom segment's address may appear in, or chain from, a member's address**, because a member's content is its own record's to render. The chained form is included deliberately: `el=<path>&bbox=<x,y,w,h>` is a crop of the member's *pixels*, so it is a rendering of the member's bytes wearing the container's address, and it re-homes onto the member's own record with the crop intact and the `el=` prefix gone. Placing is therefore also what obliges promotion (§8.1). *(Structural byte-marks are unaffected and may stand at any address, member or not: a mark is the source declaring a boundary, which is a fact about this transport regardless of what sits at the position.)*
+
+Every image, audio, and video segment therefore addresses something the resolver materializes from **this record's own capture** without a roster row — which is the same carve-out this section always drew, now stated as the rule rather than the exception. Two cases qualify:
 
 - **Artifact self-slices** *(unchanged from 2.x)* — a region of the record's own artifact: a `frame=`/`time=`/`time_range=` into a video, a `page=` render of a PDF, a `bbox=` into a single-image record.
 - **Lineage-chained references** *(3.0)* — an asset the record's bytes declare but do not contain, whose bytes live in the record's own containment-lineage parent (§6.2): a conversation message's attachment (`turn=<N>&att=<M>`), a promoted member's sibling asset. The reference is faithful content (it is *in* the bytes); the resolution chain is derived at read time from the lineage origin block plus the record's own bytes — never stored — and cannot rot, because the parent is content-addressed. A reference whose target member is absent (a dead CDN link the export never localized, a takeout gap) is still a faithful marker; materialization fails loudly at resolve/health time, never papered over by a stale stored pointer.
 
-A member row is needed only for assets that are neither self-slices nor lineage-resolvable — an inline image the capture inlined, a nested transport, a declared track.
+A member row is needed only for assets that are neither self-slices nor lineage-resolvable — an inline image the capture inlined, a nested transport, a declared track. *(3.8: which is the same set that takes a placement rather than a marker, and the same set promotion reaches — one line, drawn once, read three ways.)*
 
 #### 4.3.2 The content zone
 
@@ -502,7 +508,7 @@ A segment carries a segment body only when that body is a faithful, lossless ren
 
 - **Plain prose** — `<!--segment text-->` with the segment body as markdown text. Default for HTML prose, PDF page text, etc.
 - **Shaped lossless transcription** — `<!--segment text/<id>-->` where the overlay's declaring schema licenses lossless shaping (`enables_lossless: true`, §4.4.1). The overlay shapes the segment body into the declared form (markdown table, transcript, OCR text, time-stamped captions, etc.). The address scheme may chain through transport→atom transforms to reach a region within a frame within a stream.
-- **Body-empty marker** — every other segment, in two cases. (a) The three non-text atoms (`image`, `audio`, `video`) are positioning markers in document flow that link to a matching member row (by address membership) for the asset's byte identity. (b) A `text/<id>` overlay whose declaring schema sets `enables_lossless: false` marks a *typed but non-lossless* text region — e.g. a live, formula-driven table whose displayed values are a single-execution snapshot rather than faithful content. In both cases the segment body is empty **and stays empty**.
+- **Body-empty marker** — every other segment, in two cases. (a) The three non-text atoms (`image`, `audio`, `video`) are positioning markers in document flow for a region of **the record's own transport** — a self-slice the resolver materializes from these bytes (a PDF page raster, a `bbox=` crop, a `frame=`/`time_range=` cut). *(3.8: an address that a **member** row carries is no longer this case — the member has its own byte identity and its own record, and it is positioned by a `placement` (§4.3.2.4). A content atom at a member address claims residue in bytes that are not the record's to claim.)* (b) A `text/<id>` overlay whose declaring schema sets `enables_lossless: false` marks a *typed but non-lossless* text region — e.g. a live, formula-driven table whose displayed values are a single-execution snapshot rather than faithful content. In both cases the segment body is empty **and stays empty**.
 
   *(3.5)* **A marker says where the bytes are; it never says what they contain.** What the region is, is answered by the opener — the atom and its overlay id (`image/chart`, `image/logo`, `text/data-table-dynamic`) — which is a typed, cross-record-queryable, mechanically-checkable answer, and by the address, which is where to go. A marker carrying prose would be the record substituting a paraphrase for a rendering it declined to perform. This obliges the atom namespace to keep its overlay ids **self-describing** (§7.3): an overlay too vague to answer "what is this region" is under-specified, and the fix is a better overlay, never a sentence on the segment. Where more than the type is genuinely knowable, it is knowable **losslessly** — as a co-addressed segment (below) or, if the asset deserves standing of its own, as a promotion (§8.1).
 
@@ -514,11 +520,18 @@ Same-region stacking remains exactly what the identity rule permits — several 
 
 *(This paragraph previously read "a marker and a faithful extraction of the same region coexist, always." That was drafted the day after the ruling above and inverted it; the tooling was then reconciled to the draft rather than to the ruling. Both are corrected — §12.28's successor migration re-removes the markers that sweep restored.)*
 
-###### Required header fields
+###### The address field
 
 | Field | Description |
 |---|---|
-| `address` | Address inside the transport, in the scheme defined by the media-type schema. The segment's identity. Composable: addresses chain transforms (e.g. transport → frame → region) as the schema permits. |
+| `address` | Address inside the transport, in the scheme defined by the media-type schema. Part of the segment's identity. Composable: addresses chain transforms (e.g. transport → frame → region) as the schema permits. *(3.8: **optional** — absence names the whole transport. Below.)* |
+
+***(3.8) An absent `address` names the whole transport.*** A functional URI has always spelled *these bytes, whole* as the bare `corpus://<id>` with no query (§5.1, §6.1); an absent segment address is the record-side mirror of it, and means exactly the same thing. It is required for the ordinary case a promoted member creates: a record whose artifact **is** the addressed content — a promoted table image whose whole rendering is one `text/data-table`, a plain-text artifact rendered whole — where every axis the media-type schema declares is a way of naming a *part*, and naming the whole through one of them means fabricating a value (`bbox=0,0,1,1` — the same full-region rendering wearing a crop; a bare `el=1` on an artifact whose text lives in un-addressed layout elements). The fabricated value is not merely inelegant: it is a stored claim that a *region* was addressed, which lint then checks against a grammar that cannot see it is false. Absence is checkable, singular, and cannot drift. *(§12.25 named one instance of this — an invented `el=1` on an artifact with no addressable element — and 3.6 closed that instance by making the HTML address space total. The general case is the one here: content that genuinely is the whole artifact, where every part-naming axis is the wrong tool. §12.30.)*
+
+Two rules bound it, so absence stays the whole-transport statement rather than becoming the lazy default:
+
+- **A body-empty positioning marker may never be address-less.** A marker's whole content is *where* (§4.3.2.2); a marker positioning the record's own bytes within the record's own flow states nothing, and there is nothing for a reader to resolve that `corpus://<id>` did not already give them. This holds for the three non-text atoms, for the structural byte-mark (a boundary is a position by definition, §4.3.2.3), and for the placement (which names a member *by* its address, §4.3.2.4).
+- **The identity rule is unchanged**, and it does the rest: identity is (`opener-id`, `address`), and an absent address is one value like any other — so a record carries at most one address-less segment per opener-id, and an address-less rendering coexists with `bbox=`-addressed extractions of parts of the same artifact exactly as two addressed segments would.
 
 ###### Optional header fields
 
@@ -627,6 +640,92 @@ mark: The heist
 ```
 
 The chapters are the container's byte-marks on the shared timeline; the tracks (promotable, §8.1) inherit them at read time through lineage — a track record never copies marks its own bytes do not carry.
+
+##### 4.3.2.4 The placement segment *(3.8)*
+
+```
+<!--segment placement
+address: <where the member sits in this transport>
+-->
+```
+
+A **placement** is a body-empty segment recording that a **member** (§4.3.1.4) sits at this position in the record's reading order. It is the sixth segment kind: no content atom, no atomic overlay, no body, no fields but the address. Its identity is (`placement`, address). It is the exact structural twin of the structural byte-mark (§4.3.2.3) — both carry a position and withhold every claim about content — and the two differ only in what the position is *of*: a mark points at a boundary the source declares, a placement at bytes the roster already names.
+
+**What it withholds is why it exists.** The atom is precisely how a segment declares whether anything is left over (§7.3, `enables_lossless`): an `image` at an address claims *irreducible bytes here*, a lossless `text/<id>` claims *this is what they say*. For a member both claims are about bytes that have their own blake3, their own byte-facts, and — once positioned — their own record. A containing record making either claim is asserting something about content it does not own, in the one place where the assertion cannot be shared: the next record to contain the same member would have to make it again. A placement makes exactly one statement, and it is a statement about *this* record: **member X sits here**.
+
+**The member is named by the address, and the rendering is imported.** A placement stores no reference to the member and no reference to its record. The address it carries appears in exactly one roster row (§4.3.1.4's dedup rule guarantees at most one), that row's `transport:` is the member's blake3, and the blake3 **is** the id of its record (§2) — so *placement → row → hash → leaf record* is a derivation over the record's own bytes, computed by every reader and stored nowhere. A stored `corpus://` pointer here would be the body-link grammar 3.4 retired (§4.3.2.2) and the residence marker §12.26 refuses, for the same reason both were refused: a derivable fact written down is a fact that can disagree with its derivation.
+
+###### Placement means promotion
+
+A member positioned by a placement **must** have a record (§8.1) — that is the rule the kind exists to make statable, and it runs in one direction only. Promotion is not automatic and an **unplaced** member never needs it: the roster is unabridged by design (§4.3.1.4), and a favicon, a spacer gif, or a container member nothing has yet looked at stays a row and nothing more. What forces a record is the act of *placing*, because placing is the record saying this asset is part of how it reads, and the only faithful representation of an asset is one made from the asset's own bytes.
+
+The consequence worth stating plainly is the one that makes the arrangement pay: **one leaf serves every parent.** A member appearing in N records is rendered once. Which fixes the invariant that makes sharing sound — *context is an input to the normalize pass, never to its output.* A parent's context legitimately tells a pass what it is looking at (the lineage origin block supplies it, §8.1); the rendering the pass produces must be faithful to the member's bytes alone. A rendering that depended on which parent asked could not be shared, and the whole arrangement would be a duplication bug wearing a dedup's clothes.
+
+###### Scope: a transport within a transport, never a region of one
+
+The rule reaches exactly the assets that have a roster row, and no others. A **region** of the record's own transport — a rastered PDF page, a `bbox=` crop of a single-image artifact, a video `frame=` — has no member row, no independent blake3, and no leaf to promote to; it stays a content-atom marker with its transcriptions beside it (§4.3.2.2), and nothing here touches it. The distinction is not a convention to remember: it is already exactly the line §4.3.1.4 draws for whether a row exists at all.
+
+A region **of a member** is the case worth stating, because it looks like the exempt one and is not. `el=<path>&bbox=…` chains a crop onto a member's address, so what it renders is the member's pixels — the member's own record is where that rendering belongs, and the address it takes there is the crop alone (the fractions were always relative to the member's extent, so nothing is recomputed). A whole-frame crop (`bbox=0,0,1,1`) is not a region at all — §4.3.2.2 already says so — and takes the whole-transport address, which is to say none.
+
+###### The two demands, at their two grains
+
+A placed member in the wrong state is two different defects, and each lints where it can actually be fixed (§8.5):
+
+- **Placed with no record** is the **parent's** defect — no leaf exists, so nothing else could carry the finding, and the check is cheap: the leaf's path is a pure function of the roster hash, so existence is a stat. It is an **error**: a record positioning bytes it has not promoted has named a rendering that cannot be reached.
+- **Promoted but not yet rendered** is not a defect at all — it is **demand**, and it belongs to the leaf. A leaf placed in N parents carries N-fold **normalization pressure**, which is a second source on the same mechanism the ledger's citation discipline already drives (§8.5, `ledger.md` §6.3), so the queue can be ranked by how much of the corpus is waiting on one pass. Nothing gates on it; a leaf standing as its artifact's proxy is a complete record (§4.1).
+
+###### Worked example — three table images in one HTML article
+
+```
+<!--members
+- address: el=1.2.2.1.3.1.4.1.8.3
+  media_type: image/png
+  transport: blake3:cefda49d…
+  bytes: 63420
+- address: el=1.2.2.1.3.1.4.1.14.3
+  media_type: image/png
+  transport: blake3:010894ee…
+  bytes: 51420
+-->
+
+<!--section document-->
+
+<!--segment structural
+address: el=1.2.2.1.1.1
+level: 3
+mark: Underhood Fuse Block
+-->
+
+<!--segment placement
+address: el=1.2.2.1.3.1.4.1.8.3
+-->
+
+<!--segment placement
+address: el=1.2.2.1.3.1.4.1.14.3
+-->
+```
+
+and, on the record whose id is `cefda49d…`:
+
+```
+<!--artifact image/png-->
+
+<!--origin
+uri: corpus://<the article>?el=1.2.2.1.3.1.4.1.8.3
+snapshot: …
+-->
+
+<!--segment text/data-table
+-->
+
+**Fuse Block - Underhood, Device Usage**
+
+| No. | Device | Rating | Description |
+|---|---|---|---|
+…
+```
+
+The article says where the two tables sit; each table says what it contains, once, at the whole-transport address (no `bbox=0,0,1,1` — the rendering is of the whole artifact, §4.3.2.2), and a third article embedding the same PNG reaches the same rendering by placing the same hash.
 
 #### 4.3.3 The annotations zone
 
@@ -1140,7 +1239,7 @@ A terminal contract is **not** the catch-all this section forbids: the prohibiti
 |---|---|---|
 | `capture` | Bytes land in the corpus's staging area. | none |
 | `ingest` | blake3 of bytes → `id`; `transport_algos` → `transport:`; MIME detect → artifact-block opener; **byte-fact attestation** per the mime schema's `attest:` and `disposition:` (§7.1) — artifact fields, the members block whether manifest or exposable (members / messages / cards / entries / parts / tracks / items), structural byte-marks, sidecar lift; emit the record (the artifact's proxy, §4.1) with first origin block from capture context; persist binary. | `<pkg>.ingest@<v>` |
-| `promote` | Mint a record for a container member already in the corpus: locate via the members-block row, stream + blake3-verify → `id`; MIME detect; **attest** per the member's mime schema; emit a record whose first origin block records the containment lineage as history (`uri: corpus://<container-id>?<member-address>` + `filename`/`source_modified` where present). Bytes are NOT copied (§2). | `<pkg>.promote@<v>` |
+| `promote` | Mint a record for a container member already in the corpus: locate via the members-block row, stream + blake3-verify → `id`; MIME detect; **attest** per the member's mime schema; emit a record whose first origin block records the containment lineage as history (`uri: corpus://<container-id>?<member-address>` + `filename`/`source_modified` where present). Bytes are NOT copied (§2). *(3.8: **required** for any member a record positions with a placement (§4.3.2.4) — placing is the act that obliges it; an unplaced member never needs it. The lineage origin is also what supplies the normalize pass its parent **context**, which is an input to the pass and never to its output.)* | `<pkg>.promote@<v>` |
 | `draft` | *(retired in 3.0.)* The stage's three duties split: fact-stamping → ingest **attestation** (above); content extraction → resolver **derivation ops** (§6.2); body-writing → the normalize pass. A `status: draft` record reads tolerantly as a just-attested record (§12.18). | — |
 | `normalize` | The **one authoring pass**: consumes the derivation ops and renders the record under its named form contract (§7.8) — executed by a mechanical **shaper** where the record's declared form mapping (§7.2) or manifest shape makes it deterministic, by an interpretive agent where judgment is required — with the span's declared form fields and typed faithfulness issues riding the same pass. *(3.5: the pass no longer authors editorial headers or descriptions; its whole output is faithful renderings, form declarations, and fidelity issues.)* | `<pkg>.shape.<id>@<v>` / `<model-id>` / combined (`+`) |
 
@@ -1217,7 +1316,9 @@ A queue entry moves `idle → requested → claimed → idle`, recording the las
 | `release <id> [--failed]` | return a claim — bare re-queues it; `--failed` records a failed outcome. | no |
 | `await <id>` | block until the requested pass reaches a terminal outcome; success/failure by exit status. | reads only |
 
-**The pass gate** *(3.1, succeeding the 3.0 `status: normalized` gate; re-keyed 3.2)*. **Done** means the pass left the record **formed where its overlays declare a form** (§7.2, §4.4.6 — form-coherence lint covers the conformance half) and linting clean. Both are derived from the record itself; `finalize` enforces them together. *(3.2: the 3.1 gate's authored half dissolves with the layer — a formed span's editorial fields ride its section header under its own contract, and a record staying formless owes no vouch: its derived title/description are already honest, §4.2.3.)* *(3.3: a record governed by a **terminal contract** satisfies the gate with no stored rendering — the contract prescribes exactly that — so a terminal record drains to an immediate no-op `finalize` unless the request explicitly asks for re-evaluation or a describe pass; an accidental enqueue self-heals.)*
+**The pass gate** *(3.1, succeeding the 3.0 `status: normalized` gate; re-keyed 3.2)*. **Done** means the pass left the record **formed where its overlays declare a form** (§7.2, §4.4.6 — form-coherence lint covers the conformance half) and linting clean. Both are derived from the record itself; `finalize` enforces them together. *(3.2: the 3.1 gate's authored half dissolves with the layer — a formed span's editorial fields ride its section header under its own contract, and a record staying formless owes no vouch: its derived title/description are already honest, §4.2.3.)* *(3.3: a record governed by a **terminal contract** satisfies the gate with no stored rendering — the contract prescribes exactly that — so a terminal record drains to an immediate no-op `finalize` unless the request explicitly asks for re-evaluation or a describe pass; an accidental enqueue self-heals.)* *(3.8: linting clean now also means every member the record **places** has been promoted (§4.3.2.4) — the pass discovers its placements while making them, so the obligation is discharged in the same pass that creates it, and a parent whose placed member has no record does not close.)*
+
+***(3.8) Normalization pressure — the second demand source.*** A promoted member awaiting its own pass is **demand**, not backlog, exactly as the queue's founding rule says (§3.1 above): its parents want it rendered. The magnitude is mechanical and needs no field — a leaf placed in N records is wanted N times — so pressure is **derived** from the member index (§12.15) like every other cross-record fact, and the queue can be ranked by it: rendering one member that 668 records place is 668 records improved by one pass, which is a materially different proposition from rendering one that a single record places. This joins the ledger's demand (`ledger.md` §6.3 — the citation discipline enqueuing what it wants formed) as a second source on one mechanism; neither is a gate, and a leaf that no consumer ever asks about stays a complete record standing as its artifact's proxy (§4.1).
 
 **Drivable by an external loop, in either of two modes.** The claim is atomic (concurrent loops never double-claim) and every verb is non-interactive with a meaningful exit code and machine-readable output, so an agent loop runs `drain` → normalize the emitted id in-session → `finalize` (or `release --failed`) each iteration. A **scheduled** loop (e.g. cron) drains until the queue reports empty, then waits for the next tick — simple, but the loop session itself does the polling, waking even when there is no work. A **standing** loop instead blocks on the `drain` long-poll, which waits in the tooling until a request is claimable and returns it the instant one appears — so the (costly) loop session is engaged only when there is genuinely work. Both drive the same atomic claim; the long-poll is an ergonomic over it, not a distinct contract, and the same loop body serves either. The normalizer reads the record's applicable overlays' `normalization.guidance` (mime §7.1, origin §7.2, form §7.8, atom §7.3); because form knowledge rides in overlays, one generic loop serves every source — and demand flows down from the ledger, whose citation discipline prefers formed surfaces and raises demand by enqueuing (`ledger.md` §6.3): the ledger contributes by enqueuing, never by supplying a normalizer. *(3.0; completed 3.3)* The loop session's first consult is the record's **governing contract**, and the pass branches four ways: (1) **terminal** (§7.8) — no-op `finalize`, unless the request explicitly asks for re-evaluation *(3.5: the describe pass is gone with descriptions; a terminal record has no residual authoring work at all)*; (2) **declared form, mapped** — the shaper writes the form mechanically and there is nothing left for an agent to add, so the pass is deterministic end to end *(3.5)*; (3) **declared-but-unmapped or asserted form** — the interpretive case, and on an already-formed record a *refinement*: improve the existing shaping, never regress it; (4) **no form, no terminal** — the **adoption sweep**: test the library's contracts against the record's own bytes and adopt by assertion where one genuinely fits (§4.4.6), under the §12.22 discipline — body evidence wins, substantive-content veto, and a record matching no contract exits the pass formless and reported, never force-stamped. `finalize`'s done-gate is the pass gate above, form-coherence (§4.3.2.1) included.
 
@@ -2123,6 +2224,29 @@ The residue is the interesting part, because it is **not** mechanical. A flat in
 
 ---
 
+### 12.30 The placement amendment: a member's rendering, and the work already spent twice (non-normative)
+
+**What made it visible.** sjrahn, reading a normalized AllData article that carried three PNG members — one positioned with a bare marker, two transcribed into `text/data-table` tables in the article's own body: *"this is suppose to be on their promoted records. the current representation as i see it should be illegal."* The article was not wrong under 3.7; it was doing exactly what §4.3.2.2 licensed. What the shape hid is that the two transcriptions are renderings of bytes with their own blake3, and the corpus had no way to say so.
+
+**Measured before deciding.** Public hub: **14,300** member rows over **9,840** distinct transports, of which **9,109 are placed**; **1,573** transports appear in more than one record; **3,842** rows carry a parent-side rendering across **1,406** records; and — the number that decided it — **558** members were already transcribed in more than one record, **1,481** transcription passes spent producing renderings of bytes that had already been rendered. One PNG is placed by 668 records. Private hub: **77,502** rows, only **5,337** placed (the container manifests are overwhelmingly unplaced, which is the rule working: an unplaced member owes nothing), **2,089** parent-side renderings across **96** records. Promotion scope is therefore **9,109 + 5,337 = 14,446** distinct members — a large number of new records, and the cost sjrahn weighed and accepted: *"I am worried about the case of duplicating and splitting work done if an out of band promotion happens there is an ambiguity of where the body content for an image should be placed. we can instead just force it always to the leaf records."*
+
+**Why a segment kind rather than a block or a link.** Three alternatives were considered and each fails on a rule the spec already holds. A **block** would put positioning in two places — the roster row already carries the address — and would sit in a zone with no reading order, which is the one thing a placement must have. A **stored `corpus://` link** is the body-link grammar 3.4 retired and the residence marker §12.26 refuses; it would also rot, since bytes may move between standalone and contained residence without any record changing (§2). Re-using the **`image` marker** and simply forbidding the transcription beside it fails hardest, because the marker is not neutral: the atom is precisely how a segment declares residue (§7.3), so a marker at a member address keeps asserting *irreducible bytes here* about bytes the record does not own. The kind is needed for what it withholds, and §4.3.2.3's byte-mark is the exact precedent — a fifth kind that carries a position and no content claim. This is the sixth.
+
+**The address the leaf's rendering takes.** A promoted table image renders whole, and every axis its mime schema declares names a *part* — so the migration would have had to fabricate one (`bbox=0,0,1,1`, a full-region rendering wearing a crop). This is the general form of the defect §12.25 named on one instance of it: there, a `<div>`-soup HTML artifact with no addressable element got a `el=1` the normalize pass invented because `address:` was required, and 3.6 closed *that* instance by making the HTML address space total. The instance closed; the hole did not. Wherever the addressed content genuinely **is** the artifact, every part-naming axis is the wrong tool and a required field forces a fabrication. 3.8 removes the requirement rather than inventing a better value: an **absent** address names the whole transport, mirroring the bare `corpus://<id>` (§4.3.2.2). The two guard rules — a marker may never be address-less; identity is still (`opener-id`, `address`) — keep absence a statement rather than a default.
+
+**The migration, and the order that matters.**
+
+1. **Finish 3.4 first.** The roster amendment shipped a dual reader and lazy conversion, and eleven days later **3,550 of 3,561** public records and **1,029** private ones were still on the retired per-asset block — so the dual reader was not a transition, it was the steady state. Legacy rows carry no `bytes`, and 249 of them carry an atom-overlay id (`image/photo`, `image/figure`) where a MIME type belongs. `corpus reattest` converts, recomputes, and re-sniffs in one pass over the artifact; run it to completion and delete the dual reader. **A lazily-migrated grammar is a grammar with two spellings**, and the second one does not decay on its own.
+2. **Promote every placed member**, which requires the containment layer to stream an `el=` member out of an HTML container — the one family it could not reach, and the family holding 9,109 of the 14,446.
+3. **Move each parent-side rendering to its leaf**, at the whole-transport address — and the chained renderings with them. 2,065 public segments address a crop *of* a member (`el=<path>&…`), of which **1,829 are whole-frame** (`bbox=0,0,1,1`, `bbox=full`, and two long-form spellings of the same thing) and lose the crop entirely, ~236 are genuine sub-regions and keep it, and a residue of ~16 wears an unrecognized suffix (`region=banner`, `part=2`, `caption=after`) and needs eyes. That the dominant case is a fabricated whole-frame crop is the same finding twice: it is the invented address this amendment removes, sitting in the very population the amendment re-homes. Where two parents transcribed the same member differently, the collision is a **judgment**, not a merge: hold and report, never clobber. Where they agree, one survives and the other's work is what the amendment was measuring.
+4. **Re-anchor the ledger in the same change.** 23 citations anchor on a member address; 17 are `el=` into an HTML parent and move to the leaf, 6 are `path=` into a container and are untouched (they resolve member bytes directly and never quoted a parent's rendering).
+
+**One form check retires with the arrangement it policed.** `form/schematic` declared `embed_rendered`, binding each member in the span to exactly one of {a `text/data-table` transcription, an `image` marker} — an XOR that was right for as long as the parent was where a member's rendering lived. Under 3.8 it never is, so both of its branches are `member-rendered-on-parent` violations, and the residual question it was reaching for — *has this sheet been read yet* — is demand on the sheet's own record (§8.5), not a conformance failure of the page that embeds it. Retired rather than re-keyed: the amendment answers it structurally, which is strictly better than a per-form check answering it by declaration. Its two findings (`form-embed-not-rendered`, `form-marker-superseded`) go with it, and so do the four lint helpers that existed only to scope member ownership to a span.
+
+**What this does not touch.** A region of the record's own transport — a rastered PDF page, a `bbox=` crop, a `frame=` still — has no member row and no leaf, and keeps its content-atom marker with its transcriptions beside it. sjrahn drew that line himself, correcting an overreach: *"your comment 'the parent needs no image segment ever' is only true for embedded images. for things like pdfs we take crops of rastered pages and stay within that record. this is only for things that are transports on their own within another transport."*
+
+---
+
 ## Appendix A: Glossary
 
 | Term | Definition |
@@ -2143,6 +2267,8 @@ The residue is the interesting part, because it is **not** mechanical. A flat in
 | **Section block** | `<!--section <form-id>-->` — a **form span**: a positional span of the content zone declaring a named structural form, carrying only the fields that form declares. Depth one, never overlapping; a record may carry several. *(3.0: the 1.0–2.x TOC-grouping role is retired — see Structural segment. 3.5: no universal header fields; the sibling prohibition on a whole-record span is lifted.)* |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom: a lossless rendering of its addressed region, or a body-empty **marker** saying only where the bytes are and what type they are. *(3.5: a marker carries no narration.)* |
 | **Structural segment** | `<!--segment structural-->` — a body-empty **byte-mark**: the source's own declared boundary (heading, outline entry, chapter, topic) at an address, with `level:` and optional `mark:`. The TOC is a derived rendering over these marks. |
+| **Placement** | *(3.8)* `<!--segment placement-->` — a body-empty segment recording that a **member** sits at this position and nothing more. The member is named by the shared address, its record by the roster row's blake3 — derived, never stored. Placing a member obliges promoting it (§4.3.2.4, §8.1). |
+| **Normalization pressure** | *(3.8)* Derived demand on a promoted member's record: the number of records placing it. A second source on the queue's one mechanism, beside the ledger's citation demand; ranks the queue, gates nothing (§8.5). |
 | **Context block** | `<!--context issue/<id>[/<subtype>]-->` — an annotations-zone **capture-fidelity** observation, a typed code with no prose; record- or segment-scope (via `address:`). *(3.5: `issue` is the only namespace.)* |
 | **Namespace** | One of `mime`, `origin`, `form`, `atom`, `context`. Each is a schema axis or umbrella with its own block-keyword role. |
 | **Form** | The fourth classification axis (3.0): a **rendering contract** — an expectation for how a set of bytes is faithfully represented in a markdown shape (`conversation`, `statement`, `receipt`). Declared by a `form/` overlay; bound on a section opener; names shapes, never subjects; a goal for the right artifacts, never a default (3.1, §7.8). |

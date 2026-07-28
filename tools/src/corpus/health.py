@@ -377,7 +377,76 @@ SIGNAL_NAMES = (
     "validity_violations",
     "canonical_duplicate_clusters",
     "dangling_origin_refs",
+    "normalization_pressure",
 )
+
+
+def normalization_pressure(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
+) -> dict[str, Any]:
+    """*(3.8, spec §8.5)* Demand on promoted members, derived: how many records **place** each
+    member whose own record has not rendered it yet (§4.3.2.4).
+
+    This is not a defect list and nothing gates on it — a leaf standing as its artifact's proxy
+    is a complete record (§4.1). It is the second demand source on the queue's one mechanism,
+    beside the ledger's citation demand, and its whole value is the RANKING: rendering a member
+    that 668 records place is 668 records improved by one pass, which is a materially different
+    proposition from rendering one a single record places. Derived from the placements and the
+    roster, never stored — a field would be a count that could disagree with the records.
+
+    A member with no record at all is deliberately absent: that is the parent's error
+    (`placed-member-not-promoted`), not demand on a record that does not exist.
+    """
+    pressure: dict[str, int] = {}
+    placed_by: dict[str, set[str]] = {}
+    for ref in refs:
+        try:
+            blocks = _segments_module().iter_blocks(ref.post.content or "")
+        except Exception:
+            continue
+        addrs: set[str] = set()
+        for blk in blocks:
+            kids = blk.segments if hasattr(blk, "segments") else [blk]
+            for seg in kids:
+                if getattr(seg, "is_placement", False):
+                    value = seg.address
+                    addrs.update(value if isinstance(value, list) else [str(value)])
+        if not addrs:
+            continue
+        for row in records.iter_members(ref.post):
+            row_addrs = row.get("address")
+            row_addrs = row_addrs if isinstance(row_addrs, list) else [row_addrs]
+            if not any(str(a) in addrs for a in row_addrs):
+                continue
+            hexval = str(row.get("transport") or "").partition(":")[2]
+            if hexval:
+                placed_by.setdefault(hexval, set()).add(ref.record_id)
+
+    from . import paths as _paths
+
+    for hexval, parents in placed_by.items():
+        leaf = _paths.record_path(corpus_root, hexval)
+        if not leaf.is_file():
+            continue  # the parent's error, reported by lint — not demand
+        try:
+            state = records.derived_state(records.load(leaf), corpus_root)
+        except Exception:
+            continue
+        if state in ("proxy", "rendered"):
+            pressure[hexval] = len(parents)
+
+    ranked = sorted(pressure.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {
+        "members_awaiting": len(ranked),
+        "total_pressure": sum(pressure.values()),
+        "top": [{"member": h, "placed_by": n} for h, n in ranked[:limit]],
+    }
+
+
+def _segments_module():
+    from . import segments as _segments
+
+    return _segments
 
 
 def scan_all(
@@ -410,4 +479,6 @@ def scan_all(
         report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(refs, limit=limit)
     if "dangling_origin_refs" in selected:
         report["dangling_origin_refs"] = dangling_origin_refs(refs, corpus_root, limit=limit)
+    if "normalization_pressure" in selected:
+        report["normalization_pressure"] = normalization_pressure(refs, corpus_root, limit=limit)
     return report

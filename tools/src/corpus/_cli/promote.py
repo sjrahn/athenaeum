@@ -102,14 +102,25 @@ def run(args: argparse.Namespace) -> int:
     #    *(3.4)* This used to read a `filename` cached on the roster row. The container is the
     #    authoritative source — a cached copy can only ever agree with it or be stale — and the
     #    3.4 roster is closed to four keys (spec §4.3.1.4), so the hint comes from the bytes.
-    meta = containment.member_source_metadata(container_path, container_media_type, member_address)
+    #    *(3.8)* An `el=` member needs the container's `addressing:` stamp to be located at
+    #    all — the stamp is the grammar dispatch (§6.1.1), and resolving under the wrong
+    #    grammar would mint a record for a different element.
+    el_addressing = records.el_addressing(container_post)
+    meta = containment.member_source_metadata(
+        container_path, container_media_type, member_address, el_addressing=el_addressing
+    )
     basename = meta.get("filename") or member_address.rsplit("=", 1)[-1].rsplit("/", 1)[-1]
 
     # 4. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
     #    transport_algos). Never loads the member whole (spec §8.1 / §12.9).
     try:
         media_type, computed_id, aux = _sniff_and_hash(
-            corpus_root, container_path, container_media_type, member_address, basename
+            corpus_root,
+            container_path,
+            container_media_type,
+            member_address,
+            basename,
+            el_addressing=el_addressing,
         )
     except (ValueError, OSError) as e:
         sys.exit(f"could not read member {member_address!r} from container: {e}")
@@ -184,12 +195,16 @@ def _sniff_and_hash(
     container_media_type: str,
     member_address: str,
     basename: str,
+    *,
+    el_addressing: dict | None = None,
 ) -> tuple[str, str, dict[str, str]]:
     """Stream the member once → `(media_type, blake3_hex, {aux_algo: hex})`. Sniffs MIME from
     the leading bytes (so the member's schema — hence its `transport_algos` — is known before
     the pass completes), then digests the whole member (head + rest) with blake3 and each
     declared aux algorithm in the same pass. Never materializes the member whole."""
-    with containment.open_member_stream(container_path, container_media_type, member_address) as fp:
+    with containment.open_member_stream(
+        container_path, container_media_type, member_address, el_addressing=el_addressing
+    ) as fp:
         head = fp.read(_HEAD)
         media_type = mime.sniff_head(head, basename)
         # The member's own schema decides the aux byte-hashes to record (like ingest); a member

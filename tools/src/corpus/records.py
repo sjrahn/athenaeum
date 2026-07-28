@@ -1744,8 +1744,11 @@ def is_formed(post: frontmatter.Post) -> bool:
 def has_stored_rendering(post: frontmatter.Post) -> bool:
     """True when the record's content zone carries at least one **content-atom** segment
     (text/image/audio/video) — structural byte-marks (§4.3.2.3) do NOT count, since they
-    carry no rendering of their own, only a boundary mark. Segments count whether top-level
-    (formless) or nested inside a form section. Parse-tolerant, like `is_formed`."""
+    carry no rendering of their own, only a boundary mark, and *(3.8)* neither do
+    **placements** (§4.3.2.4): a placement says a member sits here, and the rendering it
+    points at belongs to the member's own record. A record whose content zone is nothing but
+    placements has rendered nothing of its own. Segments count whether top-level (formless) or
+    nested inside a form section. Parse-tolerant, like `is_formed`."""
     from . import segments as _segments
 
     try:
@@ -1754,9 +1757,9 @@ def has_stored_rendering(post: frontmatter.Post) -> bool:
         return False
     for b in blocks:
         if isinstance(b, _segments.Section):
-            if any(not s.is_structural for s in b.segments):
+            if any(s.is_content for s in b.segments):
                 return True
-        elif isinstance(b, _segments.Segment) and not b.is_structural:
+        elif isinstance(b, _segments.Segment) and b.is_content:
             return True
     return False
 

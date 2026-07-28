@@ -828,6 +828,47 @@ def _member_html(
     return "\n".join(out)
 
 
+def _placement_member(root: Path, record_id: str, seg: segments.Segment) -> str:
+    """*(3.8)* The member a placement names, and its record's state — derived, never stored:
+    the address matches one roster row, that row's `transport:` IS the member's record id
+    (§2, §4.3.2.4). Returns a short label, or "" when the roster does not carry the address
+    (which `placement-without-member` reports as the error it is)."""
+    try:
+        post = records.load(paths.record_path(root, record_id))
+    except Exception:
+        return ""
+    for row in records.iter_members(post):
+        addrs = _addr_list(row.get("address"))
+        if not any(a in addrs for a in _addr_list(seg.address)):
+            continue
+        hexval = str(row.get("transport") or "").partition(":")[2]
+        if not hexval:
+            return ""
+        leaf = paths.record_path(root, hexval)
+        if not leaf.is_file():
+            return f"member {hexval[:12]}… — NO RECORD"
+        try:
+            state = records.derived_state(records.load(leaf), root)
+        except Exception:
+            state = "?"
+        return f"member {hexval[:12]}… ({state})"
+    return ""
+
+
+def _placement_surface(
+    root: Path,
+    record_id: str,
+    seg: segments.Segment,
+    *,
+    regenerate: bool,
+    budget: _Budget,
+) -> str:
+    path, err = _resolve_surface(root, record_id, seg.address, regenerate=regenerate)
+    if path:
+        return _surface_html(path, budget)
+    return _note(f"address does not resolve — {err}") if err else ""
+
+
 def _segment_html(
     root: Path,
     record_id: str,
@@ -845,6 +886,23 @@ def _segment_html(
         level = f" <span class=tag>level {seg.level}</span>" if getattr(seg, "level", None) else ""
         return (f"<div class=block{anchor}>{aliases}<h3>structural mark{label} "
                 f"<span class=tag>{html.escape(str(seg.address))}</span>{level}</h3></div>")
+    if seg.is_placement:
+        # *(3.8)* A placement says a member sits here and nothing else (§4.3.2.4), so the view's
+        # job is to make the IMPORT visible: the surface resolves from this record's bytes as
+        # before, and the member's own record is named as the place its reading lives. The link
+        # is DERIVED here exactly as everywhere — address → roster row → blake3 → record — so
+        # the page shows what a reader would follow, never a stored pointer.
+        member = _placement_member(root, record_id, seg)
+        return "\n".join(
+            [
+                f"<div class=block{anchor}>{aliases}",
+                f"<h3>placement <span class=tag>{html.escape(str(seg.address))}</span>"
+                + (f" <span class=tag>{html.escape(member)}</span>" if member else "")
+                + "</h3>",
+                _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
+                "</div>",
+            ]
+        )
     parts = [f"<div class=block{anchor}>{aliases}"
              f"<h3>{html.escape(_segment_id(seg))} "
              f"<span class=tag>{html.escape(str(seg.address))}</span>"

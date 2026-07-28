@@ -126,5 +126,15 @@ def _format_summary(report: dict[str, Any]) -> str:
         lines.append(f"dangling_origin_refs: {total}" + (f" ({bysev})" if bysev else ""))
         for item in groups.get("warning", [])[:5]:
             lines.append(f"  - {item['id'][:8]}… {item['message']}")
+    if "normalization_pressure" in report:
+        # *(3.8)* Demand, not backlog (§8.5) — so it reports the RANKING, which is the only
+        # thing it is for: one pass over a member 668 records place improves 668 records.
+        np = report["normalization_pressure"]
+        lines.append(
+            f"normalization_pressure: {np['members_awaiting']} member(s) awaiting a pass, "
+            f"{np['total_pressure']} placement(s) waiting on them"
+        )
+        for item in np["top"][:5]:
+            lines.append(f"  - {item['member'][:8]}… placed by {item['placed_by']} record(s)")
 
     return "\n".join(lines) + "\n"

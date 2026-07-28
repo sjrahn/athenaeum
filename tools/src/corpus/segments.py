@@ -72,8 +72,16 @@ _VALID_ATOMS = frozenset({"text", "image", "audio", "video"})
 # Per spec §4.3.2.3 (3.0): the fifth segment kind. Not an atom — carries no body, takes no
 # atom overlay, is excluded from `token_counts.body`. Its opener-id is bare `structural`.
 _STRUCTURAL = "structural"
-# Every recognized segment opener-id axis: the four atoms plus the structural byte-mark.
-_VALID_SEGMENT_KINDS = _VALID_ATOMS | {_STRUCTURAL}
+# Per spec §4.3.2.4 (3.8): the sixth. Also not an atom — carries no body, no overlay, and no
+# field but `address`. It records that a MEMBER (§4.3.1.4) sits at this position and withholds
+# every claim about what the member contains: that is the member's own record's to make, found
+# by the blake3 the roster row already carries. Structurally the byte-mark's twin.
+_PLACEMENT = "placement"
+# The two content-less kinds — neither takes an atom overlay, neither ever carries a body,
+# and both REQUIRE an address (a position with no position states nothing, §4.3.2.2).
+_CONTENTLESS_KINDS = frozenset({_STRUCTURAL, _PLACEMENT})
+# Every recognized segment opener-id axis: the four atoms plus the two content-less kinds.
+_VALID_SEGMENT_KINDS = _VALID_ATOMS | _CONTENTLESS_KINDS
 
 
 @dataclass
@@ -120,7 +128,12 @@ class Segment:
     """
 
     atom: str
-    address: str | list[str]
+    #: *(3.8)* OPTIONAL. A single address, an ordered list of addresses, or **None** — which
+    #: names the whole transport, the record-side mirror of the bare `corpus://<id>` (§4.3.2.2).
+    #: None is what a promoted member's own rendering carries: its artifact IS the addressed
+    #: content, and every axis its mime schema declares names a part. A body-empty positioning
+    #: marker may never be address-less; the parser refuses it.
+    address: str | list[str] | None = None
     perceptual: str | list[str] | None = None  # §7.6: scalar or list (multi-region)
     entry: str | None = None
     #: The structural byte-mark's own verbatim source text (§4.3.2.3, 3.5). Structural
@@ -145,6 +158,20 @@ class Segment:
         (§4.3.2.3), which carries no content atom and no body."""
         return self.atom == _STRUCTURAL
 
+    @property
+    def is_placement(self) -> bool:
+        """True for the sixth segment kind — the `<!--segment placement-->` (§4.3.2.4, 3.8),
+        which carries no content atom, no body, and no claim: only that the member at this
+        address sits here. Its rendering lives on the member's own record."""
+        return self.atom == _PLACEMENT
+
+    @property
+    def is_content(self) -> bool:
+        """True for the four content atoms — everything that is neither a byte-mark nor a
+        placement. The predicate consumers actually want: `not is_structural` was correct
+        while there were five kinds and silently admits placements now that there are six."""
+        return self.atom not in _CONTENTLESS_KINDS
+
     def to_header_dict(self) -> dict[str, Any]:
         """Return the dict that would be YAML-dumped between the header comment
         delimiters. `atom` (and any atomic overlay) sits on the opener line itself.
@@ -157,7 +184,13 @@ class Segment:
         on an ordinary `records.dumps`, which passes the parsed content zone through
         verbatim. A record touched only for a frontmatter or metadata-block change keeps
         its legacy spelling until something deliberately reconstructs it (§12.27)."""
-        out: dict[str, Any] = {"address": self.address}
+        out: dict[str, Any] = {}
+        # *(3.8)* An absent address is emitted as an absent key, not as `address: null` — the
+        # whole-transport statement is the omission (§4.3.2.2), and a null would be a stored
+        # value again. A placement's header is therefore only ever `address:`, and a
+        # whole-transport rendering's header is often empty entirely.
+        if self.address is not None:
+            out["address"] = self.address
         if self.level is not None:
             out["level"] = self.level
         if self.perceptual is not None:
@@ -455,15 +488,22 @@ def _emit_segment(seg: Segment) -> str:
     everything else. Body-empty segments (image/audio/video positioning markers) render
     without a trailing body section.
     """
+    header = seg.to_header_dict()
+    opener_id = seg.overlay or seg.atom
+    body = seg.body.rstrip("\n")
+    if not header:
+        # *(3.8)* The one-line bare opener — a whole-transport rendering with nothing else to
+        # say (§4.3.2.2). `yaml.safe_dump({})` writes `{}`, which would store a value where
+        # the grammar means an omission.
+        opener = f"{_OPENER_PREFIX}{opener_id}{_CLOSER}\n"
+        return f"{opener}\n{body}\n" if body else opener
     header_yaml = yaml.safe_dump(
-        seg.to_header_dict(),
+        header,
         sort_keys=False,
         allow_unicode=True,
         width=10**9,
         default_flow_style=False,
     ).rstrip("\n")
-    opener_id = seg.overlay or seg.atom
-    body = seg.body.rstrip("\n")
     if body:
         return f"{_OPENER_PREFIX}{opener_id}\n{header_yaml}\n{_CLOSER}\n\n{body}\n"
     return f"{_OPENER_PREFIX}{opener_id}\n{header_yaml}\n{_CLOSER}\n"
@@ -754,10 +794,16 @@ def _opener_id(line: str) -> str | None:
     """
     stripped = line.rstrip()
     if stripped.startswith(_SUB_OPENER_PREFIX):
-        return stripped.removeprefix(_SUB_OPENER_PREFIX).strip()
-    if stripped.startswith(_OPENER_PREFIX):
-        return stripped.removeprefix(_OPENER_PREFIX).strip()
-    return None
+        token = stripped.removeprefix(_SUB_OPENER_PREFIX)
+    elif stripped.startswith(_OPENER_PREFIX):
+        token = stripped.removeprefix(_OPENER_PREFIX)
+    else:
+        return None
+    # *(3.8)* The one-line BARE opener — `<!--segment text-->` — closes on the opener line.
+    # It is what a whole-transport rendering looks like: address absent (§4.3.2.2), nothing
+    # else to carry, so the header is empty and a two-line block with a blank body would
+    # read like a field went missing. Same shape §4.3.2.1's bare section opener takes.
+    return token.removesuffix(_CLOSER).strip()
 
 
 def _parse_section_header(
@@ -829,19 +875,26 @@ def _parse_segment_block(
     the closer up to the next line that is any opener.
     """
     opener_token = _opener_id(lines[start])
-    header_start = start + 1
-    j = header_start
-    while j < len(lines) and lines[j].rstrip() != _CLOSER:
-        j += 1
-    if j >= len(lines):
-        raise ValueError(f"unterminated segment header at line {line_no}")
-    header_yaml = "\n".join(lines[header_start:j])
-    try:
-        header = yaml.safe_load(header_yaml) or {}
-    except yaml.YAMLError as e:
-        raise ValueError(f"malformed segment header at line {line_no}: {e}") from e
-    if not isinstance(header, dict):
-        raise ValueError(f"segment header at line {line_no} is not a mapping: {header!r}")
+    header: dict[str, Any]
+    if lines[start].rstrip().endswith(_CLOSER):
+        # *(3.8)* The one-line bare opener (see `_opener_id`): no header at all.
+        header = {}
+        j = start
+    else:
+        header_start = start + 1
+        j = header_start
+        while j < len(lines) and lines[j].rstrip() != _CLOSER:
+            j += 1
+        if j >= len(lines):
+            raise ValueError(f"unterminated segment header at line {line_no}")
+        header_yaml = "\n".join(lines[header_start:j])
+        try:
+            loaded = yaml.safe_load(header_yaml) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(f"malformed segment header at line {line_no}: {e}") from e
+        if not isinstance(loaded, dict):
+            raise ValueError(f"segment header at line {line_no} is not a mapping: {loaded!r}")
+        header = loaded
 
     body_start = j + 1
     k = body_start
@@ -871,6 +924,25 @@ def _parse_segment_block(
         )
     atom = atom_from_opener or legacy_atom
 
+    # The placement (§4.3.2.4, 3.8) — the sixth segment kind, and the strictest: no overlay,
+    # no body, no field but a REQUIRED address. Everything a reader wants about the member is
+    # reached from that address — the roster row it matches, and the blake3 that row carries.
+    if atom == _PLACEMENT:
+        if overlay is not None:
+            raise ValueError(f"segment at line {line_no}: `placement` takes no atom overlay")
+        address = _normalize_address(
+            header.pop("address", ""), what="segment", line_no=line_no, allow_absent=False
+        )
+        if body_text.strip():
+            raise ValueError(
+                f"placement at line {line_no}: a placement carries no body — what the member "
+                f"contains is its own record's to render (§4.3.2.4)"
+            )
+        for retired in ("level", "mark", "entry", "description", "perceptual"):
+            header.pop(retired, None)
+        header.pop("mode", None)
+        return Segment(atom=_PLACEMENT, address=address, body="", extra=header), k
+
     # The structural byte-mark (§4.3.2.3) — the fifth segment kind. Not an atom: it takes no
     # overlay and carries `address` + `level` + optional `entry`, no body.
     if atom == _STRUCTURAL:
@@ -879,7 +951,7 @@ def _parse_segment_block(
                 f"segment at line {line_no}: `structural` takes no atom overlay"
             )
         address = _normalize_address(
-            header.pop("address", ""), what="segment", line_no=line_no
+            header.pop("address", ""), what="segment", line_no=line_no, allow_absent=False
         )
         level_raw = header.pop("level", 1)
         try:
@@ -914,7 +986,15 @@ def _parse_segment_block(
             f"segment at line {line_no}: atom {atom!r} not one of {sorted(_VALID_ATOMS)}"
         )
 
-    address = _normalize_address(header.pop("address", ""), what="segment", line_no=line_no)
+    # *(3.8)* A content segment's address is OPTIONAL: absent names the whole transport
+    # (§4.3.2.2). A body-empty positioning marker is the exception — the three non-text atoms
+    # say only *where*, so an address-less one says nothing at all.
+    address = _normalize_address(
+        header.pop("address", ""),
+        what="segment",
+        line_no=line_no,
+        allow_absent=atom == "text",
+    )
     # v1.0 `perceptual:` (`<algo>:<hex>`) preferred; v0.3 `fingerprint:` (bare hex)
     # accepted on read for back-compat.
     perceptual_raw = header.pop("perceptual", None)
@@ -963,9 +1043,14 @@ def _parse_segment_block(
 
 
 def _normalize_address(
-    raw: Any, *, what: str, line_no: int
-) -> str | list[str]:
-    """Validate + canonicalize an `address:` header value (string or list)."""
+    raw: Any, *, what: str, line_no: int, allow_absent: bool = False
+) -> str | list[str] | None:
+    """Validate + canonicalize an `address:` header value (string or list).
+
+    *(3.8)* With `allow_absent`, an absent or empty value returns **None** — the whole
+    transport (§4.3.2.2), the record-side mirror of a bare `corpus://<id>`. Callers that
+    position something (the three non-text atoms, the byte-mark, the placement) pass
+    `allow_absent=False`: a position with no position states nothing."""
     if isinstance(raw, list):
         addrs = [str(x).strip() for x in raw if str(x).strip()]
         if not addrs:
@@ -974,8 +1059,12 @@ def _normalize_address(
     if isinstance(raw, str):
         v = raw.strip()
         if not v:
+            if allow_absent:
+                return None
             raise ValueError(f"{what} header at line {line_no} missing required address")
         return v
+    if raw is None and allow_absent:
+        return None
     raise ValueError(
         f"{what} header at line {line_no} has invalid address type: {type(raw).__name__}"
     )

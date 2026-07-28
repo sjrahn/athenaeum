@@ -405,6 +405,61 @@ def htmlel_bytes(ref: HtmlElRef) -> tuple[str, bytes]:
     return parsed
 
 
+def el_member_bytes(
+    artifact_path: object, value: str, *, el_addressing: dict | None = None
+) -> tuple[str, bytes]:
+    """*(3.8)* The raw bytes of the member carried at `el=<value>` in the HTML artifact at
+    `artifact_path` — `(media_type, bytes)`, exactly as the carrier's base64 `data:` payload
+    decodes, which is what attestation hashed into the roster row (§4.3.1.4).
+
+    This is the containment-layer entry point (`containment.open_member_stream`), NOT a
+    resolver op, and the difference is the whole reason it exists: the resolver's terminal
+    `el=`-on-`<img>` op *renders* to a PIL image, which re-encodes — fine for a view, fatal for
+    a promotion, whose `id` must equal the member's declared blake3. So an `<img>` is decoded
+    here rather than rendered, and every carrier family goes through one path.
+
+    `el_addressing` dispatches the grammar exactly as `extract_el` does — its presence means
+    3.6 paths, its absence the frozen legacy index — and its drift checks run first, because
+    resolving to the wrong element would mint a record under the wrong id."""
+    from pathlib import Path as _Path
+
+    soup = BeautifulSoup(_Path(str(artifact_path)).read_bytes(), EL_PARSER_ID)
+    ctx: RenderContext = {}
+    if el_addressing:
+        ctx["el_addressing"] = el_addressing
+    ref = extract_el(soup, value, ctx)
+    uri = carrier_data_uri(ref.tag)
+    if uri is None:
+        raise NotMaterializable(
+            f"el={ref.index} resolved to <{ref.tag.name}>, which carries no inline data: URI "
+            f"— it is not a member and has no bytes to promote"
+        )
+    parsed = parse_data_uri(uri)
+    if parsed is None:
+        raise ValueError(f"el={ref.index} (<{ref.tag.name}>): unrecognized or undecodable data URI")
+    return parsed
+
+
+def el_member_filename(
+    artifact_path: object, value: str, *, el_addressing: dict | None = None
+) -> str | None:
+    """*(3.8)* The member's own declared name at `el=<value>`, or None. Only an attachment
+    link carries one (`Click to download <name>`); an inlined `<img>`/`<video>` is anonymous
+    in the source and gets no invented name. Tolerant by design — a name is provenance, not
+    identity, so a walk that fails yields None rather than blocking a promotion whose hash
+    verifies."""
+    from pathlib import Path as _Path
+
+    try:
+        soup = BeautifulSoup(_Path(str(artifact_path)).read_bytes(), EL_PARSER_ID)
+        ctx: RenderContext = {}
+        if el_addressing:
+            ctx["el_addressing"] = el_addressing
+        return attachment_filename(extract_el(soup, value, ctx).tag)
+    except Exception:
+        return None
+
+
 @register("html", "selector", "image")
 def extract_via_selector(
     soup: BeautifulSoup, value: str | None, ctx: RenderContext
