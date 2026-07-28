@@ -490,26 +490,141 @@ def _cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+# ---------- segment bodies: two lossless shapes, both rendered ---------- #
+
+#: Tags a segment body may contribute to the page. Everything here is structure or emphasis
+#: that a faithful table/prose rendering genuinely carries; everything NOT here is unwrapped to
+#: its text. The list is a whitelist rather than a blacklist on purpose: a record body is
+#: CAPTURED CONTENT, so the viewer must assume it contains anything the open web does. `lint`'s
+#: `_HTML_RESIDUE_RE` already objects to `script`/`style`/`iframe` in a body, but a viewer that
+#: relied on the corpus being clean would be trusting a gate to hold for a page it hands to a
+#: person.
+_SAFE_TAGS = frozenset(
+    {
+        "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col",
+        "b", "strong", "i", "em", "u", "s", "sub", "sup", "br", "code", "span", "a",
+        "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "hr", "pre",
+    }
+)
+#: Per-tag attribute whitelist. `rowspan`/`colspan` are load-bearing — a fuse table's merged
+#: header cells are part of what the transcription says — and dropping them would silently
+#: reshape the data the record attests.
+_SAFE_ATTRS = {
+    "th": ("rowspan", "colspan", "scope"),
+    "td": ("rowspan", "colspan"),
+    "col": ("span",),
+    "colgroup": ("span",),
+    "a": ("href", "title"),
+}
+_SAFE_SCHEMES = ("http://", "https://", "mailto:", "#")
+#: Dropped WITH their contents rather than unwrapped: their text is not content.
+_DROP_ENTIRELY = frozenset({"script", "style", "iframe", "object", "embed", "template"})
+
+
+def _sanitize_html(fragment: str) -> str:
+    """A captured HTML fragment, reduced to the whitelist above and re-serialized."""
+    from bs4 import BeautifulSoup, Tag
+
+    soup = BeautifulSoup(fragment, "html.parser")
+    for tag in soup.find_all(True):
+        if not isinstance(tag, Tag):
+            continue
+        if tag.name in _DROP_ENTIRELY:
+            tag.decompose()
+            continue
+        if tag.name not in _SAFE_TAGS:
+            tag.unwrap()  # keep the text, drop the element
+            continue
+        allowed = _SAFE_ATTRS.get(tag.name, ())
+        for attr in list(tag.attrs):
+            if attr not in allowed:
+                del tag[attr]
+        href = tag.get("href")
+        if isinstance(href, str) and not href.lower().startswith(_SAFE_SCHEMES):
+            del tag["href"]
+    return str(soup)
+
+
+_HTML_BODY_RE = re.compile(r"^\s*<(table|ul|ol|dl|p|h[1-6])\b", re.IGNORECASE)
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
+_MD_ORDERED_RE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+
+
+def _inline_md(text: str) -> str:
+    """Markdown emphasis, code, and links inside one line of already-ESCAPED text.
+
+    Escaping first and matching after is deliberate: the delimiters (`*`, backtick, brackets)
+    survive escaping unchanged, so the order costs nothing and means no body can inject markup
+    by writing it out longhand.
+    """
+    out = html.escape(text)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", out)
+    out = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", out)
+    out = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+|#[^\s)]*)\)",
+        r'<a href="\2">\1</a>',
+        out,
+    )
+    return out
+
+
 def _body_html(body: str) -> str:
-    """Render a segment body: pipe tables become real tables, everything else stays verbatim."""
+    """Render a segment body as what it IS.
+
+    Two lossless shapes reach here and both used to land in a `<pre>`: a `text/data-table`
+    whose transcription is a literal HTML `<table>` (the drafter's shape for a table it read
+    out of HTML), and markdown (the normalizer's shape). Showing either as source made the
+    reader parse a table by eye, which is the one job the page exists to do for them — and it
+    is the projection this command is *for*. The record itself is untouched either way; this is
+    a read-time rendering of the body's own bytes.
+    """
+    if _HTML_BODY_RE.match(body):
+        return f"<div class=scroll>{_sanitize_html(body)}</div>"
+
     lines = body.splitlines()
     out: list[str] = []
     i = 0
     while i < len(lines):
-        if _ROW_RE.match(lines[i]):
+        line = lines[i]
+        if _ROW_RE.match(line):
             block = []
             while i < len(lines) and _ROW_RE.match(lines[i]):
                 block.append(lines[i])
                 i += 1
             out.append(_table_html(block))
             continue
-        run = []
-        while i < len(lines) and not _ROW_RE.match(lines[i]):
-            run.append(lines[i])
+        heading = _MD_HEADING_RE.match(line)
+        if heading:
+            level = min(6, len(heading.group(1)) + 2)  # never outranks the page's own h2/h3
+            out.append(f"<h{level}>{_inline_md(heading.group(2))}</h{level}>")
             i += 1
-        text = "\n".join(run).strip()
-        if text:
-            out.append(f"<pre class=surface>{html.escape(text)}</pre>")
+            continue
+        if _MD_BULLET_RE.match(line) or _MD_ORDERED_RE.match(line):
+            ordered = bool(_MD_ORDERED_RE.match(line))
+            items: list[str] = []
+            while i < len(lines):
+                m = _MD_ORDERED_RE.match(lines[i]) if ordered else _MD_BULLET_RE.match(lines[i])
+                if not m:
+                    break
+                items.append(f"<li>{_inline_md(m.group(1))}</li>")
+                i += 1
+            tag = "ol" if ordered else "ul"
+            out.append(f"<{tag}>{''.join(items)}</{tag}>")
+            continue
+        if not line.strip():
+            i += 1
+            continue
+        para: list[str] = []
+        while i < len(lines) and lines[i].strip():
+            nxt = lines[i]
+            if _ROW_RE.match(nxt) or _MD_HEADING_RE.match(nxt) or _MD_BULLET_RE.match(nxt):
+                break
+            para.append(nxt)
+            i += 1
+        if para:
+            out.append("<p>" + "<br>".join(_inline_md(p) for p in para) + "</p>")
     return "\n".join(out) or _note("empty body")
 
 
@@ -519,10 +634,12 @@ def _table_html(rows: list[str]) -> str:
         return ""
     head, rest = body_rows[0], body_rows[1:]
     parts = ["<div class=scroll><table>", "<thead><tr>"]
-    parts += [f"<th>{html.escape(c)}</th>" for c in _cells(head)]
+    # Cells carry markdown too — a fuse table's `**Primary Fuses**` section row is emphasis,
+    # not literal asterisks, and escaping alone showed the source where the reading belongs.
+    parts += [f"<th>{_inline_md(c)}</th>" for c in _cells(head)]
     parts.append("</tr></thead><tbody>")
     for row in rest:
-        parts.append("<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in _cells(row)) + "</tr>")
+        parts.append("<tr>" + "".join(f"<td>{_inline_md(c)}</td>" for c in _cells(row)) + "</tr>")
     parts.append("</tbody></table></div>")
     return "".join(parts)
 
@@ -998,6 +1115,49 @@ def placed_members(root: Path, post: Any) -> dict[str, _PlacedMember]:
     return out
 
 
+def _imported_html(member: _PlacedMember | None) -> str:
+    """*(3.8)* The IMPORT — the member's own rendering, shown where the parent places it.
+
+    §4.3.2.4 says the rendering is imported, and a viewer that showed only the resolved pixels
+    was showing the one thing the parent still has and withholding the one thing the member
+    added. For a table image that is the whole point: the reader wants the table, and it lives
+    on the leaf now. Attributed to its record rather than presented as the parent's own, since
+    that distinction is exactly what the amendment introduced — and derived on every render, so
+    it cannot go stale against the record it reads.
+
+    A member with no rendering yet says so: that is honest demand (normalization pressure,
+    §8.5), not an empty block.
+    """
+    if member is None or member.record is None:
+        return ""
+    try:
+        post = records.load(member.record)
+        blocks = segments.iter_blocks(post.content or "")
+    except Exception:
+        return ""
+    bodies = [
+        (seg.overlay or seg.atom, _address_tag(seg.address), seg.body)
+        for blk in blocks
+        for seg in (blk.segments if isinstance(blk, segments.Section) else [blk])
+        if isinstance(seg, segments.Segment) and seg.is_content and (seg.body or "").strip()
+    ]
+    where = (
+        f'<a href="{html.escape(member.href)}">{html.escape(member.hex[:12])}…</a>'
+        if member.href
+        else f"{html.escape(member.hex[:12])}…"
+    )
+    if not bodies:
+        return _note(f"member {member.hex[:12]}… carries no rendering yet — its own pass is owed")
+    parts = [f'<div class=imported><p class=sub>imported from {where}</p>']
+    for opener, address, body in bodies:
+        parts.append(
+            f"<h4>{html.escape(opener)} <span class=tag>{html.escape(address)}</span></h4>"
+        )
+        parts.append(_body_html(body))
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
 def _placement_surface(
     root: Path,
     record_id: str,
@@ -1061,6 +1221,7 @@ def _segment_html(
                 + tag
                 + "</h3>",
                 _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
+                _imported_html(member),
                 recovery,
                 "</div>",
             ]
@@ -1119,6 +1280,12 @@ h3 { font-size:.95rem; margin:0 0 .5rem; font-family:ui-monospace, SFMono-Regula
 .desc { color:var(--fg); background:var(--card); border-left:3px solid var(--acc);
   padding:.6rem .8rem; margin:.5rem 0; border-radius:0 4px 4px 0; }
 .note { color:var(--mut); font-style:italic; margin:.5rem 0; }
+/* *(3.8)* The IMPORT: a member's own rendering, shown where the parent places it. Set
+   apart deliberately — it is another record's content, and the whole amendment is about
+   that distinction being visible rather than assumed. */
+.imported { border-left:3px solid var(--acc); padding:.4rem 0 .4rem .9rem; margin:.8rem 0; }
+.imported > .sub { margin:0 0 .5rem; }
+.imported h4 { margin:.6rem 0 .3rem; font-size:.9rem; font-weight:600; }
 .block { border:1px solid var(--line); border-radius:6px; padding:.9rem 1rem; margin:1rem 0; }
 .kv { display:flex; gap:.75rem; padding:.15rem 0; font-size:.85rem; }
 .k { color:var(--mut); min-width:11rem; flex:0 0 auto; }

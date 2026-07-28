@@ -98,7 +98,7 @@ def _staged(tmp_path: Path, *, second_member: bool = False) -> tuple[Path, str]:
     )
     # The 3.8 shape: a rendering of the WHOLE transport, so no address at all.
     leaf.content = segments.emit(
-        [segments.Segment(atom="text", overlay="text/data-table", body="| a |\n|---|")]
+        [segments.Segment(atom="text", overlay="text/data-table", body="| a |\n|---|\n| 1 |")]
     )
     records.dump(leaf, paths.record_path(root, _PNG_HASH))
 
@@ -213,3 +213,60 @@ def test_the_cap_declines_to_link_rather_than_linking_nowhere(tmp_path):
     withheld = (set(_MEMBER_HASHES) - bundled).pop()
     assert f'href="members/{withheld}/index.html"' not in index
     assert f"corpus view {withheld}" in index
+
+
+# ---------- segment bodies are RENDERED, and captured HTML is not trusted ---------- #
+
+
+def test_an_html_table_body_renders_as_a_table(tmp_path):
+    """A `text/data-table` whose transcription is a literal `<table>` — the drafter's shape for
+    a table read out of HTML — used to land in a `<pre>`, which made the reader parse a table by
+    eye. That is the one job this page exists to do for them."""
+    out = view_cli._body_html(
+        "<table><thead><tr><th rowspan=\"2\">A</th></tr></thead>"
+        "<tbody><tr><td>1</td></tr></tbody></table>"
+    )
+    assert "<table>" in out and "<td>1</td>" in out
+    assert 'rowspan="2"' in out  # load-bearing: merged headers are part of what it says
+    assert "&lt;table&gt;" not in out
+
+
+def test_a_captured_body_cannot_inject_script_or_handlers(tmp_path):
+    """A record body is CAPTURED CONTENT, so the viewer assumes it contains anything the open
+    web does. Whitelist, not blacklist: `lint` objects to script in a body, but a viewer that
+    relied on the corpus being clean would be trusting a gate to hold for a page it hands to a
+    person."""
+    out = view_cli._body_html(
+        '<table><tr><td onclick="steal()">x</td>'
+        '<td><script>alert(1)</script></td>'
+        '<td><a href="javascript:bad()">link</a></td></tr></table>'
+    )
+    assert "onclick" not in out
+    assert "<script" not in out and "alert(1)" not in out  # dropped WITH its text
+    assert "javascript:" not in out
+    assert ">link<" in out  # the anchor's text survives; only the href goes
+
+
+def test_markdown_bodies_render_rather_than_showing_their_source(tmp_path):
+    out = view_cli._body_html(
+        "## Fuse Block\n\n"
+        "Some **bold** and `code` and [a link](https://x.test/p).\n\n"
+        "- one\n- two\n\n"
+        "| No. | Device |\n|---|---|\n| **FU1** | Not Used |\n"
+    )
+    assert "<h4>Fuse Block</h4>" in out  # demoted so it never outranks the page's own headings
+    assert "<strong>bold</strong>" in out and "<code>code</code>" in out
+    assert '<a href="https://x.test/p">a link</a>' in out
+    assert "<li>one</li>" in out
+    # …and a markdown cell is emphasis, not literal asterisks.
+    assert "<td><strong>FU1</strong></td>" in out
+
+
+def test_a_placement_imports_the_members_own_rendering(tmp_path):
+    """§4.3.2.4 says the rendering is imported. Showing only the resolved pixels showed the one
+    thing the parent still has and withheld the one thing the member added."""
+    z = _bundle(tmp_path)
+    index = z.read("index.html").decode()
+    assert "class=imported" in index
+    assert "imported from" in index
+    assert "<th>a</th>" in index and "<td>1</td>" in index  # the leaf's table, on the parent
