@@ -18,7 +18,6 @@ extended_fields:
   display_name:
     type: string
     required: true
-    role: title
     description: |
       The card's display name, mechanically derived by the same fallback chain the
       vcard `members` derivation already uses (spec §12.11): `FN`, else

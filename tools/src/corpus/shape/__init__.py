@@ -144,11 +144,15 @@ def declared_form_unmet(post: frontmatter.Post, corpus_root: Path) -> str | None
     return form_id
 
 
-def _whole_record_form(post: frontmatter.Post) -> str | None:
-    """The form id of the record's whole-record section (spec §4.3.2.1: a qualified section
-    with no `address`), or None. A local re-derivation of `records._whole_record_section`'s
-    predicate (kept local rather than reaching into that private helper) so this module's
-    governing-contract resolution stays a pure function of `segments.iter_blocks`."""
+def _asserted_form(post: frontmatter.Post) -> str | None:
+    """The form id the record ASSERTS for itself — the FIRST form section in its content
+    zone, or None.
+
+    *(3.7, §12.29)* This was `_whole_record_form`, keyed on a section with no `address`. With
+    the stored envelope retired there is no such spelling, and the honest replacement is the
+    first span: under §4.3.2.1's significance order the content zone opens with what the
+    artifact is FOR, so the first form section is the record's own judgment about itself and
+    any later span is framing it. A pure function of `segments.iter_blocks`, parse-tolerant."""
     from corpus import segments as _segments
 
     try:
@@ -156,7 +160,7 @@ def _whole_record_form(post: frontmatter.Post) -> str | None:
     except Exception:
         return None
     for blk in blocks:
-        if isinstance(blk, _segments.Section) and blk.form and blk.address is None:
+        if isinstance(blk, _segments.Section) and blk.form:
             return blk.form
     return None
 
@@ -224,9 +228,9 @@ def governing_form(
         _, form_id, _ = declared
         return form_id, schemas.is_terminal_form(corpus_root, form_id)
 
-    whole_record_form = _whole_record_form(post)
-    if whole_record_form:
-        return whole_record_form, schemas.is_terminal_form(corpus_root, whole_record_form)
+    asserted = _asserted_form(post)
+    if asserted:
+        return asserted, schemas.is_terminal_form(corpus_root, asserted)
 
     if records.has_stored_rendering(post):
         return None

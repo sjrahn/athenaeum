@@ -166,58 +166,6 @@ def test_within_block_first_non_empty_by_declaration_order(tmp_path):
     assert records.derived_editorial_field(post, root, "title").value == "Headline Wins"
 
 
-def test_form_outranks_origin_and_artifact(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={"subject": "Artifact Subject"})
-    records.append_origin_block(
-        post,
-        uri="testsrc://x",
-        snapshot="2026-01-01T00:00:00Z",
-        schema_id="testsrc",
-        fields={"headline": "Origin Headline"},
-    )
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [segments.Section(form="testform", segments=[seg], extra={"title": "Whole Record Title"})]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    assert title.value == "Whole Record Title" and title.layer == "form"
-
-
-def test_form_implicit_title_beats_explicit_marked_field(tmp_path):
-    """The universal `title:` header field is checked before any additional
-    schema-declared `role: title` field on the same form (spec §4.2.3)."""
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform",
-                segments=[seg],
-                extra={"title": "Implicit Title", "subtitle": "Explicit Marked Title"},
-            )
-        ]
-    )
-    assert records.derived_editorial_field(post, root, "title").value == "Implicit Title"
-
-
-def test_form_falls_through_to_marked_field_when_implicit_empty(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={"subject": "Artifact Subject"})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [segments.Section(form="testform", segments=[seg], extra={"subtitle": "Marked Subtitle"})]
-    )
-    # No implicit `title:` header field → falls to the form's explicitly marked
-    # `subtitle` — which still outranks origin/artifact (form is the strongest of the
-    # three schema-driven layers).
-    assert records.derived_editorial_field(post, root, "title").value == "Marked Subtitle"
-
-
 def test_span_scope_section_does_not_contribute_at_record_scope(tmp_path):
     root = _make_corpus(tmp_path)
     post = _base_post()
@@ -233,10 +181,33 @@ def test_span_scope_section_does_not_contribute_at_record_scope(tmp_path):
             )
         ]
     )
-    # A span-scope section (carries `address`) describes its span, never the record — the
-    # record-level title falls through past the form layer to the artifact layer.
+    # A section describes its span, never the record — the record-level title falls past it
+    # to the artifact layer. *(3.7: this now holds for EVERY section, not just span-scope
+    # ones; there is no whole-record spelling and no form rung left to fall past, §12.29.)*
     title = records.derived_editorial_field(post, root, "title")
     assert title.value == "Artifact Subject" and title.layer == "artifact"
+
+
+def test_no_section_contributes_to_display_identity(tmp_path):
+    """*(3.7, §12.29)* The form rung is gone from the ladder. A section carrying every
+    editorial shape the old rung could read — an implicit `title:`, a form declaring
+    `role: title`, a form declaring an `editorial.title_template` — contributes nothing, at
+    any scope. §4.2.3 said this in 3.5; the implementation kept a whole-record lookup that
+    only the stored section envelope made findable."""
+    root = _make_corpus(tmp_path)
+    post = _base_post()
+    records.set_artifact_block(post, mime=_MIME, fields={"subject": "Artifact Subject"})
+    seg = segments.Segment(atom="text", address="page=1", body="hi")
+    for form, extra in (
+        ("testform", {"title": "Implicit Title"}),
+        ("testform", {"subtitle": "Marked Subtitle"}),
+        ("testform_tmpl", {"account": "…7841", "period": "2026-03"}),
+    ):
+        post.content = segments.emit(
+            [segments.Section(form=form, segments=[seg], extra=extra)]
+        )
+        field = records.derived_editorial_field(post, root, "title")
+        assert field == records.EditorialField("Artifact Subject", "artifact"), (form, extra)
 
 
 def test_override_wins_over_every_layer(tmp_path):
@@ -259,9 +230,11 @@ def test_override_wins_over_every_layer(tmp_path):
     title = records.derived_editorial_field(post, root, "title")
     assert title.value == "Deliberate Override" and title.layer == "override"
     # `include_override=False` resolves beneath it — what the override is redundant
-    # against (the `editorial-override-redundant` lint rule, §12.21 step 1).
+    # against (the `editorial-override-redundant` lint rule, §12.21 step 1). *(3.7)* Beneath
+    # is the ORIGIN, never the section: no section at any scope contributes to a record's
+    # display identity (§4.2.3, and §12.29 for the code path that outlived the text).
     beneath = records.derived_editorial_field(post, root, "title", include_override=False)
-    assert beneath.value == "Form Title" and beneath.layer == "form"
+    assert beneath.value == "Origin Headline" and beneath.layer == "origin"
 
 
 def test_empty_or_absent_candidate_falls_through(tmp_path):
@@ -319,51 +292,6 @@ def test_birth_frontmatter_has_no_editorial_keys():
 # authored title, but its own codebook already names who is in it; see corpus.md §4.2.3.)
 
 
-def test_conversation_form_falls_through_to_participants_when_untitled(tmp_path):
-    """The PACKAGED `form/conversation.yaml` marks `participants` `role: title` — the
-    mechanical fallback for a shaped-but-not-yet-vouched conversation (no corpus-local
-    schema needed; resolves against the installed package like `text/html`'s artifact
-    title in test_sidecar.py)."""
-    post = _base_post()
-    records.set_artifact_block(post, mime="application/json", fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="conversation",
-                segments=[seg],
-                extra={"participants": ["Rob Hehr", "Steven Rahn", "Marco Preißer"]},
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, tmp_path, "title")
-    assert title.value == "Rob Hehr, Steven Rahn, Marco Preißer"
-    assert title.layer == "form"
-
-
-def test_conversation_form_implicit_title_still_beats_participants(tmp_path):
-    """An authored whole-record `title:` (the interpretive vouch, once a normalize pass
-    writes one) still wins over the mechanical `participants` fallback — same implicit-
-    before-explicit rule as any other form (§4.2.3)."""
-    post = _base_post()
-    records.set_artifact_block(post, mime="application/json", fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="conversation",
-                segments=[seg],
-                extra={
-                    "title": "Facebook Messenger — Meddl loide",
-                    "participants": ["Rob Hehr", "Steven Rahn"],
-                },
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, tmp_path, "title")
-    assert title.value == "Facebook Messenger — Meddl loide"
-
-
 def test_list_valued_role_field_joins_not_reprs(tmp_path):
     """A `string_or_list` role-marked field (an iMessage group renamed mid-window) derives
     a comma-joined title, never a Python-repr string (spec §4.2.3 via `_first_non_empty`)."""
@@ -386,124 +314,3 @@ def test_list_valued_role_field_joins_not_reprs(tmp_path):
 # (the four-record `form/statement` healing — 467ad52e/63cb1650/aa15658e/d5d23b3a, no
 # authored title, account 261224 — the motivating case; see `form/statement.yaml`.)
 
-
-def test_form_template_resolves_when_all_placeholders_present(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform_tmpl",
-                segments=[seg],
-                extra={"account": "…7841", "period": "2026-03"},
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    assert title.value == "…7841 — 2026-03" and title.layer == "form"
-
-
-def test_form_template_falls_through_entirely_on_one_missing_placeholder(tmp_path):
-    """A template with even one unresolved placeholder never emits a partial
-    composition — it falls through as if no template existed (spec §4.2.3)."""
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={"subject": "Artifact Subject"})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform_tmpl",
-                segments=[seg],
-                extra={"account": "…7841"},  # `period` absent — template can't resolve
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    # No "…7841 — " partial string, and no role-marked field is set either — falls all
-    # the way past the form layer to the artifact layer.
-    assert title.value == "Artifact Subject" and title.layer == "artifact"
-
-
-def test_form_implicit_title_beats_template(tmp_path):
-    """The authored whole-record `title:` (the interpretive vouch) always wins over the
-    mechanical template — same implicit-before-mechanical rule as any other candidate."""
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform_tmpl",
-                segments=[seg],
-                extra={"title": "Authored Title", "account": "…7841", "period": "2026-03"},
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    assert title.value == "Authored Title" and title.layer == "form"
-
-
-def test_form_template_wins_over_role_marked_field(tmp_path):
-    """A resolvable template outranks the contract's explicitly `role: title`-marked
-    field — template is checked second of the three form-layer candidate kinds, the
-    role-marked field last (spec §4.2.3)."""
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform_tmpl",
-                segments=[seg],
-                extra={"account": "…7841", "period": "2026-03", "subtitle": "Should Not Win"},
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    assert title.value == "…7841 — 2026-03" and title.layer == "form"
-
-
-def test_form_template_falls_through_to_role_marked_field(tmp_path):
-    """When the template can't resolve, the role-marked field beneath it is still
-    checked before dropping to the next layer (origin/artifact)."""
-    root = _make_corpus(tmp_path)
-    post = _base_post()
-    records.set_artifact_block(post, mime=_MIME, fields={})
-    seg = segments.Segment(atom="text", address="turn=1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="testform_tmpl",
-                segments=[seg],
-                extra={"account": "…7841", "subtitle": "Fallback Subtitle"},  # no `period`
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, root, "title")
-    assert title.value == "Fallback Subtitle" and title.layer == "form"
-
-
-def test_statement_form_template_against_packaged_schema(tmp_path):
-    """The PACKAGED `form/statement.yaml` carries the real
-    `"Statement — {account} — {period}"` template (no corpus-local schema needed) — the
-    exact grammar the four live untitled statements heal against."""
-    post = _base_post()
-    records.set_artifact_block(post, mime="application/pdf", fields={})
-    seg = segments.Segment(atom="text", address="pages=1-1", body="hi")
-    post.content = segments.emit(
-        [
-            segments.Section(
-                form="statement",
-                segments=[seg],
-                extra={"account": "…1224", "period": "2026-03"},
-            )
-        ]
-    )
-    title = records.derived_editorial_field(post, tmp_path, "title")
-    assert title.value == "Statement — …1224 — 2026-03"
-    assert title.layer == "form"

@@ -10,8 +10,10 @@ Content-zone grammar (§4.3.2):
 - A `<!--section <form-id>-->` opens a **form span** (spec §4.3.2.1, 3.0): the qualified
   opener carries the record-scope form id (`conversation`, `statement`, `receipt`), exactly
   as a segment opener carries its atom id. The header carries the form overlay's codebook /
-  envelope fields (e.g. `participants:`), an optional `address` (the span envelope — OMITTED
-  on a whole-record form section), and optional `entry` + `description`. Sections contain
+  envelope fields (e.g. `participants:`) — and *(3.7)* nothing else: the span envelope is
+  DERIVED from the children (`section_address`, §12.29), never stored, so a form declaring no
+  fields takes the one-line BARE OPENER `<!--section index-->`, which is the ordinary shape.
+  `entry` + `description` read tolerantly until the 3.5 sweep reaches a record. Sections contain
   segments; they have no body of their own. Closer is followed directly by the first child
   segment opener — prose between is a parse error. A **bare** `<!--section-->` (no form id) is
   the 2.x TOC grouping unit — retired in place (§4.3.2.1); it reads tolerantly (form=None,
@@ -41,8 +43,9 @@ the mixed-artifact case (§4.3.2.1) — formless top-level segments BEFORE the f
 opener, then the section(s) (a statement PDF's page-1 cover letter as bare segments, then a
 `statement` section over pages 2-6). A segment after a section opener is that section's child
 (the positional span), never a top-level sibling — so top-level mixing is admissible only in
-the before-only direction. *(3.5)* A record MAY carry several span-scope sections; only a
-WHOLE-RECORD section (no `address`, claiming the entire zone) must stand alone.
+the before-only direction. *(3.5)* A record MAY carry several sections. *(3.7: and the
+whole-record special case is gone with the stored envelope — every span claims exactly its
+children's extent, so there is no "claims the entire zone" to stand alone, §12.29.)*
 Nesting depth = 1: sections contain segments; segments contain nothing; sections don't nest.
 """
 
@@ -199,9 +202,13 @@ class Section:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_header_dict(self) -> dict[str, Any]:
+        """*(3.7)* `address` is NOT emitted: a span's envelope is its children's, derived by
+        every reader (`section_address`), so storing it would be a second copy of a fact the
+        children already state — the construction §12.29 removes. `address` stays on the
+        dataclass as the DERIVED value `iter_blocks` computes, for the consumers that want the
+        span; it is simply never serialized. A temporal section states its bounds through its
+        form's own declared field (on `extra`), which is why that case is unaffected."""
         out: dict[str, Any] = {}
-        if self.address is not None:
-            out["address"] = self.address
         if self.entry is not None:
             out["entry"] = self.entry
         if self.description is not None:
@@ -427,9 +434,10 @@ def _emit_section(sec: Section) -> str:
         _SECTION_OPENER if sec.form is None else f"{_SECTION_OPENER} {sec.form}"
     )
     if not header:
-        # A whole-record form section may carry no header fields at all (no envelope,
-        # no codebook): emit an empty header block rather than a stray blank line.
-        return f"{opener}\n{_CLOSER}\n"
+        # *(3.7)* No fields at all — the bare opener §4.3.2.1 describes, on one line. Since
+        # the envelope is derived and 3.5 retired the universal fields, this is what most
+        # sections look like: `<!--section document-->`.
+        return f"{opener}{_CLOSER}\n"
     header_yaml = yaml.safe_dump(
         header,
         sort_keys=False,
@@ -633,27 +641,44 @@ def iter_blocks(body: str) -> list[Block]:
             seg, i = _parse_segment_block(lines, i, line_no=i + 1)
             blocks.append(seg)
 
-    # *(3.5)* A record MAY carry several form spans — an article followed by the index of
-    # sibling links the page also renders; a procedure span followed by its parts table
-    # (§4.3.2.1). What stays illegal is a section claiming the WHOLE zone while something else
-    # sits beside it: `address: None` means "this form governs everything here", which two
-    # blocks cannot both be true of. So the check narrows from "no siblings" to "then it must
-    # be alone" — the same words, but now the constraint is on the claim rather than on the
-    # count of sections. The prohibition existed because the whole-record section held the
-    # record's editorial identity and two of them would have been two answers to one question;
-    # with those fields retired it holds only a shape judgment, and a document that changes
-    # shape partway through is an ordinary document.
-    if len(blocks) > 1:
-        for b in blocks:
-            if isinstance(b, Section) and b.address is None:
-                raise ValueError(
-                    "a whole-record section (no `address`) claims the entire content zone and "
-                    f"cannot have siblings (§4.3.2.1); found {len(blocks)} top-level blocks. "
-                    "Give each span its own `address:` envelope — `section_address(children)` "
-                    "derives it."
-                )
+    # *(3.7)* The whole-record section's sibling prohibition retires with the spelling it was
+    # keyed on. It fired when a section carried no `address`, meaning "this form governs
+    # everything here" — a claim two blocks could not both make. A section no longer STORES an
+    # address at all, so there is no absence to read: every span's extent is exactly its
+    # children's, and two sections can only overlap if their children do, which the address
+    # grammar and `segment-address-duplicate` already decide at the segment grain (§12.29).
+    #
+    # *(3.5 lifted the prohibition for multi-span records; 3.7 removes the last remnant.)*
+    for blk in blocks:
+        if isinstance(blk, Section) and blk.address is None and blk.segments:
+            blk.address = section_address(blk.segments, el_paths=_el_path_children(blk.segments))
 
     return blocks
+
+
+def _el_path_children(children: list[Segment]) -> bool:
+    """Whether these children's `el=` addresses are 3.6 PATHS rather than legacy flat indexes.
+
+    `section_address` needs the grammar because a bare integer is valid in both and the two
+    envelope spellings differ (`el=[3-5]` vs `el=3-5`). The record's `addressing:` stamp is the
+    authority (§6.1.1) and callers holding the post should pass it; a bare `iter_blocks` has
+    only the body, so it decides from the values themselves — exactly, not heuristically: a
+    legacy flat range (`el=3-7`) is not valid 3.6 grammar and a 3.6 dotted path or sibling
+    range is not valid legacy, so either form present settles it. Bare integers alone are the
+    one overlap, and paths are the answer there — post-migration every stamped record uses
+    them, and the unstamped remainder that would differ is three frozen non-HTML records
+    storing `el=` on vcard/ndjson (§12.28's holds)."""
+    for seg in children:
+        for addr in _iter_addr_strings(seg.address):
+            param, value = _leading_param(addr)
+            if param != "el":
+                continue
+            if _LEGACY_FLAT_RANGE_RE.fullmatch(value):
+                return False
+    return True
+
+
+_LEGACY_FLAT_RANGE_RE = re.compile(r"\d+-\d+")
 
 
 def _opener_kind(line: str) -> str | None:
@@ -663,7 +688,14 @@ def _opener_kind(line: str) -> str | None:
     extracted by `records.py` before the content-zone slice reaches this function.
     """
     stripped = line.rstrip()
-    if stripped == _SECTION_OPENER or stripped.startswith(_SECTION_OPENER + " "):
+    # *(3.7)* `<!--section-->` and `<!--section index-->` — the one-line BARE OPENER, now the
+    # ordinary shape (§4.3.2.1, §12.29) — close on the opener line, so the recognizer admits
+    # the closer directly after the keyword as well as after a space-separated form id.
+    if (
+        stripped == _SECTION_OPENER
+        or stripped.startswith(_SECTION_OPENER + " ")
+        or stripped == _SECTION_OPENER + _CLOSER
+    ):
         return "section"
     if stripped.startswith(_SUB_OPENER_PREFIX) or stripped == _SUB_OPENER:
         return "segment"
@@ -696,6 +728,16 @@ def _parse_section_header(
     # The form id on a qualified opener (`<!--section conversation-->`, §4.3.2.1). A bare
     # `<!--section-->` (the retired 2.x TOC grouping) has form=None.
     opener_suffix = lines[start].rstrip().removeprefix(_SECTION_OPENER).strip()
+
+    # *(3.7)* The BARE OPENER, closed on its own line: `<!--section index-->`. With the
+    # envelope derived (§12.29) and 3.5's universal fields retired, a form that declares
+    # nothing has no header at all — which is the ordinary case now, not the exception — and
+    # §4.3.2.1 spells that exactly this way. A two-line block with an empty body would read
+    # like a field went missing.
+    if opener_suffix.endswith(_CLOSER):
+        form = opener_suffix.removesuffix(_CLOSER).strip() or None
+        return Section(form=form), start + 1
+
     form = opener_suffix or None
 
     header_start = start + 1

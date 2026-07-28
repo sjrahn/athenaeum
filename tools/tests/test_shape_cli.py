@@ -107,7 +107,9 @@ def test_shape_builds_form_and_leaves_vouch_unauthored(tmp_path, capsys):
     chain = chain if isinstance(chain, list) else [chain]
     assert any("shape.conversation" in t for t in chain)
     title_field = records.derived_editorial_field(post, root, "title")
-    assert title_field.value == "Andy u1, Bea u2" and title_field.layer == "form"
+    # *(3.7, §12.29)* The shaper's job is the span; the record's display title is not part
+    # of it and never was the form layer's to supply (§4.2.3, retired in 3.5).
+    assert title_field.layer != "form"
     assert records.derived_editorial_field(post, root, "description").value == ""
 
 

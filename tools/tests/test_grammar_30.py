@@ -124,16 +124,18 @@ def test_form_section_emit_parse_roundtrip():
     assert len(parsed.segments) == 1
 
 
-def test_whole_record_form_section_omits_address():
+def test_form_section_envelope_is_derived_never_stored():
     seg = segments.Segment(atom="text", address="turn=1", body="hi")
     sec = segments.Section(form="conversation", segments=[seg])  # no address
     text = segments.emit([sec])
     section_header = text.split("<!--segment", 1)[0]
     assert section_header.startswith("<!--section conversation")
-    assert "address:" not in section_header  # whole-record form section omits it
+    assert "address:" not in section_header  # *(3.7)* NO section stores its envelope
     (parsed,) = segments.iter_blocks(text)
     assert parsed.form == "conversation"
-    assert parsed.address is None
+    # It is DERIVED on read, from the children that define it (§12.29) — so the value is
+    # available to every consumer and cannot disagree with the span it describes.
+    assert parsed.address == "turn=1"
 
 
 def test_bare_2x_section_reads_tolerantly():
@@ -317,8 +319,11 @@ def test_pending_retired_fields_finds_each_concern():
     pending = records.pending_retired_fields(post)
 
     assert sorted(pending["frontmatter"]) == ["canonical", "title"]
-    assert pending["section_description"] == ["whole-record"]
-    assert pending["section_title"] == ["whole-record"]
+    # *(3.7)* The locator names the span the field sits on. There is no "whole-record" scope
+    # any more — a section's extent is its children's — so a section with no stored address
+    # is located by its derived envelope (§12.29).
+    assert pending["section_description"] == ["['el=1', 'el=2', 'el=3']"]
+    assert pending["section_title"] == ["['el=1', 'el=2', 'el=3']"]
     assert pending["segment_description"] == ["el=2"]
     assert pending["segment_entry"] == ["el=3"]
     # a byte-mark already on the current spelling is NOT pending — nothing to sweep
@@ -364,29 +369,26 @@ def test_a_record_may_carry_several_span_scope_sections():
     assert segments.emit(parsed) == text
 
 
-def test_whole_record_section_still_admits_no_sibling():
-    """The narrowing is precise: `address: None` claims the ENTIRE zone, and two blocks
-    cannot both be true of that. Several span-scope sections are fine; a whole-record one
-    beside anything is not."""
+def test_two_form_sections_parse_with_derived_envelopes():
+    """*(3.7, §12.29)* The whole-record sibling prohibition is gone with its spelling. A
+    section carried no `address` to mean "this form governs everything here"; a section
+    stores no address at all now, so there is nothing to read as that claim. Two spans sit
+    side by side and each derives exactly what its children cover."""
     text = segments.emit(
         [
             segments.Section(
                 form="document",
                 segments=[segments.Segment(atom="text", address="el=1", body="a")],
-            )
-        ]
-    ) + segments.emit(
-        [
+            ),
             segments.Section(
-                address="el=2",
                 form="index",
                 segments=[segments.Segment(atom="text", address="el=2", body="b")],
-            )
+            ),
         ]
     )
-    with pytest.raises(ValueError, match="entire content zone"):
-        segments.iter_blocks(text)
-
+    a, b = segments.iter_blocks(text)
+    assert (a.form, a.address) == ("document", "el=1")
+    assert (b.form, b.address) == ("index", "el=2")
 
 def test_section_address_derives_el_and_turn_envelopes():
     """`el` and `turn` had no span strategy until a record needed more than one span —

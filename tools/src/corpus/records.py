@@ -921,7 +921,7 @@ def pending_retired_fields(post: frontmatter.Post) -> dict[str, list[str]]:
 
     for blk in blocks:
         if isinstance(blk, segs_mod.Section):
-            scope = "whole-record" if blk.address is None else str(blk.address)
+            scope = str(blk.address) if blk.address is not None else f"form/{blk.form}"
             if blk.description:
                 note("section_description", scope)
             if blk.entry:
@@ -1592,22 +1592,6 @@ def _origin_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role:
     return ""
 
 
-def _whole_record_section(post: frontmatter.Post) -> Any:
-    """The record's whole-record form section (spec §4.3.2.1: a qualified section with no
-    `address`), or None. At most one exists per the grammar (a whole-record section admits
-    no sibling sections). Parse-tolerant, like the derived-state predicates below."""
-    from . import segments as _segments
-
-    try:
-        blocks = _segments.iter_blocks(post.content or "")
-    except Exception:
-        return None
-    for blk in blocks:
-        if isinstance(blk, _segments.Section) and blk.form and blk.address is None:
-            return blk
-    return None
-
-
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 
@@ -1653,40 +1637,6 @@ def _resolve_editorial_template_value(value: Any, fields: dict[str, Any] | None)
     return _resolve_editorial_template(str(value), fields)
 
 
-def _form_editorial_candidate(post: frontmatter.Post, corpus_root: Path, role: str) -> str:
-    """The form layer's candidate (spec §4.2.3, strongest of the three schema-driven
-    layers): only the WHOLE-RECORD form section contributes — a span-scope section
-    describes its span, never the record. Three candidate kinds, checked in order until
-    one is non-empty: the universal `title:`/`description:` header fields — implicitly
-    role-marked on every form, the interpretive vouch, always checked first; the
-    contract's declared `editorial.<role>_template` (a mechanical composition over more
-    than one header field, resolved all-or-nothing — see `_resolve_editorial_template`);
-    and any additional field the form contract explicitly marks `role: <role>`, in the
-    schema's declaration order."""
-    from . import schemas as _schemas
-
-    section = _whole_record_section(post)
-    if section is None:
-        return ""
-    if role == "description":
-        implicit = str(section.description or "").strip()
-    else:
-        implicit = str((section.extra or {}).get(role) or "").strip()
-    if implicit:
-        return implicit
-    schema = _schemas.load_form_overlay(corpus_root, section.form)
-    editorial = schema.get("editorial") if isinstance(schema, dict) else None
-    template = editorial.get(f"{role}_template") if isinstance(editorial, dict) else None
-    if template:
-        templated = _resolve_editorial_template_value(template, section.extra)
-        if templated:
-            return templated
-    names = [n for n in _role_marked_fields(schema, role) if n not in _EDITORIAL_ROLES]
-    if not names:
-        return ""
-    return _first_non_empty(section.extra, names)
-
-
 def derived_editorial_field(
     post: frontmatter.Post,
     corpus_root: Path,
@@ -1722,10 +1672,12 @@ def derived_editorial_field(
         if override:
             return EditorialField(value=override, layer="override")
 
-    form_value = _form_editorial_candidate(post, corpus_root, role)
-    if form_value:
-        return EditorialField(value=form_value, layer="form")
-
+    # *(3.7)* No form rung. §4.2.3 retired it in 3.5 — "a form contract marks nothing";
+    # "no section, at any scope, contributes to a record's display identity" — while the
+    # implementation went on reading a whole-record section's fields. Removing the stored
+    # section envelope removed the only way to FIND a whole-record section and forced the
+    # divergence into the open; the rung, its helper, and the three bundled form overlays
+    # that declared editorial marks all go together (§12.29).
     origin_value = _origin_editorial_candidate(post, corpus_root, role)
     if origin_value:
         return EditorialField(value=origin_value, layer="origin")

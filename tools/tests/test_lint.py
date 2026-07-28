@@ -76,19 +76,11 @@ def test_section_address_derives_envelope():
     assert segments.section_address([]) is None
 
 
-def test_section_address_span_lint_flags_mismatch(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    good = segments.Section.spanning([_seg("page=1"), _seg("page=2")], entry="A")
-    # Claims pages=1-9 but its segments only span 4-5 (built directly, bypassing spanning).
-    bad = segments.Section(
-        address="pages=1-9", entry="B", segments=[_seg("page=4"), _seg("page=5")]
-    )
-    post.content = segments.emit([good, bad])
-    spans = [f for f in _lint(post, root) if f.rule_id == "section-address-span"]
-    assert len(spans) == 1
-    assert spans[0].severity == "warning"
-    assert "pages=1-9" in spans[0].message and "pages=4-5" in spans[0].message
+def test_section_address_span_rule_is_retired(tmp_path):
+    """*(3.7, §12.29)* The rule re-derived a section's envelope and compared it to the stored
+    one. Nothing is stored, so the comparison has no second operand and the rule is gone —
+    pinned here so its absence from a lint diff reads as intended, not as a hole."""
+    assert "section-address-span" not in {rid for rid, _fn in lint._REGISTRY}
 
 
 def test_missing_id_caught(tmp_path):
@@ -596,10 +588,12 @@ def test_issue_on_draft_rule_dropped(tmp_path):
     assert "issue-on-draft" not in _fired(post, root)
 
 
-def test_section_description_redundant_spares_whole_record_vouch(tmp_path):
-    """*(3.2)* `section-description-redundant` fires on a SPAN-scope all-lossless section,
-    but never on a whole-record section (no address) — that header's `description:` is the
-    record's editorial vouch (§4.2.3, §4.3.2.1), not a span synopsis."""
+def test_section_description_redundant_no_longer_spares_any_section(tmp_path):
+    """*(3.2)* `section-description-redundant` fires on an all-lossless section whose header
+    carries a `description:`. *(3.7)* And now on EVERY such section: the whole-record
+    exemption existed because that header was the editorial vouch's home, and 3.5 retired
+    both the vouch and the field while 3.7 retired the spelling the exemption keyed on
+    (§12.29). Any surviving section `description:` is unswept residue, wherever it sits."""
     root = _make_corpus(tmp_path)
     post = _clean_post()
     seg = segments.Segment(
@@ -616,10 +610,10 @@ def test_section_description_redundant_spares_whole_record_vouch(tmp_path):
 
     whole = segments.Section(
         address=None, form="conversation", segments=[seg],
-        description="The record's editorial vouch — the whole conversation, summarized.",
+        description="Unswept residue — 3.5 retired this field (§4.3.2.1).",
         extra={"participants": ["Andy <a@x>"]},
     )
-    assert "section-description-redundant" not in _fired(post, root, [whole])
+    assert "section-description-redundant" in _fired(post, root, [whole])
 
 
 def test_address_region_grammar(tmp_path):

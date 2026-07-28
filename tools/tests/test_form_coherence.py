@@ -209,20 +209,28 @@ def test_two_sections_with_leading_formless_segment_parse():
     blocks = segments.iter_blocks(segments.emit([cover, sec_a, sec_b]))
     assert [type(b).__name__ for b in blocks] == ["Segment", "Section", "Section"]
     assert blocks[0].address == "page=1"
-    assert (blocks[1].address, blocks[2].address) == ("pages=2-3", "pages=4-5")
+    # *(3.7)* The envelope is DERIVED, so it is exactly what the children cover — one page
+    # each here. The old assertion pinned the stored values, which over-claimed a page
+    # neither section holds: precisely the drift a stored envelope permits and §12.29 removes.
+    assert (blocks[1].address, blocks[2].address) == ("pages=2", "pages=4")
 
 
-def test_whole_record_section_rejects_formless_sibling():
-    import pytest
-
+def test_a_section_beside_a_formless_segment_parses(tmp_path=None):
+    """*(3.7, §12.29)* The whole-record sibling prohibition retires with its spelling. It
+    fired on a section carrying no `address` — "this form governs everything here" — and a
+    section no longer stores one, so there is no absence to read. A cover page beside a
+    conversation span is an ordinary mixed record: the segment keeps `page=1`, the span
+    derives `turn=1`, and neither claims the other's ground."""
     cover = segments.Segment(atom="image", address="page=1")
-    sec = segments.Section(  # whole-record: address omitted → spans the entire zone
+    sec = segments.Section(
         form="conversation", extra={"participants": ["A x"]},
         segments=[segments.Segment(atom="text", overlay="text/message", address="turn=1",
                                    body="hi", extra={"participant": 0})],
     )
-    with pytest.raises(ValueError, match="whole-record section"):
-        segments.iter_blocks(segments.emit([cover, sec]))
+    blocks = segments.iter_blocks(segments.emit([cover, sec]))
+    assert [type(b).__name__ for b in blocks] == ["Segment", "Section"]
+    assert blocks[0].address == "page=1"
+    assert blocks[1].address == "turn=1"
 
 
 def test_sectionless_flat_record_still_parses():

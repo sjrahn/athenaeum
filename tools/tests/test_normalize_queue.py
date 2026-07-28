@@ -323,7 +323,9 @@ def test_finalize_passes_formed_without_vouch(tmp_path):
     )
     post = records.load(paths.record_path(root, RID))
     assert records.derived_state(post) == "formed"
-    assert records.derived_editorial_field(post, root, "title").value == "Andy <a1>"
+    # *(3.7)* No form rung in the ladder (§4.2.3/§12.29): a shaped-not-vouched record derives
+    # its title from artifact/origin or honestly resolves empty. `finalize` never gated on it.
+    assert records.derived_editorial_field(post, root, "title").layer != "form"
     assert records.derived_editorial_field(post, root, "description").value == ""
     queue.enqueue(root, RID)
     queue.drain(root)

@@ -163,13 +163,10 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
             file=sys.stderr,
         )
         return
-    if existing and isinstance(existing[0], segs_mod.Section) and existing[0].address is None:
-        print(
-            "  WARN: structural-mark attestation skipped — record already carries a "
-            "whole-record form section, which admits no sibling block (§4.3.2.2)",
-            file=sys.stderr,
-        )
-        return
+    # *(3.7)* The whole-record guard retires with the spelling it keyed on (`address is None`,
+    # §12.29). A section's extent is now exactly its children's, so prepending a structural
+    # mark cannot collide with a span's claim the way it could when one section claimed the
+    # entire zone — the mark takes its own address and the spans keep theirs.
     already = {
         (b.address, b.mark)
         for b in existing

@@ -467,33 +467,6 @@ def _rule_section_empty(post, blocks, root) -> Iterator[Finding]:
             )
 
 
-def _rule_section_address_span(post, blocks, root) -> Iterator[Finding]:
-    """A section's address is the envelope of its child segments' addresses, in their
-    discrete-index scheme (spec §4.3.2.1) — the same value `Section.spanning` derives at
-    draft time. The `el=` family derives under whichever grammar the record's
-    `addressing:` stamp selects (§6.1.1 path algebra when stamped, the legacy min-max
-    span otherwise). Skips sections whose scheme has no span strategy: temporal
-    (`time_range=`) sections are structurally bounded intervals, not content envelopes."""
-    el_paths = _records.el_addressing(post) is not None
-    for blk in blocks:
-        if not isinstance(blk, _segments.Section) or not blk.segments:
-            continue
-        if blk.address is None:  # whole-record form section — envelope deliberately omitted
-            continue
-        expected = _segments.section_address(blk.segments, el_paths=el_paths)
-        if expected is None or expected == blk.address:
-            continue
-        yield Finding(
-            rule_id="section-address-span",
-            severity="warning",
-            message=(
-                f"section address `{_addr_str(blk.address)}` is not the span of its "
-                f"segments (expected `{_addr_str(expected)}`)."
-            ),
-            address=_addr_str(blk.address),
-        )
-
-
 def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
     """No two segments may claim the same (opener-id, address) pair (spec §4.3.2.2)."""
     seen: dict[tuple[str, str], _segments.Segment] = {}
@@ -838,8 +811,8 @@ def _rule_section_description_redundant(post, blocks, root) -> Iterator[Finding]
     for top_i, blk in enumerate(blocks, 1):
         if not isinstance(blk, _segments.Section):
             continue
-        if blk.address is None:  # whole-record section: the vouch's home (§4.2.3)
-            continue
+        # *(3.7)* No whole-record exemption: there is no whole-record section to exempt, and
+        # the vouch this rule was written around retired in 3.5 (§4.2.3, §12.29).
         if not (blk.description or "").strip() or not blk.segments:
             continue
         if all(_is_lossless(child) for child in blk.segments):
@@ -1238,6 +1211,33 @@ def _axis_low(value: str) -> int | None:
         return None
 
 
+def _member_keys_claimed_by_spans(post, blocks) -> set[tuple[str, str]]:
+    """The `(axis, value)` keys of members some form span's derived envelope CONTAINS
+    (§6.1.1 prefix test on the path axis, integer bounds otherwise). Its complement is the
+    orphan set the first span answers for — see `_rule_form_coherence`'s scoping."""
+    from corpus import functional_uri as _furi
+
+    claimed: set[tuple[str, str]] = set()
+    for blk in blocks:
+        if not isinstance(blk, _segments.Section) or blk.address is None:
+            continue
+        span_axis, span_lo, span_hi = _span_bounds(blk)
+        span_path = _el_span(post, blk.address)
+        for embed in _records.iter_embed_blocks(post):
+            axis, value = _leading_axis(embed.get("address"))
+            if not value or (span_axis and axis != span_axis):
+                continue
+            if span_path is not None:
+                member_path = _el_span(post, embed.get("address"))
+                if member_path is not None and _furi.el_path_contains(span_path, member_path):
+                    claimed.add((axis, value))
+            elif span_lo is not None:
+                low = _axis_low(value)
+                if low is not None and low >= span_lo and (span_hi is None or low <= span_hi):
+                    claimed.add((axis, value))
+    return claimed
+
+
 def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
     """Form-coherence (§4.3.2.1, §7.8): a record carrying `<!--section <form-id>-->` MUST
     satisfy the form overlay's declared `checks` — required envelope fields present, codebook
@@ -1318,9 +1318,18 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
             present = {
                 _leading_axis(seg.address) for seg in blk.segments if _segment_id(seg) == want
             }
-            # Scope to THIS span, off the section's own address envelope (§4.3.2.1) — a
-            # sibling span's embed is that span's obligation, not this one's. A whole-record
-            # section (no address) owns every embed on an axis its children use.
+            # Scope to THIS span, off the section's own derived envelope (§4.3.2.1) — a
+            # sibling span's embed is that span's obligation, not this one's.
+            #
+            # *(3.7)* A member NO span contains falls to the FIRST section, and that clause is
+            # load-bearing rather than tidy. Ownership used to have a catch-all: a whole-record
+            # section (`address: None`) owned every embed on an axis its children used. With
+            # the stored envelope retired, every span's extent is exactly its children's, so an
+            # unplaced member would belong to nobody and `form-embed-not-rendered` — the rule
+            # that says an asset with no rendering at all is an omission, not a judgment —
+            # would silently stop firing on the one case it exists for. Attributing the
+            # orphan to the first span is the same answer the old catch-all gave on a
+            # single-section record, without reinstating whole-record ownership (§12.29).
             span_axis, span_lo, span_hi = _span_bounds(blk)
             # *(3.6)* On the path axis a span owns the members its address CONTAINS — the
             # §6.1.1 prefix test. The integer lo/hi below cannot express that: a dotted path
@@ -1329,20 +1338,30 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
             span_path = _el_span(post, blk.address) if blk.address else None
             from corpus import functional_uri as _furi
 
+            is_first_section = blk is next(
+                (b for b in blocks if isinstance(b, _segments.Section)), None
+            )
+            claimed_elsewhere = _member_keys_claimed_by_spans(post, blocks)
             for embed in _records.iter_embed_blocks(post):
                 axis, value = _leading_axis(embed.get("address"))
                 if not value or (span_axis and axis != span_axis):
                     continue
+                orphan = (axis, value) not in claimed_elsewhere
+                contained = True
                 if span_path is not None:
                     member_path = _el_span(post, embed.get("address"))
-                    if member_path is None or not _furi.el_path_contains(
+                    contained = member_path is not None and _furi.el_path_contains(
                         span_path, member_path
-                    ):
-                        continue
+                    )
                 elif span_lo is not None:
                     low = _axis_low(value)
-                    if low is None or low < span_lo or (span_hi is not None and low > span_hi):
-                        continue
+                    contained = (
+                        low is not None
+                        and low >= span_lo
+                        and (span_hi is None or low <= span_hi)
+                    )
+                if not contained and not (orphan and is_first_section):
+                    continue
                 key = (axis, value)
                 marked = marker_atom and any(
                     seg.atom == marker_atom
@@ -1460,7 +1479,6 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-non-text-with-body", _rule_segment_non_text_with_body),
     ("segment-perceptual-format", _rule_segment_perceptual_format),
     ("section-empty", _rule_section_empty),
-    ("section-address-span", _rule_section_address_span),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
     ("issue-shape", _rule_issue_shape),

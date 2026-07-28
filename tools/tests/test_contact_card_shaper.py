@@ -199,7 +199,7 @@ def _promoted(root, ordinal: int, member: bytes):
     return pid
 
 
-def test_display_name_role_marks_the_title(tmp_path):
+def test_display_name_no_longer_marks_the_title(tmp_path):
     root = _corpus(tmp_path)
     pid = _promoted(root, 1, _CARD_STEVEN)
     post = _shape(root, pid)
@@ -208,8 +208,11 @@ def test_display_name_role_marks_the_title(tmp_path):
     assert sec.extra["display_name"] == "Steven Rahn"
     records.dump(post, paths.record_path(root, pid))
     reloaded = _record(root, pid)
+    # *(3.7, §12.29)* The form layer is out of the derived-editorial ladder. The shaped
+    # `display_name` is still the span's own attested fact — it is simply not the record's
+    # display title, because no section contributes one (§4.2.3, stated in 3.5).
     title = records.derived_editorial_field(reloaded, root, "title")
-    assert title.value == "Steven Rahn" and title.layer == "form"
+    assert title.layer != "form"
 
 
 def test_display_name_falls_back_to_formed_n_without_fn(tmp_path):
@@ -326,5 +329,8 @@ def test_corpus_shape_cli_dispatches_via_declared_origin_form(tmp_path, capsys):
 
     reloaded = _record(root, pid)
     assert records.derived_state(reloaded) == "formed"
+    # *(3.7, §12.29)* The form layer is out of the derived-editorial ladder. The shaped
+    # `display_name` is still the span's own attested fact — it is simply not the record's
+    # display title, because no section contributes one (§4.2.3, stated in 3.5).
     title = records.derived_editorial_field(reloaded, root, "title")
-    assert title.value == "Steven Rahn" and title.layer == "form"
+    assert title.layer != "form"

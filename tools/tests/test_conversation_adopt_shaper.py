@@ -114,7 +114,9 @@ def test_adopt_flat_wraps_whole_record_with_codebook(tmp_path):
     sec = blocks[0]
     assert isinstance(sec, segments.Section)
     assert sec.form == "conversation"
-    assert sec.address is None  # whole-record — omitted per §4.3.2.1
+    # *(3.7)* The envelope is derived from the children rather than omitted (§12.29); these
+    # five root-level siblings cross subtree boundaries, so it is an ordered address list.
+    assert sec.address == ["el=1", "el=2", "el=3", "el=4", "el=5"]
     # First-appearance order: Me (turn 1), Jason Cummings (turn 2) — no duplicates.
     assert sec.extra["participants"] == ["Me", "Jason Cummings"]
 

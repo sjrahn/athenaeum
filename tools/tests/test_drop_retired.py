@@ -93,7 +93,9 @@ def test_sweep_drops_every_retired_surface_and_nothing_else(tmp_path):
     assert "canonical" not in post.metadata
     blocks = segments.iter_blocks(post.content)
     sec = blocks[0]
-    assert sec.form == "document" and sec.address == "el=1.1"
+    # *(3.7)* The envelope is derived from the children, so it is what they actually cover —
+    # `el=1.1.[1-2]`, not the `el=1.1` the fixture stored, which over-claimed the parent.
+    assert sec.form == "document" and sec.address == "el=1.1.[1-2]"
     assert sec.description is None and sec.entry is None and "title" not in sec.extra
     text_seg, structural = sec.segments
     # The content segment loses both retired fields; its BODY is untouched.
@@ -116,7 +118,7 @@ def test_sweep_is_idempotent(tmp_path):
     rf.write_text(first.new_text, encoding="utf-8")
     second = drop_retired.sweep_record(rf, root)
     assert second.changed is False
-    assert second.skipped == "carries nothing 3.5 retired"
+    assert second.skipped == "carries nothing 3.5/3.7 retired"
 
 
 def test_sweep_reports_the_derived_pair_either_side(tmp_path):
@@ -173,8 +175,10 @@ def test_a_restored_index_span_lets_the_relation_blocks_go(tmp_path):
 def test_a_whole_record_index_section_does_not_count_as_restored(tmp_path):
     """The loose reading — "the record has an index span somewhere" — is wrong on a real
     population: 786 alldata records were fitted WHOLE-RECORD to `form/index` by the 3.2
-    form-adopt sweep, so an index section exists while nothing renders the rail. A
-    whole-record section claims no address in particular, so it never counts."""
+    form-adopt sweep, so an index section exists while nothing renders the rail. Under 3.7
+    that section derives the envelope of the content it actually holds, which is nowhere near
+    the rail — so per-block containment still refuses, now for a reason visible in the
+    address rather than in an absent field."""
     root, rf = _record(
         tmp_path,
         [Section(form="index", description="d",

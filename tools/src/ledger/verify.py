@@ -230,8 +230,18 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
 
     def add(addr, *parts):
         text = "\n".join(p for p in parts if p)
-        if text:
-            texts.append(text)
+        if not text:
+            # *(3.7)* A block with no citable text of its own registers no span. This used to
+            # be unreachable for an ADDRESSED block, and it stopped being so when the section
+            # header lost its last content-bearing fields: 3.5 retired `title`/`description`/
+            # `entry`, and 3.7 made the envelope derived (§12.29), so a section now contributes
+            # an address and no text. Registering that as a span put an empty string into every
+            # hit list its envelope overlapped, and `"\n".join` turned it into a leading
+            # newline on the resolved evidence — a quote that had matched exactly then would
+            # not. Nothing citable is lost: the section's children carry the text and their own
+            # addresses.
+            return
+        texts.append(text)
         int_spans, paths = _parse_axis_values(addr, el_stamped=el_stamped)
         for axis, lo, hi in int_spans:
             spans.setdefault(axis, []).append((lo, hi, text))
@@ -239,12 +249,11 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
             el_paths.append((p, text))
 
     def block_texts(b) -> tuple[str, ...]:
-        # a block's citable text: body + normalizer-written prose (descriptions,
-        # TOC entries, section-header titles) — all of it is record content a
-        # quote may cite. A Section's `title:` header field rides on `.extra`
-        # (spec corpus.md §4.2.3) — the whole-record vouch's new home, and
-        # every span-scope section's own span title — while `.description`
-        # is a dedicated dataclass field, already covered below.
+        # A block's citable text: its body, plus any of the retired prose fields a
+        # not-yet-swept record still carries (`description`, `entry`, a section's `title:` on
+        # `.extra`) — legacy content a standing quote may still cite, read tolerantly until
+        # the sweep reaches it. *(3.5/3.7: a CONFORMANT section contributes none of these, so
+        # for a swept record this returns nothing and the block registers no span at all.)*
         parts = (getattr(b, "body", ""), getattr(b, "description", None) or "",
                  getattr(b, "entry", None) or "")
         if isinstance(b, segments.Section):

@@ -1,4 +1,4 @@
-"""The §12.27 field sweep: remove what ATH-CORPUS 3.5 retired.
+"""The §12.27/§12.29 field sweep: remove what ATH-CORPUS 3.5 and 3.7 retired.
 
 The subtractive half of the faithfulness amendment's migration (spec §12.27). Six things
 came out of the record grammar in 3.5, and five of them are pure subtraction — a field or
@@ -16,6 +16,17 @@ anywhere:
 - the annotation zone's retired namespaces — `relation` and `reference` context blocks
   (§4.3.3.3/§4.3.3.5) — plus `issue/generic-title`, a detector's verdict about a *derived*
   value that computes on demand (§12.21).
+
+And *(3.7, §12.29)* two more of the same kind:
+
+- the frontmatter editorial **override** pair (`title:` / `description:`), retired in 3.5
+  alongside the interpretive rung it belonged to (§4.2.1) and missed by this engine's first
+  cut — two records across both hubs carried one;
+- the section header's **`address:`**, the span envelope that is now derived from the
+  children who define it (§4.3.2.1). This one needs no mutation at all: the serializer
+  stopped writing it, so re-serializing the record removes it. What the engine adds is the
+  accounting — the count, and a stability guard that licenses *that* difference and nothing
+  else.
 
 The sixth retirement is the `relation` rail's **restoration** as a trailing index span, and
 it is deliberately NOT here: it is additive, per-host, and needs the origin overlay's region
@@ -42,6 +53,7 @@ finding count is HELD, not swept.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -65,6 +77,9 @@ RETIRED_ISSUE_IDS = frozenset({"generic-title"})
 #: `description` are dataclass fields; `title` rides `Section.extra`.
 _SECTION_EXTRA_DROPS = ("title",)
 
+#: Frontmatter editorial overrides — retired in 3.5 with the interpretive rung (§4.2.1).
+_FRONTMATTER_DROPS = ("canonical", "title", "description")
+
 
 class DropHold(ValueError):
     """The record cannot be swept mechanically — held with a reason, never guessed."""
@@ -86,6 +101,54 @@ class RecordDrop:
     description_before: str = ""
     emit_normalized: bool = False
     new_text: str | None = None
+
+
+_SECTION_OPENER_RE = re.compile(r"^<!--section(?: |$)", re.M)
+_CLOSER = "-->"
+
+
+def _stored_section_fields(text: str) -> int:
+    """How many section headers in `text` still carry the retired `address:` field (§12.29).
+    Counted off the raw bytes, because once parsed the stored value is indistinguishable from
+    the derived one that replaced it."""
+    count = 0
+    for opener in _SECTION_OPENER_RE.finditer(text):
+        end = text.find(_CLOSER, opener.end())
+        if end == -1:
+            continue
+        if re.search(r"^address:", text[opener.end() : end], re.M):
+            count += 1
+    return count
+
+
+def _reserialized_section_headers(text: str) -> int:
+    """How many section headers `text` spells in the pre-3.7 multi-line form where the
+    current serializer would write the one-line bare opener (`<!--section index-->`). Not a
+    field removal — the shape a removed field leaves behind — but it is the same change and it
+    is disclosed the same way."""
+    count = 0
+    for m in re.finditer(r"^<!--section(?: [^\n>]*)?\n(?:[^\n]*\n)*?-->$", text, re.M):
+        body = m.group(0).split("\n")[1:-1]
+        if not [ln for ln in body if ln.strip()]:
+            count += 1
+    return count
+
+
+def _outside_section_headers(text: str) -> str:
+    """`text` with every section-header block replaced by its form id alone.
+
+    The textual stability guard's job is to catch drift the engine did not intend. After 3.7
+    the section header is exactly where intended change lands — the `address:` line goes and
+    an emptied header collapses to a one-line bare opener — so the guard compares everything
+    ELSE byte-for-byte and leaves the header to the block-level round-trip check, which is
+    stricter about what a header may mean than any line diff could be."""
+    return re.sub(
+        r"^<!--section(?: [^\n>]*?)?(?:-->|\n(?:[^\n]*\n)*?-->)$",
+        lambda m: "<!--section " + (m.group(0).split("\n")[0]
+                                    .removeprefix("<!--section").removesuffix("-->").strip()),
+        text,
+        flags=re.M,
+    )
 
 
 def _lint_tally(findings: list[lint.Finding]) -> Counter[str]:
@@ -187,7 +250,7 @@ def sweep_record(
         return report
 
     doomed_contexts = _retired_contexts(post)
-    has_canonical = "canonical" in post.metadata
+    doomed_frontmatter = [k for k in _FRONTMATTER_DROPS if k in post.metadata]
 
     def _section_carries(sec: segments.Section) -> bool:
         return bool(
@@ -208,13 +271,18 @@ def sweep_record(
     ]
     sections = [b for b in blocks if isinstance(b, segments.Section)]
 
+    stored_addresses = _stored_section_fields(original)
+    stale_headers = _reserialized_section_headers(original)
+
     if not (
         doomed_contexts
-        or has_canonical
+        or doomed_frontmatter
+        or stored_addresses
+        or stale_headers
         or any(_section_carries(s) for s in sections)
         or any(_segment_carries(s) for s in all_segments)
     ):
-        report.skipped = "carries nothing 3.5 retired"
+        report.skipped = "carries nothing 3.5/3.7 retired"
         return report
 
     # The rail's restoration is additive and lives elsewhere (§12.27). Dropping a
@@ -237,9 +305,16 @@ def sweep_record(
             )
             return report
 
-    # Serializer stability FIRST: the rewrite goes through the real serializer, so the only
+    # Serializer stability: the rewrite goes through the real serializer, so the only
     # differences it may introduce must be intended or disclosed (the §12.28 rule).
-    if records.dumps(post) != original:
+    #
+    # *(3.7)* One difference is now intended on every legacy record — the serializer no longer
+    # writes a section's `address:`, because the envelope is derived (§12.29). So the baseline
+    # is the record's own canonical re-serialization, and the ONLY licensed difference between
+    # it and the bytes on disk is the removal of `address:` lines from section headers. Any
+    # other drift is still a hold.
+    baseline = records.dumps(post)
+    if _outside_section_headers(baseline) != _outside_section_headers(original):
         report.hold = "record is not dumps-stable; the serializer would introduce unrelated changes"
         return report
     content = post.content or ""
@@ -250,7 +325,24 @@ def sweep_record(
         report.hold = f"content zone does not survive an emit round-trip: {exc}"
         return report
     if reparsed != blocks:
-        report.hold = "content zone does not survive an emit round-trip losslessly"
+        # *(3.7)* The commonest instance of this is worth naming rather than shrugging at: a
+        # section whose STORED envelope is not the one its children derive. Dropping the field
+        # then changes a claim instead of removing a duplicate of it, which is a deliberate
+        # re-addressing (the §12.28 `--override` precedent), not a sweep.
+        drifted = [
+            (str(a.address), str(b.address))
+            for a, b in zip(blocks, reparsed, strict=False)
+            if isinstance(a, segments.Section) and a.address != b.address
+        ]
+        if drifted:
+            detail = "; ".join(f"stored `{o}` vs derived `{n}`" for o, n in drifted)
+            report.hold = (
+                f"stored section envelope is not what its children derive ({detail}) — the "
+                f"stored value over- or under-claims, so removing it changes a claim; "
+                f"re-address the span deliberately (§12.29)"
+            )
+        else:
+            report.hold = "content zone does not survive an emit round-trip losslessly"
         return report
     report.emit_normalized = emitted.rstrip("\n") != content.rstrip("\n")
     trailing = content[len(content.rstrip("\n")) :]
@@ -259,9 +351,16 @@ def sweep_record(
     report.title_before, report.description_before = _derived_pair(post, corpus_root)
 
     # ---- the subtraction ----
-    if has_canonical:
-        post.metadata.pop("canonical", None)
-        report.counts["frontmatter canonical"] += 1
+    if stored_addresses:
+        # Nothing to mutate: the serializer already omits it and `iter_blocks` derives it.
+        # Counted so the manifest says what came off rather than leaving it to a diff.
+        report.counts["section address"] += stored_addresses
+    if stale_headers:
+        report.counts["section header → bare opener"] += stale_headers
+
+    for key in doomed_frontmatter:
+        post.metadata.pop(key, None)
+        report.counts[f"frontmatter {key}"] += 1
 
     for sec in sections:
         if sec.description is not None:
