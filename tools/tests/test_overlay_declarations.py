@@ -173,3 +173,32 @@ def test_a_promoted_member_reaches_its_origin_through_lineage(tmp_path):
 
     row = {"record": leaf, "content": schemas.content_pin(post), "shows": "x"}
     assert schemas.exemplar_status(root, "example.com", row)[0] == "ok"
+
+
+def test_the_lineage_walk_follows_the_primary_uri_only(tmp_path):
+    """sjrahn's catch: "that could become quite messy if there is a lot of sharing."
+
+    A member shared by many records accumulates one lineage ALIAS per parent that promoted it
+    — one public PNG is placed by 668 records. Walking every alias would load 668 records to
+    answer what the first one answers, and it would let an unrelated container's origin vote
+    on what this record is. §7.2 already draws exactly this line for route-keyed `form:`
+    matching: aliases are not gate-grade route evidence. The primary is the container this
+    record was promoted FROM; the rest are other places the same bytes turned up.
+    """
+    root = _root(tmp_path)
+    real = "a" * 64
+    other = "c" * 64
+    leaf = "b" * 64
+    _record(root, real, "parent")
+    _record(root, other, "elsewhere", origin_id="other.test", uri="https://other.test/p")
+    _record(root, leaf, "leaf", origin_id=None, uri=f"corpus://{real}?el=1")
+
+    # a second container turns up carrying the same bytes — an alias, not parentage
+    path = paths.record_path(root, leaf)
+    post = records.load(path)
+    records.add_origin_uri_alias(post, f"corpus://{other}?el=9")
+    records.dump(post, path)
+
+    ids = schemas._origin_ids_through_lineage(root, records.load(path))
+    assert "example.com" in ids
+    assert "other.test" not in ids, "an alias container must not vote on what this record is"

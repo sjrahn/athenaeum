@@ -1275,7 +1275,9 @@ def origin_exemplars(corpus_root: Path, origin_id: str) -> list[dict[str, Any]]:
     return out
 
 
-def _origin_ids_through_lineage(corpus_root: Path, post: Any, *, depth: int = 4) -> set[str]:
+def _origin_ids_through_lineage(
+    corpus_root: Path, post: Any, *, depth: int = 4, stop_at: str | None = None
+) -> set[str]:
     """Every origin id this record carries, **plus its containment lineage's** (§8.1).
 
     A promoted member carries no host origin at all: its origin `uri:` is the lineage
@@ -1286,41 +1288,53 @@ def _origin_ids_through_lineage(corpus_root: Path, post: Any, *, depth: int = 4)
     way §8.1 says a normalize pass may: the container's origin is legitimate context for what
     the member is.
 
-    Bounded rather than unbounded, and it does not care that the chain is acyclic by
-    construction (a member's container is older bytes): a depth cap is cheaper than trusting
-    that, and the lineage is history a record could carry wrongly."""
+    **The PRIMARY lineage uri only, never the aliases**, which is the same line §7.2 already
+    draws for route-keyed `form:` matching: *aliases are not gate-grade route evidence*. It is
+    also what keeps this affordable. A member shared by many records accumulates one lineage
+    alias per parent that promoted it — one public PNG is placed by 668 records — and a walk
+    over every alias would load 668 records to answer a question the first one answers. The
+    primary is the container this record was promoted FROM; the rest are other places the same
+    bytes turned up, which is history, not parentage.
+
+    `stop_at` short-circuits the moment that id is seen, because the caller's real question is
+    a boolean (*is this record of origin X?*) and a set is just how the answer is spelled when
+    it is not.
+
+    Depth-bounded rather than trusting the chain to be acyclic (a member's container is older
+    bytes, so it is — but the lineage is history a record could carry wrongly, and a cap is
+    cheaper than proving it every time)."""
     from corpus import functional_uri as _furi
     from corpus import paths as _paths
     from corpus import records as _records
 
     out: set[str] = set()
     seen: set[str] = set()
-    frontier = [post]
+    current: Any | None = post
     for _ in range(depth):
-        nxt: list[Any] = []
-        for p in frontier:
-            for blk in _records.iter_origin_blocks(p):
-                if oid := str(blk.get("id") or "").strip():
-                    out.add(oid)
-            for uri in _records.iter_origin_uris(p):
-                if not str(uri).startswith("corpus://"):
-                    continue
-                try:
-                    parent = _furi.parse(str(uri)).hash
-                except Exception:
-                    continue
-                if not parent or parent in seen:
-                    continue
-                seen.add(parent)
-                path = _paths.record_path(corpus_root, parent)
-                if path.is_file():
-                    try:
-                        nxt.append(_records.load(path))
-                    except Exception:
-                        continue
-        if not nxt:
+        if current is None:
             break
-        frontier = nxt
+        for blk in _records.iter_origin_blocks(current):
+            if oid := str(blk.get("id") or "").strip():
+                out.add(oid)
+        if stop_at and stop_at in out:
+            return out
+        uri = str(_records.primary_origin_uri(current) or "")
+        if not uri.startswith("corpus://"):
+            break
+        try:
+            parent = _furi.parse(uri).hash
+        except Exception:
+            break
+        if not parent or parent in seen:
+            break
+        seen.add(parent)
+        path = _paths.record_path(corpus_root, parent)
+        if not path.is_file():
+            break
+        try:
+            current = _records.load(path)
+        except Exception:
+            break
     return out
 
 
@@ -1349,7 +1363,7 @@ def exemplar_status(corpus_root: Path, origin_id: str, row: dict[str, Any]) -> t
         post = _records.load(path)
     except Exception as exc:  # unreadable is as good as absent to a reader
         return "missing", f"{rid[:12]}… will not load: {exc}"
-    ids = _origin_ids_through_lineage(corpus_root, post)
+    ids = _origin_ids_through_lineage(corpus_root, post, stop_at=origin_id)
     if origin_id not in ids:
         return "foreign", (
             f"{rid[:12]}… carries origin {sorted(i for i in ids if i) or ['(none)']}, "
