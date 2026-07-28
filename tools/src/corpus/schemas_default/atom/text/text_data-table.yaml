@@ -1,10 +1,18 @@
 class_id: text/data-table
 kind: atomic
 description: |
-  The segment body is a lossless markdown-table transcription of a
-  relation-bearing region in the addressed content. The address chain must
-  reach a region capable of carrying that relation — a `bbox=` over an image,
-  a region within a PDF/HTML page, etc.
+  The segment body is a lossless table transcription of a relation-bearing
+  region in the addressed content. The address chain must reach a region
+  capable of carrying that relation — a `bbox=` over an image, a region within
+  a PDF/HTML page, an image record's whole transport, etc.
+
+  *(3.8)* **Two body shapes, and the source picks which.** A markdown pipe
+  table where the source's table is simple; an **HTML `<table>`** wherever it
+  is not. Markdown is the smaller, more readable form and stays the default for
+  the simple case — but it cannot express a merged cell, a two-level header, a
+  block inside a cell, or a caption, and a transcription that silently flattens
+  one of those is not lossless. Reach for HTML the moment the source needs it;
+  the reader renders both, so the choice costs nothing and buys fidelity.
 
   Use this overlay when the source content is a **relation set whose tuples
   the source itself fully determines** and whose cells can be transcribed
@@ -34,17 +42,62 @@ extended_fields:
       Whether the first row is a header (column titles).
 normalization:
   guidance: |
-    Transcribe column headers and cell values verbatim. Preserve cell layout:
-    merged cells become column-span markers; empty cells stay empty (write
-    them as `` || `` not `|—|`). Do not paraphrase, summarize, or omit cells.
+    Transcribe column headers and cell values verbatim. Do not paraphrase,
+    summarize, or omit cells.
 
-    If a cell contains structured content (a list, a sub-table, a multi-paragraph
-    block), preserve it as markdown — use `<br>` for line breaks within a cell.
-    Sub-tables collapse to one cell containing a serialized form when the
-    nested structure would break markdown table syntax.
+    **Pick the shape from the source, before you start transcribing.** Getting
+    this wrong is the expensive mistake — a markdown table that had to flatten a
+    merged header has lost a fact, and nothing downstream can tell.
 
-    Footnotes / table notes that sit alongside the table go in a separate
-    segment, not in the table cells.
+    Use **markdown** when every one of these holds: one header row, no merged
+    cells, no caption, and every cell is a short run of inline text. That is the
+    common case and it stays the default.
+
+    Use an **HTML `<table>`** as soon as any of these appears:
+
+    - a **merged cell** — `rowspan=` / `colspan=`. A two-level header
+      (`Specification` spanning `Metric` + `Imperial`) is the usual trigger and
+      is extremely common in service data.
+    - a **caption** — the table's own title (below).
+    - a **block inside a cell** — a bulleted list, several paragraphs, a
+      sub-table. `<ul>`/`<li>`/`<br>` inside a `<td>` say what they are; a
+      markdown cell can only run them together.
+    - a **header column** as well as a header row (`<th scope="row">`).
+
+    Emit a minimal, readable table: `<table>`, `<caption>`, `<thead>`/`<tbody>`
+    where a header row exists, `<tr>`, `<th>`, `<td>`, and `rowspan`/`colspan`.
+    Inline emphasis (`<strong>`, `<em>`, `<code>`, `<sup>`, `<sub>`), `<br>`, and
+    list elements inside cells are fine. Nothing else — no classes, no styles, no
+    ids, no `<div>`; those are the source's presentation, not its relation, and
+    the reader strips them anyway.
+
+    **The table's title is its `<caption>`, and it is not optional when the
+    source shows one.** *(3.8)* A title drawn above a table — a rendered image's
+    header line, a printed table number — is part of the table, so it goes
+    inside the table: `<caption>Refrigerant System Capacities</caption>`,
+    verbatim. Do NOT write it as a bold line above the table (it reads as prose
+    and no consumer can tell it is the title), and do NOT write it as a
+    `<!--segment structural-->` byte-mark: a byte-mark records structure the
+    source *declares*, and a title rendered into pixels is interpreted from
+    layout, not declared (spec §4.3.2.3, §4.3.2.4). Because markdown has no
+    caption, **a titled table is always the HTML shape.**
+
+    Where the same title also appears as a real heading element on the page that
+    *embeds* this table, that page keeps its own byte-mark: it records that the
+    page declares a heading, which is a different fact about different bytes
+    (§4.3.2.4). Do not delete one because the other exists.
+
+    **Empty cells stay empty** — `<td></td>`, or `` || `` in markdown, never
+    `|—|`: an em-dash is a value the source did not write.
+
+    Footnotes / table notes that sit *alongside* the table — a `*` note beneath
+    it, a legend — go in a separate segment, not in the table cells and not in
+    the caption.
+
+    **Check your column count before you finish.** Every row, header included,
+    carries the same number of cells once `colspan` is accounted for. A markdown
+    table whose separator row has more pipes than its header is a silent defect
+    that renders as a broken table and reads as data.
 
     **Graph-shaped sources.** A source may state its relation as a drawing
     rather than as a grid — a wiring schematic states a conductor set, a block
