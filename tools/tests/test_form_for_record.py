@@ -151,8 +151,8 @@ kind: interpretive
 form:
   - match: 'procedure'
     id: procedure
-  - match: 'bulletin'
-    id: bulletin
+  - match: 'article'
+    id: article
 """
     root = _corpus(tmp_path, {"route-host": overlay})
     post = _post([("route-host", "routetest://site/index-page")])
