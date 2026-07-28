@@ -649,11 +649,51 @@ def iter_blocks(body: str) -> list[Block]:
     # grammar and `segment-address-duplicate` already decide at the segment grain (§12.29).
     #
     # *(3.5 lifted the prohibition for multi-span records; 3.7 removes the last remnant.)*
+    blocks = _collapse_adjacent_same_form(blocks)
+
     for blk in blocks:
         if isinstance(blk, Section) and blk.address is None and blk.segments:
             blk.address = section_address(blk.segments, el_paths=_el_path_children(blk.segments))
 
     return blocks
+
+
+def _collapse_adjacent_same_form(blocks: list[Block]) -> list[Block]:
+    """Merge adjacent sections that say the same thing (spec §4.3.2.1, 3.7).
+
+    Two neighbouring spans under the SAME form whose declared header fields are equal are one
+    span written twice: the form is the only judgment a section makes, the fields are the only
+    facts it carries, and position within the merged span still holds the source's order. So
+    the grammar declines to represent the split — it parses as one section, and re-emitting
+    writes one.
+
+    **Field equality is what makes this safe, and it is why the rule is form-dependent in
+    effect without being form-specific in statement.** `form/index` declares nothing, so its
+    adjacent spans always merge. `form/statement` declares `account`/`period`; two statement
+    spans in one PDF differ there and never merge — which is correct, because those fields are
+    what distinguish the two statements. The same holds for a workbook's per-worksheet spans
+    and a multi-sheet schematic's per-sheet ones: their declared fields differ, so they stand
+    apart. No form id is named here; the forms' own declarations decide.
+
+    Legacy `entry`/`description` (retired, read tolerantly) must also match — an unswept record
+    with two differently-labelled spans keeps them rather than silently losing a label."""
+    out: list[Block] = []
+    for blk in blocks:
+        prev = out[-1] if out else None
+        if (
+            isinstance(blk, Section)
+            and isinstance(prev, Section)
+            and blk.form is not None
+            and prev.form == blk.form
+            and prev.extra == blk.extra
+            and prev.entry == blk.entry
+            and prev.description == blk.description
+        ):
+            prev.segments.extend(blk.segments)
+            prev.address = None  # re-derived below, over the merged children
+            continue
+        out.append(blk)
+    return out
 
 
 def _el_path_children(children: list[Segment]) -> bool:

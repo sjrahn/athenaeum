@@ -135,20 +135,41 @@ def _reserialized_section_headers(text: str) -> int:
 
 
 def _outside_section_headers(text: str) -> str:
-    """`text` with every section-header block replaced by its form id alone.
+    """`text` with every section-header block removed entirely.
 
-    The textual stability guard's job is to catch drift the engine did not intend. After 3.7
-    the section header is exactly where intended change lands — the `address:` line goes and
-    an emptied header collapses to a one-line bare opener — so the guard compares everything
-    ELSE byte-for-byte and leaves the header to the block-level round-trip check, which is
-    stricter about what a header may mean than any line diff could be."""
+    The textual stability guard's job is to catch drift the engine did not intend. After 3.7 the
+    section header is exactly where intended change lands — the `address:` line goes, an emptied
+    header collapses to a one-line bare opener, and two adjacent same-form spans become one — so
+    the guard compares everything ELSE byte-for-byte and leaves the headers to the block-level
+    round-trip check, which is stricter about what a header MEANS than any line diff could be:
+    it compares parsed Sections and Segments, field for field."""
     return re.sub(
-        r"^<!--section(?: [^\n>]*?)?(?:-->|\n(?:[^\n]*\n)*?-->)$",
-        lambda m: "<!--section " + (m.group(0).split("\n")[0]
-                                    .removeprefix("<!--section").removesuffix("-->").strip()),
+        r"^<!--section(?: [^\n>]*?)?(?:-->|\n(?:[^\n]*\n)*?-->)\n?",
+        "",
         text,
         flags=re.M,
     )
+
+
+def _content_is_stale(text: str) -> bool:
+    """Whether the record's stored content zone differs from what the current grammar emits —
+    the canonicalizations 3.7 introduced (bare opener, no envelope, adjacent same-form spans
+    merged). Parse-tolerant: a zone that will not parse is not stale, it is broken, and the
+    round-trip check below says so with a better message."""
+    body = text.split("---", 2)[-1] if text.startswith("---") else text
+    try:
+        blocks = segments.iter_blocks(records.loads(text).content or "")
+    except Exception:
+        return False
+    if not blocks:
+        return False
+    try:
+        emitted = segments.emit(blocks)
+    except Exception:
+        return False
+    stored = (records.loads(text).content or "")
+    del body
+    return emitted.rstrip("\n") != stored.rstrip("\n")
 
 
 def _lint_tally(findings: list[lint.Finding]) -> Counter[str]:
@@ -274,11 +295,14 @@ def sweep_record(
     stored_addresses = _stored_section_fields(original)
     stale_headers = _reserialized_section_headers(original)
 
+    canonicalizes = _content_is_stale(original)
+
     if not (
         doomed_contexts
         or doomed_frontmatter
         or stored_addresses
         or stale_headers
+        or canonicalizes
         or any(_section_carries(s) for s in sections)
         or any(_segment_carries(s) for s in all_segments)
     ):
@@ -345,6 +369,16 @@ def sweep_record(
             report.hold = "content zone does not survive an emit round-trip losslessly"
         return report
     report.emit_normalized = emitted.rstrip("\n") != content.rstrip("\n")
+    if report.emit_normalized:
+        # The content zone as the CURRENT grammar spells it differs from what is stored. That
+        # difference is this verb's business, not an accident: it is the bare opener, the
+        # dropped envelope, and 3.7's collapse of adjacent same-form spans (§4.3.2.1) — each a
+        # canonicalization the grammar implies rather than a judgment anyone makes. Writing it
+        # is what makes the sweep leave a record in the shape a fresh parse would produce.
+        stored_sections = len(_SECTION_OPENER_RE.findall(content))
+        parsed_sections = sum(1 for b in blocks if isinstance(b, segments.Section))
+        if stored_sections > parsed_sections:
+            report.counts["sections collapsed"] += stored_sections - parsed_sections
     trailing = content[len(content.rstrip("\n")) :]
 
     before_findings = _lint_tally(lint.lint(post, blocks, corpus_root))

@@ -416,3 +416,63 @@ def test_section_address_derives_el_and_turn_envelopes():
         segments.Segment(atom="text", address="page=2", body="b"),
     ]
     assert segments.section_address(mixed) is None
+
+
+def test_adjacent_same_form_sections_collapse():
+    """*(3.7)* Two neighbouring spans under one form with equal declared fields are one span
+    written twice — the form is the only judgment a section makes, so the grammar declines to
+    represent the split. sjrahn, on a selector page that came out with two `index` spans:
+    "i would consider contiguous same form segments to be collapsible"."""
+    text = segments.emit(
+        [
+            segments.Section(
+                form="index",
+                segments=[segments.Segment(atom="text", address="el=1.1", body="a")],
+            ),
+            segments.Section(
+                form="index",
+                segments=[segments.Segment(atom="text", address="el=1.2", body="b")],
+            ),
+        ]
+    )
+    (sec,) = segments.iter_blocks(text)
+    assert sec.form == "index"
+    assert [s.address for s in sec.segments] == ["el=1.1", "el=1.2"]
+    assert sec.address == "el=1.[1-2]"
+
+
+def test_adjacent_sections_whose_declared_fields_differ_do_not_collapse():
+    """The safety is field equality, and it is what makes the rule form-dependent in effect
+    without naming a form: two `statement` spans in one PDF differ in `account`/`period`, and
+    those fields are exactly what distinguishes the two statements."""
+    text = segments.emit(
+        [
+            segments.Section(
+                form="statement", extra={"account": "a", "period": "2026-01"},
+                segments=[segments.Segment(atom="text", address="page=1", body="a")],
+            ),
+            segments.Section(
+                form="statement", extra={"account": "a", "period": "2026-02"},
+                segments=[segments.Segment(atom="text", address="page=2", body="b")],
+            ),
+        ]
+    )
+    a, b = segments.iter_blocks(text)
+    assert (a.extra["period"], b.extra["period"]) == ("2026-01", "2026-02")
+
+
+def test_different_forms_never_collapse():
+    text = segments.emit(
+        [
+            segments.Section(
+                form="document",
+                segments=[segments.Segment(atom="text", address="el=1.1", body="a")],
+            ),
+            segments.Section(
+                form="index",
+                segments=[segments.Segment(atom="text", address="el=1.2", body="b")],
+            ),
+        ]
+    )
+    a, b = segments.iter_blocks(text)
+    assert (a.form, b.form) == ("document", "index")
