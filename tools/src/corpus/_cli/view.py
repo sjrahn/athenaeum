@@ -213,7 +213,15 @@ def run(args: argparse.Namespace) -> int:
                 continue
             if cap and len(bundled) >= cap:
                 break
-            member.href = f"members/{member.hex[:12]}.html"
+            # A member gets a DIRECTORY named by its hash, holding the same three names the
+            # bundle root holds. Two reasons, and the second is the one that bit: inside a
+            # container named by the id, plain names are what belong (the rule the root already
+            # follows, applied one level down) — and the member's page emits `href="record.md"`
+            # and `href="artifact.<ext>"` relative to itself, so a flat `members/<hash>.html`
+            # pointed both at `members/record.md` and `members/artifact.png`, neither of which
+            # existed. The directory makes the page's own links true rather than special-casing
+            # them.
+            member.href = f"members/{member.hex}/{_PAGE_MEMBER}"
             bundled.append(member)
         # A member placed at several addresses shares one page.
         for member in leaves.values():
@@ -250,6 +258,16 @@ def run(args: argparse.Namespace) -> int:
     for member in bundled:
         assert member.record is not None and member.href is not None
         member_post = records.load(member.record)
+        # The member's own bytes ride with it — materialized through containment like any
+        # other artifact (§12.9), which for a promoted member means streaming them out of
+        # this very record's transport. Without them the member's folder is a page and a
+        # record talking about bytes that are not there, and its own artifact link is dead.
+        member_artifact = _artifact_source(
+            root,
+            member.hex,
+            member_post,
+            limit=max(0, int(getattr(args, "max_artifact", _ARTIFACT_BUDGET) or 0)),
+        )
         member_page = _render(
             root,
             member.hex,
@@ -257,11 +275,14 @@ def run(args: argparse.Namespace) -> int:
             regenerate=args.regenerate,
             budget=_Budget(budget.limit),
             source=member.record.read_text(encoding="utf-8", errors="replace"),
-            artifact=None,
+            artifact=member_artifact,
             leaves=placed_members(root, member_post),
         )
-        extra.append((member.href, member_page.encode("utf-8"), None))
-        extra.append((f"members/{member.hex[:12]}.md", None, member.record))
+        folder = f"members/{member.hex}"
+        extra.append((f"{folder}/{_PAGE_MEMBER}", member_page.encode("utf-8"), None))
+        extra.append((f"{folder}/{_RECORD_MEMBER}", None, member.record))
+        if member_artifact.path:
+            extra.append((f"{folder}/{member_artifact.name}", None, member_artifact.path))
 
     out = Path(args.out).expanduser() if args.out else root / "export" / f"{record_id}.zip"
     size = _write_bundle(out, page=page, record=path, artifact=artifact, extra=extra)
@@ -399,15 +420,29 @@ def _write_bundle(
 # ---------- surface materialization ---------- #
 
 
+def _address_tag(address: object) -> str:
+    """*(3.8)* How an address reads on the page. An ABSENT one is the whole transport
+    (§4.3.2.2) and must say so — `None` is a Python value leaking into a reading view, and it
+    reads as a bug rather than as the statement the omission actually is."""
+    if address is None or address == []:
+        return "the whole transport"
+    return str(address)
+
+
 def _resolve_surface(
     root: Path, record_id: str, address: Any, *, regenerate: bool
 ) -> tuple[Path | None, str | None]:
-    """Materialize one address → (path, error). A list address takes its first element."""
+    """Materialize one address → (path, error). A list address takes its first element.
+
+    *(3.8)* An **absent** address is not "nothing to resolve" — it names the whole transport
+    (§4.3.2.2), and the functional URI for that is the bare `corpus://<id>` the record-side
+    omission mirrors. Returning early here was why a promoted member's page showed its
+    transcription with no artifact beside it: the one surface the page exists to put there was
+    the only one it declined to ask for.
+    """
     if isinstance(address, list):
         address = address[0] if address else None
-    if not address:
-        return None, None
-    uri = f"corpus://{record_id}?{address}"
+    uri = f"corpus://{record_id}?{address}" if address else f"corpus://{record_id}"
     try:
         return resolver.resolve(uri, root, regenerate=regenerate), None
     except Exception as exc:
@@ -994,7 +1029,7 @@ def _segment_html(
         label = f" {html.escape(str(seg.mark))}" if getattr(seg, "mark", None) else ""
         level = f" <span class=tag>level {seg.level}</span>" if getattr(seg, "level", None) else ""
         return (f"<div class=block{anchor}>{aliases}<h3>structural mark{label} "
-                f"<span class=tag>{html.escape(str(seg.address))}</span>{level}</h3></div>")
+                f"<span class=tag>{html.escape(_address_tag(seg.address))}</span>{level}</h3></div>")
     if seg.is_placement:
         # *(3.8)* A placement says a member sits here and nothing else (§4.3.2.4), so the view's
         # job is to make the IMPORT visible: the surface resolves from this record's bytes as
@@ -1022,7 +1057,7 @@ def _segment_html(
         return "\n".join(
             [
                 f"<div class=block{anchor}>{aliases}",
-                f"<h3>placement <span class=tag>{html.escape(str(seg.address))}</span>"
+                f"<h3>placement <span class=tag>{html.escape(_address_tag(seg.address))}</span>"
                 + tag
                 + "</h3>",
                 _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
@@ -1032,7 +1067,7 @@ def _segment_html(
         )
     parts = [f"<div class=block{anchor}>{aliases}"
              f"<h3>{html.escape(_segment_id(seg))} "
-             f"<span class=tag>{html.escape(str(seg.address))}</span>"
+             f"<span class=tag>{html.escape(_address_tag(seg.address))}</span>"
              # `entry` is a DEDICATED field, not part of `extra`, so iterating `extra` alone
              # rendered nothing for it. It is this corpus's only way to label a block inside a
              # whole-record form span (spec §4.3.2.2) — 11,516 segments across 4,380 records
