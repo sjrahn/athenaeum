@@ -1115,7 +1115,13 @@ def placed_members(root: Path, post: Any) -> dict[str, _PlacedMember]:
     return out
 
 
-def _imported_html(member: _PlacedMember | None) -> str:
+def _imported_html(
+    member: _PlacedMember | None,
+    *,
+    root: Path,
+    regenerate: bool,
+    budget: _Budget,
+) -> str:
     """*(3.8)* The IMPORT — the member's own rendering, shown where the parent places it.
 
     §4.3.2.4 says the rendering is imported, and a viewer that showed only the resolved pixels
@@ -1125,8 +1131,19 @@ def _imported_html(member: _PlacedMember | None) -> str:
     that distinction is exactly what the amendment introduced — and derived on every render, so
     it cannot go stale against the record it reads.
 
-    A member with no rendering yet says so: that is honest demand (normalization pressure,
-    §8.5), not an empty block.
+    **A body-empty marker IS a rendering.** The first cut required a non-empty body, which
+    silently excluded the one shape a leaf uses to say *this region is a figure* (§4.3.2.2's
+    body-empty positioning marker) — so a leaf that had divided its artifact into regions
+    imported as nothing, and the parent fell back to showing the undivided member image. The
+    marker's content is its resolved region, so it resolves here against the MEMBER's own id:
+    the leaf's addresses are relative to the leaf's bytes, which is exactly what makes them
+    re-homeable in the first place (§4.3.1.4).
+
+    Structural marks ride along, because the import is meant to read the way the leaf reads and
+    a mark is how the leaf carries a heading it did not invent (§4.3.2.3).
+
+    A member with no rendering at all still says so: that is honest demand (normalization
+    pressure, §8.5), not an empty block.
     """
     if member is None or member.record is None:
         return ""
@@ -1135,25 +1152,37 @@ def _imported_html(member: _PlacedMember | None) -> str:
         blocks = segments.iter_blocks(post.content or "")
     except Exception:
         return ""
-    bodies = [
-        (seg.overlay or seg.atom, _address_tag(seg.address), seg.body)
+    segs = [
+        seg
         for blk in blocks
         for seg in (blk.segments if isinstance(blk, segments.Section) else [blk])
-        if isinstance(seg, segments.Segment) and seg.is_content and (seg.body or "").strip()
+        if isinstance(seg, segments.Segment)
+        and (seg.is_content or seg.is_structural)
+        and (seg.address or (seg.body or "").strip())
     ]
     where = (
         f'<a href="{html.escape(member.href)}">{html.escape(member.hex[:12])}…</a>'
         if member.href
         else f"{html.escape(member.hex[:12])}…"
     )
-    if not bodies:
+    if not segs:
         return _note(f"member {member.hex[:12]}… carries no rendering yet — its own pass is owed")
     parts = [f'<div class=imported><p class=sub>imported from {where}</p>']
-    for opener, address, body in bodies:
-        parts.append(
-            f"<h4>{html.escape(opener)} <span class=tag>{html.escape(address)}</span></h4>"
-        )
-        parts.append(_body_html(body))
+    for seg in segs:
+        tag = f' <span class=tag>{html.escape(_address_tag(seg.address))}</span>'
+        if seg.is_structural:
+            parts.append(f"<h4>{html.escape(str(seg.mark or ''))}{tag}</h4>")
+            continue
+        parts.append(f"<h4>{html.escape(seg.overlay or seg.atom or '')}{tag}</h4>")
+        if (seg.body or "").strip():
+            parts.append(_body_html(seg.body))
+        else:
+            # The marker's content is the region it names — resolved against the LEAF.
+            parts.append(
+                _placement_surface(
+                    root, member.hex, seg, regenerate=regenerate, budget=budget
+                )
+            )
     parts.append("</div>")
     return "\n".join(parts)
 
@@ -1221,7 +1250,7 @@ def _segment_html(
                 + tag
                 + "</h3>",
                 _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
-                _imported_html(member),
+                _imported_html(member, root=root, regenerate=regenerate, budget=budget),
                 recovery,
                 "</div>",
             ]

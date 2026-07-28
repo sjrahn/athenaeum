@@ -270,3 +270,44 @@ def test_a_placement_imports_the_members_own_rendering(tmp_path):
     assert "class=imported" in index
     assert "imported from" in index
     assert "<th>a</th>" in index and "<td>1</td>" in index  # the leaf's table, on the parent
+
+
+def test_a_body_empty_marker_on_the_leaf_imports_as_its_resolved_region(tmp_path):
+    """A body-empty marker IS a rendering — §4.3.2.2's positioning marker is how a leaf says
+    *this region is a figure*, and it is the only shape available when the content is pixels.
+
+    The import first required a non-empty body, so a leaf that had divided its artifact into
+    regions imported as nothing at all and the parent fell back to showing the member
+    undivided — precisely the division the leaf exists to record, dropped on the floor. The
+    marker's addresses are relative to the LEAF's bytes (§4.3.1.4, which is what makes them
+    re-homeable), so they resolve against the member's own id, not the parent's.
+    """
+    root, rid = _staged(tmp_path)
+    leaf_path = paths.record_path(root, _PNG_HASH)
+    leaf = records.load(leaf_path)
+    leaf.content = segments.emit(
+        [
+            segments.Segment(atom="structural", address="bbox=0,0,1,0.2", level=1, mark="Top"),
+            segments.Segment(atom="image", address="bbox=0,0,0.5,1"),
+            segments.Segment(atom="image", address="bbox=0.5,0,0.5,1"),
+        ]
+    )
+    records.dump(leaf, leaf_path)
+
+    out = tmp_path / "b.zip"
+    assert view_cli.run(_Args(target=rid, corpus_root=str(root), out=str(out))) == 0
+    index = zipfile.ZipFile(out).read("index.html").decode()
+
+    assert "carries no rendering yet" not in index, "a marker-only leaf is not an empty leaf"
+    assert "class=imported" in index
+    # the leaf's own mark rides along, so the import reads the way the leaf reads
+    assert ">Top <span class=tag>bbox=0,0,1,0.2</span></h4>" in index
+    # …and each marker is carried on its own, at its own region
+    imported = index.split("class=imported", 1)[1]
+    for region in ("bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1"):
+        assert f">image <span class=tag>{region}</span></h4>" in imported
+
+    # The assertion is structural rather than pixel-counting on purpose: `_PNG` is a 71-byte
+    # stub that PIL cannot decode, so no crop resolves under this fixture. What regressed was
+    # that markers never reached the import AT ALL — they were filtered out before any resolve
+    # was attempted — and that is exactly what these three headings pin.
