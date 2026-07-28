@@ -60,8 +60,64 @@ def run(args: argparse.Namespace) -> int:
             oid = str(blk.get("id"))
             ov = schemas.load_origin_overlay_by_id(corpus_root, oid) or {}
             _print_guidance_block(f"origin {oid}", _origin_overlay_relpath(corpus_root, oid), ov, level=3)
+            _print_regions(corpus_root, oid)
+            _print_exemplars(corpus_root, oid)
 
     return 0
+
+
+def _print_regions(corpus_root: Path, origin_id: str) -> None:
+    """The overlay's declared regions (spec §7.2, 3.8) — what enters the body, what lands in
+    the trailing framing span, and what is chrome.
+
+    Printed because the declaration exists to state a host-wide judgment ONCE: a pass that
+    cannot see it re-decides per record which index-like regions belong, which is how one
+    judgment comes out ten thousand slightly different ways."""
+    rows = schemas.origin_regions(corpus_root, origin_id)
+    if not rows:
+        return
+    print("#### declared regions\n")
+    print("_The overlay's standing judgment; a region it does not name is omitted._\n")
+    print("| role | renders | selector | lifts to |")
+    print("| --- | --- | --- | --- |")
+    for r in rows:
+        print(
+            f"| {r['role'] or '—'} | {r['renders']} | `{r['selector']}` "
+            f"| {r.get('lifts_to') or '—'} |"
+        )
+    print()
+
+
+def _print_exemplars(corpus_root: Path, origin_id: str) -> None:
+    """The overlay's blessed exemplars (spec §7.2, 3.8).
+
+    THIS is the delivery half, and it is the half that is easy to skip. Authoring law the
+    command a normalizer runs does not print is law invisible to the worker it governs — the
+    standing debt `_cli/atoms.py` names. An exemplar list sitting in a yaml nobody is allowed
+    to hand-read would be exactly that.
+
+    Ids and hints only, never the record bodies: an exemplar is a whole record, and inlining
+    several would spend the pass's context before it read its own artifact. A stale or
+    foreign one is printed WITH ITS FAULT rather than dropped — silently withholding it would
+    look identical to an origin that declares none, and the pass would go on unexampled
+    without ever learning why."""
+    rows = schemas.origin_exemplars(corpus_root, origin_id)
+    if not rows:
+        return
+    print("#### exemplars\n")
+    print(
+        "_Handcrafted records of this origin, showing shapes this guidance describes. "
+        "Read one with `corpus view <id>` or `corpus show <id>`. They show what conformance "
+        "LOOKS like; they cannot state a prohibition, so the guidance above still rules._\n"
+    )
+    for row in rows:
+        state, detail = schemas.exemplar_status(corpus_root, origin_id, row)
+        mark = "" if state == "ok" else f"  **[{state.upper()}]**"
+        where = f" (`{row['address']}`)" if row.get("address") else ""
+        print(f"- `{row['record'][:12]}…`{where}{mark} — {row['shows'] or '_no hint given_'}")
+        if state != "ok":
+            print(f"    - _DO NOT COPY THIS SHAPE: {detail}_")
+    print()
 
 
 def _print_enqueue_hint(corpus_root: Path, record_id: str) -> None:

@@ -137,4 +137,14 @@ def _format_summary(report: dict[str, Any]) -> str:
         for item in np["top"][:5]:
             lines.append(f"  - {item['member'][:8]}… placed by {item['placed_by']} record(s)")
 
+    if "overlay_declarations" in report:
+        od = report["overlay_declarations"]
+        bad = sum(len(v) for v in od["problems"].values())
+        lines.append(
+            f"overlay_declarations: {bad} problem(s) across {od['origins_checked']} origin(s) in use"
+        )
+        for oid, msgs in sorted(od["problems"].items())[:5]:
+            for msg in msgs[:3]:
+                lines.append(f"  - {oid}: {msg}")
+
     return "\n".join(lines) + "\n"

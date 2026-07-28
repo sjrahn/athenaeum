@@ -1195,3 +1195,198 @@ def list_form_ids(corpus_root: Path) -> list[str]:
             continue
         seen.setdefault(stem, None)
     return sorted(seen)
+
+
+# ---------------------------------------------------------------------------
+# *(3.8)* Origin-overlay REGIONS and EXEMPLARS (spec §7.2)
+# ---------------------------------------------------------------------------
+
+#: Where a declared region renders. `subject` is what the page is FOR (the main span);
+#: `framing` is the page's own statement about its subject and lands in a trailing span
+#: (§4.3.2.1's cross-span significance order); `never` is chrome the body omits.
+REGION_RENDERS = ("subject", "framing", "never")
+
+
+def content_pin(post: Any) -> str:
+    """The `blake3:<hex>` pin over a record's CONTENT ZONE (spec §7.2, exemplars).
+
+    Deliberately not the record file. A `touch` entry appends on every pass, so a file hash
+    would break on changes that teach nothing — and an exemplar exists to teach a shape, so
+    the pin should move when, and only when, the shape does. Trailing whitespace is stripped
+    for the same reason: an emitter's newline discipline is not a lesson.
+    """
+    from corpus import hashing
+
+    body = (getattr(post, "content", "") or "").strip()
+    return "blake3:" + hashing.hash_bytes(body.encode("utf-8"), also=())["blake3"]
+
+
+def origin_regions(corpus_root: Path, origin_id: str) -> list[dict[str, Any]]:
+    """The overlay's declared `regions:` (spec §7.2, 3.8), in declaration order — which is
+    also the order framing regions take in the trailing span.
+
+    Rows missing a `selector` or carrying an unknown `renders` are DROPPED rather than
+    guessed at: a region declaration drives what does and does not enter a body, so a
+    malformed row must not silently become `subject`. `origin_declaration_errors` is what
+    reports them; this reader hands back only what is usable."""
+    overlay = load_origin_overlay_by_id(corpus_root, origin_id) or {}
+    out: list[dict[str, Any]] = []
+    for raw in overlay.get("regions") or []:
+        if not isinstance(raw, dict):
+            continue
+        selector = str(raw.get("selector") or "").strip()
+        renders = str(raw.get("renders") or "").strip().lower()
+        if not selector or renders not in REGION_RENDERS:
+            continue
+        row = {
+            "role": str(raw.get("role") or "").strip(),
+            "selector": selector,
+            "renders": renders,
+        }
+        if lifts := str(raw.get("lifts_to") or "").strip():
+            row["lifts_to"] = lifts
+        out.append(row)
+    return out
+
+
+def origin_exemplars(corpus_root: Path, origin_id: str) -> list[dict[str, Any]]:
+    """The overlay's declared `exemplars:` (spec §7.2, 3.8) — handcrafted records of THIS
+    origin that show a shape rather than describing it.
+
+    Returns rows as declared, normalized; freshness is `exemplar_status`'s job, because a
+    stale exemplar must be REPORTED rather than quietly withheld: withholding it would look
+    to the caller exactly like an origin that declares none."""
+    overlay = load_origin_overlay_by_id(corpus_root, origin_id) or {}
+    out: list[dict[str, Any]] = []
+    for raw in overlay.get("exemplars") or []:
+        if not isinstance(raw, dict):
+            continue
+        record = str(raw.get("record") or "").strip()
+        if not record:
+            continue
+        row = {
+            "record": record,
+            "content": str(raw.get("content") or "").strip(),
+            "shows": str(raw.get("shows") or "").strip(),
+        }
+        if address := str(raw.get("address") or "").strip():
+            row["address"] = address
+        out.append(row)
+    return out
+
+
+def _origin_ids_through_lineage(corpus_root: Path, post: Any, *, depth: int = 4) -> set[str]:
+    """Every origin id this record carries, **plus its containment lineage's** (§8.1).
+
+    A promoted member carries no host origin at all: its origin `uri:` is the lineage
+    `corpus://<container>?<address>` and no host pattern matches it. Taken literally that
+    would make a leaf permanently ineligible as an exemplar — and leaves are where the
+    host-specific shape judgments actually land, since a member's rendering IS what the two-up
+    tables, the captions, and the regions are about. So the walk follows the lineage the same
+    way §8.1 says a normalize pass may: the container's origin is legitimate context for what
+    the member is.
+
+    Bounded rather than unbounded, and it does not care that the chain is acyclic by
+    construction (a member's container is older bytes): a depth cap is cheaper than trusting
+    that, and the lineage is history a record could carry wrongly."""
+    from corpus import functional_uri as _furi
+    from corpus import paths as _paths
+    from corpus import records as _records
+
+    out: set[str] = set()
+    seen: set[str] = set()
+    frontier = [post]
+    for _ in range(depth):
+        nxt: list[Any] = []
+        for p in frontier:
+            for blk in _records.iter_origin_blocks(p):
+                if oid := str(blk.get("id") or "").strip():
+                    out.add(oid)
+            for uri in _records.iter_origin_uris(p):
+                if not str(uri).startswith("corpus://"):
+                    continue
+                try:
+                    parent = _furi.parse(str(uri)).hash
+                except Exception:
+                    continue
+                if not parent or parent in seen:
+                    continue
+                seen.add(parent)
+                path = _paths.record_path(corpus_root, parent)
+                if path.is_file():
+                    try:
+                        nxt.append(_records.load(path))
+                    except Exception:
+                        continue
+        if not nxt:
+            break
+        frontier = nxt
+    return out
+
+
+def exemplar_status(corpus_root: Path, origin_id: str, row: dict[str, Any]) -> tuple[str, str]:
+    """`(state, detail)` for one declared exemplar — `ok` | `missing` | `stale` | `foreign`
+    | `unpinned`.
+
+    **Stale is an error, not a warning, and that is the whole design.** An exemplar teaches
+    with the authority of a blessed example; one that has drifted teaches a shape the corpus
+    has moved off, with the same authority. Clearing it is meant to be a deliberate act —
+    re-read the record, confirm it still shows what its `shows` line claims, re-pin — which
+    is the same argument §4.3.2.4 makes for the deconstructed import's match constraint: a
+    reference that resolves to *something* forever is the dangerous kind.
+
+    `foreign` enforces the same-origin rule. It is not pedantry: shape judgments are
+    origin-specific, and same-origin is also what keeps an exemplar inside one hub, so
+    tenancy holds with no second mechanism."""
+    from corpus import paths as _paths
+    from corpus import records as _records
+
+    rid = str(row.get("record") or "")
+    path = _paths.record_path(corpus_root, rid)
+    if not path.is_file():
+        return "missing", f"no record at {rid[:12]}…"
+    try:
+        post = _records.load(path)
+    except Exception as exc:  # unreadable is as good as absent to a reader
+        return "missing", f"{rid[:12]}… will not load: {exc}"
+    ids = _origin_ids_through_lineage(corpus_root, post)
+    if origin_id not in ids:
+        return "foreign", (
+            f"{rid[:12]}… carries origin {sorted(i for i in ids if i) or ['(none)']}, "
+            f"not `{origin_id}` — an exemplar must be of its own origin"
+        )
+    declared = str(row.get("content") or "")
+    if not declared:
+        return "unpinned", f"{rid[:12]}… declares no `content:` pin"
+    actual = content_pin(post)
+    if actual != declared:
+        return "stale", (
+            f"{rid[:12]}… content zone is {actual[:19]}…, blessed as {declared[:19]}… — "
+            f"re-read it, confirm it still shows what `shows` claims, then re-pin"
+        )
+    return "ok", ""
+
+
+def origin_declaration_errors(corpus_root: Path, origin_id: str) -> list[str]:
+    """Every malformed `regions:` row and every non-`ok` exemplar, as one list of messages.
+    The single surface both `guidance` (at the point of consumption) and `health` (so it is
+    visible without asking) report through."""
+    overlay = load_origin_overlay_by_id(corpus_root, origin_id) or {}
+    out: list[str] = []
+    for i, raw in enumerate(overlay.get("regions") or [], 1):
+        if not isinstance(raw, dict):
+            out.append(f"regions[{i}]: not a mapping")
+            continue
+        if not str(raw.get("selector") or "").strip():
+            out.append(f"regions[{i}] ({raw.get('role') or '?'}): no `selector`")
+        renders = str(raw.get("renders") or "").strip().lower()
+        if renders not in REGION_RENDERS:
+            out.append(
+                f"regions[{i}] ({raw.get('role') or '?'}): `renders: {renders or '(absent)'}` "
+                f"is not one of {', '.join(REGION_RENDERS)}"
+            )
+    for row in origin_exemplars(corpus_root, origin_id):
+        state, detail = exemplar_status(corpus_root, origin_id, row)
+        if state != "ok":
+            out.append(f"exemplar {state}: {detail}")
+    return out

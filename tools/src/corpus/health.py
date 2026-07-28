@@ -378,7 +378,33 @@ SIGNAL_NAMES = (
     "canonical_duplicate_clusters",
     "dangling_origin_refs",
     "normalization_pressure",
+    "overlay_declarations",
 )
+
+
+def overlay_declarations(refs: list[RecordRef], corpus_root: Path, **_kw: Any) -> dict[str, Any]:
+    """*(3.8, spec §7.2)* Malformed `regions:` rows and non-`ok` `exemplars:` across every
+    origin overlay a record in this corpus actually carries.
+
+    Here rather than in `corpus lint` because the defect is the OVERLAY's, not any record's:
+    a stale exemplar is one bad line in one yaml, and reporting it on each of the 7,046
+    records of that origin would be 7,046 findings for one fix. Health is where a corpus-wide
+    fact belongs.
+
+    Scoped to origins in USE — an overlay nothing has been captured under yet is a plan, not a
+    defect."""
+    from corpus import schemas
+
+    in_use: set[str] = set()
+    for ref in refs:
+        for blk in records.iter_origin_blocks(ref.post):
+            if oid := str(blk.get("id") or "").strip():
+                in_use.add(oid)
+    problems: dict[str, list[str]] = {}
+    for oid in sorted(in_use):
+        if msgs := schemas.origin_declaration_errors(corpus_root, oid):
+            problems[oid] = msgs
+    return {"origins_checked": len(in_use), "problems": problems}
 
 
 def normalization_pressure(
@@ -495,4 +521,6 @@ def scan_all(
         report["dangling_origin_refs"] = dangling_origin_refs(refs, corpus_root, limit=limit)
     if "normalization_pressure" in selected:
         report["normalization_pressure"] = normalization_pressure(refs, corpus_root, limit=limit)
+    if "overlay_declarations" in selected:
+        report["overlay_declarations"] = overlay_declarations(refs, corpus_root)
     return report
