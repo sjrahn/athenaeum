@@ -438,6 +438,125 @@ def test_a_chained_crop_of_a_member_is_the_members_rendering(tmp_path):
     assert "member-rendered-on-parent" in _fired(post, root)
 
 
+# ---------- the deconstructed import: match, and exhaustive (§4.3.2.4) ---------- #
+
+
+def _leaf_with(root, *addresses, whole=False):
+    """Mint the member's leaf carrying one segment per address (plus, optionally, an
+    address-less whole-transport rendering)."""
+    leaf = paths.record_path(root, "0" * 8)
+    leaf.parent.mkdir(parents=True, exist_ok=True)
+    post = frontmatter.Post("")
+    post.metadata["id"] = "0" * 8
+    segs = [segments.Segment(atom="image", address=a) for a in addresses]
+    if whole:
+        segs.append(segments.Segment(atom="text", body="whole"))
+    post.content = segments.emit(segs)
+    records.dump(post, leaf)
+    return leaf
+
+
+def _placed(post, *addresses):
+    post.content = segments.emit(
+        [segments.Segment(atom="placement", address=a) for a in addresses]
+    )
+    return post
+
+
+def test_a_deconstructed_placement_names_the_member_by_its_base(tmp_path):
+    """`el=3&bbox=…` on a PLACEMENT is the member at finer grain, not an orphan address —
+    only a content atom is forbidden from chaining off a member (§4.3.1.4)."""
+    root = _root(tmp_path)
+    _leaf_with(root, "bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1")
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3&bbox=0,0,0.5,1", "el=3&bbox=0.5,0,0.5,1")
+    fired = _fired(post, root)
+    assert "placement-without-member" not in fired
+    assert "placement-region-undeclared" not in fired
+    assert "placement-not-exhaustive" not in fired
+
+
+def test_a_parent_may_not_invent_a_region_the_leaf_never_declared(tmp_path):
+    """MATCH. The crop is the leaf's claim, made where it is checkable against the bytes it
+    crops; a parent measuring someone else's pixels resolves to *something* forever."""
+    root = _root(tmp_path)
+    _leaf_with(root, "bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1")
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3&bbox=0,0,0.5,1", "el=3&bbox=0.5,0,0.5,1", "el=3&bbox=0.25,0,0.5,1")
+    fired = _fired(post, root)
+    assert "placement-region-undeclared" in fired
+
+
+def test_a_member_placed_deconstructed_must_be_placed_in_full(tmp_path):
+    """EXHAUSTIVE. Partial placement is a silent, plausible omission — and it would let *some
+    of the member* and *the member* look alike in the record."""
+    root = _root(tmp_path)
+    _leaf_with(root, "bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1")
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3&bbox=0,0,0.5,1")
+    fired = _fired(post, root)
+    assert "placement-not-exhaustive" in fired
+
+
+def test_the_grain_is_the_address_not_the_segment(tmp_path):
+    """sjrahn's own note: two segments may share an address with different atoms. One
+    placement carries the pair, so a member with four segments over two regions is
+    exhaustively placed by TWO placements."""
+    root = _root(tmp_path)
+    leaf = paths.record_path(root, "0" * 8)
+    leaf.parent.mkdir(parents=True, exist_ok=True)
+    lp = frontmatter.Post("")
+    lp.metadata["id"] = "0" * 8
+    lp.content = segments.emit(
+        [
+            segments.Segment(atom="text", address="bbox=0,0,0.5,1", body="left"),
+            segments.Segment(
+                atom="text", overlay="text/data-table", address="bbox=0,0,0.5,1", body="| a |"
+            ),
+            segments.Segment(atom="text", address="bbox=0.5,0,0.5,1", body="right"),
+        ]
+    )
+    records.dump(lp, leaf)
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3&bbox=0,0,0.5,1", "el=3&bbox=0.5,0,0.5,1")
+    assert "placement-not-exhaustive" not in _fired(post, root)
+
+
+def test_a_member_is_placed_whole_or_in_full_never_both(tmp_path):
+    root = _root(tmp_path)
+    _leaf_with(root, "bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1")
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3", "el=3&bbox=0,0,0.5,1")
+    assert "placement-form-mixed" in _fired(post, root)
+
+
+def test_a_leaf_that_renders_its_whole_transport_has_no_regions_to_place(tmp_path):
+    """An address-less rendering names the whole transport (§4.3.2.2), so there is no suffix
+    to chain to — the honest answer is to import it whole, said rather than guessed at."""
+    root = _root(tmp_path)
+    _leaf_with(root, whole=True)
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3&bbox=0,0,0.5,1")
+    assert "placement-region-undeclared" in _fired(post, root)
+
+
+def test_a_whole_import_asks_nothing_of_the_leaf(tmp_path):
+    """The ordinary form stays free: no leaf read, no region check."""
+    root = _root(tmp_path)
+    _leaf_with(root, "bbox=0,0,0.5,1", "bbox=0.5,0,0.5,1")
+    post = _post()
+    _with_embed(post)
+    _placed(post, "el=3")
+    fired = _fired(post, root)
+    assert not [f for f in fired if f.startswith("placement-")]
+
+
 def test_a_region_of_the_records_own_transport_is_untouched(tmp_path):
     """The exempt case, and the line sjrahn drew himself: a `page=`/`bbox=` region of the
     record's OWN transport has no member row, no blake3, and no leaf — its marker and its

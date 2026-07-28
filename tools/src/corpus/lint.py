@@ -997,7 +997,9 @@ def _rule_placement_without_member(post, blocks, root) -> Iterator[Finding]:
         if not seg.is_placement:
             continue
         addrs = _addresses(seg.address)
-        if addrs and not any(a in members for a in addrs):
+        # A DECONSTRUCTED placement chains the member's address with a suffix naming one of
+        # the leaf's own segment addresses (§4.3.2.4), so the member is named by the BASE.
+        if addrs and not any(a.split("&", 1)[0] in members for a in addrs):
             yield Finding(
                 rule_id="placement-without-member",
                 severity="error",
@@ -1006,6 +1008,138 @@ def _rule_placement_without_member(post, blocks, root) -> Iterator[Finding]:
                     f"carries that address (spec §4.3.2.4/§4.3.1.4)."
                 ),
                 address=",".join(addrs),
+            )
+
+
+def _leaf_segment_addresses(root, hexval: str) -> tuple[set[str], bool] | None:
+    """The distinct addresses the leaf declares on its own segments, and whether any segment
+    is address-less (i.e. renders the whole transport, §4.3.2.2 — which cannot be chained to).
+    `None` when the leaf is unreadable; its absence is `placed-member-not-promoted`'s finding,
+    never restated here."""
+    path = _paths.record_path(root, hexval)
+    if not path.is_file():
+        return None
+    try:
+        leaf = _records.load(path)
+        blocks = _segments.iter_blocks(leaf.content or "")
+    except Exception:
+        return None
+    addrs: set[str] = set()
+    whole = False
+    for seg in _iter_all_segments(blocks):
+        if not (seg.is_content or seg.is_structural):
+            continue
+        got = _addresses(seg.address)
+        if not got:
+            whole = True
+        addrs.update(got)
+    return addrs, whole
+
+
+def _rule_placement_deconstructed(post, blocks, root) -> Iterator[Finding]:
+    """*(3.8, §4.3.2.4)* The two constraints on a **deconstructed import** — match, and
+    exhaustive.
+
+    A parent may position a member's parts individually by chaining the member's address with
+    a suffix, but only against regions the **leaf has already declared**, and then against all
+    of them. Both halves matter and they fail differently:
+
+    - **Match** keeps the parent out of measuring someone else's pixels. A suffix the leaf does
+      not carry is a region the parent invented — and an invented crop resolves to *something*
+      forever, which is §12.24's failure exactly: an address wearing a green light while
+      pointing at bytes nobody chose.
+    - **Exhaustive** stops a parent quietly dropping a region. Partial placement is a silent,
+      plausible omission, and it would let *some of the member* and *the member* look alike in
+      the record while differing in what they show.
+
+    Together they make drift mechanical: a leaf that re-crops, gains a region, or loses one
+    breaks its parents' addresses at the next gate rather than sliding under them.
+
+    **The grain is the address, not the segment.** A leaf may carry several segments at one
+    address — identity is (opener-id, address), so a `text` and a `text/data-table` over the
+    same region legitimately share one — and a placement naming that address imports all of
+    them. So `declared` is a set of ADDRESSES: a member with four segments over two regions is
+    exhaustively placed by two placements, not four.
+
+    Costs a record load per deconstructed member, so it runs ONLY when a chained placement
+    exists — the ordinary whole-import parent pays nothing, which is what keeps this out of the
+    perf class §12.25 warns about."""
+    if root is None:
+        return
+    members = _member_address_transports(post)
+    if not members:
+        return
+    # member base address → the chained suffixes placed against it (None = placed whole)
+    placed: dict[str, set[str | None]] = {}
+    for seg in _iter_all_segments(blocks):
+        if not seg.is_placement:
+            continue
+        for addr in _addresses(seg.address):
+            base, sep, suffix = addr.partition("&")
+            if base not in members:
+                continue
+            placed.setdefault(base, set()).add(suffix if sep else None)
+
+    for base, suffixes in sorted(placed.items()):
+        chained = {s for s in suffixes if s is not None}
+        if not chained:
+            continue  # a plain whole import asks nothing of the leaf
+        hexval = members[base]
+        if None in suffixes:
+            yield Finding(
+                rule_id="placement-form-mixed",
+                severity="error",
+                message=(
+                    f"the member at `{base}` (`blake3:{hexval[:12]}…`) is placed both whole "
+                    f"and deconstructed: a member is placed whole or placed in full, never "
+                    f"both (spec §4.3.2.4)."
+                ),
+                address=base,
+                fields={"member": f"blake3:{hexval}"},
+            )
+            continue
+        got = _leaf_segment_addresses(root, hexval)
+        if got is None:
+            continue  # unreadable/absent leaf — `placed-member-not-promoted` owns that
+        declared, whole = got
+        if whole:
+            yield Finding(
+                rule_id="placement-region-undeclared",
+                severity="error",
+                message=(
+                    f"the member at `{base}` (`blake3:{hexval[:12]}…`) renders its whole "
+                    f"transport, so it has no regions to place: import it whole (spec "
+                    f"§4.3.2.4, §4.3.2.2)."
+                ),
+                address=base,
+                fields={"member": f"blake3:{hexval}"},
+            )
+            continue
+        for extra in sorted(chained - declared):
+            yield Finding(
+                rule_id="placement-region-undeclared",
+                severity="error",
+                message=(
+                    f"placement at `{base}&{extra}` names a region the member's own record "
+                    f"does not declare: a parent may place a region the leaf has declared, "
+                    f"never one it measured for itself (spec §4.3.2.4)."
+                ),
+                address=f"{base}&{extra}",
+                fields={"member": f"blake3:{hexval}"},
+            )
+        missing = sorted(declared - chained)
+        if missing:
+            yield Finding(
+                rule_id="placement-not-exhaustive",
+                severity="error",
+                message=(
+                    f"the member at `{base}` (`blake3:{hexval[:12]}…`) is placed "
+                    f"deconstructed but {len(missing)} of its {len(declared)} declared "
+                    f"region(s) are unplaced (`{'`, `'.join(missing)}`): a member is placed "
+                    f"whole or placed in full (spec §4.3.2.4)."
+                ),
+                address=base,
+                fields={"member": f"blake3:{hexval}", "unplaced": missing},
             )
 
 
@@ -1475,6 +1609,9 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     # whether the named member exists at all.
     ("member-rendered-on-parent", _rule_member_rendered_on_parent),
     ("placement-without-member", _rule_placement_without_member),
+    ("placement-form-mixed", _rule_placement_deconstructed),
+    ("placement-region-undeclared", _rule_placement_deconstructed),
+    ("placement-not-exhaustive", _rule_placement_deconstructed),
     ("placed-member-not-promoted", _rule_placed_member_not_promoted),
     ("body-empty-normalized", _rule_body_empty_normalized),
     ("body-html-residue", _rule_body_html_residue),

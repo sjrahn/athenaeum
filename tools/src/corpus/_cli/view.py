@@ -1100,6 +1100,10 @@ def placed_members(root: Path, post: Any) -> dict[str, _PlacedMember]:
             if not isinstance(seg, segments.Segment) or not seg.is_placement:
                 continue
             for addr in _addr_list(seg.address):
+                # A DECONSTRUCTED placement chains the member's address with one of the leaf's
+                # own segment addresses (§4.3.2.4), so the MEMBER is named by the base. Keyed
+                # by the base, so N deconstructed placements share one member page.
+                addr = addr.split("&", 1)[0]
                 hexval = rows.get(addr)
                 if not hexval or addr in out:
                     continue
@@ -1121,6 +1125,7 @@ def _imported_html(
     root: Path,
     regenerate: bool,
     budget: _Budget,
+    region: str | None = None,
 ) -> str:
     """*(3.8)* The IMPORT — the member's own rendering, shown where the parent places it.
 
@@ -1144,6 +1149,12 @@ def _imported_html(
 
     A member with no rendering at all still says so: that is honest demand (normalization
     pressure, §8.5), not an empty block.
+
+    `region` is the DECONSTRUCTED import (§4.3.2.4): the chained suffix off the placement's
+    address, naming one address the leaf declares. Only the leaf segments at that address are
+    imported — all of them, since the grain is the address rather than the segment (a `text`
+    and a `text/data-table` over one region legitimately share an address). `None` imports the
+    leaf whole, which is the ordinary form.
     """
     if member is None or member.record is None:
         return ""
@@ -1159,6 +1170,7 @@ def _imported_html(
         if isinstance(seg, segments.Segment)
         and (seg.is_content or seg.is_structural)
         and (seg.address or (seg.body or "").strip())
+        and (region is None or region in _addr_list(seg.address))
     ]
     where = (
         f'<a href="{html.escape(member.href)}">{html.escape(member.hex[:12])}…</a>'
@@ -1226,9 +1238,12 @@ def _segment_html(
         # is DERIVED here exactly as everywhere — address → roster row → blake3 → record — so
         # the page shows what a reader would follow, never a stored pointer.
         member = None
+        region: str | None = None
         for addr in _addr_list(seg.address):
-            member = (leaves or {}).get(addr)
+            base, sep, suffix = addr.partition("&")
+            member = (leaves or {}).get(base)
             if member:
+                region = suffix if sep else None
                 break
         tag = ""
         if member:
@@ -1250,7 +1265,9 @@ def _segment_html(
                 + tag
                 + "</h3>",
                 _placement_surface(root, record_id, seg, regenerate=regenerate, budget=budget),
-                _imported_html(member, root=root, regenerate=regenerate, budget=budget),
+                _imported_html(
+                    member, root=root, regenerate=regenerate, budget=budget, region=region
+                ),
                 recovery,
                 "</div>",
             ]
