@@ -1188,13 +1188,17 @@ def _imported_html(
         parts.append(f"<h4>{html.escape(seg.overlay or seg.atom or '')}{tag}</h4>")
         if (seg.body or "").strip():
             parts.append(_body_html(seg.body))
-        else:
+        elif region is None:
             # The marker's content is the region it names — resolved against the LEAF.
             parts.append(
                 _placement_surface(
                     root, member.hex, seg, regenerate=regenerate, budget=budget
                 )
             )
+        # Under a DECONSTRUCTED import the placement already resolved this exact region — its
+        # own address chains to this one — so re-resolving would inline the same pixels twice.
+        # The heading still lands: it is the leaf saying it read this region and called it a
+        # figure, which the pixels immediately above do not say on their own.
     parts.append("</div>")
     return "\n".join(parts)
 
