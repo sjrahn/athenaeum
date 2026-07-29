@@ -86,6 +86,17 @@ def _print_regions(corpus_root: Path, origin_id: str) -> None:
             f"| {r.get('lifts_to') or '—'} |"
         )
     print()
+    # The nesting rule is printed WITH the table, not left to the spec, because reading this
+    # table without it is exactly the misreading 3.9 exists to end: an envelope row and a
+    # breadcrumb row sit side by side here while in the markup one contains the other.
+    print(
+        "**These regions nest, and the innermost one wins** (§7.2, 3.9). A byte belongs to "
+        "exactly ONE region: the smallest declared region containing it. So a `framing` or "
+        "`never` region sitting inside a `subject` envelope is still framing or never — do "
+        "not read the outer row as claiming its bytes — and a `subject` envelope inside "
+        "another renders its content once, not twice. Containment is a fact about *this "
+        "record's artifact*, never about the order of rows above.\n"
+    )
 
 
 def _print_exemplars(corpus_root: Path, origin_id: str) -> None:
