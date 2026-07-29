@@ -11,6 +11,10 @@ per deployment (`spec/ledger.md` §1.2).
 Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
 locally-mirrored external databases cited as `ref://` evidence. They are
 mirrors pinned by snapshot version, not git members.
+
+The issue tracker registers under `tracker:` — the Forgejo repo whose issues
+carry the system's backlog, and the in-repo path of the snapshot `ath issue
+sync` writes. Host derives from `org:`, so no tooling hardcodes an instance.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from pathlib import Path
 import yaml
 
 MANIFEST_NAME = "athenaeum.yaml"
+_DEFAULT_SNAPSHOT = ".claude/skills/orchestrator/references/tickets.md"
 
 # layer key → default parent directory ("" = the workspace root)
 _LAYER_DIRS = {"corpora": "corpora", "ledger": "", "codices": "codices"}
@@ -40,6 +45,30 @@ class Member:
     # Declared tenancy — meaningful for corpora, where it drives derived
     # sensitivity (spec/ledger.md §6.4). Default private: fail closed.
     visibility: str = "private"
+
+
+@dataclass(frozen=True)
+class Tracker:
+    """The issue tracker holding the system's backlog.
+
+    One tracker for the whole system, on the orchestrator repo: tickets cross
+    members constantly (a corpus migration owes a ledger re-anchor), and
+    splitting them per member would re-create the isolation this vantage point
+    exists to avoid. The member a ticket touches is a label, not a repo.
+    """
+
+    base: str  # API root, e.g. https://host/api/v1
+    owner: str
+    repo: str
+    snapshot: Path  # in-repo path of the generated offline snapshot
+
+    @property
+    def issues_path(self) -> str:
+        return f"/repos/{self.owner}/{self.repo}/issues"
+
+    @property
+    def web(self) -> str:
+        return f"{self.base.removesuffix('/api/v1')}/{self.owner}/{self.repo}/issues"
 
 
 @dataclass(frozen=True)
@@ -118,3 +147,31 @@ def load_references(root: Path) -> list[Reference]:
         )
         for name, spec in entries.items()
     ]
+
+
+def load_tracker(root: Path) -> Tracker:
+    """Parse the manifest's `tracker:` section.
+
+    The host derives from `org:` rather than being spelled again, so a fork or a
+    moved instance changes one line. `repo:` is `owner/name`.
+    """
+    data = _read(root)
+    spec = data.get("tracker") or {}
+    if not isinstance(spec, dict):
+        raise ManifestError("manifest tracker: expected a mapping")
+    org = str(data.get("org") or "").rstrip("/")
+    if not org:
+        raise ManifestError("manifest tracker: no org to derive the instance host from")
+    slug = str(spec.get("repo") or "")
+    if slug.count("/") != 1:
+        raise ManifestError(f"manifest tracker.repo: expected 'owner/name', got {slug!r}")
+    owner, repo = slug.split("/")
+    # org is https://host/org — the API lives at the instance root, not under the org.
+    scheme, _, rest = org.partition("://")
+    host = rest.split("/", 1)[0]
+    return Tracker(
+        base=f"{scheme}://{host}/api/v1",
+        owner=owner,
+        repo=repo,
+        snapshot=root / str(spec.get("snapshot") or _DEFAULT_SNAPSHOT),
+    )

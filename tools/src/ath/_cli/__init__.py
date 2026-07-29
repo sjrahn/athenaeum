@@ -20,6 +20,8 @@ Athenaeum system tooling — drive the members from the orchestrator repo.
 System:
   status        working-tree state of the orchestrator repo and every member
   sync          clone missing members; fetch + report the rest (--pull to fast-forward)
+  issue ...     the system's backlog: list, show, sync (the in-repo offline snapshot).
+                Write verbs — create, close and above all COMMENT — are `fj`'s.
 
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
@@ -59,6 +61,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(rest)
     if cmd == "status":
         from ath._cli.status import run
+
+        return run(rest)
+    if cmd == "issue":
+        from ath._cli.issue import run
 
         return run(rest)
     print(f"ath: unknown command {cmd!r}", file=sys.stderr)

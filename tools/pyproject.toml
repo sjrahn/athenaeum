@@ -99,6 +99,9 @@ select = [
 "src/corpus/_cli/__init__.py" = ["E501"]
 "src/corpus/lint.py" = ["E501", "RUF001", "RUF002"]  # spec-typography (§, en-dash) in messages
 "src/corpus/recordbuild.py" = ["E501"]
+# Renders markdown prose for the snapshot — en-dash and · are the typography, not typos.
+"src/ath/_cli/issue.py" = ["RUF001", "RUF002"]
+"tests/test_ath_issue.py" = ["RUF001", "RUF002"]
 # Static regex/signature catalog — long compiled patterns + intentional mojibake
 # literals (ambiguous Unicode is the point, not a typo).
 "src/corpus/quality/signatures.py" = ["E501", "RUF001", "RUF003"]

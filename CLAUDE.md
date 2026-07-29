@@ -46,6 +46,15 @@ ath status                          # orchestrator repo + every member: branch, 
 ath sync                            # clone missing members; fetch + report the rest (--pull to ff)
 ath corpus <cmd>                    # delegation shim — identical to `corpus <cmd>`
 
+# The backlog — Forgejo issues on this repo (athenaeum.yaml `tracker:`). ONE tracker for the
+# whole system; the member a ticket touches is a label. Reads + the offline snapshot are `ath`:
+ath issue list --state open         # the backlog (--label blocked, --offline for the snapshot)
+ath issue show 88                   # one ticket with its full comment trail
+ath issue sync                      # regenerate .claude/skills/orchestrator/references/tickets.md
+# Writes are forgejo-cli's — and a ticket is a LIVING TRAIL: comment as decisions land,
+# don't just rewrite the body (see the orchestrator skill, "The Ticket Trail"):
+fj issue comment 88 --body "..."    # also: fj issue create|edit|close
+
 # The corpus CLI:
 corpus --help                       # works anywhere; auto-discovers the corpus root by cwd
 corpus health --summary             # run from corpora/corpus or corpora/corpus-private
