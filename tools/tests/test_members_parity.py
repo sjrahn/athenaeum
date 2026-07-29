@@ -132,25 +132,61 @@ def test_fixtures_match_live_records(fixture_path: Path) -> None:
     surviving keys are comparable, and the snapshot keeps its job as the *legacy* baseline
     the derivation is checked against. Drift in those surviving keys still fails loudly:
     a changed `transport` means the extractor moved, which is what this guard is for.
+
+    Conversion may also change the member COUNT, and legitimately so: §4.3.1.4 makes the
+    roster **unabridged**, while a legacy roster could be hand-pruned by a normalizer (the
+    retired prune-house pattern). `0287a192` was curated to 1 member of 27 and reattest
+    restored all 27 — right per the spec, and it means neither the count nor the positional
+    `source_indices` survive conversion. So a converted record is matched by `transport`,
+    which is the row's identity; the index is only meaningful in the legacy list the fixture
+    was cut from.
     """
     fixture = _load_fixture(fixture_path)
     live, converted = _live_embeds(fixture)
 
-    assert len(live) == fixture["total_embeds_in_record"], (
-        f"{fixture_path.name}: record now has {len(live)} members, "
-        f"fixture recorded {fixture['total_embeds_in_record']}"
-    )
-
-    chosen_live = [live[i] for i in fixture["source_indices"]]
     if not converted:
+        assert len(live) == fixture["total_embeds_in_record"], (
+            f"{fixture_path.name}: record now has {len(live)} members, "
+            f"fixture recorded {fixture['total_embeds_in_record']}"
+        )
+        chosen_live = [live[i] for i in fixture["source_indices"]]
         assert chosen_live == fixture["embeds"], (
             f"{fixture_path.name}: stored embed fields at {fixture['source_indices']} "
             f"no longer match the frozen snapshot"
         )
         return
 
-    for live_row, snapshot in zip(chosen_live, fixture["embeds"], strict=True):
-        for key in _SURVIVING_ROW_KEYS:
+    def addresses(row) -> set:
+        """A row's addresses as a set — scalar and list spell the same thing (§4.3.1.4)."""
+        raw = row.get("address")
+        return set(raw) if isinstance(raw, list) else {raw}
+
+    pairs = []
+    for snapshot in fixture["embeds"]:
+        # Transport alone is NOT a key here: `87184103` holds `logs/vfio-pci.txt` and
+        # `system/zfs-info.txt` as byte-identical files, which the legacy roster carried as
+        # two per-asset blocks and §4.3.1.4's dedupe collapses into ONE row with a list
+        # address. So match on transport AND address coverage — and compare address SETS,
+        # because a legacy block's own address may already be a list (`0195cba6`).
+        live_row = next(
+            (r for r in live
+             if r.get("transport") == snapshot.get("transport")
+             and addresses(snapshot) <= addresses(r)),
+            None,
+        )
+        assert live_row is not None, (
+            f"{fixture_path.name}: converted record no longer rosters "
+            f"{snapshot.get('transport')!r} at {snapshot.get('address')!r} — "
+            f"conversion must not lose a member"
+        )
+        pairs.append((live_row, snapshot))
+
+    for live_row, snapshot in pairs:
+        assert addresses(snapshot) <= addresses(live_row), (
+            f"{fixture_path.name}: converted row no longer covers "
+            f"{snapshot.get('address')!r}"
+        )
+        for key in ("media_type", "transport"):
             assert live_row.get(key) == snapshot.get(key), (
                 f"{fixture_path.name}: converted row {snapshot.get('address')!r} has "
                 f"{key}={live_row.get(key)!r}, snapshot recorded {snapshot.get(key)!r} — "
