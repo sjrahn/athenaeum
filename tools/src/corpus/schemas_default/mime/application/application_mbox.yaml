@@ -30,6 +30,8 @@ description: |
 applies_to:
   content_types:
   - application/mbox
+# whole-address admissibility: messages, addressed at `msg=`.
+whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `msg=<N>` materializes a
 # single message's bytes (`transforms/mbox.py`).
 working_kind: mbox

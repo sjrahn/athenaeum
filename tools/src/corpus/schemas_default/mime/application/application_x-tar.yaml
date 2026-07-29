@@ -14,6 +14,8 @@ description: |
 applies_to:
   content_types:
   - application/x-tar
+# whole-address admissibility: members are the content, as zip.
+whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
 # materializes a member's bytes (`transforms/tar.py`).
 working_kind: tar

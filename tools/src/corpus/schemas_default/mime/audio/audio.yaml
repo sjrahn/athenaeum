@@ -14,6 +14,8 @@ description: |
 
   Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in
   `audio_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+# whole-address admissibility: a sequence in time, exactly as video.
+whole_address: forbidden
 normalization:
   guidance: |
     The drafter emits a flat sequence of `<!--segment text/transcript-->` segments (one per

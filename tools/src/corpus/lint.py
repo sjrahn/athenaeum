@@ -493,6 +493,97 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
                     seen[key] = seg
 
 
+def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
+    """An address-less segment is admissible only where the media type says so
+    (spec §4.3.2.2, §7.2.1 — 3.10).
+
+    3.8 made `address` optional with absence naming the whole transport, which is right
+    for a still image (one contained presentation, and `bbox=` — its only axis — names
+    nothing but a part) and wrong for a sequence. One address-less rendering over a PDF,
+    a video, or an mbox asserts a reading of the whole while naming no element of it, and
+    leaves a reader no route back into the artifact.
+
+    The judgement is the schema's, not this rule's: `whole_address` is `admissible`,
+    `forbidden`, or `single_unit_only`, the last gated on the attested count named by
+    `whole_address_count`.
+
+    **The gate compares; it never decodes.** A check that had to open the artifact would
+    report red when a codec was missing rather than when a record was wrong — a report on
+    the checking host, not on the corpus. That is not hypothetical: PIL calls every
+    animated WebP single-frame in a build without `webp_anim`, and would have waved
+    through exactly the population this rule exists to catch.
+
+    An unstamped artifact of a `single_unit_only` type is UNRESOLVED, not admitted —
+    there is no fact to compare, and defaulting to admissible would grandfather the whole
+    pre-3.10 population in silence. `corpus reattest` supplies the count."""
+    addressless = [
+        seg for seg in _segments.leaf_segments(blocks)
+        if not seg.address and (seg.body or "").strip()
+    ]
+    if not addressless:
+        return
+    artifact = _records.artifact_block(post) or {}
+    mime = (artifact.get("mime") or "").strip()
+    if not mime:
+        return                                  # artifact-block-missing already reports
+    schema = _schemas.load_mime_schema(root, mime) or {}
+    verdict = schema.get("whole_address")
+    if verdict in (None, "admissible"):
+        return
+
+    def _finding(msg: str) -> Finding:
+        return Finding(
+            rule_id="whole-address-not-admissible",
+            severity="error",
+            message=msg,
+            fields={"mime": mime, "whole_address": verdict},
+        )
+
+    if verdict == "forbidden":
+        for seg in addressless:
+            yield _finding(
+                f"`{seg.overlay or seg.atom}` segment omits its address, but `{mime}` "
+                f"declares `whole_address: forbidden` — the medium is a sequence, or its "
+                f"address space is already total, so there is no whole for absence to "
+                f"name (spec §4.3.2.2)."
+            )
+        return
+
+    if verdict == "single_unit_only":
+        field = schema.get("whole_address_count")
+        if not field:
+            yield _finding(
+                f"`{mime}` declares `whole_address: single_unit_only` but names no "
+                f"`whole_address_count` field — the schema is incomplete (spec §7.2.1)."
+            )
+            return
+        # attested byte-facts live under `fields`, not at the block's top level (which
+        # carries only `mime`)
+        count = (artifact.get("fields") or {}).get(field)
+        if count is None:
+            for seg in addressless:
+                yield _finding(
+                    f"`{seg.overlay or seg.atom}` segment omits its address and `{mime}` "
+                    f"admits that only for a single unit, but the artifact block carries "
+                    f"no `{field}` — unresolved, not admitted. Run `corpus reattest`."
+                )
+            return
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            yield _finding(
+                f"artifact block `{field}` is {count!r}, which is not a count."
+            )
+            return
+        if n != 1:
+            for seg in addressless:
+                yield _finding(
+                    f"`{seg.overlay or seg.atom}` segment omits its address, but this "
+                    f"`{mime}` holds {n} units (`{field}: {n}`) — it is a sequence, and "
+                    f"a whole rendering of it names no element (spec §4.3.2.2)."
+                )
+
+
 def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
     """Every region-op value in every authored address conforms to the region grammar:
     `x,y,WIDTH,HEIGHT` as FRACTIONS of the image in [0,1], origin top-left (spec §6.2).
@@ -1605,6 +1696,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-empty", _rule_section_empty),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
+    ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),

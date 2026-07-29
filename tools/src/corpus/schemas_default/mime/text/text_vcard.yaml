@@ -43,6 +43,9 @@ description: |
 applies_to:
   content_types:
   - text/vcard
+# whole-address admissibility: a vcard FILE may carry many cards; `card_count` is already attested.
+whole_address: single_unit_only
+whole_address_count: card_count
 # Resolver's initial working kind for the functional-URI pipeline: `card=<N>` materializes one
 # card's exact member bytes (`transforms/vcard.py`).
 working_kind: vcard

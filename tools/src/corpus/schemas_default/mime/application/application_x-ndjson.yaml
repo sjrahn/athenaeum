@@ -5,6 +5,8 @@ description: |
 applies_to:
   content_types:
   - application/x-ndjson
+# whole-address admissibility: read as one document; its lines have no declared address axis.
+whole_address: admissible
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:

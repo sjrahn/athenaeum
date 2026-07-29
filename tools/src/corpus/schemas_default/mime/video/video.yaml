@@ -4,6 +4,8 @@ description: |
   This schema knows nothing about where the video came from. A video file is a video file: bytes, codec, dimensions, duration, and audio that may or may not contain speech. Source-side concepts — who uploaded it, what channel it lives on, the description text supplied alongside it, audience comments, view counts — are not properties of a video file. They belong to whatever source supplied the file, and live on classification overlays whose extended fields and body contributions stack on top of the file shape declared here. This media-type schema describes only the file.
 
   Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in `video_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
+# whole-address admissibility: a sequence in time: `time_range` names a part and there is no whole to name.
+whole_address: forbidden
 normalization:
   guidance: |
     The drafter emits a flat sequence of `<!--segment text/transcript-->` segments (one per diarization turn, addressed `time_range=<start>-<end>&stream_id=<id>`) plus body-empty `<!--segment image-->` positioning markers at periodic frame intervals (addressed `frame=HH:MM:SS`). The image segments are derived slices of the artifact's own bytes — the resolver renders each frame on demand via `corpus resolve 'corpus://<hash>?frame=HH:MM:SS'`. There is no separate `<!--embed image/...-->` for these frames; the artifact IS the source. The lint rule `embed-missing-target` carves out artifact-self-slice addresses (`frame=` / `time=` / `time_range=`) on video records, so unembedded frame-segments don't trigger errors.

@@ -35,6 +35,84 @@ _EXIF_FIELDS: tuple[tuple[str, str], ...] = (
     ("DateTime", "exif_datetime"),
 )
 
+# (3.10 §4.3.2.2) The formats whose bytes decide whether they are a still or a sequence.
+# Their schemas declare `whole_address: single_unit_only` with `whole_address_count:
+# frame_count`, so the gate compares this attested number and never decodes.
+_ANIMATION_CAPABLE = {"GIF", "WEBP", "AVIF", "HEIF", "HEIC"}
+
+
+def _gif_frame_count(data: bytes) -> int | None:
+    """Frames in a GIF, by walking its block structure.
+
+    Counting 0x2C bytes naively would hit colour-table and LZW payload bytes, so this
+    walks the stream properly: header, optional global colour table, then blocks until
+    the trailer."""
+    if data[:3] != b"GIF":
+        return None
+    i = 13
+    if len(data) > 10 and data[10] & 0x80:
+        i += 3 * (2 ** ((data[10] & 0x07) + 1))
+    n = 0
+    try:
+        while i < len(data):
+            marker = data[i]
+            if marker == 0x3B:                          # trailer
+                break
+            if marker == 0x21:                          # extension block
+                i += 2
+                while data[i]:
+                    i += data[i] + 1
+                i += 1
+            elif marker == 0x2C:                        # image descriptor
+                n += 1
+                flags = data[i + 9]
+                i += 10
+                if flags & 0x80:                        # local colour table
+                    i += 3 * (2 ** ((flags & 0x07) + 1))
+                i += 1                                  # LZW minimum code size
+                while data[i]:
+                    i += data[i] + 1
+                i += 1
+            else:
+                break
+    except IndexError:
+        return n or None
+    return n or None
+
+
+def _webp_frame_count(data: bytes) -> int | None:
+    """Frames in a WebP, by counting `ANMF` chunks in the RIFF container.
+
+    Deliberately structural rather than `PIL.n_frames`: Pillow returns 1 both for a still
+    AND for an animation it cannot decode, and `features.check('webp_anim')` is false in
+    some builds — so the decoder's answer is indistinguishable from blindness. The
+    container says so without a codec."""
+    if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    n = data.count(b"ANMF")
+    return n if n else 1
+
+
+def _frame_count(path: Path, fmt: str, im: Image.Image) -> int | None:
+    """The artifact's frame count, or None when the format has no frame axis.
+
+    Structural readers first, decoder second — an attested fact must not vary with which
+    optional codecs the ingesting host happens to have installed."""
+    if fmt not in _ANIMATION_CAPABLE:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if fmt == "GIF" and (n := _gif_frame_count(data)) is not None:
+        return n
+    if fmt == "WEBP" and (n := _webp_frame_count(data)) is not None:
+        return n
+    try:                                    # AVIF/HEIF: no structural reader yet
+        return int(getattr(im, "n_frames", 1))
+    except Exception:
+        return None
+
 
 def draft(
     image_path: Path,
@@ -56,6 +134,13 @@ def draft(
         fields["height"] = im.height
         fields["format"] = im.format or ""
         fields["mode"] = im.mode
+
+        # (3.10 §7.2.1) The count `whole_address: single_unit_only` is gated on. Stamped
+        # only for the formats that can hold a sequence — on a PNG the field would be a
+        # constant 1 asserting nothing.
+        frames = _frame_count(image_path, (im.format or "").upper(), im)
+        if frames is not None:
+            fields["frame_count"] = frames
 
         try:
             exif = im.getexif()

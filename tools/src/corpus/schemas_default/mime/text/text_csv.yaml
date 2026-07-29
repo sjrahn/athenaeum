@@ -17,6 +17,8 @@ description: |
 applies_to:
   content_types:
   - text/csv
+# whole-address admissibility: one table, consumed at once.
+whole_address: admissible
 # Resolver's initial working kind for the functional-URI pipeline: `row=<N>` selects one
 # data row (`transforms/csv.py`), auto-rendering to its raw text when terminal, exactly as
 # a PDF `page=<N>` selector auto-renders to an image.

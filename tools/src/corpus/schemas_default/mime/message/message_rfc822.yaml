@@ -37,6 +37,8 @@ description: |
 applies_to:
   content_types:
   - message/rfc822
+# whole-address admissibility: one message.
+whole_address: admissible
 mode: body-draft
 # Resolver's initial working kind: `part=<N>` materializes a MIME part's decoded bytes
 # (`transforms/message.py`).

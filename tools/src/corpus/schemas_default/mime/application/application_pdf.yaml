@@ -3,6 +3,9 @@ description: |
 applies_to:
   content_types:
   - application/pdf
+# whole-address admissibility: pages. A one-page PDF is NOT an exception -- `page=1` is a true statement about
+#   a real unit, so requiring it fabricates nothing.
+whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline (read schema-side).
 working_kind: pdf
 mode: body-draft

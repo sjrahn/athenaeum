@@ -10,6 +10,8 @@ description: |
 applies_to:
   content_types:
   - application/json
+# whole-address admissibility: one document.
+whole_address: admissible
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:

@@ -1,3 +1,6 @@
 applies_to:
   content_types:
   - image/avif
+# whole-address admissibility: AVIF may hold an image sequence as well as a still.
+whole_address: single_unit_only
+whole_address_count: frame_count

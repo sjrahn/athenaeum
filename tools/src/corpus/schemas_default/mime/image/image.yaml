@@ -3,6 +3,9 @@ description: |
 
   Common cross-subtype guidance lives in this file; per-subtype MIME declarations live in `image_<subtype>.yaml`. The loader deep-merges this common file underneath each subtype.
 # Resolver's initial working kind for the functional-URI pipeline (read schema-side).
+# whole-address admissibility: a still is one contained presentation, and `bbox` -- the only declared axis --
+#   names a part, so the whole is nameable only by an absent address.
+whole_address: admissible
 working_kind: image
 mode: body-draft
 artifact_kind: self_contained
@@ -27,6 +30,18 @@ canonical_strategy:
   - rasterize to a canonical resolution (longest side 1024px) and color mode (RGB)
   - blake3 the raw pixel bytes
 extended_fields:
+  frame_count:
+    type: number
+    required: false
+    source: file_metadata
+    description: >-
+      (3.10 §7.2.1) Number of frames the artifact holds. Stamped only for the
+      animation-capable formats (GIF, WebP, AVIF, HEIF), where it is the fact
+      `whole_address: single_unit_only` gates on — absence of a segment address is
+      admissible iff this is 1. Read structurally from the container, never from a
+      decoder, so the value cannot vary with which optional codecs the ingesting host
+      has installed. Not stamped on PNG/JPEG, where it would be a constant asserting
+      nothing.
   width:
     type: number
     required: true

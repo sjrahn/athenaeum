@@ -18,6 +18,8 @@ description: |
 applies_to:
   content_types:
   - application/zip
+# whole-address admissibility: members are the content (disposition: manifest); each is addressed at `path=`.
+whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
 # materializes a member's bytes (`transforms/zip.py`).
 working_kind: zip

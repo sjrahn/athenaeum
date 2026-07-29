@@ -3,6 +3,9 @@ description: |
 applies_to:
   content_types:
   - text/html
+# whole-address admissibility: the address space is TOTAL under 3.6, so every region including the outermost
+#   has an honest `el=` address. Absence here is unnecessary, not untrue.
+whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline (read schema-side).
 working_kind: html
 mode: body-draft

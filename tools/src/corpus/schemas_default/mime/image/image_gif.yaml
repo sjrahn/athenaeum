@@ -1,3 +1,7 @@
 applies_to:
   content_types:
   - image/gif
+# whole-address admissibility: 701 promoted GIF members measured: 284 single-frame, 417 animated (max 259
+#   frames). One MIME, both answers, decidable only from the bytes.
+whole_address: single_unit_only
+whole_address_count: frame_count
