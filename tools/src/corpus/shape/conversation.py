@@ -331,7 +331,6 @@ def adopt_flat(
             # form span; a content segment's authored leaf `entry:` does not (none exist in
             # this fleet — the historical sub-drafter never wrote one).
             entry=seg.entry if seg.is_structural else None,
-            mark=seg.mark if seg.is_structural else None,
             perceptual=seg.perceptual,
             level=seg.level,
             extra=seg.extra,

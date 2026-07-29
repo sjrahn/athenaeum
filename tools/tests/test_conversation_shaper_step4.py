@@ -161,7 +161,7 @@ def test_topic_marks_first_appearance_share_turn_address(tmp_path):
     # topic at its birth (T-A recurring at turn 3 adds none): T-A(1), T-B(2), T-C(4). Because the
     # partition is non-trivial, ALL first-appearances mark — the singletons T-B / T-C included,
     # not only the multi-unit T-A (marking only multi-unit topics would misrepresent the directory).
-    assert [(m.address, m.mark, m.level) for m in marks] == [
+    assert [(m.address, (m.body or "").strip(), m.level) for m in marks] == [
         ("turn=1", "T-A", 1),
         ("turn=2", "T-B", 1),
         ("turn=4", "T-C", 1),

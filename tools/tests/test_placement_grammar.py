@@ -19,7 +19,7 @@ def test_a_placement_round_trips_with_only_its_address():
     (seg,) = segments.iter_blocks(text)
     assert seg.atom == "placement" and seg.is_placement
     assert seg.address == "el=1.2.3"
-    assert seg.body == "" and seg.overlay is None and seg.level is None and seg.mark is None
+    assert seg.body == "" and seg.overlay is None and seg.level is None
     assert segments.emit([seg]) == text
 
 

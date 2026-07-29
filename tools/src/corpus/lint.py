@@ -1384,9 +1384,12 @@ def _iter_all_segments(blocks):
 
 
 def _rule_structural_byte_mark(post, blocks, root) -> Iterator[Finding]:
-    """A structural byte-mark (§4.3.2.3) carries a positive `level` and no body. The parser
-    normalizes most of the shape (address required, level cast to int, body dropped); this
-    guards the residue the grammar admits — a non-positive level."""
+    """A structural byte-mark (§4.3.2.3) carries a positive `level`, and its BODY is the
+    mark's own text (3.8, §12.32) — an empty body being an unlabeled boundary, which is
+    what an absent `mark:` used to say. The parser normalizes most of the shape (address
+    required, level cast to int, a legacy `mark:`/`entry:` folded into the body); this
+    guards the residue the grammar admits — a non-positive level, and a `mark:` field that
+    somehow survived the fold."""
     for seg in _iter_all_segments(blocks):
         if not seg.is_structural:
             continue
@@ -1397,6 +1400,17 @@ def _rule_structural_byte_mark(post, blocks, root) -> Iterator[Finding]:
                 message=(
                     f"structural byte-mark `level` is {seg.level!r}; must be a positive "
                     f"integer (the source's own hierarchy depth, else 1) (spec §4.3.2.3)."
+                ),
+                address=_addr_str(seg.address),
+            )
+        if "mark" in (seg.extra or {}) or "entry" in (seg.extra or {}):
+            yield Finding(
+                rule_id="structural-mark-retired",
+                severity="error",
+                message=(
+                    "structural byte-mark carries a retired `mark:`/`entry:` field; the "
+                    "mark's own text is the segment BODY (spec §4.3.2.3, 3.8 — §12.32). A "
+                    "scalar cannot hold what a heading renders."
                 ),
                 address=_addr_str(seg.address),
             )

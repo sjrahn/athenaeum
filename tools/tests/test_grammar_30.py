@@ -19,37 +19,39 @@ from corpus import recordbuild, records, segments
 
 
 def test_structural_segment_emit_parse_roundtrip():
-    mark = segments.Segment(atom="structural", address="el=3", level=2, mark="Chapter 2")
+    mark = segments.Segment(atom="structural", address="el=3", level=2, body="Chapter 2")
     text = segments.emit([mark])
     assert "<!--segment structural" in text
     assert "level: 2" in text
-    assert "mark: Chapter 2" in text
+    # *(3.8, §12.32)* the mark's own text is the BODY, never a header field
+    assert "mark:" not in text
+    assert "\n\nChapter 2\n" in text
     (parsed,) = segments.iter_blocks(text)
     assert parsed.is_structural
     assert parsed.atom == "structural"
     assert parsed.address == "el=3"
     assert parsed.level == 2
-    assert parsed.mark == "Chapter 2"
+    assert parsed.body == "Chapter 2"
     assert parsed.entry is None
-    assert parsed.body == ""
 
 
 def test_legacy_structural_entry_reads_as_mark_and_converts_on_write():
-    """*(3.5)* `entry:` was the byte-mark's spelling through 3.4. It still READS — the 61
-    structural blocks carrying it must not become unparseable — but `emit` writes only
-    `mark:`, so a record converts the moment its content zone is reconstructed. One-way,
-    and deliberately not incidental: `records.dumps` passes the zone through (§12.27)."""
+    """Both retired spellings still READ and fold into the body. `entry:` was the byte-mark's
+    field through 3.4 and `mark:` through 3.7; §12.32 moved the text into the body because a
+    scalar cannot hold what a heading renders. `emit` writes neither field, so a record
+    converts the moment its content zone is reconstructed. One-way, and deliberately not
+    incidental: `records.dumps` passes the zone through (§12.27)."""
     legacy = "<!--segment structural\naddress: el=7\nlevel: 1\nentry: Diagnostic Aids\n-->\n"
     (parsed,) = segments.iter_blocks(legacy)
-    assert parsed.mark == "Diagnostic Aids"
+    assert parsed.body == "Diagnostic Aids"
     assert parsed.entry is None, "the legacy spelling must not also land on the content field"
 
     out = segments.emit([parsed])
-    assert "mark: Diagnostic Aids" in out
-    assert "entry:" not in out
+    assert "mark:" not in out and "entry:" not in out
+    assert "Diagnostic Aids" in out
     # ...and the converted form re-reads identically: the conversion is idempotent.
     (again,) = segments.iter_blocks(out)
-    assert (again.address, again.level, again.mark) == ("el=7", 1, "Diagnostic Aids")
+    assert (again.address, again.level, again.body) == ("el=7", 1, "Diagnostic Aids")
 
 
 def test_mark_on_a_content_segment_is_refused():
@@ -62,10 +64,24 @@ def test_mark_on_a_content_segment_is_refused():
 
 
 def test_both_spellings_present_prefers_mark():
-    """Defensive: a hand-edited record carrying both takes the current field."""
+    """Defensive: a hand-edited record carrying both folds the NEWER field into the body."""
     both = "<!--segment structural\naddress: el=2\nlevel: 1\nmark: New\nentry: Old\n-->\n"
     (parsed,) = segments.iter_blocks(both)
-    assert parsed.mark == "New"
+    assert parsed.body == "New"
+
+
+def test_a_body_beats_a_legacy_field_because_it_can_hold_more():
+    """*(3.8, §12.32)* The whole reason the text moved. A body can carry the links a heading
+    renders; the scalar never could. So where a migrated record carries both, the body wins —
+    it is the value holding what the field had to drop."""
+    both = (
+        "<!--segment structural\naddress: el=2\nlevel: 1\n"
+        "mark: Transmission Control Module (TCM)\n-->\n"
+        "\n[Transmission Control Module](#/c/421) ( [TCM](#/c/421) )\n"
+    )
+    (parsed,) = segments.iter_blocks(both)
+    assert parsed.body == "[Transmission Control Module](#/c/421) ( [TCM](#/c/421) )"
+    assert "mark:" not in segments.emit([parsed])
 
 
 def test_structural_segment_default_level_one():
@@ -92,7 +108,7 @@ def test_structural_excluded_from_body_tokens():
     post = frontmatter.Post("")
     post.metadata.update({"id": "a" * 64, "description": "d", "status": "stub"})
     blocks = [
-        segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
+        segments.Segment(atom="structural", address="el=1", level=1, body="Heading"),
         segments.Segment(atom="text", address="el=2", body="the body text"),
     ]
     post.content = segments.emit(blocks)
@@ -157,7 +173,7 @@ def test_structural_mark_inside_form_section_carries_mark():
             address="turn=1",
             form="conversation",
             segments=[
-                segments.Segment(atom="structural", address="turn=1", level=1, mark="Topic A"),
+                segments.Segment(atom="structural", address="turn=1", level=1, body="Topic A"),
                 segments.Segment(atom="text", address="turn=1", body="msg"),
             ],
         )
@@ -165,7 +181,7 @@ def test_structural_mark_inside_form_section_carries_mark():
     text = segments.emit(blocks_in)
     (sec,) = segments.iter_blocks(text)
     assert sec.segments[0].is_structural
-    assert sec.segments[0].mark == "Topic A"
+    assert sec.segments[0].body == "Topic A"
 
 
 def test_content_segment_inside_form_section_carries_entry():
@@ -231,7 +247,7 @@ def test_decompose_compile_roundtrips_form_and_structural(tmp_path):
         segments.Section(
             form="conversation",
             segments=[
-                segments.Segment(atom="structural", address="turn=1", level=1, mark="Start"),
+                segments.Segment(atom="structural", address="turn=1", level=1, body="Start"),
                 segments.Segment(atom="text", address="turn=1", body="first message"),
                 segments.Segment(atom="text", address="turn=2", body="second message"),
             ],
@@ -280,7 +296,7 @@ def test_add_blocks_replays_every_field():
             entry="Span label",
             description="what this span is",
             segments=[
-                segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
+                segments.Segment(atom="structural", address="el=1", level=1, body="Heading"),
                 segments.Segment(atom="text", address="el=2", entry="Inspect", body="a"),
                 segments.Segment(
                     atom="image", address="el=3", entry="Fig 1", description="a diagram"
@@ -309,7 +325,7 @@ def test_pending_retired_fields_finds_each_concern():
                 description="a summary of this record",
                 extra={"title": "A Title"},
                 segments=[
-                    segments.Segment(atom="structural", address="el=1", level=1, mark="H"),
+                    segments.Segment(atom="structural", address="el=1", level=1, body="H"),
                     segments.Segment(atom="image", address="el=2", description="a logo"),
                     segments.Segment(atom="text", address="el=3", entry="Label", body="x"),
                 ],
@@ -335,7 +351,7 @@ def test_pending_retired_fields_is_empty_on_a_conformant_record():
     post.metadata.update({"id": "a" * 64})
     post.content = segments.emit(
         [
-            segments.Segment(atom="structural", address="el=1", level=1, mark="Heading"),
+            segments.Segment(atom="structural", address="el=1", level=1, body="Heading"),
             segments.Segment(atom="text", address="el=2", body="faithful text"),
             segments.Segment(atom="image", address="el=3"),
         ]

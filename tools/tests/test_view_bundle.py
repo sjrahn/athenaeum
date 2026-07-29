@@ -287,7 +287,7 @@ def test_a_body_empty_marker_on_the_leaf_imports_as_its_resolved_region(tmp_path
     leaf = records.load(leaf_path)
     leaf.content = segments.emit(
         [
-            segments.Segment(atom="structural", address="bbox=0,0,1,0.2", level=1, mark="Top"),
+            segments.Segment(atom="structural", address="bbox=0,0,1,0.2", level=1, body="Top"),
             segments.Segment(atom="image", address="bbox=0,0,0.5,1"),
             segments.Segment(atom="image", address="bbox=0.5,0,0.5,1"),
         ]

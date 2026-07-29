@@ -109,16 +109,17 @@ class Segment:
     block carries none. *(3.5: retiring — an authored label with no consumer since 3.0
     moved the TOC to structural marks. Read and round-tripped; the sweep removes it.)*
 
-    `mark` is the STRUCTURAL byte-mark's own text — the source's heading/outline/chapter
-    text, verbatim (§4.3.2.3), checkable against the artifact like any attested fact.
-    Set only when `is_structural`; never on a content segment. *(3.5: this was spelled
-    `entry:` through 3.4, sharing a name with the authored label above while meaning the
-    opposite — a value the source supplies rather than one a pass chose. `entry:` is still
-    READ on a structural block for back-compat, and re-emits as `mark:`.)*
+    *(3.8)* A STRUCTURAL byte-mark's own text — the source's heading/outline/chapter text —
+    lives in its **body**, not in a header field (§4.3.2.3, §12.32). It was `entry:` through
+    3.4 and `mark:` through 3.7; both are still READ here and folded into the body, because a
+    scalar cannot hold what a heading renders. A heading carrying `<a href>` lost its links
+    outright, and — worse — because the text sat in the record but in no body, every position
+    computed over the span came out short by the mark's length and displaced its neighbours.
 
-    `body` is the segment body. Only `text`-atom segments may carry a non-empty body;
-    that body is a faithful, lossless rendering of the addressed content. Image,
-    audio, and video segments are body-empty positioning markers.
+    `body` is the segment body. `text`-atom and structural segments may carry a non-empty
+    body; a text body is a faithful, lossless rendering of the addressed content and a
+    structural body is the mark's own text (empty = an unlabeled boundary). Image, audio,
+    and video segments are body-empty positioning markers.
 
     `description` is an optional scope-specific, normalizer-written description of
     what this segment represents — distinct from the embed's whole-asset description.
@@ -136,10 +137,6 @@ class Segment:
     address: str | list[str] | None = None
     perceptual: str | list[str] | None = None  # §7.6: scalar or list (multi-region)
     entry: str | None = None
-    #: The structural byte-mark's own verbatim source text (§4.3.2.3, 3.5). Structural
-    #: segments ONLY — a content segment carrying one is a grammar error, because the
-    #: field's whole meaning is "the source said this."
-    mark: str | None = None
     description: str | None = None
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -155,7 +152,8 @@ class Segment:
     @property
     def is_structural(self) -> bool:
         """True for the fifth segment kind — the `<!--segment structural-->` byte-mark
-        (§4.3.2.3), which carries no content atom and no body."""
+        (§4.3.2.3), which carries no content atom. Its body is the mark's own text
+        (§12.32); an empty body is an unlabeled boundary."""
         return self.atom == _STRUCTURAL
 
     @property
@@ -176,8 +174,9 @@ class Segment:
         """Return the dict that would be YAML-dumped between the header comment
         delimiters. `atom` (and any atomic overlay) sits on the opener line itself.
 
-        A structural byte-mark emits `address`, then `level`, then `mark` (§4.3.2.3, 3.5):
-        no body, no atom overlay, no perceptual/description, and never `entry`.
+        A structural byte-mark emits `address`, then `level`, and nothing else (§4.3.2.3,
+        3.8): no atom overlay, no perceptual/description, and neither `mark` nor `entry` —
+        the mark's own text is the BODY.
 
         Conversion is therefore one-way but NOT incidental: it happens wherever the content
         zone is re-emitted through `emit` (recordbuild / compile / shape / attest), and not
@@ -195,8 +194,6 @@ class Segment:
             out["level"] = self.level
         if self.perceptual is not None:
             out["perceptual"] = self.perceptual
-        if self.mark is not None:
-            out["mark"] = self.mark
         if self.entry is not None:
             out["entry"] = self.entry
         if self.description is not None:
@@ -944,7 +941,7 @@ def _parse_segment_block(
         return Segment(atom=_PLACEMENT, address=address, body="", extra=header), k
 
     # The structural byte-mark (§4.3.2.3) — the fifth segment kind. Not an atom: it takes no
-    # overlay and carries `address` + `level` + optional `entry`, no body.
+    # overlay and carries `address` + `level`, with the mark's own text as its BODY (3.8).
     if atom == _STRUCTURAL:
         if overlay is not None:
             raise ValueError(
@@ -961,20 +958,24 @@ def _parse_segment_block(
                 f"structural segment at line {line_no}: `level` must be an integer, "
                 f"got {level_raw!r}"
             ) from None
-        # *(3.5)* `mark:` is the field; `entry:` is read for back-compat and converts on
-        # write. `mark:` wins where a record somehow carries both.
-        mark_raw = header.pop("mark", None)
-        legacy_raw = header.pop("entry", None)
-        if mark_raw is None:
-            mark_raw = legacy_raw
-        mark = str(mark_raw).strip() if mark_raw is not None else None
+        # *(3.8, §12.32)* The mark's text is the BODY. `mark:` (3.5-3.7) and `entry:`
+        # (<=3.4) are read here and FOLDED IN, so a legacy record reads correctly and
+        # re-emits in the current grammar. A body already present wins: it is the richer
+        # value by construction — the field could only ever have held plain text, so if
+        # both exist the body is the one carrying whatever the field had to drop.
+        legacy = header.pop("mark", None)
+        if legacy is None:
+            legacy = header.pop("entry", None)
+        else:
+            header.pop("entry", None)
+        if not body_text.strip() and legacy is not None:
+            body_text = str(legacy).strip()
         header.pop("mode", None)
         return (
             Segment(
                 atom=_STRUCTURAL,
                 address=address,
-                mark=mark,
-                body="",
+                body=body_text,
                 extra=header,
                 level=level,
             ),

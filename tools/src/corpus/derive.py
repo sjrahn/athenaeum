@@ -167,8 +167,10 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
     # §12.29). A section's extent is now exactly its children's, so prepending a structural
     # mark cannot collide with a span's claim the way it could when one section claimed the
     # entire zone — the mark takes its own address and the spans keep theirs.
+    # *(3.8, §12.32)* Keyed on the mark's BODY now that its text lives there — the key has
+    # to be what identifies the mark, and that is no longer a header field.
     already = {
-        (b.address, b.mark)
+        (b.address, (b.body or "").strip())
         for b in existing
         if isinstance(b, segs_mod.Segment) and b.is_structural
     }
@@ -177,10 +179,10 @@ def _apply_structural_segments(post: frontmatter.Post, marks: list[dict[str, Any
             atom=segs_mod._STRUCTURAL,
             address=str(m["address"]),
             level=int(m.get("level") or 1),
-            mark=(str(m["mark"]) if m.get("mark") else None),
+            body=(str(m["mark"]).strip() if m.get("mark") else ""),
         )
         for m in marks
-        if (str(m["address"]), (str(m["mark"]) if m.get("mark") else None)) not in already
+        if (str(m["address"]), (str(m["mark"]).strip() if m.get("mark") else "")) not in already
     ]
     if not new_blocks:
         return

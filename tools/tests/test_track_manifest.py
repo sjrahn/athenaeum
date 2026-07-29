@@ -493,7 +493,7 @@ def test_sidecar_chapters_land_as_structural_segments(h264_aac_clip):
             b for b in blocks
             if isinstance(b, segs_mod.Segment) and b.is_structural
         ]
-        assert [(m.address, m.mark) for m in marks] == [
+        assert [(m.address, (m.body or "").strip()) for m in marks] == [
             ("time=00:00:00", "Intro"),
             ("time=00:00:01", "Outro"),
         ]
@@ -517,7 +517,7 @@ def test_sidecar_chapters_land_as_structural_segments(h264_aac_clip):
             b for b in segs_mod.iter_blocks(reloaded.content or "")
             if isinstance(b, segs_mod.Segment) and b.is_structural
         ]
-        assert [(m.address, m.mark) for m in reloaded_marks] == [
+        assert [(m.address, (m.body or "").strip()) for m in reloaded_marks] == [
             ("time=00:00:00", "Intro"),
             ("time=00:00:01", "Outro"),
         ]

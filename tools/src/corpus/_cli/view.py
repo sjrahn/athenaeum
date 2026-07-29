@@ -1183,7 +1183,7 @@ def _imported_html(
     for seg in segs:
         tag = f' <span class=tag>{html.escape(_address_tag(seg.address))}</span>'
         if seg.is_structural:
-            parts.append(f"<h4>{html.escape(str(seg.mark or ''))}{tag}</h4>")
+            parts.append(f"<h4>{html.escape((seg.body or '').strip())}{tag}</h4>")
             continue
         parts.append(f"<h4>{html.escape(seg.overlay or seg.atom or '')}{tag}</h4>")
         if (seg.body or "").strip():
@@ -1229,9 +1229,11 @@ def _segment_html(
 ) -> str:
     anchor, aliases = _anchor_targets(_addr_list(getattr(seg, "address", None)), claimed)
     if seg.is_structural:
-        # A byte-mark's `mark:` is the SOURCE's own heading text (§4.3.2.3, 3.5 — `entry:`
-        # before the rename) — the most informative thing about the mark, so it leads.
-        label = f" {html.escape(str(seg.mark))}" if getattr(seg, "mark", None) else ""
+        # A byte-mark's BODY is the SOURCE's own heading text (§4.3.2.3, 3.8 — a `mark:`
+        # field before §12.32) — the most informative thing about the mark, so it leads.
+        # Rendered, not escaped-flat: the whole point of the move is that a heading may
+        # carry links, and a view that flattened them would hide exactly what was recovered.
+        label = f" {_body_html(seg.body)}" if (seg.body or "").strip() else ""
         level = f" <span class=tag>level {seg.level}</span>" if getattr(seg, "level", None) else ""
         return (f"<div class=block{anchor}>{aliases}<h3>structural mark{label} "
                 f"<span class=tag>{html.escape(_address_tag(seg.address))}</span>{level}</h3></div>")

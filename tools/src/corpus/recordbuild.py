@@ -236,14 +236,18 @@ def add_segment(
     structural = atom == segments._STRUCTURAL
     if not structural:
         _check_body_lossless(b.corpus_root, atom, overlay, body)
+    elif mark and not (body or "").strip():
+        # *(3.8, §12.32)* `mark=` is accepted at the call site and folded into the body,
+        # exactly as the parser folds a legacy `mark:` field. Callers that already build a
+        # body win — theirs can carry what a scalar could not.
+        body = str(mark).strip()
     seg = segments.Segment(
         atom=atom,
         address=address,
         perceptual=perceptual,
         entry=entry,
-        mark=mark,
         description=description,
-        body="" if structural else (body or ""),
+        body=body or "",
         extra=dict(extra or {}),
         overlay=overlay,
         level=level,
@@ -269,9 +273,9 @@ def add_structural(
     extra: dict | None = None,
 ) -> segments.Segment:
     """Append a structural byte-mark segment (§4.3.2.3) — the record that the source itself
-    declares a boundary at `address`, with a `level` and optional `mark` (the mark's own
-    text, verbatim from the source; spelled `entry` before 3.5). Body-empty; takes no atom
-    overlay."""
+    declares a boundary at `address`, with a `level`. The mark's own text — verbatim from
+    the source — is the segment's BODY (§12.32); `mark=` is accepted here and folded in, and
+    a caller with markup to preserve passes `body=` instead. Takes no atom overlay."""
     return add_segment(
         b,
         atom=segments._STRUCTURAL,
@@ -360,7 +364,6 @@ def add_blocks(b: Build, blocks: list) -> None:
                     # — the retired top-level-only rule, surviving in one code path and
                     # silently destroying every in-span label that came through here.
                     entry=seg.entry,
-                    mark=seg.mark if seg.is_structural else None,
                     perceptual=seg.perceptual,
                     level=seg.level,
                     extra=seg.extra,
@@ -627,12 +630,12 @@ def write_workdir(
         parts = [f"seg {opener}", f"addr={_fmt_addr(seg.address)}"]
         if seg.level is not None:  # structural byte-mark (§4.3.2.3)
             parts.append(f"level={seg.level}")
+        # *(3.8, §12.32)* A structural mark's text is its body, so it rides the same
+        # `body=@body/…` ref every other body does — there is no `mark=` shorthand any more.
         if seg.body and seg.body.strip():
             parts.append("body=" + _body_ref(loc, seg.address, seg.body.rstrip("\n")))
         if seg.description:
             parts.append("desc=" + _desc_ref(loc, seg.address, seg.description))
-        if seg.mark:
-            parts.append("mark=" + shlex.quote(seg.mark))
         if seg.entry:
             parts.append("entry=" + shlex.quote(seg.entry))
         if seg.perceptual:
@@ -841,8 +844,9 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                     address=_parse_addr(kv["addr"]),
                     body=_filetext(work, kv.get("body")),
                     description=_filetext(work, kv.get("desc")),
-                    # A structural block's label is `mark=` (3.5); `entry=` reads as its
-                    # 3.4 spelling, so a decompose dir written before the rename recompiles.
+                    # *(3.8, §12.32)* A structural block's text is its `body=` ref. `mark=`
+                    # (3.5-3.7) and `entry=` (<=3.4) are still read so a decompose dir
+                    # written before the move recompiles, and fold into the body.
                     entry=(None if atom == segments._STRUCTURAL else kv.get("entry")),
                     mark=(
                         (kv.get("mark") or kv.get("entry"))

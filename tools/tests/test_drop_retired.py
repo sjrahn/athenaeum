@@ -70,7 +70,7 @@ def test_sweep_drops_every_retired_surface_and_nothing_else(tmp_path):
         extra={"title": "An authored title."},
         segments=[
             Segment(atom="text", address="el=1.1.2", entry="One", description="prose", body="One."),
-            Segment(atom="structural", address="el=1.1.1", level=1, mark="Heading"),
+            Segment(atom="structural", address="el=1.1.1", level=1, body="Heading"),
         ],
     )
     root, rf = _record(tmp_path, [section])
@@ -102,7 +102,7 @@ def test_sweep_drops_every_retired_surface_and_nothing_else(tmp_path):
     assert text_seg.description is None and text_seg.entry is None
     assert text_seg.body.strip() == "One."
     # The byte-mark's own field was never the same field (§4.3.2.3).
-    assert structural.mark == "Heading" and structural.level == 1
+    assert structural.body == "Heading" and structural.level == 1
     touch = post.metadata["touch"]
     touch = touch if isinstance(touch, list) else [touch]
     assert any(t.startswith(f"corpus.{drop_retired.TOUCH_ID}") for t in touch)

@@ -69,7 +69,7 @@ A record body's content zone is a sequence of **sections** (form spans, §4.3.2.
 - An **address** specifying the segment's location inside the transport, in a scheme determined by the media-type schema. Addresses compose, so that chains can form from transport to atom to region (a region within a frame within a video). *(3.8: **optional** — an absent address names the whole transport, §4.3.2.2.)*
 - Exactly one **atomic classification**, declared on the opener line in the form `<!--segment <atom>/<id>-->` (or bare `<!--segment <atom>-->` for unclassified-but-typed segments). Text-atom overlays may declare lossless-shaping behavior — those overlays shape the segment body into a specific lossless form (a markdown table, a transcript, a chat message). When multiple representations apply to the same source region, each becomes its own segment.
 
-*(3.0)* A fifth segment kind — the **structural segment**, `<!--segment structural-->` (§4.3.2.3) — carries no content atom and no body: it is a **byte-mark**, the faithful record that the source itself declares a structural boundary at an address (a heading, an outline entry, a chapter mark, a topic boundary), with a `level:` and an optional `mark:`. The table of contents is a **derived rendering** over these marks — arbitrary depth, zero nesting grammar — never a stored grouping. *(The 1.0–2.x stored TOC — sections as grouping blocks — retires; §4.3.2.1.)*
+*(3.0)* A fifth segment kind — the **structural segment**, `<!--segment structural-->` (§4.3.2.3) — carries no content atom: it is a **byte-mark**, the faithful record that the source itself declares a structural boundary at an address (a heading, an outline entry, a chapter mark, a topic boundary), with a `level:` and — *(3.8)* — the mark's own text in its **body**, rendered faithfully like any other content; an empty body is an unlabeled boundary. The table of contents is a **derived rendering** over these marks — arbitrary depth, zero nesting grammar — never a stored grouping. *(The 1.0–2.x stored TOC — sections as grouping blocks — retires; §4.3.2.1.)*
 
 *(3.8)* A sixth — the **placement**, `<!--segment placement-->` (§4.3.2.4) — likewise carries no atom and no body: it records that a **member** (§4.3.1.4) sits at this position, and nothing else. What the member contains is its own record's to say, reached by the blake3 its roster row already carries; placing one is what obliges promoting it (§8.1). The two content-less kinds are symmetric — a mark points at a boundary the source declares, a placement at bytes the roster names — and both exist for what they withhold.
 
@@ -581,13 +581,20 @@ Segment bodies may carry:
 <!--segment structural
 address: <the MARK's position>
 level: <int>
-mark: <the mark's own text, verbatim>        # optional — omitted when the mark is unlabeled
 -->
+
+<the mark's own text, verbatim — as markdown>     # empty when the mark is unlabeled
 ```
 
-A **structural segment** is a body-empty mark recording that **the source itself declares a structural boundary** at an address: a heading (`el=<path>`, §6.1.1), an EPUB nav target (`spine=<N>`), a PDF outline entry (`page=<N>`), a media chapter (`time=<tc>`), a chat platform's topic boundary (`turn=<N>`). It carries no content atom, takes no atomic overlay, and never has a body; it contributes nothing to the faithful text rendering (and is excluded from `token_counts.body`, §9.6). Its identity is (`structural`, address), stacking beside content segments at the same address per the standard rule.
+A **structural segment** records that **the source itself declares a structural boundary** at an address: a heading (`el=<path>`, §6.1.1), an EPUB nav target (`spine=<N>`), a PDF outline entry (`page=<N>`), a media chapter (`time=<tc>`), a chat platform's topic boundary (`turn=<N>`). It carries no content atom and takes no atomic overlay. Its identity is (`structural`, address), stacking beside content segments at the same address per the standard rule.
 
-***(3.5)* `mark:` — the field's name matches its meaning.** It was `entry:` through 3.4, sharing a name with the content segment's authored leaf label (now retired, §4.3.2.2) while meaning something categorically different: not a label a pass chose, but **the source's own mark text, verbatim** — checkable against the bytes like every other attested fact. The shared name was itself the evidence that the two had been conflated, and the numbers showed which way the confusion ran: at the amendment, 61 structural marks carried the field against 12,936 content segments. Renaming it settles the byte-mark's identity: a value in `mark:` that is not in the source is a violation, not a judgment call.
+***(3.8, stated 2026-07-28)* The mark's text lives in the BODY, and `mark:` retires with the header field it was.** Through 3.7 the text sat in a `mark:` scalar and the segment was body-empty. The reason it cannot stay there is the reason header fields never hold content anywhere else in this spec: **a mark is markup, and a scalar is a string.** A source heading routinely carries links, emphasis, and line breaks — `<b><a href="…">Transmission Control Module</a> ( <a href="…">TCM</a> )</b>` is an ordinary one — and a scalar flattens all of it at authoring time, silently, with nothing downstream able to notice that anything was there. That is the same loss §4.3.2.2 already refuses for every other rendering, arriving through a field instead of through a body.
+
+And the damage is not confined to the mark. Because a scalar's text is *in the record but not in any body*, every position computed over a span's rendering comes out short by the mark's length: restoring one record's dropped links put a link on a prose mention the source never linked, because the count of prior occurrences was taken over text the heading was missing from. **A mark held outside the body does not merely lose what is inside it; it displaces what is beside it.**
+
+So a structural segment's body is its mark, rendered faithfully like any other content — links kept (§4.3.2.2), verbatim otherwise. An **empty body is an unlabeled boundary** (an `<hr>`, an untitled chapter), which is exactly what an absent `mark:` used to say. The mark now **does** contribute to the faithful text rendering and counts toward `token_counts.body` (§9.6), because it is text the record renders; the 3.0–3.7 exclusion described a segment that had no text at all.
+
+**The verbatim obligation is unchanged, only relocated** — and it stays mechanically checkable: the body's **plain-text projection** must equal the addressed element's own text. A body whose text is not the source's is a violation, not a judgment call, exactly as before. *(History: the field was `entry:` through 3.4, sharing a name with the content segment's authored leaf label — now retired, §4.3.2.2 — while meaning something categorically different. At 3.5, 61 structural marks carried it against 12,936 content segments, and it was renamed `mark:` to settle which of the two was the byte-fact. 3.8 finishes the job: the byte-fact was never a *field*.)* Migration: §12.32.
 
 ###### The byte-mark rule
 
@@ -629,14 +636,16 @@ streams: [h264 1920x1080, aac 5.1 eng, subrip eng]
 <!--segment structural
 address: time=00:00:00
 level: 1
-mark: Opening
 -->
+
+Opening
 
 <!--segment structural
 address: time=00:12:31
 level: 1
-mark: The heist
 -->
+
+The heist
 ```
 
 The chapters are the container's byte-marks on the shared timeline; the tracks (promotable, §8.1) inherit them at read time through lineage — a track record never copies marks its own bytes do not carry.
@@ -722,8 +731,9 @@ A placed member in the wrong state is two different defects, and each lints wher
 <!--segment structural
 address: el=1.2.2.1.1.1
 level: 3
-mark: Underhood Fuse Block
 -->
+
+Underhood Fuse Block
 
 <!--segment placement
 address: el=1.2.2.1.3.1.4.1.8.3
@@ -1636,7 +1646,7 @@ Capture config (`capturer`, `transport`, `fidelity`, `interactions`, `viewport`)
 
 The **video capturer** drives yt-dlp. Its options are declared in `capture.ytdlp:` and merged straight into `YoutubeDL` (full passthrough — `format`, `getcomments`, `impersonate`, …); the library forces `outtmpl` / `logger` / the resolved cookie file after the merge so an overlay can't break output, logging, or auth. `capture.cookies_from_host` (default `true`) pulls the capture URL's own-origin cookies from a running CDP browser (`--remote-debugging-port=9222`) into yt-dlp, so a logged-in session unlocks a host's full content (e.g. the full format ladder rather than a degraded anonymous one). yt-dlp writes a `.info.json` enrichment sidecar (post metadata + comments); ingest renames it to `capture/<hash>.info.json` — it is ingest-time-only enrichment (the sidecar-lift attestation, §7.1), never persisted to `artifacts/`.
 
-**Sidecar → origin block (ingest attestation), then deleted.** The `.info.json` is *non-primary-source* metadata, so the sidecar lift copies every declared key into the **origin block** as a flat `ytdlp_<key>` field (`ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts, …) via `records.merge_origin_fields` — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when returned) becomes a `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:` aliases. The lifted key set is schema-declared — `sidecar.ytdlp_keys` on the video/audio mime schema (§7.1); the lift is mechanical, not hardcoded. One datum is *structural* rather than flat: **`chapters[]`** (the uploader's outline) is consumed into **structural segments** (producer-declared byte-marks, §4.3.2.3) — each chapter title a `mark:`, each bound a `time=` mark address. Chapters are consumed into marks, never copied to a `ytdlp_*` field; a mark's `mark:`/address is structure, not body content, so this respects the same primary-artifact boundary. Transcription moves off the pathway entirely: it is the `transcribe` derivation op (§6.2), consumed at normalize.
+**Sidecar → origin block (ingest attestation), then deleted.** The `.info.json` is *non-primary-source* metadata, so the sidecar lift copies every declared key into the **origin block** as a flat `ytdlp_<key>` field (`ytdlp_title`, `ytdlp_description`, `ytdlp_uploader`, engagement counts, …) via `records.merge_origin_fields` — never the artifact block, the body, or the frontmatter `description`. `comments[]` (when returned) becomes a `ytdlp_comments` list field; `webpage_url`/`original_url` fold into the origin `uri:` aliases. The lifted key set is schema-declared — `sidecar.ytdlp_keys` on the video/audio mime schema (§7.1); the lift is mechanical, not hardcoded. One datum is *structural* rather than flat: **`chapters[]`** (the uploader's outline) is consumed into **structural segments** (producer-declared byte-marks, §4.3.2.3) — each chapter title the segment's **body** *(3.8; a `mark:` field through 3.7)*, each bound a `time=` mark address. Chapters are consumed into marks, never copied to a `ytdlp_*` field; a chapter mark is the producer's own declared boundary rather than a reading of the primary artifact, so this respects the same primary-artifact boundary. Transcription moves off the pathway entirely: it is the `transcribe` derivation op (§6.2), consumed at normalize.
 
 **Title is normalizer-owned.** The frontmatter `title` (like `description`) stays empty through ingest; the normalizer authors it from the block-level candidates — the artifact block's bare `title`, or an origin `ytdlp_title` (the `ytdlp_` prefix survives because the origin opener names the source record, not the tool; §4.2.1). A media capture's title candidate routes to the origin's `ytdlp_title` (an A/V artifact block carries no `title`); for display, `records.title_for` reads the frontmatter `title`, falling back to the artifact `title`, then `ytdlp_title`. After a successful lift, ingest deletes the sidecar; enrichment is one-shot (re-capture to restore — the lifted fields already persist on the record).
 
@@ -2316,7 +2326,25 @@ The residue is the interesting part, because it is **not** mechanical. A flat in
 
 **What survives, and where it goes.** The contract's genuinely useful prose was never about fields: *carry the identity block verbatim; transcribe the affected-vehicles table cell-exact; keep the source's own Condition/Cause/Correction headings; a supersession stub whose entire body is the printed forward-reference is complete, not a failed pass.* Half of that is faithfulness restated for one document type and needs no home. The half that is real — the stub variant, the regulator-notice envelope — is **alldata page-template knowledge**, and it lands on the origin overlay beside the region declarations (§7.2), where §7.8 says single-host judgments belong. The exemplar mechanism carries it further than prose did: a blessed record shows the shape instead of describing it.
 
-**The generalizable lesson, recorded because it will recur.** A form is cheap to mint and expensive to keep. The cost is not the file — it is that every contract is prose the authoring pass must read and a shape a normalizer will fit records *to*, so a contract nobody consumes does not sit inert; it competes. The forms most at risk are the ones minted from a *population census* rather than from a consumer's demand, because a census can only ever show that records of a shape exist — never that anything needs them distinguished. §7.8's criterion (3) and criterion (4) are separate clauses for exactly this reason, and `form/bulletin` passed the first while never satisfying the second.
+**The generalizable lesson, recorded because it will recur — and it recurred within the day, one section down (§12.32).** A form is cheap to mint and expensive to keep. The cost is not the file — it is that every contract is prose the authoring pass must read and a shape a normalizer will fit records *to*, so a contract nobody consumes does not sit inert; it competes. The forms most at risk are the ones minted from a *population census* rather than from a consumer's demand, because a census can only ever show that records of a shape exist — never that anything needs them distinguished. §7.8's criterion (3) and criterion (4) are separate clauses for exactly this reason, and `form/bulletin` passed the first while never satisfying the second.
+
+### 12.32 The mark comes into the body: a header field that was holding content (non-normative)
+
+*(2026-07-28.)* §4.3.2.3's `mark:` retires and the structural segment's text moves into its **body**. 77 marks across 32 public records migrate; the private hub has none.
+
+**sjrahn found it by reading one record.** *"for the structural marks, the actual content should be in the body, not an entry: field. Like for 8b35cbc we have dropped two hyperlinks because it's not expressible."* The heading in question is `<b><a href="…/component/421">Transmission Control Module</a> ( <a href="…/component/421">TCM</a> )</b>`; the record carried `mark: 'Transmission Control Module (TCM)'`. Two links gone, and not verbatim either — the source prints `( TCM )` with spaces.
+
+**The rule this instance belongs to** is the one every other retirement in 3.5–3.8 was an instance of: **a header field carries mechanical facts; content lives in a body.** `description:` went for it, the universal section-header fields went for it, `entry:` went for it, and the five `form/bulletin` envelope fields went for it one section up (§12.31) — *on the same day*, which is the useful part of the coincidence. `mark:` survived those passes because it was a *good* field: genuinely mechanical, genuinely checkable, genuinely the source's own text. It was still the wrong container, and being a good field is exactly why nobody looked at it for three versions.
+
+**What a scalar cannot hold.** A mark is markup. Headings carry links, emphasis, line breaks — and a scalar flattens all of it at authoring time, silently, leaving nothing downstream able to detect that anything was lost. This is the same loss §4.3.2.2 refuses for every other rendering; it simply arrived through a field rather than through a body, where no rule was looking.
+
+**And the loss is not confined to the mark.** Because a scalar's text sits *in the record but in no body*, every position computed over a span's rendering is short by the mark's length. Restoring 8b35cbc's dropped body links put `[TCM]` on a prose mention the source never linked — the count of prior occurrences had been taken over text the heading was missing from. It was caught and reverted, and it is the sharper statement of the defect: **a mark held outside the body does not merely lose what is inside it; it displaces what is beside it.** A field that silently loses content is bad; one that silently corrupts its neighbours is a different order of problem, and it is what turned this from a tidy-up into a build.
+
+**What changes and what does not.** The body is the mark, rendered faithfully — links kept, verbatim otherwise. An **empty body is an unlabeled boundary**, which is precisely what an absent `mark:` meant. `level:` stays: depth is a mechanical fact about the mark, not content of it. The byte-mark rule is untouched — a structural segment still exists only where the source declares one. The verbatim obligation is untouched and stays mechanical, one step removed: the body's plain-text projection must equal the addressed element's own text. And the mark now counts toward `token_counts.body` (§9.6), because it is text the record renders; the old exclusion described a segment with no text at all.
+
+**The migration folds in a second defect, because the same pass has to touch the same segments.** Of the 77 marks, **59 are addressed at an element that is not where their text came from** — on 8b35cbc every one is pinned to the neighbouring *image* (`el=…8.3`) while its text lives in the `<b>` at `el=…4`. That is #88's mis-addressing at 77% of this population, and it is unfixable-in-place while the text is in a field: there is no way to move a mark to its true element without also deciding what its body is. Both land together.
+
+**Timing.** 77 marks is small because structural marks are recent — and it is the last moment it will be small. The 73 maintenance-schedule records and the whole trailing-index-span sweep (#89) both mint marks, under whichever rule is in force when they run.
 
 ---
 
@@ -2339,7 +2367,7 @@ The residue is the interesting part, because it is **not** mechanical. A flat in
 | **Members block** | `<!--members-->` — the record's unabridged roster of embedded assets, one row per member, closed to `address` / `media_type` / `transport` / `bytes`. Wholly attested; deduplicated by `transport:`. *(3.4: replaces the per-asset `<!--embed-->` block, whose descriptive fields moved to the `members` derivation and whose `description` moved to the block that places the asset — §4.3.1.4, §12.26.)* |
 | **Section block** | `<!--section <form-id>-->` — a **form span**: a positional span of the content zone declaring a named structural form, carrying only the fields that form declares. Depth one, never overlapping; a record may carry several. *(3.0: the 1.0–2.x TOC-grouping role is retired — see Structural segment. 3.5: no universal header fields; the sibling prohibition on a whole-record span is lifted.)* |
 | **Segment block** | `<!--segment <atom>-->` — the body's content atom: a lossless rendering of its addressed region, or a body-empty **marker** saying only where the bytes are and what type they are. *(3.5: a marker carries no narration.)* |
-| **Structural segment** | `<!--segment structural-->` — a body-empty **byte-mark**: the source's own declared boundary (heading, outline entry, chapter, topic) at an address, with `level:` and optional `mark:`. The TOC is a derived rendering over these marks. |
+| **Structural segment** | `<!--segment structural-->` — a **byte-mark**: the source's own declared boundary (heading, outline entry, chapter, topic) at an address, with `level:` and the mark's own text in its **body** *(3.8; a `mark:` field through 3.7)*. An empty body is an unlabeled boundary. The TOC is a derived rendering over these marks. |
 | **Placement** | *(3.8)* `<!--segment placement-->` — a body-empty segment recording that a **member** sits at this position and nothing more. The member is named by the shared address, its record by the roster row's blake3 — derived, never stored. Placing a member obliges promoting it (§4.3.2.4, §8.1). |
 | **Normalization pressure** | *(3.8)* Derived demand on a promoted member's record: the number of records placing it. A second source on the queue's one mechanism, beside the ledger's citation demand; ranks the queue, gates nothing (§8.5). |
 | **Context block** | `<!--context issue/<id>[/<subtype>]-->` — an annotations-zone **capture-fidelity** observation, a typed code with no prose; record- or segment-scope (via `address:`). *(3.5: `issue` is the only namespace.)* |
