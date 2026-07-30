@@ -32,6 +32,17 @@ normalization:
 working_kind: video
 mode: body-draft
 artifact_kind: self_contained
+# (3.11 §7.2.1) Where this timeline's segment boundaries fall, BY DEFAULT. A page count is a
+# fact in the bytes; a scene boundary is a detector's judgment at a setting, so the resolved
+# strategy + parameters + resulting cut count are stamped onto the stream leaf's artifact block
+# as `cutting:` (resolved once at promotion, since a leaf's corpus:// origin is lineage and
+# never a lookup route). An ORIGIN OVERLAY may override this: sensitivity is a property of what
+# was recorded, not of the codec — a feature film, a YouTube upload and a TikTok differ.
+# Bundled alternatives: `keyframe@` (cut at container keyframes) and `fixed-interval@` (every N
+# seconds — the honest answer for a screen recording, which yields either ~1 cut or hundreds).
+cut_strategy:
+  id: scene-threshold@0.1.0
+  threshold: 0.4
 address_scheme:
 - param: time_range
   type: range

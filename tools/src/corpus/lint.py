@@ -493,6 +493,66 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
                     seen[key] = seg
 
 
+def _rule_cutting_stamp_shape(post, blocks, root) -> Iterator[Finding]:
+    """A `cutting:` stamp, if present, is well-formed (spec §7.2.1 — 3.11).
+
+    The stamp is what makes a time-addressed record's segment boundaries auditable: it names
+    the versioned strategy that produced them, the parameters it ran at, and the resulting
+    cut count. The count is the drift check — the same role the element count plays for
+    `addressing:` (§6.1.1) — so a stamp missing it is not merely incomplete, it is a stamp
+    that cannot do the one job it exists for.
+
+    Absence of the whole stamp is NOT a finding here. A stream promoted before its strategy
+    existed is unresolved, not defective (§7.2.1), and re-attestation is what supplies it —
+    the two hand-authored exemplar leaves are exactly this case."""
+    stamp = _records.cutting(post)
+    if stamp is None:
+        return
+    sid = str(stamp.get("id") or "").strip()
+    if not sid:
+        yield Finding(
+            rule_id="cutting-stamp-malformed",
+            severity="error",
+            message="`cutting:` stamp names no strategy `id` (spec §7.2.1).",
+        )
+    elif "@" not in sid:
+        yield Finding(
+            rule_id="cutting-stamp-malformed",
+            severity="error",
+            message=(
+                f"`cutting:` strategy id {sid!r} carries no version. A cut list is only "
+                f"reproducible against a versioned strategy (spec §7.2.1)."
+            ),
+            fields={"id": sid},
+        )
+    cuts = stamp.get("cuts")
+    if cuts is None:
+        yield Finding(
+            rule_id="cutting-stamp-malformed",
+            severity="error",
+            message=(
+                "`cutting:` stamp carries no `cuts` count — the drift check is the reason "
+                "the stamp exists (spec §7.2.1)."
+            ),
+        )
+        return
+    try:
+        n = int(cuts)
+    except (TypeError, ValueError):
+        yield Finding(
+            rule_id="cutting-stamp-malformed",
+            severity="error",
+            message=f"`cutting: cuts` is {cuts!r}, which is not a count.",
+        )
+        return
+    if n < 1:
+        yield Finding(
+            rule_id="cutting-stamp-malformed",
+            severity="error",
+            message=f"`cutting: cuts` is {n}; a stamped strategy produced at least one cut.",
+        )
+
+
 def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
     """An address-less segment is admissible only where the media type says so
     (spec §4.3.2.2, §7.2.1 — 3.10).
@@ -1697,6 +1757,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
+    ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),

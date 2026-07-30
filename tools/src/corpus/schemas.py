@@ -512,6 +512,77 @@ def resolved_disposition_for_record(corpus_root: Path, post: Any) -> str:
     return pipeline_disposition(schema)
 
 
+_CUT_STRATEGY_IDS = ("scene-threshold@", "keyframe@", "fixed-interval@")
+
+
+def cut_strategy(schema: dict[str, Any]) -> dict[str, Any] | None:
+    """A mime schema's declared default `cut_strategy` (§7.2.1, 3.11), or None.
+
+    `{id: <strategy>@<version>, **params}` — where a *timeline's* segment boundaries fall by
+    default. Returned as a plain dict so the caller can stamp it; the `id` is validated for
+    shape only (a versioned identifier), never against a fixed list, because the bundled
+    strategies are a starting set and a corpus may declare its own."""
+    raw = schema.get("cut_strategy")
+    if not isinstance(raw, dict):
+        return None
+    sid = str(raw.get("id") or "").strip()
+    if not sid or "@" not in sid:
+        return None
+    return {k: v for k, v in raw.items() if v is not None}
+
+
+def _origin_cut_strategy(corpus_root: Path, post: Any) -> dict[str, Any] | None:
+    """The most-specific origin-overlay `cut_strategy:` override (§7.2, 3.11), or None.
+
+    Same ladder walk as `_origin_disposition` — first explicit value wins. This is the key
+    the amendment exists for: cut sensitivity is a property of *what was recorded*, not of
+    the codec, so a feature film, a YouTube upload and a TikTok can each declare their own."""
+    from corpus import records  # lazy: records imports schemas
+
+    seen: set[tuple[str, str | None]] = set()
+    for blk in records.iter_origin_blocks(post):
+        id_ = str(blk.get("id") or "")
+        if not id_:
+            continue
+        subtype = blk.get("subtype")
+        key = (id_, subtype)
+        if key in seen:
+            continue
+        seen.add(key)
+        for overlay_id in _origin_overlay_ladder(id_, subtype):
+            sch = load_origin_overlay_by_id(corpus_root, overlay_id)
+            value = cut_strategy(sch or {})
+            if value is not None:
+                return value
+    return None
+
+
+def resolve_cut_strategy_for_record(corpus_root: Path, post: Any) -> dict[str, Any] | None:
+    """The cut strategy for THIS record — origin-overlay override over mime default (§7.2.1).
+
+    **Call this at PROMOTION, against the CONTAINER's post, and stamp the result on the
+    stream leaf.** It is deliberately not a reader-side lookup: a stream leaf's own origin is
+    `corpus://<container>?stream_id=<N>`, which §12.15 states is capture lineage and never a
+    lookup route — so resolving from the leaf would mean walking a containment chain of
+    unbounded depth to reach an overlay. `promote` already holds both records, so it resolves
+    once and writes the answer down (§7.2.1's `cutting:` stamp).
+
+    Returns None when neither the overlay nor the mime schema declares one — which is
+    *unresolved*, and the caller must not substitute a default of its own."""
+    override = _origin_cut_strategy(corpus_root, post)
+    if override is not None:
+        return override
+    from corpus import records  # lazy: records imports schemas
+
+    mime = records.media_type_for(post)
+    if not mime:
+        return None
+    schema = load_mime_schema(corpus_root, mime)
+    if not isinstance(schema, dict):
+        return None
+    return cut_strategy(schema)
+
+
 def normalize_pipeline_keys(schema: dict[str, Any]) -> dict[str, Any]:
     """Return `schema` with the legacy `mode`/`draft.*` view back-filled from the 3.0
     `disposition`/`derive.*` keys when a schema declares only the new form — so the drafter

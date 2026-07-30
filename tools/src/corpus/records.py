@@ -791,6 +791,25 @@ def el_addressing(post: frontmatter.Post) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def cutting(post: frontmatter.Post) -> dict[str, Any] | None:
+    """Return the record's attested `cutting:` stamp (§7.2.1, 3.11) — the resolved cut
+    strategy, its parameters, and the resulting `cuts` count — or None when absent.
+
+    Absence means **unresolved, not defaulted**: a stream promoted before its strategy
+    existed carries no stamp, and a consumer must report that rather than assume a default
+    and re-cut on sight (the same rule §4.3.2.2 sets for a missing `whole_address_count`).
+
+    The `cuts` count is the drift check, and it is what makes re-attestation safe: an
+    unchanged count refreshes the stamp, a changed one HOLDS the record, because a
+    `time_range=` address that silently re-points takes every citation resting on it along.
+    Exactly `el_addressing`'s element count, on a timeline."""
+    artifact = artifact_block(post)
+    if not artifact:
+        return None
+    value = (artifact.get("fields") or {}).get("cutting")
+    return value if isinstance(value, dict) else None
+
+
 def title_for(post: frontmatter.Post, corpus_root: Path) -> str:
     """Return the record's derived display title (spec §4.2.3). See `derived_editorial`."""
     return derived_editorial_field(post, corpus_root, "title").value
