@@ -42,7 +42,11 @@ artifact_kind: self_contained
 # seconds — the honest answer for a screen recording, which yields either ~1 cut or hundreds).
 cut_strategy:
   id: scene-threshold@0.1.0
-  threshold: 0.4
+  # 0.3, not a guess: §12.20 OQ1 resolved this on a real deck (the 2026-07-16 pilot,
+  # fb4e0b72) — `scenes=0.3` recovered 33 of 36 slides with ZERO over-segmentation. The
+  # three misses are not threshold-fixable, which is why the cuts are PROPOSALS an
+  # authoring pass verifies (§12.20 item 5) rather than marks.
+  threshold: 0.3
 address_scheme:
 - param: time_range
   type: range

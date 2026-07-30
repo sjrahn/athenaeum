@@ -51,6 +51,8 @@ def test_video_family_declares_a_default_strategy(tmp_path):
         cs = schemas.cut_strategy(s)
         assert cs is not None, mime
         assert cs["id"].startswith("scene-threshold@")
+        # 0.3 is the pilot-resolved value (§12.20 OQ1), not a placeholder
+        assert cs["threshold"] == 0.3
 
 
 def test_non_timeline_types_declare_none(tmp_path):
