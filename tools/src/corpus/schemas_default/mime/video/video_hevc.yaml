@@ -10,7 +10,9 @@ description: |
   `time_range=` / `scenes=` on the track's own hash resolve through **timeline inheritance**
   (§6.2, 3.11): the resolver reads the leaf's containment lineage and runs the op against the
   CONTAINER with `stream_id=<n>` composed in, which is also where the shared-timeline
-  composition lives (§1.2). *(Before 3.11 those ops simply failed here.)*
+  composition lives (§1.2). The gap is large, not marginal — a measured h264 track probes as
+  60 fps inside its container and 25 fps with no duration once extracted (see
+  `video_h264.yaml`), so a leaf-relative address lands at 2.4x its intended position.
 applies_to:
   content_types:
   - video/hevc

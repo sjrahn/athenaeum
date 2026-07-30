@@ -11,8 +11,12 @@ description: |
   resolver reads the leaf's containment lineage and runs the op against the CONTAINER with
   `stream_id=<n>` composed in. That is also where the shared-timeline composition lives (§1.2),
   which is why the leaf's stored `time_range=` addresses are in the container's seconds and not
-  in a timebase imputed to the stream. *(Before 3.11 those ops simply failed here, and the
-  caller was told to rewrite the URI onto the container by hand.)*
+  in a timebase imputed to the stream. The gap is large, not marginal: the §12.20 pilot deck's
+  track probes as 60 fps / 616.53s inside its container and as **25 fps with no duration** once
+  extracted, because the encoder wrote no VUI timing and the decoder falls back to a default —
+  so a leaf-relative address would land at 2.4x its intended position. Before 3.11 these ops
+  ran against that imputed timebase and produced an empty output rather than a wrong frame only
+  by luck of which guard fired first.
 applies_to:
   content_types:
   - video/h264

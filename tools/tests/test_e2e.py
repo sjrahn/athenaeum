@@ -124,9 +124,14 @@ def test_e2e_png_and_packaged_fallback(tmp_path, capsys):
 
 
 @pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg not installed")
-def test_e2e_video_noop_transcription(tmp_path, capsys):
-    """(c) A video drafts to a record + a spec-clean transcription-unavailable issue
-    under the default NoOp transcriber — no crash, lint stays clean."""
+def test_e2e_video_container_drafts_without_transcribing(tmp_path, capsys):
+    """(c) A video container drafts to a record and lints clean — *(3.11, #131)* with no
+    transcript and no `transcription-unavailable` issue of its own.
+
+    This test used to assert the issue was present, under the default NoOp transcriber. The
+    container no longer transcribes at all (the audio stream leaf owns the transcript, §1.2), so
+    there is nothing for it to report as unavailable. What still matters, and is what this
+    checks, is that the container drafts and lints clean without it."""
     from corpus import paths, records
 
     root = _init(tmp_path)
@@ -148,7 +153,8 @@ def test_e2e_video_noop_transcription(tmp_path, capsys):
 
     post = records.load(paths.record_path(root, vid))
     issues = list(records.iter_issue_blocks(post))
-    assert any(i["id"] == "transcription-unavailable" for i in issues)
-    tu = next(i for i in issues if i["id"] == "transcription-unavailable")
-    assert tu["fields"]["severity"] == "warning"
-    assert tu["fields"]["resolution"] == "open"
+    assert not any(i["id"] == "transcription-unavailable" for i in issues)
+    # the container's own attested facts are there, and its content zone carries no rendering
+    fields = (records.artifact_block(post) or {}).get("fields") or {}
+    assert fields.get("format") == "mp4" and fields.get("duration")
+    assert not records.has_stored_rendering(post)

@@ -49,14 +49,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from corpus import recordbuild, resolver, touches
+from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
-from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
 from corpus.draft._trackmanifest import attest_track_manifest, chapter_structural_segments
-from corpus.draft._transcript import parse_chaptered_sections, parse_transcript_sections
 from corpus.segments import Section
-from corpus.transcription import TranscriptionUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -88,8 +85,9 @@ def draft(
         fields["streams"] = probe["streams"]
 
     issues: list[dict[str, Any]] = []
+    # A container's content zone holds chapter marks and nothing else (§65, §4.3.2.3). `sections`
+    # stays because the shape is a list of blocks either way; it is simply always empty now.
     sections: list[Section] = []
-    transcript = ""
 
     # yt-dlp .info.json is non-primary-source enrichment → it goes to the origin block as
     # `ytdlp_*` fields, never the body/artifact/frontmatter. Its `chapters[]` are the one
@@ -99,54 +97,23 @@ def draft(
     sidecar = parse_info_json_for_record(corpus_root, record_id, record_metadata)
     chapters = sidecar.get("chapters")
 
-    mode, per_host_transcriber = resolve_transcription(corpus_root, record_metadata)
-    if mode == "disabled":
-        log.info("transcription disabled for this origin host")
-        issues.append(_unavailable_issue("info", "transcription disabled for this origin host"))
-    else:
-        try:
-            transcript_path = resolver.resolve(
-                f"corpus://{record_id}?extract_audio&transcribe",
-                corpus_root,
-                transcriber=per_host_transcriber,
-            )
-            transcript = transcript_path.read_text(encoding="utf-8")
-        except TranscriptionUnavailable as exc:
-            log.info("transcription unavailable: %s", exc)
-            issues.append(_unavailable_issue("warning", str(exc)))
-        except Exception as exc:  # ffmpeg/probe/resolve failure — still produce a record
-            log.warning("transcript resolution failed: %s", exc)
-            issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
-        else:
-            if transcript.strip():
-                common = {
-                    "audio_stream_id": probe["audio_stream_id"] or "a0",
-                    "video_stream_id": probe["video_stream_id"],
-                    "multi_audio": probe["audio_count"] > 1,
-                    "multi_video": probe["video_count"] > 1,
-                    "media_duration": probe["root"].get("duration"),
-                }
-                if chapters:
-                    sections = parse_chaptered_sections(transcript, chapters, **common)
-                    log.info("sectioned by %d chapter marker(s)", len(chapters))
-                else:
-                    sections = parse_transcript_sections(transcript, **common)
-            else:
-                issues.append(
-                    _unavailable_issue("info", "empty transcript (no detectable speech)")
-                )
-
-    distinct_speakers = sorted(
-        {
-            seg.extra.get("speaker")
-            for sec in sections
-            for seg in sec.segments
-            if seg.overlay == "text/transcript" and seg.extra.get("speaker") is not None
-        }
-    )
-    if distinct_speakers:
-        fields["speakers"] = [{"id": idx, "name": None} for idx in distinct_speakers]
-        fields["is_diarized"] = True
+    # *(3.11, #131)* The container does NOT transcribe. It used to resolve
+    # `?extract_audio&transcribe` against ITSELF and write `text/transcript` sections into its
+    # own content zone — the parent authoring a rendering of a member's bytes, which §4.3.2.2
+    # has called a violation rather than a style since 3.8. It survived here only because no
+    # video schema ever declared `disposition: manifest` (§65's conformance gap, closed in
+    # 3.11), so nothing recognized the container as a container.
+    #
+    # The transcript is the AUDIO STREAM LEAF's own content, produced by the audio drafter over
+    # the leaf's pinned ADTS/Opus bytes — not over an mp3 `extract_audio` re-encoded from the
+    # container. Diarization (`speakers:`, `is_diarized`) goes with it: those are facts about an
+    # audio stream, not about the container that carries it.
+    #
+    # What stays here is what is genuinely the container's: the per-stream probe facts, the
+    # track manifest, and the chapter marks — chapters are byte-marks OF the container
+    # (§4.3.2.3, §12.20 item 2b), a boundary the source declares about the whole, which is why
+    # they remain a legal content-zone inhabitant of a `manifest` record while a rendering is
+    # not. A leaf reaches them through lineage at read time (§1.2), never by copy.
 
     # Track-manifest attestation (spec §12.20 items 1-2): one embed per elementary stream, on
     # top of the existing container facts above (additive — "corpus reattest upgrades an

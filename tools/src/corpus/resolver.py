@@ -519,13 +519,23 @@ def resolve(
 # ---------- record-level derivation ops (§6.2) ---------- #
 
 
-#: Ops whose meaning depends on a TIMELINE — the ones that must not run against an elementary
-#: stream's imputed timebase. `stream_id`/`cut` are addressing/mode config and ride along;
-#: `format=` is deliberately absent (an encoding change addresses no timeline, so a leaf's own
-#: playable rendering stays a leaf operation).
-_TIMELINE_OP_PARAMS: frozenset[str] = frozenset(
-    {"frame", "time", "time_range", "scenes", "transcribe"}
-)
+#: Ops whose meaning depends on a TIMELINE the leaf's own bytes cannot supply. `stream_id`/`cut`
+#: are addressing/mode config and ride along.
+#:
+#: Two deliberate absences, both load-bearing:
+#:
+#: `format=` — an encoding change addresses no timeline, so a leaf's own playable rendering
+#: stays a leaf operation.
+#:
+#: `transcribe` — an AUDIO elementary stream is not in the same position as a video one. ADTS
+#: and the Opus pinned framing are self-framing at exact, fixed per-packet durations derived
+#: from the sampling rate, so an audio leaf's timeline is well-defined from its own bytes;
+#: Annex-B video carries no timing whatsoever. Redirecting would also be actively worse: the
+#: container has no `(video, transcribe)` transform, so the chain would have to route through
+#: `extract_audio`, which RE-ENCODES to mp3 — transcribing a lossy derivative of the member
+#: instead of the member's own pinned identity bytes. Work on the member's bytes when they are
+#: self-sufficient; reach for the container only when they are not.
+_TIMELINE_OP_PARAMS: frozenset[str] = frozenset({"frame", "time", "time_range", "scenes"})
 
 
 def _stream_timeline_redirect(parsed: Any, artifact_record: Any) -> str | None:

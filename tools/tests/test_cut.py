@@ -516,6 +516,57 @@ def test_cut_refreshes_an_unchanged_stamp_without_a_write(tmp_path):
     assert leaf_file.read_text(encoding="utf-8") == before  # idempotent, no touch appended
 
 
+# ---------- (#131) per-host policy reaches a leaf through lineage ---------- #
+
+
+def test_a_leaf_inherits_its_containers_host(tmp_path):
+    """A promoted member's first origin is `corpus://…`, which names no host — so a per-host
+    overlay lookup against it silently finds nothing and the leaf falls back to the global
+    default. `transcription.enabled: false` declared on a host would apply to the video
+    container and be silently ignored on the audio track promoted out of it."""
+    from corpus.draft import _hostcfg
+
+    root = _corpus(tmp_path)
+    _container(root)
+    post = records.load(_leaf(root))
+    assert _hostcfg.first_origin_uri(post.metadata) == f"corpus://{_CID}?stream_id=0"
+    assert _hostcfg.host_bearing_origin_uri(root, post.metadata) == "https://example.com/v.mp4"
+
+
+def test_the_walk_survives_a_missing_container(tmp_path):
+    from corpus.draft import _hostcfg
+
+    root = _corpus(tmp_path)  # no container record written
+    post = records.load(_leaf(root))
+    assert _hostcfg.host_bearing_origin_uri(root, post.metadata) == ""
+
+
+def test_the_walk_terminates_on_a_cycle(tmp_path):
+    """A hand-edited record could point its lineage at itself. Report no host rather than
+    looping — the fallback is the global default, which is a correct answer."""
+    from corpus.draft import _hostcfg
+
+    root = _corpus(tmp_path)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": _CID, "touch": "corpus.ingest@0.1.0"})
+    records.set_artifact_block(post, mime="video/mp4", fields={})
+    records.append_origin_block(
+        post, uri=f"corpus://{_CID}?stream_id=0", snapshot="2026-07-29T00:00:00Z"
+    )
+    path = paths.record_path(root, _CID)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records.dump(post, path)
+    assert _hostcfg.host_bearing_origin_uri(root, records.load(path).metadata) == ""
+
+
+def test_a_direct_web_origin_is_returned_unchanged(tmp_path):
+    from corpus.draft import _hostcfg
+
+    root = _corpus(tmp_path)
+    post = records.load(_container(root))
+    assert _hostcfg.host_bearing_origin_uri(root, post.metadata) == "https://example.com/v.mp4"
+
+
 # ---------- end to end, with a real container ---------- #
 
 

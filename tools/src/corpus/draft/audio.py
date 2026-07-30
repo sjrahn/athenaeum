@@ -42,6 +42,18 @@ _AUDIO_SCHEMA_IDS = (
     "audio/audio_mpeg",
     "audio/audio_x-wav",
     "audio/audio_mp4",
+    # *(3.11, #131)* The promoted-track leaf types. This is where a media container's transcript
+    # now comes from: the audio-track record owns it (§1.2), not the container that carries the
+    # track. Before this, `draft/video.py` resolved `?extract_audio&transcribe` against the
+    # CONTAINER and wrote `text/transcript` into the container's own body — a parent rendering a
+    # member's bytes, which §4.3.2.2 has forbidden since 3.8 and which survived only because no
+    # video schema declared `disposition: manifest` (§65's gap, closed in 3.11).
+    #
+    # Transcribing the leaf is also better input, not merely better placement: the leaf's bytes
+    # are the pinned ADTS/Opus extraction (§12.20.1), where `extract_audio` on the container
+    # re-encodes to 64 kbps mono mp3. The old path transcribed a lossy derivative of the member.
+    "audio/audio_aac",
+    "audio/audio_opus",
 )
 
 

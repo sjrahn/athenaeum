@@ -468,42 +468,71 @@ def _make_video_record_file(tmp_path: Path) -> tuple[Path, Path, str]:
     return root, vid, rid
 
 
-def test_video_draft_transcription_unavailable(tmp_path, monkeypatch, run_drafter):
-    """NoOp/unavailable transcription → record with a warning issue, no sections."""
+# ---------- (3.11, #131) the container does NOT transcribe ---------- #
+#
+# These three replace the tests that pinned the OPPOSITE contract. Until 3.11 the video drafter
+# resolved `?extract_audio&transcribe` against the container and wrote `text/transcript` sections
+# into the container's own content zone — the parent rendering a member's bytes, forbidden by
+# §4.3.2.2 since 3.8 and surviving only because no video schema declared `disposition: manifest`.
+# The transcript is the audio stream leaf's own content now (`draft/audio.py`, §1.2), so the
+# assertions invert: the container must produce NO sections, NO diarization fields, and — this is
+# the part worth pinning — must not so much as ASK the transcriber.
+
+
+def test_the_container_never_calls_the_transcriber(tmp_path, monkeypatch, run_drafter):
+    """The strongest form of the rule. A drafter that called `transcribe` and discarded the
+    result would pass a "no sections" assertion while still burning a whisper run per container
+    — and would re-emit onto the container whatever #134's migration moved off it."""
+    root, vid, rid = _make_video_record_file(tmp_path)
+    calls: list[str] = []
+
+    def _spy(uri, corpus_root, **kw):
+        calls.append(uri)
+        raise AssertionError(f"the container drafter resolved {uri!r}")
+
+    monkeypatch.setattr(resolver, "resolve", _spy)
+    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
+    assert calls == []
+    assert blocks == []
+    assert result["issues"] == []
+
+
+def test_the_container_reports_no_transcription_issues(tmp_path, monkeypatch, run_drafter):
+    """`transcription-unavailable` was a fact about the container's own drafting. It is now the
+    audio leaf's to report — a container that never transcribes cannot fail to."""
     root, vid, rid = _make_video_record_file(tmp_path)
 
     def _raise(uri, corpus_root, **kw):
         raise TranscriptionUnavailable("no adapter")
 
     monkeypatch.setattr(resolver, "resolve", _raise)
-    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
-    assert blocks == []
-    issues = result["issues"]
-    assert len(issues) == 1
-    assert issues[0]["id"] == "transcription-unavailable"
-    assert issues[0]["severity"] == "warning"
+    result, _blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
+    assert [i["id"] for i in result["issues"]] == []
 
 
-def test_video_draft_empty_transcript_info_issue(tmp_path, monkeypatch, run_drafter):
-    root, vid, rid = _make_video_record_file(tmp_path)
-    empty = tmp_path / "empty.txt"
-    empty.write_text("", encoding="utf-8")
-    monkeypatch.setattr(resolver, "resolve", lambda *a, **k: empty)
-    result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
-    assert blocks == []
-    assert result["issues"][0]["severity"] == "info"
-
-
-def test_video_draft_with_transcript_builds_sections(tmp_path, monkeypatch, run_drafter):
+def test_the_container_attests_no_diarization(tmp_path, monkeypatch, run_drafter):
+    """`speakers:` / `is_diarized` are facts about an audio STREAM, not about the container that
+    carries it — they move with the transcript."""
     root, vid, rid = _make_video_record_file(tmp_path)
     tx = tmp_path / "tx.txt"
     tx.write_text(_TRANSCRIPT, encoding="utf-8")
     monkeypatch.setattr(resolver, "resolve", lambda *a, **k: tx)
     result, blocks = run_drafter(video_mod.draft, vid, corpus_root=root, record_id=rid)
-    assert result["issues"] == []
-    assert len(blocks) == 2
-    assert result["fields"]["is_diarized"] is True
-    assert {sp["id"] for sp in result["fields"]["speakers"]} == {1, 2}
+    assert blocks == []
+    assert "speakers" not in result["fields"]
+    assert "is_diarized" not in result["fields"]
+    # …but the container's OWN facts are untouched.
+    assert result["fields"]["format"] == "mp4"
+
+
+def test_the_audio_leaf_types_have_a_drafter(tmp_path):
+    """The other half of the move: `audio/aac` and `audio/opus` are the promoted-track leaf
+    types, and before 3.11 no drafter was registered for either — so a promoted audio track
+    would have transcribed nothing anywhere."""
+    from corpus import draft as draft_pkg
+
+    for sid in ("audio/audio_aac", "audio/audio_opus"):
+        assert draft_pkg.get_drafter(sid) is not None, sid
 
 
 # ---------- real ffmpeg round-trip (gated) ---------- #
