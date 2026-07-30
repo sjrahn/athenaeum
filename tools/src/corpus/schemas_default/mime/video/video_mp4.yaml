@@ -1,3 +1,9 @@
 applies_to:
   content_types:
   - video/mp4
+# (§65, since 3.0 — declared here 3.11) A multi-track media container is a raw
+# archive in the strict sense: a transport whose content is other transports. Each
+# elementary stream is a member row at `stream_id=`, promotable on demand, and the
+# content zone carries only the container's chapter marks. The audio-track record
+# owns the transcript; the video-track record owns frame work. MP4/ISOBMFF — the track manifest §65 names first.
+disposition: manifest

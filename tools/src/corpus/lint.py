@@ -493,6 +493,43 @@ def _rule_segment_address_duplicate(post, blocks, root) -> Iterator[Finding]:
                     seen[key] = seg
 
 
+def _rule_container_carries_rendering(post, blocks, root) -> Iterator[Finding]:
+    """A container's own body holds a rendering of its members' bytes (spec §65, §4.3.2.2).
+
+    A `disposition: manifest` record's members ARE its content: the content zone carries the
+    container's own byte-marks (chapters) and nothing else, because anything a member says is
+    that member's promoted record's to say (§4.3.2.4 — a parent's rendering of a member is a
+    violation, not a style).
+
+    **Why a warning and not an error, which is the subtle part.** `shape.governing_form`
+    deliberately refuses to apply a class-level terminal default to a record that already
+    carries a stored rendering, so such a record stands `rendered` rather than `terminal` and
+    `terminal-stored-rendering` correctly does not fire. That guard is right — it is what lets
+    a container's disposition be declared *before* its content is migrated, instead of
+    reddening a fleet on a schema edit. But it also means the obligation would otherwise be
+    stated nowhere: the record is legitimately `rendered` today and wrong in the long run, and
+    silence reads as conformance. So this names it as owed work.
+
+    The population that forced it: 102 public `video/mp4` containers holding ~17,500 rendering
+    segments, because transcription ran against the container instead of its audio stream."""
+    if _schemas.resolved_disposition_for_record(root, post) != "manifest":
+        return
+    if not _records.has_stored_rendering(post):
+        return
+    segs = [s for s in _segments.leaf_segments(blocks) if (s.body or "").strip()]
+    yield Finding(
+        rule_id="container-carries-rendering",
+        severity="warning",
+        message=(
+            f"container (`disposition: manifest`) carries {len(segs)} stored rendering "
+            f"segment(s) in its own content zone. A container's members are its content "
+            f"(§65); what a member says belongs on the member's promoted record. Promote "
+            f"the member and move the rendering there."
+        ),
+        fields={"rendering_segments": len(segs)},
+    )
+
+
 def _rule_cutting_stamp_shape(post, blocks, root) -> Iterator[Finding]:
     """A `cutting:` stamp, if present, is well-formed (spec §7.2.1 — 3.11).
 
@@ -1758,6 +1795,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("address-region-invalid", _rule_address_region_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
+    ("container-carries-rendering", _rule_container_carries_rendering),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),
