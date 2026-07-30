@@ -5,15 +5,23 @@ description: |
   extraction produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal
   schema: this type exists so a promoted track record flows through ingest/lint/resolve like
   any other artifact; the track itself carries no further mime-declared structure (it is a
-  formless leaf — frame work rides the video atom's derivation ops, §1.2). NOTE: a bare
-  elementary stream is not independently seekable — `frame=`/`time_range=` on the track's own
-  hash fail by construction; derive renderings through the CONTAINER by containment lineage
-  (`corpus://<container>?stream_id=<n>&…`).
+  formless leaf — frame work rides the video atom's derivation ops, §1.2). A bare elementary
+  stream carries no container timing of its own — no timescale, no duration — so `frame=` /
+  `time_range=` / `scenes=` on the track's own hash resolve through **timeline inheritance**
+  (§6.2, 3.11): the resolver reads the leaf's containment lineage and runs the op against the
+  CONTAINER with `stream_id=<n>` composed in, which is also where the shared-timeline
+  composition lives (§1.2). *(Before 3.11 those ops simply failed here.)*
 applies_to:
   content_types:
   - video/hevc
 # (3.3, §7.1) A formless leaf (above) is exactly a disposition: work format with no
 # faithful markdown shape — the terminal-contract default follows. An origin overlay's
 # own `form:` (§7.2) — or a per-record asserted whole-record section — overrides either way.
+#
+# (3.11) The default stays terminal, and it speaks only about the AUTHORED layer: the track's
+# DERIVED body carries one body-empty `image` marker per scene span under its stamped
+# `cutting:` strategy (§7.2.1). Adopting them is the authoring act, which is also what supplies
+# a rendering contract — so nothing is a stored rendering under a terminal contract, and an
+# un-authored leaf is not an obligation. (See `video_h264.yaml` for the full note.)
 form:
   id: passthrough

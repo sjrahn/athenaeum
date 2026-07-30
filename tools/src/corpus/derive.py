@@ -239,14 +239,29 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
     Content-zone structural byte-marks (§4.3.2.3) are deliberately NOT stripped here: the
     currently-implemented source (media-container chapters) is a one-shot sidecar consumed and
     deleted at ingest (see `_apply_structural_segments`), so there is nothing to regenerate
-    them from on re-attest — they persist untouched, exactly as `ytdlp_*` origin fields do."""
+    them from on re-attest — they persist untouched, exactly as `ytdlp_*` origin fields do.
+
+    *(3.11)* The `cutting:` stamp is preserved for the **same** reason, and it is the one
+    artifact field that is not a byte-fact. It records a *resolution* — mime default ← the
+    container's origin overlay — performed at promotion, when both records were in hand
+    (§7.2.1). A stream leaf's own bytes cannot regenerate it: they carry no strategy and no
+    lineage, and the origin `corpus://<container>?stream_id=<N>` is capture history, never a
+    lookup route (§12.15). Stripping it would delete the resolution and leave the drafter with
+    nothing to compare against — which is precisely the drift §7.2.1's compare-before-write
+    rule exists to catch, caused by the strip that was supposed to be neutral. (This is the
+    shape of the trap 3.4 removed with `reattach_descriptions`: a non-derivable value living
+    inside a strip-and-rebuild layer. The fix there was to stop storing it; here it cannot be
+    derived at all, so the fix is to not strip it.)"""
     post.metadata["_embeds"] = []
     post.metadata["_members_block"] = True
     post.metadata["_contexts"] = [
         c for c in (post.metadata.get("_contexts") or []) if not _is_drafter_issue(c)
     ]
     art = records.artifact_block(post) or {}
-    records.set_artifact_block(post, mime=str(art.get("mime") or ""), fields={})
+    preserved: dict[str, Any] = {}
+    if (stamp := (art.get("fields") or {}).get("cutting")) is not None:
+        preserved["cutting"] = stamp
+    records.set_artifact_block(post, mime=str(art.get("mime") or ""), fields=preserved)
 
 
 def attest(

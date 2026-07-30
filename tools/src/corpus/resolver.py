@@ -204,6 +204,28 @@ def resolve(
             regenerate=regenerate,
         )
 
+    # `scene` (§6.2, 3.11): the record-level introspection view over this leaf's cut list —
+    # the `probe` analogue for a timeline. Reads the STAMPED strategy (never a fresh
+    # resolution, §7.2.1) and re-derives the spans under it. Record-level, JSON, single-param.
+    if len(parsed.params) == 1 and parsed.params[0] == ("scene", None):
+        return _resolve_scene(
+            corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
+        )
+
+    # Timeline ops on a promoted STREAM LEAF redirect through the container (§6.2's
+    # lineage-chained resolution, §1.2's inheritance-through-lineage). An elementary stream
+    # carries no container timing of its own — ffmpeg imputes a frame rate and reports no
+    # duration — so a second of "leaf time" is not a second of the timeline the leaf's stored
+    # addresses were computed in. The container holds the real timeline AND the shared one, so
+    # the op runs there with `stream_id=` composed in. Without this, an address stored on a
+    # leaf resolves against a timebase nobody measured it in.
+    redirected = _stream_timeline_redirect(parsed, artifact_record)
+    if redirected is not None:
+        log.debug("stream-leaf timeline redirect: %s -> %s", canonical_uri, redirected)
+        return resolve(
+            redirected, corpus_root, regenerate=regenerate, store=store, transcriber=transcriber
+        )
+
     if store is None:
         store = get_store(corpus_root)
     if transcriber is None:
@@ -495,6 +517,114 @@ def resolve(
 
 
 # ---------- record-level derivation ops (§6.2) ---------- #
+
+
+#: Ops whose meaning depends on a TIMELINE — the ones that must not run against an elementary
+#: stream's imputed timebase. `stream_id`/`cut` are addressing/mode config and ride along;
+#: `format=` is deliberately absent (an encoding change addresses no timeline, so a leaf's own
+#: playable rendering stays a leaf operation).
+_TIMELINE_OP_PARAMS: frozenset[str] = frozenset(
+    {"frame", "time", "time_range", "scenes", "transcribe"}
+)
+
+
+def _stream_timeline_redirect(parsed: Any, artifact_record: Any) -> str | None:
+    """The container URI a timeline op on a stream leaf should run against, or None.
+
+    Returns None — meaning "resolve normally" — unless ALL of: the URI carries a timeline op,
+    the record has a containment-lineage origin naming exactly one container stream, and the
+    URI does not already select a stream (a leaf that names `stream_id=` itself is asking for
+    something else entirely, and guessing at it would be worse than failing).
+
+    The rewritten URI is `corpus://<container>?stream_id=<N>&<the original params>` — the
+    canonical order §6.2 pins (select → cut → convert → size) with the selection supplied from
+    lineage instead of by the caller.
+    """
+    from corpus import cut as cut_mod
+
+    if not parsed.params or not any(k in _TIMELINE_OP_PARAMS for k, _ in parsed.params):
+        return None
+    if any(k == "stream_id" for k, _ in parsed.params):
+        return None
+    lineage = cut_mod.stream_lineage(artifact_record)
+    if lineage is None:
+        return None
+    container_id, stream_address = lineage
+    tail = "&".join(k if v is None else f"{k}={v}" for k, v in parsed.params)
+    return f"corpus://{container_id}?{stream_address}&{tail}"
+
+
+def _resolve_scene(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_record: Any,
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize the `scene` derivation op (§6.2, 3.11): this leaf's cut list as JSON.
+
+    The introspection surface the authoring pass reads before deciding anything — `probe`'s
+    role for a PDF page, on a timeline. It reports the resolved strategy, each span with its
+    address and duration, and the degeneracy signals, so the pass can tell "36 real slide
+    changes" from "226 frames of a scrolling terminal" without re-running a detector by hand.
+
+    Two properties are deliberate. It runs the **stamped** strategy, so this op can never be
+    the route by which a record gets silently re-cut under a strategy that moved (§7.2.1). And
+    it reports `unresolved: true` rather than failing when there is no stamp — an unstamped
+    leaf is a legitimate state, and a caller asking "how is this cut?" deserves the answer
+    "it isn't yet" instead of an exception.
+    """
+    import json as _json
+
+    from corpus import cut as cut_mod
+    from corpus.draft import video_stream as _vs
+
+    urihash_value = furi.urihash(canonical_uri)
+    cache_p = furi.cache_path(corpus_root, urihash_value, "json")
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+
+    stamp = records.cutting(artifact_record)
+    payload: dict[str, Any] = {
+        "record": source_hash,
+        "media_type": records.media_type_for(artifact_record),
+        "cutting": stamp,
+    }
+    try:
+        addresses, spans = _vs.addresses_for_stamp(corpus_root, artifact_record)
+    except (cut_mod.Unresolved, NotImplementedError) as exc:
+        payload.update({"unresolved": True, "reason": str(exc), "spans": []})
+    else:
+        payload["unresolved"] = False
+        payload["spans"] = [
+            {
+                "index": i,
+                "address": address,
+                "start": start,
+                "end": end,
+                "seconds": round(end - start, 3),
+            }
+            for i, (address, (start, end)) in enumerate(zip(addresses, spans, strict=True), 1)
+        ]
+        attested = (stamp or {}).get("cuts")
+        if isinstance(attested, int) and attested != len(spans):
+            payload["drift"] = {"attested_cuts": attested, "derived_cuts": len(spans)}
+        payload["signals"] = [
+            {"id": s.id, "detail": s.detail}
+            for s in cut_mod.degeneracy_signals(
+                spans, float((stamp or {}).get("duration") or 0.0) or _span_end(spans),
+                raw_cut_count=max(len(spans) - 1, 0),
+            )
+        ]
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    cache_p.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+    return cache_p.resolve()
+
+
+def _span_end(spans: list[tuple[float, float]]) -> float:
+    return spans[-1][1] if spans else 0.0
 
 
 def _resolve_members(

@@ -150,12 +150,32 @@ def run(args: argparse.Namespace) -> int:
     if meta.get("source_modified"):
         origin_fields["source_modified"] = meta["source_modified"]
 
+    # 6b. *(3.11 §7.2.1)* A promoted VIDEO STREAM's cut strategy is resolved HERE, because this
+    #     is the one moment both records are in hand: the leaf's own origin
+    #     `corpus://<container>?stream_id=<N>` is capture lineage and never a lookup route
+    #     (§12.15), so nothing downstream could walk to the container's overlay to resolve it.
+    #     The stamp is written on the leaf, which is thereafter self-describing. A failure to
+    #     resolve leaves the leaf unstamped — unresolved, not defaulted — and never fails the
+    #     promote: the bytes are what promotion is for.
+    cutting_stamp: dict[str, Any] | None = None
+    cutting_note = ""
+    if media_type.startswith("video/") and member_address.startswith("stream_id="):
+        from corpus._cli.cut import cut_leaf_stamp
+
+        cutting_stamp, cutting_note = cut_leaf_stamp(
+            corpus_root, container_post, container_id, member_address,
+            container_path=container_path,
+        )
+
     record_file = paths.record_path(corpus_root, computed_id)
     if record_file.is_file():
-        outcome = _fold_into_existing(record_file, containment_uri, origin_fields)
+        outcome = _fold_into_existing(
+            record_file, containment_uri, origin_fields, cutting_stamp=cutting_stamp
+        )
     else:
         outcome = _mint_stub(
-            record_file, computed_id, media_type, aux, containment_uri, origin_fields
+            record_file, computed_id, media_type, aux, containment_uri, origin_fields,
+            cutting_stamp=cutting_stamp,
         )
 
     result = {
@@ -166,6 +186,8 @@ def run(args: argparse.Namespace) -> int:
         "outcome": outcome,
         "record": str(record_file.relative_to(corpus_root)),
     }
+    if cutting_note:
+        result["cutting"] = cutting_note
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
@@ -230,11 +252,20 @@ def _origin_already_present(post: frontmatter.Post, containment_uri: str) -> boo
 
 
 def _fold_into_existing(
-    record_file: Path, containment_uri: str, origin_fields: dict[str, Any]
+    record_file: Path,
+    containment_uri: str,
+    origin_fields: dict[str, Any],
+    *,
+    cutting_stamp: dict[str, Any] | None = None,
 ) -> str:
     """A record with this id already exists (a prior promote, or a standalone ingest of the
     same bytes): fold the containment origin into it rather than erroring (spec §5.2)."""
     post = records.load(record_file)
+    # Only ever ADDS the stamp — an existing one is left exactly as it is. Overwriting would
+    # be a fresh resolution silently replacing the one this record's addresses were computed
+    # under, which §7.2.1 gives to `corpus cut` (compare-before-write) and to nothing else.
+    if cutting_stamp is not None and records.cutting(post) is None:
+        _stamp_cutting(post, cutting_stamp)
     if _origin_already_present(post, containment_uri):
         touches.record_touch(post, touches.script_identifier("promote"))
         records.dump(post, record_file)
@@ -250,6 +281,17 @@ def _fold_into_existing(
     return "folded"
 
 
+def _stamp_cutting(post: frontmatter.Post, stamp: dict[str, Any]) -> None:
+    """Write the resolved `cutting:` stamp onto the leaf's artifact block, preserving whatever
+    else the block carries."""
+    artifact = records.artifact_block(post) or {
+        "mime": records.media_type_for(post), "fields": {}
+    }
+    fields = dict(artifact.get("fields") or {})
+    fields["cutting"] = stamp
+    records.set_artifact_block(post, mime=str(artifact.get("mime") or ""), fields=fields)
+
+
 def _mint_stub(
     record_file: Path,
     record_id: str,
@@ -257,6 +299,8 @@ def _mint_stub(
     aux: dict[str, str],
     containment_uri: str,
     origin_fields: dict[str, Any],
+    *,
+    cutting_stamp: dict[str, Any] | None = None,
 ) -> str:
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
     first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
@@ -276,7 +320,9 @@ def _mint_stub(
         touch_id=touches.script_identifier("promote"),
     )
     post = frontmatter.Post(content="", **fm)
-    records.set_artifact_block(post, mime=media_type, fields={})
+    records.set_artifact_block(
+        post, mime=media_type, fields={"cutting": cutting_stamp} if cutting_stamp else {}
+    )
     records.append_origin_block(
         post,
         uri=containment_uri,

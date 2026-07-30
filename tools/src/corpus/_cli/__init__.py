@@ -26,6 +26,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
     "promote":         ("Capture & ingest",       "Mint a record for a container member (corpus://<id>?<member-address>)"),
+    "cut":             ("Capture & ingest",       "Resolve + stamp a video stream leaf's cut strategy (`cutting:`; dry-run by default)"),
     "assemble":        ("Capture & ingest",       "Repackage delivered export archives into one containment-friendly bundle"),
     "mbox-split":      ("Capture & ingest",       "Split a full-mailbox export into a closed-years container + current-year residue"),
     "mbox-window":     ("Capture & ingest",       "Reduce a full-mailbox export to a window bundle of not-yet-persisted messages"),

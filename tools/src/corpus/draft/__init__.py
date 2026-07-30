@@ -146,6 +146,7 @@ from . import pdf as _pdf  # noqa: E402, F401
 from . import tar_manifest as _tar_manifest  # noqa: E402, F401
 from . import vcard_manifest as _vcard_manifest  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
+from . import video_stream as _video_stream  # noqa: E402, F401
 from . import xls as _xls  # noqa: E402, F401
 from . import xlsx as _xlsx  # noqa: E402, F401
 from . import zip_manifest as _zip_manifest  # noqa: E402, F401

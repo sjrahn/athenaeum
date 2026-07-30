@@ -5,11 +5,14 @@ description: |
   produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal schema: this
   type exists so a promoted track record flows through ingest/lint/resolve like any other
   artifact; the track itself carries no further mime-declared structure (it is a formless leaf
-  — frame work rides the video atom's derivation ops, §1.2). NOTE: a bare elementary stream is
-  not independently seekable — `frame=`/`time_range=` on the track's own hash fail by
-  construction; derive renderings through the CONTAINER by containment lineage
-  (`corpus://<container>?stream_id=<n>&…`), which is also where the shared-timeline composition
-  lives (§1.2).
+  — frame work rides the video atom's derivation ops, §1.2). A bare elementary stream carries
+  no container timing of its own — no timescale, no duration — so `frame=`/`time_range=`/
+  `scenes=` on the track's own hash resolve through **timeline inheritance** (§6.2, 3.11): the
+  resolver reads the leaf's containment lineage and runs the op against the CONTAINER with
+  `stream_id=<n>` composed in. That is also where the shared-timeline composition lives (§1.2),
+  which is why the leaf's stored `time_range=` addresses are in the container's seconds and not
+  in a timebase imputed to the stream. *(Before 3.11 those ops simply failed here, and the
+  caller was told to rewrite the URI onto the container by hand.)*
 applies_to:
   content_types:
   - video/h264
@@ -17,5 +20,14 @@ applies_to:
 # faithful markdown shape — the terminal-contract default follows. An origin overlay's
 # own `form:` (§7.2) — or a per-record asserted whole-record section (e.g. this specific
 # track recognized as a real `slide-deck`, §12.20) — overrides either way (§7.8).
+#
+# (3.11) The default stays terminal, and it is a statement about the AUTHORED layer only. The
+# track's DERIVED body (`corpus://<id>?body`) now carries one body-empty `image` marker per
+# scene span under the record's stamped `cutting:` strategy (§7.2.1) — the mechanical proposal,
+# the PDF's page markers on a timeline. Adopting those markers into the stored body is the
+# authoring act, and it is the same act that supplies a rendering contract (the §12.20 pilot
+# track's asserted `slide-deck` section is exactly this) — so no record is ever a stored
+# rendering under a terminal contract. A leaf nobody has authored is therefore not an
+# obligation, which is the right default for a track nobody has looked at yet.
 form:
   id: passthrough
