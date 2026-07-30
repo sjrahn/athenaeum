@@ -11,12 +11,15 @@ description: |
   resolver reads the leaf's containment lineage and runs the op against the CONTAINER with
   `stream_id=<n>` composed in. That is also where the shared-timeline composition lives (§1.2),
   which is why the leaf's stored `time_range=` addresses are in the container's seconds and not
-  in a timebase imputed to the stream. The gap is large, not marginal: the §12.20 pilot deck's
-  track probes as 60 fps / 616.53s inside its container and as **25 fps with no duration** once
-  extracted, because the encoder wrote no VUI timing and the decoder falls back to a default —
-  so a leaf-relative address would land at 2.4x its intended position. Before 3.11 these ops
-  ran against that imputed timebase and produced an empty output rather than a wrong frame only
-  by luck of which guard fired first.
+  in a timebase imputed to the stream. Measured over 8 rostered containers: no leaf reports a
+  duration at all (8/8, the field absent rather than N/A), every leaf reports the same
+  meaningless placeholder rate (`avg_frame_rate=25/1`) whatever its source, and a real decode
+  agrees with the container in only 2 of 8 cases — both h264 with clean VUI-declared CFR. Three
+  diverge by a constant real_fps/25 factor and two by a non-constant drift no factor inverts.
+  All four hevc leaves fell back to 25 fps, including a clean-CFR one. And seeking fails even
+  where detection agrees: on a leaf whose cut list matched exactly, `ffmpeg -ss 30` returned
+  success and a zero-byte image — input seeking and a filter graph's fabricated timestamps are
+  not the same mechanism.
 applies_to:
   content_types:
   - video/h264
