@@ -703,3 +703,20 @@ def test_inline_svg_is_not_materializable_not_undecodable():
     with pytest.raises(ValueError) as exc:
         thtml.render_htmlel_image(ref2, {})
     assert not isinstance(exc.value, NotMaterializable)
+
+
+def test_turn_range_is_refused_with_the_real_reason():
+    """`turn=` is single-index by contract (§6.2, 'the verbatim N-th unit'); a range is
+    segment-envelope notation. Refusing it here — instead of falling through to the mime
+    ladder — is what keeps the error honest (#146's 'no transformation pipeline' misread)."""
+    import pytest as _pytest
+
+    parsed = furi.parse(f"corpus://{'a' * 64}?turn=1-3")
+    with _pytest.raises(ValueError, match="single 1-indexed unit"):
+        resolver._turn_index(parsed)
+
+
+def test_turn_non_numeric_still_falls_through():
+    # a malformed non-range value stays a non-match (None), exactly as before
+    parsed = furi.parse(f"corpus://{'a' * 64}?turn=x")
+    assert resolver._turn_index(parsed) is None

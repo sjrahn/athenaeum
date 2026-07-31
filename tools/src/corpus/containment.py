@@ -98,7 +98,12 @@ def build_member_index(corpus_root: Path) -> dict[str, list[tuple[str, str]]]:
                 continue
             address = embed.get("address")
             addr = address[0] if isinstance(address, list) else address
-            if addr:
+            # A self-referential row — a single-member container whose one member IS the
+            # whole artifact (transport == own id; the attested roster derives it honestly,
+            # e.g. a promoted single-card vCard's `card=1`) — is an identity statement, not
+            # a route: resolving through it would require the very bytes being sought
+            # (#145's containment cycle).
+            if addr and hexval != container_id:
                 index.setdefault(hexval, []).append((container_id, str(addr)))
     return index
 
@@ -304,8 +309,22 @@ def ensure_local_bytes(
     # No standalone file — resolve through the container. The member index is the ONLY route
     # (the promoted record's origin uri: is history, never consulted for lookup, §12.9).
     idx = member_index if member_index is not None else build_member_index(corpus_root)
-    routes = idx.get(record_id)
+    # Several routes may exist at once and every route yields identical bytes (§2) — "a
+    # resolver may take any", so take the first VIABLE one: a route through a container
+    # already on the resolution path (or through the record itself) is not a route at all.
+    all_routes = idx.get(record_id) or []
+    routes = [
+        (cid, addr) for cid, addr in all_routes if cid != record_id and cid not in _seen
+    ]
     if not routes:
+        if all_routes:
+            # Routes existed but every one led back into the resolution path — a genuine
+            # declared cycle (or pure self-reference). Say so; "not resolvable" would bury
+            # the pathology.
+            raise ArtifactMissing(
+                f"containment cycle resolving {record_id} "
+                f"(all routes revisit {sorted({cid for cid, _ in all_routes})})"
+            )
         raise ArtifactMissing(
             f"artifact {record_id} has no standalone file and is not resolvable through any "
             f"container (spec §2/§12.9)."

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -274,9 +275,12 @@ def resolve(
     # kind (predicted from chain).
     initial_kind = _working_kind_for(corpus_root, media_type)
     if initial_kind is None:
+        param_names = ", ".join(sorted({k for k, _ in parsed.params}))
         raise NotImplementedError(
-            f"no transformation pipeline registered for media_type {media_type!r} "
-            f"(declare `working_kind:` on its mime schema, or add it to the resolver table)"
+            f"param(s) {param_names!r} have no transformation pipeline for media_type "
+            f"{media_type!r} (declare `working_kind:` on its mime schema, or add it to the "
+            f"resolver table). Record-level ops — `body`, `members`, `turn=<N>`, "
+            f"`turn=<N>&att=<M>` — work for every media type and never reach this ladder."
         )
     final_kind = _predict_final_kind(parsed, initial_kind)
     # Version-labeled ops (§6.3, §6.4): `transcribe` output drifts across transcription
@@ -805,6 +809,17 @@ def _turn_index(parsed: furi.ParsedURI) -> tuple[int, int | None] | None:
     try:
         n = int(params[0][1] or "")
     except (TypeError, ValueError):
+        # `turn=A-B` is segment-envelope notation (§4.3.2.1), not a resolver op — the unit
+        # op is single-index by contract (§6.2: "the verbatim N-th unit"). Refuse it here
+        # with the real reason; falling through to the mime ladder would misreport it as a
+        # missing transformation pipeline (#146's misleading error).
+        value = str(params[0][1] or "")
+        if re.fullmatch(r"\d+-\d+", value):
+            raise ValueError(
+                f"turn={value}: the unit op takes a single 1-indexed unit (§6.2) — a range "
+                f"is segment-address notation; scope quotes against the record's stored "
+                f"segments instead"
+            ) from None
         return None
     if len(params) == 1:
         return n, None

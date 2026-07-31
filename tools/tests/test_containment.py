@@ -276,3 +276,33 @@ def test_rm_proceeds_when_member_has_a_standalone_artifact(tmp_path):
 
     result = maintenance.remove_records(root, [cid], execute=True)
     assert cid in result.removed and not result.blocked
+
+
+# ---------- the self-referential member row (#145) ---------- #
+
+
+def test_self_referential_member_row_is_not_a_route(tmp_path):
+    """A promoted single-member record whose attested roster declares ITSELF (transport ==
+    own id — the honest derivation for a one-card vCard, #145) must still resolve through
+    its REAL container: a self-row is an identity statement, not a route, and taking it
+    used to dead-end in the cycle guard before any real route was tried."""
+    root = _corpus(tmp_path)
+    card = b"BEGIN:VCARD\nVERSION:3.0\nFN:K\nEND:VCARD\n"
+    z = _zip(tmp_path / "b.zip", {"card.vcf": card})
+    cid = _ingest_and_draft(root, z)
+    member = _b3(card)
+    assert _promote(root, f"corpus://{cid}?path=card.vcf") == 0
+
+    # Simulate the contact-card shape op's attested roster: the whole artifact IS card 1.
+    p = paths.record_path(root, member)
+    post = records.load(p)
+    records.append_member(
+        post, media_type="text/vcard", address="card=1",
+        transport=f"blake3:{member}", fields={"bytes": len(card)},
+    )
+    records.dump(post, p)
+
+    idx = containment.build_member_index(root)
+    assert idx[member] == [(cid, "path=card.vcf")]  # the self-row is excluded outright
+    out = containment.ensure_local_bytes(root, member, "vcf", member_index=idx)
+    assert out.read_bytes() == card

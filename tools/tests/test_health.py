@@ -283,3 +283,46 @@ def test_health_cli_summary_and_filter(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "corpus health — 5 record(s)" in out
     assert "unshaped:" in out
+
+
+def test_prefix_duplicate_artifacts(tmp_path):
+    """Two records carrying the SAME origin filename whose artifacts are byte-identical, or
+    prefix-related once capture stamps and the document-closing tag run are neutralized, are
+    one source document captured twice (#147) — invisible to the evidence-independence bar
+    unless surfaced. A third record with different content in the same-name group stays out."""
+    root = _corpus(tmp_path)
+    base = (
+        b'<html><head><meta name="corpus-origin-period" content="2025-12">\n'
+        b"</head><body><p>hello</p>"
+    )
+    grown = (
+        b'<html><head><meta name="corpus-origin-period" content="2026-W01">\n'
+        b"</head><body><p>hello</p><p>more</p>"
+    )
+    other = b"<html><head></head><body><p>unrelated</p></body></html>"
+    trio = {
+        "f0" * 32: base + b"</body></html>",
+        "f1" * 32: grown + b"</body></html>",
+        "f2" * 32: other,
+    }
+    for rid, payload in trio.items():
+        fm = records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
+        post = frontmatter.Post(content="", **fm)
+        records.set_artifact_block(post, mime="text/html", fields={})
+        records.append_origin_block(
+            post, uri=None, snapshot="2026-07-31T00:00:00Z",
+            fields={"filename": "window.html"},
+        )
+        records.dump(post, paths.record_path(root, rid))
+        art = paths.artifact_path(root, rid, "html")
+        paths.ensure_parent(art)
+        art.write_bytes(payload)
+
+    refs = health.load_all_records(root)
+    report = health.prefix_duplicate_artifacts(refs, root)
+    assert report["groups_scanned"] == 1
+    assert report["total_pairs"] == 1
+    (pair,) = report["pairs"]
+    assert pair["kind"] == "prefix"
+    assert pair["shorter"] == "f0" * 32
+    assert pair["longer"] == "f1" * 32

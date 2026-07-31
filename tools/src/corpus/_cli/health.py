@@ -147,4 +147,16 @@ def _format_summary(report: dict[str, Any]) -> str:
             for msg in msgs[:3]:
                 lines.append(f"  - {oid}: {msg}")
 
+    if "prefix_duplicate_artifacts" in report:
+        pda = report["prefix_duplicate_artifacts"]
+        lines.append(
+            f"prefix_duplicate_artifacts: {pda['total_pairs']} pair(s) "
+            f"({pda['pairs_compared']} candidate pair(s) across {pda['groups_scanned']} "
+            f"same-filename group(s))"
+        )
+        for p in pda["pairs"][:5]:
+            lines.append(
+                f"  - {p['kind']}: {p['filename']} — {p['shorter'][:8]}… ⊑ {p['longer'][:8]}…"
+            )
+
     return "\n".join(lines) + "\n"

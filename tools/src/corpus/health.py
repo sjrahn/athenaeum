@@ -365,6 +365,69 @@ def dangling_origin_refs(
     return {sev: items[:limit] for sev, items in grouped.items()}
 
 
+def prefix_duplicate_artifacts(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50, **_kw: Any
+) -> dict[str, Any]:
+    """Distinct records that are the SAME source document captured twice — one artifact
+    byte-identical to another, or a byte-prefix of it, once capture-injected stamps
+    (`corpus-origin-*` meta tags) and the document-closing tag run are neutralized. The
+    live case is a producer re-emitting a grown export file into a later bundle (an
+    iMessage window one message longer, #147): two blake3-distinct records, one
+    conversation — which the ledger's two-independent-records evidence bar cannot see.
+    Candidates are joined on the origin `filename:` (a re-emission keeps its name), so
+    only same-name groups are ever byte-compared."""
+    import re as _re
+
+    from . import containment
+    from . import mime as mime_mod
+
+    stamp_re = _re.compile(rb'<meta name="corpus-origin-[^"]*" content="[^"]*">\n?')
+    tail_re = _re.compile(rb"(?:\s|</\w+>)+$")
+
+    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for r in refs:
+        blocks = list(records.iter_origin_blocks(r.post))
+        fields = (blocks[0].get("fields") or {}) if blocks else {}
+        filename = str(fields.get("filename") or "")
+        if filename:
+            groups[(records.media_type_for(r.post), filename)].append(r.record_id)
+
+    multi = {k: ids for k, ids in groups.items() if len(ids) > 1}
+    idx = containment.build_member_index(corpus_root) if multi else {}
+    pairs: list[dict[str, Any]] = []
+    compared = 0
+    for (media_type, filename), ids in sorted(multi.items()):
+        cores: list[tuple[str, bytes]] = []
+        for rid in ids:
+            try:
+                raw = containment.ensure_local_bytes(
+                    corpus_root, rid, mime_mod.extension_for(media_type), member_index=idx
+                ).read_bytes()
+            except Exception:  # bytes unavailable → not this signal's finding
+                continue
+            cores.append((rid, tail_re.sub(b"", stamp_re.sub(b"", raw))))
+        cores.sort(key=lambda x: len(x[1]))
+        for i in range(len(cores)):
+            for j in range(i + 1, len(cores)):
+                a, b = cores[i], cores[j]
+                compared += 1
+                if a[1] == b[1]:
+                    kind = "identical"
+                elif b[1].startswith(a[1]):
+                    kind = "prefix"
+                else:
+                    continue
+                pairs.append(
+                    {"kind": kind, "filename": filename, "shorter": a[0], "longer": b[0]}
+                )
+    return {
+        "groups_scanned": len(multi),
+        "pairs_compared": compared,
+        "pairs": pairs[:limit],
+        "total_pairs": len(pairs),
+    }
+
+
 # ---------- aggregator ---------- #
 
 
@@ -379,6 +442,7 @@ SIGNAL_NAMES = (
     "dangling_origin_refs",
     "normalization_pressure",
     "overlay_declarations",
+    "prefix_duplicate_artifacts",
 )
 
 
@@ -523,4 +587,8 @@ def scan_all(
         report["normalization_pressure"] = normalization_pressure(refs, corpus_root, limit=limit)
     if "overlay_declarations" in selected:
         report["overlay_declarations"] = overlay_declarations(refs, corpus_root)
+    if "prefix_duplicate_artifacts" in selected:
+        report["prefix_duplicate_artifacts"] = prefix_duplicate_artifacts(
+            refs, corpus_root, limit=limit
+        )
     return report
