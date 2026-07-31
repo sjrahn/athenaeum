@@ -144,6 +144,34 @@ def test_fixtures_match_live_records(fixture_path: Path) -> None:
     fixture = _load_fixture(fixture_path)
     live, converted = _live_embeds(fixture)
 
+    # *(3.12)* A member may be re-identified for a reason that has nothing to do with the
+    # roster conversion — 3.12 changed what a media container decomposes INTO, so a track's
+    # pinned form (and therefore its blake3) moved by design. The legacy `embeds` snapshot
+    # stays as history; the fixture declares what the members became, and that declaration is
+    # checked exactly as strictly. Loosening the comparison instead would have left the axis's
+    # only exemplar unguarded, which is how a real extractor change gets through next time.
+    if (reid := fixture.get("reidentified")) is not None:
+        expected = reid["members"]
+        assert len(live) == len(expected), (
+            f"{fixture_path.name}: record rosters {len(live)} member(s), the "
+            f"{reid['at']} re-identification declared {len(expected)}"
+        )
+        for want in expected:
+            got = next((r for r in live if r.get("address") == want["address"]), None)
+            assert got is not None, (
+                f"{fixture_path.name}: {want['address']!r} is gone from the roster"
+            )
+            for key in _SURVIVING_ROW_KEYS:
+                assert got.get(key) == want.get(key), (
+                    f"{fixture_path.name}: {want['address']!r} has {key}={got.get(key)!r}, "
+                    f"the {reid['at']} re-identification declared {want.get(key)!r} — a "
+                    f"transport that moves AGAIN is the extractor drifting, not a migration"
+                )
+            assert (got.get("fields") or {}).get("bytes") == want["fields"]["bytes"], (
+                f"{fixture_path.name}: {want['address']!r} changed `bytes`"
+            )
+        return
+
     if not converted:
         assert len(live) == fixture["total_embeds_in_record"], (
             f"{fixture_path.name}: record now has {len(live)} members, "
@@ -338,24 +366,26 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
         else:
             derived = by_addr.get(first)
             assert derived is not None, f"{fixture_path.name}: derivation omitted {first!r}"
-        if first.startswith("stream_id="):
-            # *(3.12)* A track member's pinned form changed — from a bare elementary stream to
-            # a single-track container of the source's own family — so BOTH its transport hash
-            # and its MIME (`video/h264` -> `video/mp4`) legitimately differ from what this
-            # fixture snapshotted under the superseded rule. This is the migration, not drift:
-            # the fixture is a record of the old form, and the two agree again once the fleet
-            # re-attests (§12.37). `bytes` and `filename` move with it — a container costs a
-            # `moov` index the bare stream did not carry, and the suffix follows the track
-            # kind now — so the whole row is a new-form row and parity against an old-form
-            # snapshot is not the question. What IS still checked is that the derivation
-            # produces a well-formed row of the NEW shape: a blake3 transport, a container
-            # MIME matching the track kind, a positive size, and a kind-matched suffix. The
-            # fixture is regenerated when the two promoted leaves are re-promoted, and this
-            # branch goes with it.
-            assert derived["transport"].startswith("blake3:")
-            assert derived["media_type"] in ("video/mp4", "audio/mp4")
-            assert derived["bytes"] > 0
-            suffix = "m4a" if derived["media_type"] == "audio/mp4" else "mp4"
+        if (reid := fixture.get("reidentified")) is not None:
+            # *(3.12)* This member's pinned form changed — a bare elementary stream became a
+            # single-track container of the source's own family — so its transport, MIME and
+            # size all legitimately differ from the `stored` snapshot above. That is the
+            # migration (§12.37), not drift, and parity against an old-form snapshot is not a
+            # question that can be asked any more.
+            #
+            # It is compared against the fixture's DECLARED post-change row rather than merely
+            # shape-checked, which is what this branch did while the migration was pending.
+            # A shape check ("a blake3 transport, a plausible MIME, a positive size") passes on
+            # any well-formed row including a wrong one — and this is the only stream_id=
+            # exemplar in either hub, so a weak check here is no check at all.
+            want = next(m for m in reid["members"] if m["address"] == first)
+            assert derived["transport"] == want["transport"], (
+                f"{fixture_path.name} {first}: transport drift AFTER the {reid['at']} "
+                f"re-identification — the extractor is not deterministic"
+            )
+            assert derived["media_type"] == want["media_type"]
+            assert derived["bytes"] == want["fields"]["bytes"]
+            suffix = "m4a" if want["media_type"] == "audio/mp4" else "mp4"
             assert str(derived["filename"]).endswith(f".{suffix}")
             checked += 4
             continue

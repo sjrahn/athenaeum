@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import mime, paths, records, ziparchive
+from . import mime, paths, records, streams, ziparchive
 from .containment import ArtifactMissing, ensure_local_bytes
 
 log = logging.getLogger("corpus.continuity")
@@ -111,6 +111,14 @@ def continuity(corpus_root: Path, a_id: str, b_id: str) -> Continuity:
     map_b = _embed_map(post_b)
 
     if not map_a:
+        # *(3.12)* Before falling back to id comparison, try the MEDIA question. A re-framed
+        # member — a track lifted out of its container under a changed pinned form — has
+        # different bytes by construction, so an id comparison can only ever say DIVERGED
+        # and would report a fully-sound supersession as unsafe. See `_media_continuity`.
+        media = _media_continuity(corpus_root, post_a, a_id, post_b, b_id)
+        if media is not None:
+            result.members.extend(media)
+            return result
         # A is not a container manifest — its whole-artifact identity is its id, which
         # already differs from B (checked above), so nothing of A is preserved.
         result.members.append(MemberStatus("", DIVERGED))
@@ -131,6 +139,103 @@ def continuity(corpus_root: Path, a_id: str, b_id: str) -> Continuity:
         status = _prefix_status(corpus_root, a_id, ext_a, b_id, ext_b, rel)
         result.members.append(MemberStatus(address, status))
     return result
+
+
+def _media_continuity(
+    corpus_root: Path, post_a, a_id: str, post_b, b_id: str
+) -> list[MemberStatus] | None:
+    """*(3.12)* Continuity between two ISOBMFF media records, by **sample sequence**.
+
+    Returns None when this is not a media pair — the caller then falls back to whole-artifact
+    identity as before.
+
+    **Why byte containment is the wrong question here.** A record's identity is its artifact's
+    blake3, so a track re-framed under a changed pinned form (3.12: elementary stream → a
+    single-track container of the same family) has a different id *by construction*. Comparing
+    ids reports DIVERGED for a supersession that is in fact exact, which is worse than no gate:
+    a check that is always red gets ignored. §12.37 names continuity-gated supersession as the
+    net for exactly this case, and until now it could not be one.
+
+    **The invariant underneath the envelope is the sample sequence.** Re-enveloping moves every
+    sample's file offset and changes none of their sizes, so `streams.sample_sizes` — engine-free,
+    sample-tables only — is preserved exactly across a reframe and broken by a re-encode, a
+    dropped or reordered sample, or a differently-framed payload. `CONTAINED` keeps its usual
+    meaning: A's sequence is a prefix of B's, the append-only growth case.
+
+    **Which tracks to compare** is decided by lineage, never by position, because a leaf's own
+    track 0 may be its container's track 1 and comparing them by index would silently check the
+    wrong pair:
+
+    - B carries containment lineage into A (`corpus://<a_id>?stream_id=N`) — B is a promotion of
+      A's track N, so compare A's track N against B's only track. This is the post-sweep check
+      #133 wants and the retroactive proof the 3.12 pilot never got.
+    - Otherwise both are compared track-for-track by index, which is sound when neither is a
+      member of the other (two captures of the same recording, or two framings of one leaf).
+      A track-count mismatch is reported rather than paired off.
+    """
+    ext_a = mime.extension_for(records.media_type_for(post_a))
+    ext_b = mime.extension_for(records.media_type_for(post_b))
+    try:
+        path_a = ensure_local_bytes(corpus_root, a_id, ext_a)
+        path_b = ensure_local_bytes(corpus_root, b_id, ext_b)
+        tracks_a = streams.probe_streams(path_a)
+        tracks_b = streams.probe_streams(path_b)
+    except (ArtifactMissing, ValueError, NotImplementedError, OSError, RuntimeError) as e:
+        log.debug("continuity: not a readable media pair (%s / %s): %s", a_id[:12], b_id[:12], e)
+        return None
+    if not tracks_a or not tracks_b:
+        return None
+
+    pairs = _track_pairs(post_b, a_id, tracks_a, tracks_b)
+    out: list[MemberStatus] = []
+    for address, idx_a, idx_b in pairs:
+        if idx_b is None:
+            out.append(MemberStatus(address, ABSENT))
+            continue
+        try:
+            seq_a = streams.sample_sizes(path_a, idx_a)
+            seq_b = streams.sample_sizes(path_b, idx_b)
+        except (ValueError, NotImplementedError, OSError) as e:
+            # Unreadable is never "preserved" — continuity is not claimed for what we could
+            # not check, exactly as the byte path treats a resolution failure.
+            log.debug("continuity: sample sequence unreadable for %s: %s", address, e)
+            out.append(MemberStatus(address, DIVERGED))
+            continue
+        if seq_a == seq_b:
+            out.append(MemberStatus(address, IDENTICAL))
+        elif len(seq_b) > len(seq_a) and seq_b[: len(seq_a)] == seq_a:
+            out.append(MemberStatus(address, CONTAINED))
+        else:
+            out.append(MemberStatus(address, DIVERGED))
+    return out or None
+
+
+def _track_pairs(
+    post_b, a_id: str, tracks_a: list, tracks_b: list
+) -> list[tuple[str, int, int | None]]:
+    """`(address, a_track_index, b_track_index)` for each of A's tracks — lineage first."""
+    for uri in records.iter_origin_uris(post_b):
+        if not uri.startswith(f"corpus://{a_id}?"):
+            continue
+        _, _, query = uri.partition("?")
+        for part in query.split("&"):
+            if part.startswith("stream_id="):
+                try:
+                    n = int(part[len("stream_id=") :])
+                except ValueError:
+                    continue
+                # B is A's track n, promoted. B holds exactly one track, so its own index is
+                # whatever that single track calls itself — read it rather than assuming 0.
+                if len(tracks_b) == 1 and any(t.index == n for t in tracks_a):
+                    return [(f"stream_id={n}", n, tracks_b[0].index)]
+    return [
+        (
+            f"stream_id={t.index}",
+            t.index,
+            next((u.index for u in tracks_b if u.index == t.index), None),
+        )
+        for t in tracks_a
+    ]
 
 
 def _prefix_status(

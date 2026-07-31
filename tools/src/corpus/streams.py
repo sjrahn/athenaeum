@@ -529,3 +529,29 @@ def sample_count(path: Path, stream_id: int) -> int:
         raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {src})")
     with src.open("rb") as fh:
         return sum(1 for _ in _iter_sample_layout(fh, track))
+
+
+def sample_sizes(path: Path, stream_id: int) -> list[int]:
+    """Track `stream_id`'s sample sizes, in decode order — the **re-framing fingerprint**.
+
+    `sample_count` answers *how many*; this answers *which*, and the difference is what makes
+    it a content check rather than a length check. Two members that hold the same samples have
+    the same size sequence no matter how a muxer chose to lay the boxes out: re-enveloping
+    moves every sample's file OFFSET and none of their SIZES. A re-encode, a dropped sample, a
+    reordering, or a differently-framed payload all change it.
+
+    This is what §12.37's continuity question actually needs. Byte containment cannot answer
+    it — re-enveloping changes the artifact's blake3 by construction, so a comparison of ids
+    can only ever report divergence (see `corpus.continuity`). The sample sequence is the
+    invariant underneath the envelope.
+
+    Engine-free, like everything else in this module, and reads only the sample tables — no
+    sample payload is touched, so it stays cheap on a multi-GB track.
+    """
+    src = Path(path)
+    tracks = _parse_container(src)
+    track = next((t for t in tracks if t.index == stream_id), None)
+    if track is None:
+        raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {src})")
+    with src.open("rb") as fh:
+        return [size for _offset, size in _iter_sample_layout(fh, track)]
