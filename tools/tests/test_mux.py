@@ -241,3 +241,52 @@ def test_the_muxer_is_named_never_inferred_from_the_extension(tmp_path: Path) ->
 
     assert framing.samples == streams.sample_count(src, 0)
     assert streams.probe_streams(dest)[0].codec == "opus"
+
+
+def test_an_unrecognized_codec_is_still_promotable(tmp_path: Path) -> None:
+    """Regression for a gate that outlived its reason, found by a fleet re-attest.
+
+    `corpus.streams` used to gate promotability on an allowlist of codecs whose CONFIG
+    RECORD it could parse (`h264`/`hevc`/`aac`/`opus`). Under the superseded elementary rule
+    that was the whole point — member bytes were synthesized from that config, so a codec we
+    could not read was a member we could not build. 3.12 deleted the synthesis and the gate
+    outlived it, costing 17 public containers their AV1 video track on a re-attest that
+    doubled every other roster: exactly the AOT-29 refusal this amendment exists to end,
+    surviving one layer down.
+
+    The question that replaced it is whether the samples can be LAID OUT, which every
+    ISOBMFF track answers from `stsz`/`stsc`/`stco` regardless of codec. Pinned with an
+    `mp4v` track — genuinely unrecognized by `_resolve_codec`, and cheap to build, where a
+    real AV1 fixture would need an encoder that may not be present.
+    """
+    src = tmp_path / "unknown-codec.mp4"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y",
+         "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=15",
+         "-t", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", str(src)],
+        check=True, capture_output=True,
+    )
+    track = streams.probe_streams(src)[0]
+    assert track.codec not in ("h264", "hevc", "aac", "opus"), (
+        "fixture no longer exercises the unrecognized path — the point of the test is gone"
+    )
+    assert track.media_type == "video/mp4", "an unreadable config is not an unpromotable track"
+
+    dest = tmp_path / "member.mp4"
+    framing = mux.mux_stream_to(src, 0, dest)
+
+    assert framing.samples == streams.sample_count(src, 0)
+    assert streams.sample_sizes(src, 0) == streams.sample_sizes(dest, 0)
+
+
+def test_a_non_media_track_kind_stays_unpromotable(tmp_path: Path) -> None:
+    """The kind gate is NOT retired with the codec gate, and the distinction is the amendment's
+    own: a subtitle track leaves the family (§12.36 — `tx3g` projected to `.srt` is a
+    conversion, not a reframing) and a chapter or timecode track is metadata ABOUT other
+    tracks (§12.37). Asserted directly, because "we removed a gate" is exactly the change that
+    quietly removes the neighbouring one too."""
+    from corpus.streams import _MEDIA_TYPE_BY_KIND
+
+    assert set(_MEDIA_TYPE_BY_KIND) == {"video", "audio"}
+    assert _MEDIA_TYPE_BY_KIND.get("subtitle") is None
+    assert _MEDIA_TYPE_BY_KIND.get("timecode") is None

@@ -87,11 +87,30 @@ _MEDIA_TYPE_BY_KIND = {
     "audio": "audio/mp4",
 }
 
-#: The codecs whose sample layout this reader has been proven against. Resolution still
-#: gates promotion — not because the muxer needs a config record (it reads the container
-#: itself) but because the oracle's sample count must be trustworthy before it is used to
-#: check anything.
-_PINNED_CODECS = frozenset({"h264", "hevc", "aac", "opus"})
+#: *(Retired 2026-07-31.)* This was `{h264, hevc, aac, opus}` — the codecs whose config
+#: record this module could parse — and it gated whether a track was promotable at all.
+#:
+#: **Under the elementary rule that gate was the whole point:** a member's bytes had to be
+#: SYNTHESIZED (Annex-B from `avcC` NALs, ADTS from the `AudioSpecificConfig`, a
+#: corpus-defined framing from `dOps`), so a codec whose config we could not read was a
+#: codec whose member we could not build. 3.12 deleted that synthesis — the muxer copies
+#: whatever the container holds and never asks what it means — and the gate outlived it.
+#:
+#: **Measured cost of leaving it in place:** 17 public containers whose AV1 video track was
+#: silently unrostered, on a fleet re-attest that otherwise doubled every roster. The track
+#: `-c copy` muxes fine (rc=0, 1,081 MB out, sample sequence preserved, byte-identical
+#: across runs) — nothing was ever wrong except the allowlist. This is the same shape as
+#: the AOT-29 refusal 3.12 exists to end, surviving one layer down.
+#:
+#: **What replaced it is the question that actually matters:** can this track's samples be
+#: laid out? `_iter_sample_layout` answers that from `stsz`/`stsc`/`stco`, which every
+#: ISOBMFF track carries regardless of codec, and a track whose tables are malformed still
+#: raises rather than guessing. The kind gate below stays — a subtitle track leaves the
+#: family (§12.36) and a chapter/timecode track is metadata about other tracks (§12.37).
+#:
+#: The config parsing itself is deliberately NOT removed here; whether the reader still
+#: earns its size is the question §12.37 defers, and answering it in the same change that
+#: alters what gets rostered would make the fleet diff unauditable.
 
 _START_CODE = b"\x00\x00\x00\x01"
 
@@ -330,8 +349,11 @@ def _resolve_codec(
 ) -> tuple[str, str | None, object, int | None]:
     """Return `(codec, config, length_size)` for a track's `stsd` sample
     entry. `config`/`length_size` are the codec-specific payload a consumer needs
-    — see `_Track.config`. Unrecognized fourccs come back as `(fourcc, None, None,
-    None)`: nameable in `probe_streams`, refused by `corpus.mux`."""
+    — see `_Track.config`. An unrecognized fourcc comes back as `(fourcc, None, None)`:
+    named by its own four-character code and **still promotable**, because since 3.12 the
+    member is muxed rather than synthesized and the muxer does not need a config record to
+    copy samples (see `_PINNED_CODECS`, retired). A RECOGNIZED codec missing its mandatory
+    config box still raises — that is a malformed track, not an unknown one."""
     children_start = entry_ps + fixed
     if fourcc in _H264_FOURCCS:
         avcc = _find_box(fh, "avcC", children_start, entry_pe)
@@ -504,7 +526,7 @@ def probe_streams(path: Path) -> list[StreamInfo]:
             t.index,
             t.kind,
             t.codec,
-            _MEDIA_TYPE_BY_KIND.get(t.kind) if t.codec in _PINNED_CODECS else None,
+            _MEDIA_TYPE_BY_KIND.get(t.kind),
         )
         for t in tracks
     ]
