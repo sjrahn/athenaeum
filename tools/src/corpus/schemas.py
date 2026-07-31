@@ -497,7 +497,19 @@ def resolved_disposition_for_record(corpus_root: Path, post: Any) -> str:
     judgment for THIS record: an origin overlay's `disposition:` override (§7.2) wins over
     the mime schema's declared/derived default (`pipeline_disposition`), which wins over the
     `work` fallback. Feeds the terminal-forms derivation (§7.8): a resolved `manifest` with
-    no rendering contract declared stands under `form/manifest`, no overlay edit needed."""
+    no rendering contract declared stands under `form/manifest`, no overlay edit needed.
+
+    **The single-track exception (§1.2, 3.12).** A promoted media track's member bytes are a
+    single-track container of the source's own family, so its MIME is the *container* type
+    (`video/mp4`, `audio/mp4`) — the same type its parent carries, and the type that declares
+    `disposition: manifest`. Inheriting that would be wrong twice over: a roster naming its
+    own single track has no member to promote, and the `manifest` disposition strips the
+    content zone the track's own work (a transcript, frame markers) has to live in — which is
+    the very thing promotion exists to give it. So the judgment resolves on **track count**
+    rather than on MIME subtype: a media container rostering fewer than two members is a
+    `work`. Before 3.12 the leaf carried an elementary-stream MIME and the subtype alone kept
+    the two apart; it no longer can.
+    """
     override = _origin_disposition(corpus_root, post)
     if override is not None:
         return override
@@ -509,7 +521,45 @@ def resolved_disposition_for_record(corpus_root: Path, post: Any) -> str:
     schema = load_mime_schema(corpus_root, mime)
     if not isinstance(schema, dict):
         return "work"
-    return pipeline_disposition(schema)
+    disposition = pipeline_disposition(schema)
+    if disposition == "manifest" and _is_single_track_media(mime, post):
+        return "work"
+    return disposition
+
+
+#: Container MIMEs whose members are tracks (`stream_id=`), and which a promoted single-track
+#: member therefore shares with its own parent — the collision the track-count rule resolves.
+_TRACK_CONTAINER_MIMES = frozenset(
+    {"video/mp4", "video/quicktime", "audio/mp4", "video/webm", "video/x-matroska"}
+)
+
+
+def _is_single_track_media(mime: str, post: Any) -> bool:
+    """True when this record is a promoted track leaf rather than a container.
+
+    **Not** a roster-row count, though that is the rule §1.2 states and it is what a reader
+    would reach for first. Counting rows was tried and is wrong on the live fleet: the 102
+    public video containers roster exactly ONE row each — not because they hold one track,
+    but because their second track was unpromotable under the superseded pinned form and was
+    declared as a bare fact instead. A count cannot tell "this holds one track" from "this
+    holds two and one of them could not be embedded", so it would silently flip 102 genuine
+    containers to `work` and dissolve the `container-carries-rendering` worklist that the
+    transcript migration is tracked by.
+
+    So the discriminator is the **positive fact** promotion writes and attestation never
+    does: containment lineage through a `stream_id=` address. A record that came out of a
+    container's track axis is a leaf; anything else keeps the disposition its mime declares,
+    which for a standalone single-track capture is exactly the pre-3.12 behaviour — no
+    regression on a population this amendment was not about.
+    """
+    if mime not in _TRACK_CONTAINER_MIMES:
+        return False
+    from corpus import records  # lazy: records imports schemas
+
+    return any(
+        uri.startswith("corpus://") and "stream_id=" in uri
+        for uri in records.iter_origin_uris(post)
+    )
 
 
 _CUT_STRATEGY_IDS = ("scene-threshold@", "keyframe@", "fixed-interval@")

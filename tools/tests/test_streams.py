@@ -94,9 +94,11 @@ def test_probe_streams_h264_aac(h264_aac_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "h264"
-    assert video.media_type == "video/h264"
+    # 3.12: the promoted member is a single-track CONTAINER, so its MIME is the
+    # container type for the kind — never the elementary-stream type the codec names.
+    assert video.media_type == "video/mp4"
     assert audio.codec == "aac"
-    assert audio.media_type == "audio/aac"
+    assert audio.media_type == "audio/mp4"
     # index is 0-based track order — the two indices are distinct and both valid.
     assert {video.index, audio.index} == {0, 1}
 
@@ -108,9 +110,9 @@ def test_probe_streams_h264_opus(h264_opus_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "h264"
-    assert video.media_type == "video/h264"
+    assert video.media_type == "video/mp4"
     assert audio.codec == "opus"
-    assert audio.media_type == "audio/opus"
+    assert audio.media_type == "audio/mp4"
 
 
 @needs_libx265
@@ -119,133 +121,66 @@ def test_probe_streams_hevc_aac(hevc_aac_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "hevc"
-    assert video.media_type == "video/hevc"
+    assert video.media_type == "video/mp4"
     assert audio.codec == "aac"
-    assert audio.media_type == "audio/aac"
+    assert audio.media_type == "audio/mp4"
 
 
-# ---------- double-run byte identity ---------- #
-
-
-@needs_ffmpeg
-def test_extract_stream_double_run_identical_h264(h264_aac_clip):
-    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
-    first = _hash_chunks(streams.extract_stream(h264_aac_clip, video.index))
-    second = _hash_chunks(streams.extract_stream(h264_aac_clip, video.index))
-    assert first == second
-
-
-@needs_ffmpeg
-def test_extract_stream_double_run_identical_aac(h264_aac_clip):
-    audio = _by_kind(streams.probe_streams(h264_aac_clip), "audio")
-    first = _hash_chunks(streams.extract_stream(h264_aac_clip, audio.index))
-    second = _hash_chunks(streams.extract_stream(h264_aac_clip, audio.index))
-    assert first == second
+# ---------- sample_count: the engine-free oracle ---------- #
+#
+# 3.12 moved member production out of this module (`corpus.mux` owns the muxer) and left
+# it the job of CHECKING that producer — see tests/test_mux.py for the identity path
+# itself. What used to live here was a battery pinning the elementary forms: Annex-B
+# start codes, synthesized ADTS sync words, the corpus-defined Opus framing. Those forms
+# no longer name any promoted record, and the function that built ADTS headers is the
+# very one that could not encode `audioObjectType=29`. What this module still owes is a
+# sample count that is right and that ffmpeg had no hand in.
 
 
 @needs_ffmpeg
-def test_extract_stream_double_run_identical_opus(h264_opus_clip):
-    audio = _by_kind(streams.probe_streams(h264_opus_clip), "audio")
-    first = _hash_chunks(streams.extract_stream(h264_opus_clip, audio.index))
-    second = _hash_chunks(streams.extract_stream(h264_opus_clip, audio.index))
-    assert first == second
-
-
-@needs_libx265
-def test_extract_stream_double_run_identical_hevc(hevc_aac_clip):
-    video = _by_kind(streams.probe_streams(hevc_aac_clip), "video")
-    first = _hash_chunks(streams.extract_stream(hevc_aac_clip, video.index))
-    second = _hash_chunks(streams.extract_stream(hevc_aac_clip, video.index))
-    assert first == second
-
-
-# ---------- per-codec framing shape ---------- #
-
-
-@needs_ffmpeg
-def test_extract_h264_starts_with_start_code_and_sps(h264_aac_clip):
-    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
-    chunks = list(streams.extract_stream(h264_aac_clip, video.index))
-    assert chunks[0].startswith(b"\x00\x00\x00\x01")
-    nal_type = chunks[0][4] & 0x1F
-    assert nal_type == 7, "first NAL after the start code must be an SPS (nal_unit_type 7)"
-
-
-@needs_ffmpeg
-def test_extract_aac_starts_with_adts_sync(h264_aac_clip):
-    audio = _by_kind(streams.probe_streams(h264_aac_clip), "audio")
-    chunks = list(streams.extract_stream(h264_aac_clip, audio.index))
-    assert len(chunks) > 0
-    first = chunks[0]
-    assert first[0] == 0xFF
-    assert (first[1] & 0xF0) == 0xF0, "ADTS syncword is 0xFFF (12 bits)"
-
-
-@needs_ffmpeg
-def test_extract_opus_framing_walks_exactly(h264_opus_clip):
-    audio = _by_kind(streams.probe_streams(h264_opus_clip), "audio")
-    chunks = list(streams.extract_stream(h264_opus_clip, audio.index))
-    assert len(chunks) > 1  # dOps payload + at least one packet
-    dops_len = len(chunks[0])
-    assert dops_len >= 11  # Version+ChannelCount+PreSkip+SampleRate+Gain+MappingFamily
-
-    blob = b"".join(chunks)
-    pos = dops_len
-    packet_count = 0
-    while pos < len(blob):
-        (packet_len,) = struct.unpack(">I", blob[pos : pos + 4])
-        pos += 4 + packet_len
-        packet_count += 1
-    assert pos == len(blob), "walking the length prefixes must consume the byte stream exactly"
-    assert packet_count == len(chunks) - 1
-
-
-# ---------- round-trip sanity via ffmpeg (conventional forms only) ---------- #
-
-
-@needs_ffmpeg
-def test_extract_h264_roundtrip_decodes(tmp_path, h264_aac_clip):
-    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
-    out = tmp_path / "extracted.h264"
-    out.write_bytes(b"".join(streams.extract_stream(h264_aac_clip, video.index)))
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "h264", "-i", str(out), "-f", "null", "-"],
+def test_sample_count_matches_the_container_frame_count(h264_aac_clip):
+    """The count is the number the `framing:` stamp carries, so it has to be the real
+    one — checked against the container's own reported frame count, which is derived by
+    a different reader (ffprobe) from a different table."""
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+         "-show_entries", "stream=nb_read_frames", "-of", "default=nw=1:nk=1",
+         str(h264_aac_clip)],
+        check=True, capture_output=True, text=True,
     )
-    assert result.returncode == 0
+    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
+    assert streams.sample_count(h264_aac_clip, video.index) == int(probe.stdout.strip())
 
 
 @needs_ffmpeg
-def test_extract_aac_roundtrip_decodes(tmp_path, h264_aac_clip):
-    audio = _by_kind(streams.probe_streams(h264_aac_clip), "audio")
-    out = tmp_path / "extracted.aac"
-    out.write_bytes(b"".join(streams.extract_stream(h264_aac_clip, audio.index)))
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "aac", "-i", str(out), "-f", "null", "-"],
-    )
-    assert result.returncode == 0
-
-
-# ---------- error paths: never guess ---------- #
+def test_sample_count_is_stable_across_runs(h264_aac_clip):
+    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
+    counts = {streams.sample_count(h264_aac_clip, video.index) for _ in range(3)}
+    assert len(counts) == 1
 
 
 @needs_ffmpeg
-def test_extract_stream_bad_id_raises(h264_aac_clip):
+def test_sample_count_distinguishes_the_two_tracks(h264_aac_clip):
+    """A count that came back identical for every track would satisfy every other
+    assertion in this file while measuring nothing — the degenerate-input trap."""
+    infos = streams.probe_streams(h264_aac_clip)
+    video = streams.sample_count(h264_aac_clip, _by_kind(infos, "video").index)
+    audio = streams.sample_count(h264_aac_clip, _by_kind(infos, "audio").index)
+    assert video > 0 and audio > 0
+    assert video != audio
+
+
+@needs_ffmpeg
+def test_sample_count_bad_id_raises(h264_aac_clip):
     with pytest.raises(ValueError, match="no such track"):
-        list(streams.extract_stream(h264_aac_clip, 99))
+        streams.sample_count(h264_aac_clip, 99)
 
 
-def test_probe_streams_non_isobmff_container_raises(tmp_path):
-    fake_mkv = tmp_path / "fake.mkv"
-    fake_mkv.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 32)
-    with pytest.raises(ValueError, match="Matroska"):
-        streams.probe_streams(fake_mkv)
-
-
-def test_probe_streams_no_moov_raises(tmp_path):
-    garbage = tmp_path / "garbage.mp4"
-    garbage.write_bytes(b"\x00\x00\x00\x08free" + b"\x00" * 16)
-    with pytest.raises(ValueError, match="moov"):
-        streams.probe_streams(garbage)
+@needs_ffmpeg
+def test_this_module_no_longer_produces_member_bytes(h264_aac_clip):
+    """The supersession, pinned. `extract_stream` produced elementary-stream bytes and is
+    gone at 3.12; anything still calling it is calling for a form no record carries."""
+    assert not hasattr(streams, "extract_stream")
 
 
 # ---------- synthetic box tree: stsd entry_count > 1 refusal ---------- #

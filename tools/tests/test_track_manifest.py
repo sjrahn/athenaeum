@@ -18,7 +18,7 @@ from pathlib import Path
 import blake3
 import pytest
 
-from corpus import containment, mime, paths, records, resolver, streams, touches
+from corpus import containment, mime, mux, paths, records, resolver, touches
 from corpus._cli import ingest as ingest_cli
 from corpus._cli import promote as promote_cli
 from corpus._cli import reattest as reattest_cli
@@ -169,9 +169,9 @@ def test_sniff_head_adts_by_magic():
 @pytest.mark.parametrize(
     "head,filename,expected",
     [
-        (b"\x00\x00\x00\x01\x67", "stream_id=0.h264", "video/h264"),
-        (b"\x00\x00\x00\x01\x40\x01", "stream_id=0.h265", "video/hevc"),
-        (b"\x00", "stream_id=1.opus", "audio/opus"),
+        (b"\x00\x00\x00\x01\x67", "stream_id=0.mp4", "video/mp4"),
+        (b"\x00\x00\x00\x01\x40\x01", "stream_id=0.mp4", "video/mp4"),
+        (b"\x00", "stream_id=1.m4a", "audio/mp4"),
     ],
 )
 def test_sniff_head_extension_hint_disambiguates(head, filename, expected):
@@ -232,14 +232,14 @@ def test_attest_track_manifest_h264_aac(h264_aac_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_aac_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert set(by_media) == {"video/h264", "audio/aac"}
-    for media_type, ext in (("video/h264", "h264"), ("audio/aac", "adts")):
+    assert set(by_media) == {"video/mp4", "audio/mp4"}
+    for media_type, ext in (("video/mp4", "mp4"), ("audio/mp4", "m4a")):
         e = by_media[media_type]
         assert e["address"].startswith("stream_id=")
         idx = int(e["address"].removeprefix("stream_id="))
         expected = blake3.blake3()
         length = 0
-        for chunk in streams.extract_stream(h264_aac_clip, idx):
+        for chunk in mux.mux_stream(h264_aac_clip, idx):
             expected.update(chunk)
             length += len(chunk)
         assert e["transport"] == f"blake3:{expected.hexdigest()}"
@@ -265,9 +265,9 @@ def test_attest_track_manifest_opus(h264_opus_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_opus_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert "audio/opus" in by_media
-    opus = by_media["audio/opus"]
-    assert opus["fields"]["filename"].endswith(".opus")
+    assert "audio/mp4" in by_media
+    opus = by_media["audio/mp4"]
+    assert opus["fields"]["filename"].endswith(".m4a")
 
 
 @needs_libx265
@@ -275,15 +275,15 @@ def test_attest_track_manifest_hevc(hevc_aac_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(hevc_aac_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert "video/hevc" in by_media
-    assert by_media["video/hevc"]["fields"]["filename"].endswith(".h265")
+    assert "video/mp4" in by_media
+    assert by_media["video/mp4"]["fields"]["filename"].endswith(".mp4")
 
 
 @needs_ffmpeg
 def test_attest_track_manifest_unsupported_track_declared_not_embedded(h264_subtitle_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_subtitle_clip)
     media_types = {e["media_type"] for e in embeds}
-    assert "video/h264" in media_types
+    assert "video/mp4" in media_types
     # The subtitle track is a declared fact, not an embed: no transport hash for it.
     assert len(issues) == 1
     issue = issues[0]
@@ -325,8 +325,8 @@ def test_ingest_h264_aac_record_carries_stream_embeds(h264_aac_clip):
         embeds_by_media = {
             e.get("media_type"): e for e in records.iter_embed_blocks(post)
         }
-        assert "video/h264" in embeds_by_media
-        assert "audio/aac" in embeds_by_media
+        assert "video/mp4" in embeds_by_media
+        assert "audio/mp4" in embeds_by_media
 
         # The container's existing artifact facts (ffprobe duration/codec/etc) stay as-is —
         # additive attestation, never a replacement.
@@ -369,7 +369,7 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
         uri = f"corpus://{rid}?stream_id={stream_id}"
@@ -380,7 +380,7 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
         promoted_post = records.load(paths.record_path(root, expected_pid))
         assert promoted_post.metadata["id"] == expected_pid
         assert records.derived_state(promoted_post) == "proxy"
-        assert records.media_type_for(promoted_post) == "video/h264"
+        assert records.media_type_for(promoted_post) == "video/mp4"
         origins = list(records.iter_origin_blocks(promoted_post))
         assert origins[0]["fields"]["uri"] == uri
         assert touches.touch_list(promoted_post) == [touches.script_identifier("promote")]
@@ -402,7 +402,7 @@ def test_promote_opus_stream_mime_via_extension_hint(h264_opus_clip):
         rid = _ingest(root, h264_opus_clip)
         post = records.load(paths.record_path(root, rid))
         opus_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "audio/opus"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "audio/mp4"
         )
         stream_id = str(opus_embed["address"]).removeprefix("stream_id=")
         uri = f"corpus://{rid}?stream_id={stream_id}"
@@ -410,7 +410,7 @@ def test_promote_opus_stream_mime_via_extension_hint(h264_opus_clip):
 
         expected_pid = str(opus_embed["transport"]).removeprefix("blake3:")
         promoted_post = records.load(paths.record_path(root, expected_pid))
-        assert records.media_type_for(promoted_post) == "audio/opus"
+        assert records.media_type_for(promoted_post) == "audio/mp4"
 
 
 # ---------- bare stream_id= identity resolution ---------- #
@@ -425,14 +425,14 @@ def test_bare_stream_id_resolves_to_pinned_identity_bytes(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
 
         out = resolver.resolve(f"corpus://{rid}?stream_id={stream_id}", root)
         resolved_bytes = out.read_bytes()
 
-        direct = b"".join(streams.extract_stream(h264_aac_clip, int(stream_id)))
+        direct = b"".join(mux.mux_stream(h264_aac_clip, int(stream_id)))
         assert resolved_bytes == direct
         assert out.suffix == ".h264"
 
@@ -452,7 +452,7 @@ def test_bare_stream_id_does_not_return_raw_container(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
         out = resolver.resolve(f"corpus://{rid}?stream_id={stream_id}", root)

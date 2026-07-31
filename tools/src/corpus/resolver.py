@@ -257,7 +257,7 @@ def resolve(
     # engine op (`time_range=`/`format=`/`scenes=`) `stream_id=` stays pure addressing config
     # (handled below via `_NOOP_PARAMS` + `ctx["stream_ids"]`, feeding the phase-1 ffmpeg `-map`
     # path) — but alone, it must resolve to the track's PINNED IDENTITY bytes
-    # (`corpus.streams.extract_stream`), never fall through to the raw container the generic
+    # (`corpus.mux.mux_stream`), never fall through to the raw container the generic
     # no-op branch below would otherwise return. Pure byte-work: no ffmpeg engine version folds
     # into the cache key (§12.20 item 1).
     if parsed.params and all(k == "stream_id" for k, _ in parsed.params):
@@ -741,7 +741,7 @@ def _resolve_stream_identity(
     regenerate: bool,
 ) -> Path:
     """Materialize the bare `stream_id=<n>` identity op (§12.20 item 4): the track's pinned
-    extraction bytes via `corpus.streams.extract_stream` — never the raw container, and never
+    extraction bytes via `corpus.mux.mux_stream` — never the raw container, and never
     an ffmpeg engine version folded into the cache key (this is pure byte-work, §12.20 item 1;
     contrast the engine-versioned muxing-contract ops that COMPOSE `stream_id=` via `-map`,
     §6.2). Single-track only: a comma-list or repeated `stream_id=` has no meaning for pure
@@ -751,7 +751,7 @@ def _resolve_stream_identity(
     The extension is cheap to predict ahead of the cache check (unlike the muxing contract's
     deferred-extension kinds, §12.20 item 1's engine path): `probe_streams` reads only the
     small `moov` subtree, never sample data."""
-    from . import streams
+    from . import mux, streams
 
     values = [v for _, v in params if v]
     if len(values) != 1 or "," in values[-1]:
@@ -784,7 +784,7 @@ def _resolve_stream_identity(
     tmp = cache_p.with_name(f"{cache_p.name}.tmp")
     try:
         with tmp.open("wb") as out:
-            for chunk in streams.extract_stream(artifact_binary, stream_id):
+            for chunk in mux.mux_stream(artifact_binary, stream_id, workdir=cache_p.parent):
                 out.write(chunk)
         tmp.replace(cache_p)
     finally:

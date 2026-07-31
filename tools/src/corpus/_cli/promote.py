@@ -125,15 +125,28 @@ def run(args: argparse.Namespace) -> int:
     except (ValueError, OSError) as e:
         sys.exit(f"could not read member {member_address!r} from container: {e}")
 
-    # A member whose bytes name no type — a raw elementary media stream is the case, having
-    # neither magic nor a filename (`stream_id=` is a position, so `member_source_metadata`
-    # deliberately yields none) — takes the type the roster already attested for it. The sniff
-    # still wins wherever it concludes: it read the actual bytes, where the row is a record of
-    # what attestation found in the container's own tables.
-    if media_type == "unknown":
-        declared = str(embed.get("media_type") or "").strip()
-        if declared:
-            media_type = declared
+    # A member whose bytes name no type takes the type the roster already attested for it.
+    # The sniff still wins wherever it concludes: it read the actual bytes, where the row is
+    # a record of what attestation found in the container's own tables.
+    declared = str(embed.get("media_type") or "").strip()
+    if media_type == "unknown" and declared:
+        media_type = declared
+
+    # *(3.12)* A track member is now a single-track ISOBMFF container, and its bytes are
+    # genuinely AMBIGUOUS between `video/mp4` and `audio/mp4`: both carry the same `ftyp`
+    # brand, so magic alone always answers `video/mp4`. `corpus.mime` resolves this from the
+    # filename suffix (`.m4a`), but a `stream_id=` address is a position and carries no
+    # filename, so that refinement has nothing to work with here. The roster row does know —
+    # it recorded the track's KIND from the container's own handler box at attestation. So
+    # for this one address family the row refines a generic sniff rather than only filling a
+    # blank. Deliberately narrow: it fires only when the row and the sniff are the two
+    # ISOBMFF spellings of each other, never to overrule a sniff that found something else.
+    if (
+        member_address.startswith("stream_id=")
+        and media_type == "video/mp4"
+        and declared in ("audio/mp4", "video/mp4")
+    ):
+        media_type = declared
 
     # 5. Verify: a promoted id MUST equal the roster's recorded byte identity (spec §8.1).
     if computed_id != expected_hex:

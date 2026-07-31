@@ -1,6 +1,12 @@
-"""Deterministic elementary-stream extraction for ISOBMFF media containers (mp4/m4a/mov)
-— the identity path for media-container track embeds (spec §12.20.1, the mbox `msg=`
-discipline at media scale: pinned, byte-work, no engine in the identity path).
+"""Engine-free ISOBMFF reading for media containers (mp4/m4a/mov) — the **oracle** half
+of the 3.12 identity contract (spec §12.20 item 1).
+
+Since 3.12 this module does not produce member bytes. A promoted track's identity bytes
+are a single-track container of the source's own family, muxed by `corpus.mux` — see that
+module for why an engine is admitted there. What lives here is everything needed to
+*read* a container without one, which is exactly what makes it a usable check on the
+producer: a verification sharing the producer's implementation would share its failure
+mode, so this module stays deliberately ffmpeg-free.
 
 This module owns two things:
 
@@ -8,44 +14,33 @@ This module owns two things:
   `StreamInfo` per track (index, kind, codec, media_type), by parsing the sample
   description (`stsd`) and codec configuration record (`avcC`/`hvcC`/`esds`/`dOps`).
   Cheap: only the (small) `moov` subtree is read, never sample data.
-- `extract_stream(path, stream_id)` — stream the track's **pinned identity bytes**:
-  a deterministic, engine-free reframing of the container's own sample tables
-  (`stsd`/`stsc`/`stsz`/`stco`/`co64`) into the codec's conventional elementary form.
-  Sample bytes are read directly off disk in decode order — the sample-table order
-  IS decode order (composition offsets, `ctts`, affect display order only) — so two
-  extractions of the same track are byte-identical by construction.
+- `sample_count(path, stream_id)` — how many samples a track holds per the container's
+  own tables (`stsc`/`stsz`/`stco`/`co64`), counting the layout without reading sample
+  data. This is the number the `framing:` stamp carries (§7.2.1) and the number
+  `corpus.mux` checks a muxed member against.
 
-Per-codec pinned forms (spec §12.20.1):
+**What was removed at 3.12, and why it is worth knowing.** This module used to own the
+per-codec pinned *elementary* forms: h264/hevc reframed to Annex-B, aac wrapped in
+synthesized ADTS headers, opus in a corpus-defined length-prefixed framing. That rule
+failed on its own terms. ADTS encodes the audio object type in a **2-bit** field (AOT
+1-4), so AAC at `audioObjectType=29` (HE-AAC v2) has no representable ADTS header at all
+— and 84 of 102 public containers hold exactly that, which made their audio track
+permanently unpromotable. The elementary form was also insufficient in a second way: it
+carries no timescale and no duration, so a promoted leaf reported a meaningless frame
+rate and could not be seeked. Both are fixed by muxing into the source's own family
+instead, where admissibility is true by construction.
 
-- **h264 / hevc → Annex-B.** The avcC/hvcC config record's parameter-set NALs
-  (SPS/PPS, +VPS for hevc — emitted in the config record's own storage order) as
-  start-code-framed NALs (`0x00000001`), followed by every sample's length-prefixed
-  NALs (length-field width from the config record) reframed to the same start code,
-  one sample at a time in decode order. A syntactic reframing defined by the codec
-  spec, not an encode.
-- **aac → ADTS.** A 7-byte ADTS header synthesized per sample (no CRC) — profile
-  (`audioObjectType - 1`), sampling-frequency-index, and channel-configuration read
-  from the esds `AudioSpecificConfig` — immediately followed by the raw AAC sample
-  bytes, verbatim, one header per sample.
-- **opus → `corpus-opus-framing@1`** (no conventional self-framing elementary form
-  exists for Opus, so this is a corpus-defined pinned framing, per spec §12.20.1):
-  the `dOps` box payload verbatim, then for every sample a big-endian `u32` length
-  prefix followed by the sample's raw packet bytes, in decode order. Nothing else.
+Non-ISOBMFF containers (Matroska/WebM and kin) raise a clear error — ISOBMFF only (spec
+§12.20's deferred item). A `stsd` with more than one sample-description entry on a track
+is refused loudly — never guess which config applies to which samples.
 
-Any other codec raises `NotImplementedError` naming the codec — this module never
-guesses. Non-ISOBMFF containers (Matroska/WebM and kin) raise a clear error — this
-increment is ISOBMFF only (spec §12.20's deferred item). A `stsd` with more than one
-sample-description entry on a track is refused loudly — never guess which config
-applies to which samples.
+Deliberately unparsed: `tkhd`/`mdhd` (track/media timing — track order comes from `trak`
+box order in `moov`, the spec's `stream_id=` integer; sample layout comes entirely from
+`stbl`) and `ctts` (composition-time offsets — display order, not decode order).
 
-Deliberately unparsed: `tkhd`/`mdhd` (track/media timing — track order comes from
-`trak` box order in `moov`, spec's `stream_id=` integer; sample layout comes entirely
-from `stbl`) and `ctts` (composition-time offsets — display order, not decode order).
-Their version-0/1 field-width differences are therefore never a determinism risk here.
-
-NO ffmpeg/ffprobe anywhere in this module — see `corpus.transforms.video` /
-`corpus.transforms.audio` for the engine-backed playable-rendering path (`format=`,
-spec §12.20.1's second layer).
+NO ffmpeg/ffprobe anywhere in this module — that is the point of it. `corpus.mux` owns
+the muxer; `corpus.transforms.video` / `corpus.transforms.audio` own the engine-backed
+playable-rendering path (`format=`, §12.20 item 1's second layer).
 """
 
 from __future__ import annotations
@@ -67,9 +62,12 @@ class StreamInfo:
     `codec` is the resolved codec name for the four pinned forms ("h264", "hevc",
     "aac", "opus"); for anything else it is the container's own identifier (the
     `stsd` sample-entry fourcc, or an AAC `objectTypeIndication` annotation) so an
-    unsupported track is still nameable — `extract_stream` raises on it.
-    `media_type` is the promoted record's MIME for the four pinned codecs, else
-    `None` (this increment doesn't pin a media type for tracks it can't extract).
+    unsupported track is still nameable — `corpus.mux` raises on it.
+    `media_type` is the promoted record's MIME — since 3.12 the single-track *container*
+    type for the track's KIND (`video/mp4`, `audio/mp4`), never an elementary-stream type
+    (`video/h264`, `audio/aac`), which no longer names any promoted record. `None` when the
+    codec is outside the pinned set: such a track is a real fact the roster still reports,
+    it just has no member the oracle can vouch for.
     """
 
     index: int
@@ -78,12 +76,22 @@ class StreamInfo:
     media_type: str | None
 
 
-_MEDIA_TYPE_BY_CODEC = {
-    "h264": "video/h264",
-    "hevc": "video/hevc",
-    "aac": "audio/aac",
-    "opus": "audio/opus",
+# The codec is still resolved and reported (it is a real track fact, and the roster names
+# it), but since 3.12 it no longer decides the promoted member's MIME. A member's bytes are
+# a single-track container of the source's own family, so its type follows the TRACK KIND:
+# a video-only mp4 is `video/mp4`, an audio-only one is `audio/mp4` (what an `.m4a` is).
+# Before 3.12 this map returned elementary-stream types (`video/h264`, `audio/aac`) because
+# the member's bytes were a bare stream; those types no longer name any promoted record.
+_MEDIA_TYPE_BY_KIND = {
+    "video": "video/mp4",
+    "audio": "audio/mp4",
 }
+
+#: The codecs whose sample layout this reader has been proven against. Resolution still
+#: gates promotion — not because the muxer needs a config record (it reads the container
+#: itself) but because the oracle's sample count must be trustworthy before it is used to
+#: check anything.
+_PINNED_CODECS = frozenset({"h264", "hevc", "aac", "opus"})
 
 _START_CODE = b"\x00\x00\x00\x01"
 
@@ -166,7 +174,7 @@ def _read_handler_type(fh: IO[bytes], ps: int) -> str:
 
 @dataclass
 class _Track:
-    """Everything `extract_stream` needs for one track, parsed once from `moov`. Sample
+    """Everything the sample-layout walk needs for one track, parsed once from `moov`. Sample
     data itself is never read here — `stsz`/`stsc`/`stco` are kept as box byte-ranges
     and only materialized lazily, at extraction time, so `probe_streams` stays cheap
     regardless of file length."""
@@ -174,7 +182,6 @@ class _Track:
     index: int
     kind: str
     codec: str
-    media_type: str | None
     # h264/hevc: list of parameter-set NAL bytes (config-record order). aac: (audioObjectType,
     # sampling_frequency_index, channel_configuration). opus: the dOps payload, verbatim.
     # Else: None.
@@ -321,40 +328,40 @@ def _parse_audio_specific_config(asc: bytes) -> tuple[int, int, int]:
 def _resolve_codec(
     fh: IO[bytes], fourcc: str, entry_ps: int, entry_pe: int, fixed: int
 ) -> tuple[str, str | None, object, int | None]:
-    """Return `(codec, media_type, config, length_size)` for a track's `stsd` sample
-    entry. `config`/`length_size` are the codec-specific payload `extract_stream` needs
+    """Return `(codec, config, length_size)` for a track's `stsd` sample
+    entry. `config`/`length_size` are the codec-specific payload a consumer needs
     — see `_Track.config`. Unrecognized fourccs come back as `(fourcc, None, None,
-    None)`: nameable in `probe_streams`, refused by `extract_stream`."""
+    None)`: nameable in `probe_streams`, refused by `corpus.mux`."""
     children_start = entry_ps + fixed
     if fourcc in _H264_FOURCCS:
         avcc = _find_box(fh, "avcC", children_start, entry_pe)
         if avcc is None:
             raise ValueError(f"'{fourcc}' sample entry has no 'avcC' config box")
         nals, length_size = _parse_avcc(fh, *avcc)
-        return "h264", _MEDIA_TYPE_BY_CODEC["h264"], nals, length_size
+        return "h264", nals, length_size
     if fourcc in _HEVC_FOURCCS:
         hvcc = _find_box(fh, "hvcC", children_start, entry_pe)
         if hvcc is None:
             raise ValueError(f"'{fourcc}' sample entry has no 'hvcC' config box")
         nals, length_size = _parse_hvcc(fh, *hvcc)
-        return "hevc", _MEDIA_TYPE_BY_CODEC["hevc"], nals, length_size
+        return "hevc", nals, length_size
     if fourcc == "mp4a":
         esds = _find_box(fh, "esds", children_start, entry_pe)
         if esds is None:
             raise ValueError("'mp4a' sample entry has no 'esds' config box")
         asc, object_type = _parse_esds(fh, *esds)
         if object_type != _AAC_OBJECT_TYPE_INDICATION:
-            return f"mp4a(objectType=0x{object_type:02x})", None, None, None
+            return f"mp4a(objectType=0x{object_type:02x})", None, None
         config = _parse_audio_specific_config(asc)
-        return "aac", _MEDIA_TYPE_BY_CODEC["aac"], config, None
+        return "aac", config, None
     if fourcc == "Opus":
         dops = _find_box(fh, "dOps", children_start, entry_pe)
         if dops is None:
             raise ValueError("'Opus' sample entry has no 'dOps' config box")
         fh.seek(dops[0])
         payload = fh.read(dops[1] - dops[0])
-        return "opus", _MEDIA_TYPE_BY_CODEC["opus"], payload, None
-    return fourcc, None, None, None
+        return "opus", payload, None
+    return fourcc, None, None
 
 
 def _parse_trak(fh: IO[bytes], trak_ps: int, trak_pe: int, index: int) -> _Track:
@@ -379,7 +386,7 @@ def _parse_trak(fh: IO[bytes], trak_ps: int, trak_pe: int, index: int) -> _Track
         raise ValueError(f"track {index}: no 'stsd' box")
     fourcc, entry_ps, entry_pe = _parse_stsd(fh, *stsd)
     fixed = _VIDEO_SAMPLE_ENTRY_FIXED if kind == "video" else _AUDIO_SAMPLE_ENTRY_FIXED
-    codec, media_type, config, length_size = _resolve_codec(fh, fourcc, entry_ps, entry_pe, fixed)
+    codec, config, length_size = _resolve_codec(fh, fourcc, entry_ps, entry_pe, fixed)
 
     stsz = _find_box(fh, "stsz", stbl_ps, stbl_pe)
     stsc = _find_box(fh, "stsc", stbl_ps, stbl_pe)
@@ -395,7 +402,6 @@ def _parse_trak(fh: IO[bytes], trak_ps: int, trak_pe: int, index: int) -> _Track
         index=index,
         kind=kind,
         codec=codec,
-        media_type=media_type,
         config=config,
         length_size=length_size,
         stsz=stsz,
@@ -484,74 +490,6 @@ def _iter_sample_layout(fh: IO[bytes], track: _Track) -> Iterator[tuple[int, int
                 sample_idx += 1
 
 
-# ---------- per-codec extraction ---------- #
-
-
-def _extract_annexb(path: Path, track: _Track) -> Iterator[bytes]:
-    for nal in track.config:  # parameter-set NALs, config-record order
-        yield _START_CODE + nal
-    length_size = track.length_size
-    with path.open("rb") as fh:
-        for offset, size in _iter_sample_layout(fh, track):
-            fh.seek(offset)
-            remaining = size
-            while remaining > 0:
-                len_bytes = fh.read(length_size)
-                if len(len_bytes) < length_size:
-                    raise ValueError(f"stream_id={track.index}: truncated NAL length prefix")
-                nal_len = int.from_bytes(len_bytes, "big")
-                remaining -= length_size
-                nal_data = fh.read(nal_len)
-                if len(nal_data) < nal_len:
-                    raise ValueError(f"stream_id={track.index}: truncated NAL unit")
-                remaining -= nal_len
-                yield _START_CODE + nal_data
-
-
-def _adts_header(frame_len: int, audio_object_type: int, sfi: int, chan_cfg: int) -> bytes:
-    """A 7-byte ADTS header (no CRC) for one AAC sample of `frame_len` raw bytes."""
-    profile = audio_object_type - 1
-    if not 0 <= profile <= 3:
-        raise NotImplementedError(
-            f"AAC audioObjectType={audio_object_type} has no 2-bit ADTS profile encoding"
-        )
-    aac_frame_length = frame_len + 7
-    bits = 0xFFF << 44  # syncword
-    bits |= 0 << 43  # ID (MPEG-4)
-    bits |= 0 << 41  # layer
-    bits |= 1 << 40  # protection_absent (no CRC)
-    bits |= (profile & 0x3) << 38
-    bits |= (sfi & 0xF) << 34
-    bits |= (chan_cfg & 0x7) << 30
-    bits |= (aac_frame_length & 0x1FFF) << 13
-    bits |= 0x7FF << 2  # buffer_fullness (VBR)
-    return bits.to_bytes(7, "big")
-
-
-def _extract_adts(path: Path, track: _Track) -> Iterator[bytes]:
-    audio_object_type, sfi, chan_cfg = track.config
-    with path.open("rb") as fh:
-        for offset, size in _iter_sample_layout(fh, track):
-            fh.seek(offset)
-            frame = fh.read(size)
-            if len(frame) < size:
-                raise ValueError(f"stream_id={track.index}: truncated AAC sample")
-            yield _adts_header(size, audio_object_type, sfi, chan_cfg) + frame
-
-
-def _extract_opus(path: Path, track: _Track) -> Iterator[bytes]:
-    """`corpus-opus-framing@1` (module docstring): dOps payload verbatim, then per
-    packet a big-endian u32 length prefix + the raw packet bytes, decode order."""
-    yield track.config  # the dOps box payload, verbatim
-    with path.open("rb") as fh:
-        for offset, size in _iter_sample_layout(fh, track):
-            fh.seek(offset)
-            packet = fh.read(size)
-            if len(packet) < size:
-                raise ValueError(f"stream_id={track.index}: truncated Opus packet")
-            yield struct.pack(">I", size) + packet
-
-
 # ---------- public API ---------- #
 
 
@@ -561,31 +499,33 @@ def probe_streams(path: Path) -> list[StreamInfo]:
     only the `moov` box tree — cheap regardless of file length. Raises `ValueError` for
     a non-ISOBMFF container or a malformed/incomplete track."""
     tracks = _parse_container(Path(path))
-    return [StreamInfo(t.index, t.kind, t.codec, t.media_type) for t in tracks]
+    return [
+        StreamInfo(
+            t.index,
+            t.kind,
+            t.codec,
+            _MEDIA_TYPE_BY_KIND.get(t.kind) if t.codec in _PINNED_CODECS else None,
+        )
+        for t in tracks
+    ]
 
 
-def extract_stream(path: Path, stream_id: int) -> Iterator[bytes]:
-    """Stream track `stream_id`'s pinned identity bytes (module docstring) as a
-    sequence of byte chunks — Annex-B NAL units (h264/hevc), ADTS frames (aac), or
-    `corpus-opus-framing@1` packets (opus). Deterministic by construction: same
-    container bytes in, same output bytes out, always.
+def sample_count(path: Path, stream_id: int) -> int:
+    """How many samples track `stream_id` holds, per the container's OWN tables.
 
-    Track lookup and codec support are validated eagerly (before this function
-    returns); the byte streaming itself is lazy — sample data is read from disk one
-    sample at a time as the caller consumes the iterator, never materializing the
-    whole track. Raises `ValueError` if `stream_id` doesn't name a track, and
-    `NotImplementedError` naming the codec for anything other than h264/hevc/aac/opus.
+    The engine-free half of the 3.12 identity contract (spec §12.20 item 1): this is the
+    number the `framing:` stamp carries, and the number a muxed member is checked against
+    by `corpus.mux`. It is deliberately computed here — by this package's own ISOBMFF
+    reader, which has no ffmpeg in it — so that the check and the thing it checks do not
+    share an implementation, and therefore cannot share a failure mode.
+
+    Counts the sample-table layout rather than reading any sample data, so it is cheap on
+    a multi-GB track. Raises `ValueError` if `stream_id` doesn't name a track.
     """
-    tracks = _parse_container(Path(path))
+    src = Path(path)
+    tracks = _parse_container(src)
     track = next((t for t in tracks if t.index == stream_id), None)
     if track is None:
-        raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {path})")
-    if track.codec in ("h264", "hevc"):
-        return _extract_annexb(Path(path), track)
-    if track.codec == "aac":
-        return _extract_adts(Path(path), track)
-    if track.codec == "opus":
-        return _extract_opus(Path(path), track)
-    raise NotImplementedError(
-        f"stream_id={stream_id}: extraction not implemented for codec {track.codec!r}"
-    )
+        raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {src})")
+    with src.open("rb") as fh:
+        return sum(1 for _ in _iter_sample_layout(fh, track))

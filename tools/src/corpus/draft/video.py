@@ -49,7 +49,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from corpus import recordbuild, touches
+from corpus import recordbuild, records, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._sidecar import parse_info_json_for_record
 from corpus.draft._trackmanifest import attest_track_manifest, chapter_structural_segments
@@ -75,6 +75,23 @@ def draft(
     canonical_algo: str | None = None,
     fingerprint: bool | str | list[str] = False,  # transcript is text; frames body-empty
 ) -> DrafterResult:
+    # *(3.12)* A promoted track leaf now carries the SAME mime as the container it came out
+    # of (`video/mp4`), because its bytes are a single-track container of that family. Mime
+    # no longer separates the two, so this drafter dispatches on the fact that does: a leaf
+    # carries a `cutting:` stamp, resolved once at promotion (§7.2.1), and a container never
+    # does. Before 3.12 the leaf's elementary mime routed it to its own registered drafter.
+    if _is_promoted_stream_leaf(record_metadata):
+        from corpus.draft import video_stream
+
+        return video_stream.draft(
+            video_path,
+            build=build,
+            corpus_root=corpus_root,
+            record_id=record_id,
+            record_metadata=record_metadata,
+            canonical_algo=canonical_algo,
+            fingerprint=fingerprint,
+        )
     fields: dict[str, Any] = {
         "size_bytes": video_path.stat().st_size,
         "format": _format_for_extension(video_path.suffix),
@@ -275,3 +292,21 @@ def _frame_rate(spec: str) -> float | None:
 
 def _format_for_extension(suffix: str) -> str:
     return suffix.lower().lstrip(".") or "mp4"
+
+
+def _is_promoted_stream_leaf(record_metadata: dict[str, Any] | None) -> bool:
+    """Whether this record is a promoted single-track leaf rather than a container.
+
+    Keyed on the `cutting:` stamp because that is what promotion writes and attestation
+    never does — a positive fact about how the record came to exist, rather than an absence
+    (no roster) that an un-attested container would also satisfy.
+
+    Reads it through `records.cutting` rather than reaching into the metadata dict directly:
+    the stamp's location is that module's business, and a second hand-rolled path here would
+    be one more thing to keep in step with it.
+    """
+    if not record_metadata:
+        return False
+    import frontmatter
+
+    return records.cutting(frontmatter.Post("", **dict(record_metadata))) is not None

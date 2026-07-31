@@ -338,10 +338,35 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
         else:
             derived = by_addr.get(first)
             assert derived is not None, f"{fixture_path.name}: derivation omitted {first!r}"
-        assert derived["transport"] == stored["transport"], (
-            f"{fixture_path.name} {first}: transport drift — the extractor is not deterministic"
-        )
-        assert derived["media_type"] == stored["media_type"], f"{fixture_path.name} {first}: mime"
+        if first.startswith("stream_id="):
+            # *(3.12)* A track member's pinned form changed — from a bare elementary stream to
+            # a single-track container of the source's own family — so BOTH its transport hash
+            # and its MIME (`video/h264` -> `video/mp4`) legitimately differ from what this
+            # fixture snapshotted under the superseded rule. This is the migration, not drift:
+            # the fixture is a record of the old form, and the two agree again once the fleet
+            # re-attests (§12.37). `bytes` and `filename` move with it — a container costs a
+            # `moov` index the bare stream did not carry, and the suffix follows the track
+            # kind now — so the whole row is a new-form row and parity against an old-form
+            # snapshot is not the question. What IS still checked is that the derivation
+            # produces a well-formed row of the NEW shape: a blake3 transport, a container
+            # MIME matching the track kind, a positive size, and a kind-matched suffix. The
+            # fixture is regenerated when the two promoted leaves are re-promoted, and this
+            # branch goes with it.
+            assert derived["transport"].startswith("blake3:")
+            assert derived["media_type"] in ("video/mp4", "audio/mp4")
+            assert derived["bytes"] > 0
+            suffix = "m4a" if derived["media_type"] == "audio/mp4" else "mp4"
+            assert str(derived["filename"]).endswith(f".{suffix}")
+            checked += 4
+            continue
+        else:
+            assert derived["transport"] == stored["transport"], (
+                f"{fixture_path.name} {first}: transport drift — the extractor is not "
+                "deterministic"
+            )
+            assert derived["media_type"] == stored["media_type"], (
+                f"{fixture_path.name} {first}: mime"
+            )
         checked += 2  # transport + media_type are themselves parity assertions
         for key, expected in (stored.get("fields") or {}).items():
             if key == "description" and fixture["axis"] != "card":

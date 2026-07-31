@@ -4,10 +4,10 @@ Shared core for `draft/video.py` and `draft/audio.py`: attest one manifest embed
 elementary stream of an ISOBMFF media container (mp4/m4a/mov) via `corpus.streams` — the
 phase-1 pinned identity-extraction module (see there for the per-codec framing this module
 hashes). This module owns none of that extraction logic; it only turns
-`streams.probe_streams` + `streams.extract_stream` into the drafter's `embeds`/`issues`
+`streams.probe_streams` + `mux.mux_stream` into the drafter's `embeds`/`issues`
 result-shape (spec §4.3.1.4, §8.1) — one embed per extractable stream, one info-severity
 issue per stream this increment's pinned extraction can't produce (declared honestly, per
-§12.20 item 2: a stream whose codec `streams.extract_stream` refuses is still a track fact).
+§12.20 item 2: a stream whose codec the mux refuses is still a track fact).
 
 Non-ISOBMFF containers (webm/mkv) and non-container audio (mp3/wav) are not media containers
 this module can probe — `streams.probe_streams` raises `ValueError` for both (no `moov` box /
@@ -25,26 +25,25 @@ from typing import Any
 
 import blake3
 
-from corpus import records, streams, touches
+from corpus import mux, records, streams, touches
 
 log = logging.getLogger(__name__)
 
 _DETECTOR = touches.script_identifier("draft.track-manifest")
 
-# The pinned per-codec elementary form's conventional filename suffix (spec §12.20.1) — set on
-# each embed's `fields.filename` so `corpus promote`'s streamed-head MIME sniff
-# (`_sniff_and_hash`) has a real extension to resolve against. No reliable magic bytes exist
-# for a bare Annex-B / opus-framing stream (h264 and hevc share the same start-code prefix;
-# `corpus-opus-framing@1` is a corpus invention with no natural signature at all) — the
-# declared extension is the same disambiguator a zip member already leans on (`corpus.mime`,
-# `_ZIP_EXT_REFINEMENTS`). ADTS AAC additionally gets a real magic-byte signature
-# (`corpus.mime`, this increment) since our fixed ADTS encoding is 100% deterministic; the
-# extension hint still rides along as a second line of defense.
-_EXTENSION_BY_CODEC = {
-    "h264": "h264",
-    "hevc": "h265",
-    "aac": "adts",
-    "opus": "opus",
+# The single-track container's conventional filename suffix (3.12) — set on each embed's
+# `fields.filename` so `corpus promote`'s streamed-head MIME sniff (`_sniff_and_hash`) has a
+# real extension to resolve against. It follows the track KIND, not the codec, because since
+# 3.12 that is what the member's bytes are: a video-only mp4 or an audio-only m4a.
+#
+# Before 3.12 this keyed on codec and named elementary suffixes (`h264`/`h265`/`adts`/`opus`),
+# because no reliable magic bytes exist for a bare Annex-B or opus-framed stream. That problem
+# dissolves here — an ISOBMFF member sniffs cleanly on its `ftyp` brand — so the extension is
+# now a convenience for humans rather than the disambiguator identity leaned on.
+_EXTENSION_BY_KIND = {
+    "video": "mp4",
+    "audio": "m4a",
+    "subtitle": "mp4",
 }
 
 _CHUNK = 1 << 20
@@ -53,7 +52,7 @@ _CHUNK = 1 << 20
 def attest_track_manifest(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Probe `path` for elementary streams; return `(embeds, issues)` (spec §12.20 item 2).
 
-    One embed per stream `streams.extract_stream` can produce, addressed `stream_id=<n>`,
+    One embed per stream `corpus.mux` can produce, addressed `stream_id=<n>`,
     `transport:` the blake3 of the pinned extraction — computed by streaming the extraction
     exactly once, chunk by chunk, so a large track is never materialized in memory. A stream
     the extraction refuses — an unsupported codec (`StreamInfo.media_type is None`), or a
@@ -90,7 +89,7 @@ def attest_track_manifest(path: Path) -> tuple[list[dict[str, Any]], list[dict[s
             issues.append(_unsupported_track_issue(track, str(exc)))
             continue
         fields: dict[str, Any] = {"bytes": length}
-        ext = _EXTENSION_BY_CODEC.get(track.codec)
+        ext = _EXTENSION_BY_KIND.get(track.kind)
         if ext:
             fields["filename"] = f"stream_id={track.index}.{ext}"
         embeds.append(
@@ -105,11 +104,12 @@ def attest_track_manifest(path: Path) -> tuple[list[dict[str, Any]], list[dict[s
 
 
 def _hash_extraction(path: Path, stream_id: int) -> tuple[str, int]:
-    """Stream `streams.extract_stream` once — blake3 transport digest + byte length — without
-    materializing the track whole."""
+    """Mux the track once — blake3 transport digest + byte length — without materializing it
+    whole. The digest is over the 3.12 pinned form (a single-track container of the source's
+    own family, `corpus.mux`), which is what the roster row's `transport:` names."""
     b3 = blake3.blake3()
     length = 0
-    for chunk in streams.extract_stream(path, stream_id):
+    for chunk in mux.mux_stream(path, stream_id):
         b3.update(chunk)
         length += len(chunk)
     return b3.hexdigest(), length
