@@ -40,6 +40,7 @@ pass adopts a form where one genuinely fits.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -197,6 +198,54 @@ def _transport_hex(row: dict[str, Any]) -> str:
 # ---------- member bytes (one artifact parse per record) ---------- #
 
 
+_NON_WORD = re.compile(r"[^a-z0-9]+")
+
+#: A line short enough that its presence or absence in the document proves nothing — a figure
+#: number, a callout digit, a two-word label. Below this the test declines rather than guesses.
+_JUDGEABLE_WORDS = 5
+
+
+def _bare_words(text: str) -> str:
+    """Lowercase alphanumeric words, single-spaced. Deliberately brutal: it has to make a
+    markdown rendering and its source HTML comparable, so `**Part Number** | Qty` and
+    `<th>Part Number</th><td>Qty</td>` both reduce to `part number qty`."""
+    return " ".join(_NON_WORD.sub(" ", text.lower()).split())
+
+
+def _reads_off_the_member(body: str, document: str) -> bool:
+    """Whether a bare `text` body at a non-text member's address is a reading of that member's
+    BYTES rather than the container's own prose — sjrahn's rule, 2026-07-31:
+
+        *is this text in the HTML? yes = article, no = picture.*
+
+    It discriminates the two populations that share one address and that the verb previously
+    refused together. Both are real and both are common:
+
+    - **absent from the document** — a wiring-harness legend, a callout table, the labels on a
+      schematic. Nobody could have typed it without looking at the picture, so it IS a
+      rendering of the picture and belongs on the picture's record.
+    - **present in the document** — the article's own procedure text, which landed on the
+      image's `el=` because the paragraph had no element of its own (#88). Moving it would
+      file a repair instruction under a photograph.
+
+    **Biased toward leaving text where it is.** A single judgeable line found in the document
+    is enough to decline, because the two errors are not symmetric: wrongly moving prose
+    displaces an article's content onto a PNG plausibly and permanently, while wrongly leaving
+    a transcription costs only that this record stays as it is today. Lines too short to judge
+    make the whole body undecidable for the same reason.
+    """
+    if not document:
+        return False
+    judgeable = [
+        probe
+        for line in (body or "").splitlines()
+        if len((probe := _bare_words(line)).split()) >= _JUDGEABLE_WORDS
+    ]
+    if not judgeable:
+        return False
+    return not any(" ".join(probe.split()[:12]) in document for probe in judgeable)
+
+
 class _MemberSource:
     """Materializes a record's members from ONE parse of its artifact.
 
@@ -213,6 +262,27 @@ class _MemberSource:
         self._el_addressing = records.el_addressing(post)
         self._path: Path | None = None
         self._soup: Any = None
+        self._doc_words: str | None = None
+
+    def document_text(self) -> str:
+        """The container's own rendered text, normalized to bare words — the oracle for the
+        transcription-vs-borrowed-prose test below.
+
+        Cheap because the parse is already held for the member walk. Empty for a non-HTML
+        container, which makes the test decline to classify rather than guess."""
+        if self._doc_words is None:
+            self._doc_words = ""
+            if self._media_type == "text/html":
+                from bs4 import BeautifulSoup
+
+                from corpus.transforms import html as html_tf
+
+                if self._soup is None:
+                    self._soup = BeautifulSoup(
+                        self._artifact().read_bytes(), html_tf.EL_PARSER_ID
+                    )
+                self._doc_words = _bare_words(self._soup.get_text(" "))
+        return self._doc_words
 
     def _artifact(self) -> Path:
         if self._path is None:
@@ -478,13 +548,26 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
             if (seg.body or "").strip() and seg.overlay is None and seg.atom == "text"
         ]
         if bare and not declared.startswith("text/"):
-            report.hold = (
-                f"member `{hexval[:12]}…` ({declared or 'unknown type'}) carries "
-                f"{len(bare)} bare `text` body(ies) at its address — plain prose is not a "
-                f"rendering of pixels, so this is prose printed beside the figure and pinned "
-                f"to its address (#88): re-address it before re-seating"
-            )
-            return report
+            # Discriminate rather than refuse the pair. Holding on every bare body was correct
+            # while nothing could tell the two populations apart, but it deadlocked the two
+            # tickets against each other — #88's remainder says "this is #101's placement
+            # arc", and this verb said "re-address it first (#88)" — with 8,421 findings
+            # behind it and neither able to move. `_reads_off_the_member` is the test #88
+            # itself built and proved; the refusal now names only what genuinely borrowed the
+            # address.
+            borrowed = [
+                seg for seg in bare if not _reads_off_the_member(seg.body, source.document_text())
+            ]
+            if borrowed:
+                report.hold = (
+                    f"member `{hexval[:12]}…` ({declared or 'unknown type'}) carries "
+                    f"{len(borrowed)} of {len(bare)} bare `text` body(ies) whose words appear "
+                    f"in the container's own document — prose printed beside the figure and "
+                    f"pinned to its address (#88), not a rendering of the bytes: re-address "
+                    f"it before re-seating"
+                )
+                return report
+            report.counts["pixel readings re-seated"] += len(bare)
         try:
             moved_all = [
                 _moved_segment(seg, addrs[0])

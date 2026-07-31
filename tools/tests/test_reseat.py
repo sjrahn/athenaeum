@@ -28,9 +28,14 @@ _PNG_HASH = blake3.blake3(_PNG).hexdigest()
 _DATA_URI = "data:image/png;base64," + base64.b64encode(_PNG).decode()
 
 
-def _doc(*, positions: int = 1) -> str:
+def _doc(*, positions: int = 1, prose: str = "") -> str:
     imgs = "".join(f'<p><img src="{_DATA_URI}" alt="fig {i}"></p>' for i in range(positions))
-    return f"<html><head><title>Page - SITE</title></head><body><div>{imgs}</div></body></html>"
+    body = f"<div>{imgs}</div>"
+    if prose:
+        # Prose the DOCUMENT itself carries. What distinguishes the two populations that share
+        # a member's address is whether the words are here or only in the pixels.
+        body += f"<div>{prose}</div>"
+    return f"<html><head><title>Page - SITE</title></head><body>{body}</body></html>"
 
 
 def _corpus(tmp_path):
@@ -41,12 +46,12 @@ def _corpus(tmp_path):
     return root
 
 
-def _record(tmp_path, blocks, *, positions: int = 1, member_addresses=None):
+def _record(tmp_path, blocks, *, positions: int = 1, member_addresses=None, prose: str = ""):
     """A real HTML record whose artifact genuinely inlines the PNG, so the migration's
     blake3 verification is exercised rather than stubbed."""
     root = _corpus(tmp_path)
     src = root / "page.html"
-    src.write_text(_doc(positions=positions), encoding="utf-8")
+    src.write_text(_doc(positions=positions, prose=prose), encoding="utf-8")
     h = hashing.hash_file(src)
     rid = h["blake3"]
     LocalArtifactStore(root).put(rid, "html", src)
@@ -225,21 +230,81 @@ def test_one_member_at_two_positions_gets_two_placements_and_one_rendering(tmp_p
 # ---------- the refusals ---------- #
 
 
-def test_a_bare_text_body_at_an_image_address_is_refused(tmp_path):
-    """The most consequential refusal. Plain prose is not a rendering of pixels — on this
-    fleet it is procedure text printed beside the figure and pinned to the figure's own
-    address (#88, ~3,821 segments over 1,054 records). Migrating it would move an article's
-    instructions onto a PNG and label them a transcription."""
+_PROCEDURE = "1. Grasp the console trim plate (2) and pull upward."
+_LEGEND = "Engine and Transmission Harness 3 of 9 - Engine Control Module 2 Connector A43-X2"
+
+
+def test_prose_the_document_itself_carries_is_refused(tmp_path):
+    """The consequential refusal, and it is now precise. This body's words are IN the page, so
+    it is the article's own procedure text sitting on the figure's address because the
+    paragraph had no element of its own (#88). Migrating it would move an article's
+    instructions onto a PNG and label them a transcription of the pixels."""
     root, rf = _record(
         tmp_path,
         [
             segments.Segment(atom="image", address="el=1.1.1"),
-            segments.Segment(
-                atom="text",
-                address="el=1.1.1",
-                body="1. Grasp the console trim plate (2) and pull upward.",
-            ),
+            segments.Segment(atom="text", address="el=1.1.1", body=_PROCEDURE),
         ],
+        prose=_PROCEDURE,
+    )
+    report = reseat.reseat_record(rf, root)
+    assert report.changed is False
+    assert "#88" in (report.hold or "")
+
+
+def test_a_reading_of_the_pixels_is_re_seated(tmp_path):
+    """The other half of the same population, and the one that was deadlocked. These words
+    appear NOWHERE in the document — nobody could have written them without looking at the
+    figure — so the body is a rendering of the member's bytes and belongs on the member's own
+    record. Holding this too is what left 8,421 findings immovable: #88's remainder pointed at
+    #101's arc and this verb pointed back at #88."""
+    root, rf = _record(
+        tmp_path,
+        [
+            segments.Segment(atom="image", address="el=1.1.1"),
+            segments.Segment(atom="text", address="el=1.1.1", body=_LEGEND),
+        ],
+        prose="Some unrelated paragraph the page actually prints.",
+    )
+    report = reseat.reseat_record(rf, root)
+    assert report.changed, report.hold
+    assert report.counts["pixel readings re-seated"] == 1
+    (seg,) = segments.iter_blocks(records.loads(report.leaves[0].new_text).content)
+    assert seg.body.strip() == _LEGEND
+    # It renders the WHOLE member, so it carries no sub-address — never an invented crop.
+    assert seg.address is None
+
+
+def test_one_borrowed_body_holds_the_member_even_beside_a_genuine_reading(tmp_path):
+    """The bias is deliberate and asymmetric. Wrongly moving prose displaces an article's
+    content onto a PNG plausibly and permanently; wrongly leaving a transcription costs only
+    that the record stays as it is today. So a single body found in the document refuses the
+    member, even though the other body here is a sound reading of the pixels."""
+    root, rf = _record(
+        tmp_path,
+        [
+            segments.Segment(atom="image", address="el=1.1.1"),
+            segments.Segment(atom="text", address="el=1.1.1", body=_LEGEND),
+            segments.Segment(atom="text", address="el=1.1.1", body=_PROCEDURE),
+        ],
+        prose=_PROCEDURE,
+    )
+    report = reseat.reseat_record(rf, root)
+    assert report.changed is False
+    assert "1 of 2" in (report.hold or "")
+
+
+def test_a_body_too_short_to_judge_is_not_moved(tmp_path):
+    """A two-word label is absent from the document for no informative reason. Absence only
+    means something once there is enough text for its absence to be evidence, so the test
+    declines rather than guessing in the direction that displaces content."""
+    root, rf = _record(
+        tmp_path,
+        [
+            segments.Segment(atom="image", address="el=1.1.1"),
+            segments.Segment(atom="text", address="el=1.1.1", body="Fig. 3"),
+        ],
+        prose="Some unrelated paragraph the page actually prints.",
     )
     report = reseat.reseat_record(rf, root)
     assert report.changed is False
