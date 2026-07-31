@@ -810,6 +810,27 @@ def cutting(post: frontmatter.Post) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def framing(post: frontmatter.Post) -> dict[str, Any] | None:
+    """Return the record's attested `framing:` stamp (§7.2.1, 3.12) — the muxer, its
+    version, the pinned flags and the member's sample count — or None when absent.
+
+    Written at promotion onto a stream leaf, because that is the one moment the producer
+    is running. It is what admits an engine into the identity path without asking anyone
+    to take the bytes on faith: `samples` is checkable by any consumer that can walk a
+    sample table (`corpus.streams` does, without an engine), so a disagreement is
+    *visible* rather than silent, and `version` is what makes a byte change across an
+    ffmpeg upgrade explainable instead of mysterious.
+
+    Absence means the leaf predates 3.12 or was not muxed — unresolved, never defaulted.
+    A consumer must report that rather than assume the current muxer produced it, for the
+    same reason `cutting` refuses to assume a strategy."""
+    artifact = artifact_block(post)
+    if not artifact:
+        return None
+    value = (artifact.get("fields") or {}).get("framing")
+    return value if isinstance(value, dict) else None
+
+
 def title_for(post: frontmatter.Post, corpus_root: Path) -> str:
     """Return the record's derived display title (spec §4.2.3). See `derived_editorial`."""
     return derived_editorial_field(post, corpus_root, "title").value

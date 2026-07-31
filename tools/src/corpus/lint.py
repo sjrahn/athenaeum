@@ -590,6 +590,65 @@ def _rule_cutting_stamp_shape(post, blocks, root) -> Iterator[Finding]:
         )
 
 
+def _rule_framing_stamp_shape(post, blocks, root) -> Iterator[Finding]:
+    """A `framing:` stamp, if present, is well-formed (spec §7.2.1 — 3.12).
+
+    3.12 admitted a muxer into the identity path, and this stamp is the entire compensating
+    control: it names the producer and its version, and carries a **sample count** any
+    consumer can re-derive without an engine. A stamp missing the count is decorative — it
+    documents a producer while withholding the one field that lets a reader discover it
+    disagrees. A stamp missing the version documents the present without constraining it,
+    which is the `touch:`-list role the stamp was deliberately given a slot away from.
+
+    Absence of the whole stamp is NOT a finding: a leaf promoted before 3.12, or one whose
+    bytes were ingested standalone rather than muxed, is honestly unstamped (§7.2.1). This
+    checks only that a stamp which exists can do its job.
+
+    Deliberately shape-only. The *real* check — does the leaf's own sample table agree with
+    the count — needs the artifact bytes, which for a promoted leaf means muxing it back out
+    of its container. That is a verification pass over a named worklist, not a rule that runs
+    on every record of every lint."""
+    stamp = _records.framing(post)
+    if stamp is None:
+        return
+    for key in ("muxer", "version"):
+        if not str(stamp.get(key) or "").strip():
+            yield Finding(
+                rule_id="framing-stamp-malformed",
+                severity="error",
+                message=(
+                    f"`framing:` stamp names no `{key}` — an unnamed producer is exactly "
+                    f"what the stamp exists to prevent (spec §7.2.1)."
+                ),
+            )
+    samples = stamp.get("samples")
+    if samples is None:
+        yield Finding(
+            rule_id="framing-stamp-malformed",
+            severity="error",
+            message=(
+                "`framing:` stamp carries no `samples` count — the independent check is the "
+                "reason the stamp exists (spec §7.2.1)."
+            ),
+        )
+        return
+    try:
+        n = int(samples)
+    except (TypeError, ValueError):
+        yield Finding(
+            rule_id="framing-stamp-malformed",
+            severity="error",
+            message=f"`framing: samples` is {samples!r}, which is not a count.",
+        )
+        return
+    if n < 1:
+        yield Finding(
+            rule_id="framing-stamp-malformed",
+            severity="error",
+            message=f"`framing: samples` is {n}; a muxed member holds at least one sample.",
+        )
+
+
 def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
     """An address-less segment is admissible only where the media type says so
     (spec §4.3.2.2, §7.2.1 — 3.10).
@@ -1795,6 +1854,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("address-region-invalid", _rule_address_region_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
+    ("framing-stamp-malformed", _rule_framing_stamp_shape),
     ("container-carries-rendering", _rule_container_carries_rendering),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),

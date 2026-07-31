@@ -191,13 +191,19 @@ def mux_stream_to(path: Path, stream_id: int, dest: Path) -> Framing:
     return Framing(muxer=MUXER_ID, version=version, flags=FLAGS, samples=expected)
 
 
-def framing_for(path: Path, stream_id: int) -> Framing:
+def framing_for(path: Path, stream_id: int, *, workdir: Path | None = None) -> Framing:
     """The `framing:` stamp a promotion of this track would write, computed by actually
     muxing it into a throwaway file. There is no cheaper honest answer: the sample count
     is only *verified* by producing the member, and a stamp that names an unverified
-    count is the thing the stamp exists to prevent."""
+    count is the thing the stamp exists to prevent.
+
+    Pass `workdir` for the same reason `mux_stream` takes one — a multi-GB track should
+    not land in a small `/tmp`.
+    """
     kind = _kind_of(path, stream_id)
-    with tempfile.TemporaryDirectory(prefix="corpus-mux-") as tmpdir:
+    with tempfile.TemporaryDirectory(
+        prefix="corpus-mux-", dir=str(workdir) if workdir else None
+    ) as tmpdir:
         dest = Path(tmpdir) / f"probe.{extension_for_kind(kind)}"
         return mux_stream_to(Path(path), stream_id, dest)
 

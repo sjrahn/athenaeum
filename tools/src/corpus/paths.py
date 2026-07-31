@@ -48,6 +48,17 @@ def artifact_path(corpus_root: Path, record_id: str, extension: str) -> Path:
     return corpus_root / "artifacts" / shard(record_id) / f"{record_id}.{ext}"
 
 
+def cache_dir(corpus_root: Path) -> Path:
+    """The corpus's derived-output scratch space, created if absent.
+
+    Callers that need a *large* temporary — muxing a track out of a container, say — should
+    place it here rather than in the system temp: it sits on the same filesystem as the
+    artifacts it is derived from, and `corpus gc` already knows how to sweep it."""
+    d = corpus_root / "cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def ensure_parent(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     return path

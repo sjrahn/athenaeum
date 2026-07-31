@@ -29,7 +29,7 @@ from typing import Any
 import blake3
 import frontmatter
 
-from corpus import containment, mime, paths, records, schemas, touches
+from corpus import containment, mime, mux, paths, records, schemas, touches
 from corpus import functional_uri as furi
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
@@ -180,15 +180,40 @@ def run(args: argparse.Namespace) -> int:
             container_path=container_path,
         )
 
+    # 6c. *(3.12 §7.2.1)* A track member is MUXED, so a versioned engine produced the bytes
+    #     just verified above. The `framing:` stamp names it — muxer, version, pinned flags,
+    #     sample count — and this is the one moment it can be known: the leaf's own bytes
+    #     carry no record of what wrote them, and the containment origin is history rather
+    #     than a route back to a producer. Computed only after the id check, so a stamp that
+    #     exists is one attached to bytes whose identity was confirmed.
+    #
+    #     `framing_for` re-muxes rather than reusing the pass `_sniff_and_hash` just ran,
+    #     and that is deliberate: the count is only *verified* by producing the member, and
+    #     a stamp naming an unverified count is exactly what the stamp exists to prevent. A
+    #     `-c copy` remux is I/O-bound and negligible beside the scene-detect decode step 6b
+    #     already runs over the same track. Never fatal — the same rule as `cutting:` above:
+    #     the bytes are what promotion is for, and an unstamped leaf is honestly unstamped.
+    framing_stamp: dict[str, Any] | None = None
+    if member_address.startswith("stream_id="):
+        try:
+            framing_stamp = mux.framing_for(
+                container_path,
+                int(member_address.split("=", 1)[1]),
+                workdir=paths.cache_dir(corpus_root),
+            ).as_stamp()
+        except (mux.MuxUnavailable, mux.MuxFailed, mux.SampleCountMismatch, ValueError) as e:
+            print(f"  note: no framing stamp ({e})", file=sys.stderr)
+
     record_file = paths.record_path(corpus_root, computed_id)
     if record_file.is_file():
         outcome = _fold_into_existing(
-            record_file, containment_uri, origin_fields, cutting_stamp=cutting_stamp
+            record_file, containment_uri, origin_fields,
+            cutting_stamp=cutting_stamp, framing_stamp=framing_stamp,
         )
     else:
         outcome = _mint_stub(
             record_file, computed_id, media_type, aux, containment_uri, origin_fields,
-            cutting_stamp=cutting_stamp,
+            cutting_stamp=cutting_stamp, framing_stamp=framing_stamp,
         )
 
     result = {
@@ -270,6 +295,7 @@ def _fold_into_existing(
     origin_fields: dict[str, Any],
     *,
     cutting_stamp: dict[str, Any] | None = None,
+    framing_stamp: dict[str, Any] | None = None,
 ) -> str:
     """A record with this id already exists (a prior promote, or a standalone ingest of the
     same bytes): fold the containment origin into it rather than erroring (spec §5.2)."""
@@ -278,7 +304,13 @@ def _fold_into_existing(
     # be a fresh resolution silently replacing the one this record's addresses were computed
     # under, which §7.2.1 gives to `corpus cut` (compare-before-write) and to nothing else.
     if cutting_stamp is not None and records.cutting(post) is None:
-        _stamp_cutting(post, cutting_stamp)
+        _stamp_artifact_field(post, "cutting", cutting_stamp)
+    # *(3.12)* `framing:` is add-only for a different reason: the record is content-addressed,
+    # so an existing stamp describes THESE bytes and a re-derived one can only agree with it
+    # or be wrong. Filling a blank is the useful case — a leaf promoted before 3.12, or one
+    # folded in from a standalone ingest, learning what produced its bytes.
+    if framing_stamp is not None and records.framing(post) is None:
+        _stamp_artifact_field(post, "framing", framing_stamp)
     if _origin_already_present(post, containment_uri):
         touches.record_touch(post, touches.script_identifier("promote"))
         records.dump(post, record_file)
@@ -294,14 +326,14 @@ def _fold_into_existing(
     return "folded"
 
 
-def _stamp_cutting(post: frontmatter.Post, stamp: dict[str, Any]) -> None:
-    """Write the resolved `cutting:` stamp onto the leaf's artifact block, preserving whatever
-    else the block carries."""
+def _stamp_artifact_field(post: frontmatter.Post, key: str, stamp: dict[str, Any]) -> None:
+    """Write one §7.2.1 stamp onto the leaf's artifact block, preserving whatever else the
+    block carries."""
     artifact = records.artifact_block(post) or {
         "mime": records.media_type_for(post), "fields": {}
     }
     fields = dict(artifact.get("fields") or {})
-    fields["cutting"] = stamp
+    fields[key] = stamp
     records.set_artifact_block(post, mime=str(artifact.get("mime") or ""), fields=fields)
 
 
@@ -314,6 +346,7 @@ def _mint_stub(
     origin_fields: dict[str, Any],
     *,
     cutting_stamp: dict[str, Any] | None = None,
+    framing_stamp: dict[str, Any] | None = None,
 ) -> str:
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
     first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
@@ -333,9 +366,15 @@ def _mint_stub(
         touch_id=touches.script_identifier("promote"),
     )
     post = frontmatter.Post(content="", **fm)
-    records.set_artifact_block(
-        post, mime=media_type, fields={"cutting": cutting_stamp} if cutting_stamp else {}
-    )
+    # Declaration order follows §7.2.1's: `framing:` (what produced these bytes) ahead of
+    # `cutting:` (a resolution computed over them), so a diff of two leaves reads top to
+    # bottom in the same order the spec presents them.
+    stamps: dict[str, Any] = {}
+    if framing_stamp:
+        stamps["framing"] = framing_stamp
+    if cutting_stamp:
+        stamps["cutting"] = cutting_stamp
+    records.set_artifact_block(post, mime=media_type, fields=stamps)
     records.append_origin_block(
         post,
         uri=containment_uri,

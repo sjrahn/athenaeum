@@ -251,7 +251,15 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
     rule exists to catch, caused by the strip that was supposed to be neutral. (This is the
     shape of the trap 3.4 removed with `reattach_descriptions`: a non-derivable value living
     inside a strip-and-rebuild layer. The fix there was to stop storing it; here it cannot be
-    derived at all, so the fix is to not strip it.)"""
+    derived at all, so the fix is to not strip it.)
+
+    *(3.12)* The `framing:` stamp is preserved on the same reasoning, arriving from the other
+    direction: it IS a byte-fact, and that is exactly why nothing here can rebuild it. Its
+    `samples` count is re-derivable from the leaf's own bytes, but `muxer`/`version`/`flags`
+    name what *produced* them, and produced bytes carry no record of their producer. Only the
+    promote pass knows, because only there is the muxer running. Note the stamp cannot go
+    stale the way a resolution can: the record is content-addressed, so bytes that changed
+    would be a different record."""
     post.metadata["_embeds"] = []
     post.metadata["_members_block"] = True
     post.metadata["_contexts"] = [
@@ -259,6 +267,8 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
     ]
     art = records.artifact_block(post) or {}
     preserved: dict[str, Any] = {}
+    if (stamp := (art.get("fields") or {}).get("framing")) is not None:
+        preserved["framing"] = stamp
     if (stamp := (art.get("fields") or {}).get("cutting")) is not None:
         preserved["cutting"] = stamp
     records.set_artifact_block(post, mime=str(art.get("mime") or ""), fields=preserved)
