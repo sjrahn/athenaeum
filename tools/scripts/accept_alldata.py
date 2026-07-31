@@ -172,8 +172,14 @@ def check_crumb(html: str, post: Any, blocks: list[Any], rmap: Any) -> dict[str,
 
     top = list(blocks)
     trailing = top[-1] if top else None
+    # `homed` means a framing span that TRAILS a content zone. A record whose entire body
+    # is one `form/index` section is not that: `<!--section index-->` is overloaded — it
+    # spells both "this page's entries are its content" (the form contract, §7.8) and "the
+    # trailing span that carries this page's framing" (the overlay). Without the >1 test
+    # every single-block index page scored as homed, which is how 531 records looked like
+    # the target shape while none of them were.
     trailing_is_index = bool(
-        trailing is not None and getattr(trailing, "form", None) == "index"
+        len(top) > 1 and trailing is not None and getattr(trailing, "form", None) == "index"
     )
     trailing_segments = set()
     if trailing_is_index:
@@ -232,20 +238,30 @@ def check_order(blocks: list[Any]) -> dict[str, Any]:
     Containment is not mis-ordering — a figure at `el=…49.3` inside a prose span
     `el=…[49-81]` is nested, and order is only defined between disjoint addresses. The
     naive lexicographic test called 1,054 records; that is the trap this skips.
+
+    §4.3.2.1 binds presented order WITHIN a span and *significance* order ACROSS spans —
+    content first, framing after. So the comparison must never cross a top-level span
+    boundary. It did, and that made this check flag #89's own target shape as an inversion:
+    a trailing framing span addresses EARLIER in the document than the content it follows,
+    by design. Running the #89 migration under the un-scoped rule would have "fixed" 6,512
+    records and minted 6,512 order findings in the same pass.
     """
-    seq: list[tuple[furi.ElPath, furi.ElPath]] = []
-    for seg in segments.leaf_segments(blocks):
-        paths = el_paths(seg.address)
-        if paths:
-            key = furi.el_path_sort_key
-            seq.append((min(paths, key=key), max(paths, key=key)))
     inversions = 0
-    for (_lo_a, hi_a), (lo_b, _hi_b) in pairwise(seq):
-        if furi.el_path_contains(hi_a, lo_b) or furi.el_path_contains(lo_b, hi_a):
-            continue  # nested, not ordered
-        if furi.el_path_sort_key(lo_b) < furi.el_path_sort_key(hi_a):
-            inversions += 1
-    return {"addressed_segments": len(seq), "inversions": inversions, "pass": not inversions}
+    counted = 0
+    for block in blocks:
+        seq: list[tuple[furi.ElPath, furi.ElPath]] = []
+        for seg in segments.leaf_segments([block]):
+            paths = el_paths(seg.address)
+            if paths:
+                key = furi.el_path_sort_key
+                seq.append((min(paths, key=key), max(paths, key=key)))
+        counted += len(seq)
+        for (_lo_a, hi_a), (lo_b, _hi_b) in pairwise(seq):
+            if furi.el_path_contains(hi_a, lo_b) or furi.el_path_contains(lo_b, hi_a):
+                continue  # nested, not ordered
+            if furi.el_path_sort_key(lo_b) < furi.el_path_sort_key(hi_a):
+                inversions += 1
+    return {"addressed_segments": counted, "inversions": inversions, "pass": not inversions}
 
 
 # ---------- check 4: #90, form/index over a body that lists nothing ---------- #
