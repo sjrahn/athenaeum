@@ -202,17 +202,22 @@ _NON_WORD = re.compile(r"[^a-z0-9]+")
 
 #: A line short enough that its presence or absence in the document proves nothing — a figure
 #: number, a callout digit, a two-word label. Below this the test declines rather than guesses.
-_JUDGEABLE_WORDS = 5
+#: Public: #88's re-segment shares this threshold when it derives its own location probes from
+#: a borrowed body, so the two migrations judge "long enough to mean something" identically.
+JUDGEABLE_WORDS = 5
 
 
-def _bare_words(text: str) -> str:
+def bare_words(text: str) -> str:
     """Lowercase alphanumeric words, single-spaced. Deliberately brutal: it has to make a
     markdown rendering and its source HTML comparable, so `**Part Number** | Qty` and
-    `<th>Part Number</th><td>Qty</td>` both reduce to `part number qty`."""
+    `<th>Part Number</th><td>Qty</td>` both reduce to `part number qty`.
+
+    Public: #88's re-segment normalizes both its location probes and the document text it
+    searches through the same way, so a probe built here and one built there are comparable."""
     return " ".join(_NON_WORD.sub(" ", text.lower()).split())
 
 
-def _reads_off_the_member(body: str, document: str) -> bool:
+def reads_off_the_member(body: str, document: str) -> bool:
     """Whether a bare `text` body at a non-text member's address is a reading of that member's
     BYTES rather than the container's own prose — sjrahn's rule, 2026-07-31:
 
@@ -233,13 +238,17 @@ def _reads_off_the_member(body: str, document: str) -> bool:
     displaces an article's content onto a PNG plausibly and permanently, while wrongly leaving
     a transcription costs only that this record stays as it is today. Lines too short to judge
     make the whole body undecidable for the same reason.
+
+    Public: this is the ONE test for the shape, reused rather than re-derived by #88's own
+    re-segment migration (`corpus.resegment`) — the population that borrows a member's address
+    is one population however it is finally repaired.
     """
     if not document:
         return False
     judgeable = [
         probe
         for line in (body or "").splitlines()
-        if len((probe := _bare_words(line)).split()) >= _JUDGEABLE_WORDS
+        if len((probe := bare_words(line)).split()) >= JUDGEABLE_WORDS
     ]
     if not judgeable:
         return False
@@ -281,7 +290,7 @@ class _MemberSource:
                     self._soup = BeautifulSoup(
                         self._artifact().read_bytes(), html_tf.EL_PARSER_ID
                     )
-                self._doc_words = _bare_words(self._soup.get_text(" "))
+                self._doc_words = bare_words(self._soup.get_text(" "))
         return self._doc_words
 
     def _artifact(self) -> Path:
@@ -552,11 +561,11 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
             # while nothing could tell the two populations apart, but it deadlocked the two
             # tickets against each other — #88's remainder says "this is #101's placement
             # arc", and this verb said "re-address it first (#88)" — with 8,421 findings
-            # behind it and neither able to move. `_reads_off_the_member` is the test #88
+            # behind it and neither able to move. `reads_off_the_member` is the test #88
             # itself built and proved; the refusal now names only what genuinely borrowed the
             # address.
             borrowed = [
-                seg for seg in bare if not _reads_off_the_member(seg.body, source.document_text())
+                seg for seg in bare if not reads_off_the_member(seg.body, source.document_text())
             ]
             if borrowed:
                 report.hold = (
