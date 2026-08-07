@@ -13,6 +13,13 @@ The dry run found a second way this verb lost authored work, on its first real r
 a side effect, shedding the retired per-asset descriptions, which §12.26 forbids: serialization
 is form-preserving precisely so that touching a record for an unrelated reason never converts
 it. Conversion belongs to re-attestation, which reports what it drops.
+
+The second gate here is the write side of **retirement** (#116). `corpus drop-retired` is the
+migration — it takes the fields 3.5/3.7 retired out of the records that carry them — and a
+migration with no contract behind it is undone by the next pass: this verb minted +17 retired
+`entry:` fields across a 20-record normalize pilot, past lint at zero errors, on records the
+sweep had been sized to clear. What is retired is defined once, in `corpus.retired`; this verb
+refuses to be the hand that writes one back.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ import sys
 from pathlib import Path
 
 from corpus import lint as _lint
-from corpus import paths, recordbuild, records, segments, touches
+from corpus import paths, recordbuild, records, retired, segments, touches
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
@@ -57,6 +64,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Overwrite even though the live record has changed since this working dir was "
              "decomposed. Deliberate clobber; the changes since are lost.",
+    )
+    parser.add_argument(
+        "--allow-retired",
+        action="store_true",
+        help="Write even though the rebuild ACQUIRES a record-grammar field ATH-CORPUS "
+             "3.5/3.7 retired. Deliberate; the next sweep takes it back out.",
     )
     add_corpus_root_arg(parser)
 
@@ -126,6 +139,51 @@ def run(args: argparse.Namespace) -> int:
             exit_code = 1
 
     new_text = records.dumps(rebuilt)
+
+    # The retirement gate (#116). It sits here, on the serialized pair, because both sides
+    # must be read the same way — one construct (a section's stored `address:`) is only
+    # visible in the bytes, and a gate that read the base and the rebuild differently would
+    # invent a difference.
+    #
+    # It gates ACQUIRING, never carrying. The baseline is the record already on disk and only
+    # an INCREASE refuses: ~7,300 records carry a retired field today and every one of them
+    # must still compile, or the gate is just something to switch off. `--out` is exempt for
+    # the base gate's reason — nothing authored is at risk.
+    if out is None:
+        base_text = target.read_text(encoding="utf-8") if target.exists() else ""
+        acquired = retired.gained(
+            retired.census_text(base_text), retired.census(rebuilt, new_text)
+        )
+        if acquired:
+            head = (
+                "writing anyway"
+                if args.allow_retired
+                else ("would refuse" if dry_run else "REFUSING")
+            )
+            print(
+                f"  {head}: this rebuild acquires record grammar the spec retired:",
+                file=sys.stderr,
+            )
+            for label, (was, now) in sorted(acquired.items()):
+                print(
+                    f"    {label}  {was} → {now}   (retired at {retired.cite(label)})",
+                    file=sys.stderr,
+                )
+            if not args.allow_retired:
+                print(
+                    "  a retired field has no successor, so there is nothing to re-home: take "
+                    "it back out of the working dir.",
+                    file=sys.stderr,
+                )
+                print(
+                    "  `corpus drop-retired` removes the ones records already carry; "
+                    "--allow-retired writes these anyway.",
+                    file=sys.stderr,
+                )
+                if not dry_run:
+                    return 1
+                exit_code = 1
+
     if dry_run:
         live_text = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = list(

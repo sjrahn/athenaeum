@@ -61,24 +61,14 @@ from pathlib import Path
 from typing import Any
 
 from corpus import functional_uri as furi
-from corpus import lint, records, segments, touches
+from corpus import lint, records, retired, segments, touches
 
 #: Touch identifier stamped on every record the sweep rewrites.
 TOUCH_ID = "migrate.faithfulness-35"
 
-#: Context-block namespaces 3.5 retired outright (§4.3.3.3, §4.3.3.5).
-RETIRED_NAMESPACES = frozenset({"relation", "reference"})
-
-#: Stored detector verdicts about a DERIVED value — a health query, not an annotation
-#: (§12.21). Matched on the `issue` namespace's block id.
-RETIRED_ISSUE_IDS = frozenset({"generic-title"})
-
-#: Section header fields the universal-slot retirement removes (§4.3.2.1). `entry` and
-#: `description` are dataclass fields; `title` rides `Section.extra`.
-_SECTION_EXTRA_DROPS = ("title",)
-
-#: Frontmatter editorial overrides — retired in 3.5 with the interpretive rung (§4.2.1).
-_FRONTMATTER_DROPS = ("canonical", "title", "description")
+# WHAT is retired lives in `corpus.retired` — one definition, shared with the write-side
+# gate that keeps this sweep from being undone by the next compile (#116). This module owns
+# only the removal: what may be taken out mechanically, and what must be held instead.
 
 
 class DropHold(ValueError):
@@ -101,24 +91,6 @@ class RecordDrop:
     description_before: str = ""
     emit_normalized: bool = False
     new_text: str | None = None
-
-
-_SECTION_OPENER_RE = re.compile(r"^<!--section(?: |$)", re.M)
-_CLOSER = "-->"
-
-
-def _stored_section_fields(text: str) -> int:
-    """How many section headers in `text` still carry the retired `address:` field (§12.29).
-    Counted off the raw bytes, because once parsed the stored value is indistinguishable from
-    the derived one that replaced it."""
-    count = 0
-    for opener in _SECTION_OPENER_RE.finditer(text):
-        end = text.find(_CLOSER, opener.end())
-        if end == -1:
-            continue
-        if re.search(r"^address:", text[opener.end() : end], re.M):
-            count += 1
-    return count
 
 
 def _reserialized_section_headers(text: str) -> int:
@@ -194,18 +166,6 @@ def _neutrality_hold(new_text: str, before: Counter[str], corpus_root: Path) -> 
     return f"the rewrite would introduce new lint findings ({detail})"
 
 
-def _retired_contexts(post: Any) -> list[dict[str, Any]]:
-    """The context blocks this sweep removes, in record order."""
-    out = []
-    for ctx in post.metadata.get("_contexts") or []:
-        ns = str(ctx.get("namespace") or "")
-        if ns in RETIRED_NAMESPACES or (
-            ns == "issue" and str(ctx.get("id") or "") in RETIRED_ISSUE_IDS
-        ):
-            out.append(ctx)
-    return out
-
-
 def _el_paths(value: Any) -> list[furi.ElPath]:
     """Every `el=` address in `value` (scalar or list) as a parsed §6.1.1 path. A non-`el=`
     axis or an unparseable value contributes nothing — containment is only meaningful
@@ -270,20 +230,11 @@ def sweep_record(
         report.hold = f"content zone does not parse: {exc}"
         return report
 
-    doomed_contexts = _retired_contexts(post)
-    doomed_frontmatter = [k for k in _FRONTMATTER_DROPS if k in post.metadata]
-
-    def _section_carries(sec: segments.Section) -> bool:
-        return bool(
-            sec.description is not None
-            or sec.entry is not None
-            or any(k in sec.extra for k in _SECTION_EXTRA_DROPS)
-        )
-
-    def _segment_carries(seg: segments.Segment) -> bool:
-        if seg.description is not None:
-            return True
-        return seg.entry is not None and not seg.is_structural
+    # The census is the shared definition of what 3.5/3.7 retired (`corpus.retired`); this
+    # engine's job is what it may then DO about it. Taken off the record as it stands, before
+    # any mutation, so the same counts serve the skip test above and the manifest below.
+    carried = retired.census(post, original)
+    doomed_contexts = retired.retired_contexts(post)
 
     all_segments = [
         seg
@@ -292,20 +243,11 @@ def sweep_record(
     ]
     sections = [b for b in blocks if isinstance(b, segments.Section)]
 
-    stored_addresses = _stored_section_fields(original)
     stale_headers = _reserialized_section_headers(original)
 
     canonicalizes = _content_is_stale(original)
 
-    if not (
-        doomed_contexts
-        or doomed_frontmatter
-        or stored_addresses
-        or stale_headers
-        or canonicalizes
-        or any(_section_carries(s) for s in sections)
-        or any(_segment_carries(s) for s in all_segments)
-    ):
+    if not (carried or stale_headers or canonicalizes):
         report.skipped = "carries nothing 3.5/3.7 retired"
         return report
 
@@ -375,7 +317,7 @@ def sweep_record(
         # dropped envelope, and 3.7's collapse of adjacent same-form spans (§4.3.2.1) — each a
         # canonicalization the grammar implies rather than a judgment anyone makes. Writing it
         # is what makes the sweep leave a record in the shape a fresh parse would produce.
-        stored_sections = len(_SECTION_OPENER_RE.findall(content))
+        stored_sections = len(retired.SECTION_OPENER_RE.findall(content))
         parsed_sections = sum(1 for b in blocks if isinstance(b, segments.Section))
         if stored_sections > parsed_sections:
             report.counts["sections collapsed"] += stored_sections - parsed_sections
@@ -385,43 +327,31 @@ def sweep_record(
     report.title_before, report.description_before = _derived_pair(post, corpus_root)
 
     # ---- the subtraction ----
-    if stored_addresses:
-        # Nothing to mutate: the serializer already omits it and `iter_blocks` derives it.
-        # Counted so the manifest says what came off rather than leaving it to a diff.
-        report.counts["section address"] += stored_addresses
+    # The census already said what comes off, label for label — including the section
+    # `address:`, which needs no mutation at all (the serializer omits it and `iter_blocks`
+    # derives it) and is counted so the manifest says so rather than leaving it to a diff.
+    report.counts.update(carried)
     if stale_headers:
         report.counts["section header → bare opener"] += stale_headers
 
-    for key in doomed_frontmatter:
+    for key in retired.FRONTMATTER_FIELDS:
         post.metadata.pop(key, None)
-        report.counts[f"frontmatter {key}"] += 1
 
     for sec in sections:
-        if sec.description is not None:
-            sec.description = None
-            report.counts["section description"] += 1
-        if sec.entry is not None:
-            sec.entry = None
-            report.counts["section entry"] += 1
-        for key in _SECTION_EXTRA_DROPS:
-            if key in sec.extra:
-                sec.extra.pop(key)
-                report.counts[f"section {key}"] += 1
+        sec.description = None
+        sec.entry = None
+        for key in retired.SECTION_EXTRA_FIELDS:
+            sec.extra.pop(key, None)
 
     for seg in all_segments:
-        if seg.description is not None:
-            seg.description = None
-            report.counts["segment description"] += 1
-        if seg.entry is not None and not seg.is_structural:
+        seg.description = None
+        # The structural byte-mark's field is not this one (§4.3.2.3) and stays.
+        if not seg.is_structural:
             seg.entry = None
-            report.counts["segment entry"] += 1
 
     if doomed_contexts:
         keep = [c for c in (post.metadata.get("_contexts") or []) if c not in doomed_contexts]
         post.metadata["_contexts"] = keep
-        for ctx in doomed_contexts:
-            ns, cid = str(ctx.get("namespace") or ""), str(ctx.get("id") or "")
-            report.counts[f"context {ns}/{cid}" if ns == "issue" else f"context {ns}"] += 1
 
     post.content = segments.emit(blocks).rstrip("\n") + trailing
     touches.record_touch(post, touches.script_identifier(TOUCH_ID))
