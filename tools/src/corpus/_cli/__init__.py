@@ -71,6 +71,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired (dry-run by default)"),
     "reseat":          ("Maintenance",            "§12.30 migration: promote each placed member and move its rendering onto its own record, leaving a placement (dry-run by default)"),
     "home-crumb":      ("Maintenance",            "#89 migration: move a verbatim, alone-in-its-own-segment my.alldata.com breadcrumb into a new trailing index span (dry-run by default)"),
+    "home-rail":       ("Maintenance",            "#89 migration: render a my.alldata.com related-information rail out of its retired relation blocks into a trailing index span (dry-run by default)"),
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
