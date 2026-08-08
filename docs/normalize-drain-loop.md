@@ -58,7 +58,7 @@ SESSION=drain-monitor
 corpus queue --prune                                    # sweep aged outcomes first
 while id=$(corpus drain --wait --by "$SESSION"); do
     #   >>> hand $id to a `normalizer` agent <<<
-    #   it self-guides from `corpus guidance $id`, authors the vouch, recompiles.
+    #   it self-guides from `corpus guidance $id`, shapes the rendering, recompiles.
     corpus finalize "$id" || corpus release "$id" --failed "<reason>"
 done
 ```
@@ -98,12 +98,14 @@ workspace root's `.claude/agents/`). Brief it with only the **corpus root** + th
 the finalize contract — it carries **no** format knowledge and pulls
 everything from the corpus at runtime (`corpus diagnose` / `guidance` / `overlay` / `atoms`).
 It must leave the record passing the §8.5 pass gate — **formed where its overlays declare a
-form**, and lint-clean — or `corpus finalize` refuses (exit 1). *(3.2)* The vouch is no
-longer part of the gate: where the record is formed, the agent authors it on that form's
-section header (`title:`/`description:`); a record staying formless owes none — its derived
-title/description are already honest (spec §4.2.3, §8.5). The monitor owns claim +
-finalize/release; the agent owns the normalization. Do **not** tell the agent to touch the
-queue.
+form**, and lint-clean — or `corpus finalize` refuses (exit 1). *(3.12, 2026-08-08)* There
+is nothing editorial to author, at any scope: the universal section-header fields retired in
+3.5 and a section carries only what its form declares (spec §4.3.2.1); titles/descriptions
+are derived from role-marked artifact/origin fields, never written (spec §4.2.3). The pass
+is shaping only — and the write gate refuses a compile that acquires any retired field
+(#116), while `subject-link-flattened` lint refuses a pass that drops a subject anchor's
+link (#118/#52). The monitor owns claim + finalize/release; the agent owns the
+normalization. Do **not** tell the agent to touch the queue.
 
 ## Stop, failures, backlog
 
