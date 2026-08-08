@@ -26,6 +26,15 @@ The system has three data layers and one driver:
 
 - **The orchestrator is the definition and the driver.** One repository — `athenaeum/athenaeum`, the eponymous repo of the system's org — holds the specifications, the shared tooling (the `athenaeum` distribution: the `ath` and `corpus` CLIs), the member manifest, and the resident principal-developer persona. Every other component is an independent member repo registered in the manifest.
 
+Ownership stays disjoint by layer — the boundary each spec's contract enforces:
+
+| Layer | Owns | Never owns |
+|---|---|---|
+| Corpus | Artifact identity, byte provenance, faithful structure, addressable renderings, faithfulness annotations | World-level meaning or claims |
+| Ledger | Concepts, edges, claims, interpretations, evidence bindings, derived sensitivity | Artifact renderings or publication prose |
+| Codex | Scope, profiles, generated notes, renderer-ready output, build receipts | Facts, claims, or independent knowledge |
+| Orchestrator | Specifications, shared tooling, manifest, runbooks, agent definitions, cross-member operations | Member content |
+
 ### 1.2 Design principles
 
 1. **Layered foundation.** The corpus depends on nothing; the ledger depends on the corpora; a codex depends on the ledger. Each layer knows nothing of the layers above it. References point downward only.
@@ -55,14 +64,18 @@ The system has three data layers and one driver:
 | **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id + snapshot version via `ref://` (`spec/ledger.md` §6.5). |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 across the registered corpora. Grammar: `spec/corpus.md` §6. |
 | **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — external consumers read knowledge here, never from a codex's prose (`spec/ledger.md` §12). |
-| **Normalizer** | The interpretive half of the corpus's one authoring pass: renders a record under its form contract where no mechanical shaper can, and authors the editorial vouch (`spec/corpus.md` §8.1, §4.1). |
+| **Normalizer** | The interpretive half of the corpus's one authoring pass: renders a record under its form contract where no mechanical shaper can — shaping only: faithful renderings, structural marks, and typed fidelity issues; there is no editorial vouch to author (`spec/corpus.md` §8.1, §4.1). |
 | **Orchestrator persona** | The system-resident principal-developer persona in the orchestrator repo, with cross-member scope — the system's one persona; member repos carry none. |
+| **Deployment** | One orchestrator repository, its manifest, one or more corpora, exactly one ledger, and zero or more codices — the system, instantiated. |
+| **Interpretation** | A structured hypothesis, assessment, or correction living in the ledger's pre-assertion workspace — outside the claim boundary until promoted (`spec/ledger.md` §1.3). |
+| **Form** | A named, mechanically checkable rendering contract binding a record span — what a faithful markdown shape looks like for a decomposable population (`spec/corpus.md` §7.8). |
+| **Owner** | The human authority for system direction. External captures, deletions, and normative spec changes are owner-gated — the orchestrator persona proposes, the owner decides. |
 
 ## 2. Topology
 
 ### 2.1 The org is the container
 
-The system lives in one forge organization (the reference deployment: Forgejo at `code.example.org/athenaeum`). The org contains the orchestrator repo and every member repo as siblings. Org membership and repo visibility are the outermost access-control surface — which is what makes the repo boundary a real tenant boundary (§1.2 principle 2).
+The system lives in one forge organization (the reference deployment: Forgejo at `code.example.org/athenaeum`). The org contains the orchestrator repo and every member repo as siblings. Org membership and repo visibility are the outermost access-control surface — which is what makes the repo boundary a real tenant boundary (§1.2 principle 2). A member's `remote:` override may name a different organization than the deployment's default — the tenant boundary still holds as long as that organization enforces equivalent repo-visibility controls.
 
 ### 2.2 On-disk layout
 
@@ -124,16 +137,18 @@ Members are keyed by name; manifest order is presentation order. The manifest re
 ledger ──corpus://──▶ corpora          (downward: claim evidence, blake3-resolved, span-precise)
 ledger ──ref://──▶ reference mirrors   (downward: linked external databases, snapshot-pinned)
 codex ──scope──▶ ledger                (downward: targeting; notes derive from facts)
+codex ──corpus://──▶ corpora           (build-time only: footnote resolution, functional-URI raster — `spec/codex.md`)
+codex ──ref://──▶ reference mirrors    (build-time only: the same resolution, into mirrored evidence)
 consumers ──ledger://──▶ ledger        (external knowledge reads: agents, deliverables)
 corpus ──▶ (nothing)                   (the foundation references nothing above it)
 orchestrator ──manifest──▶ members     (operational, not a data reference)
 ```
 
-A corpus never references a ledger or codex; a ledger never references a codex; within the corpus layer, the public hub never references the private one. The ledger cites both corpora — privacy there is derived claim sensitivity, and it becomes a wall at the codex build's public-profile leak check, never before. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). Notes and other generated views are never citation targets. These directions are validated, not just conventional.
+A corpus never references a ledger or codex; a ledger never references a codex; within the corpus layer, the public hub never references the private one. The ledger cites both corpora — privacy there is derived claim sensitivity, and it becomes a wall at the codex build's public-profile leak check, never before. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). A codex's own `corpus://`/`ref://` reads happen only inside the build, resolving citations the ledger already asserted into human-readable form — never a second, independent evidence path. Notes and other generated views are never citation targets. These directions are validated, not just conventional.
 
 ## 3. The corpus layer
 
-At architecture altitude: a **corpus** is a content-addressed archive of artifacts, each carried by a faithful markdown record (`records/{ab}/{blake3}.md`, one-level sharding) whose body decomposes the artifact into addressable segments, and whose lifecycle is `stub → draft → normalized` — deterministic ingest and draft, then an LLM **faithful-form** pass driven through an external request/claim queue. Schemas (four namespaces: `mime`, `origin`, `atom`, `context`) drive capture, drafting, and faithful rendering per media type, per source, and per form. A record classifies its artifact mechanically only (`mime/*`, `origin/*`); what its content *means* is asserted in the ledger, never in the record — a record contains nothing unfalsifiable against its own bytes. Artifact bytes live in an untracked content-addressed store; records, schemas, and corpus-local extensions are tracked.
+At architecture altitude: a **corpus** is a content-addressed archive of artifacts, each carried by a faithful markdown record (`records/{ab}/{blake3}.md`, one-level sharding) whose body decomposes the artifact into addressable segments, and whose state is **derived, never stored** (`spec/corpus.md` §4.1: attested at birth, **formed** where a form contract governs a stored rendering, **terminal** where the artifact is its own terminal representation) — deterministic ingest and attestation, then an LLM **faithful-form** pass driven through an external request/claim queue. Schemas (five namespaces: `mime`, `origin`, `atom`, `form`, `context`) drive capture, attestation, and faithful rendering per media type, per source, and per form. A record classifies its artifact mechanically only (`mime/*`, `origin/*`); what its content *means* is asserted in the ledger, never in the record — a record contains nothing unfalsifiable against its own bytes. Artifact bytes live in an untracked content-addressed store; records, schemas, and corpus-local extensions are tracked.
 
 Everything in that paragraph — the record grammar, schema system, lifecycle, functional-URI grammar, derived views, queue contract — is specified normatively by **`spec/corpus.md`**. This document adds only the system-level constraints:
 
@@ -164,8 +179,8 @@ A codex may additionally *operate* — embed an agent that acts on the systems i
 | Operation | Type |
 |---|---|
 | Capture (fetch, hash, store), ingest, MIME detection | Deterministic |
-| Draft (mechanical body extraction, overlay-declared emissions) | Deterministic |
-| Normalize (faithful-form refinement: shaping, descriptions) | LLM agent pass |
+| Attest / derive (byte-fact attestation at ingest; mechanical derivation ops resolved on demand) | Deterministic |
+| Normalize (faithful-form refinement: shaping) | LLM agent pass |
 | Functional-URI resolution, derived views | Deterministic |
 | Ledger harvest (mechanical concept/claim minting from corpus facts, origin-keyed) | Deterministic |
 | Ledger fact authoring and interpretation | LLM agent pass |
@@ -180,7 +195,7 @@ If the operation could produce different valid outputs depending on judgment, it
 ### 6.2 Personas
 
 - **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory. Member repos carry no personas.
-- **The Normalizer** (corpus agent) — one record (or small batch) per invocation, draft → normalized, through the decompose/edit/compile substrate; never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
+- **The Normalizer** (corpus agent) — one record (or small batch) per invocation, attested → formed (or terminal), through the decompose/edit/compile substrate — state reported, never stored (`spec/corpus.md` §4.1); never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
 - **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (`spec/ledger.md` §4).
 - **Codex compilers** — the synthesis passes that render scoped facts into a codex's voice; scope materialization and the build are deterministic tooling.
 
@@ -190,7 +205,7 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 
 One distribution — **`athenaeum`** (Python, `tools/` in the orchestrator repo) — ships the system's CLIs:
 
-- **`corpus`** — the corpus pipeline and query surface: capture / ingest / draft / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, store, gc. Auto-discovers its corpus root; accepts `--corpus-root`.
+- **`corpus`** — the corpus pipeline and query surface: capture / ingest / attest / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, store, gc. Auto-discovers its corpus root; accepts `--corpus-root`.
 - **`ath`** — the orchestrator umbrella: `ath sync` / `ath status` against the manifest; `ath corpus …` delegation; `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist) and `ath codex …` (scope, build, leak check) — landing with the shared ledger/codex packages. Deliberately no bare `ledger` or `codex` commands.
 
 Tooling agnosticism is normative: no member ids or paths in code; member-local extensions load through declared seams; a third party brings their own org, members, and agents to the same distribution.
@@ -202,6 +217,10 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 - **The specs are law.** Code conforms to `spec/`; when code needs something a spec doesn't cover, the spec changes first — and a change to `spec/corpus.md`'s data contract additionally requires a migration story for every existing record.
 - **History files away under tags** (`pre-reforge` marks the 2026-07 restructuring); the working tree carries only the system's current form.
 - **Institutional memory is layered like the system**: the orchestrator persona's references for system-level memory and history; the system runbooks (`docs/`) for operational knowledge. Auto-memory is never the source of truth.
+
+## 9. Out of scope
+
+Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (`spec/corpus.md` §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; a final static-site renderer or deployment protocol beyond the reference Quartz build; a general non-tenancy codex profile predicate language; reference-mirror content resolution, adapter registration, and snapshot verification; a standalone external `ledger://` network resolver; SVG rasterization. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
 
