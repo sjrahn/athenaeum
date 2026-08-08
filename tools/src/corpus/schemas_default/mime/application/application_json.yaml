@@ -27,14 +27,18 @@ normalization:
     verbatim, in one `text/code` segment addressed `line=1-<N>`. The normalizer's
     licence is annotation, never transformation:
 
-    - Author frontmatter `title` and `description`. The record's origin overlay
-      governs their shape — it knows what this JSON is; this schema does not.
+    - There is no frontmatter `title` or `description` to author — both are derived,
+      never authored (spec §4.2.3). Where this JSON's origin overlay marks a byte-fact
+      role candidate, it resolves automatically; an empty result means the bytes and the
+      origin said nothing about themselves under that role, not a gap this pass fills.
     - The JSON body stays byte-identical to the draft. Do not pretty-print,
       re-indent, re-order keys, normalize quoting, or fold whitespace.
     - When the top level is a long array and navigation earns it, the one permitted
       structural move is splitting the wrapping segment into CONTIGUOUS
-      line-addressed `text/code` sub-segments (same bytes, same order, with `entry:`
-      labels). Never reorder, and never let a split boundary fall mid-element.
+      line-addressed `text/code` sub-segments (same bytes, same order) — each identified
+      by its own `line=` address; there is no `entry:` field to label them with (retired
+      3.5, spec §4.3.2.2), and none is needed. Never reorder, and never let a split
+      boundary fall mid-element.
     - A draft-time parse failure rides as a `malformed-json` warning issue; the text
       still passes through. Annotate or escalate — never repair the bytes.
 extended_fields:

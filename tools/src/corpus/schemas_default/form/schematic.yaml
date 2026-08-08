@@ -58,21 +58,22 @@ decomposition: |
   The pairing obligation is **address-keyed**, so the form binds correctly at either
   scope, and the scope is chosen by where the sheets' names are printed. A page carrying
   ONE sheet takes the form at record scope. A multi-sheet page takes **one span section
-  per sheet** where the page prints a heading for each (that heading is the span's
-  `title:` — §4.3.2.1's designated home, and the sheet's identity then sits on a citable
-  surface rather than inside a figure description); mind the consequence, since sections
-  never nest — span sections leave the record with no whole-record header, so a record
-  whose vouch lives there needs it relocated to the frontmatter override (§4.2.1) as a
-  verbatim move, never a re-authoring. Where the page prints no per-sheet headings, keep
-  one record-scope section: the check binds each member, so it works either way.
+  per sheet** where the page prints a heading for each — that heading is TRANSCRIBED, a
+  markdown heading in the span's own content like any other faithfully-rendered heading
+  (§4.3.2.1: the section header carries no universal `title:` field to hold it, and none
+  is needed — the heading is body content, and the sheet's identity then sits on that
+  citable surface rather than inside a figure description). Where the page prints no
+  per-sheet headings, keep one record-scope section: the check binds each member, so it
+  works either way.
 
   Each sheet decomposes into ONE segment — whichever of the two renderings applies. Where the
   relation is legible that is a `text/data-table` from-to list, addressed as a `bbox=` crop
   into the sheet's own address (`el=N&bbox=x,y,w,h`), carrying one row per relation the drawing
   states; the address is the transcription's provenance, naming the asset and the region of it
-  that was read. Where it is not, that is the `image` marker at the sheet's own address, and
-  the reason belongs on that marker's `description:` or a `partial-content` issue — never a
-  half-transcription that quietly drops what could not be read.
+  that was read. Where it is not, that is the `image` marker at the sheet's own address,
+  body-empty and permanent (§4.3.2.2 — a marker never narrates), and the reason belongs on a
+  typed `partial-content` issue at that address — never a half-transcription that quietly
+  drops what could not be read, and never prose on the marker itself.
 
   The `bbox=` grammar is `x,y,WIDTH,HEIGHT` as **fractions of the image** (`0,0,1,1` is the
   whole sheet) — a pixel-valued bbox does NOT resolve, so resolve every address you write and
@@ -101,15 +102,16 @@ decomposition: |
   sheet gates branches by build code. See the `text/data-table` overlay's graph-shaped note
   for the fill discipline.
 
-  The attested embed keeps the LOSSY half on its `description:` — layout, symbol glyphs,
-  sheet chrome. Discrete printed matter that is not part of the relation — a legend, a note
-  block, a connector table — is its own segment at its own region, exactly as under
-  `form/document`.
+  The attested embed's lossy half — layout, symbol glyphs, sheet chrome — is not narrated:
+  the marker is body-empty and permanent, and there is no field on it to carry a reading of
+  it (§4.3.2.2). Discrete printed matter that is not part of the relation — a legend, a note
+  block, a connector table — is its own segment at its own region, losslessly transcribed,
+  exactly as under `form/document`.
 
   Two boundaries are normative to this contract. **Geometry is not relation content**:
-  where a box sits on the sheet, and the sheet's chrome, stay with the figure marker's
-  `description:`;
-  the table carries the relation only. **An unshown connection is an inference**:
+  where a box sits on the sheet, and the sheet's chrome, are not represented anywhere in the
+  record — the marker names the region and `corpus resolve` reaches the pixels; the table
+  carries the relation only. **An unshown connection is an inference**:
   transcribe the printed termination even when the downstream one is obvious — a conductor
   the drawing does not draw belongs to the ledger as a claim over this segment's span,
   never to a cell.
@@ -136,8 +138,10 @@ normalization:
 
     Know when to stop and leave it a figure. If the drawing will not yield its relation —
     a scan too degraded to trace, a topology the from-to shape cannot hold — the honest
-    rendering is the marker plus a described embed, with the reason recorded. A table
-    reconstructed past what the bytes support is worse than no table at all: it reads as
+    rendering is the body-empty marker alone, permanent, with the reason recorded as a
+    typed `partial-content` issue at the sheet's address (a code and a short structured
+    note, never narrative prose — §4.3.3.2). A table reconstructed past what the bytes
+    support is worse than no table at all: it reads as
     transcription and cites at full strength, so an invented row is laundered into
     authoritative evidence. Half a sheet transcribed with the illegible half silently
     absent is the same failure wearing a better coat.
@@ -151,35 +155,26 @@ normalization:
     resolve to nothing — but it cannot tell you a well-formed crop is the WRONG region. Only
     your eyes on the resolved image do that, so run both: the gate, and the look.
 
-    **The description is the LAST thing you write.** Not "late" — last. Do not draft it, do
-    not sketch it, do not carry a sentence for it in your head while transcribing: the whole
-    rule is that it carries only what the rendering does not, so until the body is final and
-    checked you cannot know what that remainder is. Written any earlier it describes a body
-    that no longer exists — and nothing catches the drift, because a description is prose no
-    gate can verify. The correct order is: read the bytes → author the rendering → resolve
-    every address you wrote and read it back → lint clean → and only THEN look at what is
-    left over and write the line. If you find yourself writing description prose before the
-    last row is settled, you are describing an intention rather than a record.
+    **There is no description to write — the rendering IS the disclosure.** Description
+    retired everywhere in 3.5, on segments as much as sections (§4.3.2.2): "a segment
+    cannot narrate its own region," and there is now no field on a marker or a placing
+    segment that can carry a reading of it. The two branches diverge in what gets stored,
+    not in whether anything gets narrated:
 
-    **The placing segment's `description:` carries only what the chosen rendering does not**,
-    and the two branches are lopsided:
+    - Transcribed → the `text/data-table` IS the full disclosure, at full strength. What
+      the address covered out (a region the crop excludes) is legible from the address
+      itself, never restated in prose. No element lists, no tracing, no summarizing the
+      table in sentences — that would be a second, weaker copy of what the table already
+      says at full strength.
+    - Figure-only → the body-empty `image` marker is the complete, honest rendering. WHY
+      the relation could not be transcribed goes on a typed `partial-content` issue at the
+      sheet's address — a code and a short structured note (§4.3.3.2: "a typed code at an
+      address, carries no prose"), so the next pass inherits the judgment without a
+      narrative paragraph to maintain.
 
-    - Transcribed → ONE LINE. Name the sheet, and disclose what the address covered out.
-      Nothing else: the relation is in the table at full strength, and a description can
-      only ever cite at `kind: incidental` (`ledger.md` §13.2), so narrating connectivity
-      buys nothing and rots independently — correct a row and the prose beside it silently
-      goes stale. No element lists, no tracing, no restating the table in sentences.
-    - Figure-only → the description IS the rendering, so it is full and careful: what the
-      sheet draws, its layout, its symbol conventions, and WHY the relation could not be
-      transcribed, so the next pass inherits the judgment instead of re-deriving it.
-
-    Do not leave it empty in either branch. An undescribed image embed raises
-    `embed-description-empty-on-normalized`, and silencing that with a persisted
-    "intentionally undescribed" issue is more ceremony than the one line it replaces.
-
-    If a correction later changes the body — a row re-read, a crop re-measured — the
-    description is re-derived from the new remainder, never patched around the edit. It is
-    downstream of the rendering, so it is rewritten with it.
+    If a correction later changes the body — a row re-read, a crop re-measured — the table
+    changes with it; there is no downstream description to keep in sync, because none
+    exists.
 
     The acceptance test is regeneration: a sheet redrawn from the table plus the ledger's
     facts should be ELECTRICALLY identical to the original — same endpoints, same

@@ -23,8 +23,11 @@ extended_fields:
       vcard `members` derivation already uses (spec §12.11): `FN`, else
       a formed `N` (`Prefixes Given Additional Family Suffixes`), else `ORG` / `NICKNAME` /
       `EMAIL` / `TEL`, else a positional fallback. Always present (the chain never returns
-      empty) — every contact-card record derives an honest title with NO editorial pass
-      (role-marked, spec §4.2.3): deterministic-before-LLM, exercised.
+      empty) — every contact-card record carries an honest display name with NO editorial
+      pass: deterministic-before-LLM, exercised. This is an ordinary envelope/codebook
+      field (§7.8), mechanically derivable from the span's own bytes like any other — NOT a
+      role mark: a form contract marks nothing (spec §4.2.3), and the record's separately
+      derived title/description never read this field or any other form declaration.
 decomposition: |
   The span carries one `text/field` segment per vCard property, in the card's own file
   order, addressed `prop=<N>` (1-indexed, `BEGIN:VCARD`/`END:VCARD` excluded — same

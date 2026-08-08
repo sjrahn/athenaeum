@@ -44,11 +44,11 @@ normalization:
 
     - **born-digital** (low `image_coverage`, real `text_char_count`) → the page has a faithful text layer. Pull it: `corpus resolve 'corpus://<hash>?page=<N>&text' --print` (the embedded text, verbatim — NOT an OCR of the raster), or `?page=<N>&words` for the per-word boxes (`{text, bbox}` in `[0,1]` page fractions) when you need to map text to regions or detect column layout. Still verify against the rendered page — pypdf text is approximate (see "See the source" below).
     - **scanned-ocr / scanned-no-text** (`image_coverage` ≥ 0.9) → the page is a full-page raster (a scan). Any text layer it carried is a machine-OCR layer baked in *before* capture (`has_invisible_text` often flags it); treat the page as an **image-of-document** and produce the corpus's own OCR (next section). Do NOT pull `&text` and trust it as faithful source.
-    - **no-text** (low coverage, zero text) → a vector-only or DRM'd page with nothing extractable. Refine `description` only and add a record-scope `partial-content` issue.
+    - **no-text** (low coverage, zero text) → a vector-only or DRM'd page with nothing extractable. Leave the page marker body-empty and permanent, and add a record-scope `partial-content` issue naming the missing text layer.
 
     A document may be **mixed** (`shape_summary: mixed`) — born-digital body pages plus scanned inserts, or vice versa. Decide per page from its row.
 
-    **Hybrid pages — a born-digital page can still hide raster content.** `shape_hint` keys on whole-page coverage (`image_coverage` ≥ 0.9 = scanned), so a born-digital page with a **sub-0.9 but nonzero** `image_coverage` (anything from ~0.05 up) is the tell that the page embeds a raster *region* — a figure, a chart, or a table rendered as an image — whose content is **NOT in the text layer**. `page=<N>&text` returns nothing (or garbage) for that region. Do not trust `&text` to have captured it: **render the page, find the raster region, and treat it as its own `page=<N>&bbox=...` segment** — a body-empty `image` segment with a `description:` for a figure/chart, and/or a sibling lossless `text/data-table` (or `text/ocr`) where the raster is a table or readable text. A born-digital page is "born-digital text plus zero or more raster inserts," not "all text."
+    **Hybrid pages — a born-digital page can still hide raster content.** `shape_hint` keys on whole-page coverage (`image_coverage` ≥ 0.9 = scanned), so a born-digital page with a **sub-0.9 but nonzero** `image_coverage` (anything from ~0.05 up) is the tell that the page embeds a raster *region* — a figure, a chart, or a table rendered as an image — whose content is **NOT in the text layer**. `page=<N>&text` returns nothing (or garbage) for that region. Do not trust `&text` to have captured it: **render the page, find the raster region, and treat it as its own `page=<N>&bbox=...` segment** — a body-empty, permanent `image` segment for a figure/chart (no `description:` field to fill), and/or a sibling lossless `text/data-table` (or `text/ocr`) where the raster is a table or readable text. A born-digital page is "born-digital text plus zero or more raster inserts," not "all text."
 
     Don't re-extract content from the artifact yourself with `pdftotext`; `page=<N>&text` already gives you pypdf's extraction, and the rendered page is the real source of truth. **Use the resolver to render pages and look at them** — see below.
 
@@ -60,7 +60,7 @@ normalization:
 
     - **See each page:** `corpus resolve 'corpus://<hash>?page=<N>'` to render it, or place regions by eye with `corpus preview <id> --page <N> --mark x,y,w,h`. Crop into a region (`page=<N>&bbox=...`) for fine print; `autocontrast` / `contrast=<f>` / `rotate=` / `resize=` compose just as they do for images (a scanned page is a raster — no `dpi=` detail to recover beyond the scan's own resolution).
     - **Transcribe text regions** as `<!--segment text/ocr-->` at `page=<N>&bbox=<x,y,w,h>` — one per logical text block, verbatim, recording `ocr_engine` (e.g. `vlm`) and `confidence` (see the `text/ocr` overlay). OCR segments **always carry a `&bbox=...` sub-region** — never the bare `page=<N>` address, which belongs to the page's image marker.
-    - **Tables** → `<!--segment text/data-table-->` at `page=<N>&bbox=...`; **figures/photos/diagrams** → a body-empty `image` (sub-)segment at `page=<N>&bbox=...` carrying its `description:`.
+    - **Tables** → `<!--segment text/data-table-->` at `page=<N>&bbox=...`; **figures/photos/diagrams** → a body-empty, permanent `image` (sub-)segment at `page=<N>&bbox=...` (no `description:` field — the marker alone is the complete rendering).
     - **Page marker:** the drafter's whole-page `page=<N>` image marker is the positioning anchor — leave it in place and add the `page=<N>&bbox=...` sub-region segments around it (the "Figures, diagrams, charts" address-uniqueness + `page=` self-slice rules below apply unchanged; a `page=` image segment needs no embed).
 
     OCR of a scan is a normalizer (agent) pass, not an automatic draft step — the same status as image-of-text transcription generally. The remaining sections (outline sections, text refinement, chrome) apply to **born-digital** pages; a scanned page needs only its `text/ocr` / `text/data-table` / figure segments at `page=<N>&bbox=...`.
@@ -125,40 +125,40 @@ normalization:
 
     - **born-digital page** → pull `page=<N>&text` (verify against the render), reflow it into prose `<!--segment text-->`, and split out atom-prefixed segments (equations/tables/figures); the original `page=<N>` image marker is replaced by your structural-unit segments.
     - **scanned page** → keep the `page=<N>` image marker as the positioning anchor and add `page=<N>&bbox=...` sub-segments around it (`text/ocr`, `text/data-table`, figures) per "Scanned pages" above.
-    - **figures** (on any page) → bare image segments (see "Figures, diagrams, charts"): resolve `page=N&bbox=...`, Read it, tighten the bbox, write the `description:` (body stays empty).
-    - **no extractable text** (probe `shape_hint: no-text` — DRM'd / vector-only) → leave the page marker, refine `description` only, and add a record-scope `partial-content` issue naming the missing text layer.
+    - **figures** (on any page) → bare image segments (see "Figures, diagrams, charts"): resolve `page=N&bbox=...`, Read it, tighten the bbox, and transcribe any losslessly-recoverable content as a sibling segment (body and marker both stay empty of any description — the field doesn't exist).
+    - **no extractable text** (probe `shape_hint: no-text` — DRM'd / vector-only) → leave the page marker body-empty and permanent, and add a record-scope `partial-content` issue naming the missing text layer.
 
     Record-level — read frontmatter and the `<!--artifact application/pdf-->` block:
 
     - `page_count` — total pages.
-    - `title`, `author`, `creation_date`, `producer` — from the PDF /Info dict; useful for description authoring but rarely reliable as cover-page title (publishers often leave /Info defaults like `Adobe Acrobat`, `Microsoft Word`, or the author's local username).
+    - `title`, `author`, `creation_date`, `producer` — from the PDF /Info dict; role-marked candidates the derived title/description resolve from automatically (spec §4.2.3), never facts this pass composes prose from. Rarely reliable as a cover-page title (publishers often leave /Info defaults like `Adobe Acrobat`, `Microsoft Word`, or the author's local username) — an unreliable or empty derived title is a fact about the source, not a defect to fix by hand.
 
     ## Sections — group from the document's structure (SPEC §4.3)
 
-    The drafter is always sectionless (a flat list of `page=<N>` markers). **Sectioning is the normalizer's job.** A `<!--section-->` is the universal TOC unit: it groups child segments, carries an `entry:` label, and has **no body**.
+    The drafter is always sectionless (a flat list of `page=<N>` markers). **Sectioning is the normalizer's job.** A `<!--section-->` is a positional span with no body and no stored header field of its own — `entry:` (and `address`) retired from the section header in 3.5/3.7 (spec §4.3.2.1); the derived TOC now reads structural byte-marks instead (§4.3.2.3).
 
-    **How a section's address works — read this before you assign one.** You do **not** compute a section's page range from the outline. A section's discrete-index address is the **auto-derived min-max page envelope of its child segments** (the value the tooling derives at compile; `bbox` is ignored — the envelope is over pages). So you assign segments to a section and the address *follows*: a section whose children span pages 4–9 is `pages=4-9`; a one-page section collapses to `pages=<N>`. Two consequences, both easy to get wrong:
+    **How a section's address works — read this before you assign one.** You do **not** compute or write a section's page range — it is **derived**, never stored: the min-max page envelope of its child segments, computed by every reader (`bbox` plays no part — the envelope is over pages). You assign segments to a section and the envelope follows automatically; there is nothing to write on the opener beyond the bare `<!--section-->` (or the form id, where one is asserted). Two consequences, both easy to get wrong:
 
-    - **Adjacent sections may legitimately share a boundary page.** Section A ending on page 9 and section B starting on page 9 is fine — there is no section-overlap rule. (What you must NOT do: give two *segments* the same `page=N&bbox` region, or two *sections* the same `pages=N` envelope — see below.)
-    - **`entry:` is an authored leaf label.** Top-level blocks in a multi-block record carry it, and (nesting admitted 2026-07-17, spec §4.3.3/§12.22) so may child blocks within a form section's span — a generic form span wrapping an already-labeled multi-block rendering keeps those labels. A single-block record carries none. A figure's identifying label still goes in its `description:`, never `entry:` (see "Figures, diagrams, charts").
+    - **Adjacent sections may legitimately share a boundary page.** Section A ending on page 9 and section B starting on page 9 is fine — there is no section-overlap rule. (What you must NOT do: give two *segments* the same `page=N&bbox` region — see below.)
+    - **A section's own heading is TRANSCRIBED, not labeled.** Open each section with a `<!--segment structural addr=page=<N> level=1-->` whose body is the heading text verbatim (spec §4.3.2.3) — this is what a derived TOC reads. There is no `entry:` field anywhere any more, on a section or a segment; a figure's identifying label, where the source prints one, is its own transcribed `text` segment, never a header field (see "Figures, diagrams, charts").
 
     **The outline is a starting point, not an authority.** Read it:
 
         corpus resolve 'corpus://<hash>?outline' --print
         # JSON tree of {title, page (1-indexed), children}; [] when the PDF has no bookmarks.
 
-    A clean, complete outline maps each **top-level** entry to a section whose `entry:` is the bookmark title (verbatim) and whose children are the segments for that entry's page range; a synthetic `entry: Preamble` section wraps unbookmarked front matter (cover, Contents). But real outlines are frequently broken, and you section from the document's **genuine printed structure**, not the outline mechanically:
+    A clean, complete outline maps each **top-level** entry to a section whose opening structural mark transcribes the bookmark title (verbatim) and whose remaining children are the segments for that entry's page range; a synthetic `Preamble` section (no structural mark, since there is no heading to transcribe) wraps unbookmarked front matter (cover, Contents). But real outlines are frequently broken, and you section from the document's **genuine printed structure**, not the outline mechanically:
 
     - **Missing top-level headings** — the outline omits real printed sections (an un-bookmarked "Consumer Information" leaflet). Add them as sections from the printed headings; don't let a naive "last entry runs to page_count" bury them.
     - **Degenerate single bookmark** — the entire document nested under one bookmark (common in drug-label SPLs). Ignore it and section from the printed top-level headings.
     - **Duplicate / non-monotonic entries** — many entries anchored to pp1–2, out of order, repeated (Highlights + a Contents listing + the body all bookmarked). Deduplicate to the real printed structure; ignore the noise.
-    - **Two top-level entries on the same page** — each would be a one-page section with the **same** `pages=<N>` address → an identity collision (two TOC units claiming one page span). Do NOT emit colliding same-page sections. Instead **group them under one coarser section** and carry the sub-structure as `##`/`###` prose headings on bbox-distinct child segments. This is the standard move for a dense single-page run of headings: one section, prose-headed sub-parts, a distinct `page=N&bbox` per part.
+    - **Two top-level entries on the same page** — promoting both independently would need two structural marks at the same bare `page=N` address, which collides on segment identity (`(opener-id, address)`, spec §4.3.2.2). Do NOT emit two same-page structural marks this way. Instead **group them under one coarser section** with one structural mark for the page, and carry the sub-structure as `##`/`###` prose headings on bbox-distinct child segments — or, where each entry's own heading text is worth preserving verbatim, address each structural mark at a distinct `page=N&bbox=…` crop of just that heading. This is the standard move for a dense single-page run of headings.
 
     **PDF without an outline** (the op returns `[]`). Section from the printed structure when it's clearly present (see "Normalizer-introduced sections" below); otherwise stay sectionless — a legitimate shape for short or structure-light PDFs.
 
     ### What a section is NOT
 
-    A section is a structural grouping primitive — it has its own address and an `entry:` label, no body. The section opener is followed directly by its first child segment opener; prose between section closer and first segment opener is a parse error. **Don't confuse the section block primitive with document-content sections (chapters, headings, clauses).** The block primitive is the universal TOC unit; the document-content sense of "section" describes prose inside segments (the next subsection's "Re-segment to structural units" discussion uses "section" in the document-content sense — that's about paragraph and prose grain, not block boundaries).
+    A section is a structural grouping primitive — no body, no stored header field of its own (its envelope derives from its children; there is no `entry:` field, spec §4.3.2.1). The section opener is followed directly by its first child segment opener; prose between section closer and first segment opener is a parse error. **Don't confuse the section block primitive with document-content sections (chapters, headings, clauses).** A derived TOC reads the structural marks inside sections, not a section header field; the document-content sense of "section" describes prose inside segments (the next subsection's "Re-segment to structural units" discussion uses "section" in the document-content sense — that's about paragraph and prose grain, not block boundaries).
 
     Inside a section, child segments still re-segment along structural-unit grain (one prose-flow segment per chapter-section, plus separate segments for embedded equations/tables/images). The section block contains the segments; segments contain the prose.
 
@@ -173,7 +173,7 @@ normalization:
     - The document has clear top-level structure (numbered chapters, named appendices) reliably detectable from the prose;
     - The normalizer's re-segmentation pass would otherwise produce a sprawling top-level segment list that's hard to navigate.
 
-    When introducing sections after-the-fact, choose section boundaries that match the document's own structural hierarchy, not arbitrary page ranges. Each new section needs an `address: pages=<start>-<end>` and an `entry:` matching the document's top-level heading text.
+    When introducing sections after-the-fact, choose section boundaries that match the document's own structural hierarchy, not arbitrary page ranges. Each new section's envelope derives automatically from the segments assigned to it — open it with a structural mark transcribing the document's own top-level heading text verbatim (spec §4.3.2.3), never an `entry:` field.
 
     Don't introduce sections just to be tidy on a short PDF (≤20 pages). Sectionless is a legitimate shape for short or structure-light PDFs.
 
@@ -181,11 +181,11 @@ normalization:
 
     Records normalized before the section + segment grammar landed (commit `8b777bd`) carry a flat top-level segment list with no `<!--section-->` blocks. They parse cleanly via legacy handling, but their structural TOC is impoverished — every segment shows at top level rather than grouped under outline entries.
 
-    Upgrade in place without re-extracting, through the standard decompose → edit → compile flow:
+    Upgrade in place without re-extracting, through the standard decompose → edit → compile flow. `entry:` on any pre-upgrade segment is migration residue (spec §4.3.2.2, 3.5) — a name source to read during the upgrade below, never a field to preserve:
 
     1. Read the PDF's outline: `corpus resolve 'corpus://<hash>?outline' --print`. For each top-level entry you get `{title, page}` (1-indexed). End page is the page before the next top-level entry; the last entry runs to `page_count`.
-    2. `corpus decompose <hash>`. In the manifest, group the existing `seg` lines under `section addr=pages=<start>-<end> entry="<outline title>"` lines per the outline ranges. A `seg` whose first page falls before the first outline entry (or a `page=0` chrome segment) goes under a synthetic `section ... entry="Preamble"`.
-    3. Keep each segment's body file and address exactly as they are — this upgrade is structural-only (it only adds section grouping), no content rewrite. **But drop the `entry:` from every segment you move under a section**: a previously top-level segment legitimately carried `entry:`, but once it's inside a section that `entry:` is a hard compile error (the section is now the TOC unit — its title moves to the section's `entry:`). A segment that stays top-level (a `page=0` chrome segment outside every section) keeps its `entry:`.
+    2. `corpus decompose <hash>`. In the manifest, group the existing `seg` lines under bare `section addr=pages=<start>-<end>` lines per the outline ranges, and open each with a `seg structural addr=page=<N> level=1` whose body carries the outline title verbatim. A `seg` whose first page falls before the first outline entry (or a `page=0` chrome segment) goes under a synthetic bare `section` with no structural mark (there is no heading to transcribe).
+    3. Keep each segment's body file and address exactly as they are — this upgrade is structural-only (it only adds section grouping), no content rewrite. Strip any stale `entry:` from every segment you move under a section — it retired in 3.5 and has no home on a segment inside or outside a section any more.
     4. `corpus compile <dir> --model <your-model-id>`. The record stays at `status: normalized`; the upgrade is itself a normalize pass, so it earns a touch.
 
     A sectionless PDF that produced a flat segment list MAY remain sectionless if the source has no outline — no upgrade required. Only wrap when the source carries an outline.
@@ -218,17 +218,17 @@ normalization:
 
     The surrounding prose stays in bare `<!--segment text-->` segments with no overlay — that's the default "prose flow" segment. (Unique repeating chrome is also a bare `text` segment — see "Repeating page chrome" below.)
 
-    Image-atom segments (`atom: image`) appear at their source position in document order — first-class peers of text segments, not embedded inside a text segment's body. They have their own address (typically `page=N&bbox=...`). Per v1.0 they are **body-empty positioning markers** — the figure's description lives on the segment's `description:` header field, not in the body (see "Figures, diagrams, charts" below).
+    Image-atom segments (`atom: image`) appear at their source position in document order — first-class peers of text segments, not embedded inside a text segment's body. They have their own address (typically `page=N&bbox=...`). They are **body-empty positioning markers, permanent** — there is no `description:` header field any more (retired 3.5, spec §4.3.2.2: "a segment cannot narrate its own region"); the marker says where the bytes are and nothing about what they show (see "Figures, diagrams, charts" below).
 
     ## Figures, diagrams, charts — bare image segments, never embeds
 
     A figure on a PDF page is a **crop of the rendered page**, not a separately stored asset. The resolver rasterizes `page=N&bbox=...` from the PDF's own bytes on demand — the artifact *is* the source, exactly as a video framegrab is a slice of the video (see `schema/mime/video/video.yaml`). So a figure is a **bare `<!--segment image-->`** with:
 
     - `address: page=N&bbox=<x>,<y>,<w>,<h>` — the page region.
-    - `description:` — a faithful description of what the crop **shows** (composition, on-screen text verbatim, chart/diagram structure), written after resolving and looking at the crop. **Lead it with the figure's identifying label** ("Figure 2 — WAG operation schematic. …"): the label lives here, NOT in `entry:`. (`entry:` is a section / top-level-segment field; a figure segment *inside a section* that carries `entry:` is a **hard compile error** — see "Sections". Only a figure that is itself a sectionless top-level segment may use `entry:`.) Body stays **empty** (image atoms are body-empty per SPEC §4.3.2.3).
+    - **No `description:`.** There is no field on the marker to carry a reading of what the crop shows — composition, on-screen text, chart structure are not narrated. Where the figure's identifying label (a caption printed on the page — "Figure 2 — WAG operation schematic") is genuinely source text, transcribe it losslessly as its own `text` segment at its own address, never as a header field on the marker. Body stays **empty** (image atoms are body-empty per SPEC §4.3.2.3).
     - **No `<!--members-->` row, and no `transport:` hash.** The `embed-missing-target` lint rule carves out `page=` addresses on PDF records precisely because no separate asset exists. Never compute a blake3 of a rendered crop and present it as a member transport — that fabricates an asset the corpus doesn't store.
 
-    A losslessly-transcribable region inside a figure (a data table, an equation, OCR-able caption text) is a **separate** `text/<overlay>` segment (`text/data-table`, `text/equation`, `text/ocr`) at a chained `page=N&bbox=...` address — sibling to the image marker, carrying the lossless body.
+    A losslessly-transcribable region inside a figure (a data table, an equation, OCR-able caption text) is a **separate** `text/<overlay>` segment (`text/data-table`, `text/equation`, `text/ocr`) at a chained `page=N&bbox=...` address — sibling to the image marker, carrying the lossless body. Where the transcription covers the figure's whole own region, it REPLACES the marker (§4.3.2.2) — two segments on one region earn their place only by extracting different information. Where nothing in the figure is losslessly recoverable (a photo, a diagram whose layout is the content), the marker alone is the complete, honest rendering; a genuine faithfulness defect (illegible, cut off) is a typed `issue` at that address, never prose on the marker.
 
     **The members roster is attestation's job, not yours.** Genuine member rows exist only for assets attestation extracted as distinct byte-streams (e.g. an inline `<img>` decoded from an HTML page — `schema/mime/text/text_html.yaml`). A PDF yields none, so on a PDF record you never create one — and never edit the roster on any record. If you believe the source contains a genuinely separable embedded asset attestation failed to extract, **persist an `<!--issue missing-media-->`** describing it rather than fabricating a row.
 
@@ -295,10 +295,10 @@ normalization:
 
     For recon before decomposing, two read-only tools:
 
-        uv run --directory scripts corpus toc <hash>          # segment table of contents: ordinal, atom, entry label
+        uv run --directory scripts corpus toc <hash>          # segment table of contents: ordinal, atom, structural-mark body
         uv run --directory scripts corpus segment <hash> 7    # one segment's full detail (by ordinal or address)
 
-    `corpus toc` is your one-shot shape recon — the record's full structure in a few hundred lines. A bare `page=<N>` image marker (atom `image`, plain `page=` address, no `entry`) is still drafter-shaped; the first such ordinal in document order is where your chunk starts, and any section entry labels let you pick a clean end boundary at a section break.
+    `corpus toc` is your one-shot shape recon — the record's full structure in a few hundred lines, derived from the structural marks (there is no `entry:` field to read any more). A bare `page=<N>` image marker (atom `image`, plain `page=` address, no sibling segments at that page) is still drafter-shaped; the first such ordinal in document order is where your chunk starts, and any section-opening structural marks let you pick a clean end boundary at a section break.
 
     ### Detect prior-pass state
 
@@ -351,8 +351,8 @@ normalization:
     When chrome carries information beyond mechanical pagination (a "DRAFT" or "CONFIDENTIAL" watermark, a running header that names a different version than the cover, an embargo notice), hoist to one **bare `<!--segment text-->`** at the top of the body carrying the chrome's literal text verbatim — a single representation of the repeating chrome, not one per page. There is no `text/chrome` overlay in v1.0; chrome that's worth keeping is just faithful text. The segment carries:
 
     - `address: page=0` — the chrome-segment sentinel reserved in this schema's `address_scheme`. Unique within the record; the resolver doesn't resolve `page=0` to page bytes (the body is the chrome's own text, not an extracted page region).
-    - body: the chrome's literal text (the watermark / running-header / embargo string). An optional `description:` may summarize it but does not replace the literal body.
-    - an `entry:` such as "Watermark" or "Running header" so it's identifiable in the TOC.
+    - body: the chrome's literal text (the watermark / running-header / embargo string), verbatim — no field summarizes it, the body is the whole statement (retired 3.5, spec §4.3.2.2).
+    - If it's worth identifying in the TOC, PRECEDE it with a `<!--segment structural addr=page=0 level=1-->` whose own body is a short label ("Watermark", "Running header") — a distinct segment, different opener-id, so it shares the `page=0` address legitimately (spec §4.3.2.2). There is no `entry:` field to hold that label on the text segment itself.
 
     Do not invent synthetic content-region bboxes (e.g. `page=1&bbox=0,0,1,0.15`) to "describe the chrome region" — bboxes denote actual extracted source regions, not heuristic chrome zones.
 

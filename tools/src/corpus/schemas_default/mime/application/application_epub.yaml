@@ -80,10 +80,11 @@ normalization:
     exist, and they are not yours to touch. In the body each image is a `<img data-el="K">`
     placeholder at its reading position. During normalization, replace the placeholder with a
     bare `<!--segment image-->` addressed `spine=<N>&el=<K>` (matching the member row by address
-    membership) and write **that segment's own** `description:` from what the image shows; the
-    row supplies the bytes, and pixel dimensions come from the `members` derivation. An
-    image carrying losslessly-transcribable content (a diagram's labels, a code screenshot)
-    also gets a sibling `text/<overlay>` segment.
+    membership) — body-empty, permanent (spec §4.3.2.2, a marker never narrates; there is no
+    `description:` field on it or the row). Where the image carries losslessly-transcribable
+    content (a diagram's labels, a code screenshot), emit a sibling `text/<overlay>` segment
+    with that content, resolved and read from the bytes first; where nothing is losslessly
+    recoverable, the marker alone is the complete rendering.
 
     ## Sections — drafter-built from the nav/NCX TOC (spec §4.3)
 
@@ -93,19 +94,24 @@ normalization:
 
     - `address: spines=<start>-<end>` — the section spans the spine documents from this TOC
       entry's target up to the document before the next entry (collapses to `spines=<N>` for
-      a single document). `entry:` is the TOC label (the part/chapter title), written by the
-      drafter — a fresh draft already carries a useful TOC.
+      a single document). The TOC label (the part/chapter title) is TRANSCRIBED as the
+      section's own opening structural mark — `<!--segment structural addr=spine=<N> level=1-->`,
+      body = the label verbatim (spec §4.3.2.3) — never a header field; there is no `entry:`
+      any more (retired 3.5). A fresh draft already carries this label from the nav/NCX, so
+      the mark is populated at draft time, not authored during normalization.
     - Spine documents before the first TOC target (cover, title page, copyright, dedication
-      that the nav often omits) are wrapped in a synthetic `entry: Front matter` section —
-      the EPUB analogue of the PDF's `Preamble`.
+      that the nav often omits) are wrapped in a synthetic `Front matter` section — the EPUB
+      analogue of the PDF's `Preamble` — with no structural mark, since there is no TOC label
+      for it to transcribe.
     - Only **top-level** nav entries become sections (like the PDF's `get_toc(max_depth=1)`).
       Deeper nav nesting is intra-document sub-structure (a chapter's own sub-headings,
       pointing to `#fragment`s within one document) — recover it as prose `##`/`###`
       headings inside the segment, not as sections.
 
     A book with **no usable nav/NCX** drafts sectionless (a flat top-level `spine=<N>`
-    segment list, each carrying its document `<title>` as `entry:`); introduce sections
-    during normalization from the prose structure, exactly as for an outline-less PDF.
+    segment list); introduce sections during normalization from the prose structure, opening
+    each with a structural mark transcribing that document's own `<title>` verbatim, exactly
+    as for an outline-less PDF.
 
     A section here typically contains ONE spine-document segment (each chapter is its own
     document). Re-segment that chapter's prose to structural-unit grain (below); don't

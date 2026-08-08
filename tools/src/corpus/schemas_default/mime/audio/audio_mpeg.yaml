@@ -6,6 +6,9 @@ applies_to:
   content_types:
   - audio/mpeg
 # (3.3, §7.1) The format's terminal-contract default. An origin overlay's own `form:`
-# (§7.2) — or a per-record asserted whole-record section — overrides this either way.
+# (§7.2), or a per-record asserted section, overrides this either way — a stamped
+# per-record judgment outranks the class default (spec §7.8, governing-contract
+# precedence). *(3.5/3.7: the section carries no editorial identity to override
+# alongside the contract — only the shape judgment.)*
 form:
   id: passthrough

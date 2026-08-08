@@ -25,7 +25,7 @@ transport_algos:
 - sha256
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The docx drafter is the structural-content authority for a docx record: deterministically, it walks `word/document.xml` (unwrapping `<w:sdt>` content controls), populates frontmatter (`paragraph_count`, `table_count`, `page_count`, `word_count`, `docx_*` from docProps, `has_images`), and emits one `<!--section-->` per top-level heading — `entry:` written directly from the heading text, so a fresh-draft TOC is already useful (no normalizer pass required to populate it). Each section holds one `atom: text` segment whose body is the rendered markdown for that section.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The docx drafter is the structural-content authority for a docx record: deterministically, it walks `word/document.xml` (unwrapping `<w:sdt>` content controls), populates frontmatter (`paragraph_count`, `table_count`, `page_count`, `word_count`, `docx_*` from docProps, `has_images`), and emits one `<!--section-->` per top-level heading. **The drafter still writes `entry:` directly from the heading text on each section** (a write-path defect tracked separately, not yet closed) — `entry:` retired from the section header in 3.5 (spec §4.3.2.1) and is migration residue on sight, not a field to preserve or extend. Every normalize pass converts it: open each section with a `<!--segment structural addr=block=<N> level=1-->` whose body is the heading text verbatim (spec §4.3.2.3), and strip the section's own `entry:`. Each section then holds that structural mark plus one `atom: text` segment whose body is the rendered markdown for that section.
 
     ## The draft body is high-fidelity — trust it, don't re-render
 
@@ -66,12 +66,9 @@ normalization:
 
     ## Sections — heading-driven grouping (SPECv2 §4.3)
 
-    A docx body's top-level blocks are sections, one per top-level heading (a paragraph whose style is `Heading1` / `SDMHead1`, or which carries `outlineLvl 0`). The drafter emits:
+    A docx body's top-level blocks are sections, one per top-level heading (a paragraph whose style is `Heading1` / `SDMHead1`, or which carries `outlineLvl 0`) — each a BARE `<!--section-->` opener, its envelope derived from its children, never stored (spec §4.3.2.1). The drafter's first-pass output still writes the heading text as a section-level `entry:` (residue, see above); the normalize pass converts it to the section's opening structural mark instead — `<!--segment structural addr=block=<N> level=1-->`, body = the heading text verbatim.
 
-    - `address: block=<start>-<end>` — the block-ordinal span the section covers.
-    - `entry: <heading text>` — written directly from the heading paragraph.
-
-    A synthetic `entry: Preamble` section wraps content before the first top-level heading — the cover/title block (which lives inside `<w:sdt>` content controls the drafter unwraps: document-class label, title, version line, "Sectoral scope(s):") and the table of contents. Sub-headings (level ≥2) render as markdown `##`/`###` inside the section they belong to, not as their own sections.
+    A synthetic `Preamble` section (no structural mark, since there is no heading to transcribe) wraps content before the first top-level heading — the cover/title block (which lives inside `<w:sdt>` content controls the drafter unwraps: document-class label, title, version line, "Sectoral scope(s):") and the table of contents. Sub-headings (level ≥2) render as markdown `##`/`###` inside the section they belong to, not as their own sections.
 
     **docx with no detectable headings** → the drafter emits a single flat top-level `atom: text` segment covering the whole body (mirroring the outline-less PDF case). The normalizer MAY introduce sections during re-segmentation if structure is genuinely present in the prose.
 
@@ -83,7 +80,7 @@ normalization:
 
     ## Reading the drafter's signals
 
-    - Each `<!--section-->` carries `entry:` = the document's own heading text. The section's single `atom: text` child segment carries the rendered markdown.
+    - Each `<!--section-->` opens with a `<!--segment structural-->` mark carrying the document's own heading text verbatim as its body (never an `entry:` field, retired 3.5). The section's `atom: text` child segment carries the rendered markdown.
     - The body markdown already promotes the document's heading hierarchy (`##` for sub-headings within a section), renders paragraphs as prose (one paragraph per markdown block, internal tabs/line-breaks collapsed to spaces), and renders tables as GitHub-flavored markdown.
     - Frontmatter `page_count` is the **last-saved page count from `docProps/app.xml`** — a soft render-time value, not a structural axis. `word_count` is likewise app.xml's count. Don't treat either as authoritative document structure.
 
@@ -143,14 +140,16 @@ extended_fields:
       True iff the OOXML zip contains any `word/media/` part. A discoverability signal; the v1 drafter does not yet emit image segments for docx (see normalization guidance).
   title:
     # (3.2) Deliberately NOT role: title — this field's own description records that it's
-    # "often a document-management code rather than a readable title," with the real title
-    # meant to arrive via the form/origin layer instead (stronger in the §4.2.3 precedence).
-    # Role-marking it would surface the raw docProps code as the derived title on every
-    # formless docx, which is exactly the outcome this field's guidance warns against.
+    # "often a document-management code rather than a readable title." An origin overlay MAY
+    # still mark a stronger candidate of its own (the origin layer outranks artifact in the
+    # §4.2.3 precedence) — a form marks nothing (§4.2.3), so there is no form-layer rung to
+    # route this through. Role-marking THIS field would surface the raw docProps code as the
+    # derived title on every formless docx, which is exactly the outcome this field's
+    # guidance warns against.
     type: string
     required: false
     source: file_metadata
-    description: '`<dc:title>` from `docProps/core.xml`, if set by the author. Often a document-management code (e.g. `EB125_repan05_AMS-II.G_(ver14.0)`) rather than a readable title — the normalizer promotes the real title per the document/publisher overlay.'
+    description: '`<dc:title>` from `docProps/core.xml`, if set by the author. Often a document-management code (e.g. `EB125_repan05_AMS-II.G_(ver14.0)`) rather than a readable title — deliberately unmarked so it never becomes the derived title; a stronger candidate, where one exists, comes from an origin overlay''s own role mark, never authored by this pass.'
   creator:
     type: string
     semantic_type: person

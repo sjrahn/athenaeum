@@ -17,16 +17,18 @@ extended_fields: {}
 decomposition: |
   None — a terminal contract prescribes the ABSENCE of a stored rendering, so there is no
   decomposition to declare. The content zone carries structural byte-marks only where the
-  transport has any (a media container's chapter marks); an optional whole-record opener
-  may carry the editorial header (§4.2.3) with no children beneath it. Stamping a section
-  at all is optional and editorial — the declaration alone governs (§7.8).
+  transport has any (a media container's chapter marks). *(3.5, then 3.7: the optional
+  whole-record opener's editorial header retired with the fields it would have carried —
+  there is no describe pass here at all, and nothing left to stamp one for.)* Stamping a
+  section at all is optional — the declaration alone governs (§7.8), and a bare terminal
+  record, or none, is the complete shape.
 checks: {}
 normalization:
   guidance: |
     There is no shaping work here — the contract's entire content IS the absence of a
-    stored rendering. The only licensed pass work is the optional whole-record opener's
-    editorial header (title/description, §4.2.3) — a deliberate describe pass, never
-    demand (§8.5) — plus any embed/segment descriptions genuinely warranted. Never author
-    a transcription or a summary body; that would violate the contract it adopts.
-    Adopting `passthrough` at all is a deliberate judgment (§4.4.6), earned exactly like
-    any named form's identification — never stamped merely to flatter a census (§12.22).
+    stored rendering. There is no describe pass: the editorial header retired in 3.5 and
+    the optional opener it justified retired with it in 3.7 (§7.8) — a terminal record
+    authors nothing about itself. Never author a transcription or a summary body; that
+    would violate the contract it adopts. Adopting `passthrough` at all is a deliberate
+    judgment (§4.4.6), earned exactly like any named form's identification — never
+    stamped merely to flatter a census (§12.22).

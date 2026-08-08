@@ -18,9 +18,11 @@ decomposition: |
   step they govern — never hoisted away. Decision branches ("if …, go to step N") stay
   intact at their branch point, nested under the step where the source nests them.
   Torque values, clearances, measurement targets, special-tool identifiers survive
-  verbatim at their step. Mid-procedure figures are described embeds at their source
-  position, with lossless sibling transcriptions where a figure region is genuinely
-  text. Named supporting blocks (special tools, required parts) render as their faithful
+  verbatim at their step. Mid-procedure figures are body-empty `image` markers, permanent,
+  at their source position, with a lossless sibling `text/ocr`/`text/data-table`
+  transcription where a figure region is genuinely text or tabular (§4.3.2.2 — a marker
+  never narrates; there is no `description:` to fill). Named supporting blocks (special
+  tools, required parts) render as their faithful
   list or `text/data-table`. Where the source's procedural spine IS a decision table
   (Step | Action | Yes | No — a common diagnostic shape), that table rendered as
   `text/data-table` is the faithful spine: the ordered-list discipline applies to
@@ -35,8 +37,9 @@ normalization:
     branch table or decision matrix, render it as the table it is rather than flattening
     to prose.
 
-    On a whole-record span, the section header's `title:`/`description:` fields are the
-    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
-    Title from the procedure's own name shorn of site chrome; the description says what
-    is being done to what (and for a diagnostic chart, which codes/conditions it
-    covers), written from the steps themselves.
+    This form declares no `extended_fields`, so its opener is BARE — `<!--section
+    procedure-->` and nothing else — and that is complete (spec §4.3.2.1). Do not write
+    `title:` or `description:` on it: the universal section-header fields retired in 3.5
+    and the count of them is now zero. What the procedure does, and to what (and for a
+    diagnostic chart, which codes/conditions it covers), is not the record's to
+    summarize — a ledger claim names it, citing the span.

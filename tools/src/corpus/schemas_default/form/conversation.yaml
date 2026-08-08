@@ -56,7 +56,9 @@ normalization:
     records use that form). Timestamps stay in the source-stated zone. Never invent a
     day-break section — that is a read-time rendering (§4.3.2.3).
 
-    On a whole-record span, the section header's `title:`/`description:` fields are the
-    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
-    A faithful title names who the conversation is with/among; the description says who's
-    in it and what it covers.
+    Do not write `title:` or `description:` on the section header: the universal
+    section-header fields retired in 3.5, and a form marks no editorial candidate
+    (§4.2.3) — `participants:`, above, is this span's only header field, and it is a
+    mechanical codebook, not a vouch. Who the conversation is with, and what it's
+    about, are the ledger's claims to make, citing the span; the corpus states the
+    shape and the messages, nothing more.

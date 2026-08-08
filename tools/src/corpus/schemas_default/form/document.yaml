@@ -16,21 +16,24 @@ description: |
 extended_fields: {}
 decomposition: |
   The span carries the page's presented content in source order: framing text (a
-  breadcrumb, a heading, a caption) as text segments; every figure as a described embed —
-  the `description:` is the lossy-asset disclosure, grounded in viewing the bytes; every
-  losslessly-transcribable figure region (a spec table, a pin-out, a parts list, a
-  legend) ALSO as a sibling `text/ocr` or `text/data-table` segment at the chained
-  address (`el=N&bbox=…`), cells verbatim — the image positioning-marker and the lossless
-  transcription coexist. Machine-readable tables render directly as `text/data-table`
-  (markdown grid, or literal HTML `<table>` where structure demands). A drawing whose
-  payload is a relation the drawing STATES — a wiring, vacuum, or hydraulic circuit, a
-  block diagram — is not a document page: it is `form/schematic`, whose contract binds the
-  figure to a from-to transcription of that relation (2026-07-26, reversing this
-  contract's earlier ruling that schematic topology is not losslessly textualizable —
-  tracing a drawn connection is transcription; fabricating an unshown one, which that
-  ruling rightly refused, still is not). A drawing with no relation to state — a component
-  photo, an exploded parts view, a location illustration — stays here, and its described
-  embed plus any discrete text legend are its faithful rendering.
+  breadcrumb, a heading, a caption) as text segments; every figure as a body-empty
+  `image` marker, permanent (§4.3.2.2 — a marker says where the bytes are, never what
+  they contain, and there is no field on it to say more); every losslessly-transcribable
+  figure region (a spec table, a pin-out, a parts list, a legend) as a sibling `text/ocr`
+  or `text/data-table` segment at the chained address (`el=N&bbox=…`), cells verbatim.
+  Where a transcription covers the figure's whole own region it REPLACES the marker —
+  two segments on one region earn their place only by extracting different information.
+  Machine-readable tables render directly as `text/data-table` (markdown grid, or literal
+  HTML `<table>` where structure demands). A drawing whose payload is a relation the
+  drawing STATES — a wiring, vacuum, or hydraulic circuit, a block diagram — is not a
+  document page: it is `form/schematic`, whose contract binds the figure to a from-to
+  transcription of that relation (2026-07-26, reversing this contract's earlier ruling
+  that schematic topology is not losslessly textualizable — tracing a drawn connection is
+  transcription; fabricating an unshown one, which that ruling rightly refused, still is
+  not). A drawing with no relation to state — a component photo, an exploded parts view,
+  a location illustration — stays here: its body-empty `image` marker plus any discrete
+  text legend or callout, losslessly transcribed as its own segment, are its faithful
+  rendering.
 
   A spreadsheet workbook (xlsx/xls) decomposes the same way at the mime's own axis: one
   section per worksheet, addressed `sheet=<tab-name>` (its child `text/data-table` /
@@ -49,16 +52,19 @@ normalization:
     promises content that was never captured, persist a `missing-media` issue — never
     fabricate.
 
-    **Descriptions come LAST, after the extraction is finished.** Each placing segment's own
-    `description:` is filled from the resolved bytes, concrete and short — and how much it
-    owes depends on how much of the asset the transcription ended up carrying, so it cannot
-    be written until the segments are settled. A description drafted alongside the body
-    restates what the body already holds at full strength (a description cites only at
-    `kind: incidental`, `ledger.md` §13.2) and then rots when a cell is corrected, with no
-    gate able to notice. Extract, settle the addresses, then describe the remainder.
+    **A body-empty marker is a finished statement, not a placeholder for prose.**
+    Description retired everywhere in 3.5, on segments as much as sections (§4.3.2.2) — a
+    segment cannot narrate its own region, and there is no field anywhere a marker can
+    carry a reading of its own content. Where a figure's content matters and can be read
+    off the bytes, transcribe it losslessly as a sibling segment (above); where it cannot
+    (layout, composition, a photo's own visual content), the marker alone — permanent — is
+    the complete, honest rendering, and `corpus resolve` is how a reader reaches it. A
+    genuine faithfulness defect (blurry, cut off, corrupted) is a typed `issue` at that
+    address, never a description — "this is a photo" is not a finding.
 
-    On a whole-record span, the section header's `title:`/`description:` fields are the
-    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
-    Title from the page's own title shorn of site chrome; the description names what the
-    page presents and what a reader can recover from it (e.g. the component, the
-    spec rows, the connector and its pin-out).
+    This form declares no `extended_fields`, so its opener is BARE — `<!--section
+    document-->` and nothing else — and that is complete (spec §4.3.2.1). Do not write
+    `title:` or `description:` on it: the universal section-header fields retired in 3.5
+    and the count of them is now zero. What the page presents, and what a reader can
+    recover from it, is not the record's to say — a synopsis is a ledger claim citing
+    the span.

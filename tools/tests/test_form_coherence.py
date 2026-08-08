@@ -605,5 +605,5 @@ def test_guidance_prints_the_governing_form_contract(tmp_path, capsys):
     assert "checks lint will run" in out
     assert "embed_rendered" in out
     assert "authoring guidance" in out
-    # the sequencing rule the whole section exists to deliver
-    assert "LAST thing you write" in out
+    # the 3.12 doctrine the section exists to deliver: markers never narrate
+    assert "body-empty and permanent" in out

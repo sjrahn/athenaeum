@@ -37,8 +37,8 @@ normalization:
     listing that was never captured (an empty shell), persist a `missing-media` /
     `partial-content` issue rather than inventing entries.
 
-    On a whole-record span, the section header's `title:`/`description:` fields are the
-    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
-    Title from the page's own title shorn of site chrome; the description says what the
-    index lists and its extent ("lists 7 available information types", "122 connector
-    views in 9 groups") — composable mechanically from the entry census.
+    Do not write `title:` or `description:` on the section header: the universal
+    section-header fields retired in 3.5, and a form marks no editorial candidate
+    (§4.2.3). `entry_count`, above, is this span's only possible header field, and it
+    is a mechanical recount, not a vouch. What the index lists, and for whom, is not
+    the record's to characterize — a ledger claim names it, citing the span.

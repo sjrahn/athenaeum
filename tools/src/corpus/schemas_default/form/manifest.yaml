@@ -5,10 +5,12 @@ description: |
   The CONTAINER specialization of the terminal contract (spec §7.8, 3.3): the members ARE
   the content (`disposition: manifest`, §1.2), so conformance binds the record's attested
   `<!--members-->` block — the roster IS the attestation, nothing re-stated in a
-  content-zone rendering (spec §4.3.1.4/§12.26) — and the editorial header, where written,
-  vouches the CONTAINER (what this bundle is, what its members span), never a per-member
-  summary (that is each promoted member's own record, formed or terminal in its own
-  right). One derivation keeps the judgment single: a `disposition: manifest` record with
+  content-zone rendering (spec §4.3.1.4/§12.26). *(3.5: the editorial header that used to
+  vouch the container is retired — what the bundle is, is the members roster plus the
+  mime, and what a reader wants said about it is a ledger claim, never a record
+  assertion — never a per-member summary either; that is each promoted member's own
+  record, formed or terminal in its own right.)* One derivation keeps the judgment
+  single: a `disposition: manifest` record with
   no rendering contract declared for it stands under this contract automatically (§7.8) —
   the disposition already IS the terminal judgment, zero overlay edits required. An
   overlay MAY still bind a genuine rendering contract over a manifest-disposition record
@@ -24,12 +26,8 @@ checks: {}
 normalization:
   guidance: |
     There is no per-member shaping work on the container record — its members are
-    independently promotable, first-class records of their own. The only licensed pass
-    work here is the optional whole-record opener's editorial header (§4.2.3): what this
-    bundle is and what its members span, composed from the attested roster (member count,
-    kinds, date range where derivable) — a deliberate describe pass, never demand (§8.5),
-    and never a fabricated per-member summary.
-
-    Where written, the section header's `title:`/`description:` fields are the vouch's
-    home — never the frontmatter. A faithful title names the container itself (e.g.
-    "iMessage export — Jane Doe, 2019-2026"); the description names what the roster holds.
+    independently promotable, first-class records of their own — and no pass work here
+    at all: the content zone carries container byte-marks only, or nothing. Stamping a
+    section is optional and, since 3.5, carries no editorial header to write — the bare
+    declaration (`<!--section manifest-->`) governs. What this bundle is, and what its
+    members span, is a ledger claim over the attested roster, never a record assertion.

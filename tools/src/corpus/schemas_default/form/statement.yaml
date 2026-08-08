@@ -35,9 +35,9 @@ normalization:
     transaction rows are a `text/data-table` transcription — cells verbatim, never
     summarized.
 
-    The section header's `title:`/`description:` fields are the vouch's home (implicitly
-    role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter. Neither `account` nor
-    `period` alone identifies THIS statement among an account's many others — compose a
-    faithful title from both (and the issuer/product, when the bytes name it), e.g. "RBC
-    Visa statement — …7841 — 2026-03". The description names the issuer/product and briefly
-    what the period covers.
+    Do not write `title:` or `description:` on the section header: the universal
+    section-header fields retired in 3.5, and a form marks no editorial candidate
+    (§4.2.3). `account` and `period`, above, are this span's only header fields, and
+    neither is a title. Which statement this is among an account's many others, and
+    what the issuer/product is, are not the record's to compose — a ledger claim names
+    them, citing the span.

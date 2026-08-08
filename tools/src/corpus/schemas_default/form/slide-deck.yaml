@@ -24,9 +24,10 @@ decomposition: |
   use the corpus MM:SS convention (HH:MM:SS past the hour). On a promoted TRACK record,
   render stills through the CONTAINER by lineage (`corpus://<container>?frame=…`) — a
   raw elementary stream (Annex-B) is not independently seekable, so `frame=` on the
-  track's own hash fails by construction (pilot finding, §12.20). What a slide
-  SHOWS beyond its text (figures, photos, layout) stays `description:` on the image
-  segment — faithful-form discipline. The deck's own declared grouping (an agenda, the
+  track's own hash fails by construction (pilot finding, §12.20). What a slide SHOWS
+  beyond its on-screen text (figures, photos, layout) is not narrated: the `image` marker
+  is a body-empty positioning mark, permanent, and there is no field on it to describe
+  what it shows (§4.3.2.2). The deck's own declared grouping (an agenda, the
   container's chapter marks inherited through lineage) is structural marks or sections,
   never extra slides.
 checks:
@@ -37,14 +38,18 @@ normalization:
   guidance: |
     Boundaries are mechanically proposed (the pinned scene-cut op) and verified by eye
     against rendered stills (`corpus preview`, `frame=` transforms) — merge a slide's
-    animation steps into one unit, split missed cuts. One image marker per slide;
-    transcribe on-screen text verbatim as `text/ocr` (reading order, no paraphrase);
-    describe non-text content in the image segment's `description:`. Set `slide_count`
-    to the slide-unit count. Narration is NOT this record's content — it lives on the
-    sibling audio track's `form/transcript`; the same-video composition joins the two
-    on (lineage × timeline).
+    animation steps into one unit, split missed cuts. One body-empty `image` marker per
+    slide, permanent; transcribe on-screen text verbatim as `text/ocr` (reading order, no
+    paraphrase). A slide's non-text visual content (a photo, a layout, an unreadable
+    diagram) is not described — the marker alone is the complete, honest rendering; a
+    genuine faithfulness defect is a typed `issue`, never prose. Set `slide_count` to the
+    slide-unit count. Narration is NOT this record's content — it lives on the sibling
+    audio track's `form/transcript`; the same-video composition joins the two on
+    (lineage × timeline).
 
-    On a whole-record span, the section header's `title:`/`description:` fields are the
-    vouch's home (implicitly role-marked, spec §4.2.3/§4.3.2.1) — never the frontmatter.
-    Title the deck from its own title slide or the source's own name for it; describe what
-    it presents and, briefly, its scope (slide count, whether narration accompanies it).
+    Do not write `title:` or `description:` on the section header: the universal
+    section-header fields retired in 3.5, and a form marks no editorial candidate
+    (§4.2.3). `slide_count`, above, is this span's only header field, and it is a
+    mechanical recount, not a title. What the deck presents, whose it is, and what
+    event it belongs to are not the record's to say — a ledger claim names them,
+    citing the span.

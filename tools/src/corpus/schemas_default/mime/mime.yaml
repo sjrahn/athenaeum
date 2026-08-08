@@ -13,7 +13,10 @@ description: |
   `title` field on the artifact block declared by the per-type schema — the block opener's
   MIME already names the provenance, so the candidate isn't prefixed. Non-primary-source
   titles (yt-dlp) land on the origin block as `ytdlp_title` (whose `ytdlp_` prefix survives
-  because the origin opener names the source record, not the extraction tool). The
-  normalizer picks among those candidates to author the frontmatter `title` (spec §4.2.1).
+  because the origin opener names the source record, not the extraction tool). *(3.5: the
+  frontmatter override this field once fed is retired along with authored titles
+  generally — spec §4.2.3/§4.2.1. A record's display title is derived, never authored:
+  it resolves mechanically from these role-marked candidates at read time, and no pass
+  writes it anywhere.)*
 
 extended_fields: {}

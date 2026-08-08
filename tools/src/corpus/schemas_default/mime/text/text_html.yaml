@@ -108,31 +108,45 @@ normalization:
 
     Two API facts the older version of this snippet got wrong, both of which fail loudly: `html.draft()` takes a **keyword-only `build=`** (a `recordbuild.Build` from `recordbuild.begin`), and the drafted content zone lands on **`build.blocks`** — there is no `result['segments']`. `result` carries the metadata zone only (`fields` / `embeds` / `issues` / `canonical` / `origin_*`).
 
-    ## `description` is the summary surface
+    ## There is no narrative summary to author
 
-    Like meetings, claude-sessions, and PDFs: an HTML record's narrative summary lives in YAML frontmatter `description`, not in a body header. Write 1-3 sentences in a single physical line naming: what the page covers, who published it, and what concrete claims / data / events it carries. For multi-author research papers, name the venue and authors only if the page itself does. For press releases, name the issuer. For news articles, name the outlet, byline (if present), and the headline event. Stay faithful — describe what the page SAYS, not whether what it says is true. No editorial assessment of the publisher's credibility, position, or rhetoric.
-
-    Don't pad `description` with cross-references to other corpus records; that's classification overlays' job. Don't embed wikilinks in `description` unless the page itself is *about* another corpus artifact (rare for HTML; common for claude-session records — see that schema).
+    A record's display `description` is derived, never authored (spec §4.2.3) — there is no
+    frontmatter field this or any pass writes to, and no body header carries one either
+    (retired 3.5). For HTML it resolves automatically from the role-marked artifact fields
+    declared below (`meta[name=description]` / `og:description`), read verbatim, exactly as
+    the classifications view is computed. A page that states neither is not a defect: it
+    means the source said nothing about itself under that role, and an empty derived
+    description is the honest result — never a signal to compose one by hand. Where a reader
+    genuinely needs a summary the bytes don't state, that is a ledger claim over the record,
+    authored against the concept, not this pass's to write.
 
     ## Section structure — H1 → H2 fallback → sectionless
 
     Parse the cleaned HTML in the input segment's body with BeautifulSoup. Identify section boundaries:
 
-    - **If 1+ `<h1>` elements are present**, group top-level content into `<!--section-->` blocks bounded by each `<h1>`. The H1 text becomes the section `entry:`. Pre-H1 content (rare — usually CMS preamble) goes into a synthetic `Preamble` section.
-    - **If no `<h1>` but the document has a clear hierarchy of `<h2>`-rooted sections** (typical for long technical documents — Isometric protocols, multi-section reports, structured methodologies, regulatory standards), group by `<h2>`. The H2 text becomes the section `entry:`. Pre-H2 content goes into a synthetic `Preamble` section.
+    - **If 1+ `<h1>` elements are present**, group top-level content into bare `<!--section-->` blocks bounded by each `<h1>`. The H1 text is TRANSCRIBED as the section's own opening structural mark (see "Section identity" below) — never a header field. Pre-H1 content (rare — usually CMS preamble) goes into a synthetic `Preamble` section (no structural mark, since there is no heading to transcribe).
+    - **If no `<h1>` but the document has a clear hierarchy of `<h2>`-rooted sections** (typical for long technical documents — Isometric protocols, multi-section reports, structured methodologies, regulatory standards), group by `<h2>`. The H2 text is transcribed the same way. Pre-H2 content goes into a synthetic `Preamble` section.
     - **If the document is short** (a press release, news brief, marketing one-pager, blog post) **and lacks a clear sub-heading hierarchy**, leave it sectionless — a flat segment list is the right shape.
 
     Trust the source structure: don't fabricate sections. Don't merge two clearly-separate H2 sections into one because they're short. Don't split a single coherent section into pieces because it's long.
 
     The H1 vs H2 choice is a per-document call, not a per-overlay rule — make it based on which heading level is the *primary structural axis* of THIS document. Most Isometric protocols, Verra methodologies (when captured as HTML), and CDM registry pages are H2-rooted in practice (their H1 is the document title, but the body's section breaks land at H2). When in doubt, check whether the H1 appears once (it's the title — use H2 as the section axis) or recurs at top-level structural breaks (use H1).
 
-    ## Segment shape — no heading-only segments
+    ## Section identity — a structural mark, never a header field
 
-    Each section contains one or more `<!--segment text-->` blocks. **A segment whose entire body is a single heading line (just `## My Heading` with no following prose) is wrong** — the heading text belongs in the containing section's `entry:`, not as a standalone segment.
+    Every section's own heading is TRANSCRIBED as its first child, a `<!--segment structural
+    addr=el=<path> level=<N>-->` whose body is the heading text verbatim, links kept (spec
+    §4.3.2.3 — "a structural byte-mark's text is its body"). There is no `entry:` field any
+    more (retired 3.5, spec §4.3.2.1/§4.3.2.2) and no section header field to hold it — the
+    mark is an ordinary segment, and it is what a derived TOC reads. Address the element that
+    actually carries the heading text, never a neighbour.
 
-    Heading-level rule:
-    - The heading level used as section boundaries (H1 if H1-rooted, H2 if H2-rooted) is promoted to the section `entry:` and removed from segment bodies.
-    - Headings *deeper* than the section-bounding level (H3 / H4 / H5 / H6) CAN appear inline at the start of a segment body when they introduce the prose that follows — `### Sub-heading\n\nfollowing prose`. They're sub-structure within a section, not section roots.
+    The heading level used as section boundaries (H1 if H1-rooted, H2 if H2-rooted) is what
+    becomes this structural mark. Headings *deeper* than the section-bounding level (H3 / H4 /
+    H5 / H6) CAN appear inline at the start of a following `text` segment's body when they
+    introduce the prose that follows — `### Sub-heading\n\nfollowing prose`. They're
+    sub-structure within a section, not section roots, and stay in the body rather than
+    becoming their own structural marks.
 
     Aggregate consecutive prose blocks (`<p>`, `<ul>`, `<ol>`, `<blockquote>`) into a single text segment that preserves their reading flow. Tables, `<pre>` / `<code>` blocks, and figures break aggregation and emit their own segments (rendering rules below).
 
@@ -150,7 +164,7 @@ normalization:
 
     ## Segment addresses
 
-    Each emitted segment's `address` field is **read off the `data-el` attribute** the drafter annotated on the corresponding cleaned-HTML element. Single element → `address: el=<path>` — and the path names the element AND its whole subtree, so content that lives entirely inside one container needs only that container's path. Aggregated prose spanning a contiguous run of one parent's element children → the sibling range `address: el=<parent>.[<a>-<b>]`. An aggregation crossing subtree boundaries → an address LIST of the member paths (spec §4.3.2.2). There is NO flat `el=N-M` form (§6.1.1 — that retired grammar is how over-claiming envelopes arose); prose with no annotated element takes the path of the element that contains it. For `<!--section-->` wrappers, derive the envelope from the children (`Section.spanning(..., el_paths=True)` / `segments.section_address`) rather than hand-formatting it — the `section-address-span` lint rule re-derives the same value.
+    Each emitted segment's `address` field is **read off the `data-el` attribute** the drafter annotated on the corresponding cleaned-HTML element. Single element → `address: el=<path>` — and the path names the element AND its whole subtree, so content that lives entirely inside one container needs only that container's path. Aggregated prose spanning a contiguous run of one parent's element children → the sibling range `address: el=<parent>.[<a>-<b>]`. An aggregation crossing subtree boundaries → an address LIST of the member paths (spec §4.3.2.2). There is NO flat `el=N-M` form (§6.1.1 — that retired grammar is how over-claiming envelopes arose); prose with no annotated element takes the path of the element that contains it. For `<!--section-->` wrappers, do not compute or write an envelope at all — a section's `address` retired in 3.7 (spec §4.3.2.1) and is derived from its children by every reader, never stored.
 
     **Do NOT use `selector=`** — that's the deprecated address scheme for pre-v0.8.0 records. New records use `el=` paths. The legacy `selector=` resolver stays registered for backward compatibility but no new addresses should use it.
 
@@ -161,7 +175,7 @@ normalization:
     For each image you decide to surface as an image segment:
 
     - `address: el=<path>` (the `data-el` value on the `<img>`, matching the row's address)
-    - `body:` — stays empty (a positioning marker); the faithful description goes on this segment's own `desc=`, not the row (see "Images — resolve and describe on the segment" below).
+    - `body:` — stays empty (a positioning marker, permanent — spec §4.3.2.2, a marker never narrates; there is no `description:`/`desc=` field on it or the row to fill, see "Images" below).
 
     No reference field linking the segment to the row. The link is purely positional: the segment's `address` is placed by whichever row has that path in its `address` field (scalar match for unique-occurrence; list membership for repeated). For unique images, segment-address and row-address are equal (scalar match). For repeated images, the row has a list like `address: [el=1.3.8, el=1.5.2]`, and you emit one segment per address you want to surface (typically all of them; you may surface fewer if some occurrences are obviously decorative even when the bytes are substantive).
 
@@ -173,23 +187,20 @@ normalization:
 
     ## Bot-block pages
 
-    When the drafter has emitted a record-scope `bot-block` issue (severity `blocking`) naming an Akamai / Cloudflare / Imperva / similar bot-block detection, the cleaned HTML is the block-page chrome — the page that came back instead of the article. Render the body lightly (a flat segment list is fine; it's evidence of the block, not substantive content). Fill `description` to:
-
-    - Name the block source (`Akamai bot-detection block page`, `Cloudflare challenge page`, etc.) per the drafter's issue.
-    - Name the originating URL (from `origins[]`) that wasn't successfully retrieved.
-    - Optionally summarize what the underlying page was supposed to be about, ONLY when the title text or URL gives that signal (e.g. `/insight-alert/are-you-ready-new-eu-rules-methane-emissions-energy-sector` is suggestive even when the body is bot-block chrome).
+    When the drafter has emitted a record-scope `bot-block` issue (severity `blocking`) naming an Akamai / Cloudflare / Imperva / similar bot-block detection, the cleaned HTML is the block-page chrome — the page that came back instead of the article. Render the body lightly (a flat segment list is fine; it's evidence of the block, not substantive content). There is nothing to author beyond that: the block source lives on the drafter's own issue, the originating URL is already on the record's `origins[]` block, and the record's derived `description` stays whatever the role-marked artifact fields resolve to — often empty, and honestly so (§4.2.3). There is no frontmatter field to compose a summary into, and no prose to add to the issue either (§4.3.3.2 — "an issue carries no prose").
 
     Don't fabricate the underlying content. Don't remove the drafter's `bot-block` issue. Don't change the drafter's `severity` or `remediation` hint.
 
     ## Paywall pages
 
-    When the cleaned HTML contains a clear lede + early paragraphs but cuts off before the article body — typical patterns: a partial paragraph followed by a "Subscribe to read more" call-to-action, a `<p>` containing literally `Continue reading with a subscription...`, paragraph count dropping abruptly at a soft-bound — the normalizer adds a record-scope `partial-content` issue naming the paywall and the paragraph count captured:
+    When the cleaned HTML contains a clear lede + early paragraphs but cuts off before the article body — typical patterns: a partial paragraph followed by a "Subscribe to read more" call-to-action, a `<p>` containing literally `Continue reading with a subscription...`, paragraph count dropping abruptly at a soft-bound — the normalizer adds a record-scope `partial-content` issue naming the paywall, in structured fields — an issue carries no prose (spec §4.3.3.2):
 
         <!--issue partial-content/paywall
         severity: warning
         resolution: open
         detector: <normalizer-touch-id>
-        description: Capture contains the lede + first N paragraphs; the remainder of the article is gated behind <publisher>'s paywall.
+        publisher: <publisher>
+        paragraphs_captured: N
         remediation: recapture_with_authenticated_session
         -->
 
@@ -204,33 +215,50 @@ normalization:
 
     Scan the `?members` inventory once to plan; then walk the cleaned HTML emitting text and image segments together so reading order is preserved.
 
-    ## Images — resolve and describe on the segment
+    ## Images — resolve and read, transcribe what's recoverable
 
-    Image segments are **body-empty positioning markers** (SPEC §4.3.2.3) — they mark where the image falls in reading order and carry no body. The faithful description of what the image SHOWS lives on the placing segment's own `description:` field (`desc=` in the manifest op) — NOT on the members-block row, which is wholly attested and carries no `description` field at all (spec §4.3.1.4/§12.26). Don't paste the alt text in verbatim — it's a hint, not the description; describe what the image actually shows.
+    Image segments are **body-empty positioning markers, permanent** (spec §4.3.2.2) — they
+    mark where the image falls in reading order and carry no body, and there is no
+    `description:`/`desc=` field on them or on the members-block row (wholly attested, carries
+    no description field at all — spec §4.3.1.4/§12.26) to narrate what the image shows.
+    Resolve and READ every image you surface before deciding what, if anything, is losslessly
+    recoverable from it — never paste the alt text in as if it were a transcription; it's a
+    hint for deciding whether to surface the row (see "Choosing which images to surface"
+    above), nothing more.
 
     Resolve via the segment's own address (the same address that places it against the row):
 
         uv run --directory scripts corpus resolve 'corpus://<hash>?<address>'
 
-    The command prints the cache PNG path to stdout. Read that file with the standard Read tool — you see the image — then write a faithful visible-content description onto the segment. Per SPEC §4.3: describe what's *visible* in the image (shapes, text labels, axes, colors, structural elements, captions inside the image itself), not what the surrounding article text says about it. Don't editorialize image content. Don't infer photographer, location, or subject identity unless the image itself shows a caption that names them.
+    The command prints the cache PNG path to stdout. Read that file with the standard Read
+    tool — you see the image. When a region of it is losslessly transcribable text (a data
+    table, OCR-able prose, code, an equation, a caption printed inside the image), emit a
+    SEPARATE text segment with the matching atom overlay on its opener (`text/data-table`,
+    `text/ocr`, `text/code`, `text/equation`) at the chained sub-address. Where the
+    transcription covers the image's whole own region, it REPLACES the marker (§4.3.2.2) —
+    two segments on one region earn their place only by extracting different information.
+    Layout, composition, and a photo's own visual content are not narrated anywhere: where
+    nothing is losslessly recoverable, the marker alone is the complete, honest rendering, and
+    `corpus resolve` is how a reader reaches it.
 
-    When a region of the image is losslessly transcribable text (a data table, OCR-able prose, code, an equation), emit a SEPARATE text segment with the matching atom overlay on its opener (`text/data-table`, `text/ocr`, `text/code`, `text/equation`) at the chained sub-address — that lossless transcription is a text body, distinct from the image segment's own whole-image description.
+    For survival-relevant images (in-body figures, charts, diagrams), this resolve-and-read
+    pass — deciding what's genuinely transcribable and transcribing it losslessly — is the
+    main interpretive lift.
 
-    For survival-relevant images (in-body figures, charts, diagrams), this resolve + describe pass is the main interpretive lift.
-
-    When the resolver fails (corrupt data URI, unrecognized format, decode error) it raises a `ValueError`. Leave the segment's `description:` empty and add a segment-scope `partial-content` issue (addressed at the image segment) naming the failure mode, then move on.
+    When the resolver fails (corrupt data URI, unrecognized format, decode error) it raises a
+    `ValueError`. Leave the marker body-empty and add a segment-scope `partial-content` issue
+    (addressed at the image segment) naming the failure mode, then move on.
 
     ## Verification
 
     - Top-level body order: frontmatter → fields blocks → the `<!--members-->` block → sections/segments. No member rows interleaved between segments.
     - Top-level structure matches the rule above: H1-rooted sections, H2-rooted sections, or sectionless. No fabricated section breaks; no merged-across-natural-boundary sections.
-    - Every top-level section carries a descriptive `entry:` label (the heading text at the section-bounding level).
-    - No segment inside a section carries an `entry:` (segments are not TOC units when nested; the parser rejects it).
-    - **No segment body is a single heading line** — heading text at the section-bounding level promotes to section entries; deeper headings stay inline at the start of segment bodies.
+    - Every top-level section opens with a `<!--segment structural-->` mark whose body is the heading text at the section-bounding level, verbatim, addressed at the element that carries it. No section or segment carries `entry:`, `title:`, or `description:` — all retired 3.5 (spec §4.3.2.1/§4.3.2.2); the parser rejects them.
+    - **A `text` segment whose entire body is a single heading line with no following prose is miscategorized** — it belongs as a `structural` mark instead. Deeper headings (below the section-bounding level) stay inline at the start of `text` segment bodies rather than becoming their own marks.
     - Segment addresses are `el=` child-index paths (§6.1.1) referencing elements in the raw artifact (lifted from `data-el` annotations) — point paths, sibling ranges `el=<parent>.[<a>-<b>]`, or address lists; never the retired flat `el=N-M`. No `selector=` addresses on new emissions.
     - Every image segment's `address` appears in some row's `address` field (scalar match or list membership) — except resolver-materializable addresses (an artifact self-slice or a lineage-chained reference), which need no row at all (spec §4.3.1.4). An unplaced row (no segment surfaces it) is tolerated, never pruned — the roster is unabridged by design.
-    - Every image segment is body-empty; the visible-content description lives on the segment's OWN `description:` field (never the row) and describes what's *visible* in the image, not what the surrounding text says about it.
-    - `description` is a single physical line in frontmatter, populated for every normalized record.
+    - Every image segment is body-empty, permanent, and carries no `description:` field (retired 3.5 — neither the segment nor the row has one). Losslessly-recoverable content inside it is a separate transcribed sibling segment; a genuine faithfulness defect is a typed issue, never prose on the marker.
+    - No pass writes a frontmatter `description`; it derives automatically from the role-marked artifact fields, and an honest empty result is not a defect.
     - Drafter-emitted issues (e.g. bot-block `partial-content`) are preserved. The normalizer may ADD issues (e.g. paywall) but doesn't remove or modify the drafter's.
 extended_fields:
   title:

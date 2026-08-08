@@ -33,32 +33,32 @@ normalization:
     After draft, a claude-session record carries one `<!--section-->` per
     user-message boundary (`address: turn=<N>`) and 1+ `<!--segment-->` children
     per section (atom `text` or `image`, addressed `jsonpath=<expr>&line=<N>`).
-    The normalizer's job is to refine `description` and to fold the
-    fine-grained turn sections into ~8-15 phase-aligned sections with
-    descriptive entries — same shape as the meeting subclass's topic-based
-    reorganization.
 
-    **`description` is the summary surface.** Like meetings, claude-sessions
-    keep their narrative summary in YAML frontmatter `description`, not as a
-    `## Summary` body header. Write 1-3 sentences naming: what task this
-    session was performing, what artifact/target it was working against, the
-    rough shape of work (which tools, how many turns, any subagent spawns),
-    and how the session concluded (if observable from the events — e.g.
-    "ended with a commit", "terminated on an error", "wrapped with a summary
-    report to the parent"). Stay faithful — describe what HAPPENED, not
-    WHETHER the agent did a good job.
+    **There is no narrative summary to author.** A record's display `description`
+    is derived, never authored (spec §4.2.3) — there is no frontmatter field this
+    pass writes to. Where a reader genuinely needs to know what task a session
+    performed, what it was working against, and how it concluded, that is a
+    ledger claim citing the record, authored against the concept, never a
+    record-side summary.
 
-    **The one interpretive operation: phase-based reorganization.** The
-    drafter emits one section per user-turn — for sessions driven by tool
-    use, that's roughly one section per tool call. A 200-event session
-    yields ~100 sections, way too granular to scan. The normalizer's
-    interpretive licence is exactly one operation: collapse those
-    turn-grained sections into ~8-15 phase sections with descriptive `entry:`
-    labels naming what the agent was doing in each phase (e.g. "Read schema
-    and normalizer guidance", "Walk pages 1-8 with image embeds", "Convert
-    tables 1-5 to markdown", "Final commit and report"). Group by activity,
-    not by tool name. Preserve source order — phases are contiguous slices
-    of the timeline, never reordered.
+    **Phase-based reorganization — OPEN QUESTION, not yet resolved for 3.12.**
+    The drafter emits one section per user-turn — for sessions driven by tool
+    use, that's roughly one section per tool call. A 200-event session yields
+    ~100 sections, way too granular to scan. The prior guidance's answer was to
+    collapse those into ~8-15 phase sections carrying a normalizer-composed
+    `entry:` label naming what the agent was doing in each phase (e.g. "Read
+    schema and normalizer guidance", "Convert tables 1-5 to markdown"). `entry:`
+    retired in 3.5 (spec §4.3.2.1), and its structural-mark successor
+    (§4.3.2.3) is documented as TRANSCRIBING the source's own boundary text —
+    not composing one. A JSONL transcript states no literal "phase" boundary
+    anywhere in its bytes, so a phase label is normalizer-composed judgment,
+    not a transcription, and it is not obvious a structural mark is the right
+    home for it under the current doctrine (grouping + naming reads as exactly
+    the editorial-synthesis move §4.2.3/§4.3.2.2 moved to the ledger elsewhere).
+    Until this is settled: do NOT write `entry:` (compile refuses it); group
+    sections for readability if you judge it genuinely helps, but do not invent
+    a header-field label for the grouping, and flag the tension in your report
+    rather than resolving it unilaterally.
 
     Everything else is faithful preservation. Don't summarize tool inputs or
     outputs beyond what they actually said. Don't drop failed tool calls,
@@ -110,9 +110,7 @@ normalization:
       it records is recomputable from the URI index at any time (§12.4.7).
 
     **Verification.**
-    - Every top-level section carries a descriptive `entry:` label.
-    - No segment inside a section carries an `entry:` (segments are not TOC
-      units when nested; the parser will reject it).
+    - No section or segment carries `entry:` — retired 3.5, the parser rejects it (spec §4.3.2.1/§4.3.2.2). See the open question above for what, if anything, identifies a phase grouping.
     - Image-segment alt text describes what's *visible* in the image, not
       what the surrounding text says about it (the universal faithfulness
       rule).

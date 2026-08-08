@@ -71,22 +71,33 @@ normalization:
     2. **External workbook links.** No equivalent of xlsx's `xl/externalLinks/` part detection.
     3. **Macros / pivot tables.** No equivalent of xlsx's `xl/vbaProject.bin` / `xl/pivotTables/` member checks. The fields `has_macros` and `has_pivot_tables` are not declared on xls records.
 
-    The practical consequence is that the normalizer carries more weight for xls records than for xlsx ones: the drafter renders everything as static `text/data-table`, and the normalizer judges per-sheet whether a sheet is actually a live calculator. When a sheet's purpose is clearly a calculator (a small number of user inputs feeding a derived output, with cells laid out as labeled-parameter columns rather than tabular data): keep the literally-present labels / inputs (and any genuinely fixed table) as `text/data-table`, mark a live-calculation region with a body-empty `text/data-table-dynamic` segment described on its header (never transcribe its volatile values), and put the computation summary on the section's own `description` (that the sheet functions as a calculator is ledger knowledge — a claim citing the section span, never a record-side tag). The `text/data-table-dynamic` overlay already encodes the lost formula layer, so a separate per-sheet `format-loss` issue is not needed.
+    The practical consequence is that the normalizer carries more weight for xls records than for xlsx ones: the drafter renders everything as static `text/data-table`, and the normalizer judges per-sheet whether a sheet is actually a live calculator. When a sheet's purpose is clearly a calculator (a small number of user inputs feeding a derived output, with cells laid out as labeled-parameter columns rather than tabular data): keep the literally-present labels / inputs (and any genuinely fixed table) as `text/data-table`, and mark a live-calculation region with a body-empty `text/data-table-dynamic` segment, permanent (never transcribe its volatile values, and there is no header field to narrate it with — retired 3.5, spec §4.3.2.2). That the sheet functions as a calculator is ledger knowledge — a claim citing the section span, never a record-side tag, and never a description field, which doesn't exist. The `text/data-table-dynamic` overlay already encodes the lost formula layer, so a separate per-sheet `format-loss` issue is not needed.
 
     Use the artifact's surrounding context to inform the call. CDM/UNFCCC methodology calculators almost always have sheets named `INPUTS`, `OPTION A`/`OPTION B`/…, `Given_parameters`, `Requirements for options` — those are calculator sections where cached values are post-input snapshots and the formulas in the source artifact carry the methodology. Reference / static-data sheets in the same workbook (`INTRODUCTION`, `PROJECT TITLE`, `Sheet1`) stay static `text/data-table`.
 
     ## Sections — sheet-driven grouping (SPECv2 §4.3)
 
-    An xls body's top-level blocks are sections, one per visible worksheet. The drafter emits:
+    An xls body's top-level blocks are sections, one per visible worksheet, each a BARE
+    `<!--section document-->` opener — `form/document` declares no `extended_fields` (spec
+    §7.8), and a section's own address is derived from its children, never stored (§4.3.2.1).
+    The sheet's own tab name is not a header field — it is TRANSCRIBED, the first child of
+    the span, as a structural byte-mark:
 
-    - `address: sheet=<worksheet-name>` — the worksheet's tab name, in workbook order.
-    - `entry: <worksheet-name>` — written by the drafter directly; the sheet name IS the TOC label.
+    - `<!--segment structural addr=sheet=<name> level=1-->`, body = the tab name verbatim
+      (spec §4.3.2.3). This is what a derived TOC reads; there is no `entry:` field any more.
 
-    Each section's child segment is the cell-grid render, addressed at `sheet=<name>` (same as the section). The drafter emits one whole-sheet segment, but the normalizer may carve a sheet into multiple regions — e.g. a calculator sheet's static parameter block (`text/data-table`) plus its live value matrix (`text/data-table-dynamic`) — narrowing each segment with a cell range: `sheet=<name>&bbox=<A1-range>` (e.g. `sheet=INPUTS&bbox=A6:E11`). Chart sheets / embedded objects / dashboard shapes are not surfaced by xlrd and would require olefile-level inspection; surface those as a `format-loss` issue if you encounter one.
+    Each section's remaining child segment is the cell-grid render, addressed at `sheet=<name>`
+    (the same axis, narrowed with `&bbox=<A1-range>` for a carved region — e.g.
+    `sheet=INPUTS&bbox=A6:E11`). The drafter emits one whole-sheet segment, but the normalizer
+    may carve a sheet into multiple regions — e.g. a calculator sheet's static parameter block
+    (`text/data-table`) plus its live value matrix (`text/data-table-dynamic`). Chart sheets /
+    embedded objects / dashboard shapes are not surfaced by xlrd and would require olefile-level
+    inspection; surface those as a `format-loss` issue if you encounter one.
 
-    ### In-section segments don't carry `entry:`
-
-    Per SPEC §4.3.3 (nesting admitted 2026-07-17): a section's child segments MAY carry `entry:` leaf labels, though for sheets the sheet name conventionally lives on the section header (`address: sheet=<name>` / `entry: <name>`) — and, once the section/segment shape is in place, the section opener asserts `document` (`<!--section document ...-->`, see "Asserting the structural form" below); child segments otherwise identify themselves via address and their atomic overlay (`text/data-table`, `text/data-table-dynamic`).
+    Once the section/segment shape above is in place, the section opener asserts `document`
+    (`<!--section document-->`, see "Asserting the structural form" below); child segments
+    identify themselves via address and their atomic overlay (`text/data-table`,
+    `text/data-table-dynamic`) — never an `entry:` field, retired 3.5.
 
     ## Refining transcribed cell-grid segments — rendering decision first, then cleanup
 
@@ -106,15 +117,15 @@ normalization:
 
     ## Cover every populated block — no silent drops
 
-    When you carve a sheet into multiple `bbox` regions, account for **every populated cell**: it falls inside some `text/data-table` segment's `bbox` (transcribed losslessly), inside a `text/data-table-dynamic` marker's range (a live region, described not transcribed), or is a label folded into the section `description`. Don't transcribe the obvious tables and silently skip a smaller populated block off to the side — that is a faithfulness loss. Cross-check against a fresh ephemeral draft (the one-liner above): its single whole-sheet body is the full used range; the union of your segment `bbox` ranges should cover every non-empty cell it shows.
+    When you carve a sheet into multiple `bbox` regions, account for **every populated cell**: it falls inside some `text/data-table` segment's `bbox` (transcribed losslessly), inside a `text/data-table-dynamic` marker's range (a live region, body-empty and permanent), or inside its own small transcribed label segment (printed cell text is content like any other — transcribe it, never fold it into a description, which doesn't exist). Don't transcribe the obvious tables and silently skip a smaller populated block off to the side — that is a faithfulness loss. Cross-check against a fresh ephemeral draft (the one-liner above): its single whole-sheet body is the full used range; the union of your segment `bbox` ranges should cover every non-empty cell it shows.
 
     ## Switching to HTML tables
 
     Markdown table syntax cannot express merged cells, nested multi-level headers, very wide tables, or cells with internal newlines / markdown-significant characters. Use an HTML `<table>` inside the segment body for those cases. xlrd does NOT surface merge information by default; if you suspect merges in the source, the segment-scope `format-loss / minor` issue should note that merge-fidelity wasn't verified. The segment's overlay (`text/data-table` or `text/data-table-dynamic`) is unchanged by the switch.
 
-    ## Authoring the title
+    ## There is no title to author
 
-    `title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries NO title candidate at all; the frontmatter `title` stays empty through draft. Author it from scratch — the workbook's actual purpose, derived from sheet content, sheet names, or the methodology context. Faithfulness applies — do not invent a title the workbook itself does not support.
+    `title` is NOT in the xls drafter's output — xlrd doesn't expose the OLE2 SummaryInformation stream's title field. So an xls record carries no artifact-layer title candidate at all, and the record's derived display title resolves empty — honestly, not as a defect (spec §4.2.3). There is no frontmatter field to write one into, and no pass authors one from the workbook's purpose or sheet names: a record deriving empty is a fact about the schemas, not something this pass fixes by composing text. Where a human-readable name genuinely matters, that is a ledger claim against the concept the workbook evidences, never a record-side field.
 
     ## Asserting the structural form
 
@@ -122,11 +133,11 @@ normalization:
 
     ## What a sheet IS — ledger knowledge, not a record assertion
 
-    The 1.0 `spreadsheet` composite overlay (subclasses `simple-table`, `calculator`, `dataset`, `dashboard`) is a removed 1.0 mechanism and stays removed (SPEC §7.4) — see xlsx.yaml's section of the same name for the full reasoning; it applies unchanged to xls. The record-side moves are the `form/document` assertion above and each section's/segment's disclosed `description:`; what a sheet functions as (a calculator, a dashboard, a plain dataset) is a ledger claim citing the record's span, never a record-side tag.
+    The 1.0 `spreadsheet` composite overlay (subclasses `simple-table`, `calculator`, `dataset`, `dashboard`) is a removed 1.0 mechanism and stays removed (SPEC §7.4) — see xlsx.yaml's section of the same name for the full reasoning; it applies unchanged to xls. The record-side move is the `form/document` assertion above, structural only; what a sheet functions as (a calculator, a dashboard, a plain dataset) is a ledger claim citing the record's span, never a record-side tag and never a description field, which doesn't exist.
 
     ## Faithfulness reminder
 
-    Cell values surfaced by xlrd are cached computed values — the same Excel would display. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's own `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
+    Cell values surfaced by xlrd are cached computed values — the same Excel would display. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker, permanent (the snapshot values are not transcribed, and there is no header field to summarize the computation with) — never paraphrase a cached number as if it were an input.
 extended_fields:
   sheet_names:
     type: list[string]

@@ -20,7 +20,8 @@ applies_to:
   - video/hevc
 # (3.3, §7.1) A formless leaf (above) is exactly a disposition: work format with no
 # faithful markdown shape — the terminal-contract default follows. An origin overlay's
-# own `form:` (§7.2) — or a per-record asserted whole-record section — overrides either way.
+# own `form:` (§7.2), or a per-record asserted section, overrides either way: a stamped
+# per-record judgment outranks the class default (§7.8, governing-contract precedence).
 #
 # (3.11) The default stays terminal, and it speaks only about the AUTHORED layer: the track's
 # DERIVED body carries one body-empty `image` marker per scene span under its stamped

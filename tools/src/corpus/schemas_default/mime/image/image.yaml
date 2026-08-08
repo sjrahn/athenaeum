@@ -13,8 +13,9 @@ artifact_kind: self_contained
 # with no faithful markdown shape — the bytes ARE the terminal rendering. Declared once at
 # the family-base rung (every subtype below is a still, none is disposition: manifest, so
 # there is nothing for this default to wrongly shadow) rather than per-subtype. An origin
-# overlay's own `form:` (§7.2) — or a per-record asserted whole-record section, e.g. a scan
-# recognized as a real document shape — overrides this default either way (§7.8).
+# overlay's own `form:` (§7.2), or a per-record asserted section — e.g. a scan recognized
+# as a real document shape — overrides this default either way: a stamped per-record
+# judgment outranks the class default (§7.8, governing-contract precedence).
 form:
   id: passthrough
 address_scheme:
