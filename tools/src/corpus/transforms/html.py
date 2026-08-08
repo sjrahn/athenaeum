@@ -137,8 +137,9 @@ def iter_element_children(tag: Tag) -> list[Tag]:
 def element_path(tag: Tag, root: Tag) -> str | None:
     """The §6.1.1 child-index path of `tag` walked up to `root`, as the canonical
     dotted string (no `el=` key). None when `tag` is not under `root` (or IS `root`:
-    the root itself has no path — a whole-content claim is the §4.3.2.1 addressless
-    whole-record section, never an address)."""
+    the root itself has no path — a whole-transport claim is the ABSENT address
+    (§4.3.2.2: address optional, absence naming the whole transport), never a path
+    that names the root)."""
     parts: list[int] = []
     node = tag
     while node is not root:

@@ -146,10 +146,10 @@ def chapter_structural_segments(
 ) -> list[dict[str, Any]]:
     """`_sidecar.py`'s yt-dlp `chapters[]` (`[{start, end?, title}, …]`) → the media
     container's chapter byte-marks (§4.3.2.3's worked example): one `<!--segment
-    structural-->` per chapter, addressed `time=<HH:MM:SS>`, `level: 1`, `mark:` the
-    chapter's own title. This is the **sidecar path** (§12.20 item 2(b)) — the mp4 chapter
-    atom (`chpl`/`chap`-track) path is a named gap this increment does not implement; see the
-    module notes in `draft/video.py`.
+    structural-->` per chapter, addressed `time=<HH:MM:SS>`, `level: 1`, carrying the
+    chapter's own title as its text. This is the **sidecar path** (§12.20 item 2(b)) — the
+    mp4 chapter atom (`chpl`/`chap`-track) path is a named gap this increment does not
+    implement; see the module notes in `draft/video.py`.
 
     None/empty input returns an empty list (no chapters declared, or the sidecar path found
     none)."""
@@ -165,6 +165,11 @@ def chapter_structural_segments(
             {
                 "address": f"time={_format_timecode(float(start))}",
                 "level": 1,
+                # `"mark"` here is this INTERMEDIATE producer dict's key, not a stored
+                # header field: `derive._apply_structural_segments` (derive.py ~178-183)
+                # reads it straight into `Segment(body=...)` — the mark's text lives in the
+                # segment BODY (spec §4.3.2.3, 3.8 §12.32), never a scalar header. Nothing
+                # here writes `mark:` onto a record.
                 "mark": str(title),
             }
         )

@@ -262,8 +262,10 @@ class Section:
         `block=`, `sheet=`; `el=` under the 3.6 path algebra when `el_paths` is True — the
         caller reads the record's `addressing:` stamp, §6.1.1). The single place a section
         span is computed: drafters build sections this way instead of hand-formatting the
-        range, and the `section-address-span` lint rule re-derives the same value to guard
-        drift.
+        range. *(3.7, §12.29)* Nothing stores the span any more — `iter_blocks` derives a
+        Section's `address` from its children on every parse, so there is no second value
+        for a lint rule to compare against; the `section-address-span` rule this factory
+        once fed is retired, and this IS now the only place the span is computed at all.
 
         `segments` must be non-empty and share one registered scheme. Raises ValueError when
         the span can't be derived (empty, heterogeneous, or an unrecognized/temporal scheme)
@@ -418,8 +420,10 @@ def section_address(
     integer value means different things under the two grammars, so the record, never
     the value, decides.
 
-    The single source of truth for a section span: `Section.spanning` builds with it and the
-    `section-address-span` lint rule re-derives with it to catch drift."""
+    The single source of truth for a section span: `Section.spanning` builds with it, and
+    `iter_blocks` re-derives with it on every parse (§12.29) — a section's `address` is
+    never stored, so this function IS the derivation, not a value a retired lint rule
+    (`section-address-span`, gone at 3.7) once checked against a stored one."""
     families: dict[str, list[str]] = {}
     for seg in children:
         for addr in _iter_addr_strings(seg.address):

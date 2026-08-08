@@ -231,21 +231,36 @@ def test_generic_title_verdicts_go_but_real_issues_stay(tmp_path):
 
 
 def test_the_neutrality_gate_holds_a_rewrite_that_would_lint_worse(tmp_path):
-    """`text/data-table-dynamic` opts out of lossless (`enables_lossless: false`), so it is
-    a body-empty marker whose `description` `segment-description-required` still asks for.
-    Dropping it raises that rule's count — the gate holds the record rather than trading a
-    retired field for a new finding (the §12.28 lesson: the whole rule set, deliberately)."""
+    """ATH-CORPUS 3.12 (#153): the fixture rule this test pinned against —
+    `segment-description-required` — is itself retired (segment/section `description:` has
+    no successor, spec §4.2.3/§12.27); the GATE it exercises is still spec law (§12.27's own
+    closing clause) and stays pinned here against a rule that is still live.
+
+    A section's retired `title:` (§4.3.2.1) rides `Section.extra["title"]` (`retired.
+    SECTION_EXTRA_FIELDS`) — the sweep clears it unconditionally along with `description`/
+    `entry`. A corpus-local form overlay that (mis)declares `title` as a required envelope
+    field turns that clearing into a new `form-envelope-missing` error: 0 findings before,
+    1 after. The gate must hold the record rather than trade a retired field for a new one."""
     root, rf = _record(
         tmp_path,
-        [Section(form="document", address="el=1.1", segments=[
-            Segment(atom="text", overlay="text/data-table-dynamic", address="el=1.1.2",
-                    description="A live table the capture could not resolve."),
-        ])],
+        [Section(
+            form="pinned-envelope", address="el=1.1",
+            segments=[Segment(atom="text", address="el=1.1.2", body="One.")],
+            extra={"title": "Retired residue an overlay still demands"},
+        )],
         canonical=False,
     )
+    form_dir = root / "schema" / "form"
+    form_dir.mkdir(parents=True, exist_ok=True)
+    (form_dir / "pinned-envelope.yaml").write_text(
+        "form_id: pinned-envelope\nkind: form\nchecks:\n  envelope_required: [title]\n",
+        encoding="utf-8",
+    )
+    schemas._sources.cache_clear()
+    schemas.load_form_overlay.cache_clear()
     report = drop_retired.sweep_record(rf, root)
     assert report.changed is False
-    assert "segment-description-required" in (report.hold or ""), report.hold
+    assert "form-envelope-missing" in (report.hold or ""), report.hold
 
 
 @pytest.mark.parametrize("field_name", ["description", "entry"])

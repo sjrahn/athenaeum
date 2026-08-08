@@ -20,10 +20,8 @@ import argparse
 import sys
 
 from corpus import (
-    content_hash,
     paths,
     recordbuild,
-    records,
     touches,
 )
 from corpus._cli._common import add_corpus_root_arg
@@ -76,21 +74,27 @@ def derive_record(
 ) -> None:
     """Re-derive `post`'s mechanical content from its retained artifact, **in place**: run the
     matching drafter (via the shared `corpus.derive.build_content_zone` core), apply the
-    metadata-zone result, emit + grammar-validate the content zone, apply the per-host
-    canonical content-scoping override, and append the draft touch. The record stays
-    formless (§4.1) — no form is stamped here: a re-derived mechanical body with no
-    governing form is exactly the grandfathered `rendered` state (§12.18 step 3), superseded
-    by its next pass. No dedup and no write — the caller owns those. `post` must have no
-    stored rendering yet. The transitional core shared by `corpus draft` and the
-    `redraft_record` test helper (§12.19). Raises `DraftError` (missing schema / drafter) or
-    `ArtifactMissing` (artifact not local)."""
+    metadata-zone result, emit + grammar-validate the content zone, and append the draft
+    touch. The record stays formless (§4.1) — no form is stamped here: a re-derived
+    mechanical body with no governing form is exactly the grandfathered `rendered` state
+    (§12.18 step 3), superseded by its next pass. No dedup and no write — the caller owns
+    those. `post` must have no stored rendering yet. The transitional core shared by
+    `corpus draft` and the `redraft_record` test helper (§12.19). Raises `DraftError`
+    (missing schema / drafter) or `ArtifactMissing` (artifact not local).
+
+    *(3.12 reconciliation, #153)* Two retired-field write sites came out of this path: the
+    per-host canonical content-scoping override (it wrote frontmatter `canonical:`, retired
+    3.5 §4.2.1 — `derive.apply_drafter_result` already discards a drafter's computed
+    canonical, so this was the field's only surviving writer) and the overlay-declared
+    dependent-reference emission (`references.emit_overlay_references` wrote `reference`
+    context blocks, a namespace retired 3.5 §4.3.3.3). Neither has a successor here; the
+    `references` module and `capture.references` overlay declarations are unaffected — only
+    this retired draft core's call into them is gone."""
     from corpus.derive import produces_body, strip_attested_layer
 
-    build, result, mt_schema, binary_file, mime_schema_id = build_content_zone(
+    build, result, mt_schema, _binary_file, mime_schema_id = build_content_zone(
         post, corpus_root, fingerprint_cli=fingerprint_cli, messages=messages
     )
-    media_type = records.media_type_for(post)
-    canonical_algo = (mt_schema.get("canonical_strategy") or {}).get("algo")
 
     # Idempotent attest: strip any attested layer already present (a 3.0 ingest attests at
     # stub time) before re-applying, so a transitional draft never doubles the roster/issues.
@@ -110,35 +114,6 @@ def derive_record(
     # (spec §7.1). `finish` re-parses to surface grammar errors before any write.
     if produces_body(mt_schema):
         recordbuild.finish(build)
-
-    # Opt-in per-host canonical content-scoping: if the record's origin host declares a
-    # `canonical.content_selector` in its overlay, recompute the canonical hash over just
-    # that content region, overriding the drafter's whole-document hash. This makes the
-    # same article reached by different links (different title/breadcrumb framing) share a
-    # canonical → collapse via content-dedup. Absent the overlay section, the drafter's
-    # whole-document canonical stands (no behaviour change for other corpora).
-    if canonical_algo and post.metadata.get("canonical"):
-        from corpus.capture import recipes
-
-        selector = recipes.canonical_content_selector_for_url(
-            corpus_root, records.primary_origin_uri(post)
-        )
-        if selector:
-            post.metadata["canonical"] = records.format_hash(
-                canonical_algo.split("-", 1)[0],
-                content_hash.compute(canonical_algo, binary_file, content_selector=selector),
-            )
-
-    # Opt-in overlay-declared dependent references (spec §4.3.3.3 / §7.2): if the record's
-    # origin host declares `capture.references` rules, emit a `provenance: auto` `reference`
-    # context block for each declared dependent link in the page (a PDP's product manual,
-    # etc.) at tier 2 (`source_url`) — tier 3 is a read-time edge, never stored (spec
-    # §4.4.5). HTML-only (the rules match a DOM); pure opt-in (no rules → nothing
-    # emitted); idempotent under `redraft` (re-stub clears context blocks first).
-    if media_type == "text/html":
-        from corpus import references
-
-        references.emit_overlay_references(post, corpus_root, binary_file)
 
     # Append the draft touch. A re-derived mechanical body with no governing form is a
     # grandfathered materialized derivation (§4.1's `rendered` state, §12.18 step 3) — the

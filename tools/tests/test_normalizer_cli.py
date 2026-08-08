@@ -37,12 +37,10 @@ def _record(root: Path) -> None:
     post.content = segments.emit(
         [
             segments.Segment(atom="text", address="el=1", body="sam seder news", entry="News"),
-            # a second, entry-LESS top block beside a labeled one: partial labeling is the
-            # 3.0 entry-missing trigger (uniformly bare zones are the well-formed default)
             segments.Segment(atom="text", address="el=2", body="more news"),
         ]
     )
-    post.metadata["status"] = "draft"
+    post.metadata["status"] = "draft"  # a legacy 3.0 key; `dump()` drops it on write (§4.1)
     records.dump(post, paths.record_path(root, RID))
 
 
@@ -150,9 +148,9 @@ def test_overlay_unknown_is_error(tmp_path):
 
 def test_lint_json(tmp_path, capsys):
     root = _corpus(tmp_path)
-    _record(root)  # a draft segment with no entry → entry-missing warning
+    _record(root)  # video/mp4 stands `disposition: manifest` and carries a rendering
     dispatch(["lint", RID, "--json", "--corpus-root", str(root)])
     findings = json.loads(capsys.readouterr().out)  # a single JSON array, not NDJSON
     assert isinstance(findings, list) and findings
     assert all({"rule_id", "severity", "message", "record_id"} <= set(o) for o in findings)
-    assert any(o["rule_id"] == "entry-missing" for o in findings)
+    assert any(o["rule_id"] == "container-carries-rendering" for o in findings)

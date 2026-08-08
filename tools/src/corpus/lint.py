@@ -126,55 +126,6 @@ def _rule_legacy_status(post, blocks, root) -> Iterator[Finding]:
     )
 
 
-def _rule_editorial_override_shape(post, blocks, root) -> Iterator[Finding]:
-    """*(3.2)* Frontmatter `title:`/`description:` are OPTIONAL overrides of the derived
-    editorial pair (spec §4.2.1, §4.2.3), not a required together-vouch — the retired
-    `is_authored` strict-AND is gone, and a record carrying exactly one is a legal, lone
-    editorial assertion, not a defect. What's still worth flagging: an explicit empty-string
-    `''` value, a 3.1-era placeholder (the old required-vouch shape) that `dumps()` now
-    drops on the record's next write (spec §12.21) — info, mirroring the
-    `frontmatter-legacy-status` precedent. `description` is separately capped at ~600 chars
-    (1–3 sentences) when present."""
-    for key in ("title", "description"):
-        raw = post.metadata.get(key)
-        if isinstance(raw, str) and raw == "":
-            yield Finding(
-                rule_id="editorial-override-placeholder",
-                severity="info",
-                message=(
-                    f"frontmatter `{key}: ''` is a 3.1-era placeholder (spec §12.21) — "
-                    f"`dumps()` drops it on the record's next write; safe to ignore or strip."
-                ),
-            )
-    desc = str(post.metadata.get("description") or "").strip()
-    if len(desc) > 600:
-        yield Finding(
-            rule_id="description-too-long",
-            severity="warning",
-            message=f"`description` is {len(desc)} chars; aim ≤600 (1–3 sentences).",
-        )
-
-
-def _rule_editorial_override_redundant(post, blocks, root) -> Iterator[Finding]:
-    """*(3.2, §12.21 step 1)* A frontmatter override whose value EQUALS the record's
-    derived value computed WITHOUT the override is noise, not an assertion (spec §4.2.1)."""
-    for role in ("title", "description"):
-        override = str(post.metadata.get(role) or "").strip()
-        if not override:
-            continue
-        beneath = _records.derived_editorial_field(post, root, role, include_override=False)
-        if beneath.value and beneath.value == override:
-            yield Finding(
-                rule_id="editorial-override-redundant",
-                severity="warning",
-                message=(
-                    f"frontmatter `{role}` override equals the record's derived {role} "
-                    f"(layer: {beneath.layer}) — noise, not an assertion (spec §4.2.1); "
-                    f"drop the override."
-                ),
-            )
-
-
 def _rule_transport_format(post, blocks, root) -> Iterator[Finding]:
     """`transport:` is `<algo>:<hex>` or list thereof (spec §4.2)."""
     raw = post.metadata.get("transport")
@@ -190,21 +141,6 @@ def _rule_transport_format(post, blocks, root) -> Iterator[Finding]:
                     f"`transport` entry {v!r} is not `<algo>:<hex>` "
                     f"(e.g. `sha256:abc…`, spec §4.2)."
                 ),
-            )
-
-
-def _rule_canonical_format(post, blocks, root) -> Iterator[Finding]:
-    """`canonical:` is `<algo>:<hex>` or list thereof (spec §4.2)."""
-    raw = post.metadata.get("canonical")
-    if raw is None:
-        return
-    values = raw if isinstance(raw, list) else [raw]
-    for v in values:
-        if not isinstance(v, str) or not _HASH_RE.match(v):
-            yield Finding(
-                rule_id="canonical-format",
-                severity="error",
-                message=f"`canonical` entry {v!r} is not `<algo>:<hex>`.",
             )
 
 
@@ -372,6 +308,61 @@ def _rule_embed_format(post, blocks, root) -> Iterator[Finding]:
                     f"(spec §4.3.1.4)."
                 ),
             )
+
+
+def _rule_member_row_unknown_key(post, blocks, root) -> Iterator[Finding]:
+    """The `<!--members-->` row is a CLOSED four-key shape — `address`, `media_type`,
+    `transport`, `bytes` — and an unrecognized key is a validation error (spec §4.3.1.4):
+    a closed shape needs a closed check, or the roster silently re-accumulates the
+    descriptive payload 3.4 moved out of it into the `members` derivation.
+
+    `address`/`media_type`/`transport` are popped into their own keys by the reader
+    (`records._structure_member_rows`), so `bytes` is the only key a well-formed row's
+    `fields` dict may still carry — anything else there is residue that survived a write
+    path other than the strict one. `bytes` itself is required, and must be an int: it is
+    the row's one field whose derivation is not uniformly cheap (§4.3.1.4), so a row that
+    omits or mistypes it is exactly the case the admission rule was written to keep out.
+
+    Legacy pre-3.4 `<!--embed-->` rows are EXEMPT (spec §12.26): they are read-only, still
+    carry whatever the retired per-asset block stored, and are not this check's business.
+    `post.metadata["_members_block"]` records which form the record was read from — False
+    only when legacy per-asset blocks were actually read."""
+    if not post.metadata.get("_members_block", True):
+        return
+    for idx, row in enumerate(_records.iter_members(post), 1):
+        addr = _addr_str(row.get("address"))
+        fields = row.get("fields") or {}
+        unknown = sorted(k for k in fields if k != "bytes")
+        if unknown:
+            yield Finding(
+                rule_id="member-row-unknown-key",
+                severity="error",
+                message=(
+                    f"members row #{idx} carries unknown key(s) {unknown} — the row is "
+                    f"closed to {{address, media_type, transport, bytes}} (spec §4.3.1.4)."
+                ),
+                address=addr,
+                fields={"unknown_keys": unknown},
+            )
+        if "bytes" not in fields:
+            yield Finding(
+                rule_id="member-row-unknown-key",
+                severity="error",
+                message=f"members row #{idx} is missing required `bytes` (spec §4.3.1.4).",
+                address=addr,
+            )
+        else:
+            bytes_val = fields["bytes"]
+            if isinstance(bytes_val, bool) or not isinstance(bytes_val, int):
+                yield Finding(
+                    rule_id="member-row-unknown-key",
+                    severity="error",
+                    message=(
+                        f"members row #{idx} `bytes: {bytes_val!r}` is not an int "
+                        f"(spec §4.3.1.4)."
+                    ),
+                    address=addr,
+                )
 
 
 # ---------- content-zone (sections/segments) rules ---------- #
@@ -894,24 +885,6 @@ def _rule_classify_retired(post, blocks, root) -> Iterator[Finding]:
 # ---------- normalizer-support rules (luklacloud-intent parity) ---------- #
 
 
-def _rule_description_too_long(post, blocks, root) -> Iterator[Finding]:
-    """An over-long description usually signals interpretation leaking into the summary."""
-    desc = (post.metadata.get("description") or "").strip()
-    if not desc:
-        return
-    words = len(desc.split())
-    if words > 800:
-        yield Finding(
-            rule_id="description-too-long",
-            severity="warning",
-            message=(
-                f"description is {words} words; consider tightening (>800 is usually a "
-                f"signal of over-detail)."
-            ),
-            fields={"word_count": words},
-        )
-
-
 def _rule_mime_extension_mismatch(post, blocks, root) -> Iterator[Finding]:
     """The local artifact's extension should match the artifact-block MIME. Only flags when a
     sibling binary of a *different* extension is present (an unhydrated artifact is silent)."""
@@ -950,38 +923,6 @@ def _rule_mime_extension_mismatch(post, blocks, root) -> Iterator[Finding]:
     )
 
 
-def _rule_entry_missing(post, blocks, root) -> Iterator[Finding]:
-    """PARTIAL authored labeling only (3.0). `entry` on a top-level block is an OPTIONAL
-    authored leaf label (§4.3.2.2), and a uniformly bare flat content zone is the default,
-    well-formed state (§4.3.2.1) — never flagged. What IS a defect worth surfacing: a
-    half-built authored TOC, where some top-level content blocks carry an `entry` and
-    others do not — warning, never error. Structural segments are excluded from the count:
-    their `entry:` is the source's own mark text, optional by §4.3.2.3, not an authored
-    label. A single-content-block record is exempt as before (its own TOC line)."""
-    content = [
-        (i + 1, blk)
-        for i, blk in enumerate(blocks)
-        if getattr(blk, "atom", None) != _segments._STRUCTURAL
-    ]
-    if len(content) <= 1:
-        return
-    missing = [o for o, blk in content if not (getattr(blk, "entry", None) or "").strip()]
-    if not missing or len(missing) == len(content):
-        return  # fully labeled, or the uniformly-bare default state — both well-formed
-    ords = ", ".join(str(o) for o in missing[:20])
-    more = f" (+{len(missing) - 20} more)" if len(missing) > 20 else ""
-    yield Finding(
-        rule_id="entry-missing",
-        severity="warning",
-        message=(
-            f"{len(missing)} of {len(content)} top-level content blocks are missing `entry` "
-            f"while others carry one — a half-built authored TOC. Backfill or clear: "
-            f"{ords}{more}."
-        ),
-        fields={"missing_ordinals": missing[:20]},
-    )
-
-
 def _iter_segments_labelled(blocks):
     for top_i, blk in enumerate(blocks, 1):
         if isinstance(blk, _segments.Section):
@@ -993,16 +934,11 @@ def _iter_segments_labelled(blocks):
 
 def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding]:
     """Body ⟺ lossless (spec §4.3.2.3). A `text` segment whose atomic overlay opts out of
-    lossless (`enables_lossless: false`, e.g. `text/data-table-dynamic`) is a body-empty
-    marker — it must carry a `description`, not a transcribed body."""
-    # *(3.2, re-keyed off `is_authored`'s retirement)* `is_formed` (not `has_stored_rendering`)
-    # is the honest severity signal here: by the time this loop reaches a segment at all, the
-    # record necessarily has a stored rendering (the segment IS one) — `has_stored_rendering`
-    # would be tautologically true and collapse the info/warning distinction. Under 3.2 the
-    # vouch rides the form (§4.1), so a record under a named form contract is the one that
-    # shouldn't have gaps (warning); a record still rendering formless/grandfathered content
-    # with no governing contract yet is expected to (info).
-    formed = _records.is_formed(post)
+    lossless (`enables_lossless: false`, e.g. `text/data-table-dynamic`) must stay a
+    body-empty marker: the segment cannot narrate its own region (spec §4.2.3, §4.3.1.4 —
+    no field survived 3.5 for a segment to carry that narration in). Where the region's
+    content genuinely matters and can't be losslessly rendered, the honest residue is a
+    typed `issue` block at that address (spec §12.27, §4.3.3.2), not a description field."""
     for label, seg in _iter_segments_labelled(blocks):
         if seg.atom != "text" or not seg.overlay:
             continue
@@ -1011,72 +947,22 @@ def _rule_segment_body_lossless_contract(post, blocks, root) -> Iterator[Finding
         if not isinstance(overlay, dict) or overlay.get("enables_lossless") is not False:
             continue
         body = (seg.body or "").strip()
-        desc = (seg.description or "").strip()
-        if body:
-            snippet = body if len(body) <= 80 else body[:77] + "…"
-            yield Finding(
-                rule_id="segment-body-requires-lossless",
-                severity="error",
-                message=(
-                    f"{label} (`{seg.overlay}`) carries a body, but its overlay is non-lossless "
-                    f"(`enables_lossless: false`) — it must be a body-empty marker with what the "
-                    f"region is in the segment `description`, not a transcription. "
-                    f"Body preview: {snippet!r}"
-                ),
-                address=_addr_str(seg.address),
-                fields={"overlay": seg.overlay, "body_chars": len(body)},
-            )
-        elif not desc:
-            yield Finding(
-                rule_id="segment-description-required",
-                severity="warning" if formed else "info",
-                message=(
-                    f"{label} (`{seg.overlay}`) is a non-lossless body-empty marker with no "
-                    f"`description` — describe what the region is/computes on the segment header."
-                ),
-                address=_addr_str(seg.address),
-                fields={"overlay": seg.overlay},
-            )
-
-
-def _rule_section_description_redundant(post, blocks, root) -> Iterator[Finding]:
-    """A SPAN-scope section whose every child segment is lossless does not need a
-    `description` — the segments already hold the content faithfully (advisory, info).
-    *(3.2)* A WHOLE-RECORD section (no `address`) is exempt: its `description:` header
-    field is the record's editorial vouch (spec §4.2.3, §4.3.2.1 — the vouch's home),
-    summarizing the whole artifact, never a restatement of what its lossless children
-    already hold."""
-
-    def _is_lossless(seg: _segments.Segment) -> bool:
-        if seg.atom != "text":
-            return False
-        if not seg.overlay:
-            return True
-        atom, _, sub = str(seg.overlay).partition("/")
-        overlay = _schemas.load_atomic_overlay(root, atom, sub or atom)
-        if not isinstance(overlay, dict):
-            return True
-        return overlay.get("enables_lossless") is not False
-
-    for top_i, blk in enumerate(blocks, 1):
-        if not isinstance(blk, _segments.Section):
+        if not body:
             continue
-        # *(3.7)* No whole-record exemption: there is no whole-record section to exempt, and
-        # the vouch this rule was written around retired in 3.5 (§4.2.3, §12.29).
-        if not (blk.description or "").strip() or not blk.segments:
-            continue
-        if all(_is_lossless(child) for child in blk.segments):
-            yield Finding(
-                rule_id="section-description-redundant",
-                severity="info",
-                message=(
-                    f"section {top_i} (`{_addr_str(blk.address)}`) carries a `description` but "
-                    f"every child segment is lossless — the segments already hold the content. A "
-                    f"section `description` is for lossy/interpretive sections; drop it here."
-                ),
-                address=_addr_str(blk.address),
-                fields={"segment_count": len(blk.segments)},
-            )
+        snippet = body if len(body) <= 80 else body[:77] + "…"
+        yield Finding(
+            rule_id="segment-body-requires-lossless",
+            severity="error",
+            message=(
+                f"{label} (`{seg.overlay}`) carries a body, but its overlay is non-lossless "
+                f"(`enables_lossless: false`) — leave the marker body-empty; if the region's "
+                f"content matters and can't be losslessly rendered, the honest residue is a "
+                f"typed `issue` block at this address (spec §12.27, §4.3.3.2), not a "
+                f"transcription. Body preview: {snippet!r}"
+            ),
+            address=_addr_str(seg.address),
+            fields={"overlay": seg.overlay, "body_chars": len(body)},
+        )
 
 
 def _rule_segment_mode_deprecated(post, blocks, root) -> Iterator[Finding]:
@@ -1834,11 +1720,7 @@ def _rule_terminal_stored_rendering(post, blocks, root) -> Iterator[Finding]:
 _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("id-format", _rule_id_format),
     ("frontmatter-legacy-status", _rule_legacy_status),
-    ("editorial-override-placeholder", _rule_editorial_override_shape),
-    ("description-too-long", _rule_editorial_override_shape),
-    ("editorial-override-redundant", _rule_editorial_override_redundant),
     ("transport-format", _rule_transport_format),
-    ("canonical-format", _rule_canonical_format),
     ("perceptual-format", _rule_perceptual_format),
     ("visibility-invalid", _rule_visibility_invalid),
     ("touch-format", _rule_touch_format),
@@ -1846,6 +1728,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("origins-empty", _rule_origins_empty),
     ("origin-uri-shape", _rule_origin_uri_shape),
     ("embed-format", _rule_embed_format),
+    ("member-row-unknown-key", _rule_member_row_unknown_key),
     ("atom-invalid", _rule_atom_invalid),
     ("segment-non-text-with-body", _rule_segment_non_text_with_body),
     ("segment-perceptual-format", _rule_segment_perceptual_format),
@@ -1860,12 +1743,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("context-shape", _rule_context_shape),
     ("classify-block-retired", _rule_classify_retired),
     # normalizer-support parity (luklacloud intent)
-    ("description-too-long", _rule_description_too_long),
     ("mime-extension-mismatch", _rule_mime_extension_mismatch),
-    ("entry-missing", _rule_entry_missing),
     ("segment-body-requires-lossless", _rule_segment_body_lossless_contract),
-    ("segment-description-required", _rule_segment_body_lossless_contract),
-    ("section-description-redundant", _rule_section_description_redundant),
     ("segment-mode-deprecated", _rule_segment_mode_deprecated),
     ("embed-unreferenced", _rule_embed_unreferenced),
     ("embed-missing-target", _rule_embed_missing_target),
@@ -1897,15 +1776,11 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal
 # frontmatter/structure checks (athenaeum's idiomatic rule_ids).
 DIAGNOSE_QUICK_RULES: tuple[str, ...] = (
-    "editorial-override-placeholder",
-    "editorial-override-redundant",
     "frontmatter-legacy-status",
     "transport-format",
-    "canonical-format",
     "touch-format",
     "artifact-block-missing",
     "origins-empty",
-    "entry-missing",
     "atom-invalid",
 )
 

@@ -24,10 +24,9 @@ def _make_corpus(tmp_path: Path) -> Path:
 
 def _clean_post() -> frontmatter.Post:
     """A bare proxy record (spec §4.1) — no `title`/`description` keys at all (spec
-    §12.3.4: birth frontmatter carries no editorial fields), no `status:` key. Lints
-    fully clean: no stored placeholder to flag (`editorial-override-placeholder`), and an
-    override-less record's empty content zone is expected, not flagged
-    (`body-empty-normalized` gates on `has_editorial_override`)."""
+    §4.2.1, §12.3.4: both retired 3.5, and birth frontmatter never carried them), no
+    `status:` key. Lints fully clean: an override-less record's empty content zone is
+    expected, not flagged (`body-empty-normalized` gates on `has_editorial_override`)."""
     post = frontmatter.Post("")
     post.metadata.update(
         {
@@ -81,6 +80,24 @@ def test_section_address_span_rule_is_retired(tmp_path):
     one. Nothing is stored, so the comparison has no second operand and the rule is gone —
     pinned here so its absence from a lint diff reads as intended, not as a hole."""
     assert "section-address-span" not in {rid for rid, _fn in lint._REGISTRY}
+
+
+def test_3_12_reconciliation_retires_the_pre_3_5_rules(tmp_path):
+    """ATH-CORPUS 3.12 reconciliation (#153): these rule ids enforced law 3.5/3.7 retired —
+    `entry:` labels, segment/section `description:`, the frontmatter `title`/`description`
+    override pair, and `canonical:`. Pinned here, same style as `section-address-span` above,
+    so their absence reads as intended."""
+    registered = {rid for rid, _fn in lint._REGISTRY}
+    retired = {
+        "entry-missing",
+        "segment-description-required",
+        "section-description-redundant",
+        "editorial-override-placeholder",
+        "editorial-override-redundant",
+        "canonical-format",
+    }
+    assert not (registered & retired)
+    assert retired.isdisjoint(lint.DIAGNOSE_QUICK_RULES)
 
 
 def test_missing_id_caught(tmp_path):
@@ -178,6 +195,63 @@ def test_embed_rules_read_metadata_zone(tmp_path):
     )
     findings = _lint(post, root)
     assert any(f.rule_id == "embed-transport-format" for f in findings)
+
+
+def _member_row(**fields):
+    return {
+        "media_type": "image/png",
+        "address": "el=1",
+        "transport": "blake3:" + "a" * 64,
+        "fields": fields,
+    }
+
+
+def test_member_row_clean_shape_lints_clean(tmp_path):
+    """The closed four-key shape — `bytes` present and an int — is exactly conformant
+    (spec §4.3.1.4); nothing here to flag."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_embeds"] = [_member_row(bytes=1024)]
+    assert not any(f.rule_id == "member-row-unknown-key" for f in _lint(post, root))
+
+
+def test_member_row_unknown_key_flagged(tmp_path):
+    """A stray descriptive key on a members-block row (spec §4.3.1.4: the row is closed to
+    address/media_type/transport/bytes) — the exact defect class that let the retired
+    per-asset block accumulate authored prose beside its byte-facts."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_embeds"] = [_member_row(bytes=1024, width=640, alt="a logo")]
+    findings = [f for f in _lint(post, root) if f.rule_id == "member-row-unknown-key"]
+    assert findings and findings[0].severity == "error"
+    assert findings[0].fields["unknown_keys"] == ["alt", "width"]
+
+
+def test_member_row_missing_bytes_flagged(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_embeds"] = [_member_row()]  # no `bytes` at all
+    findings = [f for f in _lint(post, root) if f.rule_id == "member-row-unknown-key"]
+    assert findings and "missing required `bytes`" in findings[0].message
+
+
+def test_member_row_non_int_bytes_flagged(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_embeds"] = [_member_row(bytes="1024")]  # string, not int
+    findings = [f for f in _lint(post, root) if f.rule_id == "member-row-unknown-key"]
+    assert findings and "not an int" in findings[0].message
+
+
+def test_member_row_legacy_embed_form_is_exempt(tmp_path):
+    """Pre-3.4 per-asset `<!--embed-->` rows are read-only and carry whatever the retired
+    block stored — not this check's business (spec §12.26). `_members_block: False` marks
+    a record read from the legacy form."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["_members_block"] = False
+    post.metadata["_embeds"] = [_member_row(width=640, alt="a logo")]  # no `bytes` either
+    assert not any(f.rule_id == "member-row-unknown-key" for f in _lint(post, root))
 
 
 def test_embed_in_content_body_is_invisible_to_embed_rules(tmp_path):
@@ -324,57 +398,6 @@ def test_issue_spec_shape_passes(tmp_path):
     assert not any(f.rule_id.startswith("issue-") for f in findings)
 
 
-def test_lone_override_is_legal(tmp_path):
-    """*(3.2)* A record carrying a title override but no description (or vice versa) is a
-    legal, deliberate lone editorial assertion — the retired `is_authored` strict-AND (and
-    its `vouch-half-authored` lint rule) is gone; nothing flags this."""
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["title"] = "Half-vouched"
-    findings = _lint(post, root)
-    assert not any(f.rule_id.startswith("editorial-override-") for f in findings)
-
-
-def test_empty_string_placeholder_flagged(tmp_path):
-    """A stored empty-string `description: ''` is 3.1-era placeholder residue (spec
-    §12.21) — info, not a defect; `dumps()` drops it on the next write."""
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["description"] = ""
-    findings = _lint(post, root)
-    hit = next(f for f in findings if f.rule_id == "editorial-override-placeholder")
-    assert hit.severity == "info"
-
-
-def test_full_override_not_flagged_as_placeholder(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["title"] = "Fully vouched"
-    post.metadata["description"] = "ok"
-    findings = _lint(post, root)
-    assert not any(f.rule_id == "editorial-override-placeholder" for f in findings)
-
-
-def test_editorial_override_redundant_flagged(tmp_path):
-    """*(3.2, §12.21 step 1)* A frontmatter override equal to the record's derived value
-    beneath it (here, via the transitional legacy artifact-bare-`title` fallback — no
-    packaged schema is role-marked yet) is noise, not an assertion."""
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["title"] = "T"  # equals the artifact block's bare `title` field
-    findings = _lint(post, root)
-    hit = next(f for f in findings if f.rule_id == "editorial-override-redundant")
-    assert hit.severity == "warning"
-
-
-def test_editorial_override_not_redundant_when_it_diverges(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["title"] = "A Deliberately Different Title"
-    findings = _lint(post, root)
-    assert not any(f.rule_id == "editorial-override-redundant" for f in findings)
-
-
 def test_segment_address_duplicate_caught(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
@@ -450,46 +473,25 @@ def _fired(post, root, blocks=None):
     return {f.rule_id for f in lint.lint(post, blocks if blocks is not None else [], root)}
 
 
-def test_description_too_long(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    post.metadata["description"] = "word " * 801
-    assert "description-too-long" in _fired(post, root)
-
-
 def test_segment_lossless_contract(tmp_path):
+    """A `text` segment whose overlay opts out of lossless (`enables_lossless: false`) must
+    stay a body-empty marker (spec §4.3.2.3). A marker carrying a body is
+    `segment-body-requires-lossless`; a body-empty marker is silent — 3.5 retired the
+    segment `description` field the old rule demanded in its place (§4.2.3, §12.27): the
+    honest residue for content that matters is a typed `issue` block, authored separately,
+    not a lint-mandated field."""
     root = _make_corpus(tmp_path)
     # text/data-table-dynamic is bundled non-lossless (enables_lossless: false).
     with_body = segments.Segment(
         atom="text", address="el=2", overlay="text/data-table-dynamic", body="x"
     )
-    marker_no_desc = segments.Segment(
+    marker_empty = segments.Segment(
         atom="text", address="el=3", overlay="text/data-table-dynamic"
     )
     post = _clean_post()
-    fired = {f.rule_id for f in lint.lint(post, [with_body, marker_no_desc], root)}
+    fired = {f.rule_id for f in lint.lint(post, [with_body, marker_empty], root)}
     assert "segment-body-requires-lossless" in fired  # body on a non-lossless overlay
-    assert "segment-description-required" in fired  # body-empty marker, no description
-
-
-def test_entry_missing(tmp_path):
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    bare = segments.Segment(atom="text", address="el=1", body="hi")  # no entry
-    bare2 = segments.Segment(atom="text", address="el=2", body="ho")  # no entry
-    labeled = segments.Segment(atom="text", address="el=3", body="yo", entry="Appendix")
-    # A uniformly bare flat zone is the §4.3.2.1 default, well-formed state — silent.
-    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [bare, bare2], root)}
-    # PARTIAL labeling — a half-built authored TOC — fires, as a warning.
-    partial = [f for f in lint.lint(post, [bare, labeled], root) if f.rule_id == "entry-missing"]
-    assert partial and partial[0].severity == "warning"
-    # Fully labeled and single-block records are silent.
-    labeled2 = segments.Segment(atom="text", address="el=4", body="hey", entry="Notes")
-    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [labeled, labeled2], root)}
-    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [bare], root)}
-    # Structural byte-marks never count: their entry is the source's, optional (§4.3.2.3).
-    mark = segments.Segment(atom="structural", address="el=1", level=1, entry="Ch. 1")
-    assert "entry-missing" not in {f.rule_id for f in lint.lint(post, [mark, bare, bare2], root)}
+    assert "segment-description-required" not in fired  # retired 3.5 — no such rule exists
 
 
 def test_body_sanity_rules(tmp_path):
@@ -586,34 +588,6 @@ def test_issue_on_draft_rule_dropped(tmp_path):
         post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
     )
     assert "issue-on-draft" not in _fired(post, root)
-
-
-def test_section_description_redundant_no_longer_spares_any_section(tmp_path):
-    """*(3.2)* `section-description-redundant` fires on an all-lossless section whose header
-    carries a `description:`. *(3.7)* And now on EVERY such section: the whole-record
-    exemption existed because that header was the editorial vouch's home, and 3.5 retired
-    both the vouch and the field while 3.7 retired the spelling the exemption keyed on
-    (§12.29). Any surviving section `description:` is unswept residue, wherever it sits."""
-    root = _make_corpus(tmp_path)
-    post = _clean_post()
-    seg = segments.Segment(
-        atom="text", overlay="text/message", address="turn=1", body="hi",
-        extra={"participant": 0},
-    )
-
-    span = segments.Section(
-        address="turn=1", form="conversation", segments=[seg],
-        description="A synopsis restating lossless content.",
-        extra={"participants": ["Andy <a@x>"]},
-    )
-    assert "section-description-redundant" in _fired(post, root, [span])
-
-    whole = segments.Section(
-        address=None, form="conversation", segments=[seg],
-        description="Unswept residue — 3.5 retired this field (§4.3.2.1).",
-        extra={"participants": ["Andy <a@x>"]},
-    )
-    assert "section-description-redundant" in _fired(post, root, [whole])
 
 
 def test_address_region_grammar(tmp_path):

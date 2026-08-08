@@ -35,13 +35,28 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
 
     record  id=<hex>
     member  <mime> addr=<a|[a|b…]> transport=<algo:hex> [bytes=<n>]
-    section addr=<a> [entry="..."] [class=<ns>/<id>] [desc=@desc/..] [k=v ...]
-    seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [perceptual=..] [k=v ...]
+    section [form=<form-id>] [addr=<a>] [k=v ...]
+    seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [perceptual=..] [k=v ...]
+    seg     structural addr=<a> level=<int> [mark=..]     # §4.3.2.3 byte-mark
     issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]
 
-`seg` enforces body⟺lossless (spec §4.3.2.2): a `body=` ref is permitted only for
-a lossless atom/overlay; `image` / `audio` / `video` and a text overlay declaring
-`enables_lossless: false` take `desc=` only.
+`seg` enforces body⟺lossless (spec §4.3.2.2): a `body=` ref is permitted only for a
+lossless atom/overlay. `image`/`audio`/`video` and a text overlay declaring
+`enables_lossless: false` take neither `body=` nor `desc=` — a non-lossless marker is
+body-empty, full stop (spec §4.3.2.2/§4.2.3: a segment cannot narrate its own region).
+
+*(3.12 reconciliation, #153)* `section`'s `entry=`/`desc=` and content-`seg`'s `entry=`/
+`desc=` are DROPPED from this taught grammar — the universal section-header fields and the
+segment `description` retired 3.5 with no successor (§4.3.2.1, §4.3.2.2), and this grammar
+summary (and `_MANIFEST_HEADER`'s printed copy) must not keep advertising a slot as
+something to AUTHOR when `compile`'s retirement gate (#116) refuses any edit that acquires
+one. `write_workdir` still ROUND-TRIPS a value the in-memory Section/Segment already
+carries (an unswept legacy record touched for an unrelated reason, §12.26's form-preserving
+principle) — never a new one, since nothing here ever authors one — and `read_workdir`
+reads either key tolerantly for exactly that carry. The asymmetry is #116's, unchanged:
+acquiring (a net increase over the base record) is refused; carrying one never is. A
+structural mark's own text still folds tolerantly from a legacy `mark=`/`entry=` into the
+segment BODY (§12.32) — a separate, unaffected mechanism.
 
 *(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19). A legacy `record
 id=<hex> status=<s>` line reads parse-tolerantly (the `status=` key is accepted and ignored)
@@ -86,13 +101,16 @@ _MANIFEST_HEADER = [
     "# Grammar:",
     "#   record  id=<hex>",
     "#   member  <mime> addr=<a|[a|b…]> transport=<algo:hex> [bytes=<n>]",
-    "#   section [form=<form-id>] [addr=<a>] [entry=\"...\"] [desc=@desc/..] [k=v ...]",
-    "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [desc=@desc/..] [entry=..] [k=v ...]",
-    "#   seg     structural addr=<a> level=<int> [entry=\"...\"]   # §4.3.2.3 byte-mark",
+    "#   section [form=<form-id>] [addr=<a>] [k=v ...]",
+    "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]",
+    "#   seg     structural addr=<a> level=<int> [mark=..]   # §4.3.2.3 byte-mark",
     "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]",
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
     "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
+    "# `entry=`/`desc=` are RETIRED on `section` and content `seg` lines (spec §4.3.2.1/",
+    "#   §4.3.2.2, 3.5) — no successor; do not add one. `compile`'s retirement gate (#116)",
+    "#   refuses a rebuild that ACQUIRES one; --allow-retired overrides.",
     "# record state is derived (spec §4.1), never authored — no `status=` on the record line.",
     "# Spec §4.3: the members roster lives in the METADATA zone (reconciliation #1).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
@@ -634,6 +652,13 @@ def write_workdir(
         # `body=@body/…` ref every other body does — there is no `mark=` shorthand any more.
         if seg.body and seg.body.strip():
             parts.append("body=" + _body_ref(loc, seg.address, seg.body.rstrip("\n")))
+        # *(3.12 reconciliation, #153)* `description:`/`entry:` on a content segment are
+        # retired (spec §4.3.2.2, 3.5) — no successor. Round-tripped here ONLY when the
+        # in-memory Segment already carries one (an unswept legacy record touched for an
+        # unrelated edit, §12.26's form-preserving principle) — never taught as something
+        # new to author: the printed grammar (`_MANIFEST_HEADER` / module docstring) no
+        # longer lists `desc=`/`entry=` as slots, and `compile`'s retirement gate (#116)
+        # refuses any edit that ADDS one where the base record had none.
         if seg.description:
             parts.append("desc=" + _desc_ref(loc, seg.address, seg.description))
         if seg.entry:
@@ -653,6 +678,12 @@ def write_workdir(
                 parts.append(f"form={blk.form}")
             if blk.address is not None:
                 parts.append(f"addr={_fmt_addr(blk.address)}")
+            # *(3.12 reconciliation, #153)* `entry:`/`description:` on a section header are
+            # retired (spec §4.3.2.1, 3.5) — no successor. Round-tripped here ONLY when the
+            # in-memory Section already carries one (§12.26's form-preserving principle,
+            # same carve-out as the content-segment case in `_seg_line` above) — never
+            # taught as something new to author, and `compile`'s retirement gate (#116)
+            # refuses any edit that ADDS one where the base record had none.
             if blk.entry:
                 parts.append("entry=" + shlex.quote(blk.entry))
             if blk.description:
@@ -824,6 +855,10 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 kv = _kv(toks[1:])
                 # `form=` is the 3.0 spelling; `class=` reads tolerantly (a decomposed dir
                 # produced by a 2.x tool). `addr` is optional (whole-record form section).
+                # `entry=`/`desc=` are retired (§4.3.2.1, 3.5) — read tolerantly so a working
+                # dir carrying a legacy record's already-present field round-trips (§12.26);
+                # `compile`'s retirement gate (#116) refuses only a rebuild that ACQUIRES one
+                # (a net increase over the base record), never a carry.
                 open_section(
                     b,
                     address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
@@ -837,6 +872,9 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 atom, slash, _sub = opener.partition("/")
                 overlay = opener if slash else None
                 kv = _kv(toks[2:])
+                # A content segment's `desc=`/`entry=` are retired (§4.3.2.2, 3.5) — read
+                # tolerantly, same reasoning as `section` above (round-trip, not authoring;
+                # #116 gates the acquisition, not the carry).
                 add_segment(
                     b,
                     atom=atom,

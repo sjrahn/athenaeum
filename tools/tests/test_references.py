@@ -15,7 +15,7 @@ from pathlib import Path
 import blake3
 import frontmatter
 
-from corpus import derived_views, paths, records, references, restub
+from corpus import derived_views, paths, records, references
 from corpus._cli import capture as capture_cli
 from corpus._cli import dispatch
 from corpus._cli import draft as draft_cli
@@ -289,34 +289,23 @@ def test_emit_no_rules_is_noop(tmp_path):
     assert list(records.iter_reference_blocks(post)) == []
 
 
-# ---------- integration: draft emits, redraft regenerates ---------- #
+# ---------- integration: the retired draft core no longer emits ---------- #
 
 
-def test_draft_emits_references(tmp_path):
+def test_derive_record_no_longer_emits_references(tmp_path):
+    """ATH-CORPUS 3.12 reconciliation (#153): `derive_record` (the retired draft core,
+    `_cli/draft.py`) no longer calls `emit_overlay_references` — the `reference` context
+    namespace it wrote was retired at 3.5 (§4.3.3.3), and the draft core's own retirement
+    (§12.4.6) is not license to keep acquiring a construct the grammar no longer admits.
+    The declaration/matching/emission machinery below is unaffected and still callable
+    directly; only this call site is gone, so overlay-declared dependent references
+    currently have no LIVE emission path in the pipeline — a follow-on, not fixed here."""
     root = _corpus(tmp_path, overlay=OVERLAY)
     post = _html_record(root, ID_PDP, BASE, PDP_HTML)
     draft_cli.derive_record(post, root)
     records.dump(post, paths.record_path(root, ID_PDP))
     reloaded = records.load(paths.record_path(root, ID_PDP))
-    refs = derived_views.references(root, reloaded)
-    assert {r["source_url"] for r in refs} == {MANUAL, SPEC}
-    assert all(r["provenance"] == "auto" for r in refs)
-
-
-def test_redraft_regenerates_without_duplication(tmp_path):
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    rf = paths.record_path(root, ID_PDP)
-    draft_cli.derive_record(post, root)
-    records.dump(post, rf)
-    first = len(list(records.iter_reference_blocks(records.load(rf))))
-    assert first == 2
-    # re-stub → fresh stub (context blocks cleared) → re-derive emits the same set, once.
-    restub.restub(rf)
-    post2 = records.load(rf)
-    draft_cli.derive_record(post2, root)
-    records.dump(post2, rf)
-    assert len(list(records.iter_reference_blocks(records.load(rf)))) == 2
+    assert list(records.iter_reference_blocks(reloaded)) == []
 
 
 def test_non_html_record_emits_nothing(tmp_path):
