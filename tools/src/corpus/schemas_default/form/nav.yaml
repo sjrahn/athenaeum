@@ -23,9 +23,11 @@ decomposition: |
   The span renders each framing region the origin overlay names (`renders: framing`,
   §7.2) as its own segment(s) at its own address — regions in the overlay's declaration
   order, entries in source order within each region. A breadcrumb renders as its one
-  verbatim text line: the source's own labels and separators, exactly as presented —
-  never spliced with a header string from elsewhere on the page, never case-normalized,
-  never repaired. A link rail renders as a markdown list — verbatim label plus target
+  verbatim line: the source's own labels and separators, exactly as presented — and
+  where the source's crumbs are links, the rendering keeps them (`[label](href)` per
+  crumb; a crumb the source renders hrefless — typically the current page — stays plain
+  text). Never spliced with a header string from elsewhere on the page, never
+  case-normalized, never repaired. A link rail renders as a markdown list — verbatim label plus target
   URL, the source's own grouping headings preserved. A rail entry that is a self-edge
   back at this same page adds no wayfinding and is omitted; a rail that is ONLY
   self-edges yields no span at all — an empty framing span states something the source
