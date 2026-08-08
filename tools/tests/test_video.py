@@ -158,21 +158,24 @@ _TRANSCRIPT = (
 
 
 def test_parse_transcript_sections_speaker_runs():
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT,
         audio_stream_id="a0",
         video_stream_id="v0",
         multi_audio=False,
         multi_video=False,
     )
-    assert len(secs) == 2  # Speaker 1 run, Speaker 2 run
-    first = secs[0]
-    transcripts = [s for s in first.segments if s.overlay == "text/transcript"]
-    assert len(transcripts) == 2
-    assert all(s.extra.get("speaker") == 1 for s in transcripts)
-    # Each section leads with a body-empty image framegrab marker.
-    assert first.segments[0].atom == "image" and first.segments[0].body == ""
-    assert first.address.startswith("time_range=00:07-")
+    # A speaker change carries no source-stated label — no structural mark anywhere.
+    assert not any(s.is_structural for s in segs)
+    transcripts = [s for s in segs if s.overlay == "text/transcript"]
+    assert len(transcripts) == 3
+    assert [t.extra.get("speaker") for t in transcripts] == [1, 1, 2]
+    # Each speaker run leads with a body-empty image framegrab marker.
+    frames = [s for s in segs if s.atom == "image"]
+    assert [f.address for f in frames] == ["frame=00:07", "frame=00:21"]
+    assert all(f.body == "" for f in frames)
+    assert segs[0].address == "frame=00:07"
+    assert segs[1].address == "time_range=00:07-00:12"
 
 
 def test_parse_transcript_sections_frames_unique_lead_and_final_close():
@@ -184,20 +187,19 @@ def test_parse_transcript_sections_frames_unique_lead_and_final_close():
         "[Speaker 2] (00:00:10)\nB.\n\n"
         "[Speaker 2] (00:00:15)\nC.\n"
     )
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id="v0",
         multi_audio=False,
         multi_video=False,
     )
-    frames = [seg.address for sec in secs for seg in sec.segments if seg.atom == "image"]
-    # No duplicate at the 00:10 boundary; the final section closes with the last frame.
+    frames = [seg.address for seg in segs if seg.atom == "image"]
+    # No duplicate at the 00:10 boundary; the final run closes with the last frame.
     assert frames == ["frame=00:00", "frame=00:10", "frame=00:15"]
     assert len(frames) == len(set(frames))
-    # Every section leads with its keyframe; the final section also closes with one.
-    assert all(sec.segments[0].atom == "image" for sec in secs)
-    assert secs[-1].segments[-1].atom == "image"
+    # The very last segment is the closing keyframe.
+    assert segs[-1].atom == "image"
 
 
 def test_parse_transcript_sections_single_segment_spans_media_duration():
@@ -206,7 +208,7 @@ def test_parse_transcript_sections_single_segment_spans_media_duration():
     # end fell back to last_cp + 0.001 → a degenerate `00:00-00:00` range. media_duration
     # bounds it to the true clip length so it reads `00:00-<duration>`.
     transcript = "[Speaker 1] (00:00:00)\nA continuous rant with no pauses.\n"
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id="v0",
@@ -214,13 +216,11 @@ def test_parse_transcript_sections_single_segment_spans_media_duration():
         multi_video=False,
         media_duration=22.13,
     )
-    assert len(secs) == 1
-    assert secs[0].address == "time_range=00:00-00:22"
-    transcripts = [s for s in secs[0].segments if s.overlay == "text/transcript"]
+    transcripts = [s for s in segs if s.overlay == "text/transcript"]
     assert len(transcripts) == 1
     assert transcripts[0].address == "time_range=00:00-00:22"
-    # The lone video section bookends: lead frame at 0, closing frame at the true end.
-    frames = [g.address for g in secs[0].segments if g.atom == "image"]
+    # The lone run bookends: lead frame at 0, closing frame at the true end.
+    frames = [g.address for g in segs if g.atom == "image"]
     assert frames == ["frame=00:00", "frame=00:22"]
 
 
@@ -228,27 +228,27 @@ def test_parse_transcript_sections_single_segment_without_duration_falls_back():
     # No media_duration → preserve the legacy near-zero end (no regression for callers
     # that don't pass a duration; the audio/video drafters now always do).
     transcript = "[Speaker 1] (00:00:00)\nShort.\n"
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id=None,
         multi_audio=False,
         multi_video=False,
     )
-    assert secs[0].address == "time_range=00:00-00:00"
+    assert segs[0].address == "time_range=00:00-00:00"
 
 
-def _transcript_addresses(secs):
-    return [s.address for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+def _transcript_addresses(segs):
+    return [s.address for s in segs if s.overlay == "text/transcript"]
 
 
-def _duplicate_findings(secs):
+def _duplicate_findings(segs):
     # Run the real `segment-address-duplicate` lint rule over the emitted blocks. The rule
     # only reads `blocks`, so pass empty post/root — it's the record-global (opener-id,
     # address) uniqueness check the drafter must satisfy (§4.3.2.2).
     from corpus.lint import _rule_segment_address_duplicate
 
-    return list(_rule_segment_address_duplicate(None, list(secs), None))
+    return list(_rule_segment_address_duplicate(None, list(segs), None))
 
 
 def test_parse_transcript_sections_zero_width_collision_merges():
@@ -261,22 +261,22 @@ def test_parse_transcript_sections_zero_width_collision_merges():
     # at the same second and the lone speaker run (no media_duration) ends at the same
     # second, so both render `02:30-02:30`.
     transcript = "[Speaker 1] (00:02:30)\nOh, sorry.\n\n[Speaker 1] (00:02:30)\nYeah.\n"
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id="v0",
         multi_audio=False,
         multi_video=False,
     )
-    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    ts = [s for s in segs if s.overlay == "text/transcript"]
     assert len(ts) == 1  # the colliding pair merged into one segment
     assert ts[0].address == "time_range=02:30-02:30"
     assert ts[0].body == "Oh, sorry. Yeah."  # verbatim text concatenated with a space
     assert ts[0].extra.get("speaker") == 1  # same-speaker merge keeps attribution
     # No two segments share a (opener-id, address); lint is clean.
-    addrs = _transcript_addresses(secs)
+    addrs = _transcript_addresses(segs)
     assert len(addrs) == len(set(addrs))
-    assert _duplicate_findings(secs) == []
+    assert _duplicate_findings(segs) == []
 
 
 def test_parse_transcript_sections_three_in_a_row_collision_merges():
@@ -287,44 +287,44 @@ def test_parse_transcript_sections_three_in_a_row_collision_merges():
         "[Speaker 1] (00:02:30)\nYeah.\n\n"
         "[Speaker 1] (00:02:30)\nRight.\n"
     )
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id="v0",
         multi_audio=False,
         multi_video=False,
     )
-    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    ts = [s for s in segs if s.overlay == "text/transcript"]
     assert len(ts) == 1
     assert ts[0].body == "Oh, sorry. Yeah. Right."
-    addrs = _transcript_addresses(secs)
+    addrs = _transcript_addresses(segs)
     assert len(addrs) == len(set(addrs))
-    assert _duplicate_findings(secs) == []
+    assert _duplicate_findings(segs) == []
 
 
 def test_parse_transcript_sections_cross_speaker_collision_dedups_globally():
     # Pathological: a diarization flip at one zero-width instant lands two segments at the
-    # same `S-S` address in ADJACENT sections (speaker change is a section boundary). The
+    # same `S-S` address in ADJACENT runs (speaker change is a grouping boundary). The
     # record-global ledger still folds the second into the first; because the merged span
-    # genuinely spans two speakers, its `speaker` is dropped (like a multi-speaker chapter
-    # section), and the now-empty trailing section is dropped — no phantom TOC node, no
-    # duplicate section address.
+    # genuinely spans two speakers, its `speaker` is dropped (like a multi-speaker chapter),
+    # and the now-emptied trailing run contributes nothing — no phantom marker, no
+    # duplicate address.
     transcript = "[Speaker 1] (00:02:30)\nOh, sorry.\n\n[Speaker 2] (00:02:30)\nYeah.\n"
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         transcript,
         audio_stream_id="a0",
         video_stream_id="v0",
         multi_audio=False,
         multi_video=False,
     )
-    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    ts = [s for s in segs if s.overlay == "text/transcript"]
     assert len(ts) == 1
     assert ts[0].body == "Oh, sorry. Yeah."
     assert "speaker" not in ts[0].extra  # spans two speakers → no single attribution
-    assert len(secs) == 1  # the emptied second section is dropped
-    addrs = _transcript_addresses(secs)
+    assert len(segs) == 2  # the lead frame + the one merged transcript segment
+    addrs = _transcript_addresses(segs)
     assert len(addrs) == len(set(addrs))
-    assert _duplicate_findings(secs) == []
+    assert _duplicate_findings(segs) == []
 
 
 def test_parse_chaptered_sections_zero_width_collision_merges():
@@ -332,7 +332,7 @@ def test_parse_chaptered_sections_zero_width_collision_merges():
     # checkpoints inside one chapter must merge too.
     transcript = "[Speaker 1] (00:00:05)\nOne.\n\n[Speaker 1] (00:00:05)\nTwo.\n"
     chapters = [{"start": 0.0, "end": 5.0, "title": "Only"}]
-    secs = transcript_mod.parse_chaptered_sections(
+    segs = transcript_mod.parse_chaptered_sections(
         transcript,
         chapters,
         audio_stream_id="a0",
@@ -340,14 +340,15 @@ def test_parse_chaptered_sections_zero_width_collision_merges():
         multi_audio=False,
         multi_video=False,
     )
-    ts = [s for sec in secs for s in sec.segments if s.overlay == "text/transcript"]
+    ts = [s for s in segs if s.overlay == "text/transcript"]
     assert [s.body for s in ts] == ["One. Two."]
-    assert _duplicate_findings(secs) == []
+    assert _duplicate_findings(segs) == []
 
 
 def test_parse_chaptered_sections_uses_chapter_outline():
-    # A video that ships chapter markers is sectioned by them (the uploader's outline),
-    # the chapter title riding as each section's `entry` TOC label (§4.3.2.2).
+    # A video that ships chapter markers is grouped by them (the uploader's outline), each
+    # chapter's own title becoming a leading structural mark (§4.3.2.3) rather than a
+    # Section's `entry`.
     transcript = (
         "[Speaker 1] (00:00:00)\nIntro line.\n\n"
         "[Speaker 1] (00:00:20)\nFirst topic.\n\n"
@@ -359,7 +360,7 @@ def test_parse_chaptered_sections_uses_chapter_outline():
         {"start": 40.0, "end": 60.0, "title": "Discussion"},
         {"start": 60.0, "end": 80.0, "title": "Outro"},
     ]
-    secs = transcript_mod.parse_chaptered_sections(
+    segs = transcript_mod.parse_chaptered_sections(
         transcript,
         chapters,
         audio_stream_id="a0",
@@ -367,39 +368,48 @@ def test_parse_chaptered_sections_uses_chapter_outline():
         multi_audio=False,
         multi_video=False,
     )
-    # One section per chapter, titled by the chapter.
-    assert [s.entry for s in secs] == ["Intro", "Discussion", "Outro"]
-    # Chapter time-ranges become the section addresses (contiguous; the last runs to the
-    # final checkpoint rather than its declared end_time).
-    assert secs[0].address == "time_range=00:00-00:40"
-    assert secs[1].address == "time_range=00:40-01:00"
-    assert secs[2].address.startswith("time_range=01:00-")
-    # Each checkpoint lands in the chapter containing its start.
-    def _txt(sec):
-        return [g.body for g in sec.segments if g.overlay == "text/transcript"]
-
-    def _spk(sec):
-        return [g.extra.get("speaker") for g in sec.segments if g.overlay == "text/transcript"]
-
-    assert _txt(secs[0]) == ["Intro line.", "First topic."]  # 0s, 20s → Intro [0,40)
-    assert _txt(secs[1]) == ["Second topic question."]  # 50s → Discussion [40,60)
-    # A chapter spanning two speakers keeps each segment's own speaker.
-    assert _spk(secs[1]) == [2] and _spk(secs[2]) == [1]
-    # Frame markers stay unique and each section leads with one (§4.3.2.2).
-    frames = [g.address for s in secs for g in s.segments if g.atom == "image"]
+    # One mark per chapter, titled by the chapter, at the chapter's own start instant.
+    marks = [s for s in segs if s.is_structural]
+    assert [(m.body, m.address) for m in marks] == [
+        ("Intro", "time=00:00"),
+        ("Discussion", "time=00:40"),
+        ("Outro", "time=01:00"),
+    ]
+    # Each checkpoint lands in the chapter containing its start, in reading order, and a
+    # chapter spanning two speakers keeps each segment's own speaker.
+    ts = [s for s in segs if s.overlay == "text/transcript"]
+    assert [t.body for t in ts] == [
+        "Intro line.", "First topic.", "Second topic question.", "Wrapping up.",
+    ]
+    assert [t.extra.get("speaker") for t in ts] == [1, 1, 2, 1]
+    # The exact flat reading order: each chapter's mark leads its own frame and content.
+    assert [(s.atom, s.address) for s in segs] == [
+        ("structural", "time=00:00"),
+        ("image", "frame=00:00"),
+        ("text", "time_range=00:00-00:20"),
+        ("text", "time_range=00:20-00:40"),
+        ("structural", "time=00:40"),
+        ("image", "frame=00:40"),
+        ("text", "time_range=00:50-01:00"),
+        ("structural", "time=01:00"),
+        ("image", "frame=01:00"),
+        ("text", "time_range=01:10-01:10"),
+        ("image", "frame=01:10"),
+    ]
+    # Frame markers stay unique (§4.3.2.2).
+    frames = [s.address for s in segs if s.atom == "image"]
     assert len(frames) == len(set(frames))
-    assert all(s.segments[0].atom == "image" for s in secs)
 
 
 def test_parse_chaptered_sections_no_chapters_with_text_still_emits_lead_frame():
-    # A chapter that contains no speech is still a structural section (kept, not dropped),
-    # carrying its lead keyframe.
+    # A chapter that contains no speech is still a structural unit (kept, not dropped),
+    # carrying its mark and lead keyframe.
     transcript = "[Speaker 1] (00:00:05)\nOnly in the first chapter.\n"
     chapters = [
         {"start": 0.0, "end": 10.0, "title": "Talk"},
         {"start": 10.0, "end": 20.0, "title": "Silence"},
     ]
-    secs = transcript_mod.parse_chaptered_sections(
+    segs = transcript_mod.parse_chaptered_sections(
         transcript,
         chapters,
         audio_stream_id="a0",
@@ -407,28 +417,30 @@ def test_parse_chaptered_sections_no_chapters_with_text_still_emits_lead_frame()
         multi_audio=False,
         multi_video=False,
     )
-    assert [s.entry for s in secs] == ["Talk", "Silence"]
-    # The speechless chapter has its lead frame but no transcript segment.
-    assert all(g.overlay != "text/transcript" for g in secs[1].segments)
-    assert secs[1].segments[0].atom == "image"
+    marks = [s for s in segs if s.is_structural]
+    assert [m.body for m in marks] == ["Talk", "Silence"]
+    # The speechless chapter's mark is still followed by its lead frame, no transcript.
+    silence_idx = segs.index(marks[1])
+    assert segs[silence_idx + 1].atom == "image"
+    assert not any(s.overlay == "text/transcript" for s in segs[silence_idx:])
 
 
 def test_parse_transcript_sections_no_video_stream_omits_frames():
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT,
         audio_stream_id="a0",
         video_stream_id=None,
         multi_audio=False,
         multi_video=False,
     )
-    assert all(seg.atom == "text" for sec in secs for seg in sec.segments)
+    assert all(seg.atom == "text" for seg in segs)
 
 
 def test_parse_transcript_multi_audio_adds_stream_id():
-    secs = transcript_mod.parse_transcript_sections(
+    segs = transcript_mod.parse_transcript_sections(
         _TRANSCRIPT, audio_stream_id="a1", video_stream_id=None, multi_audio=True, multi_video=False
     )
-    assert "&stream_id=a1" in secs[0].address
+    assert "&stream_id=a1" in segs[0].address
 
 
 @pytest.mark.parametrize("s,tc", [(7, "00:07"), (75, "01:15"), (3661, "01:01:01")])

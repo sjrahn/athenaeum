@@ -12,7 +12,7 @@ from PIL import Image
 from corpus import content_hash, epub
 from corpus.draft import get_drafter
 from corpus.draft.epub import draft as epub_draft
-from corpus.segments import Section, Segment
+from corpus.segments import Section
 
 
 def _png(w: int, h: int) -> bytes:
@@ -31,7 +31,8 @@ _CONTAINER = """<?xml version="1.0"?>
 </container>"""
 
 # Spine reading order: cover, ch1, ch2. The cover is intentionally NOT in the nav/NCX TOC
-# so it exercises the synthetic "Front matter" section.
+# so it exercises the range before the first TOC target, which gets no structural mark at
+# all under the TOC-grouped path (spec §4.3.2.3 — no fabricated label).
 _COVER = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Cover</title></head>
 <body><p>cover</p></body></html>"""
@@ -215,15 +216,21 @@ def test_canonical_epub_is_packaging_invariant(tmp_path):
 def test_drafter_sections_by_toc(tmp_path, run_drafter):
     path = _write_epub(tmp_path / "b.epub")  # nav TOC: ch1, ch2 (cover omitted)
     result, blocks = run_drafter(epub_draft, path, corpus_root=tmp_path, record_id="x")
-    # Spine docs before the first TOC target (the cover) → a synthetic Front matter section;
-    # then one section per top-level TOC entry, addressed by spine-range with the TOC label.
-    assert all(isinstance(b, Section) for b in blocks)
-    assert [b.entry for b in blocks] == ["Front matter", "Chapter One", "Second Part"]
-    assert [b.address for b in blocks] == ["spines=1", "spines=2", "spines=3"]
-    # Child segments are spine=<N> points carrying NO entry (the section owns the label).
-    assert [s.address for s in blocks[0].segments] == ["spine=1"]
-    assert blocks[1].segments[0].address == "spine=2"
-    assert all(s.entry is None for b in blocks for s in b.segments)
+    # No `Section` is ever asserted (spec §7.8/§4.3.2.1) — flat structural marks + content.
+    assert not any(isinstance(b, Section) for b in blocks)
+    # Spine docs before the first TOC target (the cover) get no mark at all — the old
+    # synthetic "Front matter" label was fabricated and does not survive. Each TOC entry's
+    # own title marks the spine position its range starts at (spec §4.3.2.3).
+    marks = [b for b in blocks if b.is_structural]
+    assert [(m.body, m.address) for m in marks] == [
+        ("Chapter One", "spine=2"),
+        ("Second Part", "spine=3"),
+    ]
+    # Content segments carry no label of their own (a content segment's `entry` retired
+    # 3.5, §4.3.2.2) — a chapter's title lives on its mark, never restated on the segment.
+    content = [b for b in blocks if b.atom == "text"]
+    assert [b.address for b in content] == ["spine=1", "spine=2", "spine=3"]
+    assert all(b.entry is None for b in content)
     assert result["fields"]["title"] == "Synthetic Test Book"
     assert result["fields"]["spine_item_count"] == 3
     assert result["fields"]["toc_entry_count"] == 2
@@ -234,10 +241,15 @@ def test_drafter_sections_by_toc(tmp_path, run_drafter):
 def test_drafter_flat_fallback_when_no_toc(tmp_path, run_drafter):
     path = _write_epub(tmp_path / "b.epub", nav=False)  # no nav, no NCX
     result, blocks = run_drafter(epub_draft, path, corpus_root=tmp_path, record_id="x")
-    # Sectionless: a flat top-level segment per spine doc, each carrying its doc title.
-    assert all(isinstance(b, Segment) for b in blocks)
-    assert [b.address for b in blocks] == ["spine=1", "spine=2", "spine=3"]
-    assert [b.entry for b in blocks] == ["Cover", "Chapter One", "Second Part"]
+    # Flat throughout: no `Section`, and each spine document's own title marks its own
+    # position (spec §4.3.2.3) rather than riding the content segment's `entry`.
+    marks = [b for b in blocks if b.is_structural]
+    assert [(m.body, m.address) for m in marks] == [
+        ("Cover", "spine=1"), ("Chapter One", "spine=2"), ("Second Part", "spine=3"),
+    ]
+    content = [b for b in blocks if b.atom == "text"]
+    assert [b.address for b in content] == ["spine=1", "spine=2", "spine=3"]
+    assert all(b.entry is None for b in content)
     assert result["fields"]["toc_entry_count"] == 0
 
 

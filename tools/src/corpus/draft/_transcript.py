@@ -1,17 +1,26 @@
-"""Shared transcript → sections splitter for the audio and video drafters.
+"""Shared transcript → flat-segment splitter for the audio and video drafters.
 
 Both drafters consume a `[Speaker N] (HH:MM:SS)` diarized transcript (produced by the
-configured `TranscriptionAdapter`) and turn it into `Section`s, each holding one
-`text/transcript` `Segment` per checkpoint addressed by time-range (checkpoints whose
-start+end round to one already-used whole-second address are merged so no two segments
-share a `(opener-id, address)` identity). The default sectioning
-is one `Section` per speaker run (`parse_transcript_sections`); a video that ships chapter
-markers is instead sectioned by its chapters (`parse_chaptered_sections`), the chapter
-title riding as each section's `entry` TOC label (§4.3.2.2). The video drafter additionally
-leads each section with a body-empty `image` keyframe marker (and the last section closes
-with the video's final frame); the audio drafter passes `video_stream_id=None` and gets
-transcript-only sections. A boundary instant is shared by adjacent sections, so each
-`frame=<t>` address is emitted at most once (§4.3.2.2).
+configured `TranscriptionAdapter`) and turn it into a FLAT list of `Segment`s in reading
+order — one `text/transcript` `Segment` per checkpoint addressed by time-range
+(checkpoints whose start+end round to one already-used whole-second address are merged so
+no two segments share a `(opener-id, address)` identity).
+
+*(3.12 reconciliation, #153)* No `Section` is ever asserted here: a section binds a FORM,
+which is a normalize-pass judgment (or a declared shaper's mapping), never a generic
+drafter's (§7.8, §4.3.2.1). Grouping is now purely internal — `_emit_sections` still
+groups checkpoints by speaker run or by chapter to compute addresses and boundaries, but
+the grouping never reaches the record as a stored span. The default grouping is one run
+per speaker (`parse_transcript_sections`), which carries no label the source ever stated
+(a speaker change is a machine inference, not a byte-fact) and so contributes no
+structural mark at all. A video that ships chapter markers groups by its chapters instead
+(`parse_chaptered_sections`); the uploader's own chapter title IS a byte-fact, so each
+chapter's start gets a leading STRUCTURAL byte-mark carrying that title verbatim
+(§4.3.2.3) — never a fabricated label, and never a Section's `entry`. The video drafter
+additionally leads each group with a body-empty `image` keyframe marker (and the last
+group closes with the video's final frame); the audio drafter passes
+`video_stream_id=None` and gets transcript-only segments. A boundary instant is shared by
+adjacent groups, so each `frame=<t>` address is emitted at most once (§4.3.2.2).
 """
 
 from __future__ import annotations
@@ -19,7 +28,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from corpus.segments import Section, Segment
+from corpus.segments import _STRUCTURAL as _STRUCTURAL_ATOM
+from corpus.segments import Segment
 
 # Transcript segment header: `[Speaker N] (HH:MM:SS)` (or bare `(HH:MM:SS)`).
 _SEGMENT_HEADER_RE = re.compile(
@@ -54,22 +64,25 @@ def parse_transcript_sections(
     multi_audio: bool,
     multi_video: bool,
     media_duration: float | None = None,
-) -> list[Section]:
-    """One Section per speaker run — the DEFAULT sectioning, used when a video ships no
-    chapter markers (chaptered videos go through `parse_chaptered_sections`). Each holds
-    one `text/transcript` Segment per checkpoint (utterance body, speaker on `extra`) and
-    carries no `entry` (the normalizer writes a TOC label later). When `video_stream_id`
-    is set (video drafter) each section LEADS with a body-empty `image` keyframe marker at
-    its start and the final section closes with one at the video's last frame; audio
-    passes None and gets transcript-only sections. Interior boundary instants are shared
-    between adjacent runs, so each `frame=<t>` address is placed at most once (§4.3.2.2).
+) -> list[Segment]:
+    """A flat list of segments grouped by speaker run — the DEFAULT grouping, used when a
+    video ships no chapter markers (chaptered videos go through
+    `parse_chaptered_sections`). One `text/transcript` Segment per checkpoint (utterance
+    body, speaker on `extra`); a speaker run carries no label the source ever stated (a
+    speaker change is a machine inference, not a byte-fact) and so contributes no
+    structural mark — just its transcript (and, for video, frame) segments, in reading
+    order. When `video_stream_id` is set (video drafter) each run LEADS with a body-empty
+    `image` keyframe marker at its start and the final run closes with one at the video's
+    last frame; audio passes None and gets transcript-only segments. Interior boundary
+    instants are shared between adjacent runs, so each `frame=<t>` address is placed at
+    most once (§4.3.2.2).
 
     `media_duration` (the probed clip length, seconds) bounds the final run's end so a
     short continuous-speech clip that whisper returns as a single segment at start=0
     spans `00:00-<duration>` rather than collapsing to a zero-length `00:00-00:00`.
 
-    A speaker change is a section boundary at draft time; the normalizer later merges
-    across speaker boundaries into topic-grain sections.
+    A speaker change is a grouping boundary at draft time, internal to how addresses are
+    computed; the normalizer later reads the transcript and asserts topic-grain sections.
     """
     checkpoints = _parse_checkpoints(transcript)
     if not checkpoints:
@@ -93,16 +106,17 @@ def parse_chaptered_sections(
     multi_audio: bool,
     multi_video: bool,
     media_duration: float | None = None,
-) -> list[Section]:
-    """One Section per video chapter — the uploader's outline (yt-dlp `chapters[]`), used
-    in preference to speaker runs when a video ships chapter markers. The chapter title
-    becomes the section `entry` (the §4.3.2.2 TOC label — section-block metadata
-    structure, NOT body content); the section spans the chapter's time-range and holds the
-    transcript checkpoints that fall within it (each verbatim, its own speaker on `extra`,
-    since one chapter can span several speakers). Frame markers follow the same
-    lead-each-section / close-the-last rule as the speaker-run path. Chapters are kept even
-    when they contain no speech (a chapter is a structural unit); for video they still
-    carry their lead keyframe.
+) -> list[Segment]:
+    """A flat list of segments grouped by video chapter — the uploader's own outline
+    (yt-dlp `chapters[]`), used in preference to speaker runs when a video ships chapter
+    markers. Each chapter's title is a source-declared byte-fact, so its start gets a
+    leading STRUCTURAL byte-mark carrying that title verbatim (§4.3.2.3) — never a
+    Section's `entry` — followed by the transcript checkpoints that fall within it (each
+    verbatim, its own speaker on `extra`, since one chapter can span several speakers).
+    Frame markers follow the same lead-each-group / close-the-last rule as the speaker-run
+    path. Chapters are kept even when they contain no speech (a chapter is a structural
+    unit): the mark is emitted regardless, and for video it still carries its lead
+    keyframe.
     """
     checkpoints = _parse_checkpoints(transcript)
     return _emit_sections(
@@ -115,8 +129,10 @@ def parse_chaptered_sections(
     )
 
 
-# A section "group" feeding `_emit_sections`:
-#   (entry|None, begin_seconds, end_seconds, [(start_seconds, text, speaker_idx|None), …]).
+# A grouping "group" feeding `_emit_sections` — internal only, never stored as a Section:
+#   (label|None, begin_seconds, end_seconds, [(start_seconds, text, speaker_idx|None), …]).
+# `label` is a source-declared byte-fact (a chapter title) or None (a speaker run, which
+# the source never labeled) — it becomes a structural mark's body, never a Section's entry.
 _Group = tuple[str | None, float, float, list[tuple[float, str, int | None]]]
 
 
@@ -162,9 +178,10 @@ def _final_end(last_cp: float, media_duration: float | None) -> float:
 def _speaker_run_groups(
     checkpoints: list[tuple[float, str, str]], media_duration: float | None = None
 ) -> list[_Group]:
-    """Group consecutive same-speaker checkpoints into runs (entry=None — speaker-run
-    sectioning carries no TOC label). A run ends where the next run begins; the last ends
-    at the probed media duration (or just past the final checkpoint when unknown)."""
+    """Group consecutive same-speaker checkpoints into runs (label=None — a speaker run
+    carries no source-stated label, so it gets no structural mark). A run ends where the
+    next run begins; the last ends at the probed media duration (or just past the final
+    checkpoint when unknown)."""
     groups: list[_Group] = []
     i, n = 0, len(checkpoints)
     while i < n:
@@ -186,7 +203,8 @@ def _chapter_groups(
     chapters: list[dict[str, Any]],
     media_duration: float | None = None,
 ) -> list[_Group]:
-    """One group per chapter (entry=the chapter title), tiling the timeline contiguously:
+    """One group per chapter (label=the chapter's own title, a byte-fact), tiling the
+    timeline contiguously:
     a chapter runs to the next chapter's start, and the last to the probed media duration
     (or just past the final checkpoint when unknown — kept in-range, like the speaker-run
     path, rather than at a declared `end_time` that can round past the real duration).
@@ -223,31 +241,30 @@ def _emit_sections(
     video_stream_id: str | None,
     multi_audio: bool,
     multi_video: bool,
-) -> list[Section]:
-    """Render section groups → `Section`s with the shared frame-marker rule: each section
-    LEADS with an `image` keyframe at its start, the final section closes with one at its
-    end, and a `frame=<t>` address is emitted at most once (boundary instants are shared
-    between adjacent sections — `(opener-id, address)` identity, §4.3.2.2). `drop_empty`
-    skips groups with no checkpoints (speaker runs) — chapters keep them (a chapter is a
-    structural unit)."""
+) -> list[Segment]:
+    """Render grouping groups → a FLAT list of `Segment`s (spec §4.3.2.1/§7.8: no Section
+    is asserted here — grouping is internal bookkeeping, not a stored span, §153). A group
+    with a `label` (only the chapter path ever sets one — a byte-fact, the uploader's own
+    title) gets a leading STRUCTURAL byte-mark at its start instant, carrying that label
+    verbatim (§4.3.2.3); a speaker run (`label=None`) gets no mark at all. Every group
+    additionally shares the frame-marker rule: each LEADS with an `image` keyframe at its
+    start, the final group closes with one at its end, and a `frame=<t>` address is
+    emitted at most once (boundary instants are shared between adjacent groups —
+    `(opener-id, address)` identity, §4.3.2.2). `drop_empty` skips groups with no
+    checkpoints (speaker runs) — chapters keep them (a chapter is a structural unit; its
+    mark is emitted regardless of whether it has any speech)."""
     emitted = [g for g in groups if g[3]] if drop_empty else groups
     seen_frames: set[str] = set()
     # Record-global ledger of every `text/transcript` address emitted so far, mapped to its
-    # Segment, so a zero-width collision is folded even across a section boundary (a
+    # Segment, so a zero-width collision is folded even across a group boundary (a
     # speaker-run flip at the same rounded instant lands the two segments in adjacent
-    # sections — within-section dedup alone wouldn't catch that).
+    # groups — within-group dedup alone wouldn't catch that).
     seen_transcripts: dict[str, Segment] = {}
-    sections: list[Section] = []
-    for idx, (entry, begin, end, members) in enumerate(emitted):
-        section_address = (
-            f"time_range={seconds_to_timecode(begin)}-{seconds_to_timecode(end)}"
-        )
-        if multi_audio:
-            section_address += f"&stream_id={audio_stream_id}"
-
+    out: list[Segment] = []
+    for idx, (label, begin, end, members) in enumerate(emitted):
         segs: list[Segment] = []
-        # Each section LEADS with the keyframe at its start. The boundary instant is owned
-        # by the section that opens there; the prior section's end equals it and is not
+        # Each group LEADS with the keyframe at its start. The boundary instant is owned
+        # by the group that opens there; the prior group's end equals it and is not
         # re-emitted as a trailing marker (that was the duplicate-address bug).
         if video_stream_id:
             _append_frame(segs, seen_frames, begin, video_stream_id, multi_video)
@@ -269,7 +286,7 @@ def _emit_sections(
             # shared `S-S` value). 3+ in a row fold one-by-one into the running segment.
             # When the two carry different speakers (a diarization flip at one instant) the
             # merged span genuinely covers more than one speaker, so its `speaker` is
-            # dropped — mirroring a multi-speaker chapter section, which carries no single
+            # dropped — mirroring a multi-speaker chapter group, which carries no single
             # speaker either.
             prior = seen_transcripts.get(addr)
             if prior is not None:
@@ -286,22 +303,32 @@ def _emit_sections(
             )
             seen_transcripts[addr] = seg
             segs.append(seg)
-        # Only the final section closes with a trailing frame; every interior section's
-        # end coincides with the next section's leading frame, so emitting it would
-        # duplicate that address.
+        # Only the final group closes with a trailing frame; every interior group's end
+        # coincides with the next group's leading frame, so emitting it would duplicate
+        # that address.
         if video_stream_id and idx == len(emitted) - 1 and end > begin:
             _append_frame(segs, seen_frames, end, video_stream_id, multi_video)
 
         # `drop_empty` (speaker-run path) skips groups with no checkpoints up front; a
-        # cross-section zero-width collision can ALSO empty a section after the fact (its
-        # lone checkpoint folded into the prior section, and its lead frame was the shared
-        # boundary instant already placed). Drop such a now-empty section so it leaves no
-        # phantom TOC node with a duplicate section address. Chaptered sections
-        # (`drop_empty=False`) are kept — a chapter is a structural unit either way.
+        # cross-group zero-width collision can ALSO empty a group after the fact (its lone
+        # checkpoint folded into the prior group, and its lead frame was the shared
+        # boundary instant already placed). Drop such a now-empty group so it leaves no
+        # phantom marker at a duplicate address. Chapter groups (`drop_empty=False`) are
+        # kept — a chapter is a structural unit either way, and (unlike a dropped speaker
+        # run) it still gets its mark below even with zero segments.
         if drop_empty and not segs:
             continue
-        sections.append(Section(address=section_address, entry=entry, segments=segs))
-    return sections
+        if label:
+            out.append(
+                Segment(
+                    atom=_STRUCTURAL_ATOM,
+                    address=f"time={seconds_to_timecode(begin)}",
+                    level=1,
+                    body=label,
+                )
+            )
+        out.extend(segs)
+    return out
 
 
 def _append_frame(

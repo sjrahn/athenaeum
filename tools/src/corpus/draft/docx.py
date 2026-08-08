@@ -6,11 +6,14 @@ them with the standard library alone (no `python-docx`):
 - Frontmatter from `docProps/core.xml` + `docProps/app.xml` via ElementTree.
 - Walks `word/document.xml`'s body in document order, unwrapping `<w:sdt>` content
   controls. Each top-level block is a paragraph (`<w:p>`) or table (`<w:tbl>`).
-- Groups content into one `Section` per top-level heading (a paragraph styled
-  `Heading1` or carrying `outlineLvl 0`). Pre-heading content becomes a synthetic
-  `entry: Preamble` section. Each section holds one `atom: text` segment whose body is
-  rendered markdown (sub-headings → `##`/`###`, paragraphs as prose, tables as GFM
-  tables). A document with no headings emits a single flat top-level segment.
+- Splits content at each top-level heading (a paragraph styled `Heading1` or carrying
+  `outlineLvl 0`): the heading becomes a leading STRUCTURAL byte-mark carrying its own
+  verbatim text (spec §4.3.2.3), followed by one `atom: text` segment whose body is
+  rendered markdown for everything through the next heading (sub-headings → `##`/`###`,
+  paragraphs as prose, tables as GFM tables) — flat, top-level, no `Section` (a section
+  binds a FORM, which is normalize's judgment, never a generic drafter's, §7.8/§4.3.2.1).
+  Content before the first heading needs no mark — it is simply the document's opening.
+  A document with no headings at all emits a single flat segment, as before.
 
 Address scheme: `block=<N>` (or `block=<start>-<end>`) — the 1-indexed ordinal of a
 block-level element in document order (Word has no fixed pages in the XML). Mode is
@@ -29,7 +32,8 @@ from xml.etree import ElementTree as ET
 from corpus import recordbuild
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
-from corpus.segments import Section, Segment
+from corpus.segments import _STRUCTURAL as _STRUCTURAL_ATOM
+from corpus.segments import Segment
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _NS = {
@@ -117,8 +121,16 @@ def _iter_block_items(parent: ET.Element):
 
 
 class _SectionAcc:
-    def __init__(self, entry: str | None, start: int) -> None:
-        self.entry = entry
+    """One run of content between headings. `heading`/`heading_ordinal` are set only when
+    the run was OPENED by a level-1 heading (its own verbatim text and block position);
+    the run before the first heading (if any) carries neither — it needs no structural
+    mark (§4.3.2.3), just its own content."""
+
+    def __init__(
+        self, heading: str | None, start: int, heading_ordinal: int | None = None
+    ) -> None:
+        self.heading = heading
+        self.heading_ordinal = heading_ordinal
         self.start = start
         self.end = start
         self.lines: list[str] = []
@@ -134,10 +146,14 @@ class _SectionAcc:
 
 def _build_segments(
     blocks: list[tuple[str, ET.Element]], text_algos: list[str]
-) -> list[Section | Segment]:
-    """Heading-driven sections, or a single flat segment when there are no headings."""
+) -> list[Segment]:
+    """Heading-driven flat segments (spec §4.3.2.3), or a single flat segment when there
+    are no headings. No `Section` is ever asserted (§7.8, §4.3.2.1) and no label is ever
+    fabricated: a heading's structural mark carries its own verbatim text, and content
+    with no heading over it — the preamble, or the whole document when headless — gets no
+    label at all."""
     accs: list[_SectionAcc] = []
-    current = _SectionAcc(entry=None, start=1)
+    current = _SectionAcc(heading=None, start=1)
     saw_heading = False
 
     for ordinal, (kind, el) in enumerate(blocks, start=1):
@@ -148,11 +164,8 @@ def _build_segments(
         level = _heading_level(el, style)
         text = _collapse(_para_text(el))
         if level == 1:
-            if current.lines:
-                if current.entry is None:
-                    current.entry = "Preamble"
-                accs.append(current)
-            current = _SectionAcc(entry=text or "Section", start=ordinal)
+            accs.append(current)
+            current = _SectionAcc(heading=text, start=ordinal, heading_ordinal=ordinal)
             saw_heading = True
             if text:
                 current.add(f"## {text}", ordinal)
@@ -160,18 +173,13 @@ def _build_segments(
                 current.end = ordinal
             continue
         current.add(_render_para(el, style, level, text), ordinal)
-
-    if current.lines:
-        if saw_heading and current.entry is None:
-            current.entry = "Preamble"
-        accs.append(current)
-
-    if not accs:
-        return []
+    accs.append(current)
 
     if not saw_heading:
         acc = accs[0]
         body = acc.body()
+        if not body:
+            return []
         return [
             Segment(
                 atom="text",
@@ -181,15 +189,28 @@ def _build_segments(
             )
         ]
 
-    sections: list[Section] = []
+    out: list[Segment] = []
     for acc in accs:
-        body = acc.body()
-        addr = _block_address(acc.start, acc.end)
-        child = Segment(
-            atom="text", address=addr, perceptual=text_fingerprints(body, text_algos), body=body
-        )
-        sections.append(Section.spanning([child], entry=acc.entry))
-    return sections
+        if acc.heading_ordinal is not None:
+            out.append(
+                Segment(
+                    atom=_STRUCTURAL_ATOM,
+                    address=_block_address(acc.heading_ordinal, acc.heading_ordinal),
+                    level=1,
+                    body=acc.heading or "",
+                )
+            )
+        if acc.lines:
+            body = acc.body()
+            out.append(
+                Segment(
+                    atom="text",
+                    address=_block_address(acc.start, acc.end),
+                    perceptual=text_fingerprints(body, text_algos),
+                    body=body,
+                )
+            )
+    return out
 
 
 def _block_address(start: int, end: int) -> str:

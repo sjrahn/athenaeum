@@ -35,17 +35,17 @@ normalization:
 
         uv run --directory scripts python -c "
         from pathlib import Path
-        from corpus import paths
+        from corpus import paths, recordbuild
         from corpus.draft import docx
         corpus_root = paths.find_corpus_root()
         record_id, _ = paths.resolve_record(corpus_root, '<hash-prefix>')
         artifact = corpus_root / 'artifacts' / record_id[:2] / f'{record_id}.docx'
-        result = docx.draft(artifact)
+        build = recordbuild.begin({'frontmatter': {'id': record_id, 'touch': 'debug'}}, corpus_root)
+        result = docx.draft(artifact, build=build)
         print('fields:', result['fields'])
-        for s in result['segments']:
-            entry = getattr(s, 'entry', None)
-            seg = s.segments[0] if hasattr(s, 'segments') else s
-            print(f'  {s.address}  entry={entry!r}  body_len={len(seg.body)}')
+        for seg in build.blocks:  # flat segments: structural marks (heading text as body) + content
+            kind = 'mark' if seg.is_structural else seg.atom
+            print(f'  {seg.address}  {kind}  body_len={len(seg.body or \"\")}')
         "
 
     Note: `uv run --directory scripts` makes the spawned Python's cwd `scripts/`, NOT the corpus root. Always build artifact paths from `paths.find_corpus_root()` rather than relative paths.

@@ -6,13 +6,15 @@ OOXML spreadsheets are zip containers of XML parts. The drafter:
   `docProps/core.xml`, `docProps/app.xml`) — dep-light. A second openpyxl pass
   (`data_only=False`) counts formula cells per sheet; the zip member list surfaces
   external links, pivot tables, macros, and defined names.
-- Emits one Section per worksheet, addressed `sheet=<name>`, holding one rendered
-  segment (also `sheet=<name>`; a normalizer carving a sub-region appends
-  `&bbox=<A1-range>`). Static-data sheets get a markdown table fingerprinted via
-  simhash. Sheets whose own cells carry formulas or external references — plus
-  chart-only and empty sheets — get a body-empty segment and an address-scoped
-  `format-loss` issue (spec §4.3.3.1 shape; reconciliation #2 vs the reference's
-  CarbonAi `format_loss`). Per-sheet *classification* stays the normalizer's job.
+- Emits, per worksheet, a leading STRUCTURAL byte-mark carrying the sheet's own name
+  verbatim (spec §4.3.2.3) followed by one rendered segment — both addressed `sheet=<name>`
+  (a normalizer carving a sub-region of the content appends `&bbox=<A1-range>`). Flat, no
+  `Section` (a section binds a FORM, never a generic drafter's, §7.8/§4.3.2.1). Static-data
+  sheets get a markdown table fingerprinted via simhash. Sheets whose own cells carry
+  formulas or external references — plus chart-only and empty sheets — get a body-empty
+  segment and an address-scoped `format-loss` issue (spec §4.3.3.1 shape; reconciliation #2
+  vs the reference's CarbonAi `format_loss`). Per-sheet *classification* stays the
+  normalizer's job.
 
 `openpyxl` (the `[office]` extra) is imported lazily, so `import corpus.draft` works
 without it; drafting an actual xlsx without the extra raises a clear ImportError.
@@ -33,7 +35,8 @@ from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.functional_uri import quote_value
-from corpus.segments import Section, Segment
+from corpus.segments import _STRUCTURAL as _STRUCTURAL_ATOM
+from corpus.segments import Segment
 
 _NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -110,11 +113,11 @@ def draft(
     fields["has_pivot_tables"] = complexity["has_pivot_tables"]
     fields["has_macros"] = complexity["has_macros"]
 
-    sections, issues = _draft_sheet_sections(
+    segs, issues = _draft_sheet_sections(
         xlsx_path, complexity, detector, algos_for_atom("text", fingerprint)
     )
 
-    recordbuild.add_blocks(build, sections)
+    recordbuild.add_blocks(build, segs)
     return {
         "fields": fields,
         "embeds": [],
@@ -125,17 +128,17 @@ def draft(
 register(_XLSX_SCHEMA_ID)(draft)
 
 
-# ---------- per-sheet sections ---------- #
+# ---------- per-sheet segments ---------- #
 
 
 def _draft_sheet_sections(
     xlsx_path: Path, complexity: dict[str, Any], detector: str, text_algos: list[str]
-) -> tuple[list[Section], list[dict[str, Any]]]:
-    """One Section per worksheet (+ chart-sheet sections). Returns (sections, issues)
-    where issues are address-scoped format-loss entries."""
+) -> tuple[list[Segment], list[dict[str, Any]]]:
+    """A flat structural-mark-then-content pair per worksheet (+ chart-sheet). Returns
+    (segments, issues) where issues are address-scoped format-loss entries."""
     sheet_meta: dict[str, dict[str, Any]] = complexity.get("sheet_meta", {})
     wb = _openpyxl().load_workbook(xlsx_path, read_only=True, data_only=True)
-    sections: list[Section] = []
+    segments: list[Segment] = []
     issues: list[dict[str, Any]] = []
     try:
         for ws in wb.worksheets:
@@ -147,19 +150,28 @@ def _draft_sheet_sections(
                 detector=detector,
                 text_algos=text_algos,
             )
-            sections.append(_wrap_sheet_section(ws.title, seg))
+            segments.extend(_sheet_segments(ws.title, seg))
             issues.extend(seg_issues)
         for cs in wb.chartsheets:
             seg, seg_issues = _chartsheet_segment(cs, detector)
-            sections.append(_wrap_sheet_section(cs.title, seg))
+            segments.extend(_sheet_segments(cs.title, seg))
             issues.extend(seg_issues)
     finally:
         wb.close()
-    return sections, issues
+    return segments, issues
 
 
-def _wrap_sheet_section(sheet_title: str, child: Segment) -> Section:
-    return Section.spanning([child], entry=sheet_title)
+def _sheet_segments(sheet_title: str, child: Segment) -> list[Segment]:
+    """A worksheet's flat segment pair (spec §4.3.2.3, §7.8/§4.3.2.1 — 3.12
+    reconciliation, #153): a leading STRUCTURAL byte-mark carrying the sheet's own name
+    verbatim, followed by its rendered content. No `Section` — a section binds a FORM,
+    never a generic drafter's. Both share the sheet's own address (`sheet=<name>`): the
+    mark says a sheet named X sits here, the segment renders what its cells hold. Shared
+    by the xlsx and xls drafters (the xls drafter has no chart-sheet case)."""
+    return [
+        Segment(atom=_STRUCTURAL_ATOM, address=child.address, level=1, body=sheet_title),
+        child,
+    ]
 
 
 def _worksheet_segment(

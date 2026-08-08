@@ -8,11 +8,13 @@ Produces a `draft`-status body from an audio artifact:
 2. Resolve `corpus://<id>?transcribe` through the functional-URI resolver. That runs
    the configured `TranscriptionAdapter` (NoOp default, HTTPWhisper opt-in), cached by
    urihash. When no adapter is available — or the backend fails — the resolver raises
-   `TranscriptionUnavailable`; the drafter still produces a record, just with no sections
+   `TranscriptionUnavailable`; the drafter still produces a record, just with no segments
    and a spec-shaped `transcription-unavailable` issue.
 
-3. Parse the `[Speaker N] (HH:MM:SS)` transcript into one Section per speaker run via the
-   shared `_transcript` splitter (video_stream_id=None → transcript-only, no frame markers).
+3. Parse the `[Speaker N] (HH:MM:SS)` transcript into a flat list of `text/transcript`
+   segments, one per speaker run, via the shared `_transcript` splitter
+   (video_stream_id=None → transcript-only, no frame markers). No `Section` is asserted
+   (§7.8, §4.3.2.1) — a speaker run carries no source-stated label.
 
 Registered for every bundled `audio/*` mime-schema id; a corpus with a custom audio mime
 schema registers its own drafter for that id.
@@ -33,7 +35,7 @@ from corpus.draft._hostcfg import resolve_transcription
 from corpus.draft._sidecar import parse_info_json_for_record
 from corpus.draft._trackmanifest import attest_track_manifest
 from corpus.draft._transcript import parse_transcript_sections
-from corpus.segments import Section
+from corpus.segments import Segment
 from corpus.transcription import TranscriptionUnavailable
 
 log = logging.getLogger(__name__)
@@ -77,7 +79,7 @@ def draft(
         fields["streams"] = probe["streams"]
 
     issues: list[dict[str, Any]] = []
-    sections: list[Section] = []
+    segs: list[Segment] = []
     transcript = ""
     mode, per_host_transcriber = resolve_transcription(corpus_root, record_metadata)
     if mode == "disabled":
@@ -99,7 +101,7 @@ def draft(
             issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
         else:
             if transcript.strip():
-                sections = parse_transcript_sections(
+                segs = parse_transcript_sections(
                     transcript,
                     audio_stream_id=probe["audio_stream_id"] or "a0",
                     video_stream_id=None,
@@ -115,8 +117,7 @@ def draft(
     distinct_speakers = sorted(
         {
             seg.extra.get("speaker")
-            for sec in sections
-            for seg in sec.segments
+            for seg in segs
             if seg.overlay == "text/transcript" and seg.extra.get("speaker") is not None
         }
     )
@@ -135,7 +136,7 @@ def draft(
     track_embeds, track_issues = attest_track_manifest(audio_path)
     issues.extend(track_issues)
 
-    recordbuild.add_blocks(build, sections)
+    recordbuild.add_blocks(build, segs)
     return {
         "fields": fields,
         "embeds": track_embeds,

@@ -4,10 +4,13 @@ Legacy Excel 97-2003 binary workbooks (OLE2 Compound Documents, not the OOXML zi
 xlsx uses). Read via `xlrd` (the `[office]` extra), imported lazily so
 `import corpus.draft` works without it.
 
-- One Section per *visible* worksheet, addressed `sheet=<name>` (hidden sheets are
-  internal chrome and skipped). Each sheet renders as a markdown table of cached cell
-  values via the xlsx drafter's shared rendering helpers; empty sheets become a
-  body-empty segment + an address-scoped `format-loss` issue (spec §4.3.3.1).
+- A leading STRUCTURAL byte-mark (spec §4.3.2.3) carrying the sheet's own name verbatim,
+  then one rendered segment, per *visible* worksheet, both addressed `sheet=<name>`
+  (hidden sheets are internal chrome and skipped) — flat, no `Section` (§7.8/§4.3.2.1;
+  shared with the xlsx drafter's `_sheet_segments`). Each sheet renders as a markdown
+  table of cached cell values via the xlsx drafter's shared rendering helpers; empty
+  sheets become a body-empty segment + an address-scoped `format-loss` issue (spec
+  §4.3.3.1).
 - Key gap vs xlsx: **formula detection is unavailable** — xlrd 2.x exposes only the
   cached value type, not `XL_CELL_FORMULA`, so every populated sheet renders its
   cached values regardless of whether they are user-entered or computed. The
@@ -23,10 +26,10 @@ from typing import Any
 
 from corpus import recordbuild, touches
 from corpus.draft import DrafterResult, register
-from corpus.draft.xlsx import _fmt_cell, _rows_to_markdown, loss_issue
+from corpus.draft.xlsx import _fmt_cell, _rows_to_markdown, _sheet_segments, loss_issue
 from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.functional_uri import quote_value
-from corpus.segments import Section, Segment
+from corpus.segments import Segment
 
 _ROW_CAP = 1000
 _XLS_SCHEMA_ID = "application/application_vnd.ms-excel"
@@ -60,7 +63,7 @@ def draft(
     text_algos = algos_for_atom("text", fingerprint)
     xlrd = _xlrd()
     fields: dict[str, Any] = {}
-    sections: list[Section] = []
+    segs: list[Segment] = []
     issues: list[dict[str, Any]] = []
 
     book = xlrd.open_workbook(str(xls_path), formatting_info=False)
@@ -75,18 +78,12 @@ def draft(
 
         for sheet in visible_sheets:
             seg, seg_issues = _worksheet_segment(sheet, detector, text_algos)
-            sections.append(
-                Section(
-                    address=f"sheet={quote_value(sheet.name)}",
-                    entry=sheet.name,
-                    segments=[seg],
-                )
-            )
+            segs.extend(_sheet_segments(sheet.name, seg))
             issues.extend(seg_issues)
     finally:
         book.release_resources()
 
-    recordbuild.add_blocks(build, sections)
+    recordbuild.add_blocks(build, segs)
     return {
         "fields": fields,
         "embeds": [],

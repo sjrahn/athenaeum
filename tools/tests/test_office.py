@@ -95,15 +95,20 @@ def test_docx_draft_and_lint(tmp_path):
     from corpus import segments as seg_mod
 
     blocks = list(seg_mod.iter_blocks(post.content))
-    sections = [b for b in blocks if isinstance(b, seg_mod.Section)]
-    assert [s.entry for s in sections] == ["Preamble", "Introduction", "Conclusion"]
-    # The docx drafter's sections are bare 2.x TOC groupings (no `form:` id) — stored
-    # content with no governing form is the `rendered` derived state (§4.1).
+    # No `Section` is ever asserted (spec §7.8/§4.3.2.1) — flat structural marks + content.
+    assert not any(isinstance(b, seg_mod.Section) for b in blocks)
+    marks = [b for b in blocks if b.is_structural]
+    assert [m.body for m in marks] == ["Introduction", "Conclusion"]
+    # Content before the first heading gets no fabricated "Preamble" label — no mark at all.
+    assert len(marks) == 2
+    # The docx drafter's marks + segments are formless content — stored content with no
+    # governing form is the `rendered` derived state (§4.1).
     assert records.derived_state(post) == "rendered"
     assert post.metadata["_artifact"]["fields"].get("title") == "My Document"
     # Fingerprinting is opt-in (default off) — data segments carry no perceptual here.
-    intro = next(s for s in sections if s.entry == "Introduction")
-    assert intro.segments[0].perceptual is None
+    intro_idx = next(i for i, b in enumerate(blocks) if getattr(b, "body", None) == "Introduction")
+    intro_content = blocks[intro_idx + 1]
+    assert intro_content.atom == "text" and intro_content.perceptual is None
 
 
 def test_docx_fingerprint_opt_in(tmp_path, run_drafter):
@@ -152,6 +157,15 @@ def test_xlsx_draft_and_lint(tmp_path):
     assert lint_rc == 0
 
     post = records.load(paths.record_path(root, rid))
+    from corpus import segments as seg_mod
+
+    blocks = list(seg_mod.iter_blocks(post.content))
+    # No `Section` is ever asserted (spec §7.8/§4.3.2.1) — a structural mark carrying each
+    # sheet's own name verbatim, then its rendered content.
+    assert not any(isinstance(b, seg_mod.Section) for b in blocks)
+    marks = [b for b in blocks if b.is_structural]
+    assert {m.body for m in marks} == {"Data", "Calc", "Empty"}
+
     issues = list(records.iter_issue_blocks(post))
     by_addr = {i["fields"].get("address"): i for i in issues}
     # Calc (formula) → warning; Empty → info. Both address-scoped, format-loss.
@@ -180,8 +194,11 @@ def test_xls_draft_and_lint(tmp_path):
     from corpus import segments as seg_mod
 
     blocks = list(seg_mod.iter_blocks(post.content))
-    sections = [b for b in blocks if isinstance(b, seg_mod.Section)]
-    assert {s.entry for s in sections} == {"Data", "Empty"}
+    # No `Section` is ever asserted (spec §7.8/§4.3.2.1) — a structural mark carrying the
+    # sheet's own name verbatim, then its rendered content, per sheet.
+    assert not any(isinstance(b, seg_mod.Section) for b in blocks)
+    marks = [b for b in blocks if b.is_structural]
+    assert {m.body for m in marks} == {"Data", "Empty"}
     # The Empty sheet contributes an info format-loss issue.
     issues = list(records.iter_issue_blocks(post))
     assert any(i["fields"].get("address") == "sheet=Empty" for i in issues)

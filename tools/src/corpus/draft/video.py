@@ -1,40 +1,26 @@
 """Video draft extraction (deterministic, no LLM).
 
-Produces a `draft`-status body from a video artifact:
+Produces a `draft`-status body from a video CONTAINER artifact. *(3.11, #131)* The
+container itself never transcribes — that moved to the audio stream leaf's own drafter
+(`draft/audio.py`, §1.2), since a container rendering a member's bytes has been a
+violation since 3.8 (§4.3.2.2, `disposition: manifest`, §65). What this drafter still
+owns:
 
 1. Probe the file via `ffprobe` for duration / dimensions / codecs / per-stream
    metadata (tolerant — a missing or failing ffprobe yields no metadata, not a
    crash; per-stream data lifts to a `streams:` map keyed `v0`/`a0`/…).
 
-2. Resolve `corpus://<id>?extract_audio&transcribe` through the functional-URI
-   resolver. That runs ffmpeg → the configured `TranscriptionAdapter` (NoOp default,
-   HTTPWhisper opt-in), cached by urihash. When no adapter is available — or the
-   backend fails — the resolver raises `TranscriptionUnavailable`; the drafter still
-   produces a record, just with no sections and a spec-shaped
-   `transcription-unavailable` issue (reconciliation #2 vs the reference's
-   CarbonAi `format_loss` shape).
-
-3. Parse the `[Speaker N] (HH:MM:SS)` transcript into Sections. Default: one Section
-   per speaker run. When the capture's `.info.json` ships chapter markers, section by
-   the chapters instead (the uploader's outline beats the speaker-run heuristic) — the
-   chapter title becomes the section `entry` TOC label (§4.3.2.2; metadata structure,
-   not body content). Each section holds one `text/transcript` Segment per checkpoint
-   (verbatim utterance as body, speaker carried on `extra`), led by a body-empty `image`
-   keyframe marker at the section's start frame — the final section also closes with
-   one at the video's last frame (when the source has a video stream). Interior
-   boundary frames are shared between adjacent sections, so each is emitted once
-   (§4.3.2.2). `text/transcript` is the lossless atomic overlay (spec §7.3) — the
-   body losslessly transcribes the addressed time-range; the adapter's output is
-   approximate and the normalizer corrects it.
-
-4. Track-manifest attestation (spec §12.20 items 1-2, `draft/_trackmanifest.py`): one embed
+2. Track-manifest attestation (spec §12.20 items 1-2, `draft/_trackmanifest.py`): one embed
    per elementary stream for an ISOBMFF container (mp4/quicktime), additive to the facts
-   above — a no-op for webm/mkv (Matroska/EBML support is a deferred item). Chapter marks
-   (from the same yt-dlp sidecar step 3 reads) land as structural byte-marks (§4.3.2.3) via
-   the **sidecar path only** — `_sidecar.py`'s `chapters[]`. The mp4 chapter-atom path
-   (`chpl` box / `chap`-track) is a **named gap**: not implemented this increment, so a
-   chaptered mp4 with no yt-dlp sidecar (e.g. a plain capture, not a yt-dlp download) attests
-   no structural marks even though the container bytes may carry them.
+   above — a no-op for webm/mkv (Matroska/EBML support is a deferred item).
+
+3. Chapter marks: yt-dlp `.info.json`'s `chapters[]` (the **sidecar path only** —
+   `_sidecar.py`) land as structural byte-marks (§4.3.2.3), each carrying the chapter's own
+   title verbatim — a boundary the source declares about the whole container, and the one
+   content-zone inhabitant a `disposition: manifest` record is allowed (§65). The mp4
+   chapter-atom path (`chpl` box / `chap`-track) is a **named gap**: not implemented this
+   increment, so a chaptered mp4 with no yt-dlp sidecar (e.g. a plain capture, not a yt-dlp
+   download) attests no structural marks even though the container bytes may carry them.
 
 Registered for every bundled `video/*` mime-schema id; a corpus with a custom video
 mime schema registers its own drafter for that id.
