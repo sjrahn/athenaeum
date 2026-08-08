@@ -27,6 +27,13 @@ at all is not a flattening), and `crumbline.py` for the breadcrumb (>=2 crumb la
 in order on one line, with a literal `>` — coverage-fraction tests are fuzzy because the
 fleet substitutes the vehicle name for the "Vehicle" crumb).
 
+The links check (modern-text mode, the default below) is now `corpus.linkscan.scan_flattened`
+— lifted OUT of this script and into a shared module `corpus.lint`'s `subject-link-flattened`
+rule imports too (#52's third acceptance gate lands in lint itself), so the two can never
+drift apart. `--legacy-text` reproduces #118's published (under-counting, no-entity-decode)
+figure and stays local to this script — the shared module only ever implements the corrected
+text treatment.
+
 Usage:
     accept_alldata.py <corpus-root> [--ids FILE] [--json OUT] [--limit N]
 
@@ -49,19 +56,10 @@ from typing import Any
 
 from corpus import functional_uri as furi
 from corpus import records, schemas, segments
+from corpus.linkscan import ANCHOR, CHROME_TEXT, HREF, MDLINK, TAG, scan_flattened
 from corpus.regionmap import resolve as resolve_regions
 
 HOST = "my.alldata.com"
-
-ANCHOR = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.S | re.I)
-HREF = re.compile(r"""href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
-TAG = re.compile(r"<[^>]+>")
-MDLINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
-
-# Anchor texts that are the page's own UI, not the publisher naming a component. Carried
-# over verbatim from the census that produced #118's published figure — changing this set
-# changes the number, so it is not a place to improvise.
-CHROME_TEXT = {"open in new tab", "zoom/print", "click for full-size image", "print"}
 
 # What the tracker already says. A check that cannot land on its own row is not trusted.
 PUBLISHED = {
@@ -110,11 +108,31 @@ def el_paths(address: Any) -> list[furi.ElPath]:
 # ---------- check 1: #118, flattened inline auto-links ---------- #
 
 
-def check_links(html: str, body: str, rmap: Any) -> dict[str, Any]:
+def check_links(html: str, blocks: list[segments.Block], rmap: Any) -> dict[str, Any]:
     """Anchors inside a SUBJECT region whose text survived into the body but whose link
     did not. `renders_at` implements §7.2's innermost-wins, so a rail link nested inside
-    `ad-repair-article` scores as framing (#120's correction) and never lands here."""
-    linked = {t for t, _u in MDLINK.findall(body)}
+    `ad-repair-article` scores as framing (#120's correction) and never lands here.
+
+    `blocks`, not a raw body string: the presence test must exclude the trailing
+    `<!--section nav-->` span's own rendering, since #89's restoration puts the page's own
+    breadcrumb there and a crumb label routinely repeats a subject anchor's text — see
+    `corpus.linkscan`'s module docstring for the false-positive this was scoring before the
+    exclusion.
+
+    Modern-text mode (the default) delegates to `corpus.linkscan.scan_flattened` — the
+    shared module `corpus.lint`'s own rule imports — so this script and lint can never
+    silently disagree. `--legacy-text` reproduces #118's published (no-entity-decode)
+    figure; the shared module doesn't know that mode, so it stays a local reimplementation
+    here rather than a parameter added to the shared function (the nav exclusion is
+    reproduced locally too, for the same reason the shared module carries it)."""
+    if not LEGACY_TEXT:
+        return scan_flattened(html, blocks, rmap)
+    whole_body = segments.emit(blocks)
+    subject_blocks = [
+        b for b in blocks if not (isinstance(b, segments.Section) and b.form == "nav")
+    ]
+    subject_body = segments.emit(subject_blocks)
+    linked = {t for t, _u in MDLINK.findall(whole_body)}
     flattened: list[str] = []
     total_subject = 0
     for m in ANCHOR.finditer(html):
@@ -128,10 +146,12 @@ def check_links(html: str, body: str, rmap: Any) -> dict[str, Any]:
         if rmap.renders_at(m.start()) != "subject":
             continue
         total_subject += 1
-        # The text has to still BE there. An anchor whose whole element was never placed
-        # is an omission judgment, not a flattening — conflating them is what inflated
-        # this census twice.
-        if text not in linked and re.search(r"(?<!\w)" + re.escape(text) + r"(?!\w)", body):
+        # The text has to still BE there, OUTSIDE the nav span. An anchor whose whole
+        # element was never placed is an omission judgment, not a flattening — conflating
+        # them is what inflated this census twice.
+        if text not in linked and re.search(
+            r"(?<!\w)" + re.escape(text) + r"(?!\w)", subject_body
+        ):
             flattened.append(text)
     return {
         "subject_anchors": total_subject,
@@ -164,7 +184,7 @@ def check_crumb(html: str, post: Any, blocks: list[Any], rmap: Any) -> dict[str,
 
       absent  the artifact has a breadcrumb, the record renders it nowhere
       inline  it is rendered, but loose in the content — not in the trailing span
-      homed   it is rendered inside the trailing `<!--section index-->` (the target shape)
+      homed   it is rendered inside the trailing `<!--section nav-->` (the target shape)
     """
     labels = [x for x in crumb_labels(html, rmap) if x]
     if len(labels) < 2:
@@ -172,17 +192,23 @@ def check_crumb(html: str, post: Any, blocks: list[Any], rmap: Any) -> dict[str,
 
     top = list(blocks)
     trailing = top[-1] if top else None
-    # `homed` means a framing span that TRAILS a content zone. A record whose entire body
-    # is one `form/index` section is not that: `<!--section index-->` is overloaded — it
-    # spells both "this page's entries are its content" (the form contract, §7.8) and "the
-    # trailing span that carries this page's framing" (the overlay). Without the >1 test
-    # every single-block index page scored as homed, which is how 531 records looked like
-    # the target shape while none of them were.
-    trailing_is_index = bool(
-        len(top) > 1 and trailing is not None and getattr(trailing, "form", None) == "index"
+    # `homed` means a framing span that TRAILS a content zone. #89 minted `form/nav` as the
+    # homed spelling — a different form id from `index`, so it can never merge with a bare
+    # `form/index` span left behind by the move — so `nav` is the shape checked FIRST here;
+    # `index` is kept only as the legacy pre-#89 spelling (a record a prior run already homed,
+    # or a historical-data reproduction run). A record whose entire body is one `form/index`
+    # section is homed by NEITHER spelling: `<!--section index-->` is overloaded — it spells
+    # both "this page's entries are its content" (the form contract, §7.8) and (pre-#89) "the
+    # trailing span that carries this page's framing" (the overlay). Without the >1 test every
+    # single-block index page scored as homed, which is how 531 records looked like the target
+    # shape while none of them were.
+    trailing_is_homed_span = bool(
+        len(top) > 1
+        and trailing is not None
+        and getattr(trailing, "form", None) in ("nav", "index")
     )
     trailing_segments = set()
-    if trailing_is_index:
+    if trailing_is_homed_span:
         trailing_segments = {id(s) for s in segments.leaf_segments([trailing])}
 
     for seg in segments.leaf_segments(top):
@@ -346,7 +372,7 @@ def main() -> int:
                 str(t).startswith("corpus.compile") and "+" in str(t)
                 for t in (post.metadata.get("touch") or [])
             ),
-            "links": check_links(html, body, rmap),
+            "links": check_links(html, blocks, rmap),
             "crumb": check_crumb(html, post, blocks, rmap),
             "order": check_order(blocks),
             "form": check_form(post, blocks),

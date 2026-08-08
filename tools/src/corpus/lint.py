@@ -1714,6 +1714,83 @@ def _rule_terminal_stored_rendering(post, blocks, root) -> Iterator[Finding]:
         )
 
 
+# ---------- the link gate (#52's third acceptance gate, #118) ---------- #
+
+
+def _rule_subject_link_flattened(post, blocks, root) -> Iterator[Finding]:
+    """A normalize pass that flattens a subject-region anchor — keeps the source `<a href>`'s
+    text in the body but drops the link itself — cannot reach finalize (spec #118, #52).
+
+    Reads artifact bytes, unlike every other rule in `_REGISTRY`: a record's origin overlay
+    must declare at least one `regions:` row with `renders: subject` (config-driven — a host
+    with no declaration is never judged, spec §7.2) before this rule touches the artifact at
+    all, so a corpus with no such overlay pays nothing for it. Beyond that gate, an
+    unavailable artifact or a region-resolve failure means this rule silently does not fire
+    (lint's parse-tolerant discipline, same as every other artifact-optional check) — it is
+    never the reason a record fails to lint.
+
+    The detector itself is `corpus.linkscan.scan_flattened`, the same function
+    `scripts/accept_alldata.py`'s `check_links` now delegates to — ported rather than
+    re-derived so the two can never drift (module docstring). Deliberately NOT exempted from
+    any migration-verb neutrality allowlist: the neutrality gates (`home_rail.py`,
+    `home_crumb.py`, `drop_retired.py`) compare this rule's finding count like any other, so a
+    rewrite that RAISES flattening still holds — exactly right — while a pre-existing
+    flattened anchor a migration doesn't touch is not this rule's problem to fix."""
+    if _records.media_type_for(post) != "text/html":
+        return
+    record_id = str(post.metadata.get("id") or "")
+    if not record_id:
+        return
+
+    decl: list[dict[str, Any]] | None = None
+    for origin in _records.iter_origin_blocks(post):
+        host = str(origin.get("id") or "")
+        if not host:
+            continue
+        rows = _schemas.origin_regions(root, host)
+        if any(row.get("renders") == "subject" for row in rows):
+            decl = rows
+            break
+    if decl is None:
+        return  # no origin overlay declares a subject region — nothing to judge (§7.2)
+
+    from corpus import mime as _mime
+    from corpus.containment import ArtifactMissing, ensure_local_bytes
+    from corpus.linkscan import scan_flattened
+    from corpus.regionmap import resolve as _resolve_regions
+
+    ext = _mime.extension_for(_records.media_type_for(post))
+    try:
+        artifact_path = ensure_local_bytes(root, record_id, ext)
+    except ArtifactMissing:
+        return  # artifact unavailable — silently does not fire, not a lint failure
+
+    html = artifact_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        rmap = _resolve_regions(html, decl)
+    except Exception:
+        return  # region-resolve failure — does not fire
+
+    result = scan_flattened(html, blocks, rmap)
+    if not result["flattened"]:
+        return
+    samples = "; ".join(result["sample"])
+    yield Finding(
+        rule_id="subject-link-flattened",
+        severity="error",
+        message=(
+            f"{result['flattened']} of {result['subject_anchors']} subject-region anchor(s) "
+            f"render flattened — the link text survives in the body but the link does not "
+            f"({samples}); a normalize pass must preserve source links as [text](url) (#118)"
+        ),
+        fields={
+            "subject_anchors": result["subject_anchors"],
+            "flattened": result["flattened"],
+            "sample": result["sample"],
+        },
+    )
+
+
 # ---------- rule registry + entry point ---------- #
 
 
@@ -1771,6 +1848,9 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("form-address-nonmonotonic", _rule_form_coherence),
     # terminal contracts (§7.8, 3.3) — the inverted conformance check.
     ("terminal-stored-rendering", _rule_terminal_stored_rendering),
+    # #52/#118 — the link gate. Reads artifact bytes, unlike every rule above; see the rule's
+    # own docstring for why that is cheap for a corpus whose overlays declare no subject region.
+    ("subject-link-flattened", _rule_subject_link_flattened),
 )
 
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal
