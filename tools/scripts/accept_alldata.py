@@ -217,7 +217,10 @@ def check_crumb(html: str, post: Any, blocks: list[Any], rmap: Any) -> dict[str,
         for raw_line in (seg.body or "").strip().split("\n")[:3]:
             if ">" not in raw_line:
                 continue
-            line = norm(raw_line)
+            # Strip markdown links to their text first — a faithfully-rendered crumb is
+            # LINKED, and the URL residue otherwise breaks the adjacency test (the #52
+            # pilot's fleet renders crumbs with hrefs kept; the detector predates that).
+            line = norm(MDLINK.sub(r"\1", raw_line))
             if not line:
                 continue
             # Chained IN ORDER *and adjacent across the separator*. Chaining alone is not

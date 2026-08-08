@@ -152,6 +152,36 @@ def test_a_verbatim_crumb_inside_an_article_span_moves_into_a_new_trailing_nav_s
     assert crumb_seg.address == "el=1.2.1"  # untouched — a pure move, not a re-address
 
 
+def test_a_markdown_linked_crumb_line_still_matches(tmp_path):
+    """A faithfully-rendered crumb keeps its hrefs — `[Vehicle](url) > …`. The matcher
+    strips markdown links to their text before normalizing; without that, the URL residue
+    sits in the inter-label gap and the adjacency test calls a real crumb absent (found
+    when the #52 pilot's fleet started rendering crumbs linked)."""
+    linked = (
+        "[Vehicle](#/carids/46076/components/1) > "
+        "[Technical Service Bulletins](#/carids/46076/itypes/13) > Some Bulletin Title"
+    )
+    root, rf = _record(
+        tmp_path,
+        [
+            Section(
+                form="article",
+                segments=[
+                    Segment(atom="text", address="el=1.2.1", body=linked),
+                    Segment(atom="text", address="el=1.2.2", body="Prose body."),
+                ],
+            )
+        ],
+    )
+    report = home_crumb.home_crumb_record(rf, root)
+    assert report.hold is None and report.changed, report.hold
+    assert dict(report.counts) == {"breadcrumb homed": 1}
+    blocks = segments.iter_blocks(records.loads(report.new_text).content)  # type: ignore[arg-type]
+    assert blocks[-1].form == "nav"
+    (crumb_seg,) = blocks[-1].segments
+    assert crumb_seg.body.strip() == linked  # moved byte-for-byte, links intact
+
+
 def test_a_crumb_leading_a_bare_index_span_that_is_the_whole_record_now_moves(tmp_path):
     """The commonest real shape (397 of 525), and the one this module used to refuse outright:
     a bare `form/index` span declares no fields, so before #89 it was indistinguishable from

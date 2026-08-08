@@ -94,6 +94,7 @@ HOST = "my.alldata.com"
 _ANCHOR = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.S | re.I)
 _TAG = re.compile(r"<[^>]+>")
 _SEPARATOR_GAP = re.compile(r"[\s>:*|/-]+")
+_MDLINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
 
 
 # ---------- crumb-label extraction (ported from accept_alldata.py) ---------- #
@@ -173,7 +174,12 @@ def _find_crumb_matches(
             for raw_line in (seg.body or "").strip().split("\n")[:3]:
                 if ">" not in raw_line:
                     continue
-                line = _norm(raw_line)
+                # A faithfully-rendered crumb is LINKED (`[Vehicle](url) > …`) — strip
+                # markdown links to their text before normalizing, or the URL residue
+                # lands in the inter-label gap and breaks the adjacency test (found when
+                # the #52 pilot's fleet started rendering crumbs with their hrefs kept,
+                # which is the faithful shape — the detector predates it).
+                line = _norm(_MDLINK.sub(r"\1", raw_line))
                 if not line:
                     continue
                 # `check_crumb`'s own chain scan, verbatim — plus `true_start`/`best_end`,
