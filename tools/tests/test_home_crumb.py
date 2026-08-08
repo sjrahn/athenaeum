@@ -2,12 +2,17 @@
 
 What these pin: the migration only moves a breadcrumb segment that is ALONE in its own
 segment and spelled verbatim (chain starts at the line's first character, uses every label,
-runs to the line's end); it REFUSES rather than guesses on the three populations #52's
-acceptance check found sharing one symptom — mixed into a larger segment, prefixed with the
-vehicle-name string (#89's third defect), and a partial/residue chain; it never leaves a form
-span childless; it is idempotent; and the positive landing check actually confirms the move
-landed (not merely that lint didn't get worse) — the lesson a prior migration paid for when a
-neutrality gate passed on a run that reported hundreds of "merges" while writing nothing.
+runs to the line's end) into a new trailing `<!--section nav-->`; it REFUSES rather than
+guesses on the three populations #52's acceptance check found sharing one symptom — mixed into
+a larger segment, prefixed with the vehicle-name string (#89's third defect), and a
+partial/residue chain; it never leaves a form span childless; it is idempotent; the positive
+landing check actually confirms the move landed (not merely that lint didn't get worse) — the
+lesson a prior migration paid for when a neutrality gate passed on a run that reported hundreds
+of "merges" while writing nothing; the population it used to refuse outright — the crumb
+leading a `form/index` span that is the record's whole content — now moves too, since `nav`
+and `index` are different form ids and can never merge (#89); and a record a prior run already
+homed under the pre-#89 `index` spelling gets that span's opener RE-SPELLED to `nav`, gated the
+same as any other rewrite, rather than skipped.
 """
 
 from __future__ import annotations
@@ -108,12 +113,12 @@ def _record(
 # ---------- the happy path ---------- #
 
 
-def test_a_verbatim_crumb_inside_an_article_span_moves_into_a_new_trailing_index_span(
+def test_a_verbatim_crumb_inside_an_article_span_moves_into_a_new_trailing_nav_span(
     tmp_path,
 ):
     """The genuinely handleable shape (116 of 525): the crumb sits as the first child of a
     `form/article` span alongside the genuine article content. It moves out, untouched
-    byte-for-byte, into a NEW trailing `<!--section index-->`."""
+    byte-for-byte, into a NEW trailing `<!--section nav-->`."""
     root, rf = _record(
         tmp_path,
         [
@@ -141,22 +146,21 @@ def test_a_verbatim_crumb_inside_an_article_span_moves_into_a_new_trailing_index
         "Removal: 1. Disconnect the battery. 2. Remove the cover."
     ]
     # A NEW trailing span carries the crumb, verbatim, and nothing else.
-    assert blocks[-1].form == "index"
+    assert blocks[-1].form == "nav"
     (crumb_seg,) = blocks[-1].segments
     assert crumb_seg.body.strip() == _VERBATIM_CRUMB
     assert crumb_seg.address == "el=1.2.1"  # untouched — a pure move, not a re-address
 
 
-def test_a_crumb_leading_a_bare_index_span_that_is_the_whole_record_is_held(tmp_path):
-    """The commonest real shape (397 of 525) and the one that CANNOT be a pure block move: a
-    bare `form/index` span declares no fields, so it is indistinguishable from another bare
-    `form/index` span, and §4.3.2.1's own adjacent-same-form rule merges two of them on sight.
-    Every one of these records is its own sole top-level block — a link-index page (the
-    overlay's "the link list IS the content") that happens to carry the crumb as a co-located
-    entry — so appending a new trailing index span would not create a second, distinguishable
-    span; it would collapse into the first on the very next parse, and #52's acceptance check
-    requires >1 top-level block to score `homed` at all. Refusing here rather than writing a
-    record whose shape silently is not what it looks like."""
+def test_a_crumb_leading_a_bare_index_span_that_is_the_whole_record_now_moves(tmp_path):
+    """The commonest real shape (397 of 525), and the one this module used to refuse outright:
+    a bare `form/index` span declares no fields, so before #89 it was indistinguishable from
+    another bare `form/index` span, and §4.3.2.1's own adjacent-same-form rule would have
+    merged two of them on sight — every one of these records is its own sole top-level block, a
+    link-index page (the overlay's "the link list IS the content") that happens to carry the
+    crumb as a co-located entry. `form/nav` ends the overload: the crumb now moves into a
+    trailing `nav` span, a different form id from the `index` span it leaves behind, so the two
+    can never merge, whatever the remaining span declares."""
     root, rf = _record(
         tmp_path,
         [
@@ -175,22 +179,20 @@ def test_a_crumb_leading_a_bare_index_span_that_is_the_whole_record_is_held(tmp_
         ],
     )
     report = home_crumb.home_crumb_record(rf, root)
-    assert report.changed is False
-    assert "`form/index` span" in (report.hold or "")
+    assert report.hold is None and report.changed, report.hold
+    blocks = segments.iter_blocks(records.loads(report.new_text).content)
+    assert [b.form for b in blocks] == ["index", "nav"]
+    assert blocks[-1].segments[0].body.strip() == _VERBATIM_CRUMB
 
 
-def test_an_index_span_carrying_LEGACY_fields_is_held_too(tmp_path):
-    """The trap, and the reason the guard tests the FORM ALONE.
-
-    396 of the 509 live candidates are index spans still carrying legacy `title:`/`description:`.
-    Those fields DO satisfy §4.3.2.1's equality test, so a trailing index span genuinely stays
-    separate from them — today. But the fields are retired and `corpus drop-retired` exists to
-    remove them, and the moment it reaches these records the two spans become identical and
-    merge. Admitting them would write a shape whose correctness EXPIRES, and nothing errors when
-    it does: the record simply stops being content-then-framing and no gate fires.
-
-    A trap armed by a sibling migration is worse than a record left alone, so the form id is the
-    whole test and the presence of a distinguishing field buys nothing."""
+def test_an_index_span_carrying_LEGACY_fields_now_moves_too(tmp_path):
+    """Before #89, this was the trap: 396 of the 509 live candidates are index spans still
+    carrying legacy `title:`/`description:`. Those fields DID satisfy §4.3.2.1's equality
+    test, so a trailing index span genuinely stayed separate from them — until `corpus
+    drop-retired` swept the fields and the two spans became identical and merged, a shape
+    whose correctness EXPIRED silently. `form/nav` ends it: the new trailing span is a
+    different form id regardless of what the remaining span declares, so the field's presence
+    or removal no longer matters."""
     root, rf = _record(
         tmp_path,
         [
@@ -205,16 +207,15 @@ def test_an_index_span_carrying_LEGACY_fields_is_held_too(tmp_path):
         ],
     )
     report = home_crumb.home_crumb_record(rf, root)
-    assert report.changed is False
-    assert "`form/index` span" in (report.hold or "")
+    assert report.hold is None and report.changed, report.hold
+    blocks = segments.iter_blocks(records.loads(report.new_text).content)
+    assert [b.form for b in blocks] == ["index", "nav"]
 
 
 def test_a_crumb_leading_a_bare_index_span_still_moves_when_another_span_follows(tmp_path):
-    """The same `form/index` container as the hold above, but it is NOT the record's last
-    top-level block — an unrelated `form/article` span follows it, so the emptied-of-crumb
-    index span is no longer adjacent to the new trailing span and the merge never triggers.
-    Pins that the hold above is about genuine adjacency, not about the container's form id in
-    isolation."""
+    """The same `form/index` container as the tests above, but it is NOT the record's last
+    top-level block — an unrelated `form/article` span sits between it and the new trailing
+    `nav` span. Moves the same way regardless (the form id split makes adjacency moot too)."""
     root, rf = _record(
         tmp_path,
         [
@@ -234,7 +235,7 @@ def test_a_crumb_leading_a_bare_index_span_still_moves_when_another_span_follows
     report = home_crumb.home_crumb_record(rf, root)
     assert report.changed, report.hold
     blocks = segments.iter_blocks(records.loads(report.new_text).content)
-    assert [b.form for b in blocks] == ["index", "article", "index"]
+    assert [b.form for b in blocks] == ["index", "article", "nav"]
     assert blocks[-1].segments[0].body.strip() == _VERBATIM_CRUMB
 
 
@@ -257,7 +258,37 @@ def test_idempotent_a_second_pass_is_a_clean_skip(tmp_path):
 
     second = home_crumb.home_crumb_record(rf, root)
     assert second.changed is False
-    assert second.skipped == "already homed — the breadcrumb sits in the trailing index span"
+    assert second.skipped == "already homed — the breadcrumb sits in the trailing nav span"
+
+
+def test_a_legacy_index_spelled_homed_crumb_is_re_spelled_to_nav(tmp_path):
+    """A record `corpus home-crumb` homed before `form/nav` existed still carries its crumb in
+    a trailing bare `<!--section index-->`. Re-running now finds it already homed under the OLD
+    spelling and RE-SPELLS the opener to `nav` — reported as a change, not a skip — through the
+    same round-trip and neutrality gates as any other rewrite (#89's convergence: the ~113
+    already-homed records converge this way, with no separate script)."""
+    root, rf = _record(
+        tmp_path,
+        [
+            Section(
+                form="article",
+                segments=[
+                    Segment(atom="text", address="el=1.1.1", body="Genuine article content."),
+                ],
+            ),
+            Section(
+                form="index",
+                segments=[Segment(atom="text", address="el=1.1.2", body=_VERBATIM_CRUMB)],
+            ),
+        ],
+    )
+    report = home_crumb.home_crumb_record(rf, root)
+    assert report.hold is None and report.changed, report.hold
+    assert dict(report.counts) == {"framing span re-spelled: index -> nav": 1}
+
+    blocks = segments.iter_blocks(records.loads(report.new_text).content)
+    assert [b.form for b in blocks] == ["article", "nav"]
+    assert blocks[-1].segments[0].body.strip() == _VERBATIM_CRUMB
 
 
 # ---------- the refusals ---------- #

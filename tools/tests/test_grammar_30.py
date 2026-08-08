@@ -492,3 +492,28 @@ def test_different_forms_never_collapse():
     )
     a, b = segments.iter_blocks(text)
     assert (a.form, b.form) == ("document", "index")
+
+
+def test_nav_adjacent_to_index_never_collapses():
+    """#89: `form/nav` and `form/index` shared one spelling through 3.12's first year, and
+    since neither declared fields, a content-index and its trailing framing merged under
+    §4.3.2.1's adjacent-same-form rule the moment legacy fields stopped distinguishing them.
+    Minting `nav` as its own form id ends it — a `nav` span trailing a bare `index` span (both
+    equally bare, equally fieldless) stays two spans, exactly the shape a content page's own
+    entry listing plus its restored framing needs. Contrast `test_adjacent_same_form_sections_
+    collapse` above: two BARE `index` spans, same form id, still merge — the fix is the form
+    split, not a change to the merge rule itself."""
+    text = segments.emit(
+        [
+            segments.Section(
+                form="index",
+                segments=[segments.Segment(atom="text", address="el=1.1", body="- [Link](#/a)")],
+            ),
+            segments.Section(
+                form="nav",
+                segments=[segments.Segment(atom="text", address="el=1.2", body="Vehicle > Here")],
+            ),
+        ]
+    )
+    a, b = segments.iter_blocks(text)
+    assert (a.form, b.form) == ("index", "nav")

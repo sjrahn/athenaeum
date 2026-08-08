@@ -1,4 +1,4 @@
-"""#89: the related-information rail comes home — a trailing `<!--section index-->` (ATH-CORPUS
+"""#89: the related-information rail comes home — a trailing `<!--section nav-->` (ATH-CORPUS
 3.5's framing restoration, §4.3.2.1/§12.27, licensed for this host by the `my.alldata.com`
 origin overlay's `regions:` declaration of `related-information` as `renders: framing`).
 
@@ -36,16 +36,20 @@ hand-written.
 source's presented order, across spans significance order; the rail is the page's frame, not
 its subject). Three cases, and the population splits across all three:
 
-- **join** (113) — the record already carries a trailing bare `<!--section index-->`, the one
-  `corpus home-crumb` built for its breadcrumb. The rail joins it, after the crumb: the
-  overlay declares `breadcrumb-component` before `related-information`, and §7.2 says
+- **join** (113) — the record already carries a trailing bare framing span, the one
+  `corpus home-crumb` built for its breadcrumb (`<!--section nav-->` going forward, or the
+  as-yet-unconverged `<!--section index-->` a prior run left — this verb re-spells that
+  opener to `nav` as part of the join, converging it). The rail joins it, after the crumb:
+  the overlay declares `breadcrumb-component` before `related-information`, and §7.2 says
   declaration order is the order framing regions take in that span. One framing span per
   record, which is what the overlay asks for.
-- **append** (3,842) — the record ends in a `form/article` / `procedure` / `document` /
-  `schematic` span. A new trailing index span goes after it; 3.5 permits several form spans
-  per record, and these forms declare distinguishing fields, so nothing merges.
+- **append** (3,842 + the 584 below) — the record ends in some other span: a `form/article` /
+  `procedure` / `document` / `schematic` span, or — since #89 minted `form/nav` — a
+  `form/index` span too, bare or not, alone or not. A new trailing `nav` span goes after it;
+  `nav` and `index` are different form ids, so §4.3.2.1's adjacent-same-form rule never arms
+  between them, no matter what the preceding span declares.
 - **formless** (241) — the record's content zone is bare top-level segments. The new trailing
-  index span is its only span, appended after them (§4.3.2.1's before-only rule admits
+  nav span is its only span, appended after them (§4.3.2.1's before-only rule admits
   formless segments ahead of a section). **This one has a visible consequence and it is not a
   lint finding, so no gate here can see it:** `derived_state` reads `formed` off the presence
   of any qualified form section (§4.1), so these records move `rendered` → `formed` on the
@@ -54,20 +58,17 @@ its subject). Three cases, and the population splits across all three:
   worklist that reads the layer census as "has this record been through a forming pass" will
   stop seeing them. Disclosed here rather than discovered in a health diff.
 
-**And one case this REFUSES, against the migration's stated design** (584 records, every one
-of them measured as its record's SOLE top-level block): the record's whole content zone is one
-`form/index` span. `form/index` declares no fields (§7.8), so two adjacent index spans satisfy
-§4.3.2.1's equality test and the grammar merges them on sight — `_collapse_adjacent_same_form`
-is not a heuristic, it is what a parse DOES. Appending here would not create a second,
-distinguishable span; it would produce one span mixing the page's own link list with its
-framing indistinguishably. 582 of the 584 carry legacy `title:`/`description:` that keep the
-two apart *today*, which makes it worse rather than better: `corpus drop-retired` is queued
-directly behind this verb — releasing its hold is the whole point — and it removes exactly
-those fields, so the shape would be correct on the commit that writes it and silently merged
-on the next. That is the trap `home_crumb` refused for the same population under the same
-reasoning, and it stays refused here. These records need `form/index`'s overload resolved —
-it spells both "this page's entries are its content" and "the trailing span carrying this
-page's framing", and no grammar can tell those apart while they share a form id.
+**The case this used to REFUSE, now resolved** (584 records, every one of them measured as
+its record's SOLE top-level block): the record's whole content zone is one `form/index` span.
+Before #89, the rail's own restoration wrote a trailing `form/index` span too, and `form/index`
+declares no fields (§7.8), so two adjacent bare index spans satisfy §4.3.2.1's equality test
+and the grammar merges them on sight — appending there would not have created a second,
+distinguishable span, it would have produced one span mixing the page's own link list with its
+framing indistinguishably. `form/nav` ends the overload: an index span and a nav span are
+never equal under §4.3.2.1 regardless of what either declares, so the append case above now
+covers this population outright — no field, no `drop-retired` ordering, no trap. #89 is the
+record of the resolution; `home_crumb` made and refused the identical trap for the same
+population, and its refusal disarms the same way.
 
 Same discipline as `home_crumb` / `drop_retired`: compute, never write; the record's own
 dumps-stability and an emit round-trip gate every rewrite; the **neutrality gate** holds any
@@ -227,32 +228,31 @@ def _bullet(text: str, url: str) -> str:
 
 def _placement(blocks: list[segments.Block]) -> tuple[str, segments.Section | None]:
     """Where the rail's span goes: `("join", section)` / `("append", None)` /
-    `("formless", None)`, else a `RailHold` naming the refusal.
+    `("formless", None)`.
 
     The join case is the framing span `home_crumb` built and nothing else — a **bare**
-    `form/index` span (no declared fields at all), trailing, on a record that has other blocks.
-    That is exactly `home_crumb`'s own "already homed" test, and on the live population it
-    separates cleanly: all 113 crumb-homed records match it and all 584 index-trailing records
-    that are their own sole block do not."""
+    span (no declared fields at all), trailing, on a record that has other blocks, spelled
+    `nav` (the current shape) or `index` (a prior run's spelling, not yet converged — the join
+    re-spells it). That is exactly `home_crumb`'s own "already homed" test.
+
+    Everything else appends a fresh trailing `form/nav` span, including a record whose last
+    block is a `form/index` span that is NOT the crumb's bare home (carries its own fields, or
+    is the record's sole block, or both): `nav` and `index` are different form ids, so
+    §4.3.2.1's adjacent-same-form rule cannot arm between them, no matter what either span
+    declares — the case this migration used to refuse outright (see the module docstring)."""
     if not blocks:
         raise RailHold("the record has an empty content zone — nothing to place a rail after")
     last = blocks[-1]
     if not isinstance(last, segments.Section):
         return "formless", None
+    if last.form == "nav":
+        return "join", last
     if last.form != "index":
         return "append", None
     bare = not last.extra and last.entry is None and last.description is None
     if bare and len(blocks) > 1:
-        return "join", last
-    raise RailHold(
-        "the record's trailing block is itself a `form/index` span (and the record's only "
-        "one) — a new trailing index span merges into it on the next parse (§4.3.2.1's "
-        "adjacent-same-form rule) the moment `drop-retired` sweeps the legacy header fields "
-        "that currently distinguish them, leaving one span that mixes this page's own link "
-        "list with its framing rather than content-then-framing; `form/index`'s overload "
-        "needs resolving before this can be a mechanical write (the same refusal "
-        "`corpus home-crumb` makes for this population)"
-    )
+        return "join", last  # old spelling — the join re-spells it to `nav`
+    return "append", None
 
 
 def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
@@ -327,7 +327,7 @@ def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
         }
         want = {(a, b) for a, b in rendered}
         if want <= have:
-            report.skipped = "already restored — the rail sits in the trailing index span"
+            report.skipped = "already restored — the rail sits in the trailing framing span"
             return report
         if want & have:
             report.hold = (
@@ -339,7 +339,7 @@ def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
 
     before = Counter(f.rule_id for f in lint.lint(post, blocks, corpus_root))
 
-    # ---- the restoration: one text segment per address, in a trailing index span ---- #
+    # ---- the restoration: one text segment per address, in a trailing nav span ---- #
     new_segments = [
         segments.Segment(atom="text", address=address, body=body) for address, body in rendered
     ]
@@ -347,11 +347,14 @@ def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
     if placement == "join" and join_target is not None:
         # The crumb first, the rail after: the overlay declares `breadcrumb-component` before
         # `related-information`, and §7.2 makes declaration order the order framing regions
-        # take in the trailing span.
+        # take in the trailing span. Re-spelling the opener to `nav` is idempotent when it is
+        # already `nav`, and is exactly the convergence a legacy `index`-spelled crumb span
+        # needs — one write, gated the same as any other.
         join_target.segments = list(join_target.segments) + new_segments
+        join_target.form = "nav"
         join_target.address = None  # re-derived over the widened child set (§4.3.2.1)
     else:
-        new_blocks.append(segments.Section(form="index", segments=new_segments))
+        new_blocks.append(segments.Section(form="nav", segments=new_segments))
 
     post.content = segments.emit(new_blocks).rstrip("\n") + "\n"
     touches.record_touch(post, touches.script_identifier(TOUCH_ID))
@@ -368,7 +371,7 @@ def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
     if segments.emit(reparsed).rstrip("\n") != post.content.rstrip("\n"):
         report.hold = (
             "rewritten content zone does not survive an emit round-trip losslessly (the "
-            "commonest cause is a trailing index span the parse merges into its neighbour)"
+            "commonest cause is a trailing span the parse merges into its neighbour)"
         )
         return report
 
@@ -415,13 +418,13 @@ def _landed(
     """Return a hold reason when the rewrite did not actually land what it says it did.
 
     Four claims, each checked on the RE-PARSED record rather than on the objects we built:
-    the span is trailing and is an index span; it carries every rendered group at its own
+    the span is trailing and is a `nav` span; it carries every rendered group at its own
     address, exactly once; no group leaked into a block ahead of it; and the `relation` blocks
     are all still there, because this half of §12.27 is additive and `drop-retired` owns the
     other half."""
     trailing = reparsed[-1] if reparsed else None
-    if not (isinstance(trailing, segments.Section) and trailing.form == "index"):
-        return "internal: no trailing form/index span in the rewritten record"
+    if not (isinstance(trailing, segments.Section) and trailing.form == "nav"):
+        return "internal: no trailing form/nav span in the rewritten record"
     landed = [
         (str(s.address), (s.body or "").strip())
         for s in trailing.segments

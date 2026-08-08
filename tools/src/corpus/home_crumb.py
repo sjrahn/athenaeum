@@ -1,4 +1,4 @@
-"""#89: the breadcrumb comes home — one trailing `<!--section index-->` (ATH-CORPUS 3.5's
+"""#89: the breadcrumb comes home — one trailing `<!--section nav-->` (ATH-CORPUS 3.5's
 framing restoration, unblocked by 3.9's region-nesting rule and the `my.alldata.com` origin
 overlay's 2026-07-27 `regions:` declaration, spec §7.2).
 
@@ -7,7 +7,7 @@ The overlay names the breadcrumb (`div.article-breadcrumb` / `ad-repair-breadcru
 trailing span** (§4.3.2.1's cross-span significance order). #52's acceptance check
 (`tools/scripts/accept_alldata.py`) measured the fleet against that shape and found three
 populations sharing one symptom — "the breadcrumb line renders somewhere in the body, not
-inside a trailing index span" — for three DIFFERENT reasons, and only one of them is a move:
+inside a trailing framing span" — for three DIFFERENT reasons, and only one of them is a move:
 
 - **alone in its own segment, verbatim** — the segment's whole body IS the crumb trail and
   nothing else, spelled exactly as the artifact's own crumb labels chain. Re-parenting it
@@ -24,6 +24,24 @@ inside a trailing index span" — for three DIFFERENT reasons, and only one of t
 - **mixed into a larger content segment** — the crumb line is real but shares a segment with
   procedure prose, a labor table, or other content. Splitting it out is a re-segmentation
   judgment (§12.33), not a block move, so it is REFUSED too.
+
+**The population this module used to refuse outright, now resolved by `form/nav`:** 397 of the
+525 candidates carry the crumb as one child of a `form/index` span that is the record's own
+sole top-level block — a genuine link-index page (the overlay's "the link list IS the
+content") that happens to co-locate the crumb. Moving the crumb out used to mean appending a
+new trailing `form/index` span, and since `form/index` declares no fields (§7.8), that new
+span would merge with the one left behind on the very next parse (§4.3.2.1's adjacent-same-form
+rule) — so this module refused rather than write a shape whose correctness would silently
+expire. `form/nav` ends the overload: the crumb now moves into a trailing `nav` span, a
+different form id from the `index` span it leaves behind, and the two can never merge
+regardless of what either declares. `home_rail` made and refused the identical trap for the
+same population; its refusal disarms the same way (see `home_rail`'s module docstring).
+
+**Convergence, additionally:** a record this module already homed under the pre-#89 spelling
+carries its crumb in a trailing bare `<!--section index-->` rather than `<!--section nav-->`.
+Re-running now finds that span and RE-SPELLS its opener to `nav` — reported as a change, not a
+skip — through the same round-trip and neutrality gates as any other rewrite. This is how the
+~113 already-homed records converge to the one spelling; no separate script does it.
 
 Same discipline as `reseat.py` / `drop_retired.py`: compute, never write; the record's own
 dumps-stability and an emit round-trip gate every rewrite; the **neutrality gate** holds any
@@ -59,6 +77,7 @@ from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
+from typing import Any
 
 from corpus import lint, mime, records, schemas, segments, touches
 from corpus.containment import ArtifactMissing, ensure_local_bytes
@@ -213,6 +232,46 @@ class CrumbHome:
     new_text: str | None = None
 
 
+def _emit_and_gate(
+    post: Any,
+    blocks: list[segments.Block],
+    before: Counter[str],
+    corpus_root: Path,
+    report: CrumbHome,
+) -> tuple[str, list[segments.Block]] | None:
+    """Emit `blocks`, stamp the touch, and run the round-trip + neutrality gates shared by
+    every rewrite this module makes — a move or a bare re-spell alike. Returns
+    `(new_text, reparsed_blocks)` on success; on failure sets `report.hold` and returns None."""
+    post.content = segments.emit(blocks).rstrip("\n") + "\n"
+    touches.record_touch(post, touches.script_identifier(TOUCH_ID))
+    new_text = records.dumps(post)
+
+    # Round-trip on the TEXT: a section's `address` is derived from its children (§4.3.2.1,
+    # §12.29), so the in-memory envelope is stale by construction here — the reparse is the
+    # check that matters (the same discipline `reseat.py` and `drop_retired.py` apply).
+    try:
+        reparsed = segments.iter_blocks(post.content)
+    except ValueError as exc:
+        report.hold = f"rewritten content zone does not parse: {exc}"
+        return None
+    if segments.emit(reparsed).rstrip("\n") != post.content.rstrip("\n"):
+        report.hold = "rewritten content zone does not survive an emit round-trip losslessly"
+        return None
+
+    # The neutrality gate (§12.28): the whole rule set, deliberately — the failure worth
+    # catching is the unpredicted one.
+    after = Counter(f.rule_id for f in lint.lint(post, reparsed, corpus_root))
+    worse = sorted(rule for rule in set(before) | set(after) if after[rule] > before.get(rule, 0))
+    if worse:
+        report.hold = (
+            "rewrite would raise lint findings ("
+            + ", ".join(f"{r}: {before.get(r, 0)}→{after[r]}" for r in worse)
+            + ")"
+        )
+        return None
+    return new_text, reparsed
+
+
 def home_crumb_record(record_file: Path, corpus_root: Path) -> CrumbHome:
     """Compute (never write) the §89 crumb-homing move for one record. The caller applies
     `report.new_text` when `report.changed`; a `hold` means hands off."""
@@ -266,16 +325,36 @@ def home_crumb_record(record_file: Path, corpus_root: Path) -> CrumbHome:
 
     (m,) = matches
     # Already the target shape — `check_crumb`'s own "homed" test: the match sits inside a
-    # trailing `form/index` span. Re-running a completed move must be inert, not a hold: the
+    # trailing bare framing span. Re-running a completed move must be inert, not a hold: the
     # single-child span this move just created would otherwise trip the "no children left"
     # guard below on a SECOND pass over the same record.
-    if (
+    already_homed = (
         m.container is not None
-        and m.container.form == "index"
+        and m.container.form in ("nav", "index")
         and len(blocks) > 1
         and blocks[-1] is m.container
-    ):
-        report.skipped = "already homed — the breadcrumb sits in the trailing index span"
+    )
+    if already_homed and m.container.form == "nav":
+        report.skipped = "already homed — the breadcrumb sits in the trailing nav span"
+        return report
+    if already_homed:
+        # The pre-#89 spelling: this record was homed by a prior run before `form/nav` existed.
+        # Re-spell the opener in place — nothing else about the record changes — through the
+        # same round-trip and neutrality gates as any other rewrite (#89's convergence: no
+        # separate script re-spells the ~113 already-homed records, this pass does).
+        before = Counter(f.rule_id for f in lint.lint(post, blocks, corpus_root))
+        m.container.form = "nav"
+        gated = _emit_and_gate(post, blocks, before, corpus_root, report)
+        if gated is None:
+            return report
+        new_text, reparsed = gated
+        trailing = reparsed[-1] if reparsed else None
+        if not (isinstance(trailing, segments.Section) and trailing.form == "nav"):
+            report.hold = "internal: re-spelled span did not land as trailing form/nav"
+            return report
+        report.counts["framing span re-spelled: index -> nav"] += 1
+        report.new_text = new_text
+        report.changed = True
         return report
     if not m.is_pure:
         report.hold = (
@@ -326,79 +405,28 @@ def home_crumb_record(record_file: Path, corpus_root: Path) -> CrumbHome:
         else:
             new_blocks.append(blk)
 
-    # A bare `form/index` span declares no fields (§7.8) — nothing distinguishes it from
-    # another bare `form/index` span. §4.3.2.1's own adjacent-same-form rule therefore merges
-    # two of them on sight, and every one of the 525 pure-verbatim candidates is its record's
-    # SOLE top-level block, so this is not a corner case: 397 of them ARE this remaining
-    # content span. Appending a new trailing index span here would not create a second,
-    # distinguishable span — it would collapse into the first on the very next parse, leaving
-    # ONE span that mixes the page's own link list with its framing indistinguishably. Worse,
-    # #52's acceptance check requires >1 top-level block to score `homed` at all (`homed`
-    # false-positived 531 single-block records before that gate existed), so this move would
-    # not even register as landing. Refusing here rather than writing a record whose shape
-    # silently isn't what it looks like.
-    # NOTE the test is on the FORM ALONE, deliberately, and not on whether the span currently
-    # declares distinguishing fields. 396 of the 509 candidates are index spans that today
-    # carry legacy `title:`/`description:`, which do satisfy §4.3.2.1's equality test and so
-    # would keep the two spans apart — but those fields are retired and `corpus drop-retired`
-    # exists to remove them. Admitting those records would write a shape whose correctness
-    # EXPIRES: correct today, silently merged into one indistinguishable span the moment the
-    # other migration reaches them. That is precisely the transitionary state the house
-    # forbids, and a trap armed by a sibling migration is worse than a record left alone,
-    # because nothing errors when it springs. Held until `form/index`'s overload is resolved —
-    # it spells both "this page's entries are its content" and "the trailing span carrying
-    # this page's framing", and no grammar can tell those apart while they share a form id.
-    if not new_blocks or (
-        isinstance(new_blocks[-1], segments.Section) and new_blocks[-1].form == "index"
-    ):
-        report.hold = (
-            "the remaining content is itself a `form/index` span (or the record would have "
-            "none) — a new trailing index span merges into it on the next parse "
-            "(§4.3.2.1's adjacent-same-form rule) once the legacy header fields that "
-            "currently distinguish them are swept, leaving one indistinguishable span rather "
-            "than content-then-framing; this needs a design decision beyond a pure block move"
-        )
-        return report
+    # Before #89, a bare `form/index` span declared no fields (§7.8) — nothing distinguished
+    # it from another bare `form/index` span, so appending a new trailing index span here
+    # would have merged with whatever `form/index` span the crumb's removal left behind
+    # (§4.3.2.1's adjacent-same-form rule) — 397 of the 525 pure-verbatim candidates are their
+    # record's SOLE top-level block, so this was not a corner case. `form/nav` ends the
+    # overload: the new trailing span below is a different form id from anything it might
+    # follow, so it can never merge, whatever the remaining content's form declares or omits.
 
-    new_blocks.append(segments.Section(form="index", segments=[seg]))
+    new_blocks.append(segments.Section(form="nav", segments=[seg]))
 
-    post.content = segments.emit(new_blocks).rstrip("\n") + "\n"
-    touches.record_touch(post, touches.script_identifier(TOUCH_ID))
-    new_text = records.dumps(post)
-
-    # Round-trip on the TEXT: a section's `address` is derived from its children (§4.3.2.1,
-    # §12.29), so the in-memory envelope is stale by construction here — the reparse is the
-    # check that matters (the same discipline `reseat.py` and `drop_retired.py` apply).
-    try:
-        reparsed = segments.iter_blocks(post.content)
-    except ValueError as exc:
-        report.hold = f"rewritten content zone does not parse: {exc}"
+    gated = _emit_and_gate(post, new_blocks, before, corpus_root, report)
+    if gated is None:
         return report
-    if segments.emit(reparsed).rstrip("\n") != post.content.rstrip("\n"):
-        report.hold = "rewritten content zone does not survive an emit round-trip losslessly"
-        return report
-
-    # The neutrality gate (§12.28): the whole rule set, deliberately — the failure worth
-    # catching is the unpredicted one.
-    after = Counter(f.rule_id for f in lint.lint(post, reparsed, corpus_root))
-    worse = sorted(
-        rule for rule in set(before) | set(after) if after[rule] > before.get(rule, 0)
-    )
-    if worse:
-        report.hold = (
-            "rewrite would raise lint findings ("
-            + ", ".join(f"{r}: {before.get(r, 0)}→{after[r]}" for r in worse)
-            + ")"
-        )
-        return report
+    new_text, reparsed = gated
 
     # The positive landing check (the lesson a prior migration paid for: a neutrality gate
     # that passed on a run reporting 641 merges while writing nothing). Assert the move
-    # actually landed — a trailing `form/index` span exists, holds exactly this crumb body
+    # actually landed — a trailing `form/nav` span exists, holds exactly this crumb body
     # and nothing else, and the crumb body is nowhere else in the record.
     trailing = reparsed[-1] if reparsed else None
-    if not (isinstance(trailing, segments.Section) and trailing.form == "index"):
-        report.hold = "internal: no trailing form/index span in the rewritten record"
+    if not (isinstance(trailing, segments.Section) and trailing.form == "nav"):
+        report.hold = "internal: no trailing form/nav span in the rewritten record"
         return report
     trailing_bodies = [s.body.strip() for s in trailing.segments if isinstance(s, segments.Segment)]
     if trailing_bodies.count(m.line) != 1:

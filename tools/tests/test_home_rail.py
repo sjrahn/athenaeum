@@ -1,14 +1,15 @@
 """The §89 rail restoration — `corpus.home_rail`.
 
 What these pin: the rail renders as markdown links, grouped by the source's own addresses, in
-the source's own order, into a TRAILING `<!--section index-->` — joining the crumb's span
-where `corpus home-crumb` already built one, appending a new one after a formed span, and
-standing alone on a formless record; self-edges are dropped and a record whose whole rail is
-self-edges is REFUSED rather than left with an empty span; the `relation` blocks are left
-exactly where they are (`corpus drop-retired` owns their removal); a record whose only
-top-level block is a `form/index` span is refused, because the grammar merges two adjacent
-bare index spans on sight; and both the neutrality gate and the positive landing check refuse
-a rewrite rather than write one — the landing check because a prior migration reported 641
+the source's own order, into a TRAILING `<!--section nav-->` — joining the crumb's span where
+`corpus home-crumb` already built one (re-spelling it to `nav` if it is still the pre-#89
+`index` spelling), appending a new one after a formed span (including, since `form/nav` ended
+the merge overload with `form/index`, a record whose only top-level block IS a `form/index`
+span — the population this module used to refuse), and standing alone on a formless record;
+self-edges are dropped and a record whose whole rail is self-edges is REFUSED rather than left
+with an empty span; the `relation` blocks are left exactly where they are (`corpus drop-retired`
+owns their removal); and both the neutrality gate and the positive landing check refuse a
+rewrite rather than write one — the landing check because a prior migration reported 641
 merges while writing nothing and its neutrality gate passed.
 """
 
@@ -129,10 +130,10 @@ def _trailing(new_text):
 # ---------- the three placement cases ---------- #
 
 
-def test_append_a_new_trailing_index_span_after_a_form_article_span(tmp_path):
+def test_append_a_new_trailing_nav_span_after_a_form_article_span(tmp_path):
     """The bulk case (3,842 records): the record ends in a formed subject span, so the rail
-    takes a NEW trailing index span after it. `form/article` declares distinguishing fields,
-    so nothing merges."""
+    takes a NEW trailing `nav` span after it. `form/article` and `form/nav` are different form
+    ids, so nothing merges regardless of what either declares."""
     root, rf = _record(tmp_path, [_article()])
     report = home_rail.home_rail_record(rf, root)
     assert report.hold is None and report.changed, report.hold
@@ -141,15 +142,38 @@ def test_append_a_new_trailing_index_span_after_a_form_article_span(tmp_path):
     assert report.counts["addresses"] == 2
 
     blocks, trailing = _trailing(report.new_text)
-    assert [b.form for b in blocks] == ["article", "index"]
+    assert [b.form for b in blocks] == ["article", "nav"]
     assert [s.address for s in trailing.segments] == [_RAIL_ADDR_B, _RAIL_ADDR_A]
 
 
 def test_join_the_existing_trailing_span_the_crumb_migration_built(tmp_path):
-    """The 113 records `corpus home-crumb` already homed: a trailing BARE `form/index` span
-    on a record with other blocks. The rail joins it — crumb first, rail after, because the
+    """The 113 records `corpus home-crumb` already homed: a trailing BARE `nav` span on a
+    record with other blocks. The rail joins it — crumb first, rail after, because the
     overlay declares `breadcrumb-component` before `related-information` and §7.2 makes
     declaration order the order framing regions take in that span. One framing span, not two."""
+    crumb = Segment(
+        atom="text",
+        address="el=1.2.2.1.1.2.1",
+        body="Vehicle > Technical Service Bulletins > Some Bulletin",
+    )
+    root, rf = _record(tmp_path, [_article(), Section(form="nav", segments=[crumb])])
+    report = home_rail.home_rail_record(rf, root)
+    assert report.hold is None and report.changed, report.hold
+    assert report.counts["placement: join"] == 1
+
+    blocks, trailing = _trailing(report.new_text)
+    assert [b.form for b in blocks] == ["article", "nav"]  # joined, not a second span
+    assert [s.address for s in trailing.segments] == [
+        "el=1.2.2.1.1.2.1",  # the crumb, first
+        _RAIL_ADDR_B,
+        _RAIL_ADDR_A,
+    ]
+
+
+def test_join_re_spells_a_legacy_index_spelled_crumb_span_to_nav(tmp_path):
+    """A crumb span a PRE-#89 `corpus home-crumb` run built still carries the old
+    `<!--section index-->` opener. The rail's join re-spells it to `nav` as part of the same
+    write — the convergence path, gated the same as any other rewrite."""
     crumb = Segment(
         atom="text",
         address="el=1.2.2.1.1.2.1",
@@ -160,17 +184,12 @@ def test_join_the_existing_trailing_span_the_crumb_migration_built(tmp_path):
     assert report.hold is None and report.changed, report.hold
     assert report.counts["placement: join"] == 1
 
-    blocks, trailing = _trailing(report.new_text)
-    assert [b.form for b in blocks] == ["article", "index"]  # joined, not a second span
-    assert [s.address for s in trailing.segments] == [
-        "el=1.2.2.1.1.2.1",  # the crumb, first
-        _RAIL_ADDR_B,
-        _RAIL_ADDR_A,
-    ]
+    blocks, _ = _trailing(report.new_text)
+    assert [b.form for b in blocks] == ["article", "nav"]  # re-spelled, not left as index
 
 
 def test_a_formless_record_gets_the_trailing_span_as_its_only_span(tmp_path):
-    """The 241 formless records: bare top-level segments, so the new index span is the
+    """The 241 formless records: bare top-level segments, so the new `nav` span is the
     record's only one and sits after them (§4.3.2.1 admits formless segments before the first
     section opener — which is exactly the shape trailing produces)."""
     root, rf = _record(
@@ -183,7 +202,7 @@ def test_a_formless_record_gets_the_trailing_span_as_its_only_span(tmp_path):
 
     blocks, trailing = _trailing(report.new_text)
     assert isinstance(blocks[0], Segment)
-    assert isinstance(trailing, Section) and trailing.form == "index"
+    assert isinstance(trailing, Section) and trailing.form == "nav"
 
 
 # ---------- the rendering ---------- #
@@ -248,7 +267,7 @@ def test_idempotent_a_second_pass_is_a_clean_skip(tmp_path):
 
     second = home_rail.home_rail_record(rf, root)
     assert second.changed is False
-    assert second.skipped == "already restored — the rail sits in the trailing index span"
+    assert second.skipped == "already restored — the rail sits in the trailing framing span"
 
 
 # ---------- self-edges ---------- #
@@ -306,16 +325,16 @@ def test_a_rail_that_is_entirely_self_edges_is_refused_never_left_empty(tmp_path
     assert "self-edge" in (report.hold or "") and "empty" in (report.hold or "")
 
 
-# ---------- the refusals ---------- #
+# ---------- the disarmed merge trap (#89) ---------- #
 
 
-def test_a_sole_form_index_block_is_held_the_merge_trap(tmp_path):
-    """584 records, every one its record's SOLE top-level block. `form/index` declares no
-    fields, so §4.3.2.1's equality test makes two adjacent bare index spans ONE span on the
-    next parse. 582 of them carry legacy `title:`/`description:` that keep the two apart today
-    — which makes it worse, not better: `drop-retired` runs directly behind this verb and
-    removes exactly those fields, so the shape would be correct on the commit that writes it
-    and silently merged on the next. The same refusal `home_crumb` makes for this population."""
+def test_a_sole_form_index_block_now_restores_a_trailing_nav_span(tmp_path):
+    """584 records, every one its record's SOLE top-level block — the population this module
+    used to refuse outright. Before `form/nav`, `form/index` declared no fields, so §4.3.2.1's
+    equality test would have made two adjacent bare index spans ONE span on the next parse.
+    `form/nav` ends the overload: appending a trailing `nav` span here never merges with the
+    `index` span ahead of it, whatever fields either declares — so this now restores, the
+    `relation` blocks left exactly where they are for `drop-retired` to sweep."""
     root, rf = _record(
         tmp_path,
         [
@@ -327,14 +346,19 @@ def test_a_sole_form_index_block_is_held_the_merge_trap(tmp_path):
         ],
     )
     report = home_rail.home_rail_record(rf, root)
-    assert report.changed is False
-    assert "`form/index` span" in (report.hold or "")
+    assert report.hold is None and report.changed, report.hold
+    assert report.counts["placement: append"] == 1
+
+    blocks, _ = _trailing(report.new_text)
+    assert [b.form for b in blocks] == ["index", "nav"]
+    after = records.loads(report.new_text)
+    assert len(home_rail.rail_blocks(after)) == 3
 
 
-def test_a_bare_sole_form_index_block_is_held_too(tmp_path):
-    """The 2 records that would merge TODAY rather than after the sweep — same refusal, and
-    the guard tests the form and the block count, never whether a distinguishing field
-    happens to be present."""
+def test_a_bare_sole_form_index_block_restores_too(tmp_path):
+    """The 2 records that would have merged TODAY rather than after the sweep — same
+    resolution, and it does not depend on whether a distinguishing field happens to be
+    present, because the new span is a different form id either way."""
     root, rf = _record(
         tmp_path,
         [
@@ -345,8 +369,9 @@ def test_a_bare_sole_form_index_block_is_held_too(tmp_path):
         ],
     )
     report = home_rail.home_rail_record(rf, root)
-    assert report.changed is False
-    assert "`form/index` span" in (report.hold or "")
+    assert report.hold is None and report.changed, report.hold
+    blocks, _ = _trailing(report.new_text)
+    assert [b.form for b in blocks] == ["index", "nav"]
 
 
 def test_an_unparseable_rail_address_is_held(tmp_path):
@@ -436,7 +461,7 @@ def test_the_landing_check_refuses_a_rewrite_that_wrote_nothing(tmp_path, monkey
     real_emit = segments.emit
 
     def _emit_dropping_the_new_span(blocks):
-        keep = [b for b in blocks if not (isinstance(b, Section) and b.form == "index")]
+        keep = [b for b in blocks if not (isinstance(b, Section) and b.form == "nav")]
         return real_emit(keep or blocks)
 
     monkeypatch.setattr(home_rail.segments, "emit", _emit_dropping_the_new_span)

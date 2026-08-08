@@ -139,7 +139,7 @@ def test_sweep_reports_the_derived_pair_either_side(tmp_path):
     assert report.title_after == "Page Title - SITE"
 
 
-def test_a_relation_block_with_no_restored_index_span_holds(tmp_path):
+def test_a_relation_block_with_no_restored_nav_span_holds(tmp_path):
     """Dropping the rail before it comes home is data loss, not a sweep (§12.27)."""
     root, rf = _record(
         tmp_path,
@@ -149,20 +149,20 @@ def test_a_relation_block_with_no_restored_index_span_holds(tmp_path):
     )
     report = drop_retired.sweep_record(rf, root)
     assert report.changed is False
-    assert "no `form/index` span claims" in (report.hold or "")
+    assert "no `form/nav` span claims" in (report.hold or "")
 
     allowed = drop_retired.sweep_record(rf, root, allow_unrestored=True)
     assert allowed.changed
     assert allowed.counts["context relation"] == 1
 
 
-def test_a_restored_index_span_lets_the_relation_blocks_go(tmp_path):
+def test_a_restored_nav_span_lets_the_relation_blocks_go(tmp_path):
     root, rf = _record(
         tmp_path,
         [
             Section(form="document", address="el=1.1", description="d",
                     segments=[Segment(atom="text", address="el=1.1.2", body="One.")]),
-            Section(form="index", address="el=1.2",
+            Section(form="nav", address="el=1.2",
                     segments=[Segment(atom="text", address="el=1.2", body="- Elsewhere")]),
         ],
         contexts=[_relation("el=1.2.3")],  # inside the restored span, by §6.1.1 containment
@@ -172,22 +172,44 @@ def test_a_restored_index_span_lets_the_relation_blocks_go(tmp_path):
     assert report.counts["context relation"] == 1
 
 
-def test_a_whole_record_index_section_does_not_count_as_restored(tmp_path):
-    """The loose reading — "the record has an index span somewhere" — is wrong on a real
+def test_a_restored_legacy_index_spelled_span_still_releases_the_hold(tmp_path):
+    """#89: `_restored` keys on the address a framing span claims, not on which of the two
+    spellings it currently carries — a record `home_rail` restored before `form/nav` existed,
+    and that nothing has re-spelled yet, still releases the hold `corpus drop-retired` puts on
+    its `relation` blocks."""
+    root, rf = _record(
+        tmp_path,
+        [
+            Section(form="document", address="el=1.1", description="d",
+                    segments=[Segment(atom="text", address="el=1.1.2", body="One.")]),
+            Section(form="index", address="el=1.2",
+                    segments=[Segment(atom="text", address="el=1.2", body="- Elsewhere")]),
+        ],
+        contexts=[_relation("el=1.2.3")],
+    )
+    report = drop_retired.sweep_record(rf, root)
+    assert report.changed, report.hold
+    assert report.counts["context relation"] == 1
+
+
+def test_a_whole_record_nav_section_does_not_count_as_restored(tmp_path):
+    """The loose reading — "the record has a framing span somewhere" — is wrong on a real
     population: 786 alldata records were fitted WHOLE-RECORD to `form/index` by the 3.2
     form-adopt sweep, so an index section exists while nothing renders the rail. Under 3.7
     that section derives the envelope of the content it actually holds, which is nowhere near
     the rail — so per-block containment still refuses, now for a reason visible in the
-    address rather than in an absent field."""
+    address rather than in an absent field. Pinned against `nav` (the form the restoration
+    itself now writes) rather than the legacy `index` spelling — the whole-record case is
+    about a section with no address, and that is orthogonal to which of the two forms it is."""
     root, rf = _record(
         tmp_path,
-        [Section(form="index", description="d",
+        [Section(form="nav", description="d",
                  segments=[Segment(atom="text", address="el=1.1.2", body="One.")])],
         contexts=[_relation("el=1.2.3")],
     )
     report = drop_retired.sweep_record(rf, root)
     assert report.changed is False
-    assert "no `form/index` span claims" in (report.hold or "")
+    assert "no `form/nav` span claims" in (report.hold or "")
 
 
 def test_a_relation_block_outside_the_restored_span_still_holds(tmp_path):

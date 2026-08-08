@@ -28,8 +28,9 @@ And *(3.7, §12.29)* two more of the same kind:
   accounting — the count, and a stability guard that licenses *that* difference and nothing
   else.
 
-The sixth retirement is the `relation` rail's **restoration** as a trailing index span, and
-it is deliberately NOT here: it is additive, per-host, and needs the origin overlay's region
+The sixth retirement is the `relation` rail's **restoration** as a trailing `form/nav` span
+(#89 — `form/index` before it, on a record no re-spell has reached yet), and it is
+deliberately NOT here: it is additive, per-host, and needs the origin overlay's region
 declaration (§7.2). Run it first where it applies — this verb refuses a record whose rail
 would otherwise be dropped without having come home (`--allow-unrestored` to override, for
 the populations where the overlay names no rail region).
@@ -182,18 +183,26 @@ def _el_paths(value: Any) -> list[furi.ElPath]:
     return out
 
 
+#: The form ids a framing restoration span may carry (#89): `nav` going forward, `index` for a
+#: record `corpus home-rail` / `corpus home-crumb` restored before `form/nav` existed and
+#: nothing has yet re-spelled. Keyed explicitly to these two rather than to "any form" — the
+#: claim test is about recognizing the rail's own home, not about tolerating an address
+#: collision with unrelated content.
+_RESTORED_FORMS = ("nav", "index")
+
+
 def _restored(ctx: dict[str, Any], sections: list[segments.Section]) -> bool:
-    """Whether this retired `relation` block's address is claimed by an `index` span — the
-    §6.1.1 containment test against the span's own address and its child segments'. A
-    record-scoped block (no address) can never be shown to have come home, and a
-    whole-record `index` section (no address) claims nothing in particular, so neither
-    counts: both are exactly the pre-restoration shape."""
+    """Whether this retired `relation` block's address is claimed by a framing-restoration
+    span (`form/nav`, or the pre-#89 `form/index` spelling) — the §6.1.1 containment test
+    against the span's own address and its child segments'. A record-scoped block (no address)
+    can never be shown to have come home, and a whole-record section with no address claims
+    nothing in particular, so neither counts: both are exactly the pre-restoration shape."""
     targets = _el_paths((ctx.get("fields") or {}).get("address"))
     if not targets:
         return False
     claims: list[furi.ElPath] = []
     for sec in sections:
-        if sec.form != "index" or sec.address is None:
+        if sec.form not in _RESTORED_FORMS or sec.address is None:
             continue
         claims.extend(_el_paths(sec.address))
         for child in sec.segments:
@@ -254,19 +263,19 @@ def sweep_record(
     # The rail's restoration is additive and lives elsewhere (§12.27). Dropping a
     # `relation` block on a record whose links never came home is data loss, not a sweep.
     #
-    # "Came home" is tested per BLOCK, by §6.1.1 containment against the addresses an
-    # `index` span actually claims — not by "the record has an index span somewhere". The
-    # weaker test is wrong on a real and large population: 786 alldata records were fitted
-    # WHOLE-RECORD to `form/index` by the 3.2 form-adopt sweep, so an index span exists on
-    # them while nothing renders the rail at all, and the loose reading would have dropped
-    # 9,182 rail links from records that never restored one.
+    # "Came home" is tested per BLOCK, by §6.1.1 containment against the addresses a `nav`
+    # (or as-yet-unconverged legacy `index`) span actually claims — not by "the record has a
+    # framing span somewhere". The weaker test is wrong on a real and large population: 786
+    # alldata records were fitted WHOLE-RECORD to `form/index` by the 3.2 form-adopt sweep, so
+    # an index span exists on them while nothing renders the rail at all, and the loose reading
+    # would have dropped 9,182 rail links from records that never restored one.
     if not allow_unrestored:
         relations = [c for c in doomed_contexts if str(c.get("namespace")) == "relation"]
         homeless = [c for c in relations if not _restored(c, sections)]
         if homeless:
             report.hold = (
                 f"{len(homeless)} of {len(relations)} `relation` block(s) sit at an address no "
-                f"`form/index` span claims — restore the rail first (§12.27), or pass "
+                f"`form/nav` span claims — restore the rail first (§12.27), or pass "
                 f"--allow-unrestored"
             )
             return report

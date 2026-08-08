@@ -1,0 +1,48 @@
+form_id: nav
+kind: form
+description: |
+  A navigational link set (spec §7.8; minted 2026-08-08, #89): a page's own wayfinding,
+  rendered faithfully — a breadcrumb trail stating where the page sits in its source's
+  hierarchy, and/or a link rail stating what the source relates to it (related-information
+  lists, sibling-page links), under the source's own grouping. Names a SHAPE, never a
+  role: §4.3.2.1's rule stands — nothing declares a span "chrome", and significance is
+  expressed by position. On most records a nav span trails the content it frames
+  (§4.3.2.1's cross-span significance order); a wayfinding hub whose whole content is
+  navigation carries this form as its leading — or only — span, and that is content.
+
+  The boundary against `form/index`, and the reason this contract exists (#89): an
+  index's entries ARE the page's content — removing them leaves nothing. A nav span's
+  entries point AT content from a position beside it — the page is about something else,
+  and this span is the source's own statement of where that something sits and what
+  relates to it. The two shapes shared one spelling through 3.12's first year, and since
+  neither declared fields, a content-index and its trailing framing merged under
+  §4.3.2.1's adjacent-same-form rule the moment legacy fields stopped distinguishing
+  them. Different ids end the merge; the split is the contract.
+extended_fields: {}
+decomposition: |
+  The span renders each framing region the origin overlay names (`renders: framing`,
+  §7.2) as its own segment(s) at its own address — regions in the overlay's declaration
+  order, entries in source order within each region. A breadcrumb renders as its one
+  verbatim text line: the source's own labels and separators, exactly as presented —
+  never spliced with a header string from elsewhere on the page, never case-normalized,
+  never repaired. A link rail renders as a markdown list — verbatim label plus target
+  URL, the source's own grouping headings preserved. A rail entry that is a self-edge
+  back at this same page adds no wayfinding and is omitted; a rail that is ONLY
+  self-edges yields no span at all — an empty framing span states something the source
+  does not. A dead link stays its faithful text. No prose is added.
+checks:
+  address_axes: [el]
+normalization:
+  guidance: |
+    Entries verbatim, complete, never fabricated. The crumb is the source's own trail —
+    if a stored crumb was spliced (a vehicle header prefixed onto `Vehicle > …`), the
+    remedy is CORRECTION to the source's verbatim trail, never deletion: absent and
+    correct both pass lint, and only correct is faithful (#89's pilot lesson; the
+    spliced header belongs in its own segment at its own address, where the source
+    renders it).
+
+    Do not write `title:` or `description:` on the section header — the universal
+    section-header fields retired in 3.5, and this form declares none, so the bare
+    opener `<!--section nav-->` is complete. What the page's position in its hierarchy
+    MEANS — what the trail implies the page covers, which concept the rail's targets
+    serve — is ledger knowledge citing this span, never a record assertion.

@@ -7,7 +7,12 @@ description: |
   entries and their labels, not prose. Names a SHAPE, never a subject. The boundary
   against every content form: when a page both lists and substantially TELLS, the
   telling wins (it is an article/document with links); a page is an index when removing
-  its entries would leave nothing. Entries may be plain links, a tabular listing (a
+  its entries would leave nothing. The boundary against `form/nav` (minted 2026-08-08,
+  #89): an index's entries ARE the page's content; a nav span's entries frame content
+  that sits beside them — the page's own breadcrumb trail and related-links rail. A
+  region the origin overlay declares `renders: framing` (§7.2) takes `form/nav` in its
+  own span, never this form — the two shapes shared one spelling once, and the
+  adjacent-same-form merge that caused is why they no longer do. Entries may be plain links, a tabular listing (a
   bulletin index: Number | Date | Title), or a matrix of what exists where — the
   contract is the same: entries verbatim, complete, and never fabricated.
 extended_fields:
@@ -23,8 +28,10 @@ decomposition: |
   The span renders the entry set faithfully in source order: link entries as a markdown
   list (label + target URL, the source's own grouping headings preserved); tabular
   listings as `text/data-table` with the source's columns; an availability matrix as its
-  faithful grid. Framing text the page itself presents (a breadcrumb, a category
-  heading, a count line) stays as text segments. An entry whose target the source
+  faithful grid. A category heading or count line the listing itself presents stays as
+  text segments within this span; a breadcrumb or link rail the origin overlay names
+  `renders: framing` is not this span's content — it takes its own trailing `form/nav`
+  span (#89). An entry whose target the source
   renders dead (an href-less anchor, a stale link) stays as its faithful text — never
   repaired, never dropped. No prose is added; an index with zero entries renders as its
   honest empty listing.
