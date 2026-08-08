@@ -230,6 +230,39 @@ def test_generic_title_verdicts_go_but_real_issues_stay(tmp_path):
     assert [c["id"] for c in remaining] == ["partial-content"]
 
 
+def test_issue_description_field_goes_but_the_issue_stays(tmp_path):
+    """#152/#153: an issue is a typed code at an address and carries no prose (spec
+    §4.3.3.2, 3.5) — the sweep strips the retired `description` FIELD, never the block: a
+    real issue's id/severity/resolution/detector are not this amendment's business."""
+    issue = {
+        "namespace": "issue", "id": "partial-content", "subtype": None,
+        "fields": {
+            "address": "el=1.1.2", "severity": "warning", "resolution": "open",
+            "detector": "claude-opus-4-8[1m]",
+            "description": "A sentence 3.5 retired (§4.3.3.2).",
+        },
+    }
+    root, rf = _record(
+        tmp_path,
+        [Section(form="document", address="el=1.1",
+                 segments=[Segment(atom="text", address="el=1.1.2", body="One.")])],
+        contexts=[issue],
+        canonical=False,
+    )
+    report = drop_retired.sweep_record(rf, root)
+    assert report.changed, report.hold
+    assert report.counts["issue description"] == 1
+    rf.write_text(report.new_text, encoding="utf-8")
+    remaining = records.load(rf).metadata["_contexts"]
+    assert len(remaining) == 1
+    survivor = remaining[0]
+    assert survivor["id"] == "partial-content"
+    assert survivor["fields"]["severity"] == "warning"
+    assert survivor["fields"]["resolution"] == "open"
+    assert survivor["fields"]["detector"] == "claude-opus-4-8[1m]"
+    assert "description" not in survivor["fields"]
+
+
 def test_the_neutrality_gate_holds_a_rewrite_that_would_lint_worse(tmp_path):
     """ATH-CORPUS 3.12 (#153): the fixture rule this test pinned against —
     `segment-description-required` — is itself retired (segment/section `description:` has

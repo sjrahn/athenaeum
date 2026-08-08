@@ -89,6 +89,49 @@ def _mint_segment_entry(workdir: Path) -> None:
     _edit_manifest(workdir, line, line + " entry='A TOC label.'")
 
 
+def _issue_record(root: Path, *, description: str | None = None) -> Path:
+    """A minimal record carrying one real `issue` block (spec §4.3.3.2) — `description`
+    gives it the retired free-prose field, for the tests about carrying one rather than
+    acquiring one."""
+    p = root / "records" / "dd" / f"{_ID}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    post = frontmatter.Post("")
+    post.metadata.update(
+        {"id": _ID, "transport": "sha256:" + "e" * 64, "touch": ["corpus.ingest@0.1.0"]}
+    )
+    records.set_artifact_block(post, mime="application/pdf", fields={"page_count": 1})
+    records.append_origin_block(
+        post, uri="https://example.com/g.pdf", snapshot="2026-05-31T00:00:00Z"
+    )
+    post.content = segments.emit(
+        [Section(form="document", address="page=1",
+                 segments=[Segment(atom="text", address="page=1", body="One.")])]
+    )
+    fields = {"description": description} if description else None
+    records.append_issue_block(
+        post, id="partial-content", severity="warning", resolution="open",
+        detector="claude-opus-4-8[1m]", address="page=1", fields=fields,
+    )
+    records.dump(post, p)
+    return p
+
+
+def _mint_issue_description(workdir: Path) -> None:
+    """Add a retired `desc=` to the `issue` line — the manifest still reads it tolerantly
+    for round-trip (#153/#152), which is exactly the surface an authoring pass could still
+    reach for even though the printed grammar no longer teaches it."""
+    (workdir / "desc").mkdir(exist_ok=True)
+    (workdir / "desc" / "9999-minted.txt").write_text(
+        "A sentence 3.5 retired (§4.3.3.2).\n", encoding="utf-8"
+    )
+    line = next(
+        ln
+        for ln in (workdir / "manifest.corpus").read_text("utf-8").splitlines()
+        if ln.startswith("issue ")
+    )
+    _edit_manifest(workdir, line, line + " desc=@desc/9999-minted.txt")
+
+
 # ------------------------------------------------------------------ the refusal
 
 
@@ -147,6 +190,26 @@ def test_a_frontmatter_field_reintroduced_through_meta_yaml_is_refused(tmp_path,
     err = capsys.readouterr().err
     assert "frontmatter canonical  0 → 1" in err
     assert "retired at 3.5, §4.2.1" in err
+
+
+def test_an_issue_description_acquired_through_the_manifest_is_refused(tmp_path, capsys):
+    """#152's other half: an issue is a typed code at an address and carries no prose
+    (spec §4.3.3.2) — minting one through the manifest's `desc=@desc/..` is gated exactly
+    like a section/segment field."""
+    root = _corpus(tmp_path)
+    rec = _issue_record(root)
+    before = rec.read_text("utf-8")
+    work = tmp_path / "w"
+    _decompose(root, work)
+    _mint_issue_description(work)
+
+    assert _compile(root, work) == 1
+    assert rec.read_text("utf-8") == before  # nothing written
+    err = capsys.readouterr().err
+    assert "REFUSING" in err
+    assert "issue description  0 → 1" in err
+    assert "retired at 3.5, §4.3.3.2" in err
+    assert "--allow-retired" in err
 
 
 def test_no_base_record_at_the_target_still_refuses(tmp_path, capsys):
@@ -215,6 +278,40 @@ def test_a_second_one_on_an_already_carrying_record_is_still_acquiring(tmp_path,
 
     assert _compile(root, work) == 1
     assert "segment entry  1 → 2" in capsys.readouterr().err
+
+
+def test_an_issue_that_already_carries_a_description_still_compiles(tmp_path, capsys):
+    """The same asymmetry, on the issue-prose field (#152): editing a record for an
+    unrelated reason must not lose an already-carried, retired issue description."""
+    root = _corpus(tmp_path)
+    rec = _issue_record(root, description="A sentence 3.5 retired (§4.3.3.2).")
+    work = tmp_path / "w"
+    _decompose(root, work)
+    body = sorted((work / "bodies").glob("*.md"))[0]
+    body.write_text("One, corrected.\n", encoding="utf-8")
+
+    assert _compile(root, work) == 0
+    after = rec.read_text("utf-8")
+    assert "One, corrected." in after
+    assert "description: A sentence 3.5 retired" in after  # carried through, unremarked
+
+
+def test_removing_an_issue_description_compiles(tmp_path, capsys):
+    """Going DOWN is the sweep's own direction; a hand doing it one record at a time must
+    not be stopped, same as the section/segment case."""
+    root = _corpus(tmp_path)
+    rec = _issue_record(root, description="A sentence 3.5 retired (§4.3.3.2).")
+    work = tmp_path / "w"
+    _decompose(root, work)
+    line = next(
+        ln
+        for ln in (work / "manifest.corpus").read_text("utf-8").splitlines()
+        if ln.startswith("issue ")
+    )
+    _edit_manifest(work, line, line.split(" desc=")[0])
+
+    assert _compile(root, work) == 0
+    assert "description:" not in rec.read_text("utf-8")
 
 
 # ------------------------------------------------------------- the escape hatches
@@ -312,6 +409,10 @@ def test_the_census_counts_every_retired_construct_under_its_label():
             {"namespace": "reference", "id": "cited-work", "fields": {}},
             {"namespace": "issue", "id": "generic-title", "fields": {}},
             {"namespace": "issue", "id": "partial-content", "fields": {}},  # a real one
+            {
+                "namespace": "issue", "id": "partial-content",
+                "fields": {"description": "A sentence 3.5 retired (§4.3.3.2)."},
+            },  # a real one carrying the retired prose too
         ],
     )
     assert dict(retired.census(post)) == {
@@ -326,6 +427,7 @@ def test_the_census_counts_every_retired_construct_under_its_label():
         "context relation": 1,
         "context reference": 1,
         "context issue/generic-title": 1,
+        "issue description": 1,
     }
 
 

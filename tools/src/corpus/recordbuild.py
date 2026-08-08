@@ -38,25 +38,28 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
     section [form=<form-id>] [addr=<a>] [k=v ...]
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [perceptual=..] [k=v ...]
     seg     structural addr=<a> level=<int> [mark=..]     # §4.3.2.3 byte-mark
-    issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]
+    issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]
 
 `seg` enforces body⟺lossless (spec §4.3.2.2): a `body=` ref is permitted only for a
 lossless atom/overlay. `image`/`audio`/`video` and a text overlay declaring
 `enables_lossless: false` take neither `body=` nor `desc=` — a non-lossless marker is
 body-empty, full stop (spec §4.3.2.2/§4.2.3: a segment cannot narrate its own region).
 
-*(3.12 reconciliation, #153)* `section`'s `entry=`/`desc=` and content-`seg`'s `entry=`/
-`desc=` are DROPPED from this taught grammar — the universal section-header fields and the
-segment `description` retired 3.5 with no successor (§4.3.2.1, §4.3.2.2), and this grammar
-summary (and `_MANIFEST_HEADER`'s printed copy) must not keep advertising a slot as
-something to AUTHOR when `compile`'s retirement gate (#116) refuses any edit that acquires
-one. `write_workdir` still ROUND-TRIPS a value the in-memory Section/Segment already
+*(3.12 reconciliation, #153/#152)* `section`'s `entry=`/`desc=`, content-`seg`'s `entry=`/
+`desc=`, and `issue`'s `desc=` are DROPPED from this taught grammar — the universal
+section-header fields, the segment `description`, and an issue's free-prose `description`
+all retired 3.5 with no successor (§4.3.2.1, §4.3.2.2, §4.3.3.2: "an issue is a typed code
+at an address, and carries no prose"), and this grammar summary (and `_MANIFEST_HEADER`'s
+printed copy) must not keep advertising a slot as something to AUTHOR when `compile`'s
+retirement gate (#116, fed by `retired.census`) refuses any edit that acquires one.
+`write_workdir` still ROUND-TRIPS a value the in-memory Section/Segment/issue block already
 carries (an unswept legacy record touched for an unrelated reason, §12.26's form-preserving
-principle) — never a new one, since nothing here ever authors one — and `read_workdir`
-reads either key tolerantly for exactly that carry. The asymmetry is #116's, unchanged:
-acquiring (a net increase over the base record) is refused; carrying one never is. A
-structural mark's own text still folds tolerantly from a legacy `mark=`/`entry=` into the
-segment BODY (§12.32) — a separate, unaffected mechanism.
+principle) — never a new one, since nothing here ever authors one — and `read_workdir` reads
+the key tolerantly for exactly that carry (a generic `context` block's `desc=` is untouched:
+a note/aside legitimately narrates). The asymmetry is #116's, unchanged: acquiring (a net
+increase over the base record) is refused; carrying one never is. A structural mark's own
+text still folds tolerantly from a legacy `mark=`/`entry=` into the segment BODY (§12.32) —
+a separate, unaffected mechanism.
 
 *(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19). A legacy `record
 id=<hex> status=<s>` line reads parse-tolerantly (the `status=` key is accepted and ignored)
@@ -104,18 +107,19 @@ _MANIFEST_HEADER = [
     "#   section [form=<form-id>] [addr=<a>] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]",
     "#   seg     structural addr=<a> level=<int> [mark=..]   # §4.3.2.3 byte-mark",
-    "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [desc=@desc/..] [k=v ...]",
+    "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]",
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
     "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
-    "# `entry=`/`desc=` are RETIRED on `section` and content `seg` lines (spec §4.3.2.1/",
-    "#   §4.3.2.2, 3.5) — no successor; do not add one. `compile`'s retirement gate (#116)",
-    "#   refuses a rebuild that ACQUIRES one; --allow-retired overrides.",
+    "# `entry=`/`desc=` are RETIRED on `section`/content-`seg` lines, and `desc=` on `issue`",
+    "#   lines (spec §4.3.2.1/§4.3.2.2/§4.3.3.2, 3.5) — no successor; do not add one.",
+    "#   `compile`'s retirement gate (#116) refuses a rebuild that ACQUIRES one;",
+    "#   --allow-retired overrides. A generic `context` block's `desc=` is unaffected.",
     "# record state is derived (spec §4.1), never authored — no `status=` on the record line.",
     "# Spec §4.3: the members roster lives in the METADATA zone (reconciliation #1).",
     "# body⟺lossless: `body=` is only valid on a lossless atom/overlay (bare text,",
-    "#   text/data-table, text/transcript, …). image/audio/video and non-lossless text",
-    "#   overlays (e.g. text/data-table-dynamic) take `desc=` only — run `corpus atoms`.",
+    "#   text/data-table, text/transcript, …). image/audio/video and a non-lossless text",
+    "#   overlay stay body-empty, full stop — no `desc=` alternative (§4.3.2.2/§4.2.3, 3.5).",
     "# Edit body/desc sidecar files; rebuild with `corpus compile <dir>`",
     "#   (run it from the corpus root). Final normalize pass: `corpus compile <dir> --model <id>`.",
 ]
@@ -313,12 +317,16 @@ def add_issue(
     resolution: str,
     detector: str,
     address: str | None = None,
-    description: str | None = None,
     fields: dict | None = None,
 ) -> None:
-    f = dict(fields or {})
-    if description is not None:
-        f["description"] = description
+    """*(3.12 reconciliation, #153/#152)* No dedicated `description` param: an issue is a
+    typed code at an address and carries no prose (spec §4.3.3.2, 3.5) — offering a
+    first-class kwarg for it is exactly the authoring slot the retirement forbids. A `fields`
+    dict a caller already built with a `description` key (the manifest reader's `desc=`
+    round-trip of a value a legacy record already carries, never something this function
+    invites new) still passes through unmolested — this only removes the shortcut that
+    invited a NEW one; `retired.census` counts an issue `description` and `compile`'s
+    retirement gate (#116) refuses a rebuild that adds one where the base record had none."""
     records.append_issue_block(
         b.post,
         id=id,
@@ -327,7 +335,7 @@ def add_issue(
         resolution=resolution,
         detector=detector,
         address=address,
-        fields=f,
+        fields=dict(fields or {}),
     )
 
 
@@ -710,7 +718,11 @@ def write_workdir(
             f_ = dict(ctx.get("fields") or {})
             addr = f_.pop("address", None)
             if ns == "issue":
-                # Keep the dedicated `issue <id> sev= res= detector=` manifest line.
+                # Keep the dedicated `issue <id> sev= res= detector=` manifest line. A
+                # `description` surviving in `f_` below (§4.3.3.2, 3.5 — no successor) is
+                # ROUND-TRIPPED only, never taught: the printed grammar doesn't list `desc=`
+                # as an issue-line slot any more, and `compile`'s retirement gate (#116)
+                # refuses a rebuild that adds one where the base record had none (#153/#152).
                 opener = f"{cid}/{sub}" if sub else cid
                 sev = f_.pop("severity", "")
                 res = f_.pop("resolution", "")
@@ -902,6 +914,10 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 iid, _slash, sub = opener.partition("/")
                 kv = _kv(toks[2:])
                 extras: dict[str, Any] = {}
+                # `desc=` on an issue line is read tolerantly for round-trip only — the
+                # printed grammar no longer teaches it (§4.3.3.2, 3.5: no successor); adding
+                # a NEW one is `retired.census`'s "issue description", which `compile`'s
+                # retirement gate (#116) refuses same as any other acquisition (#153/#152).
                 for k, v in kv.items():
                     if k in ("sev", "res", "detector", "addr"):
                         continue
@@ -917,7 +933,6 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                     resolution=kv["res"],
                     detector=kv["detector"],
                     address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
-                    description=None,
                     fields=extras,
                 )
             elif verb == "context":

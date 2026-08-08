@@ -58,6 +58,7 @@ RETIRED_AT: dict[str, tuple[str, str]] = {
     "context reference": ("3.5", "§4.3.3.3"),
     "context relation": ("3.5", "§4.3.3.5"),
     "context issue/generic-title": ("3.5", "§12.21"),
+    "issue description": ("3.5", "§4.3.3.2"),
 }
 
 SECTION_OPENER_RE = re.compile(r"^<!--section(?: |$)", re.M)
@@ -120,6 +121,18 @@ def census(post: Any, text: str = "") -> Counter[str]:
     for ctx in retired_contexts(post):
         ns, cid = str(ctx.get("namespace") or ""), str(ctx.get("id") or "")
         counts[f"context {ns}/{cid}" if ns == "issue" else f"context {ns}"] += 1
+
+    # An issue's free-prose `description` (§4.3.3.2, 3.5) — "an issue is a typed code at an
+    # address, and carries no prose." Independent of `retired_contexts()` above: that set is
+    # about a whole BLOCK with no successor (relation/reference/generic-title, all deleted
+    # wholesale); this is a FIELD with no successor on an otherwise-legitimate issue (severity/
+    # resolution/detector stay) — same criterion `records.pending_retired_fields`'s
+    # `context_prose` reports, so the two never disagree about which issues carry one.
+    for ctx in post.metadata.get("_contexts") or []:
+        if str(ctx.get("namespace") or "") != "issue":
+            continue
+        if str((ctx.get("fields") or {}).get("description") or "").strip():
+            counts["issue description"] += 1
 
     # Parse tolerantly: a content zone that will not parse carries no countable header
     # fields, and saying WHY belongs to the caller, which can say it far better than a

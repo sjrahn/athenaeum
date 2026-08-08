@@ -353,6 +353,13 @@ def sweep_record(
         keep = [c for c in (post.metadata.get("_contexts") or []) if c not in doomed_contexts]
         post.metadata["_contexts"] = keep
 
+    # An issue's free-prose `description` (§4.3.3.2, 3.5) comes off the FIELD, not the block:
+    # id/severity/resolution/detector are a real issue and stay — only the prose the spec
+    # says an issue never carries goes, same as `census`'s "issue description" count above.
+    for ctx in post.metadata.get("_contexts") or []:
+        if str(ctx.get("namespace") or "") == "issue":
+            (ctx.get("fields") or {}).pop("description", None)
+
     post.content = segments.emit(blocks).rstrip("\n") + trailing
     touches.record_touch(post, touches.script_identifier(TOUCH_ID))
     new_text = records.dumps(post)
