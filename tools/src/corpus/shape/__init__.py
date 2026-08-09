@@ -275,5 +275,6 @@ def shape_record(post: frontmatter.Post, corpus_root: Path) -> bool:
 
 
 # Import the bundled shapers so they self-register.
+from corpus.shape import alldata_index as _alldata_index  # noqa: E402, F401
 from corpus.shape import contact_card as _contact_card  # noqa: E402, F401
 from corpus.shape import conversation as _conversation  # noqa: E402, F401

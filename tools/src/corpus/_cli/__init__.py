@@ -72,6 +72,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "reseat":          ("Maintenance",            "§12.30 migration: promote each placed member and move its rendering onto its own record, leaving a placement (dry-run by default)"),
     "home-crumb":      ("Maintenance",            "#89 migration: move a verbatim, alone-in-its-own-segment my.alldata.com breadcrumb into a new trailing index span (dry-run by default)"),
     "home-rail":       ("Maintenance",            "#89 migration: render a my.alldata.com related-information rail out of its retired relation blocks into a trailing index span (dry-run by default)"),
+    "reshape-index":   ("Maintenance",            "#164 migration: deterministically re-author a my.alldata.com index page from its DOM — title byte-mark, linked entry list, verbatim crumb in a trailing nav span (dry-run by default)"),
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
