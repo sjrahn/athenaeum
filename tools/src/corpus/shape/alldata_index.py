@@ -73,7 +73,7 @@ def _mdlink(label: str, href: str | None) -> str:
     return f"[{label}]({href})" if href else label
 
 
-def _load_soup(corpus_root: Path, post: frontmatter.Post) -> BeautifulSoup:
+def load_stamped_soup(corpus_root: Path, post: frontmatter.Post) -> BeautifulSoup:
     """The record's artifact, parsed under the parser its `addressing:` stamp attests.
 
     The stamp is checked here, not left to the caller: every address this shaper writes is a
@@ -168,7 +168,7 @@ def shape_alldata_index(
     """Author the whole content zone of one alldata index page from its DOM. `mapping` is
     unused — the template is the contract (§7.2: a `form:` declaration may carry no mapping
     when the shape needs none)."""
-    soup = _load_soup(corpus_root, post)
+    soup = load_stamped_soup(corpus_root, post)
     root = path_root(soup)
 
     view = soup.select_one("div.view-content")

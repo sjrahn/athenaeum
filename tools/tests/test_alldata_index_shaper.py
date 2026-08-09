@@ -222,3 +222,55 @@ def test_the_build_ops_are_the_shapers_only_surface(tmp_path):
     alldata_index.shape_alldata_index(build, post, root, {})
     assert [type(b).__name__ for b in build.blocks] == ["Section", "Section"]
     assert post.content == ""  # untouched until `finish`
+
+
+def test_an_asserted_index_section_governs_when_no_route_matches(tmp_path):
+    """§7.8 precedence (b): a bare-itype index page's URL shape cannot safely declare a
+    form — the same route covers both a list and a single-entry article jump (#164) — so
+    the record's own asserted first section is what licenses the shaper."""
+    post, root = _record(tmp_path, _page(_ENTRIES), uri_itype="104")
+    post.content = (
+        "<!--section index-->\n\n<!--segment text\naddress: el=1\n-->\n\nstale rendering\n"
+    )
+    assert shape_record(post, root) is True
+    blocks = segments.iter_blocks(post.content or "")
+    sections = [b for b in blocks if isinstance(b, segments.Section)]
+    assert [s.form for s in sections] == ["index", "nav"]
+
+
+def test_a_formless_unrouted_record_is_still_not_shaped(tmp_path):
+    """The asserted-form fallback needs an actual assertion — a record with no route AND
+    no form section stays unshaped, exactly as before the widening."""
+    post, root = _record(tmp_path, _page(_ENTRIES), uri_itype="105")
+    assert post.content == ""
+    assert shape_record(post, root) is False
+
+
+def test_reshape_accepts_an_asserted_form_record(tmp_path):
+    """`reshape_record`'s gate admits the asserted-form population the same way the
+    dispatch does — declared-or-asserted, never URL guesswork."""
+    from corpus import reshape_index
+
+    post, root = _record(tmp_path, _page(_ENTRIES), uri_itype="104")
+    post.content = (
+        "<!--section index-->\n\n<!--segment text\naddress: el=1.1.1\n-->\n\n"
+        "Technical Service Bulletins\n"
+    )
+    rid = str(post.metadata["id"])
+    record_file = paths.record_path(root, rid)
+    records.dump(post, record_file)
+    report = reshape_index.reshape_record(record_file, root)
+    assert report.hold is None
+    assert report.changed is True
+
+
+def test_reshape_skips_a_record_that_neither_routes_nor_asserts(tmp_path):
+    from corpus import reshape_index
+
+    post, root = _record(tmp_path, _page(_ENTRIES), uri_itype="105")
+    rid = str(post.metadata["id"])
+    record_file = paths.record_path(root, rid)
+    records.dump(post, record_file)
+    report = reshape_index.reshape_record(record_file, root)
+    assert report.skipped is not None
+    assert "neither routes to nor asserts" in report.skipped

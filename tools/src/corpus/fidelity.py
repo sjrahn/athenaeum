@@ -305,12 +305,19 @@ def _leaf_elements(tag: Any) -> list[Any]:
     stop being a leaf and only "Values" would ever be probed, and a heading carrying an
     inline `<a>` — the shape #159's own missing-h3 class arrives in — would vanish from the
     reverse direction entirely. An unrecognized element (a custom `<ad-repair-*>`) counts as
-    structure, which keeps the contiguity guarantee conservative rather than assuming it."""
-    if all(child.name in _INLINE_TAGS for child in iter_element_children(tag)):
-        return [tag]
+    structure, which keeps the contiguity guarantee conservative rather than assuming it.
+
+    Iterative, not recursive: this host emits unclosed `<li>` chains that `html.parser`
+    nests ~1,000 elements deep, past Python's recursion limit."""
     out: list[Any] = []
-    for child in iter_element_children(tag):
-        out.extend(_leaf_elements(child))
+    stack = [tag]
+    while stack:
+        node = stack.pop()
+        children = iter_element_children(node)
+        if all(child.name in _INLINE_TAGS for child in children):
+            out.append(node)
+        else:
+            stack.extend(reversed(children))
     return out
 
 

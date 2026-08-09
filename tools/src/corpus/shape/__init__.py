@@ -144,7 +144,7 @@ def declared_form_unmet(post: frontmatter.Post, corpus_root: Path) -> str | None
     return form_id
 
 
-def _asserted_form(post: frontmatter.Post) -> str | None:
+def asserted_form(post: frontmatter.Post) -> str | None:
     """The form id the record ASSERTS for itself — the FIRST form section in its content
     zone, or None.
 
@@ -228,7 +228,7 @@ def governing_form(
         _, form_id, _ = declared
         return form_id, schemas.is_terminal_form(corpus_root, form_id)
 
-    asserted = _asserted_form(post)
+    asserted = asserted_form(post)
     if asserted:
         return asserted, schemas.is_terminal_form(corpus_root, asserted)
 
@@ -260,10 +260,18 @@ def shape_record(post: frontmatter.Post, corpus_root: Path) -> bool:
 
     local_code.load_corpus_modules(corpus_root, "shapers")
     resolved = form_for_record(post, corpus_root)
-    if resolved is None:
-        return False
-    origin_id, form_id, mapping = resolved
-    shaper = get_shaper(origin_id) or get_shaper(form_id)
+    if resolved is not None:
+        origin_id, form_id, mapping = resolved
+        shaper = get_shaper(origin_id) or get_shaper(form_id)
+    else:
+        # §7.8 precedence (b), as `governing_form` reads it: with no overlay declaration,
+        # the record's own asserted whole-record section is its governing contract, and a
+        # registered shaper for that form serves it the same way (#164 — the bare-itype
+        # index pages, whose URL route CANNOT declare the form because the same URL shape
+        # covers both lists and single-entry article jumps).
+        form_id = asserted_form(post)
+        mapping = {}
+        shaper = get_shaper(form_id) if form_id else None
     if shaper is None:
         return False
 

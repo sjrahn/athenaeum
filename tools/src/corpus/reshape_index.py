@@ -60,7 +60,7 @@ class IndexReshape:
     new_text: str | None = None
 
 
-def _fidelity_hold(
+def fidelity_hold(
     post: Any, blocks: list[segments.Block], corpus_root: Path, record_id: str
 ) -> str | None:
     """The positive landing check: does the REWRITE satisfy #159's gate? Returns a hold
@@ -103,8 +103,15 @@ def reshape_record(record_file: Path, corpus_root: Path) -> IndexReshape:
         return report
 
     resolved = shape.form_for_record(post, corpus_root)
-    if resolved is None or resolved[1] != FORM:
-        report.skipped = f"origin overlay does not route this record to form/{FORM}"
+    if resolved is not None:
+        if resolved[1] != FORM:
+            report.skipped = f"origin overlay routes this record to form/{resolved[1]}, not {FORM}"
+            return report
+    elif shape.asserted_form(post) != FORM:
+        # §7.8 precedence (b): no overlay declaration, so the record's own asserted
+        # whole-record section is what governs — the bare-itype index pages arrive this
+        # way, since their URL shape cannot safely declare a form (#164).
+        report.skipped = f"record neither routes to nor asserts form/{FORM}"
         return report
 
     try:
@@ -153,7 +160,7 @@ def reshape_record(record_file: Path, corpus_root: Path) -> IndexReshape:
         )
         return report
 
-    held = _fidelity_hold(post, reparsed, corpus_root, rid)
+    held = fidelity_hold(post, reparsed, corpus_root, rid)
     if held is not None:
         report.hold = held
         return report

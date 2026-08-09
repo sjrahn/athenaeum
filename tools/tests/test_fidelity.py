@@ -652,3 +652,16 @@ def test_a_framing_regions_heading_is_not_owed_by_the_transcription():
     dropped = check_fidelity(subject, blocks, _STAMP, _NEVER)
     assert dropped["dropped"] == 1
     assert "Related Information" in _kinds(dropped, "dropped")[0]["sample"][0]
+
+
+def test_a_thousand_deep_unclosed_li_chain_does_not_blow_the_stack():
+    """This host emits unclosed `<li>` tags, which `html.parser` nests each inside the
+    last — real pages reach ~1,000 elements deep, past Python's recursion limit. The
+    gate must MEASURE such a record, not die (or worse: get silently skipped by a
+    tolerant caller)."""
+    depth = 1200
+    html = "<body><div>" + "<li>entry text here " * depth + "</div></body>"
+    blocks = [Segment(atom="text", address="el=1", body="entry text here")]
+    result = _scan(html, blocks)
+    assert result["segments"] == 1
+    assert result["unresolvable"] == 0
