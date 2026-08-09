@@ -656,9 +656,11 @@ def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
 
     **The gate compares; it never decodes.** A check that had to open the artifact would
     report red when a codec was missing rather than when a record was wrong — a report on
-    the checking host, not on the corpus. That is not hypothetical: PIL calls every
-    animated WebP single-frame in a build without `webp_anim`, and would have waved
-    through exactly the population this rule exists to catch.
+    the checking host, not on the corpus. That is not hypothetical: PIL reports an
+    animation it cannot decode as single-frame (historically, any animated WebP in a
+    build without animation support — Pillow 12 folded the old `webp_anim` feature flag
+    into plain `webp`), and would have waved through exactly the population this rule
+    exists to catch.
 
     An unstamped artifact of a `single_unit_only` type is UNRESOLVED, not admitted —
     there is no fact to compare, and defaulting to admissible would grandfather the whole
@@ -774,6 +776,98 @@ def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         for addr in _addresses(eb.get("address")):
             yield from _check(addr, f"embed {i}")
+
+
+def _rule_address_frame_grammar(post, blocks, root) -> Iterator[Finding]:
+    """Every `frame=` value in an IMAGE record's stored addresses is a declared axis,
+    a valid 1-based index or inclusive span, within the attested `frame_count`, and
+    leads its chain (#124; spec §6.2, §4.3.2.2).
+
+    Scope is the image working kind alone: `frame=` is polymorphic (§6.2), and on a
+    video it is a timecode this grammar must not judge. Three checks, same discipline
+    as its siblings:
+
+    - **Declared**: the mime's `address_scheme` must carry a `frame` param — the first
+      code that reads that key; before this rule, an undeclared axis passed every gate
+      silently, which is `address-region-invalid`'s 1,778-pixel-address story wearing a
+      new key.
+    - **Bounded, compare-never-decode**: the count is the attested field the schema
+      names in `whole_address_count` (`frame_count`), never a decode of the artifact —
+      the whole-address rule's reasoning, one rule up. `frame=` on an unstamped
+      artifact is unresolved, not admitted: run `corpus reattest`.
+    - **Leading**: `frame=` selects the surface the rest of the chain operates on, and
+      the materialization reads the source bytes — a region param before `frame=` is
+      an address that renders something other than what it says (§6.2)."""
+    from corpus import functional_uri as _furi
+
+    artifact = _records.artifact_block(post) or {}
+    mime = (artifact.get("mime") or "").strip()
+    if not mime.startswith("image/"):
+        return
+    schema = None      # loaded lazily — most image records carry no frame= at all
+    count: int | None = None
+
+    def _findings(addr: str, where: str) -> Iterator[Finding]:
+        nonlocal schema, count
+        parts = [p.partition("=") for p in addr.split("&")]
+        keys = [k.strip() for k, _, _ in parts]
+        if "frame" not in keys:
+            return
+        if schema is None:
+            schema = _schemas.load_mime_schema(root, mime) or {}
+            field = schema.get("whole_address_count")
+            raw = (artifact.get("fields") or {}).get(field) if field else None
+            try:
+                count = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                count = None
+
+        def _finding(msg: str) -> Finding:
+            return Finding(
+                rule_id="address-frame-invalid",
+                severity="error",
+                message=f"{where} address `{addr}`: {msg}",
+                address=addr,
+                fields={"mime": mime},
+            )
+
+        declared = any(
+            (p or {}).get("param") == "frame" for p in schema.get("address_scheme") or []
+        )
+        if not declared:
+            yield _finding(
+                f"`{mime}` declares no `frame` axis in its address scheme (spec §7.1) — "
+                f"a frame address on this medium names nothing"
+            )
+            return
+        if any(k in _furi.REGION_PARAMS for k in keys[: keys.index("frame")]):
+            yield _finding(
+                "frame= must lead its chain — it selects the surface the region params "
+                "operate on (spec §6.2)"
+            )
+        if count is None:
+            yield _finding(
+                "the artifact block carries no attested frame count — unresolved, not "
+                "admitted. Run `corpus reattest`."
+            )
+            return
+        for key, sep, value in parts:
+            for problem in _furi.frame_errors(key.strip(), value if sep else None, count=count):
+                yield _finding(problem)
+
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            for addr in _addresses(blk.address):
+                yield from _findings(addr, "section")
+            for seg in blk.segments:
+                for addr in _addresses(getattr(seg, "address", None)):
+                    yield from _findings(addr, "segment")
+        elif isinstance(blk, _segments.Segment):
+            for addr in _addresses(getattr(blk, "address", None)):
+                yield from _findings(addr, "segment")
+    for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
+        for addr in _addresses(eb.get("address")):
+            yield from _findings(addr, f"embed {i}")
 
 
 # ---------- annotation-zone (issue) rules ---------- #
@@ -1911,6 +2005,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-empty", _rule_section_empty),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
+    ("address-frame-invalid", _rule_address_frame_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
     ("framing-stamp-malformed", _rule_framing_stamp_shape),

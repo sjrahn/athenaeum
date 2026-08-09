@@ -36,6 +36,13 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="For a paged artifact (PDF): render this 1-indexed page first.",
     )
     parser.add_argument(
+        "--frame",
+        type=int,
+        default=None,
+        help="For an animated raster (GIF/WebP): render this 1-indexed frame first "
+        "(#124; the image reading of the polymorphic frame= axis).",
+    )
+    parser.add_argument(
         "--mark",
         action="append",
         default=[],
@@ -104,18 +111,22 @@ def run(args: argparse.Namespace) -> int:
     rid = _record_id(corpus_root, args.target)
 
     page = args.page
+    frame = args.frame
     marks = list(args.mark)
     if args.from_segments:
-        seg_marks, seg_page = _segment_marks(corpus_root, rid, page)
+        seg_marks, seg_unit = _segment_marks(corpus_root, rid, page if frame is None else frame)
         if not seg_marks:
             where = f" on page {page}" if page is not None else ""
             print(f"no committed bbox segments{where} in {rid[:12]}", file=sys.stderr)
             return 1
         marks = seg_marks + marks
-        if page is None:
-            page = seg_page
+        if page is None and frame is None:
+            page = seg_unit
 
     params: list[str] = []
+    if frame is not None:
+        # frame= leads the chain: it selects the surface every later param operates on
+        params.append(f"frame={frame}")
     if page is not None:
         params.append(f"page={page}")
     if args.dpi is not None:
@@ -193,15 +204,17 @@ def _segment_marks(
 
 
 def _parse_addr(addr: str) -> tuple[int | None, str | None]:
-    page: int | None = None
+    """(unit, box): the address's 1-based unit index — its `page=` or, for an animated
+    raster, its `frame=` (the two axes never co-occur on one medium) — and its bbox."""
+    unit: int | None = None
     box: str | None = None
     for part in addr.split("&"):
         key, _, value = part.partition("=")
-        if key == "page":
+        if key in ("page", "frame"):
             try:
-                page = int(value)
+                unit = int(value)
             except ValueError:
-                pass
+                pass                     # a frame span or timecode — not a unit index
         elif key == "bbox":
             box = value
-    return page, box
+    return unit, box

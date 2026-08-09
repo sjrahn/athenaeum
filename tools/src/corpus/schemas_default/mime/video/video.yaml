@@ -55,6 +55,13 @@ address_scheme:
   type: string
   description: |-
     Stream identifier (`v0`, `v1`, ..., `a0`, `a1`, ...) matching a key in the frontmatter `streams:` map.
+- param: frame
+  type: timecode
+  description: |-
+    Seconds (float) or MM:SS / HH:MM:SS — one frame at that timestamp, rendered to an image
+    (the VIDEO reading of the polymorphic `frame=` axis, spec section 6.2; on the image working
+    kind the same key is a 1-based ordinal). This declares the axis the guidance above and the
+    drafter's positioning markers have used all along (#124 closed the declaration gap).
 transport_algos:
 - sha256
 extended_fields:

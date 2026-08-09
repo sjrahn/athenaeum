@@ -400,6 +400,25 @@ def region_errors(key: str, value: str | None) -> list[str]:
     return out
 
 
+def frame_errors(key: str, value: str | None, *, count: int | None = None) -> list[str]:
+    """Validate one authored `key=value` param as an image frame index/span, returning
+    zero or more human-readable problems. Non-`frame` keys return `[]`.
+
+    The IMAGE side of the polymorphic `frame=` axis (spec §6.2): a 1-based ordinal `N`
+    or inclusive span `N-M` over the artifact's own frame sequence — never a timecode,
+    which is the VIDEO working kind's reading of the same key and is not judged here
+    (the caller gates on mime). The grammar and bounds are `parse_index_span`'s, the
+    same definition the materialization transform renders through, for the same
+    lint-and-render-cannot-disagree reason as `region_errors` above."""
+    if key != "frame":
+        return []
+    try:
+        parse_index_span("frame", value, count=count, noun="the artifact")
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
 def _looks_numeric(chunk: str) -> bool:
     """True when every comma-separated part parses as a float — the signal that this
     chunk is meant as a relative region at all."""

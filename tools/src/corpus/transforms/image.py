@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from corpus import functional_uri as furi
 
-from . import RenderContext, register
+from . import NotMaterializable, RenderContext, register
 
 # ---- fit= presets ---------------------------------------------------------- #
 # The `llm` preset bounds an image to a vision-model's input budget. These numbers
@@ -47,6 +47,40 @@ def format_image(img: Image.Image, value: str | None, ctx: RenderContext) -> Ima
             f"already-selected frame/page render)"
         )
     return img
+
+
+@register("image", "frame", "image")
+def frame(img: Image.Image, value: str | None, ctx: RenderContext) -> Image.Image:
+    """`frame=<N>` — select one 1-based frame of an animated raster (GIF, animated
+    WebP/AVIF), so the image transforms downstream (`bbox=`, `mark=`, `fit=`) operate on
+    that frame (#124; spec §6.2 — the IMAGE reading of the polymorphic `frame=` axis: an
+    ordinal, where the video working kind reads a timecode).
+
+    Reads the source artifact (`ctx["artifact_path"]`), not the working value: the
+    resolver's initial image load decodes a single composited frame and closes the file,
+    so the sequence is only reachable from the bytes. That makes `frame=` a LEADING
+    param by construction — chain it first (`frame=3&bbox=…`), as §6.2 requires; any
+    transform applied before it is discarded with the working value.
+
+    A SPAN (`frame=1-8`) is a legitimate stored address — the whole-sequence assertion
+    of §4.3.2.2 — but names no single byte surface, so it does not materialize; bounds
+    are still checked first (`parse_index_span`: bounds are a property of the address,
+    not of whether it materializes)."""
+    low, high = furi.parse_index_span("frame", value, noun="the artifact")
+    src = ctx.get("artifact_path")
+    if src is None:
+        raise ValueError("frame= requires the source artifact (resolver supplies artifact_path)")
+    with Image.open(src) as im:
+        count = getattr(im, "n_frames", 1)
+        furi.parse_index_span("frame", value, count=count, noun="this image")
+        if low != high:
+            raise NotMaterializable(
+                f"frame={low}-{high} names a span of the sequence, not a renderable "
+                f"unit — resolve a single frame"
+            )
+        im.seek(low - 1)
+        im.load()
+        return im.copy()
 
 
 @register("image", "bbox", "image")
