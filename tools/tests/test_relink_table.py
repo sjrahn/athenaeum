@@ -133,3 +133,26 @@ def test_an_address_that_is_not_a_table_is_left_alone(tmp_path):
     report = relink_table.relink_table_record(record_file, root)
     assert report.changed is False
     assert report.skipped is not None
+
+
+def test_a_body_carrying_prose_beyond_its_table_is_held(tmp_path):
+    """The sweep's hard lesson: replacing an over-stuffed body deletes the prose, and the
+    gates BLESS the deletion — the dropped lines were the ones failing fidelity under the
+    table's address, so the finding vanishes with the content. The verb must refuse."""
+    body = _SEGMENT + _flat_body() + "\n\nSupersession Statement\n\nThis PI was superseded.\n"
+    record_file, root = _record(tmp_path, _page(), body)
+    report = relink_table.relink_table_record(record_file, root)
+    assert report.changed is False
+    assert report.hold is not None
+    assert "not a pure pipe table" in report.hold
+
+
+def test_a_raw_html_table_body_is_held(tmp_path):
+    """A raw `<table>` body may hold colspan/rowspan structure a pipe table cannot express —
+    converting it is a degrade, not a link repair."""
+    body = _SEGMENT + "<table><tr><td colspan=\"2\">Wide</td></tr></table>\n"
+    record_file, root = _record(tmp_path, _page(), body)
+    report = relink_table.relink_table_record(record_file, root)
+    assert report.changed is False
+    assert report.hold is not None
+    assert "not a pure pipe table" in report.hold

@@ -84,6 +84,20 @@ def _table_md(table: Tag) -> str:
     return "\n".join(lines)
 
 
+def _is_pipe_table(body: str) -> bool:
+    """True when the existing body is a pure markdown pipe table — every non-blank line a
+    `|` row. That is the ONLY shape this verb replaces: it is a RE-link, and the sweep that
+    taught it so (2026-08-09, corpus `76b51383a` partially reverted) found two bodies it
+    must never touch. A body carrying prose beyond its table loses that prose to the
+    rewrite — and the gates BLESS the loss, because the dropped lines were the very lines
+    failing fidelity under the table's address, so the finding disappears with the content.
+    And a raw-HTML `<table>` body with colspan/rowspan holds structure a pipe table cannot
+    express — replacing it is a degrade, not a repair. Both are re-segmentation or
+    re-authoring: another pass's work."""
+    lines = [line for line in body.split("\n") if line.strip()]
+    return bool(lines) and all(line.lstrip().startswith("|") for line in lines)
+
+
 def _addressed_table(soup: Tag, address: object) -> Tag | None:
     """The single `<table>` a segment's address names, or None when the address is not one
     point path resolving to a table (a range, a list, another element — not this verb's)."""
@@ -144,6 +158,13 @@ def relink_table_record(record_file: Path, corpus_root: Path) -> TableRelink:
             return report
         if table is None:
             continue
+        if not _is_pipe_table(seg.body or ""):
+            report.hold = (
+                "a data-table segment's body is not a pure pipe table — replacing it would "
+                "drop its non-table content or its spanned-table structure (re-segmentation, "
+                "out of scope for a link restoration)"
+            )
+            return report
         body = _table_md(table)
         if body != (seg.body or "").strip("\n"):
             seg.body = body
