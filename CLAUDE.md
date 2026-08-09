@@ -86,3 +86,21 @@ ath codex <name> build --profile public   # also: scope | notes; public builds r
 - **Deterministic before LLM.** Capture/ingest/draft are mechanical; normalize and codex authoring are interpretive agent passes. Keep the boundary sharp.
 - **Parse tolerantly.** Log and skip unparseable records rather than failing a whole corpus.
 - **Member repos commit through their own gates** — corpus records pass `corpus lint` / `health` (field guide: `docs/capture-operations.md`); ledger commits pass `ath ledger check`; codex vaults are generated, validated by `ath codex <name> check`. No member carries a persona — the orchestrator drives them all.
+
+## Working rules
+
+- Plan in the main session, together with me. Hand grunt work (broad searches,
+  repetitive edits, boilerplate, log digging) to subagents on lesser models:
+  Sonnet for searches, triage, and trivial mechanical work, and Opus for
+  writing code. Keep decisions, architecture, and final review in the main
+  session.
+- Always look for the simplest solution first, and prefer it. The smallest
+  change that solves the actual problem beats a bigger design. Extend existing
+  patterns before inventing new ones. No new dependencies or moving parts
+  without a real reason.
+- Show me a checklist while you work (use the todo list tool), kept current,
+  so I can see what you are working on, what is done, and what is next.
+- When you spawn a subagent, tell me at that moment: which model it runs on
+  and what it is doing. Report what it came back with when it finishes.
+- Never use Haiku.
+- Search, write and maintain issues and decisions in the Forgejo tracker rather than in markdown files in the repo
