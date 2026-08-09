@@ -108,7 +108,12 @@ def el_paths(address: Any) -> list[furi.ElPath]:
 # ---------- check 1: #118, flattened inline auto-links ---------- #
 
 
-def check_links(html: str, blocks: list[segments.Block], rmap: Any) -> dict[str, Any]:
+def check_links(
+    html: str,
+    blocks: list[segments.Block],
+    rmap: Any,
+    self_urls: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Anchors inside a SUBJECT region whose text survived into the body but whose link
     did not. `renders_at` implements §7.2's innermost-wins, so a rail link nested inside
     `ad-repair-article` scores as framing (#120's correction) and never lands here.
@@ -124,9 +129,11 @@ def check_links(html: str, blocks: list[segments.Block], rmap: Any) -> dict[str,
     silently disagree. `--legacy-text` reproduces #118's published (no-entity-decode)
     figure; the shared module doesn't know that mode, so it stays a local reimplementation
     here rather than a parameter added to the shared function (the nav exclusion is
-    reproduced locally too, for the same reason the shared module carries it)."""
+    reproduced locally too, for the same reason the shared module carries it). The
+    self-edge exclusion (`self_urls`, #52 wave 7) is modern-mode only for the same
+    reason: the published figure predates it."""
     if not LEGACY_TEXT:
-        return scan_flattened(html, blocks, rmap)
+        return scan_flattened(html, blocks, rmap, self_urls=self_urls)
     whole_body = segments.emit(blocks)
     subject_blocks = [
         b for b in blocks if not (isinstance(b, segments.Section) and b.form == "nav")
@@ -375,7 +382,16 @@ def main() -> int:
                 str(t).startswith("corpus.compile") and "+" in str(t)
                 for t in (post.metadata.get("touch") or [])
             ),
-            "links": check_links(html, blocks, rmap),
+            "links": check_links(
+                html,
+                blocks,
+                rmap,
+                self_urls=tuple(
+                    str(u)
+                    for origin in records.iter_origin_blocks(post)
+                    for u in ((origin.get("fields") or {}).get("uri") or [])
+                ),
+            ),
             "crumb": check_crumb(html, post, blocks, rmap),
             "order": check_order(blocks),
             "form": check_form(post, blocks),

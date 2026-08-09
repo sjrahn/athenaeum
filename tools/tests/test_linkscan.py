@@ -140,3 +140,41 @@ def test_raw_html_anchor_in_body_counts_as_linked():
     ]
     result = scan_flattened(html, blocks, _Rmap())
     assert result["flattened"] == 0 and result["subject_anchors"] == 1
+
+
+def test_self_edge_anchor_excluded_from_candidacy():
+    """A self-edge anchor's mandated rendering is omission (form/nav, #89), so its dropped
+    link is never a flattening — even when its label collides with unrelated body text
+    (#52 wave 7: a "Service Procedure" rail entry vs. a same-text body heading)."""
+    html = (
+        '<div class="article">'
+        '<a href="#/vehicle/1/component/2">Service Procedure</a>'
+        "</div>"
+    )
+    blocks = [Segment(atom="text", body="**Service Procedure** — do the steps below.")]
+    rmap = resolve_regions(html, _DECL)
+    own = ("https://host.example/repair/#/vehicle/1/component/2",)
+    result = scan_flattened(html, blocks, rmap, self_urls=own)
+    assert result["subject_anchors"] == 0
+    assert result["flattened"] == 0
+    assert result["pass"] is True
+    # Without self_urls the same anchor still scores — the exclusion is caller-opt-in,
+    # preserving the detector's historical behavior for callers without origin URIs.
+    result = scan_flattened(html, blocks, rmap)
+    assert result["flattened"] == 1
+
+
+def test_self_edge_requires_route_not_bare_fragment():
+    """A bare `#` href names no route and never matches a self URL; a non-self route
+    stays a candidate even when other anchors on the page are self-edges."""
+    html = (
+        '<div class="article">'
+        '<a href="#/vehicle/1/component/OTHER">Elsewhere Page</a>'
+        "</div>"
+    )
+    blocks = [Segment(atom="text", body="Elsewhere Page is discussed here.")]
+    rmap = resolve_regions(html, _DECL)
+    own = ("https://host.example/repair/#/vehicle/1/component/2",)
+    result = scan_flattened(html, blocks, rmap, self_urls=own)
+    assert result["subject_anchors"] == 1
+    assert result["flattened"] == 1

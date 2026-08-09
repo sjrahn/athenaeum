@@ -25,6 +25,18 @@ without decoding and is therefore an under-count by ~45%. Reproducing that histo
 is `accept_alldata.py --legacy-text`'s job and stays local to the script; this module only
 ever implements the corrected (modern) text treatment.
 
+**A self-edge anchor is never a candidate.** The nav contract (`form/nav`, #89) and the
+host guidance both rule that an anchor pointing back at the page it sits on adds no
+wayfinding and is OMITTED — so its dropped link is the *mandated* rendering, not a
+flattening. Without the exclusion, a correctly-dropped self-edge whose label happens to
+repeat elsewhere in the body (measured: a "Service Procedure" rail entry colliding with an
+unrelated `<b>Service Procedure</b>` body heading, #52 wave 7) scores as flattened and
+blocks finalize on a record the guidance itself required. Callers pass the record's own
+origin URIs via `self_urls`; an anchor matches when its href equals one of them outright,
+or — for the fragment/rooted relative hrefs a SPA emits — when an origin URI ends with the
+href. No `self_urls` means no exclusion, which keeps the detector's historical behavior
+for callers that cannot name the page's own address.
+
 **The presence test excludes the trailing `form/nav` span.** #89's restoration renders each
 page's own breadcrumb as plain text inside a trailing `<!--section nav-->` span, and a
 breadcrumb label routinely repeats a subject-region anchor's own text (measured: ~12 false
@@ -41,6 +53,7 @@ from __future__ import annotations
 
 import html as _html
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from . import segments as _segments
@@ -65,7 +78,20 @@ def plain(fragment: str) -> str:
     return " ".join(_html.unescape(stripped).replace("\xa0", " ").split())
 
 
-def scan_flattened(html: str, blocks: list[Any], rmap: Any) -> dict[str, Any]:
+def _is_self_edge(href: str, self_urls: tuple[str, ...]) -> bool:
+    """Does this href point back at the page it sits on? Exact match against the record's
+    own origin URIs, or — for the `#/route` / rooted relative forms a SPA emits — an origin
+    URI ending with the href (a bare `#` never matches; it names no route)."""
+    if href in self_urls:
+        return True
+    if len(href) > 1 and href.startswith(("#", "/")):
+        return any(u.endswith(href) for u in self_urls)
+    return False
+
+
+def scan_flattened(
+    html: str, blocks: list[Any], rmap: Any, self_urls: Iterable[str] = ()
+) -> dict[str, Any]:
     """Anchors inside a SUBJECT region whose text survived into the body but whose link did
     not. `rmap.renders_at()` implements §7.2's innermost-wins, so a rail link nested inside
     a subject wrapper scores as framing (#120's correction) and never lands here.
@@ -81,7 +107,12 @@ def scan_flattened(html: str, blocks: list[Any], rmap: Any) -> dict[str, Any]:
     The linked-set counts BOTH markdown links and raw `<a href>` anchors in the body: the
     guidance mandates raw HTML for merged-cell (rowspan/colspan) tables, so a raw anchor
     there is the correct rendering, not a flattening (#52 wave 6's finding — the rule was
-    refusing bodies it had itself required)."""
+    refusing bodies it had itself required).
+
+    `self_urls` — the record's own origin URIs — excludes self-edge anchors from candidacy
+    entirely (module docstring): their mandated rendering is omission (#52 wave 7's
+    finding, the same refusing-what-it-required shape as the raw-anchor case)."""
+    own = tuple(self_urls)
     whole_body = _segments.emit(blocks)
     subject_blocks = [
         b for b in blocks if not (isinstance(b, _segments.Section) and b.form == "nav")
@@ -102,6 +133,8 @@ def scan_flattened(html: str, blocks: list[Any], rmap: Any) -> dict[str, Any]:
         hm = HREF.search(m.group(1))
         href = next((g for g in (hm.groups() if hm else ()) if g), "") if hm else ""
         if not href:
+            continue
+        if _is_self_edge(href, own):
             continue
         if rmap.renders_at(m.start()) != "subject":
             continue

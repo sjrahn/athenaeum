@@ -1771,7 +1771,12 @@ def _rule_subject_link_flattened(post, blocks, root) -> Iterator[Finding]:
     except Exception:
         return  # region-resolve failure — does not fire
 
-    result = scan_flattened(html, blocks, rmap)
+    self_urls = [
+        str(u)
+        for origin in _records.iter_origin_blocks(post)
+        for u in ((origin.get("fields") or {}).get("uri") or [])
+    ]
+    result = scan_flattened(html, blocks, rmap, self_urls=self_urls)
     if not result["flattened"]:
         return
     samples = "; ".join(result["sample"])
