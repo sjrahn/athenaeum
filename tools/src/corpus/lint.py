@@ -1796,6 +1796,100 @@ def _rule_subject_link_flattened(post, blocks, root) -> Iterator[Finding]:
     )
 
 
+# ---------- the address-fidelity gate (#159) ---------- #
+
+
+def _rule_segment_address_fidelity(post, blocks, root) -> Iterator[Finding]:
+    """A segment whose body text does not come from the element its address names (#159).
+
+    The #52 drain's biggest defect family, and the one no gate was asking about: lint judged
+    the address's grammar and the body's shape, `check_order` judged address sequence, the
+    link gate judged anchors — and nothing compared the two sides of the same segment. The
+    detector is `corpus.fidelity.check_fidelity`, shared with `scripts/accept_alldata.py`'s
+    census exactly as `subject-link-flattened` shares `linkscan.scan_flattened`.
+
+    **Stamped records only.** `records.el_addressing` is the §6.1.1 grammar dispatch: an
+    unstamped record's `el=5` names the 5th WHITELISTED element under the frozen pre-3.6
+    index, not the body's 5th element child, so resolving it through the path walk would
+    compare the segment against the wrong element and report the very defect this rule
+    exists to find. Legacy-grammar records are frozen and never judged here.
+
+    Reads artifact bytes, and keeps the artifact-optional discipline of the link gate: an
+    absent artifact, an unparseable one, or a stamp whose attested parser/element-count
+    disagrees with this parse all mean the rule silently does not fire. A disagreeing stamp
+    in particular is another gate's finding — under a different tree every address resolves
+    somewhere else, so anything this rule said about it would be noise.
+
+    The severity split is initial calibration, to be tuned against the drained population:
+    `misplaced` (borrowed text) and `unresolvable` (an address naming nothing) are errors,
+    `dropped` (addressed text the body never renders) and `unsourced` (body text the
+    artifact carries nowhere) warn."""
+    if _records.media_type_for(post) != "text/html":
+        return
+    record_id = str(post.metadata.get("id") or "")
+    if not record_id:
+        return
+    addressing = _records.el_addressing(post)
+    if addressing is None:
+        return  # legacy el= grammar (§12.28) — frozen, never judged under the path walk
+
+    from corpus import mime as _mime
+    from corpus.containment import ArtifactMissing, ensure_local_bytes
+    from corpus.fidelity import KINDS, check_fidelity
+
+    ext = _mime.extension_for(_records.media_type_for(post))
+    try:
+        artifact_path = ensure_local_bytes(root, record_id, ext)
+    except ArtifactMissing:
+        return  # artifact unavailable — silently does not fire, not a lint failure
+
+    # The overlay's `renders: never` regions, fetched the way `subject-link-flattened` does:
+    # a region §7.2 says nobody renders is nobody's to have dropped. A record whose origin
+    # declares none is judged in full, which is the honest default for an unmapped host.
+    regions: list[dict[str, Any]] = []
+    for origin in _records.iter_origin_blocks(post):
+        host = str(origin.get("id") or "")
+        if host and (rows := _schemas.origin_regions(root, host)):
+            regions = rows
+            break
+
+    try:
+        html = artifact_path.read_text(encoding="utf-8", errors="replace")
+        result = check_fidelity(html, blocks, addressing, regions)
+    except Exception:
+        return  # unparseable, or a stamp attesting a different tree — does not fire
+
+    severity = {
+        "misplaced": "error",
+        "unresolvable": "error",
+        "dropped": "warning",
+        "unsourced": "warning",
+    }
+    message = {
+        "misplaced": "body line(s) that come from elsewhere in the artifact, not from the "
+                     "element the segment's address names",
+        "unresolvable": "segment address(es) that resolve to no element in the artifact",
+        "dropped": "addressed element(s) whose text the segment body never renders",
+        "unsourced": "body line(s) that appear nowhere in the artifact",
+    }
+    for kind in KINDS:
+        findings = [f for f in result["findings"] if f["kind"] == kind]
+        if not findings:
+            continue
+        samples = [s for f in findings for s in f["sample"]][:5]
+        yield Finding(
+            rule_id="segment-address-fidelity",
+            severity=severity[kind],
+            subtype=kind,
+            message=(
+                f"{result[kind]} {message[kind]} across {len(findings)} segment(s) "
+                f"({'; '.join(samples)}) — a segment's address and its rendering must "
+                f"describe the same content (#159)"
+            ),
+            fields={"kind": kind, "count": result[kind], "sample": samples},
+        )
+
+
 # ---------- rule registry + entry point ---------- #
 
 
@@ -1856,6 +1950,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     # #52/#118 — the link gate. Reads artifact bytes, unlike every rule above; see the rule's
     # own docstring for why that is cheap for a corpus whose overlays declare no subject region.
     ("subject-link-flattened", _rule_subject_link_flattened),
+    # #159 — the address-fidelity gate. Reads artifact bytes; stamped records only.
+    ("segment-address-fidelity", _rule_segment_address_fidelity),
 )
 
 # The rule subset `corpus diagnose` runs for its quick-lint section — the cheap, high-signal

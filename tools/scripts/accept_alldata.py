@@ -6,17 +6,22 @@ that guidance saying a thing is not evidence the fleet does it — the html sche
 "keep `<a href>` as `[text](url)`" since 43598b0 (2026-05-31), which is before every one of
 the records #118 says were flattened.
 
-So: four checks, one per defect a 1,470-record sweep would otherwise repeat 1,470 times.
+So: five checks, one per defect a 1,470-record sweep would otherwise repeat 1,470 times.
 
-  links   #118  the source's inline auto-links, flattened out of the body
-  crumb   #89   where the page's own framing lives — nowhere / inline / homed in a trailing span
-  order   #121  blocks emitted out of the source's presented order
-  form    #90   `form/index` adopted over a body that lists nothing
+  links    #118  the source's inline auto-links, flattened out of the body
+  crumb    #89   where the page's own framing lives — nowhere / inline / homed in a trailing span
+  order    #121  blocks emitted out of the source's presented order
+  form     #90   `form/index` adopted over a body that lists nothing
+  fidelity #159  a segment's body text not coming from the element its address names
 
-EVERY CHECK VALIDATES ITSELF against a figure the tracker already published, and prints the
-comparison. That is not ceremony: my first attempt at the links check reported ~100%
-flattening across every normalizer generation, and the record sjrahn originally found the
-defect on (`4a03eb5`) turned out to have its link present and 24 body links. An unexpected
+THE FIRST FOUR VALIDATE THEMSELVES against a figure the tracker already published, and print
+the comparison. `fidelity` is the exception, and deliberately: it is the check the drain's
+biggest defect family went un-measured for, so there is no published figure to land on — it
+prints its own populations and IS the baseline a later run compares against.
+
+Validating against a published figure is not ceremony: my first attempt at the links check
+reported ~100% flattening across every normalizer generation, and the record sjrahn originally
+found the defect on (`4a03eb5`) turned out to have its link present and 24 body links. An unexpected
 extreme is a hypothesis about the detector before it is a fact about the corpus, and a
 detector that cannot reproduce a known number has no business gating a fleet run.
 
@@ -54,8 +59,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+from corpus import fidelity, records, schemas, segments
 from corpus import functional_uri as furi
-from corpus import records, schemas, segments
 from corpus.linkscan import ANCHOR, CHROME_TEXT, HREF, MDLINK, TAG, scan_flattened
 from corpus.regionmap import resolve as resolve_regions
 
@@ -321,6 +326,45 @@ def check_form(post: Any, blocks: list[Any]) -> dict[str, Any]:
     return {"verdict": "index", "entries": entries, "pass": entries > 0}
 
 
+# ---------- check 5: #159, does the body come from the address? ---------- #
+
+
+def check_fidelity(
+    html: str, post: Any, blocks: list[Any], regions: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Whether each segment's body text is the text at the address it claims.
+
+    Delegates to `corpus.fidelity.check_fidelity` — the shared detector `corpus.lint`'s
+    `segment-address-fidelity` rule imports too, exactly as `check_links` delegates to
+    `corpus.linkscan` — so this census and that gate can never drift apart.
+
+    Three non-verdicts, and each is a real population rather than a failure:
+    `unstamped` (the record's `el=` values speak the frozen pre-3.6 filtered index, §12.28,
+    where this grammar does not apply), `stamp` (the record attests a tree this parse does
+    not produce — every address resolves elsewhere, so no fidelity claim is honest), and
+    `n/a` under `--legacy-text`, which reproduces a published figure that predates this
+    check entirely."""
+    if LEGACY_TEXT:
+        return {"verdict": "n/a", "pass": None}
+    stamp = records.el_addressing(post)
+    if stamp is None:
+        return {"verdict": "unstamped", "pass": None}
+    try:
+        result = fidelity.check_fidelity(html, blocks, stamp, regions)
+    except ValueError as exc:
+        return {"verdict": "stamp", "detail": str(exc)[:140], "pass": None}
+    out: dict[str, Any] = {
+        "verdict": "pass" if result["pass"] else "fail",
+        "segments": result["segments"],
+        "pass": result["pass"],
+    }
+    out.update({kind: result[kind] for kind in fidelity.KINDS})
+    out["sample"] = [
+        f"{f['kind']}: {s}" for f in result["findings"] for s in f["sample"][:1]
+    ][:5]
+    return out
+
+
 # ---------- driver ---------- #
 
 
@@ -395,6 +439,7 @@ def main() -> int:
             "crumb": check_crumb(html, post, blocks, rmap),
             "order": check_order(blocks),
             "form": check_form(post, blocks),
+            "fidelity": check_fidelity(html, post, blocks, decl),
         }
         out.append(row)
 
@@ -405,6 +450,9 @@ def main() -> int:
         if row["order"]["inversions"]:
             counts["order.records"] += 1
         counts[f"crumb.{row['crumb']['verdict']}"] += 1
+        counts[f"fidelity.{row['fidelity']['verdict']}"] += 1
+        for kind in fidelity.KINDS:
+            totals[f"fidelity.{kind}"] += row["fidelity"].get(kind, 0)
         if row["form"]["verdict"] == "index" and not row["form"]["pass"]:
             counts["form.empty_index"] += 1
         if scanned % 500 == 0:
@@ -435,6 +483,15 @@ def main() -> int:
     print("\ncrumb — where the page's own framing lives:")
     for verdict in ("homed", "inline", "absent", "n/a"):
         print(f"  {counts[f'crumb.{verdict}']:6}  {verdict}")
+
+    # #159 has no published figure to validate against — it is the check the drain's biggest
+    # defect family went un-measured for — so it reports its own populations instead of a
+    # MATCH/DIFFERS row, and IS the baseline a later run compares to.
+    print("\nfidelity — does a segment's body come from the element its address names (#159):")
+    for verdict in ("pass", "fail", "unstamped", "stamp", "n/a"):
+        print(f"  {counts[f'fidelity.{verdict}']:6}  {verdict}")
+    for kind in fidelity.KINDS:
+        print(f"  {totals[f'fidelity.{kind}']:6}  {kind} (findings, not records)")
 
     if args.json:
         args.json.write_text(json.dumps(out, indent=1))

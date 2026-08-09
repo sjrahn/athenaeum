@@ -308,12 +308,22 @@ def _lint_tally(findings: list[lint.Finding]) -> Counter[str]:
     return Counter(f.rule_id for f in findings)
 
 
+#: The one lint rule the neutrality gate cannot compare across THIS rewrite: the §159
+#: address-fidelity gate judges stamped records only (`el=5` means a different element under
+#: each grammar), and stamping the record is what this migration does. Its count is therefore
+#: 0 before every remap by construction, so a rise measures the record becoming LEGIBLE to the
+#: rule, not the rewrite making it worse — the one thing a neutrality gate exists to say. A
+#: rendering the remap did not author and cannot repair stays the finalize gate's to hold.
+_DEFERRED_RULE = "segment-address-fidelity"
+
+
 def _lint_neutrality_hold(
     new_text: str, before: Counter[str], corpus_root: Path
 ) -> str | None:
     """Return a hold reason when the rewritten record would lint WORSE than the original
     — any rule whose finding count rises — else None. Counts, not addresses: every
-    address changes by design, so only the rules' verdicts are comparable."""
+    address changes by design, so only the rules' verdicts are comparable. Minus the one
+    rule the stamp itself admits (`_DEFERRED_RULE`)."""
     try:
         after_post = records.loads(new_text)
         after = _lint_tally(
@@ -321,7 +331,11 @@ def _lint_neutrality_hold(
         )
     except Exception as exc:  # a record whose rewrite cannot even be linted is a hold
         return f"post-remap lint did not run: {exc}"
-    risen = {r: (before.get(r, 0), c) for r, c in after.items() if c > before.get(r, 0)}
+    risen = {
+        r: (before.get(r, 0), c)
+        for r, c in after.items()
+        if c > before.get(r, 0) and r != _DEFERRED_RULE
+    }
     if not risen:
         return None
     detail = ", ".join(f"{r} {b}→{a}" for r, (b, a) in sorted(risen.items()))

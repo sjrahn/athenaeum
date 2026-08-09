@@ -376,3 +376,40 @@ def test_remap_engine_holds_on_out_of_range(tmp_path):
     report = remap_el.remap_record(rf, root)
     assert report.hold is not None and "out of range" in report.hold
     assert not report.changed and report.new_text is None
+
+
+def test_the_fidelity_gate_never_holds_a_remap(tmp_path):
+    """#159's `segment-address-fidelity` judges STAMPED records only, and stamping is what
+    this migration does — so its count is 0 before every remap by construction, and a rise
+    measures the record becoming legible to the rule rather than the rewrite making it worse.
+    `_DEFERRED_RULE` is what keeps a rendering the remap neither authored nor can repair from
+    holding an address translation; the finalize gate still refuses it.
+
+    The record here renders only the second and third paragraphs while its remapped address
+    covers all three, so the fidelity rule genuinely fires afterwards — deferred, not
+    silenced."""
+    from corpus import hashing, lint
+    from corpus.store import LocalArtifactStore
+
+    root = _make_corpus(tmp_path)
+    src = root / "alias.html"
+    src.write_text(_ALIASING_DOC, encoding="utf-8")
+    h = hashing.hash_file(src)
+    rid = h["blake3"]
+    LocalArtifactStore(root).put(rid, "html", src)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "transport": f"sha256:{h['sha256']}"})
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(post, uri="https://x.test/a", snapshot="2026-01-01T00:00:00Z")
+    post.content = segments.emit([Segment(atom="text", address="el=2-3", body="Two. Three.")])
+    rf = paths.record_path(root, rid)
+    records.dump(post, rf)
+
+    report = remap_el.remap_record(rf, root, {"el=2-3": "el=1.[1-2]"})
+    assert report.hold is None and report.new_text
+
+    after = records.loads(report.new_text)
+    findings = lint.lint(after, segments.iter_blocks(after.content or ""), root)
+    fidelity = [f for f in findings if f.rule_id == "segment-address-fidelity"]
+    assert fidelity, "the fixture must actually trip the rule, else it proves nothing"
+    assert any("One." in s for f in fidelity for s in f.fields["sample"])
