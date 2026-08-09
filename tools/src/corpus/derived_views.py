@@ -148,44 +148,6 @@ def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
     return out
 
 
-def references(
-    corpus_root: Path, post: frontmatter.Post, *, index: dict[str, str] | None = None
-) -> list[dict[str, Any]]:
-    """§9.9 — derive `references[]`: the `reference`-namespace projection of the context
-    view (§4.3.3.3) — the sibling of `issues` (§9.2).
-
-    Each entry carries the reference block's stored fields — the citation ladder
-    (`attribution_text`, `source_url`, and, only on an *asserted* reference, a stored
-    `source_uri`), the optional anchor (`address`, `quote`, `occurrence`), `provenance`,
-    and (on mechanical, overlay-declared references) `role` — PLUS the **read-time derived
-    edge**: `source_url` is resolved against the URI index *here*, exposing
-    `captured: bool` and (when matched) `resolved_uri: corpus://<id>`. That edge is never
-    stored by the mechanical drafter (spec §4.3.3.3 — `draft` must stay a pure function of
-    the artifact); resolving it at read time mirrors `corpus links --references` and lets it
-    self-heal (`captured ⇄ pending`) as targets are captured, removed, or superseded. The
-    reverse edge is a corpus-wide read, not indexed here (spec §9.9 / §11).
-    """
-    blocks = list(records.iter_reference_blocks(post))
-    if index is None and any((b.get("fields") or {}).get("source_url") for b in blocks):
-        index = records.build_uri_index(corpus_root)
-    out: list[dict[str, Any]] = []
-    for reference in blocks:
-        entry: dict[str, Any] = {}
-        if reference.get("subtype"):
-            entry["subtype"] = reference["subtype"]
-        fields = reference.get("fields") or {}
-        for k, v in fields.items():
-            entry[k] = v
-        source_url = str(fields.get("source_url") or "").strip()
-        if source_url:
-            resolved = records.find_by_uri(source_url, corpus_root=corpus_root, index=index)
-            entry["captured"] = bool(resolved)
-            if resolved:
-                entry["resolved_uri"] = f"corpus://{resolved}"
-        out.append(entry)
-    return out
-
-
 def uris(corpus_root: Path, post: frontmatter.Post) -> list[str]:
     """§9.3 — every origin block's uri + every semantic_type:uri-tagged field,
     deduplicated by URL canonicalization."""

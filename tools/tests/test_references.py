@@ -1,11 +1,12 @@
-"""Overlay-declared dependent references (spec §7.2 `capture.references`, §4.3.3.3, §9.9).
+"""Overlay-declared dependent references (spec §7.2 `capture.references`, §8.1).
 
 Pure-function units for the rule parser + DOM matcher, plus integration over a tmp corpus
-+ origin overlay (no browser/network): draft-stage emission of `provenance: auto` reference
-blocks, the `references` derived view, `corpus links --references`, and the depth-1
++ origin overlay (no browser/network): `corpus links --references` and the depth-1
 auto-grab (`fetch_references` / `corpus capture --with-references` / `corpus crawl
 --references`) with `capture_and_ingest` faked. Opt-in is proven by the with-/without-rules
-contrast.
+contrast. The declaration is purely a capture instruction (#157, ruling 2026-08-09): the
+record-side emission retired with the `reference` context namespace (3.5 §4.3.3.3), and
+the writer left the codebase with it.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 import blake3
 import frontmatter
 
-from corpus import derived_views, paths, records, references
+from corpus import paths, records, references
 from corpus._cli import capture as capture_cli
 from corpus._cli import dispatch
 from corpus._cli import draft as draft_cli
@@ -249,108 +250,21 @@ def test_matches_for_record_excludes_self_links(tmp_path):
     assert MANUAL in urls_ and BASE not in urls_  # own origin excluded
 
 
-# ---------- integration: emit_overlay_references ---------- #
-
-
-def test_emit_overlay_references_block_shape(tmp_path):
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    n = references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
-    assert n == 2
-    refs = list(records.iter_reference_blocks(post))
-    by_url = {r["fields"]["source_url"]: r["fields"] for r in refs}
-    assert set(by_url) == {MANUAL, SPEC}
-    m = by_url[MANUAL]
-    assert m["provenance"] == "auto"
-    assert m["role"] == "manual"
-    assert m["attribution_text"] == "Product Manual (PDF)"
-    assert "source_uri" not in m  # tier 2 — target not captured yet
-    assert by_url[SPEC]["role"] == "spec-sheet"
-
-
-def test_emit_never_writes_tier3_even_when_target_captured(tmp_path):
-    # Draft purity (spec §4.3.3.3): emission must not read corpus state. Even with the
-    # manual already a record, the drafted reference stays tier-2 — no source_uri baked in.
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    _html_record(root, ID_MANUAL, MANUAL, "<html></html>")  # manual already a record
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
-    by_url = {r["fields"]["source_url"]: r["fields"] for r in records.iter_reference_blocks(post)}
-    assert "source_uri" not in by_url[MANUAL]  # captured, but draft stays pure → no tier 3
-    assert "source_uri" not in by_url[SPEC]
-    assert by_url[MANUAL]["source_url"] == MANUAL  # tier 2 still present
-
-
-def test_emit_no_rules_is_noop(tmp_path):
-    root = _corpus(tmp_path, overlay=None)  # no overlay at all
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    html_path = paths.artifact_path(root, ID_PDP, "html")
-    assert references.emit_overlay_references(post, root, html_path) == 0
-    assert list(records.iter_reference_blocks(post)) == []
-
-
 # ---------- integration: the retired draft core no longer emits ---------- #
 
 
 def test_derive_record_no_longer_emits_references(tmp_path):
-    """ATH-CORPUS 3.12 reconciliation (#153): `derive_record` (the retired draft core,
-    `_cli/draft.py`) no longer calls `emit_overlay_references` — the `reference` context
-    namespace it wrote was retired at 3.5 (§4.3.3.3), and the draft core's own retirement
-    (§12.4.6) is not license to keep acquiring a construct the grammar no longer admits.
-    The declaration/matching/emission machinery below is unaffected and still callable
-    directly; only this call site is gone, so overlay-declared dependent references
-    currently have no LIVE emission path in the pipeline — a follow-on, not fixed here."""
+    """ATH-CORPUS 3.12 reconciliation (#153) + the #157 ruling (2026-08-09): a full draft
+    of a rules-carrying record emits NO `reference` context blocks — the namespace retired
+    at 3.5 (§4.3.3.3), the draft core's call site left with #153, and the writer itself
+    (`emit_overlay_references`) left with #157. The declaration is purely a capture
+    instruction (spec §8.1); the declare/match/fetch machinery is what remains."""
     root = _corpus(tmp_path, overlay=OVERLAY)
     post = _html_record(root, ID_PDP, BASE, PDP_HTML)
     draft_cli.derive_record(post, root)
     records.dump(post, paths.record_path(root, ID_PDP))
     reloaded = records.load(paths.record_path(root, ID_PDP))
     assert list(records.iter_reference_blocks(reloaded)) == []
-
-
-def test_non_html_record_emits_nothing(tmp_path):
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    rid = "cc" * 32
-    src = root / "doc.pdf"
-    src.write_bytes(b"%PDF-1.4 not really")
-    LocalArtifactStore(root).put(rid, "pdf", src)
-    post = frontmatter.Post("", **records.stub_frontmatter(record_id=rid, touch_id="t"))
-    records.set_artifact_block(post, mime="application/pdf", fields={})
-    records.append_origin_block(post, uri=BASE, snapshot="2026-06-04T00:00:00Z")
-    # emission is HTML-guarded in derive_record; the lib call on a pdf path also no-ops
-    assert references.emit_overlay_references(post, root, src) == 0
-
-
-# ---------- derived view ---------- #
-
-
-def test_references_derived_view_projection(tmp_path):
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
-    view = derived_views.references(root, post)
-    assert {v["source_url"] for v in view} == {MANUAL, SPEC}
-    assert {v.get("role") for v in view} == {"manual", "spec-sheet"}
-    # targets uncaptured → the read-time edge resolves to pending, no resolved_uri
-    assert all(v["captured"] is False and "resolved_uri" not in v for v in view)
-    # not surfaced in the issues projection
-    assert derived_views.issues(post) == []
-
-
-def test_references_view_resolves_edge_at_read_time(tmp_path):
-    # The intra-corpus edge is DERIVED from source_url at read time, never stored at draft.
-    # Capturing the target later flips `captured` without re-drafting the citing record.
-    root = _corpus(tmp_path, overlay=OVERLAY)
-    post = _html_record(root, ID_PDP, BASE, PDP_HTML)
-    references.emit_overlay_references(post, root, paths.artifact_path(root, ID_PDP, "html"))
-    before = {v["source_url"]: v for v in derived_views.references(root, post)}
-    assert before[MANUAL]["captured"] is False and "resolved_uri" not in before[MANUAL]
-    # capture the manual as its own record; the citing record on disk is untouched
-    _html_record(root, ID_MANUAL, MANUAL, "<html></html>")
-    after = {v["source_url"]: v for v in derived_views.references(root, post)}
-    assert after[MANUAL]["captured"] is True
-    assert after[MANUAL]["resolved_uri"] == f"corpus://{ID_MANUAL}"
-    assert after[SPEC]["captured"] is False  # spec still uncaptured
 
 
 # ---------- corpus links --references ---------- #

@@ -9,16 +9,17 @@ module is the single home for that declaration:
   typed `ReferenceRule`s (the reader half of spec §7.2).
 - `match` — apply the rules to a captured HTML document, yielding the dependent links
   (resolved + normalized, deduped) the rest of the pipeline acts on.
-- `emit_overlay_references` — the draft-stage emission: turn the matches into
-  `provenance: auto` `reference` context blocks on the record (spec §4.3.3.3) at tier 2
-  (`source_url`). It reads no corpus state and never writes tier-3 `source_uri`: whether
-  a target is itself a record is a read-time edge (`derived_views.references`), so `draft`
-  stays a pure function of the artifact.
+- `fetch_references` — the capture-side depth-1 auto-grab: fetch each selected match
+  once as its own ordinary record (content-hash deduped).
 
-The *fetch* of a dependent target (`capture: true` / `corpus capture --with-references`
-/ `corpus crawl --references`) is a capture-side concern and lives there; this module
-only declares, matches, and emits. Tolerant throughout: a malformed rule or a bad regex
-is skipped, never fatal (spec design principle — parse tolerantly).
+The declaration is purely a **capture** instruction (spec §8.1): which outbound links are
+part of this capture. Its record-side half — emitting a `reference` context block per
+declared link — retired with the block at 3.5 (§4.3.3.3; the last call site left with the
+draft core, #153, and the writer itself with #157): the links are already in the faithful
+body, and whether one names a captured record is a read-time resolution over the body's
+own links (§9.9). Consumers: `corpus capture --with-references`, `corpus crawl
+--references`, `corpus links --references`. Tolerant throughout: a malformed rule or a
+bad regex is skipped, never fatal (spec design principle — parse tolerantly).
 """
 
 from __future__ import annotations
@@ -233,61 +234,6 @@ def matches_for_record(
         return []
     own = {urls.normalize(u) for u in records.iter_origin_uris(post)}
     return [m for m in found if m.url not in own]
-
-
-def _reference_fields(m: MatchedReference) -> dict[str, Any]:
-    """Assemble a mechanical `reference` context block's fields (spec §4.3.3.3): the
-    `provenance: auto` marker, the rule's `role`, and the citation ladder up to tier 2 —
-    tier-1 `attribution_text` (the link text) + tier-2 `source_url` (the resolved href).
-
-    The mechanical drafter stops here. It NEVER writes tier-3 `source_uri`: "which record,
-    if any, that URL is" is a read-time resolution of `source_url` (derived_views.references),
-    not draft output — so `draft` stays a pure function of the artifact (it reads no corpus
-    state) and the edge self-heals as the corpus changes instead of dangling under removal."""
-    fields: dict[str, Any] = {"provenance": "auto"}
-    if m.role:
-        fields["role"] = m.role
-    if m.text:
-        fields["attribution_text"] = m.text
-    fields["source_url"] = m.url
-    return fields
-
-
-def emit_overlay_references(post: Any, corpus_root: Path, html_path: Path) -> int:
-    """Emit one `provenance: auto` `reference` context block per declared dependent link
-    onto `post` (spec §4.3.3.3). Draft-stage only and HTML-only — the caller guards on
-    media type. Each reference is record-scoped (no segment anchor in v1; the link's
-    containing region is often un-segmented chrome) and stops at tier 2 (`source_url`).
-    Returns the number emitted.
-
-    **Pure.** Draft reads no corpus state — no `find_by_uri`, no tier-3 `source_uri` baked
-    in. Whether a target URL is itself a record is a read-time derived edge over the durable
-    `source_url` (`derived_views.references` / `corpus links --references`), so the same
-    artifact always drafts to the same bytes regardless of what else the corpus holds (the
-    line `draft` must not cross — spec §4.3.3.3, §8.2). The own-URI exclusion is already
-    applied during matching (`matches_for_record`).
-
-    Idempotent by construction: `corpus draft` runs only on a clean stub (and `redraft`
-    re-stubs first, clearing context blocks), so this appends to a record that holds no
-    prior reference blocks — there is nothing to overwrite, and an asserted (normalizer)
-    reference added in a later normalize pass is untouched until the next re-stub.
-    """
-    try:
-        html = html_path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        log.debug("cannot read artifact for references: %s", exc)
-        return 0
-    found = matches_for_record(corpus_root, post, html)
-    if not found:
-        return 0
-    for m in found:
-        records.append_context_block(
-            post,
-            namespace="reference",
-            id="reference",
-            fields=_reference_fields(m),
-        )
-    return len(found)
 
 
 # ---------- capture-side depth-1 auto-grab (spec §7.2 `capture: true`) ---------- #
