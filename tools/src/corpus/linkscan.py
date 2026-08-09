@@ -76,13 +76,23 @@ def scan_flattened(html: str, blocks: list[Any], rmap: Any) -> dict[str, Any]:
     link-collection pass reads the whole body regardless.
 
     Returns `{subject_anchors, flattened, sample, pass}` — `sample` is up to 5 flattened
-    texts, `pass` is `flattened == 0`."""
+    texts, `pass` is `flattened == 0`.
+
+    The linked-set counts BOTH markdown links and raw `<a href>` anchors in the body: the
+    guidance mandates raw HTML for merged-cell (rowspan/colspan) tables, so a raw anchor
+    there is the correct rendering, not a flattening (#52 wave 6's finding — the rule was
+    refusing bodies it had itself required)."""
     whole_body = _segments.emit(blocks)
     subject_blocks = [
         b for b in blocks if not (isinstance(b, _segments.Section) and b.form == "nav")
     ]
     subject_body = _segments.emit(subject_blocks)
     linked = {t for t, _u in MDLINK.findall(whole_body)}
+    for bm in ANCHOR.finditer(whole_body):
+        if HREF.search(bm.group(1)):
+            body_text = plain(bm.group(2))
+            if body_text:
+                linked.add(body_text)
     flattened: list[str] = []
     total_subject = 0
     for m in ANCHOR.finditer(html):

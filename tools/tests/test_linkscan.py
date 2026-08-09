@@ -116,3 +116,27 @@ def test_markdown_link_inside_nav_span_still_counts_as_linked():
     result = scan_flattened(html, blocks, rmap)
     assert result["subject_anchors"] == 1
     assert result["flattened"] == 0
+
+
+def test_raw_html_anchor_in_body_counts_as_linked():
+    """The guidance mandates raw `<a href>` inside merged-cell tables — a raw anchor in
+    the body satisfies the link rule exactly as a markdown link does (#52 wave 6)."""
+    html = (
+        '<div class="subject"><a href="/x">Interface</a></div>'
+    )
+    from corpus import segments as _segments
+    from corpus.linkscan import scan_flattened
+
+    class _Rmap:
+        def renders_at(self, pos):
+            return "subject"
+
+    blocks = [
+        _segments.Segment(
+            atom="text",
+            address="el=1",
+            body='<table><tr><td rowspan="2"><a href="/x">Interface</a></td></tr></table>',
+        )
+    ]
+    result = scan_flattened(html, blocks, _Rmap())
+    assert result["flattened"] == 0 and result["subject_anchors"] == 1
