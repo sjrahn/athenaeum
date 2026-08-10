@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import mimetypes
+
 import frontmatter
 import pytest
 
-from corpus import hashing, mime, paths, schemas, touches, urls
+from corpus import containment, hashing, mime, paths, schemas, touches, urls
 
 
 def test_hash_file_and_bytes_agree(tmp_path):
@@ -90,6 +92,84 @@ def test_mime_isobmff_audio_brand(tmp_path):
     f = tmp_path / "noext"
     f.write_bytes(m4a_brand)
     assert mime.detect(f) == "audio/mp4"
+
+
+def test_mime_detects_svg_through_its_prologue(tmp_path):
+    # SVG has no fixed-offset magic: the root may be preceded by a BOM, an XML declaration,
+    # a doctype, comments, or whitespace. Every opening reaches the same answer.
+    bare = tmp_path / "bare"
+    bare.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>')
+    assert mime.detect(bare) == "image/svg+xml"
+
+    declared = tmp_path / "declared"
+    declared.write_bytes(
+        b"\xef\xbb\xbf<?xml version='1.0' encoding='UTF-8'?>\n<svg viewBox='0 0 1 1'></svg>"
+    )
+    assert mime.detect(declared) == "image/svg+xml"
+
+    doctyped = tmp_path / "doctyped"
+    doctyped.write_bytes(
+        b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
+        b' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg width="8"></svg>'
+    )
+    assert mime.detect(doctyped) == "image/svg+xml"
+
+    commented = tmp_path / "commented"
+    commented.write_bytes(b"<!-- Generator: Adobe Illustrator -->\n<svg></svg>")
+    assert mime.detect(commented) == "image/svg+xml"
+
+
+def test_mime_svg_test_stays_off_non_svg(tmp_path):
+    # A prologue alone is not SVG — generic XML must not be claimed.
+    xml = tmp_path / "feed"
+    xml.write_bytes(b"<?xml version='1.0'?>\n<rss version='2.0'><channel/></rss>")
+    assert mime.detect(xml) != "image/svg+xml"
+    # An HTML page has no byte signature of its own, so a prologue'd page with an EARLY
+    # inline <svg> would be claimed here if presence in the window decided instead of the
+    # first element: a comment banner ("<!-- saved from url -->") and an XHTML `<?xml`
+    # prologue are both real page openings, not SVG ones.
+    banner_html = tmp_path / "page.html"
+    banner_html.write_bytes(
+        b"<!-- saved from url=(0042)https://example.com -->\n"
+        b'<!DOCTYPE html><html><body><svg width="5"><rect/></svg></body></html>'
+    )
+    assert mime.detect(banner_html) == "text/html"
+    xhtml = tmp_path / "page.xhtml"
+    xhtml.write_bytes(
+        b"<?xml version='1.0'?>\n"
+        b'<html xmlns="http://www.w3.org/1999/xhtml"><body><svg/></body></html>'
+    )
+    assert mime.detect(xhtml) != "image/svg+xml"
+    # Nor a tag that merely starts with the same letters.
+    assert mime.sniff_head(b"<svgmap><node/></svgmap>") != "image/svg+xml"
+    # Real troff answers exactly what it answered before: nothing from the bytes, and
+    # whatever the platform's extension table says for a genuine man-page suffix (the
+    # `.1` → `application/x-troff-man` mapping comes from the system's mime.types, not from
+    # Python's built-in table, so the invariant is "unchanged", not a literal type).
+    troff = b'.TH FOO 1 "2026-08-10"\n.SH NAME\nfoo \\- do a thing\n'
+    assert mime.sniff_head(troff) == "unknown"
+    assert mime.sniff_head(troff, "foo.1") == (mimetypes.guess_type("foo.1")[0] or "unknown")
+
+
+def test_mime_tiff_and_heif_magic(tmp_path):
+    # #149's private half: Apple export attachments — ProRAW DNGs (TIFF family, both byte
+    # orders) and HEIC photos — sniffed `unknown` and were typed from a pseudo-filename.
+    assert mime.sniff_head(b"MM\x00*" + b"\x00" * 40) == "image/tiff"
+    assert mime.sniff_head(b"II*\x00" + b"\x00" * 40) == "image/tiff"
+    assert mime.sniff_head(b"\x00\x00\x00 ftypheic" + b"\x00" * 40) == "image/heic"
+    assert mime.sniff_head(b"\x00\x00\x00 ftypmif1" + b"\x00" * 40) == "image/heif"
+    assert mime.sniff_head(b"\x00\x00\x00\x1cftyp3gp5" + b"\x00" * 40) == "video/3gpp"
+
+
+def test_mime_svg_bytes_outrank_an_element_address(tmp_path):
+    # #149: an `el=` member's synthesized pseudo-filename is an element address, and
+    # `mimetypes` reads its trailing `.3` as a man-page section. Bytes evidence runs first,
+    # so the address can no longer type 304 inline SVGs as troff.
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"></svg>'
+    assert mime.sniff_head(svg, "1.2.2.1.3.3") == "image/svg+xml"
+    assert mime.sniff_head(svg, None) == "image/svg+xml"
+    # And the address never reaches the sniffer as a name in the first place.
+    assert containment.member_sniff_name("el=1.2.2.1.3.3") is None
 
 
 def test_mime_extension_for():

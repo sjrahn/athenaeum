@@ -306,3 +306,17 @@ def test_self_referential_member_row_is_not_a_route(tmp_path):
     assert idx[member] == [(cid, "path=card.vcf")]  # the self-row is excluded outright
     out = containment.ensure_local_bytes(root, member, "vcf", member_index=idx)
     assert out.read_bytes() == card
+
+
+def test_member_sniff_name_only_trusts_a_path_tail():
+    """#149: only a `path=` tail is a filename. Every other scheme addresses a POSITION, and
+    handing its tail to `mimetypes` invents a type from a number — an `el=` element path's
+    trailing `.3` reads as a man-page section (`application/x-troff-man`)."""
+    assert containment.member_sniff_name("path=word/document.xml") == "document.xml"
+    assert containment.member_sniff_name("path=report.pdf") == "report.pdf"
+    for position in ("el=1.2.2.1.3.3", "msg=7", "part=3", "stream_id=0", "card=2"):
+        assert containment.member_sniff_name(position) is None
+    # A declared filename always wins, whatever the address names.
+    assert containment.member_sniff_name("el=1.2.3", "logo.svg") == "logo.svg"
+    # An op chained onto the address makes the whole thing a request, not a member name.
+    assert containment.member_sniff_name("path=a.png&bbox=0,0,1,1") is None

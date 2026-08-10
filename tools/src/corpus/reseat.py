@@ -347,7 +347,7 @@ def _mint_leaf(
     declared_media_type: str,
     containment_uri: str,
     origin_fields: dict[str, Any],
-    basename: str,
+    basename: str | None,
 ) -> frontmatter.Post:
     """A fresh promoted record for the member — `corpus promote`'s stub, built from bytes we
     already hold. The `id` is the verified blake3; the first origin is the containment lineage
@@ -518,7 +518,7 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
                 origin_fields["filename"] = meta["filename"]
             if meta.get("source_modified"):
                 origin_fields["source_modified"] = meta["source_modified"]
-            basename = meta.get("filename") or base.rsplit("=", 1)[-1].rsplit("/", 1)[-1]
+            basename = containment.member_sniff_name(base, meta.get("filename"))
             leaf_post = _mint_leaf(
                 corpus_root,
                 hexval,

@@ -109,7 +109,7 @@ def run(args: argparse.Namespace) -> int:
     meta = containment.member_source_metadata(
         container_path, container_media_type, member_address, el_addressing=el_addressing
     )
-    basename = meta.get("filename") or member_address.rsplit("=", 1)[-1].rsplit("/", 1)[-1]
+    basename = containment.member_sniff_name(member_address, meta.get("filename"))
 
     # 4. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
     #    transport_algos). Never loads the member whole (spec §8.1 / §12.9).
@@ -254,7 +254,7 @@ def _sniff_and_hash(
     container_path: Path,
     container_media_type: str,
     member_address: str,
-    basename: str,
+    basename: str | None,
     *,
     el_addressing: dict | None = None,
 ) -> tuple[str, str, dict[str, str]]:

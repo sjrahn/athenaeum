@@ -47,10 +47,20 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"\xff\xd8\xff", "image/jpeg"),
     (0, b"GIF87a", "image/gif"),
     (0, b"GIF89a", "image/gif"),
+    # TIFF, both byte orders. Covers the TIFF-based camera-RAW family too (DNG — Apple
+    # ProRAW export attachments among them): DNG IS TIFF, and the codebase already names
+    # the family `image/tiff` (epub + html embed tables), so no `x-` type is invented.
+    (0, b"II*\x00", "image/tiff"),
+    (0, b"MM\x00*", "image/tiff"),
     # NOTE: RIFF containers (WebP / WAV / AVI) all share the `RIFF` magic at offset 0;
     # they are disambiguated by the four-byte form-type at offset 8 — see `_refine_riff`.
     # AVIF: ISOBMFF container with the `ftyp` box brand `avif` at offset 4.
     (4, b"ftypavif", "image/avif"),
+    # HEIF stills, same box family: `heic`/`heix` are the HEVC-coded brands (iPhone
+    # photos), `mif1` the codec-agnostic structural brand.
+    (4, b"ftypheic", "image/heic"),
+    (4, b"ftypheix", "image/heic"),
+    (4, b"ftypmif1", "image/heif"),
     # Audio ISOBMFF brands (M4A/M4B audiobooks). Checked before the generic video brands
     # so a correctly-branded audio-in-MP4 file routes to the audio pipeline. Generic
     # `isom`/`mp42`-branded audiobooks (most `.m4b` files lie about their brand) are caught
@@ -58,6 +68,9 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (4, b"ftypM4A ", "audio/mp4"),
     (4, b"ftypM4B ", "audio/mp4"),
     # Video ISOBMFF brands.
+    # The 7-byte `3gp` prefix covers every 3GPP generation brand (3gp4/3gp5/3gp6…) —
+    # MMS-era phone videos in the export captures.
+    (4, b"ftyp3gp", "video/3gpp"),
     (4, b"ftypisom", "video/mp4"),
     (4, b"ftypmp42", "video/mp4"),
     (4, b"ftypmp41", "video/mp4"),
@@ -116,6 +129,13 @@ _EML_STRONG_PREFIXES: tuple[bytes, ...] = (
 # followed by a colon and at least one space/tab.
 _EML_HEADER_RE = re.compile(rb"^[\x21-\x39\x3b-\x7e]+:[ \t]")
 
+# SVG's root element and the prologue forms that may precede it — see `_looks_like_svg`.
+# The root pattern requires a delimiter after the tag name so `<svgfoo>` is not an `<svg>`.
+_SVG_ROOT_RE = re.compile(r"<svg[\s>/]", re.I)
+_SVG_PROLOGUE_PREFIXES = ("<?xml", "<!doctype svg", "<!--")
+_XML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_FIRST_ELEMENT_RE = re.compile(r"<([A-Za-z][A-Za-z0-9-]*)")
+
 
 def detect(path: Path, corpus_root: Path | None = None) -> str:
     """Return the IANA MIME type, or `unknown`.
@@ -139,6 +159,11 @@ def detect(path: Path, corpus_root: Path | None = None) -> str:
         return _refine_isobmff(path, sig)
     if sig:
         return sig
+
+    # Before the extension fallback: bytes evidence outranks a filename heuristic (see
+    # `_looks_like_svg`).
+    if _looks_like_svg(head):
+        return "image/svg+xml"
 
     guessed, _ = mimetypes.guess_type(path.name)
     if guessed:
@@ -170,6 +195,8 @@ def sniff_head(head: bytes, filename: str | None = None) -> str:
             return refined
     if sig:
         return sig
+    if _looks_like_svg(head):
+        return "image/svg+xml"
     if filename:
         guessed, _ = mimetypes.guess_type(filename)
         if guessed:
@@ -208,6 +235,34 @@ def _looks_like_message(head: bytes) -> bool:
         return False
     second = lines[1]
     return bool(_EML_HEADER_RE.match(second)) or second[:1] in (b" ", b"\t")
+
+
+def _looks_like_svg(head: bytes) -> bool:
+    """True when the head opens an SVG document.
+
+    SVG cannot join `_SIGNATURES`: it has no magic at a fixed offset. The root element may
+    be preceded by a BOM, an XML declaration, a doctype, comments, or plain whitespace, in
+    any combination — so the test is a shape test on the decoded head, like
+    `_looks_like_message`. Two tiers: the `<svg` root itself, or an XML prologue with the
+    root reachable INSIDE the sniff window. A prologue alone is not enough — generic XML is
+    not SVG, and a long DTD or comment banner can push the root past `_SNIFF_BYTES`.
+
+    Runs BEFORE the extension fallback in both callers, unlike the weak email test: an
+    inline `el=` member's synthesized basename is an element address, and `mimetypes` reads
+    its trailing `.1` through `.9` as a man-page section (`application/x-troff-man`), so a
+    filename-first order lets a non-name overrule the bytes."""
+    text = head.decode("utf-8", errors="replace").lstrip("\ufeff").lstrip()
+    if _SVG_ROOT_RE.match(text):
+        return True
+    if not text[:16].lower().startswith(_SVG_PROLOGUE_PREFIXES):
+        return False
+    # The FIRST element decides, not `<svg` anywhere in the window: HTML has no byte
+    # signature of its own, so a comment-led page ("<!-- saved from url -->") or an
+    # `<?xml`-prologue XHTML page with an early inline <svg> would otherwise be claimed
+    # here before its extension can answer. Comments are stripped first so a `<` inside
+    # a banner is not read as the first element.
+    first = _FIRST_ELEMENT_RE.search(_XML_COMMENT_RE.sub("", text))
+    return bool(first) and first.group(1).lower() == "svg"
 
 
 def _refine_gzip(path: Path) -> str:

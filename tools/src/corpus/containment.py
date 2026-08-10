@@ -273,6 +273,26 @@ def member_source_metadata(
     return meta
 
 
+def member_sniff_name(address: str, filename: str | None = None) -> str | None:
+    """The name to sniff a member's bytes under (`mime.sniff_head`), or None when it has none.
+
+    The container's declared `filename` whenever it has one — that is the extension the zip
+    family refinement and the pinned track forms need. Failing that, the address tail, and
+    ONLY for a `path=` address: an archive member path's tail IS a filename with a real
+    extension (`path=word/document.xml` → `document.xml`). Every other scheme addresses a
+    POSITION — `el=1.2.2.1.3.3`, `msg=7`, `part=3`, `stream_id=0` — whose tail is not a name:
+    `mimetypes` reads the trailing `.1` through `.9` of an element path as a man-page section and
+    answers `application/x-troff-man`, which is how 304 inline SVGs were typed as troff."""
+    if filename:
+        return filename
+    key, sep, value = str(address).partition("=")
+    # A multi-param address (`path=a.png&bbox=…`) names an op over the member, not the member,
+    # so nothing in it is a filename.
+    if key != "path" or not sep or "&" in value:
+        return None
+    return value.rsplit("/", 1)[-1] or None
+
+
 # ---------- the store fallback ---------- #
 
 
