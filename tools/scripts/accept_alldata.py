@@ -286,10 +286,18 @@ def check_order(blocks: list[Any]) -> dict[str, Any]:
     a trailing framing span addresses EARLIER in the document than the content it follows,
     by design. Running the #89 migration under the un-scoped rule would have "fixed" 6,512
     records and minted 6,512 order findings in the same pass.
+
+    A framing `form/nav` span has one further ordering rule: spec §7.2 requires its
+    regions to follow the overlay's declaration order, which may differ from DOM order.
+    On alldata the print breadcrumb is declared before the interactive breadcrumb even
+    though it occurs later in the artifact. #121 concerns subject-content order, so this
+    generic address check does not second-guess a nav span's separately declared order.
     """
     inversions = 0
     counted = 0
     for block in blocks:
+        if isinstance(block, segments.Section) and block.form == "nav":
+            continue
         seq: list[tuple[furi.ElPath, furi.ElPath]] = []
         for seg in segments.leaf_segments([block]):
             paths = el_paths(seg.address)
