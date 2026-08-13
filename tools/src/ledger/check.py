@@ -39,7 +39,6 @@ from ledger.model import (
     PERIOD_RE,
     PROPOSES_EVIDENCE_KEYS,
     QUALIFIED_URI_RE,
-    REDIRECT_KEYS,
     REF_URI_RE,
     ROSTER_KEYS,
     SLUG_RE,
@@ -53,6 +52,7 @@ from ledger.model import (
     is_edge,
     is_redirect,
     load_json_dir,
+    load_lineage,
 )
 from ledger.schemas import load_schemas
 
@@ -94,6 +94,8 @@ def run_check(
         rep.errors.append(e)
 
     for stray in sorted(ledger_root.glob("facts/*.json")):
+        if stray.name == "LINEAGE.json":  # the lineage map (§4.1) lives here by design
+            continue
         rep.err(f"facts/{stray.name}", "fact files live under facts/{type}/, not facts/")
 
     schemas, schema_errors = load_schemas(ledger_root)
@@ -113,7 +115,6 @@ def run_check(
 
     # ---------------------------------------------------------------- indexes
     ids: dict[str, Path] = {}
-    redirects: dict[str, str] = {}
     live_facts: dict[str, dict] = {}
     fact_paths: dict[str, Path] = {}
     claims_by_id: dict[str, tuple[Path, dict, dict]] = {}
@@ -136,9 +137,11 @@ def run_check(
                 rep.err(rel(f), f"duplicate id {fid!r} (also {rel(ids[fid])})")
             ids[fid] = f
             fact_paths[fid] = f
-            if is_redirect(o):
-                redirects[fid] = str(o.get("merged_into"))
-            else:
+            # a legacy redirect-shape file (§4.1, is_redirect) is never live —
+            # it errors below in the main fact-files pass and contributes
+            # nothing to resolution; lineage (facts/LINEAGE.json) is the only
+            # source of redirect chasing now
+            if not is_redirect(o):
                 live_facts[fid] = o
 
     for f, o in interps.items():
@@ -153,12 +156,29 @@ def run_check(
                                 "interpretations share one namespace")
             ids[iid] = f
 
+    # the lineage map (§4.1): id uniqueness runs across facts + interpretations
+    # + the map's own KEYS, so a retired slug can never be re-minted by accident
+    lineage, lineage_errors = load_lineage(ledger_root)
+    rep.errors.extend(lineage_errors)
+    for key, target in lineage.items():
+        if key in ids:
+            rep.err("facts/LINEAGE.json", f"lineage key {key!r} collides with a living id "
+                                          f"(also {rel(ids[key])})")
+        if target not in live_facts:
+            if target in lineage:
+                rep.err("facts/LINEAGE.json", f"lineage row {key!r} -> {target!r}: "
+                                              f"{target!r} is itself a retired id — retarget "
+                                              "to the final survivor (one-hop rule)")
+            else:
+                rep.err("facts/LINEAGE.json", f"lineage row {key!r} -> {target!r}: "
+                                              f"{target!r} does not exist")
+
     def resolve_id(ref: str) -> str | None:
-        """A fact reference through at most one redirect hop → live id, or None."""
+        """A fact reference through at most one lineage-map hop → live id, or None."""
         if ref in live_facts:
             return ref
-        if ref in redirects:
-            target = redirects[ref]
+        if ref in lineage:
+            target = lineage[ref]
             return target if target in live_facts else None
         return None
 
@@ -172,17 +192,8 @@ def run_check(
     for f, o in facts.items():
         where = rel(f)
         if is_redirect(o):
-            extra = set(o) - REDIRECT_KEYS
-            if extra:
-                rep.err(where, f"a redirect tombstone carries only id/type/merged_into "
-                               f"(found {sorted(extra)})")
-            target = str(o.get("merged_into"))
-            if target not in live_facts:
-                if target in redirects:
-                    rep.err(where, f"merged_into {target!r} is itself a redirect — retarget "
-                                   "to the final survivor (one-hop rule)")
-                else:
-                    rep.err(where, f"merged_into {target!r} does not exist")
+            rep.err(where, "carries the legacy redirect shape (merged_into) — fold into "
+                           "facts/LINEAGE.json (§4.1)")
             continue
 
         edge = is_edge(o)

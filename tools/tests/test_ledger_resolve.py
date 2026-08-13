@@ -30,6 +30,15 @@ def _interp(root: Path, obj: dict) -> Path:
     return p
 
 
+def _lineage(root: Path, mapping: dict[str, str]) -> Path:
+    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1)."""
+    p = root / "facts" / "LINEAGE.json"
+    existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    existing.update(mapping)
+    p.write_text(json.dumps(existing, indent=1), encoding="utf-8")
+    return p
+
+
 @pytest.fixture()
 def ledger(tmp_path: Path) -> Path:
     (tmp_path / "facts").mkdir()
@@ -130,7 +139,7 @@ def test_interpretations_excluded_by_default_and_included_with_flag(ledger: Path
 
 def test_redirect_chases_to_survivor_and_loser_never_surfaces(ledger: Path) -> None:
     _fact(ledger, "part", {"id": "bcm", "type": "part", "name": "Body Control Module"})
-    _fact(ledger, "part", {"id": "bcm-old", "type": "part", "merged_into": "bcm"})
+    _lineage(ledger, {"bcm-old": "bcm"})
     idx = build_index(ledger)
 
     cands = resolve_query(idx, "bcm-old")

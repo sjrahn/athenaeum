@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from ledger.model import intervals_overlap, period_interval
+from ledger.model import intervals_overlap, is_redirect, period_interval
 
 INVARIANT_KEYS = {"id", "description", "applies_to", "constraint", "severity", "per", "set",
                   "requires", "min", "max"}
@@ -74,7 +74,7 @@ def evaluate(invariants: list[dict], facts: dict[Path, dict]) -> list[tuple[str,
         sev = inv.get("severity", "error")
         name = inv.get("id", "?")
         for fact in facts.values():
-            if "merged_into" in fact or not _fact_matches(inv, fact):
+            if is_redirect(fact) or not _fact_matches(inv, fact):
                 continue
             claims = [c for c in fact.get("claims") or [] if isinstance(c, dict)]
             matching = [c for c in claims if _matches(inv, fact, c)]

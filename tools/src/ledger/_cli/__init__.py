@@ -42,6 +42,11 @@ Commands:
   stamp ID      (re-)pin a correction's challenge to the claim state (§7.3)
   supersede OLD NEW  rewrite corpus citations old→new on re-capture, gated by
                 content continuity; --retire reclaims the old bytes (§13.3)
+  merge LOSER SURVIVOR  merge LOSER into SURVIVOR (#176, §4.1): claims re-key
+                (shorts preserved, collisions renamed), sources unify,
+                references rewrite ledger-wide, lineage row added, loser
+                file deleted; dry-run by default, --apply executes, --json
+                for the plan
   remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
                 child-index paths, mapped against the artifacts (dry-run by
                 default; --apply writes)
@@ -392,6 +397,91 @@ def _cmd_supersede(argv: Sequence[str]) -> int:
     return 1 if res.divergences else 0
 
 
+def _print_merge_plan(summary: dict, loser: str, survivor: str, *, dry_run: bool) -> None:
+    label = "DRY RUN" if dry_run else "APPLYING"
+    print(f"[{label}] merge {loser} → {survivor}")
+    if summary["errors"]:
+        print("REFUSED:")
+        for e in summary["errors"]:
+            print(f"  {e}")
+        return
+    for w in summary["warnings"]:
+        print(f"warn: {w}")
+    renamed = {r["old"] for r in summary["claim_renames"]}
+    print(f"claims moved: {len(summary['claims_moved'])}")
+    for row in summary["claims_moved"]:
+        mark = " (renamed)" if row["old"] in renamed else ""
+        print(f"  {row['old']} -> {row['new']}{mark}")
+    if summary["sources_unified"]:
+        print(f"sources unified: {len(summary['sources_unified'])}")
+        for row in summary["sources_unified"]:
+            note = f" — {row['note']}" if row.get("note") else ""
+            print(f"  {row['loser_key']} -> {row['survivor_key']} ({row['target']}){note}")
+    if summary["sources_added"]:
+        print(f"sources added (fresh keys): {len(summary['sources_added'])}")
+        for row in summary["sources_added"]:
+            print(f"  {row['loser_key']} -> {row['new_key']} ({row['target']})")
+    if summary["aliases_added"]:
+        print(f"aliases added: {', '.join(summary['aliases_added'])}")
+    if summary["meta"]:
+        print(f"meta: {summary['meta']}")
+    if summary["sensitivity"]:
+        print(f"sensitivity: {summary['sensitivity']}")
+    if summary["artifacts_added"]:
+        print(f"artifacts added: {len(summary['artifacts_added'])}")
+    if summary["references_rewritten"]:
+        print(f"references rewritten: {len(summary['references_rewritten'])}")
+        for row in summary["references_rewritten"]:
+            extra = " ".join(f"{k}={v}" for k, v in row.items() if k not in ("file", "kind"))
+            print(f"  {row['file']} :: {row['kind']} {extra}")
+    if summary["challenges_repinned"]:
+        print(f"challenges re-pinned: {len(summary['challenges_repinned'])}")
+        for row in summary["challenges_repinned"]:
+            print(f"  {row['interp']} :: {row['claim']} {row['old_state']} -> {row['new_state']}")
+    print(f"lineage row: {loser} -> {survivor}")
+    if summary["lineage_retargeted"]:
+        print(f"lineage rows retargeted: {len(summary['lineage_retargeted'])}")
+        for row in summary["lineage_retargeted"]:
+            print(f"  {row['key']}: {row['old_target']} -> {row['new_target']}")
+    print(f"files touched: {len(summary['files_touched'])}")
+    for f in summary["files_touched"]:
+        print(f"  {f}")
+    print(f"files deleted: {summary['files_deleted']}")
+
+
+def _cmd_merge(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger merge",
+        "Merge a losing fact into a survivor (#176, §4.1) — dry-run by default.",
+    )
+    ap.add_argument("loser")
+    ap.add_argument("survivor")
+    ap.add_argument("--apply", action="store_true", help="execute the merge (default: dry-run)")
+    ap.add_argument("--json", action="store_true", help="print the full plan as JSON")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.merge import MergeError, apply_merge, plan_merge
+
+    plan = plan_merge(ledger_root, join, ns.loser, ns.survivor)
+    summary = {k: v for k, v in plan.items() if not k.startswith("_")}
+    if ns.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        _print_merge_plan(summary, ns.loser, ns.survivor, dry_run=not ns.apply)
+    if summary["errors"]:
+        return 1
+    if not ns.apply:
+        print("\n(dry run — pass --apply to execute)")
+        return 0
+    try:
+        apply_merge(ledger_root, plan, join, datasets)
+    except MergeError as e:
+        print(f"ath ledger merge: {e}", file=sys.stderr)
+        return 1
+    print(f"\napplied: {ns.loser} → {ns.survivor}")
+    return 0
+
+
 def _cmd_remap_el(argv: Sequence[str]) -> int:
     ap = _base_parser(
         "ath ledger remap-el",
@@ -464,6 +554,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stamp": _cmd_stamp,
         "worklist": _cmd_worklist,
         "supersede": _cmd_supersede,
+        "merge": _cmd_merge,
         "remap-el": _cmd_remap_el,
     }
     try:

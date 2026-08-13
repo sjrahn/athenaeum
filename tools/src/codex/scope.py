@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codex.manifest import CodexManifest
-from ledger.model import is_edge, is_redirect, load_json_dir
+from ledger.model import is_edge, is_redirect, load_json_dir, load_lineage
 
 
 def _value_entities(value: object) -> list[str]:
@@ -63,18 +63,17 @@ def materialize(ledger_root: Path, manifest: CodexManifest) -> tuple[
     problems = list(errors) + list(ierrors)
 
     by_id: dict[str, dict] = {}
-    redirects: dict[str, str] = {}
     for o in facts.values():
         fid = str(o.get("id"))
-        if is_redirect(o):
-            redirects[fid] = str(o.get("merged_into"))
-        else:
+        if not is_redirect(o):
             by_id[fid] = o
+    lineage, lineage_errors = load_lineage(ledger_root)
+    problems.extend(lineage_errors)
 
     def resolve(ref: str) -> str | None:
         if ref in by_id:
             return ref
-        target = redirects.get(ref)
+        target = lineage.get(ref)
         return target if target in by_id else None
 
     scope = manifest.scope

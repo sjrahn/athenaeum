@@ -108,7 +108,42 @@ def load_json_dir(base: Path, pattern: str) -> tuple[dict[Path, dict], list[str]
 
 
 def is_redirect(fact: dict) -> bool:
+    """Detects the RETIRED per-file tombstone shape (pre-1.7, `merged_into`).
+
+    Lineage now lives in `facts/LINEAGE.json` (§4.1, `load_lineage`); a fact
+    file still carrying this shape is a check ERROR ("fold into
+    facts/LINEAGE.json"), never a live redirect — callers use this only to
+    detect and skip/flag such legacy files.
+    """
     return "merged_into" in fact
+
+
+def load_lineage(ledger_root: Path) -> tuple[dict[str, str], list[str]]:
+    """Tolerant read of `facts/LINEAGE.json` (§4.1) → ({old-id: survivor-id}, errors).
+
+    Missing file → empty map, no errors. A non-object top level, or an entry
+    whose key/value isn't a plain string, is reported as an error string
+    (prefixed `facts/LINEAGE.json: …`) and the entry is dropped — parse
+    tolerantly, author strictly.
+    """
+    path = ledger_root / "facts" / "LINEAGE.json"
+    if not path.is_file():
+        return {}, []
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return {}, [f"facts/LINEAGE.json: invalid JSON — {e}"]
+    if not isinstance(obj, dict):
+        return {}, ["facts/LINEAGE.json: top level must be a JSON object"]
+    lineage: dict[str, str] = {}
+    errors: list[str] = []
+    for k, v in obj.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            errors.append(f"facts/LINEAGE.json: entry {k!r} -> {v!r} must be a string -> "
+                          "string mapping")
+            continue
+        lineage[k] = v
+    return lineage, errors
 
 
 def is_edge(fact: dict) -> bool:

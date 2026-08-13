@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ledger import invariants as invariants_mod
-from ledger.model import derived_uri, load_json_dir
+from ledger.model import derived_uri, load_json_dir, load_lineage
 
 
 def worklist(ledger_root: Path, ref: str) -> list[str]:
@@ -57,10 +57,12 @@ def worklist(ledger_root: Path, ref: str) -> list[str]:
 
     # fact id → dependents
     link = re.compile(rf"\[\[{re.escape(ref)}(?:[\]|#])")
+    lineage, _ = load_lineage(ledger_root)
+    for key, target in sorted(lineage.items()):
+        if target == ref:
+            out.append(f"lineage {key} → {ref} (facts/LINEAGE.json)")
     for path, o in facts.items():
         where = str(path.relative_to(ledger_root))
-        if o.get("merged_into") == ref:
-            out.append(f"redirect {o.get('id')} → {ref} ({where})")
         if o.get("subject") == ref or ref in (o.get("participants") or []):
             out.append(f"edge    {o.get('id')} ({where})")
         for c in o.get("claims") or []:

@@ -16,7 +16,14 @@ import os
 import re
 from pathlib import Path
 
-from ledger.model import CORPUS_REF_RE, is_edge, is_redirect, load_json_dir, source_target
+from ledger.model import (
+    CORPUS_REF_RE,
+    is_edge,
+    is_redirect,
+    load_json_dir,
+    load_lineage,
+    source_target,
+)
 
 INDEX_VERSION = 1
 CACHE_REL = Path(".cache") / "ledger-index.json"
@@ -49,7 +56,8 @@ def slugify(s: object) -> str:
 def build_index(ledger_root: Path) -> dict:
     facts, fact_errors = load_json_dir(ledger_root, "facts/*/*.json")
     interps, interp_errors = load_json_dir(ledger_root, "interpretations/*.json")
-    skipped: list[str] = [*fact_errors, *interp_errors]
+    lineage, lineage_errors = load_lineage(ledger_root)
+    skipped: list[str] = [*fact_errors, *interp_errors, *lineage_errors]
 
     entries: dict[str, dict] = {}
     names: dict[str, list[str]] = {}
@@ -80,10 +88,10 @@ def build_index(ledger_root: Path) -> dict:
         ftype = path.parent.name
 
         if is_redirect(fact):
-            entries[fid] = {
-                "file": rel, "kind": "redirect", "type": ftype, "name": "",
-                "aliases": [], "merged_into": fact.get("merged_into"),
-            }
+            # legacy per-file tombstone shape (§4.1) — `ath ledger check` errors
+            # on it now; the index tolerates it by skipping (never a live
+            # redirect), same as any other unusable record
+            skipped.append(f"{rel}: legacy redirect shape — fold into facts/LINEAGE.json")
             continue
 
         kind = "edge" if is_edge(fact) else "concept"
@@ -116,6 +124,15 @@ def build_index(ledger_root: Path) -> dict:
             if m:
                 cite(m.group(1), roster=fid)
 
+    # redirect entries come from the lineage map (§4.1), not file shapes — the
+    # same {kind: "redirect", merged_into: survivor} shape `resolve_query`'s
+    # existing one-hop chasing already expects
+    for key, target in lineage.items():
+        entries[key] = {
+            "file": "facts/LINEAGE.json", "kind": "redirect", "type": "",
+            "name": "", "aliases": [], "merged_into": target,
+        }
+
     for path, interp in interps.items():
         iid = interp.get("id")
         if not isinstance(iid, str) or not iid:
@@ -142,9 +159,11 @@ def build_index(ledger_root: Path) -> dict:
 
 
 def _stat_pass(ledger_root: Path) -> tuple[int, float]:
-    """File count + max mtime over the two glob sets — a cheap stat pass, no
-    parsing — the staleness signal `load_or_build`/`is_fresh` compare against
-    the cached stamp."""
+    """File count + max mtime over the two glob sets plus `facts/LINEAGE.json`
+    — a cheap stat pass, no parsing — the staleness signal `load_or_build`/
+    `is_fresh` compare against the cached stamp. LINEAGE.json is counted so an
+    edit to the map (a merge, a rename) invalidates the cache like any other
+    fact edit."""
     n = 0
     max_mtime = 0.0
     for pattern in ("facts/*/*.json", "interpretations/*.json"):
@@ -152,6 +171,11 @@ def _stat_pass(ledger_root: Path) -> tuple[int, float]:
             n += 1
             with contextlib.suppress(OSError):
                 max_mtime = max(max_mtime, p.stat().st_mtime)
+    lineage_path = ledger_root / "facts" / "LINEAGE.json"
+    if lineage_path.is_file():
+        n += 1
+        with contextlib.suppress(OSError):
+            max_mtime = max(max_mtime, lineage_path.stat().st_mtime)
     return n, max_mtime
 
 

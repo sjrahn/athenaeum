@@ -115,6 +115,15 @@ def _interp(root: Path, obj: dict) -> Path:
     return p
 
 
+def _lineage(root: Path, mapping: dict[str, str]) -> Path:
+    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1)."""
+    p = root / "ledger" / "facts" / "LINEAGE.json"
+    existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    existing.update(mapping)
+    p.write_text(json.dumps(existing, indent=1), encoding="utf-8")
+    return p
+
+
 def _join(root: Path) -> CorpusJoin:
     return CorpusJoin([
         RegisteredCorpus("corpus", root / "corpora" / "corpus", private=False),
@@ -479,18 +488,52 @@ def test_disputed_requires_standing_correction(system: Path) -> None:
 # ----------------------------------------------------------------------- graph
 
 
-def test_redirects_resolve_one_hop(system: Path) -> None:
+def test_lineage_resolves_one_hop(system: Path) -> None:
     _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
-    _fact(system, "artist", {"id": "old", "type": "artist", "merged_into": "survivor"})
-    _fact(system, "artist", {"id": "older", "type": "artist", "merged_into": "old"})
+    _lineage(system, {"old": "survivor", "older": "old"})
     _fact(system, "album", {
         "id": "a", "type": "album", "name": "A",
         "claims": [_claim("a", "by", predicate="released_by", object="old")],
     })
     rep = _check(system)
-    # object through one redirect hop is fine; a redirect chain is not
+    # object through one lineage hop is fine; a lineage chain is not
     assert not any("dangling object" in e for e in rep.errors)
     assert any("one-hop rule" in e for e in rep.errors)
+
+
+def test_legacy_redirect_shape_is_a_check_error(system: Path) -> None:
+    """A fact file still carrying the retired `merged_into` tombstone shape
+    (pre-1.7) is a check ERROR — lineage now lives only in
+    facts/LINEAGE.json (§4.1)."""
+    _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
+    _fact(system, "artist", {"id": "old", "type": "artist", "merged_into": "survivor"})
+    rep = _check(system)
+    assert any("fold into facts/LINEAGE.json" in e for e in rep.errors)
+
+
+def test_lineage_key_colliding_with_living_id(system: Path) -> None:
+    _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
+    _fact(system, "artist", {"id": "old", "type": "artist", "name": "Old"})
+    _lineage(system, {"old": "survivor"})
+    rep = _check(system)
+    assert any("lineage key 'old' collides with a living id" in e for e in rep.errors)
+
+
+def test_lineage_dangling_value(system: Path) -> None:
+    _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
+    _lineage(system, {"old": "ghost"})
+    rep = _check(system)
+    assert any("'ghost' does not exist" in e for e in rep.errors)
+
+
+def test_lineage_json_is_not_a_stray_fact_file(system: Path) -> None:
+    """facts/LINEAGE.json lives directly under facts/ by design (§4.1) — the
+    stray-fact-file check (fact files must live under facts/{type}/) must not
+    flag it."""
+    _fact(system, "artist", {"id": "survivor", "type": "artist", "name": "S"})
+    _lineage(system, {"old": "survivor"})
+    rep = _check(system)
+    assert not any("LINEAGE.json" in e and "not facts/" in e for e in rep.errors)
 
 
 def test_dangling_references(system: Path) -> None:
@@ -794,8 +837,8 @@ def test_schema_elements_and_entity_refs(system: Path) -> None:
     claim value — enum `values` and typed `entity` `target`s — while undeclared
     keys, {"name"}/{"handle"} elements, and non-dict elements validate nothing.
     And, independent of any declaration, every {"entity": <id>} in a claim value
-    MUST resolve (through redirect tombstones) — the no-dangling rule extended to
-    the roster shape."""
+    MUST resolve (through the lineage map, §4.1) — the no-dangling rule extended
+    to the roster shape."""
     from ledger.schemas import load_schemas
     (system / "ledger" / "schemas").mkdir()
     (system / "ledger" / "schemas" / "event.yaml").write_text(
@@ -812,12 +855,12 @@ def test_schema_elements_and_entity_refs(system: Path) -> None:
     for pid in ("steven", "kat"):
         _fact(system, "person", {"id": pid, "type": "person", "name": pid.title(),
                                  "claims": [_claim(pid, "email", predicate="email")]})
-    _fact(system, "person", {"id": "renamed", "type": "person", "merged_into": "steven"})
+    _lineage(system, {"renamed": "steven"})
     _fact(system, "organization", {"id": "acme", "type": "organization", "name": "Acme",
                                    "claims": [_claim("acme", "d", predicate="description")]})
 
     # clean: entity → person, role in vocab, undeclared `capacity` tolerated; a
-    # renamed entity resolves through its redirect tombstone; {"name"}/{"handle"}
+    # renamed entity resolves through the lineage map; {"name"}/{"handle"}
     # and a bare-string element validate nothing; lineup entity → organization
     # with an undeclared free-text `role`.
     _fact(system, "event", {

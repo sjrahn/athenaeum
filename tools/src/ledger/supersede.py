@@ -17,7 +17,7 @@ and reports the rest, gated by `corpus.continuity`:
 
 `--retire` then reclaims the old record's bytes (`corpus rm`) — but only when no diverged
 citation still points at it. This is the corpus-citation analogue of the ledger's own
-concept-level `merged_into` redirect, one layer down.
+concept-level lineage map (`facts/LINEAGE.json`, §4.1), one layer down.
 """
 
 from __future__ import annotations
