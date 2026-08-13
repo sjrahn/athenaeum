@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-LEDGER
 title: "Ledger Specification"
-version: 1.6
+version: 1.7
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
-date_modified: 2026-08-07
+date_modified: 2026-08-13
 ---
 
 # Ledger Specification
@@ -29,6 +29,8 @@ The name is meant literally: a ledger is claims with evidence and an audit trail
 **Version 1.5** settles the derivation-op version pin's binding format — the 1.1 open item (`spec/corpus.md` §12.19 OQ2), demanded by the first derived-surface citations. The sources-entry `verified` binding gains an **`ops` map** (§13.2): engine pins keyed by axis param, recorded at stamp time for every derivation-op-resolved anchor the source's evidence uses; a pin mismatch at verification flags the evidence for re-verification exactly as a touch mismatch does. With it, verification MUST resolve derived-surface anchors through the corpus resolver rather than declaring them unverifiable — the (1.1) "member anchors are first-class" promise, now implemented; the honestly-unverifiable residue narrows to ops the verifying environment genuinely cannot run.
 
 **Version 1.6** reconciles the citable-surface contract against `spec/corpus.md` 3.4–3.12 (§6.3, §13.2) — six amendments this tracking note had never closed (folds #70). The 3.5 faithfulness amendment retired every surface Version 1.2 had named as citable authored prose: section-header/segment descriptions, section entries, and the frontmatter title/description override. Citable surfaces are now the record's **faithful rendering** (segment bodies under their form) and **attested byte-facts** (artifact-block fields, the members roster, structural byte-marks) — nothing else; the per-mime `citation_surface` rule (1.4, above) remains this contract's own mechanism for records whose derived body isn't a citable surface at all. A record swept before the 3.5 faithfulness amendment (corpus §12.27) may still carry a retired descriptive field; verification reads it **tolerantly** where it exists, but it is never a surface new evidence may cite. No implementation change: `ledger/verify.py`'s tolerant read already matches this contract — this version brings the text to what the code does.
+
+**Version 1.7** replaces the per-file redirect tombstone with the **lineage map** (§4.1) — one committed file, `facts/LINEAGE.json`, holding every retired id as a `{"old-id": "survivor-id"}` row — and settles **claim-id lineage** through merges (shorts preserved; collisions renamed loudly with a migration worklist). The lineage promise sharpens from *an id never silently disappears* to **an id never silently changes meaning**: retired slugs stay occupied (id uniqueness runs over the map's keys, so no accidental re-mint), references resolve through the map mechanically, the type directories list only living concepts, and the full history of any merge — dates, moved claims, the reduced file — lives where history lives: in the repository's own log. (Ruled by the owner, 2026-08-13; the conversation is the citable trail on ticket #176.)
 
 ### 1.2 One ledger
 
@@ -58,7 +60,7 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 | **Fact file** | JSON under `facts/{type}/{slug}.json` — a concept or an edge, holding claims. |
 | **Concept schema** | A declared, validating shape for a concept type — `schemas/{type}.yaml` (§4.4). |
 | **Artifact roster** | A concept's typed `corpus://` links: the records that are artifacts *of* the thing (§4.2). |
-| **Redirect tombstone** | A fact file reduced to `{id, type, merged_into}` — the lineage a merged or renamed id leaves behind (§4.1). |
+| **Lineage map** | `facts/LINEAGE.json` — the committed `{"old-id": "survivor-id"}` map every merged or renamed id retires into (§4.1); its keys stay occupied forever. |
 | **Claim** | One atomic, typed, **asserted** statement with evidence (§5). |
 | **Evidence** | A `corpus://` or `ref://` citation grounding a claim, graded by `kind` (§6). |
 | **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, …), citable as evidence by native id via `ref://` (§6.5). |
@@ -119,7 +121,13 @@ Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(--?[a-z0-9]+)*`):
 
 **Identity is real-world identity.** A concept id names the thing, not any record of it. When identity is established mechanically it comes from **origin-native keys** — a source's own stable identifiers exposed in origin facts (§10) — so re-captures and mirrors of the same thing converge on the same concept rather than minting shadows.
 
-**Ids carry lineage.** Once minted, an id never silently disappears — external consumers hold `ledger://` URIs (§12) the ledger does not control. When concepts merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing file becomes a **redirect tombstone** — `{"id": "old-slug", "type": "…", "merged_into": "survivor-slug"}` and nothing else; its claims move to the survivor. References (wikilinks, claim `object`s, `ledger://`) resolve through redirects, **one hop only**: merging into an id that is itself a redirect retargets the older tombstone to the final survivor. Outright deletion is reserved for content that should never have existed.
+**Ids carry lineage.** Once minted, an id never silently **changes meaning** — external consumers hold `ledger://` URIs (§12) the ledger does not control, and frozen corpus bytes (captured conversations, session logs) name ids in prose forever. When concepts merge (an identity hypothesis resolving, §7.1) or a slug is renamed *(1.7)*, the losing id retires into the **lineage map** — `facts/LINEAGE.json`, a flat committed `{"old-id": "survivor-id"}` object — and the losing **file is deleted**: its claims move to the survivor, the type directories list only living concepts, and the merge's full story (date, moved claims, the diff itself) lives in the repository history. The map's semantics:
+
+- **Retired slugs stay occupied.** Id uniqueness (§13.1) runs across facts, interpretations, *and the lineage map's keys* — a retired id can never be re-minted by accident, so an old reference can dangle loudly but never resolve silently to a different thing. Deliberate resurrection requires removing the row, a visible diff.
+- **References resolve through the map, one hop only**: wikilinks, claim `object`s, `{"entity": …}` refs, and `ledger://` chase a key to its survivor. Merging into an id that is itself a key **retargets the older row** to the final survivor, so chains never form.
+- **Claim ids carry lineage through the file id** *(1.7)*. A claim's id is `{file-id}:{short}` (§5.1); when claims move to a merge's survivor each is **re-keyed to the survivor's prefix with its `short` preserved** — an external `ledger://{id}:{short}` then resolves through the map unchanged: the row maps the id half, the preserved short maps the rest. A short colliding with an existing claim on the survivor is **renamed**, and the merge emits a **migration worklist** naming every renamed claim and its dependents (the §11 amended-invariant shape) — a rename is loud, never silent. Outside merge-collision, tooling MUST NOT rewrite a short; internal references that name claims by id (`challenges`, `based_on`) are rewritten in the same pass that re-keys them, and a correction's `challenges` pin is re-stamped when the only delta is the re-key itself (§7.3 — the content the dispute examined is unchanged).
+
+Outright deletion — id and lineage row both — is reserved for content that should never have existed.
 
 ### 4.2 Concept files — `facts/{type}/{slug}.json`
 
@@ -210,7 +218,7 @@ fields:
 
 Undeclared element keys are admissible — they register nothing and validate nothing, exactly as unmarked fields do; an element carrying `{"handle": …}` or `{"name": …}` in place of `entity` is fine.
 
-**Entity references resolve — always.** Independent of any `elements` declaration, every `{"entity": <id>}` object inside a claim value MUST resolve to an existing fact (through redirect tombstones, §4.1): the no-dangling-references rule (§4.2) extended to the roster shape structured-array claims carry (§5.1). Codex scope traversal follows these references (`spec/codex.md`), so a dangling one would silently truncate a compilation — validation makes it an error at its source.
+**Entity references resolve — always.** Independent of any `elements` declaration, every `{"entity": <id>}` object inside a claim value MUST resolve to an existing fact (through the lineage map, §4.1): the no-dangling-references rule (§4.2) extended to the roster shape structured-array claims carry (§5.1). Codex scope traversal follows these references (`spec/codex.md`), so a dangling one would silently truncate a compilation — validation makes it an error at its source.
 
 Any type's schema may declare **expectations** — conditional owed-ness, the declared half of gap-finding (§7.4):
 
@@ -488,7 +496,7 @@ ledger://{id}                    → a fact (concept or edge) or an interpretati
 ledger://{id}:{short}            → a specific claim
 ```
 
-Facts, claims, and interpretations are citable; **generated views are not**. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following redirect tombstones (§4.1) so references survive merges and renames. What a published deliverable may *contain* is governed by sensitivity (§6.4) and the codex profile's leak check (`spec/codex.md` §6) — a filter over content, never a URI form.
+Facts, claims, and interpretations are citable; **generated views are not**. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following the lineage map (§4.1) so references survive merges and renames. What a published deliverable may *contain* is governed by sensitivity (§6.4) and the codex profile's leak check (`spec/codex.md` §6) — a filter over content, never a URI form.
 
 ## 13. Validation
 
@@ -500,7 +508,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Sensitivity** — derived sensitivity (§6.4) computes for every claim (all evidence resolves against registered corpora or datasets, so the private/public determination is total); asserted `sensitivity` overrides are upward only.
 
-**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; redirect tombstones (§4.1) satisfy references and resolve in one hop (the `merged_into` target exists and is not itself a redirect; a redirect carries no claims).
+**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; the lineage map (§4.1) satisfies references and resolves in one hop (every value names a living fact, never another key; keys collide with no living id; no fact file carries a retired shape).
 
 **Epistemics** — the authentication bar for every `confirmed` claim; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
@@ -532,7 +540,7 @@ A claim whose evidence fails verification is flagged at the severity of its stat
 
 ### 13.3 Supersession — following a re-captured record
 
-A corpus record's identity is the blake3 of its bytes (`spec/corpus.md` §2), so a source re-captured with more content lands as a **new** record — a Claude Code session that grew by a few turns (`corpus session capture`, `spec/corpus.md` §12.8) is the motivating case. Citations must follow the content without a human re-checking each one, and without a synthetic stable id papering over the change. **`ath ledger supersede <old> <new>`** does this, gated by **content continuity** (`corpus continuity`, `spec/corpus.md` §12.8): for every ledger citation of `<old>` — fact `sources` entries (judged per referencing evidence entry, anchor by anchor) and roster `artifacts[].uri`s — it re-points the citation to `<new>` (anchors verbatim) **only** where the addressed content is preserved in `<new>` (byte-identical, or contained as a prefix the new capture extends). When every entry riding a sources key is preserved, the key's `record` is rewritten in place; when only some are, the entry **splits** — preserved evidence entries move to a fresh sources key for `<new>`, diverged ones stay behind on `<old>` (the same-target uniqueness rule is satisfied: old and new are distinct records). A citation whose content **diverged** (a compacted or rewritten source) is left untouched and reported for re-anchoring — no quote is silently moved onto content it was never checked against, so no separate "dirty" flag is required: a genuine break stays visibly on the old id, which `check` (§13.1, dangling citation) and `verify` (§13.2, broken anchor/quote) already surface. `--retire` then reclaims the old record's bytes (`corpus rm`), refused while any diverged citation still references it. This is the corpus-citation analogue of the concept-level `merged_into` redirect (§4.1): lineage followed forward, one content-address to the next, only where the evidence still holds.
+A corpus record's identity is the blake3 of its bytes (`spec/corpus.md` §2), so a source re-captured with more content lands as a **new** record — a Claude Code session that grew by a few turns (`corpus session capture`, `spec/corpus.md` §12.8) is the motivating case. Citations must follow the content without a human re-checking each one, and without a synthetic stable id papering over the change. **`ath ledger supersede <old> <new>`** does this, gated by **content continuity** (`corpus continuity`, `spec/corpus.md` §12.8): for every ledger citation of `<old>` — fact `sources` entries (judged per referencing evidence entry, anchor by anchor) and roster `artifacts[].uri`s — it re-points the citation to `<new>` (anchors verbatim) **only** where the addressed content is preserved in `<new>` (byte-identical, or contained as a prefix the new capture extends). When every entry riding a sources key is preserved, the key's `record` is rewritten in place; when only some are, the entry **splits** — preserved evidence entries move to a fresh sources key for `<new>`, diverged ones stay behind on `<old>` (the same-target uniqueness rule is satisfied: old and new are distinct records). A citation whose content **diverged** (a compacted or rewritten source) is left untouched and reported for re-anchoring — no quote is silently moved onto content it was never checked against, so no separate "dirty" flag is required: a genuine break stays visibly on the old id, which `check` (§13.1, dangling citation) and `verify` (§13.2, broken anchor/quote) already surface. `--retire` then reclaims the old record's bytes (`corpus rm`), refused while any diverged citation still references it. This is the corpus-citation analogue of the concept-level lineage row (§4.1): lineage followed forward, one content-address to the next, only where the evidence still holds.
 
 ---
 
