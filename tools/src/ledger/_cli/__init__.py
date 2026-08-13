@@ -32,6 +32,10 @@ Commands:
                 token candidates against the derived index; rc 1 on no match
   index         ensure/rebuild the derived resolution index (.cache/,
                 uncommitted); --rebuild forces, --stats prints counts
+  dedupe        coalescence proposer (#177) — candidate duplicate concepts/
+                edges, near-duplicate predicates, dead schema surface;
+                READ-ONLY, proposes only, never merges/writes; --json,
+                --section concepts|predicates|schemas
   harvest       run the mechanical minting rules (harvest/*.yaml, §10):
                 strip auto output, sweep the corpora, re-mint
   promote ID    move a hypothesis's proposed claim into its fact (§7.2)
@@ -233,6 +237,65 @@ def _cmd_index(argv: Sequence[str]) -> int:
     return 0
 
 
+def _cmd_dedupe(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger dedupe",
+        "Coalescence proposer (#177) — candidate duplicate concepts/edges, "
+        "near-duplicate predicates, dead schema surface. READ-ONLY: proposes, "
+        "never merges or writes.",
+    )
+    ap.add_argument("--json", action="store_true", help="print the full report as JSON")
+    ap.add_argument("--section", choices=["concepts", "predicates", "schemas"], default=None,
+                    help="restrict to one section (default: all three)")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger.dedupe import propose
+
+    report = propose(ledger_root)
+    if ns.section:
+        report = {ns.section: report[ns.section], "skipped": report["skipped"]}
+    if ns.json:
+        print(json.dumps(report, indent=2))
+        return 0
+
+    if "concepts" in report:
+        concepts = report["concepts"]
+        print(f"== concepts ({len(concepts)} candidate group(s)) ==")
+        for c in concepts:
+            if c["basis"] == "name-collision":
+                print(f"name-collision\t{c['key']}\t" + "\t".join(c["ids"]))
+            elif c["basis"] == "id-containment":
+                print(f"id-containment\t{c['type']}\t" + "\t".join(c["ids"]))
+            else:
+                print(f"shared-external-id\t{c['key']}\t" + "\t".join(c["ids"]))
+        print()
+
+    if "predicates" in report:
+        preds = report["predicates"]
+        print(f"== predicates ({len(preds)} candidate pair(s)) ==")
+        for p in preds:
+            print(f"{p['basis']}\t{p['a']} ({p['count_a']})\t{p['b']} ({p['count_b']})")
+        print()
+
+    if "schemas" in report:
+        s = report["schemas"]
+        print(f"== schemas ({len(s['reports'])} schema(s)) ==")
+        for r in s["reports"]:
+            print(f"{r['type']}\tfacts={r['fact_count']}\t"
+                  f"unused_fields={r['unused_fields']}\tunused_roles={r['unused_roles']}\t"
+                  f"all_fields_unused={r['all_fields_unused']}")
+        print(f"\nschemaless types ({len(s['schemaless_types'])}):")
+        for row in s["schemaless_types"]:
+            print(f"{row['type']}\t{row['fact_count']} fact(s)")
+        print()
+
+    if report["skipped"]:
+        print(f"skipped ({len(report['skipped'])}):")
+        for s in report["skipped"]:
+            print(f"  {s}")
+    return 0
+
+
 def _cmd_harvest(argv: Sequence[str]) -> int:
     ap = _base_parser("ath ledger harvest",
                       "Strip auto output, sweep the corpora, re-mint (§10).")
@@ -395,6 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "verify": _cmd_verify,
         "resolve": _cmd_resolve,
         "index": _cmd_index,
+        "dedupe": _cmd_dedupe,
         "harvest": _cmd_harvest,
         "promote": _cmd_promote,
         "stamp": _cmd_stamp,
