@@ -9,6 +9,7 @@ reference datasets `ref://` citations may name. There is deliberately no bare
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,6 +28,10 @@ Commands:
   check         the validation contract (§13.1) — rc 1 on errors
   verify        evidence-content verification (§13.2): anchors resolve,
                 quotes match verbatim; --stamp writes snapshot bindings
+  resolve QUERY entity resolution before minting (#174) — id/name/alias/
+                token candidates against the derived index; rc 1 on no match
+  index         ensure/rebuild the derived resolution index (.cache/,
+                uncommitted); --rebuild forces, --stats prints counts
   harvest       run the mechanical minting rules (harvest/*.yaml, §10):
                 strip auto output, sweep the corpora, re-mint
   promote ID    move a hypothesis's proposed claim into its fact (§7.2)
@@ -171,6 +176,61 @@ def _cmd_verify(argv: Sequence[str]) -> int:
           f"{res.stamped} stamped — {len(res.errors)} errors, "
           f"{len(res.warnings)} warnings")
     return 0 if res.ok else 1
+
+
+def _cmd_resolve(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger resolve",
+                      "Entity resolution before minting (#174).")
+    ap.add_argument("query")
+    ap.add_argument("--type", dest="type_filter", default=None,
+                    help="filter candidates by type (concept/edge type, or interp kind)")
+    ap.add_argument("--limit", type=int, default=15)
+    ap.add_argument("--json", action="store_true", help="print the full candidate list as JSON")
+    ap.add_argument("--ids", action="store_true", help="print bare ids only, one per line")
+    ap.add_argument("--all", action="store_true", help="include interpretations")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger.index import load_or_build, resolve_query
+
+    idx = load_or_build(ledger_root)
+    cands = resolve_query(idx, ns.query, type_filter=ns.type_filter,
+                          include_interpretations=ns.all, limit=ns.limit)
+    if ns.json:
+        print(json.dumps(cands, indent=2))
+    elif ns.ids:
+        for c in cands:
+            print(c["id"])
+    else:
+        for c in cands:
+            basis = c["basis"]
+            if c.get("note"):
+                basis = f"{basis}, {c['note']}"
+            print(f"{c['id']}\t{c['type']}\t{c['name']}\t({basis})")
+    return 0 if cands else 1
+
+
+def _cmd_index(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger index",
+                      "Ensure/rebuild the derived resolution index (uncommitted, .cache/).")
+    ap.add_argument("--rebuild", action="store_true", help="force a rebuild")
+    ap.add_argument("--stats", action="store_true", help="print index statistics")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger import index as index_mod
+
+    if ns.rebuild:
+        idx = index_mod.build_index(ledger_root)
+        index_mod.write_cache(ledger_root, idx)
+        print(f"rebuilt ({idx['stamp']['files']} files)")
+    else:
+        fresh = index_mod.is_fresh(ledger_root)
+        idx = index_mod.load_or_build(ledger_root)
+        print("fresh" if fresh else f"rebuilt ({idx['stamp']['files']} files)")
+    if ns.stats:
+        print(f"entries: {len(idx['entries'])}  names: {len(idx['names'])}  "
+              f"citations: {len(idx['citations'])}  skipped: {len(idx['skipped'])}")
+        print(f"stamp: {idx['stamp']}")
+    return 0
 
 
 def _cmd_harvest(argv: Sequence[str]) -> int:
@@ -333,6 +393,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "check": _cmd_check,
         "regen": _cmd_regen,
         "verify": _cmd_verify,
+        "resolve": _cmd_resolve,
+        "index": _cmd_index,
         "harvest": _cmd_harvest,
         "promote": _cmd_promote,
         "stamp": _cmd_stamp,
