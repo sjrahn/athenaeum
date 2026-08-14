@@ -535,11 +535,12 @@ def test_verify_row_axis_falls_back_to_record_scoped(tmp_path: Path) -> None:
     assert not res.errors and not res.warnings
 
 
-def test_verify_segments_surface_no_persisted_segments_is_error(tmp_path: Path) -> None:
-    """§13.2.4: a `segments`-surface record (`text/html`, corpus §7.1's built-in
-    default) with zero persisted segments — the raw pre-normalize proxy state — has
-    no citable surface at all, so claim evidence citing it is an ERROR regardless of
-    claim status (here `provisional`, which would otherwise only warn on failure)."""
+def test_verify_segments_surface_no_persisted_segments_is_deferred(tmp_path: Path) -> None:
+    """§13.2.4 *(1.8)*: a `segments`-surface record (`text/html`, corpus §7.1's
+    built-in default) with zero persisted segments is a DEFERRED surface — claim
+    evidence citing it is neither failed nor warned: the quote is held unmatched
+    (never soup-matched record-wide), the entry counts as `deferred`, the record
+    lands in the demand aggregate, and the source is never stamped."""
     import frontmatter
 
     from corpus import paths, records
@@ -555,7 +556,8 @@ def test_verify_segments_surface_no_persisted_segments_is_error(tmp_path: Path) 
 
     ledger = tmp_path / "ledger"
     (ledger / "facts" / "thing").mkdir(parents=True)
-    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+    fact_path = ledger / "facts" / "thing" / "widget.json"
+    fact_path.write_text(json.dumps({
         "id": "widget", "type": "thing", "name": "Widget",
         "sources": {"s1": {"record": h}},
         "claims": [{"id": "widget:x", "predicate": "described", "value": "x",
@@ -564,13 +566,55 @@ def test_verify_segments_surface_no_persisted_segments_is_error(tmp_path: Path) 
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, set(), stamp=True)
     assert res.verified == 0
-    assert len(res.errors) == 1
-    assert "requires a rendered surface" in res.errors[0]
-    assert "no persisted" in res.errors[0]
-    assert f"corpus://{h[:12]}" in res.errors[0]
-    assert not res.warnings
+    assert res.deferred == 1
+    assert res.demand == {h: 1}
+    assert not res.errors and not res.warnings
+    # held, not stamped: the source must not read as freshly verified
+    assert "verified" not in json.loads(fact_path.read_text())["sources"]["s1"]
+
+
+def test_verify_deferred_surface_byte_fact_quote_still_verifies(tmp_path: Path) -> None:
+    """§13.2.4 *(1.8)*: deferral holds only what cannot be checked. A quote that
+    lands on the record's attested byte-facts (here an origin `filename:` field —
+    a verifiable surface per §6.3) verifies NOW, even though the record's declared
+    citation surface has not formed; a second, unfindable quote on the same source
+    defers — and the mixed source stays unstamped."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    h = "a" * 64
+    root = tmp_path / "corpus"
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="text/html", fields={})
+    records.append_origin_block(
+        post, snapshot="2026-01-01T00:00:00Z", fields={"filename": "saved-page.html"}
+    )
+    records.dump(post, paths.record_path(root, h))
+
+    ledger = tmp_path / "ledger"
+    (ledger / "facts" / "thing").mkdir(parents=True)
+    (ledger / "facts" / "thing" / "widget.json").write_text(json.dumps({
+        "id": "widget", "type": "thing", "name": "Widget",
+        "sources": {"s1": {"record": h}},
+        "claims": [{"id": "widget:x", "predicate": "described", "value": "x",
+                    "status": "provisional", "asof": "2026-01-01",
+                    "evidence": [
+                        {"source": "s1", "quote": "saved-page.html", "kind": "direct"},
+                        {"source": "s1", "quote": "not in any byte-fact",
+                         "kind": "direct"},
+                    ]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, set(), stamp=False)
+    assert res.verified == 1
+    assert res.deferred == 1
+    assert res.demand == {h: 1}
+    assert not res.errors and not res.warnings
 
 
 def test_verify_segments_surface_with_persisted_segments_verifies(tmp_path: Path) -> None:
@@ -613,9 +657,9 @@ def test_verify_segments_surface_with_persisted_segments_verifies(tmp_path: Path
 def test_verify_interpretation_may_reference_segmentless_html_with_enqueue_need(
     tmp_path: Path,
 ) -> None:
-    """§13.2.4: interpretations are exempt from the hard error — the pre-assertion
-    workspace holds discoveries the evidence bar can't yet carry — and a matching
-    `enqueue` need naming the same hash keeps the reference clean."""
+    """§13.2.4 *(1.8)*: interpretations reference deferred surfaces freely — the
+    reference joins the demand aggregate (an explicit `enqueue` need may ride
+    along, but is no longer policed: the citation is itself the pressure)."""
     import frontmatter
 
     from corpus import paths, records
@@ -641,13 +685,15 @@ def test_verify_interpretation_may_reference_segmentless_html_with_enqueue_need(
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
     res = verify_ledger(ledger, join, set(), stamp=False)
     assert not res.errors and not res.warnings
+    assert res.demand == {h: 1}
 
 
-def test_verify_interpretation_referencing_segmentless_html_without_need_warns(
+def test_verify_interpretation_reference_without_need_is_clean_demand(
     tmp_path: Path,
 ) -> None:
-    """The same reference with no matching enqueue/promote need draws a WARNING —
-    never an error, since interpretations stay exempt from the hard gate."""
+    """*(1.8)* The same reference with no typed need draws NOTHING — the 1.4
+    needs-warning retired with enqueue-before-cite. The reference simply lands
+    in the demand aggregate: cite-then-pressure."""
     import frontmatter
 
     from corpus import paths, records
@@ -671,20 +717,18 @@ def test_verify_interpretation_referencing_segmentless_html_without_need_warns(
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
     res = verify_ledger(ledger, join, set(), stamp=False)
-    assert not res.errors
-    assert len(res.warnings) == 1
-    assert "no enqueue/promote need" in res.warnings[0]
-    assert f"corpus://{h[:12]}" in res.warnings[0]
+    assert not res.errors and not res.warnings
+    assert res.demand == {h: 1}
 
 
-def test_verify_interpretation_proposes_inline_uri_without_need_warns(
+def test_verify_interpretation_proposes_inline_uri_joins_demand(
     tmp_path: Path,
 ) -> None:
     """corpus:// refs live in two homes on an interpretation: `based_on`, and — for
     a hypothesis's `proposes` — the pre-reforge inline-`uri` evidence shape (check.py's
     PROPOSES_EVIDENCE_KEYS; proposes predates the fact it targets, so it can't yet cite
-    a sources-table key). The gate must catch THIS home too, not just `based_on` — the
-    hash here is cited ONLY via `proposes.evidence[].uri`, isolating the extension."""
+    a sources-table key). The demand aggregate must catch THIS home too, not just
+    `based_on` — the deferred hash here is cited ONLY via `proposes.evidence[].uri`."""
     import frontmatter
 
     from corpus import paths, records
@@ -720,10 +764,8 @@ def test_verify_interpretation_proposes_inline_uri_without_need_warns(
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
     res = verify_ledger(ledger, join, set(), stamp=False)
-    assert not res.errors
-    assert len(res.warnings) == 1
-    assert "no enqueue/promote need" in res.warnings[0]
-    assert f"corpus://{h[:12]}" in res.warnings[0]
+    assert not res.errors and not res.warnings
+    assert res.demand == {h: 1}  # `other` is text/plain — raw surface, no demand
 
 
 def _ingest_vcard(root: Path, raw: bytes, name: str = "contact.vcf") -> str:

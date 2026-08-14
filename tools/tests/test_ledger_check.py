@@ -371,6 +371,59 @@ def test_authentication_bar(system: Path) -> None:
     assert sum("authentication bar" in e for e in rep.errors) == 1
 
 
+def _html_record(corpus_root: Path, h: str, *, formed: bool) -> None:
+    """A `text/html` record — `segments`-citation-surface (corpus §7.1's built-in
+    table). Formless it is a DEFERRED surface (§5.4, 1.8); with one persisted
+    segment it is verifiable and counts toward the bar again."""
+    p = corpus_root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    seg = "<!--segment text el=1\n-->\nhello\n" if formed else ""
+    p.write_text(f"---\nid: {h}\n---\n\n<!--artifact text/html\n-->\n\n{seg}",
+                 encoding="utf-8")
+
+
+def test_authentication_bar_excludes_deferred_surfaces(system: Path) -> None:
+    """*(1.8, §5.4)* The bar counts only verifiable-surface evidence. Deferred
+    surfaces (segment-less `segments`-surface records) carry a claim on every
+    lower rung, but never to `confirmed` — not as the authoritative artifact,
+    not toward independence — and the error names the actual defect. A formed
+    record of the same mime counts normally, and a mixed claim whose countable
+    evidence still meets the bar passes."""
+    d1, d2, formed = "9" * 64, "8" * 64, "7" * 64
+    pub = system / "corpora" / "corpus"
+    _html_record(pub, d1, formed=False)
+    _html_record(pub, d2, formed=False)
+    _html_record(pub, formed, formed=True)
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            # two independent records — but both deferred: fails, with the 1.8 cause
+            _claim("x", "both-deferred", status="confirmed",
+                   evidence=[{"_record": d1, "kind": "direct"},
+                             {"_record": d2, "kind": "direct"}]),
+            # authoritative — but deferred: authority can't ride an unformed surface
+            _claim("x", "auth-deferred", status="confirmed",
+                   evidence=[{"_record": d1, "kind": "authoritative"}]),
+            # countable evidence meets the bar; a deferred rider changes nothing
+            _claim("x", "mixed-ok", status="confirmed",
+                   evidence=[{"_record": H_PUB, "kind": "authoritative"},
+                             {"_record": d1, "kind": "direct"}]),
+            # a FORMED record of the same mime is verifiable-surface evidence
+            _claim("x", "formed-ok", status="confirmed",
+                   evidence=[{"_record": formed, "kind": "authoritative"}]),
+            # below the bar, deferred evidence is simply admissible
+            _claim("x", "provisional-ok", status="provisional",
+                   evidence=[{"_record": d1, "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    bar_errors = [e for e in rep.errors if "authentication bar" in e]
+    assert len(bar_errors) == 2
+    assert all("deferred surfaces" in e for e in bar_errors)
+    assert any("x:both-deferred" in e for e in bar_errors)
+    assert any("x:auth-deferred" in e for e in bar_errors)
+
+
 def test_reported_requires_attribution(system: Path) -> None:
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",

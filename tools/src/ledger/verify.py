@@ -21,13 +21,19 @@ residue narrows to ops the verifying environment genuinely can't run
 A claim whose evidence FAILS is flagged at the severity of its status:
 `confirmed` failing is an error; lower rungs warn.
 
-*(1.4)* One gate ignores claim status entirely: a `segments`-surface record
-(corpus §7.1 — raw/derived whole-record text that is presentation soup, e.g.
-a captured HTML DOM) carrying zero persisted segments has no citable surface
-at all, so claim evidence citing it is an ERROR at any status, before any
-anchor/quote matching (§13.2.4). Interpretations are exempt from the error —
-they may reference such a record freely — but draw a WARNING when they do so
-without a matching `enqueue`/`promote` need naming the same hash.
+*(1.4, regraded 1.8)* A `segments`-surface record (corpus §7.1 — raw/derived
+whole-record text that is presentation soup, e.g. a captured HTML DOM)
+carrying zero persisted segments is a DEFERRED surface (§13.2.4): evidence
+citing it is neither failed nor warned — its quotes are held unmatched
+(record-wide matching against soup would mislead), it stamps no binding, and
+it is excluded from the §5.4 bar (check's side of the contract). What such a
+record already attests mechanically still verifies now: a quote found on an
+attested byte-fact surface, or an anchor resolving through a derivation op,
+verifies exactly as on any record — and a quote that FAILS against a
+mechanically derived surface is still a failure; deferral never shields a
+wrong quote. Deferred citations aggregate per record — claim evidence and
+interpretation references alike — into `VerifyResult.demand`, the standing
+normalize-demand signal (cite-then-pressure; the 1.4 needs-warning retired).
 """
 
 from __future__ import annotations
@@ -82,6 +88,13 @@ class VerifyResult:
     # content the markdown can't scope (time_range, path, bbox …) — verified,
     # but honestly weaker than anchor-scoped
     record_scoped: int = 0
+    # *(1.8)* claim evidence entries held on DEFERRED surfaces (§13.2.4) —
+    # admissible, unverified, bar-excluded; resolved by forming, never failed
+    deferred: int = 0
+    # *(1.8)* the demand aggregate: {record hash: count of deferred citations},
+    # claim evidence and interpretation references together — the standing
+    # normalize-demand signal the deferral principle runs on
+    demand: dict[str, int] = field(default_factory=dict)
     # *(1.5)* quotes verified against a surface the corpus RESOLVER derived
     # mechanically (a derivation op the record markdown itself can't scope) —
     # verified, at full anchor precision, via a library call to `corpus.resolver`
@@ -422,6 +435,14 @@ def verify_ledger(
         def ok(skey: str, _map: dict[str, bool] = source_ok) -> None:
             _map.setdefault(skey, True)
 
+        def defer(skey: str, h: str) -> None:
+            # *(1.8, §13.2.4)* held on a deferred surface: admissible, unverified,
+            # bar-excluded. Blocks the source's stamp (an unchecked citation must
+            # not read as freshly verified) and aggregates into the demand signal.
+            res.deferred += 1
+            res.demand[h] = res.demand.get(h, 0) + 1
+            bad(skey)
+
         for claim in fact.get("claims") or []:
             if not isinstance(claim, dict):
                 continue
@@ -473,20 +494,13 @@ def verify_ledger(
                         res.warnings.append(
                             f"{where}: derivation-op pin drifted for corpus://{h[:12]}… "
                             f"({detail}) — re-verification needed")
-                if content.citation_surface == "segments" and content.segment_count == 0:
-                    # §13.2.4: a segments-surface record with no persisted segments has
-                    # no citable surface at all — record-wide matching against its raw/
-                    # derived whole-record text (nav chrome, script payloads, inlined
-                    # framing) would be structurally misleading, not merely weak. This
-                    # is an error regardless of claim status (unlike `sev` below), and
-                    # it preempts anchor/quote matching entirely — no fallback applies.
-                    res.errors.append(
-                        f"{where}: evidence cites corpus://{h[:12]}… whose mime "
-                        f"({content.media_type}) requires a rendered surface — no "
-                        "persisted segments; enqueue for normalize, cite after (§13.2.4)"
-                    )
-                    bad(skey)
-                    continue
+                # *(1.4, regraded 1.8, §13.2.4)* a segments-surface record with no
+                # persisted segments is a DEFERRED surface: what its byte-facts and
+                # derivation ops can still verify below verifies now; everything
+                # that would fall back to record-wide soup matching is held as
+                # `deferred` instead of failing — resolved by forming.
+                surface_deferred = (content.citation_surface == "segments"
+                                    and content.segment_count == 0)
                 anchor = e.get("anchor")
                 uri = derived_uri(sources, skey, anchor) or f"corpus://{h}"
                 from corpus import functional_uri
@@ -507,6 +521,9 @@ def verify_ledger(
                     haystack = text if (status == "ok" and text is not None) \
                         else content.full_text
                     if not haystack.strip() and not content.full_text.strip():
+                        if surface_deferred:
+                            defer(skey, h)
+                            continue
                         # a text-less record (an image-only scan not yet OCR'd):
                         # the quote is unverifiable, not wrong
                         res.unverifiable += 1
@@ -549,6 +566,12 @@ def verify_ledger(
                                     f"«{str(quote)[:60]}…»")
                                 bad(skey)
                             continue
+                        if surface_deferred:
+                            # (1.8) the anchor's surface hasn't formed and no op
+                            # could derive it — held, not unverifiable: forming
+                            # the record is exactly what resolves it
+                            defer(skey, h)
+                            continue
                         # unresolvable through the record markdown OR the
                         # resolver — the honest gap the resolver call narrows
                         # (§13.2, 1.5): artifact bytes absent, an optional
@@ -565,6 +588,12 @@ def verify_ledger(
                         bad(skey)
                         continue
                     if not _quote_found(str(quote), haystack):
+                        if surface_deferred:
+                            # (1.8) the quote isn't on the record's byte-fact
+                            # surfaces and its real surface hasn't formed —
+                            # held, never soup-matched, never failed
+                            defer(skey, h)
+                            continue
                         if status == "ok" and text is not None and \
                                 _quote_found(str(quote), content.full_text):
                             sev.append(f"{where}: quote exists in the record but NOT at "
@@ -574,9 +603,14 @@ def verify_ledger(
                                        f"corpus://{h[:12]}… — «{str(quote)[:60]}…»")
                         bad(skey)
                         continue
-                if status == "unchecked" and not quote:
-                    res.unverifiable += 1
-                    bad(skey)
+                if not quote and (status == "unchecked" or surface_deferred):
+                    if surface_deferred:
+                        # (1.8) a bare cite of a deferred surface attests nothing
+                        # checkable yet — held as demand, not counted verified
+                        defer(skey, h)
+                    else:
+                        res.unverifiable += 1
+                        bad(skey)
                     continue
                 res.verified += 1
                 if status == "unchecked" and quote:
@@ -613,12 +647,10 @@ def verify_ledger(
             f.write_text(json.dumps(fact, indent=2, ensure_ascii=False) + "\n",
                          encoding="utf-8")
 
-    # §13.2.4 (interpretations exempt from the error): a segment-less
-    # segments-surface record may be referenced freely — the pre-assertion
-    # workspace exists precisely to hold discoveries the evidence bar can't
-    # yet carry — but referencing one without a matching enqueue/promote
-    # need (naming that same hash) draws a warning, so the normalize demand
-    # rides along with the discovery instead of silently going missing.
+    # §13.2.4 *(1.8)*: interpretation references to deferred surfaces join the
+    # demand aggregate — the citation is itself the pressure signal, so the 1.4
+    # needs-warning (enqueue/promote typed beside the discovery) retires. The
+    # pre-assertion workspace references such records freely, as ever.
     for f in sorted(ledger_root.glob("interpretations/*.json")):
         try:
             interp = json.loads(f.read_text(encoding="utf-8"))
@@ -626,40 +658,27 @@ def verify_ledger(
             continue
         if not isinstance(interp, dict):
             continue
-        where = f"interpretations/{f.name} :: {interp.get('id')}"
-        need_hashes: set[str] = set()
-        for n in interp.get("needs") or []:
-            if not isinstance(n, dict) or n.get("action") not in ("enqueue", "promote"):
-                continue
-            nm = CORPUS_URI_RE.match(str(n.get("record", "")))
-            if nm:
-                need_hashes.add(nm.group(1))
         # corpus:// refs live in two homes on an interpretation: `based_on` (the
         # standard reference list) and — for a hypothesis's `proposes` — the
         # pre-reforge inline-`uri` evidence shape (proposes predates the fact it
-        # targets, so it can't yet cite a sources-table key, check.py's
-        # PROPOSES_EVIDENCE_KEYS handling). Both are references the discovery
-        # rides on, so both draw the same warning under the same need-matching.
+        # targets, so it can't yet cite a sources-table key). Both are references
+        # the discovery rides on, so both feed the same demand aggregate.
         refs: list[str] = list(interp.get("based_on") or [])
         proposes = interp.get("proposes")
         if isinstance(proposes, dict):
             for pe in proposes.get("evidence") or []:
                 if isinstance(pe, dict):
                     refs.append(str(pe.get("uri", "")))
-        warned: set[str] = set()
+        counted: set[str] = set()
         for b in refs:
             m = CORPUS_URI_RE.match(str(b))
-            if not m or m.group(1) in warned or m.group(1) in need_hashes:
+            if not m or m.group(1) in counted:
                 continue
             h = m.group(1)
             content = content_for(h)
             if content is None or content.citation_surface != "segments" \
                     or content.segment_count != 0:
                 continue
-            warned.add(h)
-            res.warnings.append(
-                f"{where}: references corpus://{h[:12]}… (segments-surface, none "
-                "persisted) with no enqueue/promote need — type the demand beside "
-                "the discovery"
-            )
+            counted.add(h)
+            res.demand[h] = res.demand.get(h, 0) + 1
     return res

@@ -466,6 +466,15 @@ def run_check(
             rep.err(where, "no evidence")
         hashes: set[str] = set()
         has_auth = False
+        # *(1.8, §5.4)* the bar counts only verifiable-surface evidence: entries
+        # citing a DEFERRED surface (a segments-surface record persisting no
+        # segments yet — join.deferred_surface) are admissible but carry nothing
+        # toward `confirmed`. `ref://` entries and environment-limited ops stay
+        # countable — verifiable in principle. Offline (no live corpora) the
+        # surface state is unknowable, so everything counts: fail open here,
+        # because inventing bar failures a resolver never saw helps no one.
+        countable_hashes: set[str] = set()
+        auth_countable = False
         priv = c.get("sensitivity") == "private"
         for e in evs:
             if not isinstance(e, dict):
@@ -484,6 +493,7 @@ def run_check(
                 rep.err(where, f"evidence kind {kind!r} missing/invalid "
                                f"(authoritative|direct|incidental)")
             has_auth = has_auth or kind == "authoritative"
+            entry_countable = True  # flipped only by a provably deferred surface
             anchor = e.get("anchor")
             if isinstance(anchor, str) and anchor.startswith("?"):
                 rep.err(where, f"anchor {anchor!r} must not carry a leading '?'")
@@ -503,11 +513,28 @@ def run_check(
                     h = str(entry["record"])
                     if FULL_HASH_RE.match(h):
                         hashes.add(h)
+                        if resolve_live and join.deferred_surface(h) is True:
+                            entry_countable = False
+                        else:
+                            countable_hashes.add(h)
                         if resolve_live and join.resolves(h) and join.is_private(h):
                             priv = True
-        if st == "confirmed" and evs and not (has_auth or len(hashes) >= 2):
-            rep.err(where, "fails the authentication bar for `confirmed` (needs an "
-                           "authoritative artifact or ≥2 independent records)")
+            if entry_countable and kind == "authoritative":
+                auth_countable = True
+        if st == "confirmed" and evs \
+                and not (auth_countable or len(countable_hashes) >= 2):
+            if has_auth or len(hashes) >= 2:
+                # the classic bar shape is met, but only by deferred surfaces —
+                # name the actual defect so the fix (form, or demote) is legible
+                rep.err(where, "fails the authentication bar for `confirmed`: its "
+                               "bar-carrying evidence cites deferred surfaces — "
+                               "records whose declared citation surface has no "
+                               "persisted segments yet (§5.4, 1.8). Form the "
+                               "records (the citations are standing demand) or "
+                               "demote the claim")
+            else:
+                rep.err(where, "fails the authentication bar for `confirmed` (needs an "
+                               "authoritative artifact or ≥2 independent records)")
         if priv:
             private_claims += 1
         c["_private"] = priv  # consumed by the file-level pass below, then dropped

@@ -185,8 +185,19 @@ def _cmd_verify(argv: Sequence[str]) -> int:
               "quote found record-wide)" if res.record_scoped else "")
     derived = (f" ({res.derived_resolved} derived-resolved via corpus resolver)"
               if res.derived_resolved else "")
-    print(f"\n{res.verified} verified{scoped}{derived}, {res.unverifiable} unverifiable, "
-          f"{res.stamped} stamped — {len(res.errors)} errors, "
+    if res.demand:
+        # (1.8, §13.2.4) the standing normalize-demand aggregate: deferred-surface
+        # citations per record, claim evidence + interpretation references alike
+        ranked = sorted(res.demand.items(), key=lambda kv: (-kv[1], kv[0]))
+        print(f"\nnormalize demand — {len(res.demand)} record(s) cited on deferred "
+              "surfaces (cite-then-pressure, §13.2.4):")
+        for h, n in ranked[:10]:
+            print(f"  corpus://{h[:12]}… x{n}")
+        if len(ranked) > 10:
+            print(f"  … and {len(ranked) - 10} more")
+    deferred = f", {res.deferred} deferred" if res.deferred else ""
+    print(f"\n{res.verified} verified{scoped}{derived}, {res.unverifiable} "
+          f"unverifiable{deferred}, {res.stamped} stamped — {len(res.errors)} errors, "
           f"{len(res.warnings)} warnings")
     return 0 if res.ok else 1
 
