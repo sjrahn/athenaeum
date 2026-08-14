@@ -26,15 +26,16 @@ _BLOCK_TAG_RE = re.compile(
     r"|<br\s*/?>",
     re.I,
 )
-# `[^<>]+` — NOT `[^>]+` (ledger 1.5 defect): a negated class also matches newlines, so on
-# arbitrary derived-surface text (raw JSON/chat member content, never HTML-authored)
-# a single stray unmatched `<` — a Discord "<3" heart, a bare "x < y" — greedily
-# consumed everything up to the NEXT unrelated `>` anywhere later in the document,
-# silently deleting spans of a multi-MB derived surface including whatever quote happened
-# to fall inside. Requiring the run to stay bracket-free still matches every well-formed
-# tag `norm` is meant to strip (`<td>`, `<u>`, `<br>` never nest `<`/`>`) while leaving an
-# unmatched stray bracket untouched.
-_TAG_RE = re.compile(r"<[^<>]+>")
+# Two defect generations teach this regex's shape. `[^>]+` (ledger 1.5 defect) let a
+# stray `<` consume across newlines to the next unrelated `>` anywhere later. `[^<>]+`
+# stopped the bracket-crossing but still ate any BRACKET-FREE prose span between the two
+# comparison operators clinical text writes constantly — "patients <65 years … in >900
+# patients" silently deleted the paragraphs between, 10% of a drug monograph invisible
+# to the quote verifier (found by the 2026-08-14 scribe verification). A stripped run
+# must now LOOK like a tag: `<` then a letter or `/`, as every element `norm` means to
+# strip does (`<td>`, `<u>`, `</u>`, `<br/>`, `<span …>`) and no comparison operand,
+# Discord `<3`, or bare `x < y` ever does.
+_TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _ELLIPSIS_RE = re.compile(r"\s*(?:\.\.\.|…|\|)\s*")
 _CHAR_FOLD = str.maketrans(  # the fold table IS the ambiguous chars — noqa: RUF001

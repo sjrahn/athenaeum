@@ -50,3 +50,22 @@ def test_norm_leaves_a_stray_bracket_alone():
 def test_squash_absorbs_separators_for_the_retry():
     assert squash("Head bolts - 22 ft-lb") == "Headbolts22ftlb"
     assert quote_found("Headbolts", "<b>Head</b> bolts")
+
+
+def test_comparison_operators_in_prose_survive_tag_stripping():
+    """The third generation of the tag-regex defect (2026-08-14 scribe find):
+    a bracket-free prose span between `<` and `>` — clinical text's paired
+    comparison operators — must NOT be eaten as a tag. Only tag-shaped runs
+    (`<` + letter or `/`) strip."""
+    from corpus.textnorm import norm, quote_found
+
+    hay = (
+        "patients >=65 years old and <65 years old. THE MECHANISM PARAGRAPH. "
+        "In controlled clinical trials in >900 patients, the efficacy was evaluated."
+    )
+    assert "THE MECHANISM PARAGRAPH" in norm(hay)
+    assert quote_found("THE MECHANISM PARAGRAPH", hay)
+    assert quote_found("<65 years old", hay)
+    # real inline tags still vanish without splitting the word
+    assert norm("under<u>line</u>d") == "underlined"
+    assert norm("a <span class='x'>b</span> c") == "a b c"
