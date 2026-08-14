@@ -453,6 +453,11 @@ def _check_perceptual_shape(seg: _segments.Segment) -> Iterator[Finding]:
 def _rule_section_empty(post, blocks, root) -> Iterator[Finding]:
     for blk in blocks:
         if isinstance(blk, _segments.Section) and not blk.segments:
+            # The terminal-contract inversion (spec §7.8, 3.3): a terminal form's
+            # section is bare BY DESIGN — content there is the violation
+            # (`terminal-stored-rendering`), so emptiness is conformance, not a defect.
+            if blk.form and _schemas.is_terminal_form(root, blk.form):
+                continue
             yield Finding(
                 rule_id="section-empty",
                 severity="warning",

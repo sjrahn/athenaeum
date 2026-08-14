@@ -804,3 +804,15 @@ def test_embed_missing_target_self_slice_exemptions(tmp_path):
     # video record, so it still requires an embed.
     seg = segments.Segment(atom="image", address="page=3", body="")
     assert "embed-missing-target" in {f.rule_id for f in lint.lint(video_post, [seg], root)}
+
+
+def test_section_empty_skips_terminal_forms(tmp_path):
+    """The §7.8 inversion: a terminal contract's section is bare BY DESIGN — an
+    empty `<!--section passthrough-->` is conformance, never a `section-empty`
+    warning; a bare (formless) empty section still warns."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.content = "<!--section passthrough-->"
+    assert not any(f.rule_id == "section-empty" for f in _lint(post, root))
+    post.content = "<!--section-->"
+    assert any(f.rule_id == "section-empty" for f in _lint(post, root))
