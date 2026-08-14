@@ -2,7 +2,7 @@
 
 Run the interpretive normalize stage as an external loop session over the queue's request/claim contract.
 
-`normalize` (spec §8.1, §8.5) is the one stage the tooling does not run itself — it is interpretive, performed by an external **loop session** (a scheduled agent). The tooling provides only the request/claim contract; it never invokes a normalizer. One generic loop serves every domain: the per-domain knowledge rides in overlays (`corpus guidance <id>`), so the loop never needs domain code — a codex contributes by authoring overlays and enqueuing, not by supplying a normalizer.
+`normalize` (spec §8.1, §8.5) is the one stage the tooling does not run itself — it is interpretive, performed by an external **loop session** (a scheduled agent). The tooling provides only the request/claim contract; it never invokes a normalizer. One generic loop serves every domain: the per-domain knowledge rides in overlays (`corpus guidance <id>`), so the loop never needs domain code — a requester contributes by authoring overlays and enqueuing, not by supplying a normalizer.
 
 The verb cycle each iteration:
 

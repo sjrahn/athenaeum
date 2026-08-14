@@ -14,7 +14,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--by",
         default=None,
-        help="Identifier of the requester (e.g. a codex agent), recorded on the request.",
+        help="Identifier of the requester (e.g. a consumer's build agent), recorded on the request.",
     )
     parser.add_argument(
         "--hint",

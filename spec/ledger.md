@@ -1,22 +1,25 @@
 ---
-spec_id: ATH-LEDGER
-title: "Ledger Specification"
-version: 1.9
+spec_id: ATH
+part: III
+title: "Athenaeum Specification — Part III: The Ledger"
+version: 15
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
 date_modified: 2026-08-14
 ---
 
-# Ledger Specification
+# Athenaeum Specification — Part III: The Ledger
 
 ## 1. Overview
 
 ### 1.1 What this is
 
-The **ledger** is the Athenaeum system's knowledge layer (`spec/athenaeum.md`): the single fact substrate between the corpora (faithful bytes, `spec/corpus.md`) and the codices (targeted prose compilations, `spec/codex.md`). It holds **concepts** — materialized real-world things (§4) carrying typed claims in which **every claim carries evidence**: `corpus://` URIs into captured bytes (span-precise where verified) and `ref://` URIs into mirrored reference datasets (§6.5) — and **interpretations**, the pre-assertion workspace beside them.
+The **ledger** is the Athenaeum system's knowledge layer ([Part I](athenaeum.md)): the single fact substrate atop the corpora (faithful bytes, [Part II](corpus.md)) — with them it forms the system's **end product**, consumed from outside by compilations and expert agents under the consumption contract (§12). It holds **concepts** — materialized real-world things (§4) carrying typed claims in which **every claim carries evidence**: `corpus://` URIs into captured bytes (span-precise where verified) and `ref://` URIs into mirrored reference datasets (§6.5) — and **interpretations**, the pre-assertion workspace beside them.
 
 The name is meant literally: a ledger is claims with evidence and an audit trail. Entries are *posted* (claims — asserted, each with computable trust) or held in *suspense* (interpretations — not yet assertable). The boundary between the two is physical (§1.3), which is what lets every consumer of the fact graph trust that everything in it is asserted knowledge.
+
+**Version 15** *(2026-08-14, the unification — Part I §8)* closes the ATH-LEDGER line at 1.9: this document becomes Part III of the one Athenaeum specification, versioned with it. The same revision moves codices outside the system — consumers of the product, no longer a member layer — so §12 becomes the **consumption contract**: the publication wall, previously specified as the codex build's leak check (ATH-CODEX §6, retired from the system's law), is restated as the normative obligation riding the product itself. The tracking notes below record the closed line's history.
 
 **Version 1.1** tracks the corpus layers amendment (`spec/corpus.md` 3.1): the corpus `status` field is retired, so citability re-keys from record status to **verifiable surfaces** — a stored rendering under a named form contract, mechanically derived content (engine-pinned), or authored prose (§6.3, §13.1) — and the snapshot binding gains a derivation-op version pin for derived-surface evidence (§13.2). The demand discipline is unchanged in spirit: the ledger raises corpus work by enqueuing, never by authoring records.
 
@@ -38,15 +41,15 @@ The name is meant literally: a ledger is claims with evidence and an audit trail
 
 ### 1.2 One ledger
 
-The ledger is not shared — it is the system's intermediate representation, consumed only by its owner's tooling and codices — so it is **one repository**, interpreting every corpus it declares (§2). *(1.9 / ATH-ARCH v14: the corpus layer is likewise one repository; tenancy there is derived per record from origin declarations, §6.4 — nowhere in the system is privacy a repo partition anymore.)*
+The ledger is not shared — it is the system's intermediate representation, read only by its owner's tooling and by consumers under §12 — so it is **one repository**, interpreting every corpus it declares (§2). *(1.9 / v14: the corpus layer is likewise one repository; tenancy there is derived per record from origin declarations, §6.4 — nowhere in the system is privacy a repo partition anymore.)*
 
 ```
-corpus ──interprets──▶  ledger  ──compiles──▶  codices  (the publication surface)
+corpus ──interprets──▶  ledger  ──consumed──▶  compilations, agents  (publication is theirs, gated by §12)
 ```
 
 - **Sensitivity is derived, not partitioned.** A claim citing private evidence is **private-backed** (§6.4) — the placement rule of the two-hub design ("a fact lives with its most private evidence") survives as computed metadata instead of repo placement. One thing is one file, whatever mix of sensitivities its claims carry.
-- **The wall moves to publication.** Privacy is enforced where it is load-bearing: codex profiles filter on sensitivity, and the public-profile leak check is the hard boundary (`spec/codex.md` §6). Nothing inside the ledger needs a wall — everything inside it is the owner's.
-- One knowledge substrate, many consumers: codices target the ledger; expert agents read it directly. Knowledge is authored once, here — never re-authored per presentation.
+- **The wall moves to publication.** Privacy is enforced where it is load-bearing: the consumption contract (§12) obliges any consumer publishing beyond the owner to filter on derived sensitivity, fail closed. Nothing inside the ledger needs a wall — everything inside it is the owner's.
+- One knowledge substrate, many consumers: compilations target the ledger; expert agents read it directly. Knowledge is authored once, here — never re-authored per presentation.
 
 ### 1.3 The assertion boundary
 
@@ -111,7 +114,7 @@ ledger/
 └── docs/                      # process docs — never world knowledge
 ```
 
-There is no `notes/` in the ledger: prose lives in codices. World knowledge lives only in `facts/` + `interpretations/`; the boundary is strict.
+There is no `notes/` in the ledger: prose lives with consumers (§12). World knowledge lives only in `facts/` + `interpretations/`; the boundary is strict.
 
 ## 4. Facts
 
@@ -220,7 +223,7 @@ fields:
 
 Undeclared element keys are admissible — they register nothing and validate nothing, exactly as unmarked fields do; an element carrying `{"handle": …}` or `{"name": …}` in place of `entity` is fine.
 
-**Entity references resolve — always.** Independent of any `elements` declaration, every `{"entity": <id>}` object inside a claim value MUST resolve to an existing fact (through the lineage map, §4.1): the no-dangling-references rule (§4.2) extended to the roster shape structured-array claims carry (§5.1). Codex scope traversal follows these references (`spec/codex.md`), so a dangling one would silently truncate a compilation — validation makes it an error at its source.
+**Entity references resolve — always.** Independent of any `elements` declaration, every `{"entity": <id>}` object inside a claim value MUST resolve to an existing fact (through the lineage map, §4.1): the no-dangling-references rule (§4.2) extended to the roster shape structured-array claims carry (§5.1). Consumers' scope traversals follow these references (§12), so a dangling one would silently truncate a compilation — validation makes it an error at its source.
 
 Any type's schema may declare **expectations** — conditional owed-ness, the declared half of gap-finding (§7.4):
 
@@ -355,14 +358,14 @@ Tenancy at the knowledge layer is computed, not partitioned (§1.2):
 - **Evidence sensitivity is a lookup.** A cited hash is **public** iff some holding record's **tenancy** is public; otherwise it is **private** (fail closed). *(1.9)* A record's tenancy is derived, never stored: **public** iff any of its origins carries a `tenancy: public` overlay declaration (origin overlays MAY declare `tenancy: public | private` — deployment metadata the ledger reads schema-first; the corpus itself never consumes it) **or** inherits public through an origin's `corpus://` lineage (a promoted member takes its container's tenancy, chased transitively); a record whose origins declare nothing falls closed to its **holding corpus's manifest `visibility:`** (default private — fail closed; `spec/athenaeum.md` §2.3). Any-public-wins across origins and holders — bytes demonstrably public are public evidence even if also captured privately; an additional private capture never lowers that. `ref://` evidence is public.
 - **A claim is private-backed** iff any of its evidence is private, or it asserts `sensitivity: private`. The override is **upward only** — derived privacy is a floor no assertion lowers. (A claim can be private on public evidence — a claim about your home citing a public map; the reverse cannot exist.)
 - **A fact file is private** iff every claim and roster entry it carries is private-backed, or it asserts `sensitivity: private` — existence itself can be the leak.
-- Sensitivity gates **nothing inside the ledger** — everything here is the owner's. It is the claim metadata codex profiles filter on and the public-profile leak check enforces (`spec/codex.md` §6): the mandatory profile axis, computed at its source.
+- Sensitivity gates **nothing inside the ledger** — everything here is the owner's. It is the claim metadata the consumption contract's publication filter keys on (§12): computed at its source, enforced at the boundary.
 
 ### 6.5 Reference datasets — `ref://`
 
 Some sources are linked, not captured. The corpus captures the world's *ephemera* — pages rot, so bytes are frozen under faithfulness obligations. Reference datasets mirror the world's *databases* — Wikipedia, MusicBrainz, OpenStreetMap: versioned, bulk-distributed, queried in place from a local mirror.
 
 - **Citation form: `ref://{dataset}/{id}`** — the dataset's **native identity** (a page slug, an MBID, an OSM element id), never a URL. Datasets are registered in the system manifest (`spec/athenaeum.md` §2.3) with mirror source and snapshot version; a `ref://` into an unregistered dataset is a validation error.
-- **Not corpus records.** No blake3, no capture, no record lifecycle, no faithfulness pass. Reproducibility pins on the **mirror snapshot version** (a ZIM date, a dump serial) — recorded at verification exactly as corpus evidence records touch identity (§13.2), and frozen into build certificates (`spec/codex.md` §5).
+- **Not corpus records.** No blake3, no capture, no record lifecycle, no faithfulness pass. Reproducibility pins on the **mirror snapshot version** (a ZIM date, a dump serial) — recorded at verification exactly as corpus evidence records touch identity (§13.2), and available for a consumer's build receipts to pin (§12).
 - **Graded like any evidence.** `kind` applies unchanged: a MusicBrainz release entry is `authoritative` for its own tracklist; a Wikipedia passage is typically `direct` or `incidental`.
 - **External identity lands here.** A concept's ids in the world's databases (a Wikidata QID, an MBID) are ordinary claims citing the dataset itself — `predicate: musicbrainz-id`, evidence `ref://musicbrainz/artist/{mbid}` — made once on the concept, never stamped per record (the 1.0 corpus `concept` block's join key, at its correct altitude).
 - *(Deferred tooling: the local-mirror resolver is post-reforge. Until it lands, validation checks `ref://` grammar and dataset registration; content verification (§13.2) reports `unverifiable` rather than failing.)*
@@ -434,7 +437,7 @@ Every predicate, qualifier key, concept type, edge type, and roster role in use 
 
 The ledger carries the **coverage obligation for every corpus it interprets** (`ledger.yaml` `corpora:`): every in-scope record should be *represented* — cited as evidence by at least one fact or interpretation, or rostered by a concept (§4.2). `coverage.md` is the generated ledger, tracked per corpus (covered / backlog / out-of-scope with reasons). A represented-but-shallow topic becomes a coverage-gap assessment with `capture` needs — the ledger is *designed* to generate ingestion demand. Coverage is how the ledger proves the compendium thesis over its corpora: nothing captured goes unrepresented silently.
 
-(Presentation scope is a codex concern, `spec/codex.md`. Coverage is not gated by sensitivity — private records are covered, privately.)
+(Presentation scope is a consumer concern, outside the system (§12). Coverage is not gated by sensitivity — private records are covered, privately.)
 
 ## 10. Harvest — mechanical claims
 
@@ -491,16 +494,22 @@ Semantics:
 - **Resolution is human, and binary**: either the invariant is wrong — amend it, and validation emits the **migration worklist** of claims and dependent notes to revisit — or a claim is wrong — challenge it with a `correction` (§7), sending it to `disputed`. An invariant is never silently bent.
 - **Grown organically**, like vocabulary: declare an invariant when a real inconsistency class appears, never ahead of one. A new invariant lands as a visible diff, and its first validation run *is* the audit.
 
-## 12. Referencing the ledger
+## 12. The consumption contract
 
-External consumers (codices, expert agents, deliverables) reference ledger content as:
+The corpus + ledger join is the system's **end product** (Part I §5): an interpreted archive whose every claim is evidence-backed, graded, and sensitivity-derived. Consumers — compilations (the codex estate), expert agents, deliverable pipelines — sit outside the system and read the product under this contract. *(v15: this section absorbs the publication obligations previously specified as the codex layer's — ATH-CODEX §5–§6 — at the altitude they were always true at: they ride the product, whatever tool renders it.)*
+
+Ledger content is referenced as:
 
 ```
 ledger://{id}                    → a fact (concept or edge) or an interpretation
 ledger://{id}:{short}            → a specific claim
 ```
 
-Facts, claims, and interpretations are citable; **generated views are not**. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following the lineage map (§4.1) so references survive merges and renames. What a published deliverable may *contain* is governed by sensitivity (§6.4) and the codex profile's leak check (`spec/codex.md` §6) — a filter over content, never a URI form.
+- **Read knowledge here; never re-author it.** Facts, claims, and interpretations are citable; **generated views are not** — and no consumer's derived prose is a citation target for anything. A consumer that hand-authors facts into its own output has left the contract: knowledge lives in the ledger, authored once. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following the lineage map (§4.1) so references survive merges and renames.
+- **Render the epistemic state honestly.** A consumer surfacing claims carries their ladder position with them — a `provisional` claim MUST NOT present like a `confirmed` one, and interpretive content (standing corrections, open questions) presents as interpretive. The ladder survives into presentation; that is the honesty the ledger bought.
+- **Publication filters on sensitivity, fail closed.** What a published deliverable may *contain* is governed by derived sensitivity (§6.4) — a filter over content, never a URI form. A consumer publishing beyond the owner MUST NOT emit private-backed claim content, the ids of fully-private fact files, or evidence bytes and derived assets that resolve only privately; private-backed content is excluded or explicitly stubbed, never leaked. This is the system's publication wall. *(Non-normative: the reference implementation is the codex kit's public-profile leak check, maintained with the codex estate.)*
+- **Pin the tuple when freezing.** A consumer freezing a deliverable SHOULD record its reproducibility tuple — the ledger commit, the touch identity of every record cited or resolved (§13.2), and the mirror snapshot version of every `ref://` dataset cited (§6.5) — so ledger or corpus movement beneath a frozen build is a *detected transition* (`ath ledger worklist` names the dependents), never silent rot discovered by readers.
+- **Evidence resolution materializes; it never originates.** A consumer's own `corpus://`/`ref://` reads happen only to render citations the ledger already asserts (footnotes, embeds, rasters) — never as a second, independent evidence path.
 
 ## 13. Validation
 
@@ -540,7 +549,7 @@ Beyond record existence, validation MUST — once per claim edit, and on demand 
 
 A claim whose evidence fails verification is flagged at the severity of its status (`confirmed` failing = error; lower rungs = warning). This is the mechanical guarantee behind the system's thesis: a citation is not decoration — it is a checked invariant.
 
-*(Implementation note, non-normative: the shared ledger package (`ath ledger …`) implements this contract, replacing the per-codex `check.py` copies that preceded the ledger layer. Beyond checking, it ships the revision-workflow generator — `ath ledger worklist`: fact → the notes deriving from it; record → the claims citing it; invariant → the claims violating it. Every edit to the durable layer deterministically yields the list of dependents to revisit; the worklist is the revision process, not a lint report.)*
+*(Implementation note, non-normative: the shared ledger package (`ath ledger …`) implements this contract, replacing the per-codex `check.py` copies that preceded the ledger layer. Beyond checking, it ships the revision-workflow generator — `ath ledger worklist`: record → the claims and rosters citing it; fact → its dependents (claims, edges, wikilinks, interpretations); invariant → the claims violating it. Every edit to the durable layer deterministically yields the list of dependents to revisit; the worklist is the revision process, not a lint report. Consumers track their own derived prose's dependence on facts on their side of the boundary — §12's tuple pin is what makes that mechanical.)*
 
 ### 13.3 Supersession — following a re-captured record
 
@@ -574,7 +583,7 @@ One concept carrying a public claim and a private-backed claim (one file — sen
   },
   {
     // 55ab…'s record derives private tenancy → this claim is private-backed (§6.4);
-    // public codex profiles filter it, and the leak check enforces that (spec/codex.md §6)
+    // public-facing consumers exclude it under the consumption contract (§12)
     "id": "pontiac-g8:owned-by", "predicate": "owned_by", "object": "steven-rahn",
     "status": "confirmed", "asof": "2026-05-12",
     "evidence": [{ "source": "s3", "anchor": "page=1", "quote": "…", "kind": "authoritative", "note": "bill of sale" }]

@@ -3,8 +3,9 @@
 A thin, lazy dispatcher: system-level verbs (`sync`, `status`) plus the
 delegation shim (`ath corpus …` → the corpus CLI, verbatim). Mirrors the
 corpus dispatcher's lazy-import discipline so the base import path stays
-clean; there is deliberately no bare `codex` command — codex verbs land here
-as `ath codex …` when the shared codex package ships.
+clean; there is deliberately no bare `ledger` command. (v15: the codex verbs
+left with the codex kit — the system's distribution carries no consumer
+tooling.)
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ System:
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
                 promote, stamp, worklist, regen (spec/ledger.md)
-  codex ...     the codex layer: scope, notes, build (spec/codex.md)
 
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)
@@ -51,10 +51,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ledger._cli import main as ledger_main
 
         return ledger_main(rest)
-    if cmd == "codex":
-        from codex._cli import main as codex_main
-
-        return codex_main(rest)
     if cmd == "sync":
         from ath._cli.sync import run
 

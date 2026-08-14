@@ -1,4 +1,4 @@
-"""corpus — the Athenaeum corpus library (ATH-CORPUS)."""
+"""corpus — the Athenaeum corpus library (the Athenaeum specification, Part II)."""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version

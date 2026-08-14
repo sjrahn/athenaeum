@@ -1,18 +1,19 @@
 ---
-spec_id: ATH-CORPUS
-title: "Corpus Specification"
-version: 3.14
+spec_id: ATH
+part: II
+title: "Athenaeum Specification — Part II: The Corpus"
+version: 15
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-05-24
 date_modified: 2026-08-14
 ---
 
-# Corpus Specification
+# Athenaeum Specification — Part II: The Corpus
 
-A **corpus** is the foundation layer of the Athenaeum system: a content-addressed archive of captured artifacts, represented as markdown records. This document is its complete specification, in two parts. **Part I (§1–§11)** is the normative data contract — every record in every corpus conforms to it, and tooling across the system cites its section numbers. **Part II (§12)** is the implementation guide: non-normative notes on how the reference pipeline produces conforming records. Two appendices follow — the glossary (Appendix A) and a non-normative content-type taxonomy (Appendix B).
+A **corpus** is the foundation layer of the Athenaeum system: a content-addressed archive of captured artifacts, represented as markdown records. This document — Part II of the Athenaeum specification ([Part I](athenaeum.md) is the architecture) — is the corpus's complete contract, in two halves. **The contract (§1–§11)** is normative — every record in every corpus conforms to it, and tooling across the system cites its section numbers. **The implementation guide (§12)** is non-normative: notes on how the reference pipeline produces conforming records. Two appendices follow — the glossary (Appendix A) and a non-normative content-type taxonomy (Appendix B).
 
-The corpus sits beneath the ledger layer, which interprets it through `corpus://` functional URIs — see [`athenaeum.md`](athenaeum.md) for the system architecture, [`ledger.md`](ledger.md) for the knowledge layer, and [`codex.md`](codex.md) for the codex contract.
+The corpus sits beneath the ledger layer, which interprets it through `corpus://` functional URIs — see [Part I](athenaeum.md) for the system architecture and [Part III](ledger.md) for the knowledge layer.
 
 The contract below is the record grammar's **3.12 shape** (§1.1's freeze). It reached this shape through fifteen amendments plus three implementation increments since 2.0, each forced by a measurement against the fleet rather than argued in the abstract. The full account — what broke, what was measured, what the migration cost — lives in [`corpus-history.md`](corpus-history.md); this table is the index.
 
@@ -43,10 +44,11 @@ The contract below is the record grammar's **3.12 shape** (§1.1's freeze). It r
 | 3.12 | 2026-07-31 | Decomposition-target amendment | A promoted stream is a single-track container of its source's own family, not a bare elementary stream. | history §12.37 |
 | 3.13 | 2026-08-09 | Frame-axis amendment | Animated images gain `frame=<N>` / `frame=<A>-<B>` (1-based ordinal / whole-sequence assertion); the polymorphic axis is declared on video, where it was always a timecode. First post-freeze amendment, landed complete (#124). | history §12.38 |
 | 3.14 | 2026-08-14 | Deferral tracking | The `citation_surface` ledger-consumption note (§7.1) tracks ATH-LEDGER 1.8: a segment-less `segments`-surface record is citable at reduced strength (deferred — excluded from the confirmed bar; the citation itself is the normalize demand), no longer an enqueue-before-cite error. §8.5's demand doctrine is deployment law: normalization runs only under demand — no standing drain program, no backlog. | — |
+| **15** | 2026-08-14 | **Unification** | The ATH-CORPUS line closes at 3.14: this document becomes Part II of the one Athenaeum specification, versioned with it (Part I §8). Codices leave the system in the same revision — external consumers of the corpus+ledger product (Part I §5); the record grammar is untouched. | — |
 
 ---
 
-# Part I — The contract (normative)
+# The contract (normative)
 
 ## 1. Overview
 
@@ -170,7 +172,7 @@ A record references a schema by the qualified id encoded on a block opener — f
 
 Each layer's declared fields extend its parent's; conflicts resolve in favor of the most-specific declaration.
 
-The on-disk organization of these schemas is implementation-discretionary; a reference layout appears in Part II (§12.2).
+The on-disk organization of these schemas is implementation-discretionary; a reference layout appears in the implementation guide (§12.2).
 
 ---
 
@@ -1449,7 +1451,7 @@ Re-stub appends a `touch[]` entry of the form `<pkg>.re-stub@<v>`. It remains th
 
 `normalize` (§8.1) is the one stage the corpus tooling does not itself initiate — it is driven by an external **loop session** (a scheduled agent), which runs the mechanical shaper where the record's form mapping licenses one and works interpretively where not (§12.5). The tooling provides only the **request/claim contract** that lets any actor ask for a (re-)normalization pass and await its result; it never invokes a normalizer.
 
-*(3.1)* The queue is **standing demand, never a backlog**. An entry exists because some consumer wants a pass — the ledger citing into a record, a codex compiling one, an overlay newly declaring a form, guidance improving — and the queue's size measures outstanding *demand*, not outstanding *work owed*. A formless record no consumer has asked about is complete, not pending (§4.1); it enters the queue when a reason does. *(3.14 — the deferral principle, deployment law)* This doctrine is operational, not aspirational: **normalization runs only under demand.** There is no standing drain program and no pre-emptive forming sweep; every ingested record is usable from birth (readable via its derived surfaces, citable at the strength its surface class carries — `ledger.md` 1.8), a drain session runs when demand exists and stops when the queue is dry, and `normalization_pressure` (§4.4.6 / the health report) is a *ranking input* for that demand, never a work list.
+*(3.1)* The queue is **standing demand, never a backlog**. An entry exists because some consumer wants a pass — the ledger citing into a record, an external consumer's build wanting a formed surface, an overlay newly declaring a form, guidance improving — and the queue's size measures outstanding *demand*, not outstanding *work owed*. A formless record no consumer has asked about is complete, not pending (§4.1); it enters the queue when a reason does. *(3.14 — the deferral principle, deployment law)* This doctrine is operational, not aspirational: **normalization runs only under demand.** There is no standing drain program and no pre-emptive forming sweep; every ingested record is usable from birth (readable via its derived surfaces, citable at the strength its surface class carries — `ledger.md` 1.8), a drain session runs when demand exists and stops when the queue is dry, and `normalization_pressure` (§4.4.6 / the health report) is a *ranking input* for that demand, never a work list.
 
 **The queue never writes records.** A record's `touch[]` and body are authored solely by `ingest` and the normalize pass (§8.1). Queue state is **external to the record** and untracked — regenerable orchestration, like `capture/` and `cache/` (§12.1). Queue operations are **read-only on records**: they may read a record (to gate on lint, or report a result) but never mutate it. One writer per concern — the normalizer owns the record; the queue owns only its own entries.
 
@@ -1607,11 +1609,11 @@ Genuinely deferred items for this spec version:
 
 ---
 
-# Part II — Implementation guide (non-normative)
+# Implementation guide (non-normative)
 
 ## 12. Implementation guide
 
-This part describes how the reference pipeline — the `corpus` tooling shipped by the orchestrator repo — produces records that conform to Part I: which passes run in what order, where files land on disk, detection and dedup strategy, queue mechanics, and maintenance. Part I says what each record carries; this part says how the pipeline gets there. Nothing here is mandated: an implementation is free to make different choices as long as it honors the Part I contracts, and where the two disagree, Part I wins and this part gets corrected.
+This guide describes how the reference pipeline — the `corpus` tooling shipped by the orchestrator repo — produces records that conform to the contract (§1–§11): which passes run in what order, where files land on disk, detection and dedup strategy, queue mechanics, and maintenance. The contract says what each record carries; this guide says how the pipeline gets there. Nothing here is mandated: an implementation is free to make different choices as long as it honors the contract, and where the two disagree, the contract wins and this guide gets corrected.
 
 ### 12.1 On-disk layout and sharding
 
@@ -1950,11 +1952,11 @@ The LLM normalizer never reads `schema/*.yaml` directly; it works through read-o
 This group was shaped by reviewing real normalizer runs on image-of-document records (scanned/photographed forms), whose dominant friction was `bbox=` **semantics**: agents read `bbox=x,y,w,h` as corner coordinates, overflowed `x+w>1`, and the resolve failed. The fixes target that directly: the `crop=`/`bbox=` bounds error names the format and the overflowing axis (`… bbox is x,y,WIDTH,HEIGHT, NOT corners`), `corpus resolve`/`corpus preview --help` print the full transform grammar (`_common.TRANSFORM_GRAMMAR`), and `mime/image/image.yaml` carries `normalization.guidance` teaching the bbox convention, crop-first legibility, orientation, and the verify loop.
 
 - **`mark=x,y,w,h[;…]`** (image → image, §6.2) — draws the region(s) onto the full image rather than cropping to them: the inspection dual of `crop=`/`bbox=` (a cycling high-visibility stroke, auto-labeled `1..N`, width ∝ image size). Composes after `page=`, so `corpus://<id>?page=4&mark=0.1,0.1,0.6,0.3` outlines a box on a rendered PDF page — how an agent that can't run a browser sees a proposed crop, as a PNG with the box burned in.
-- **`fit=<W>x<H>` | `fit=<preset>`** — downscale to fit, aspect-preserving and reduce-only; distinct from `resize=` (forces exact dimensions, may distort or enlarge). The **`llm` preset** bounds the image to a vision model's input budget: long edge ≤ `LLM_MAX_EDGE` (1568 px) and total pixels ≤ `LLM_MAX_PIXELS` (1,150,000), the smaller scale winning. These constants live in `transforms/image.py`, not Part I — §6.2 keeps presets implementation-defined because model limits drift. PDF `dpi=` is the other half of the dial: rasterize at the DPI you want, then `fit=llm` caps the result.
+- **`fit=<W>x<H>` | `fit=<preset>`** — downscale to fit, aspect-preserving and reduce-only; distinct from `resize=` (forces exact dimensions, may distort or enlarge). The **`llm` preset** bounds the image to a vision model's input budget: long edge ≤ `LLM_MAX_EDGE` (1568 px) and total pixels ≤ `LLM_MAX_PIXELS` (1,150,000), the smaller scale winning. These constants live in `transforms/image.py`, not the contract — §6.2 keeps presets implementation-defined because model limits drift. PDF `dpi=` is the other half of the dial: rasterize at the DPI you want, then `fit=llm` caps the result.
 - **`rotate=90|180|270`** and **`auto_orient`** — right a sideways/upside-down phone photo or scan before the agent reads it; `corpus preview --rotate`/`--auto-orient` expose them.
 - **`autocontrast`** (1% cutoff) and **`contrast=<factor>`** — pull a faint scan toward readable; `corpus preview --autocontrast` exposes the flag.
 
-The split that keeps `fit` honest: the transforms stay pure (no implicit fitting), and only the agent-facing surface defaults the budget on — `corpus preview` fits to `llm` unless `--full` (a preview *is* going into model context), while a raw `corpus resolve` applies `fit=` only when the URI says so (a codex embedding a crop in a human-facing deliverable wants native resolution). A typical loop iteration: `corpus preview <id> --page 4 --mark 0.1,0.1,0.6,0.3 -o /tmp/look.png`, read it, adjust, repeat; once right, write the segment at `page=4&bbox=0.1,0.1,0.6,0.3`. **`corpus preview --from-segments <id>`** is the verify half: it reads the record's already-committed bbox segment addresses (grouped by `page=`) and draws them, so the normalizer can confirm each written address frames the span it meant.
+The split that keeps `fit` honest: the transforms stay pure (no implicit fitting), and only the agent-facing surface defaults the budget on — `corpus preview` fits to `llm` unless `--full` (a preview *is* going into model context), while a raw `corpus resolve` applies `fit=` only when the URI says so (a consumer embedding a crop in a human-facing deliverable wants native resolution). A typical loop iteration: `corpus preview <id> --page 4 --mark 0.1,0.1,0.6,0.3 -o /tmp/look.png`, read it, adjust, repeat; once right, write the segment at `page=4&bbox=0.1,0.1,0.6,0.3`. **`corpus preview --from-segments <id>`** is the verify half: it reads the record's already-committed bbox segment addresses (grouped by `page=`) and draws them, so the normalizer can confirm each written address frames the span it meant.
 
 One caveat the image guidance makes explicit: unlike a PDF (vector source, re-renderable at higher `dpi=`), an image's resolution is fixed — cropping can't add detail, so for fine print on a low-res capture the levers are crop-tight + `resize=` (interpolated enlargement, not new detail) + `autocontrast`; there is no DPI escape hatch.
 
@@ -1979,7 +1981,7 @@ done
 
 That bare loop is the **scheduled** shape: a tick (cron) drains until dry, then the model sleeps until the next tick — the model polls, waking on a clock even when the queue is empty. `drain --wait` moves the poll off the model: it long-polls the claim primitive in the subprocess and returns the instant a request is claimable, blocking instead of exiting on an empty queue (until `--timeout`, if set; `--interval` sets the poll cadence, default 2 s). The wait holds no claim — `drain` claims atomically only at the moment it succeeds — so an interrupt mid-wait leaks nothing. A **standing** loop runs `corpus drain --wait` under a persistent runner that re-invokes per claim, so the (expensive) model wakes only when there is genuinely work. The contract is unchanged: `--wait` is an ergonomic over the same atomic claim.
 
-**The done gate.** `finalize` refuses (exit 1, claim left intact) unless the pass gate holds (§8.5: formed-where-declared + lint clean, both derived from the record; *3.2: the authored half retired with the layer*) — a dirty pass is never reported complete. A requester (a codex agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code, so it works for a re-normalization of an already-passed record (the record alone can't tell the new pass apart — the queue entry can). Because per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every codex; a codex contributes by authoring overlays and enqueuing, never by supplying a normalizer.
+**The done gate.** `finalize` refuses (exit 1, claim left intact) unless the pass gate holds (§8.5: formed-where-declared + lint clean, both derived from the record; *3.2: the authored half retired with the layer*) — a dirty pass is never reported complete. A requester (an external consumer's build agent) does `corpus enqueue <id>` then `corpus await <id>`; `await` polls the external state and resolves by exit code, so it works for a re-normalization of an already-passed record (the record alone can't tell the new pass apart — the queue entry can). Because per-domain knowledge rides in overlays (`corpus guidance`), one generic loop serves every requester; a requester contributes by authoring overlays and enqueuing, never by supplying a normalizer.
 
 **Result lifecycle.** `.req` and `.claim` are transient — each transition is an atomic rename that consumes the prior marker — but a settled pass leaves a `<id>.result` that nothing removes on its own (§8.5: an outcome must outlive the pass so a decoupled requester can await after the loop tick ends). Results are GC'd by age: `corpus queue --prune [--older-than DAYS]` (default 7 d; `0` = now) removes settled results past the grace window and sweeps crash-orphaned `*.tmp.*` scratch, never touching live `.req`/`.claim`. Run it periodically; it is idempotent.
 
@@ -2009,7 +2011,7 @@ Every stage is independently re-runnable (§8.3); each re-run appends a `touch[]
 
 ### 12.8 Maintenance: GC and record removal
 
-Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a routine, age-gated sweep of regenerable data (`gc`) and a deliberate, ref-checked removal of a tracked record (`rm` / `forget-origin`). Nothing here is normative — Part I is silent on removal; this is CLI hygiene over the storage layout (§12.1).
+Two distinct risk classes, kept as separate verbs (`corpus.maintenance`): a routine, age-gated sweep of regenerable data (`gc`) and a deliberate, ref-checked removal of a tracked record (`rm` / `forget-origin`). Nothing here is normative — the contract is silent on removal; this is CLI hygiene over the storage layout (§12.1).
 
 - **`corpus gc`** prunes, by file mtime, four regenerable categories — never a tracked record, a live queue entry, or an artifact that still has a record: **`cache`** (resolver output; re-warms on the next resolve), **`staging`** (leftover `capture/` debris — sidecars, crawl coordination files, abandoned partials), **`orphans`** (artifacts with no owning record — ingest is the only writer of `artifacts/`, so an orphan is exactly an artifact file whose record is gone: the debris of a `--force` re-capture, a re-stub, or a hand-`rm`), and **`export`** (regenerable bundles). Previews by default (counts + bytes per category); `--yes` deletes. `--older-than DAYS` sets the grace window (default 7; `0` prunes everything now) — generous beyond the brief window in ingest between writing an artifact and its record, so the orphan sweep never races a fresh capture. `--include` restricts the set; `--json` emits the structured result. Idempotent, empty-shard-tidying, safe on a cron tick.
 - **`corpus rm <id>`** removes a record across its layers — the `.md`, the content-addressed artifact, and now-empty shard dirs — with three guards. *Dry-run by default*: without `--yes`/`--force` it prints the plan (paths, sizes, inbound referrers) and deletes nothing. *Ref-checked*: `inbound_references` scans every record's `reference` blocks (§4.3.3.3) for one citing the target — a `source_url` that resolves to it — and refuses a cited record (exit 1) unless `--force`, naming the would-be-dangling referrers. (Ledger evidence citing the record is the other inbound-reference class; checking it is a ledger-side concern — `ath ledger worklist` names the citing claims.) *Reproducibility-warned*: the artifact is gitignored, so dropping it is undoable only by re-capture — `rm` says so, and `--keep-artifact` drops the `.md` while retaining the bytes. It deliberately does not touch the resolver cache (cache is keyed by functional-URI hash, so there is no clean per-record slice); `gc` reclaims orphaned cache by age. A fourth guard lands with containment (2.1): removing a **container** whose members have promoted records strands those records' bytes — `rm` names the promoted members and refuses without `--force`; even when forced, the failure mode is loud (health reports the ids unresolvable, history §12.17).
@@ -2096,7 +2098,7 @@ No server is part of the corpus contract — a corpus is a directory of records,
 
 Flagged for follow-up; not all are blockers.
 
-- **Sharding crossover** (applies to both corpus and codex layers). When does single-level hex-prefix sharding stop being adequate — at what record count do we move to two-level (`a7/f3/…`)? Likely a tooling-driven flag declared in `corpus.toml` (corpus side) or `codex.yaml` (codex side), with tooling rebalancing on change; the codex layer defers to this entry (see `codex.md`).
+- **Sharding crossover.** When does single-level hex-prefix sharding stop being adequate — at what record count do we move to two-level (`a7/f3/…`)? Likely a tooling-driven flag declared in `corpus.toml`, with tooling rebalancing on change.
 - **URI index persistence.** The URI → `id` lookup (`records.build_uri_index`) is rebuilt-on-start from the records — the settled default (an in-memory query engine, not a data store). A persistent side-file is a deferred perf optimization, not an open design question.
 - **Schema validation.** `corpus lint` validates *records*, not schemas; a `validate-schemas` command (`extended_fields` well-formed, `semantic_type` within the closed seven, no reserved `provenance` declared as a field, `capture.*` sections parseable) is still missing.
 - **Multi-corpus capture.** When the same content needs to land in multiple corpora, capture is currently a copy step on top; a "capture into multiple corpora" mode is a possible future feature.

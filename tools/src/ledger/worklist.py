@@ -3,8 +3,8 @@
 Every edit to the durable layer deterministically yields the dependents to
 revisit: a record → the claims and rosters citing it; a fact → the claims,
 edges, wikilinks, and interpretations referencing it; an invariant → the
-claims violating it. (The fact → dependent-notes direction lands with the
-codex build at 5e — notes carry their `generated_from` there.)
+claims violating it. (Consumers track their own derived prose's dependence on
+facts on their side of the boundary — the §12 tuple pin makes it mechanical.)
 """
 
 from __future__ import annotations

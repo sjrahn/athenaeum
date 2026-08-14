@@ -17,9 +17,9 @@ def _git(cwd: Path, *args: str) -> None:
 
 @pytest.fixture()
 def system(tmp_path: Path) -> Path:
-    """A miniature system: three bare 'remotes' + an orchestrator root with a manifest."""
+    """A miniature system: two bare 'remotes' + an orchestrator root with a manifest."""
     remotes = tmp_path / "remotes"
-    for name in ("corpus", "ledger", "codex-demo"):
+    for name in ("corpus", "ledger"):
         bare = remotes / f"{name}.git"
         bare.mkdir(parents=True)
         _git(bare, "init", "--bare", "--initial-branch=main", ".")
@@ -43,8 +43,6 @@ def system(tmp_path: Path) -> Path:
         "ledger:\n"
         "  ledger:\n"
         "    description: test ledger\n"
-        "codices:\n"
-        "  codex-demo:\n"
     )
     return root
 
@@ -54,14 +52,12 @@ def test_manifest_defaults(system: Path) -> None:
     assert [(m.name, m.layer) for m in members] == [
         ("corpus", "corpora"),
         ("ledger", "ledger"),
-        ("codex-demo", "codices"),
     ]
-    corpus, ledger, demo = members
+    corpus, ledger = members
     assert corpus.path == system / "corpora" / "corpus"
     assert corpus.remote.endswith("/remotes/corpus.git")
     assert corpus.description == "test hub"
     assert ledger.path == system / "ledger"  # the ledger sits at the workspace root
-    assert demo.path == system / "codices" / "codex-demo"
 
 
 def test_manifest_exactly_one_ledger(tmp_path: Path) -> None:
@@ -115,7 +111,7 @@ def test_find_root_walks_up(system: Path) -> None:
 def test_sync_clones_then_reports(system: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["sync", "--root", str(system)]) == 0
     assert (system / "corpora" / "corpus" / ".git").exists()
-    assert (system / "codices" / "codex-demo" / "README.md").read_text() == "# codex-demo\n"
+    assert (system / "ledger" / "README.md").read_text() == "# ledger\n"
     capsys.readouterr()
     assert main(["sync", "--root", str(system)]) == 0  # idempotent
     out = capsys.readouterr().out
@@ -144,7 +140,7 @@ def test_status_missing_then_clean(system: Path, capsys: pytest.CaptureFixture[s
     # the orchestrator root itself is not a git repo in this fixture → MISSING row
     assert main(["status", "--root", str(system)]) == 1
     out = capsys.readouterr().out
-    assert out.count("MISSING") == 4  # root + 3 members
+    assert out.count("MISSING") == 3  # root + 2 members
     _git(system, "init", "--initial-branch=main", ".")
     assert main(["sync", "--root", str(system)]) == 0
     capsys.readouterr()

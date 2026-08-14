@@ -1,19 +1,22 @@
 # athenaeum
 
 The Athenaeum system's shared tooling distribution — one Python package
-shipping four libraries and two CLIs:
+shipping three libraries and two CLIs:
 
 | Package | Surface | Contract |
 |---|---|---|
-| `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → (demand-driven) normalize pipeline | [ATH-CORPUS](../spec/corpus.md) |
-| `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `corpus`, `ledger`, `codex`) | [ATH-ARCH](../spec/athenaeum.md) |
-| `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH-LEDGER](../spec/ledger.md) |
-| `codex` | `ath codex <name> scope\|notes\|build\|check` — targeting, vault generation, the certified build with the public-profile leak check | [ATH-CODEX](../spec/codex.md) |
+| `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → (demand-driven) normalize pipeline | [ATH Part II](../spec/corpus.md) |
+| `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `issue`, `corpus`, `ledger`) | [ATH Part I](../spec/athenaeum.md) |
+| `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH Part III](../spec/ledger.md) |
 
 Also bundled: the **universal** corpus schemas (`mime`, `origin`, `atom/**`,
 `context/issue/**`). Each corpus repo supplies only its own records and its
-own corpus-local schema extensions; the ledger and codices carry no tooling
-of their own.
+own corpus-local schema extensions; the ledger carries no tooling of its own.
+
+Consumers of the system's product use this distribution **as a library**
+(ATH Part I §5): the codex kit — `~/workspaces/codices/tools`, with its own
+`codex` CLI and the ATH-CODEX contract — is the reference consumer. The
+distribution itself carries no consumer tooling (v15).
 
 ## Install
 
@@ -47,15 +50,15 @@ tools/
 ├── pyproject.toml          # one distribution: packages src/{corpus,ath,ledger,codex}
 ├── README.md
 ├── src/
-│   ├── corpus/             # ATH-CORPUS library + `corpus` CLI (+ schemas_default/)
+│   ├── corpus/             # the corpus library + `corpus` CLI (+ schemas_default/)
 │   ├── ath/                # the umbrella CLI: manifest, status/sync, delegation shims
-│   ├── ledger/             # model, check, verify, harvest, promote, views, coverage
-│   └── codex/              # manifest, scope, notes, build (raster + leak check + certificate)
+│   └── ledger/             # model, check, verify, harvest, promote, views, coverage
 └── tests/
 ```
 
 ## Conformance authority
 
-The specs in [`../spec/`](../spec/) are the contract. Where this
-implementation needs something a spec doesn't cover, the spec gets updated
-first (the workspace root `CLAUDE.md` states the same law).
+The specification in [`../spec/`](../spec/) — one document, three parts, one
+version — is the contract. Where this implementation needs something the spec
+doesn't cover, the spec gets updated first (the workspace root `CLAUDE.md`
+states the same law).

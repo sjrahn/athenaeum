@@ -426,8 +426,8 @@ def run_check(
                     rep.err(where, f"wikilink [[{link}]] doesn't match a fact id")
         # universal (§4.4): every {"entity": <id>} inside a claim value resolves —
         # the no-dangling rule extended to the roster shape structured-array
-        # claims carry. Codex scope traversal follows these refs, so a dangle
-        # would silently truncate a compilation; validation errors on it here.
+        # claims carry. Consumers' scope traversals follow these refs (§12), so
+        # a dangle would silently truncate a compilation; it errors at its source.
         for eid in _iter_entity_refs(c.get("value")):
             if resolve_id(eid) is None:
                 rep.err(where, f"dangling entity reference {eid!r} in claim value")

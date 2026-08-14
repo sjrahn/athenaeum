@@ -3,7 +3,7 @@
 > **Deferral principle (ATH-CORPUS §8.5 3.14).** Normalization runs only under demand.
 > This loop is started **when the queue has entries** — deferred-surface citations
 > aggregating in `ath ledger verify`'s demand report, an explicit `corpus enqueue`, a
-> codex build wanting a surface — and it **stops when the queue is dry**. It is never a
+> consumer's build wanting a surface — and it **stops when the queue is dry**. It is never a
 > standing background program, and queue emptiness is the normal, healthy state.
 
 The operating procedure for draining the queue: one session that claims whatever's

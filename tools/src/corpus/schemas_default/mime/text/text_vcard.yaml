@@ -107,7 +107,7 @@ normalization:
 
     Names, phone numbers, emails, addresses, birthdays, and notes are the CONTENT. They are in
     the cards' verbatim bytes; do NOT redact, mask, or placeholder. Derived sensitivity is a
-    ledger/codex concern, never a partition here.
+    ledger/consumer concern, never a partition here.
 
     ## Verification
 

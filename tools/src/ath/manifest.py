@@ -1,12 +1,14 @@
 """`athenaeum.yaml` — the member manifest.
 
 The manifest at the orchestrator repo root is the single registry of the
-system's member repos (corpora, the ledger, codices) and the runtime join the
-tooling reads. Members are keyed by name under a `corpora:` / `ledger:` /
-`codices:` mapping; paths and remotes derive by convention — `corpora/<name>`,
-`<name>` at the root for the ledger, `codices/<name>`, and `{org}/{name}.git`
-— unless a member overrides `path:` / `remote:`. There is exactly one ledger
-per deployment (`spec/ledger.md` §1.2).
+system's member repos (corpora and the ledger) and the runtime join the
+tooling reads. Members are keyed by name under a `corpora:` / `ledger:`
+mapping; paths and remotes derive by convention — `corpora/<name>`, `<name>`
+at the root for the ledger, and `{org}/{name}.git` — unless a member
+overrides `path:` / `remote:`. There is exactly one ledger per deployment
+(`spec/ledger.md` §1.2). Consumers of the system's product (codices, expert
+agents) are NOT members: the system holds no registry of them (spec
+athenaeum.md §5, v15).
 
 Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
 locally-mirrored external databases cited as `ref://` evidence. They are
@@ -28,7 +30,7 @@ MANIFEST_NAME = "athenaeum.yaml"
 _DEFAULT_SNAPSHOT = "docs/tickets.md"
 
 # layer key → default parent directory ("" = the workspace root)
-_LAYER_DIRS = {"corpora": "corpora", "ledger": "", "codices": "codices"}
+_LAYER_DIRS = {"corpora": "corpora", "ledger": ""}
 
 
 class ManifestError(RuntimeError):
@@ -38,7 +40,7 @@ class ManifestError(RuntimeError):
 @dataclass(frozen=True)
 class Member:
     name: str
-    layer: str  # "corpora" | "ledger" | "codices"
+    layer: str  # "corpora" | "ledger"
     path: Path  # absolute working-tree location
     remote: str
     description: str
