@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 MANIFEST_NAME = "athenaeum.yaml"
-_DEFAULT_SNAPSHOT = ".claude/skills/orchestrator/references/tickets.md"
+_DEFAULT_SNAPSHOT = "docs/tickets.md"
 
 # layer key → default parent directory ("" = the workspace root)
 _LAYER_DIRS = {"corpora": "corpora", "ledger": "", "codices": "codices"}

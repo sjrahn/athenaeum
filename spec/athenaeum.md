@@ -193,7 +193,7 @@ If the operation could produce different valid outputs depending on judgment, it
 
 ### 6.2 Personas
 
-- **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). Boots from `.claude/skills/orchestrator/`; keeps logbook/state/gotchas as institutional memory. Member repos carry no personas.
+- **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). *(v14)* Boots **thin**: the root `CLAUDE.md` (pointers, gates, the deferral principle — deliberately no resident skill or institutional-memory tree; the specs, the tracker, and git history are the system's memory). Member repos carry no personas.
 - **The Normalizer** (corpus agent) — one record (or small batch) per invocation, attested → formed (or terminal), through the decompose/edit/compile substrate — state reported, never stored (`spec/corpus.md` §4.1); never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (`spec/corpus.md` §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
 - **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (`spec/ledger.md` §4).
 - **Codex compilers** — the synthesis passes that render scoped facts into a codex's voice; scope materialization and the build are deterministic tooling.
@@ -215,7 +215,7 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 
 - **The specs are law.** Code conforms to `spec/`; when code needs something a spec doesn't cover, the spec changes first — and a change to `spec/corpus.md`'s data contract additionally requires a migration story for every existing record.
 - **History files away under tags** (`pre-reforge` marks the 2026-07 restructuring); the working tree carries only the system's current form.
-- **Institutional memory is layered like the system**: the orchestrator persona's references for system-level memory and history; the system runbooks (`docs/`) for operational knowledge. Auto-memory is never the source of truth.
+- **Institutional memory is the system itself** *(v14)*: the specs for law, the tracker for the backlog and its rulings, git history for what happened and why, the system runbooks (`docs/`) for operational knowledge. There is deliberately no persona-resident memory tree — a logbook beside the system drifts from it. Auto-memory is never the source of truth.
 
 ## 9. Out of scope
 

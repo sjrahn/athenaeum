@@ -12,10 +12,10 @@ which already does them well. Duplicating them here would be a second way to do 
 thing, and the tracker would start disagreeing with itself.
 
 **Why the snapshot exists.** Session boot reads the backlog. Without a committed copy, a
-tailnet hiccup or a headless run without credentials boots blind to 70+ tickets — and the
-skill files are supposed to be the source of truth for system state. The snapshot keeps that
-contract honest: the tracker is authoritative, the snapshot is the offline read and the
-git-history trace of how the backlog moved.
+tailnet hiccup or a headless run without credentials boots blind to the whole backlog. The
+snapshot keeps the contract honest: the tracker is authoritative, the snapshot
+(`docs/tickets.md` by default; `tracker.snapshot` in the manifest) is the offline read and
+the git-history trace of how the backlog moved.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ usage: ath issue <list|show|sync> [options...]
 
 Ticket state lives in the tracker; `sync` mirrors it into the repo so a session can
 boot without the network. Use `fj issue comment <n>` to record a decision — the trail
-is the point (see the orchestrator skill).
+is the point.
 """
 
 

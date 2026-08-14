@@ -1,16 +1,18 @@
-# Normalization drain monitor — the standing queue loop
+# Normalization drain — the demand loop
 
-The operating procedure for running normalization as a **standing loop over the queue**:
-one long-lived session that claims whatever's enqueued, hands it to a `normalizer` agent,
-and finalizes — record-agnostic, near-zero idle cost. Starting it is a matter of following
-§*Start the monitor* below; **which records are enqueued doesn't matter** — the loop drains
-whatever is there.
+> **Deferral principle (ATH-CORPUS §8.5 3.14).** Normalization runs only under demand.
+> This loop is started **when the queue has entries** — deferred-surface citations
+> aggregating in `ath ledger verify`'s demand report, an explicit `corpus enqueue`, a
+> codex build wanting a surface — and it **stops when the queue is dry**. It is never a
+> standing background program, and queue emptiness is the normal, healthy state.
 
-The loop serves **either corpus** — the queue is per-corpus state (`queue/` in each corpus
-root), so a monitor drains ONE hub; run one per corpus when both have work. **Boot the
-session at the athenaeum workspace root** (where the `normalizer` subagent is defined,
-`.claude/agents/normalizer.md`) and run the `corpus` commands with cwd inside the target
-corpus (`corpus` at the workspace root) or with `--corpus-root`.
+The operating procedure for draining the queue: one session that claims whatever's
+enqueued, hands each record to a `normalizer` agent, and finalizes — record-agnostic.
+**Which records are enqueued doesn't matter** — the loop drains whatever demand exists.
+
+**Boot the session at the athenaeum workspace root** (where the `normalizer` subagent is
+defined, `.claude/agents/normalizer.md`) and run the `corpus` commands with cwd inside
+the corpus (`corpus` at the workspace root) or with `--corpus-root`.
 
 This is the *how-to for running the loop*. The generic request/claim contract and its two
 modes are the tooling's own runbook — read it first, don't restate it:

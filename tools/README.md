@@ -5,7 +5,7 @@ shipping four libraries and two CLIs:
 
 | Package | Surface | Contract |
 |---|---|---|
-| `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → normalize pipeline | [ATH-CORPUS v3.1](../spec/corpus.md) |
+| `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → (demand-driven) normalize pipeline | [ATH-CORPUS](../spec/corpus.md) |
 | `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `corpus`, `ledger`, `codex`) | [ATH-ARCH](../spec/athenaeum.md) |
 | `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH-LEDGER](../spec/ledger.md) |
 | `codex` | `ath codex <name> scope\|notes\|build\|check` — targeting, vault generation, the certified build with the public-profile leak check | [ATH-CODEX](../spec/codex.md) |
@@ -17,8 +17,8 @@ of their own.
 
 ## Install
 
-Both CLIs come from ONE uv tool install of this directory (editable for dev;
-see the workspace root `CLAUDE.md`, gotcha #1):
+Both CLIs come from ONE uv tool install of this directory (editable, so a
+`src/` edit is live in the installed CLIs without reinstalling):
 
 ```bash
 uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with cryptography
@@ -58,4 +58,4 @@ tools/
 
 The specs in [`../spec/`](../spec/) are the contract. Where this
 implementation needs something a spec doesn't cover, the spec gets updated
-first (workspace root `CLAUDE.md`, key principles).
+first (the workspace root `CLAUDE.md` states the same law).
