@@ -33,18 +33,25 @@ import pytest
 
 from corpus import records
 
-# tools/tests/test_members_parity.py -> parents[2] is the athenaeum workspace root (see
-# test_ccsession.py's OVERLAY path for the same convention).
-_WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-_CORPORA_ROOT = _WORKSPACE_ROOT / "corpora"
-_CORPUS_ROOTS = {
-    "corpus": _CORPORA_ROOT / "corpus",
-    "corpus-private": _CORPORA_ROOT / "corpus-private",
-}
-_HAVE_CORPORA = all(root.is_dir() for root in _CORPUS_ROOTS.values())
+# Live-corpus locations resolve through the MANIFEST (athenaeum.yaml walked up
+# from this file), never a hardcoded layout — member `path:` overrides moved the
+# public corpus to the workspace root in the single-corpus consolidation, and
+# nothing but the manifest may know where members live (spec/athenaeum.md §2.3).
+def _manifest_corpus_roots() -> dict[str, Path]:
+    try:
+        from ath import manifest
+
+        root = manifest.find_root(Path(__file__).resolve().parent)
+        return {m.name: m.path for m in manifest.load(root) if m.layer == "corpora"}
+    except Exception:  # no manifest above this checkout — tests self-skip
+        return {}
+
+
+_CORPUS_ROOTS = {name: p for name, p in _manifest_corpus_roots().items() if p.is_dir()}
+_HAVE_CORPORA = bool(_CORPUS_ROOTS)
 _NO_CORPORA_REASON = (
-    "corpora/corpus and corpora/corpus-private are untracked clones not present "
-    "in this checkout"
+    "no manifest-registered corpus clones present in this checkout "
+    "(untracked members; see athenaeum.yaml)"
 )
 
 _DATA_DIR = Path(__file__).resolve().parent / "data" / "members_parity"
@@ -105,7 +112,9 @@ def _live_embeds(fixture: dict) -> tuple[list[dict], bool]:
     `<!--members-->` roster (`records.load` sets `_members_block` False only when legacy
     per-asset blocks were actually read).
     """
-    corpus_root = _CORPUS_ROOTS[fixture["hub"]]
+    corpus_root = _CORPUS_ROOTS.get(fixture["hub"])
+    if corpus_root is None:
+        pytest.skip(f"member {fixture['hub']!r} is not cloned in this checkout")
     record_path = corpus_root / fixture["relpath"]
     post = records.load(record_path)
     converted = bool(post.metadata.get("_members_block", True))
@@ -283,7 +292,9 @@ def test_derivation_reproduces_mechanical_fields(fixture_path: Path) -> None:
     from corpus import resolver
 
     fixture = _load_fixture(fixture_path)
-    corpus_root = _CORPUS_ROOTS[fixture["hub"]]
+    corpus_root = _CORPUS_ROOTS.get(fixture["hub"])
+    if corpus_root is None:
+        pytest.skip(f"member {fixture['hub']!r} is not cloned in this checkout")
     record_path = corpus_root / fixture["relpath"]
     record_id = records.load(record_path).metadata["id"]
 

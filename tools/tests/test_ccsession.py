@@ -14,10 +14,26 @@ from pathlib import Path
 from corpus import ccsession, hashing, paths, records, ziparchive
 from corpus._cli import dispatch
 
-OVERLAY = (
-    Path(__file__).resolve().parents[2]
-    / "corpora/corpus-private/schema/origin/claude-code-session.yaml"
-)
+def _overlay_path() -> Path:
+    """The live claude-code-session overlay, resolved through the MANIFEST —
+    member locations are path-overridable (spec/athenaeum.md §2.3), so no test
+    may hardcode one. Falls back to a non-existent path when no member holds
+    the overlay; the fixture guards with `.is_file()` either way."""
+    try:
+        from ath import manifest
+
+        root = manifest.find_root(Path(__file__).resolve().parent)
+        for m in manifest.load(root):
+            if m.layer == "corpora":
+                p = m.path / "schema/origin/claude-code-session.yaml"
+                if p.is_file():
+                    return p
+    except Exception:
+        pass
+    return Path("/nonexistent/claude-code-session.yaml")
+
+
+OVERLAY = _overlay_path()
 
 
 # --------------------------------------------------------------------------- helpers
