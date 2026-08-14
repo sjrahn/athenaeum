@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -35,7 +36,10 @@ Commands:
   dedupe        coalescence proposer (#177) — candidate duplicate concepts/
                 edges, near-duplicate predicates, dead schema surface;
                 READ-ONLY, proposes only, never merges/writes; --json,
-                --section concepts|predicates|schemas
+                --section concepts|predicates|schemas; --review [PATH]
+                writes the concepts section as a self-contained HTML
+                judgment page (#182) instead of printing it (default path
+                <ledger>/.cache/dedupe-review.html)
   harvest       run the mechanical minting rules (harvest/*.yaml, §10):
                 strip auto output, sweep the corpora, re-mint
   promote ID    move a hypothesis's proposed claim into its fact (§7.2)
@@ -252,9 +256,33 @@ def _cmd_dedupe(argv: Sequence[str]) -> int:
     ap.add_argument("--json", action="store_true", help="print the full report as JSON")
     ap.add_argument("--section", choices=["concepts", "predicates", "schemas"], default=None,
                     help="restrict to one section (default: all three)")
+    ap.add_argument(
+        "--review", nargs="?", const="", default=None, metavar="PATH",
+        help="write the concepts section as a self-contained HTML judgment page (#182) "
+             "to PATH (default: <ledger_root>/.cache/dedupe-review.html) instead of "
+             "printing it; composes with nothing else",
+    )
     ns = ap.parse_args(list(argv))
     ledger_root, _, _ = _system(ns.root)
     from ledger.dedupe import propose
+
+    if ns.review is not None:
+        if ns.json:
+            print("ath ledger dedupe: --review cannot be combined with --json",
+                  file=sys.stderr)
+            return 2
+        from ledger.review import classify_groups, render_review
+
+        report = propose(ledger_root)
+        page = render_review(ledger_root, report)
+        out_path = Path(ns.review) if ns.review else ledger_root / ".cache" / "dedupe-review.html"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out_path.with_name(out_path.name + ".tmp")
+        tmp.write_text(page, encoding="utf-8")
+        os.replace(tmp, out_path)
+        open_n, adjudicated_n = classify_groups(ledger_root, report["concepts"])
+        print(f"review page: {out_path} ({open_n} open, {adjudicated_n} adjudicated groups)")
+        return 0
 
     report = propose(ledger_root)
     if ns.section:
