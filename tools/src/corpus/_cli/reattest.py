@@ -28,6 +28,7 @@ from corpus import derive, records, touches
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 from corpus.derive import DeriveError
 from corpus.draft import mbox_manifest
+from corpus.mux import MuxFailed
 from corpus.store import ArtifactMissing
 
 
@@ -173,7 +174,9 @@ def run(args: argparse.Namespace) -> int:
             new_text = reattest_record(rf, corpus_root, fingerprint_cli=fp, messages=ordinals)
         except mbox_manifest.MessageHashConflict as exc:
             sys.exit(str(exc))  # stale declaration — a hard error (§12.11), never papered over
-        except (DeriveError, ArtifactMissing) as exc:
+        except (DeriveError, ArtifactMissing, MuxFailed) as exc:
+            # MuxFailed: a member extraction the current mux can't perform (e.g. a codec
+            # its container family refuses) — a per-record condition, never a fleet-stopper.
             print(f"  skip {rid}: {exc}", file=sys.stderr)
             failed += 1
             continue
