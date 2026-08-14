@@ -1,4 +1,4 @@
-"""Overlay-declared URL equivalence — identity keys (spec §7.2, docs/URL-EQUIVALENCE.md).
+"""Overlay-declared URL equivalence — identity keys (spec §7.2).
 
 Pure-function units for `urls.identity_key` / `normalize_equivalence` / `apply_rewrite_rules`,
 plus integration over a tmp corpus + origin overlay (no browser/network): the recipe resolver,

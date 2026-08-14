@@ -602,7 +602,8 @@ def _reconcile_pagination(
 ) -> Path | None:
     """Walk a paginated work's pages, merge them into one HTML, ingest exactly ONE artifact.
 
-    Per `docs/PAGINATION-RECONCILE.md`: each page is captured via the staging-only `capture()`
+    Per the pagination-reconcile invariant (`capture.pagination`): each page is
+    captured via the staging-only `capture()`
     path, read into memory, and its staging file unlinked — per-page bytes are **never**
     content-addressed (the INVARIANT). Only the merged document is ingested. The clean seed
     (`canonical`) is the recorded origin URI; every constituent page URL — both the bare site

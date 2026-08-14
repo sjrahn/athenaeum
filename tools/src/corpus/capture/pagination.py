@@ -14,8 +14,8 @@ pure, browser-free logic it drives:
 - ``expected_count`` — read a site-advertised item count for the completeness check.
 
 Everything here operates on HTML strings via BeautifulSoup — no browser, no I/O — so the
-merge is unit-testable. The INVARIANT (``docs/PAGINATION-RECONCILE.md``): only the merged
-document is content-addressed; per-page captures are transient.
+merge is unit-testable. The INVARIANT (the retired PAGINATION-RECONCILE doc, restated
+here): only the merged document is content-addressed; per-page captures are transient.
 """
 
 from __future__ import annotations

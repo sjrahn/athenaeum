@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 15
+version: 16
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -25,7 +25,7 @@ The system's **end product** is the interpreted archive — the corpus + ledger 
 
 - **The ledger layer is the knowledge — the claims.** The ledger is the single fact substrate: **concepts** (materialized real-world things) and edges carrying typed claims in which every claim carries `corpus://`/`ref://` evidence, with an epistemic status ladder, plus the pre-assertion workspace (interpretations) beside them. Knowledge is authored once, here; privacy is derived sensitivity, not a partition. The ledger contract is **Part III** (`spec/ledger.md`).
 
-- **The orchestrator is the definition and the driver.** One repository — `athenaeum/athenaeum`, the eponymous repo of the system's org — holds the specification, the shared tooling (the `athenaeum` distribution: the `ath` and `corpus` CLIs), the member manifest, and the resident principal-developer persona. Every other component is an independent member repo registered in the manifest.
+- **The orchestrator is the definition and the driver.** One repository — `athenaeum/athenaeum`, the eponymous repo of the system's org — holds the specification, the shared tooling (the `athenaeum` distribution: the `ath` and `corpus` CLIs), and the resident persona's generic brief. *(v16)* It is a **pure tooling-and-specification host** — deployment-agnostic, publicly hostable: the member manifest and every other piece of deployment state live with the deployment (§2.2), never tracked here. Every other component is an independent member repo registered in the manifest.
 
 Ownership stays disjoint by layer — the boundary each part's contract enforces — and the product boundary bounds the system itself:
 
@@ -53,9 +53,9 @@ Ownership stays disjoint by layer — the boundary each part's contract enforces
 
 | Term | Definition |
 |---|---|
-| **Orchestrator repo** | `athenaeum/athenaeum` — the system's definition (the specification), tooling (`tools/`), member manifest (`athenaeum.yaml`), and driver persona. Its working tree is the workspace root; members are cloned beneath it at ignored paths. |
+| **Orchestrator repo** | `athenaeum/athenaeum` — the system's definition (the specification) and tooling (`tools/`), deployment-agnostic and publicly hostable (v16). Its working tree is the workspace root; the manifest and the members live there untracked. |
 | **Member** | An independent git repository registered in the manifest: a corpus or the ledger. Members live in the same forge org as the orchestrator repo. |
-| **Manifest** | `athenaeum.yaml` at the orchestrator root — the single registry of members and the runtime join the tooling reads (§2.3). |
+| **Manifest** | `athenaeum.yaml` at the workspace root — the single registry of members and the runtime join the tooling reads (§2.3). Deployment state: the orchestrator repo ignores it and ships `athenaeum.yaml.example` as the template. |
 | **Corpus** | A content-addressed archive of artifacts with faithful markdown records; record tenancy is derived from origin declarations, never repo placement (§1.2). Contract: Part II. |
 | **Ledger** | The single fact substrate: concepts + edges holding asserted claims with evidence, plus interpretations (the pre-assertion workspace). One repository interpreting every corpus; privacy is derived sensitivity, walled at publication (Part III §12). Contract: Part III. |
 | **Concept** | A materialized real-world thing in the ledger — typed, optionally schema-shaped; records are its evidence and artifact roster, never its identity (Part III §4). |
@@ -77,29 +77,30 @@ Ownership stays disjoint by layer — the boundary each part's contract enforces
 
 ### 2.1 The org is the container
 
-The system lives in one forge organization (the reference deployment: Forgejo at `code.example.org/athenaeum`). The org contains the orchestrator repo and every member repo as siblings. Org membership and repo visibility are the outermost access-control surface — which is what makes the repo boundary a real tenant boundary (§1.2 principle 2). A member's `remote:` override may name a different organization than the deployment's default — the tenant boundary still holds as long as that organization enforces equivalent repo-visibility controls.
+The system lives in one forge organization (the reference deployment: Forgejo on a private host — the org URL is deployment state, declared only in the manifest). The org contains the orchestrator repo and every member repo as siblings. Org membership and repo visibility are the outermost access-control surface — which is what makes the repo boundary a real tenant boundary (§1.2 principle 2). A member's `remote:` override may name a different organization than the deployment's default — the tenant boundary still holds as long as that organization enforces equivalent repo-visibility controls.
 
 ### 2.2 On-disk layout
 
-The orchestrator repo's working tree is the workspace; members are cloned inside it at paths the repo ignores:
+The orchestrator repo's working tree is the workspace; everything deployment-specific lives inside it at paths the repo ignores:
 
 ```
 athenaeum/                        ← working tree of athenaeum/athenaeum
-├── athenaeum.yaml                ← the member manifest (§2.3)
+├── athenaeum.yaml                ← the member manifest (§2.3), UNTRACKED — deployment state
+├── athenaeum.yaml.example        ← the manifest template the repo ships
 ├── spec/                         ← the specification: this part + corpus.md + ledger.md
 ├── tools/                        ← the `athenaeum` distribution (§6)
 ├── corpus/                       ← member, UNTRACKED — the corpus (bytes; one repo, tenancy per record)
 └── ledger/                       ← member, UNTRACKED — the knowledge layer (one repo, Part III §1.2)
 ```
 
-The two singleton layers sit at the root. Everything keeps the orchestrator's tracked tree small and hot while member data stays heavy and cold. Nothing above requires this exact machine layout — the manifest is authoritative, and member `path:` overrides exist — but it is the reference shape. Consumers live entirely outside the workspace (§5); the system holds no registry of them.
+The two singleton layers sit at the root. *(v16)* The orchestrator repo tracks **no deployment state** — not the manifest, not runbooks, not backlog snapshots: it is a tooling-and-specification host any deployment (and the public) can consume. Operational runbooks live with the members they operate (the corpus's `runbooks/`, the ledger's `docs/`), where the deployment's privacy posture already governs them. Nothing above requires this exact machine layout — the manifest is authoritative, and member `path:` overrides exist — but it is the reference shape. Consumers live entirely outside the workspace (§5); the system holds no registry of them.
 
 ### 2.3 The manifest
 
-`athenaeum.yaml` is the single registry of members and the join the tooling reads. Nothing else — no tool, schema, or doc — may hardcode a member's location.
+`athenaeum.yaml` is the single registry of members and the join the tooling reads. Nothing else — no tool, schema, or doc — may hardcode a member's location. *(v16)* The manifest is **deployment state**: it lives at the workspace root, untracked by the orchestrator repo (which ships `athenaeum.yaml.example` as the template) — a deployment's org URL, member roster, and tracker are its own business, never published with the tooling.
 
 ```yaml
-org: https://code.example.org/athenaeum   # remote base: {org}/{name}.git
+org: https://forge.example.com/athenaeum          # remote base: {org}/{name}.git
 
 corpora:
   {name}:
@@ -123,7 +124,9 @@ references:                # reference datasets (Part III §6.5) — mirrored da
     snapshot: …            # the pinned snapshot version cited by evidence verification
 ```
 
-Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo and running `ath sync`.
+Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo, writing its manifest from the example, and running `ath sync`.
+
+The tracker's `snapshot` (the committed offline read of the backlog) is deployment state too: by default it lands beside the manifest, untracked; a deployment SHOULD point it into a member repo (the reference deployment: `corpus/runbooks/tickets.md`) so the backlog's movement stays in git history.
 
 ### 2.4 Reference directions
 
@@ -147,7 +150,7 @@ Everything in that paragraph — the record grammar, schema system, lifecycle, f
 
 - **One corpus, tenancy per origin** (the reference deployment): all captured artifacts land in the single `corpus` member, and a record's tenancy derives from its origins — each origin overlay declares `tenancy: public | private` once, at the source grain (a web host's overlay declares public; an export producer's declares private), members inherit through container lineage, and silence falls closed to private (Part III §6.4). The tenancy question is answered when a source is onboarded, never per capture. *(v13's two mutually-exclusive hubs merged 2026-08-14 under a sensitivity-invariance gate: every cited record's derived sensitivity verified byte-identical across the consolidation.)*
 - **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private drafter, a vendor schema) lives in the corpus that needs it, loaded through the tooling's corpus-local extension seams. The universal package carries no tenant- or vendor-specific knowledge.
-- **A corpus carries no resident persona.** The orchestrator persona (§6.2) drives content work in every corpus through that corpus's own gates; host- and source-specific operational knowledge lives in the orchestrator repo's runbooks (`docs/`). How many personas a deployment stations is deployment policy, not architecture — the reference deployment runs exactly one.
+- **A corpus carries no resident persona.** The orchestrator persona (§6.2) drives content work in every corpus through that corpus's own gates; host- and source-specific operational knowledge lives in the member repos' runbooks (the corpus's `runbooks/`; the ledger's `docs/` — v16). How many personas a deployment stations is deployment policy, not architecture — the reference deployment runs exactly one.
 
 ## 4. The ledger layer
 
@@ -184,7 +187,7 @@ If the operation could produce different valid outputs depending on judgment, it
 
 ### 6.2 Personas
 
-- **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). *(v14)* Boots **thin**: the root `CLAUDE.md` (pointers, gates, the deferral principle — deliberately no resident skill or institutional-memory tree; the specification, the tracker, and git history are the system's memory). Member repos carry no personas.
+- **The orchestrator persona** (orchestrator repo) — principal developer for the system and its one operating persona: specs, tooling, cross-member coherence, member health, and the content operating loop in every member (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). *(v14)* Boots **thin**: the root `CLAUDE.md` (pointers, gates, the deferral principle — deliberately no resident skill or institutional-memory tree; the specification, the tracker, and git history are the system's memory). *(v16)* The brief is **generic** — deployment specifics (member roster, backlog location, known-red baselines) ride the deployment's own state: the untracked manifest and the member runbooks. Member repos carry no personas.
 - **The Normalizer** (corpus agent) — one record (or small batch) per invocation, attested → formed (or terminal), through the decompose/edit/compile substrate — state reported, never stored (Part II §4.1); never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (Part II §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
 - **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (Part III §4).
 
@@ -206,7 +209,7 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 - **The specification is law.** Code conforms to `spec/`; when code needs something the specification doesn't cover, the spec changes first — and a change to Part II's data contract additionally requires a migration story for every existing record.
 - **One version, three parts.** A normative change to any part bumps the shared version and records itself in that part's changelog. The closed pre-unification lines (ATH-ARCH, ATH-CORPUS, ATH-LEDGER, ATH-CODEX) are citable as history; new law cites the unified version.
 - **History files away under tags** (`pre-reforge` marks the 2026-07 restructuring); the working tree carries only the system's current form.
-- **Institutional memory is the system itself** *(v14)*: the specification for law, the tracker for the backlog and its rulings, git history for what happened and why, the system runbooks (`docs/`) for operational knowledge. There is deliberately no persona-resident memory tree — a logbook beside the system drifts from it. Auto-memory is never the source of truth.
+- **Institutional memory is the system itself** *(v14)*: the specification for law, the tracker for the backlog and its rulings, git history for what happened and why, the member runbooks (the corpus's `runbooks/`, the ledger's `docs/` — v16) for operational knowledge. There is deliberately no persona-resident memory tree — a logbook beside the system drifts from it. Auto-memory is never the source of truth.
 
 ## 9. Out of scope
 
@@ -214,10 +217,12 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
+*Version 16 (2026-08-14) makes the orchestrator repo **deployment-agnostic** — a pure tooling-and-specification host, fit for public hosting. Deployment state leaves the tracked tree: the member manifest becomes an untracked workspace-root file (the repo ships `athenaeum.yaml.example`), the operational runbooks move to the member repos they operate (the corpus's `runbooks/`, the ledger's `docs/`), the tracker snapshot follows the manifest's `tracker.snapshot` into a member repo, and the persona brief (`CLAUDE.md`) is generic — instance specifics live in the deployment's own runbooks. No data contract changes.*
+
 *Version 15 (2026-08-14) unifies the specification and draws the product boundary. The three specs become **one specification in three parts** under one version — corpus and ledger no longer version independently (their lines close at 3.14 and 1.9). **Codices leave the system**: through v14 they were a member layer (ATH-CODEX); the corpus+ledger substrate having generalized into a well-defined product, domain-specific compilations now consume it from outside — the codex kit and its contract move to the codex estate, the manifest and tooling drop the layer, and the publication wall is restated as the consumption contract's obligation (Part III §12), where it always did its load-bearing work.*
 
 *Version 14 (2026-08-14) consolidates the corpus layer to **one repository**: tenant isolation moves from the v13 repo boundary to derived per-record tenancy (origin-overlay `tenancy:` declarations, fail closed private — Part III §6.4 v1.9), with the publication-side leak check unchanged as the wall. The merge landed behind a sensitivity-invariance gate (per-claim derived sensitivity byte-identical before and after), with both hubs' git histories preserved in the merged repo. The same revision adopts the **deferral principle** operationally: records are usable from ingest, and normalization is pulled by citation demand (ATH-LEDGER 1.8's deferred surfaces), never pushed as backlog.*
 
 *Version 13 (2026-07) supersedes v12's two-layer draft: the orchestrator becomes a specified component (eponymous repo + manifest + `ath`); the fact model born inside the first codices graduates into its own layer — the single ledger (ATH-LEDGER), where concepts materialize real-world things and privacy is derived sensitivity — leaving codices as targeted compilations (ATH-CODEX); and the retired viewer/server stack is descoped from the architecture. The corpus contract moved to 2.0 (classification to the ledger) in the same revision.*
 
-*Amended in place 2026-07-12: the Curator persona (public corpus) was absorbed into the orchestrator (2026-07-06) — one persona system-wide; its operational knowledge lives in the system runbooks (`docs/capture-operations.md`), its pre-reforge references at the corpus repo's `pre-reforge` tag.*
+*Amended in place 2026-07-12: the Curator persona (public corpus) was absorbed into the orchestrator (2026-07-06) — one persona system-wide; its operational knowledge lives in the capture-operations runbook (since v16: the corpus repo's `runbooks/capture-operations.md`), its pre-reforge references at the corpus repo's `pre-reforge` tag.*

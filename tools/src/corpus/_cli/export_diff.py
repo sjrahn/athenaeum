@@ -7,7 +7,8 @@ decides (1) whether the serializer is deterministic across export jobs, (2) the 
 chrome (churn) set to declare (`strip_headers` / `strip_fields`), and (3) full-strata vs
 member-dedup-only onboarding. The precedent: two Gmail Takeouts diffed member-wise showed
 identity modulo the `X-Gmail-Labels` header = 99.1% stable — the header was the COMPLETE
-churn set (docs/export-sources.md, "Temporal stratification onboarding").
+churn set (the export-sources runbook, "Temporal stratification onboarding" — runbooks
+ride the corpus repo, e.g. corpus/runbooks/export-sources.md).
 
 Read-only; no corpus root involved — this analyzes two export deliveries directly, before
 either is ever ingested.

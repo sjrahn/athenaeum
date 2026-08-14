@@ -27,7 +27,10 @@ from pathlib import Path
 import yaml
 
 MANIFEST_NAME = "athenaeum.yaml"
-_DEFAULT_SNAPSHOT = "docs/tickets.md"
+# Deployment state beside the manifest by default; deployments SHOULD point it
+# into a member repo (e.g. corpus/runbooks/tickets.md) so the backlog's movement
+# stays committed — the orchestrator repo itself tracks no deployment state.
+_DEFAULT_SNAPSHOT = "tickets.md"
 
 # layer key → default parent directory ("" = the workspace root)
 _LAYER_DIRS = {"corpora": "corpora", "ledger": ""}

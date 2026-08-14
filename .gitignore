@@ -16,3 +16,8 @@ tools/**/__pycache__/
 tools/**/*.egg-info/
 tools/.pytest_cache/
 tools/.ruff_cache/
+
+# Deployment state — the manifest and the default tracker snapshot live at the
+# workspace root but belong to the deployment, never to this repo (spec Part I §2.2 v16).
+/athenaeum.yaml
+/tickets.md

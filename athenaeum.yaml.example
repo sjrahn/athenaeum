@@ -1,0 +1,47 @@
+# athenaeum.yaml — the member manifest (TEMPLATE).
+#
+# Copy to `athenaeum.yaml` at the workspace root and fill in your deployment.
+# The manifest is DEPLOYMENT STATE: the orchestrator repo ignores it (spec
+# Part I §2.2/§2.3) — this repo hosts tooling and specification only.
+#
+# The single registry of the system's member repos and the runtime join the
+# tooling reads (`ath sync` / `ath status` / the ledger runtime). Members are
+# keyed by name; paths and remotes derive by convention — corpora/<name>,
+# <name> at the root for the ledger, {org}/{name}.git — unless a member
+# overrides `path:` / `remote:`. Exactly one ledger per deployment
+# (spec/ledger.md §1.2). Consumers of the product are NOT members — the
+# system holds no registry of them (spec/athenaeum.md §5).
+
+org: https://forge.example.com/my-athenaeum
+
+# The issue tracker — the system's backlog. ONE tracker for the whole system;
+# the member a ticket touches is a label, not a repo. Host derives from `org:`.
+# `snapshot` is where `ath issue sync` writes the committed offline read —
+# point it into a member repo (e.g. the corpus's runbooks/) so the backlog's
+# movement stays in git history; the default (`tickets.md` at the workspace
+# root) is untracked deployment state.
+tracker:
+  repo: my-athenaeum/my-athenaeum
+  snapshot: corpus/runbooks/tickets.md
+
+corpora:
+  corpus:
+    description: >-
+      the corpus — all captured artifacts, one content-addressed archive. Tenancy is
+      per-record, derived from origin-overlay `tenancy:` declarations (fail closed
+      private; spec/ledger.md §6.4) — never a repo boundary.
+    visibility: private   # the fail-closed floor for records whose origins declare nothing
+    path: corpus          # at the workspace root, beside ledger/
+
+ledger:
+  ledger:
+    description: the knowledge layer — one ledger interpreting the corpus (spec/ledger.md)
+
+# Reference datasets (spec/ledger.md §6.5) — locally-mirrored external
+# databases cited as `ref://{dataset}/{id}` evidence; mirrors pinned by
+# snapshot version, never git members. Register mirrors as they land, e.g.:
+#   wikipedia:
+#     description: English Wikipedia, ZIM mirror
+#     mirror: /mnt/mirrors/wikipedia_en_all_maxi.zim
+#     snapshot: "2026-06"
+references: {}

@@ -2,7 +2,7 @@
 
 Pure-function units (BeautifulSoup over fixture HTML) plus integration tests that drive
 `capture_and_ingest` with the browser `capture()` monkeypatched to canned per-page HTML —
-all deterministic, no browser/network. See `docs/PAGINATION-RECONCILE.md`.
+all deterministic, no browser/network. The invariant is stated on `capture.pagination`.
 """
 
 from __future__ import annotations
