@@ -1,11 +1,11 @@
 ---
 spec_id: ATH-ARCH
 title: "Athenaeum — Architecture Specification"
-version: 13
+version: 14
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-07-16
+date_modified: 2026-08-14
 ---
 
 # Athenaeum — Architecture Specification
@@ -18,7 +18,7 @@ The Athenaeum is a knowledge normalization and curation system. It captures arti
 
 The system has three data layers and one driver:
 
-- **The corpus layer is the foundation — the bytes.** A corpus is a content-addressed archive of captured artifacts, each identified by the blake3 hash of its bytes and represented by a faithful markdown record. Corpora are the unit of tenant isolation. The corpus contract is **`spec/corpus.md`** (ATH-CORPUS).
+- **The corpus layer is the foundation — the bytes.** A corpus is a content-addressed archive of captured artifacts, each identified by the blake3 hash of its bytes and represented by a faithful markdown record. Tenancy is a **derived, per-record property** — origin-overlay `tenancy:` declarations, fail closed private — never a repo boundary (§1.2 principle 2). The corpus contract is **`spec/corpus.md`** (ATH-CORPUS).
 
 - **The ledger layer is the knowledge — the claims.** The ledger is the single fact substrate: **concepts** (materialized real-world things) and edges carrying typed claims in which every claim carries `corpus://`/`ref://` evidence, with an epistemic status ladder, plus the pre-assertion workspace (interpretations) beside them. Knowledge is authored once, here; privacy is derived sensitivity, not a partition. The ledger contract is **`spec/ledger.md`** (ATH-LEDGER).
 
@@ -38,7 +38,7 @@ Ownership stays disjoint by layer — the boundary each spec's contract enforces
 ### 1.2 Design principles
 
 1. **Layered foundation.** The corpus depends on nothing; the ledger depends on the corpora; a codex depends on the ledger. Each layer knows nothing of the layers above it. References point downward only.
-2. **Tenant isolation is a repo boundary where sharing lives.** Public and private corpora are separate repositories with mutually exclusive content — corpora are shareable artifacts, so their wall is physical. The ledger above them is deliberately **one repository** (the system's intermediate representation, never itself shared); privacy there is *derived sensitivity* on claims (`spec/ledger.md` §6.4), and becomes a hard boundary again exactly where content goes public: the codex build's leak check. No tooling, schema, or convention may blur tenants at the corpus layer or pass private-backed content through a public profile.
+2. **Tenancy is declared knowledge, walled at publication.** The corpus is **one repository** (private, like every member), and a record's tenancy is *derived*: origin overlays declare `tenancy: public | private` at the source grain — decided once per origin, never once per capture — promoted members inherit through their container lineage, and a record whose origins declare nothing falls closed to private (`spec/ledger.md` §6.4). Sensitivity computes upward from there (claims are private-backed by their evidence), and privacy becomes a hard boundary exactly where content goes public: the codex build's leak check. No tooling, schema, or convention may lower a record's derived tenancy or pass private-backed content through a public profile. *(v13's physical wall — separate public/private corpus repos — defended repo-grain sharing that publication never used; the leak check was always the load-bearing wall, and remains it.)*
 3. **Content addressing.** An artifact's identity is the blake3 hash of its bytes — permanent, and identical in every corpus that holds those bytes.
 4. **Faithfulness below, interpretation above.** Corpus records are faithful renderings that add no information; interpretation lives in the ledger, where every interpretive move carries evidence and an epistemic status; editorial voice lives in the codices, where every sentence traces to a ledger fact.
 5. **Evidence is the contract between the layers.** A ledger claim cites `corpus://` URIs — resolved by blake3 across the corpora, optionally span-precise (`?el=`, `?page=`, `?time_range=`, `?bbox=`) — or `ref://` citations into mirrored reference datasets, and the system's validation verifies those citations mechanically: anchors resolve, quotes match verbatim, re-normalized records and updated mirrors flag their citers. Traceability is not a style; it is a checked invariant.
@@ -55,7 +55,7 @@ Ownership stays disjoint by layer — the boundary each spec's contract enforces
 | **Orchestrator repo** | `athenaeum/athenaeum` — the system's definition (specs), tooling (`tools/`), member manifest (`athenaeum.yaml`), and driver persona. Its working tree is the workspace root; members are cloned beneath it at ignored paths. |
 | **Member** | An independent git repository registered in the manifest: a corpus or a codex. Members live in the same forge org as the orchestrator repo. |
 | **Manifest** | `athenaeum.yaml` at the orchestrator root — the single registry of members and the runtime join the tooling reads (§2.3). |
-| **Corpus** | A content-addressed archive of artifacts with faithful markdown records; the unit of tenant isolation. Contract: `spec/corpus.md`. |
+| **Corpus** | A content-addressed archive of artifacts with faithful markdown records; record tenancy is derived from origin declarations, never repo placement (§1.2). Contract: `spec/corpus.md`. |
 | **Ledger** | The single fact substrate: concepts + edges holding asserted claims with evidence, plus interpretations (the pre-assertion workspace). One repository interpreting every corpus; privacy is derived sensitivity, walled at the codex build. Contract: `spec/ledger.md`. |
 | **Concept** | A materialized real-world thing in the ledger — typed, optionally schema-shaped; records are its evidence and artifact roster, never its identity (`spec/ledger.md` §4). |
 | **Codex** | A targeting of ledger facts that compiles to prose: scope + voice + generated vault + published deliverable. Owns no knowledge. Contract: `spec/codex.md`. |
@@ -86,16 +86,13 @@ athenaeum/                        ← working tree of athenaeum/athenaeum
 ├── athenaeum.yaml                ← the member manifest (§2.3)
 ├── spec/                         ← this document + corpus.md + ledger.md + codex.md
 ├── tools/                        ← the `athenaeum` distribution (§6)
-├── .claude/skills/orchestrator/  ← the driver persona + its institutional memory
-├── corpora/                      ← members, UNTRACKED
-│   ├── corpus/                   ←   public hub (bytes)
-│   └── corpus-private/           ←   private hub (bytes)
+├── corpus/                       ← member, UNTRACKED — the corpus (bytes; one repo, tenancy per record)
 ├── ledger/                       ← member, UNTRACKED — the knowledge layer (one repo, spec/ledger.md §1.2)
 └── codices/                      ← members, UNTRACKED
     └── codex-{name}/
 ```
 
-Grouping directories (`corpora/`, `codices/`) mirror the manifest's structure and keep the orchestrator's tracked tree small and hot while member data stays heavy and cold. Nothing above requires this exact machine layout — the manifest is authoritative, and member `path:` overrides exist — but it is the reference shape and the path convention's default.
+The two singleton layers (`corpus/`, `ledger/`) sit at the root; the grouping directory (`codices/`) mirrors the manifest's structure. Everything keeps the orchestrator's tracked tree small and hot while member data stays heavy and cold. Nothing above requires this exact machine layout — the manifest is authoritative, and member `path:` overrides exist — but it is the reference shape.
 
 ### 2.3 The manifest
 
@@ -107,9 +104,11 @@ org: https://code.example.org/athenaeum   # remote base: {org}/{name}.git
 corpora:
   {name}:
     description: …        # the member's role, one line
-    visibility: …          # public | private — DEFAULT private (fail closed); the declared
-                           # tenancy that drives derived sensitivity (spec/ledger.md §6.4)
-    path: …                # optional — default corpora/{name}
+    visibility: …          # public | private — DEFAULT private (fail closed). The FLOOR for
+                           # records whose origins declare no `tenancy:` (spec/ledger.md §6.4);
+                           # per-record tenancy is derived from origin overlays, not from here
+    path: …                # optional — default corpora/{name}; the reference deployment's
+                           # single corpus overrides to `corpus` at the workspace root
     remote: …              # optional — default {org}/{name}.git
 ledger:
   {name}:                  # exactly one (spec/ledger.md §1.2)
@@ -134,17 +133,17 @@ Members are keyed by name; manifest order is presentation order. The manifest re
 ### 2.4 Reference directions
 
 ```
-ledger ──corpus://──▶ corpora          (downward: claim evidence, blake3-resolved, span-precise)
+ledger ──corpus://──▶ corpus           (downward: claim evidence, blake3-resolved, span-precise)
 ledger ──ref://──▶ reference mirrors   (downward: linked external databases, snapshot-pinned)
 codex ──scope──▶ ledger                (downward: targeting; notes derive from facts)
-codex ──corpus://──▶ corpora           (build-time only: footnote resolution, functional-URI raster — `spec/codex.md`)
+codex ──corpus://──▶ corpus            (build-time only: footnote resolution, functional-URI raster — `spec/codex.md`)
 codex ──ref://──▶ reference mirrors    (build-time only: the same resolution, into mirrored evidence)
 consumers ──ledger://──▶ ledger        (external knowledge reads: agents, deliverables)
 corpus ──▶ (nothing)                   (the foundation references nothing above it)
 orchestrator ──manifest──▶ members     (operational, not a data reference)
 ```
 
-A corpus never references a ledger or codex; a ledger never references a codex; within the corpus layer, the public hub never references the private one. The ledger cites both corpora — privacy there is derived claim sensitivity, and it becomes a wall at the codex build's public-profile leak check, never before. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). A codex's own `corpus://`/`ref://` reads happen only inside the build, resolving citations the ledger already asserted into human-readable form — never a second, independent evidence path. Notes and other generated views are never citation targets. These directions are validated, not just conventional.
+A corpus never references a ledger or codex; a ledger never references a codex. The ledger cites the corpus freely — privacy is derived claim sensitivity computed from record tenancy (`spec/ledger.md` §6.4), and it becomes a wall at the codex build's public-profile leak check, never before. Codices do not reference each other — they share the ledger instead (what dissolved the sibling-citation problem). A codex's own `corpus://`/`ref://` reads happen only inside the build, resolving citations the ledger already asserted into human-readable form — never a second, independent evidence path. Notes and other generated views are never citation targets. These directions are validated, not just conventional.
 
 ## 3. The corpus layer
 
@@ -152,13 +151,13 @@ At architecture altitude: a **corpus** is a content-addressed archive of artifac
 
 Everything in that paragraph — the record grammar, schema system, lifecycle, functional-URI grammar, derived views, queue contract — is specified normatively by **`spec/corpus.md`**. This document adds only the system-level constraints:
 
-- **Two hubs, mutually exclusive content** (the reference deployment): `corpus` for world artifacts, `corpus-private` for personal artifacts. Which hub an artifact belongs to is decided by its subject's tenancy, before capture.
+- **One corpus, tenancy per origin** (the reference deployment): all captured artifacts land in the single `corpus` member, and a record's tenancy derives from its origins — each origin overlay declares `tenancy: public | private` once, at the source grain (a web host's overlay declares public; an export producer's declares private), members inherit through container lineage, and silence falls closed to private (`spec/ledger.md` §6.4). The tenancy question is answered when a source is onboarded, never per capture. *(v13's two mutually-exclusive hubs merged 2026-08-14 under a sensitivity-invariance gate: every cited record's derived sensitivity verified byte-identical across the consolidation.)*
 - **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private drafter, a vendor schema) lives in the corpus that needs it, loaded through the tooling's corpus-local extension seams. The universal package carries no tenant- or vendor-specific knowledge.
 - **A corpus carries no resident persona.** The orchestrator persona (§6.2) drives content work in every corpus through that corpus's own gates; host- and source-specific operational knowledge lives in the orchestrator repo's runbooks (`docs/`). How many personas a deployment stations is deployment policy, not architecture — the reference deployment runs exactly one.
 
 ## 4. The ledger layer
 
-At architecture altitude: the **ledger** is the single fact substrate — one repository interpreting every registered corpus. There is deliberately no ledger-side tenant partition: the ledger is the system's intermediate representation, never itself published; privacy is **derived sensitivity** on claims (evidence resolving only in private corpora, or an asserted upward override) and becomes a wall at the codex build. A **fact** is a typed **concept** — a materialized real-world thing, for which records are evidence and artifact roster, never identity — or an **edge**, holding **claims**; every claim carries **evidence** (`corpus://` URIs resolved by blake3 across the corpora, span-precise where verified; `ref://` citations into mirrored reference datasets) and a position on the epistemic status ladder, promoted in place as evidence accrues. Beside the facts sits the **pre-assertion workspace** — interpretations: identity guesses, working assessments, corrections/tombstones, and ingestion needs. The boundary is physical: everything in `facts/` is asserted; consumers never filter speculation out of knowledge.
+At architecture altitude: the **ledger** is the single fact substrate — one repository interpreting every registered corpus. There is deliberately no ledger-side tenant partition: the ledger is the system's intermediate representation, never itself published; privacy is **derived sensitivity** on claims (evidence whose records derive private tenancy, or an asserted upward override — `spec/ledger.md` §6.4) and becomes a wall at the codex build. A **fact** is a typed **concept** — a materialized real-world thing, for which records are evidence and artifact roster, never identity — or an **edge**, holding **claims**; every claim carries **evidence** (`corpus://` URIs resolved by blake3 across the corpora, span-precise where verified; `ref://` citations into mirrored reference datasets) and a position on the epistemic status ladder, promoted in place as evidence accrues. Beside the facts sits the **pre-assertion workspace** — interpretations: identity guesses, working assessments, corrections/tombstones, and ingestion needs. The boundary is physical: everything in `facts/` is asserted; consumers never filter speculation out of knowledge.
 
 Knowledge is authored **once**, in the ledger — never re-authored per presentation. The ledger carries the coverage obligation for every corpus it interprets (every in-scope record represented — cited as evidence or rostered on a concept), which is how the system proves nothing captured goes unrepresented silently. Everything in this paragraph is specified normatively by **`spec/ledger.md`**, including the evidence-verification gate — anchors resolve, quotes match verbatim, snapshot binding flags rot — that makes the system's traceability a checked invariant.
 
@@ -223,6 +222,8 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (`spec/corpus.md` §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; a final static-site renderer or deployment protocol beyond the reference Quartz build; a general non-tenancy codex profile predicate language; reference-mirror content resolution, adapter registration, and snapshot verification; a standalone external `ledger://` network resolver; SVG rasterization. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
+
+*Version 14 (2026-08-14) consolidates the corpus layer to **one repository**: tenant isolation moves from the v13 repo boundary to derived per-record tenancy (origin-overlay `tenancy:` declarations, fail closed private — `spec/ledger.md` §6.4 v1.9), with the codex leak check unchanged as the publication wall. The merge landed behind a sensitivity-invariance gate (per-claim derived sensitivity byte-identical before and after), with both hubs' git histories preserved in the merged repo. The same revision adopts the **deferral principle** operationally: records are usable from ingest, and normalization is pulled by citation demand (ATH-LEDGER 1.8's deferred surfaces), never pushed as backlog.*
 
 *Version 13 (2026-07) supersedes v12's two-layer draft: the orchestrator becomes a specified component (eponymous repo + manifest + `ath`); the fact model born inside the first codices graduates into its own layer — the single ledger (ATH-LEDGER), where concepts materialize real-world things and privacy is derived sensitivity — leaving codices as targeted compilations (ATH-CODEX); and the retired viewer/server stack is descoped from the architecture. The corpus contract moved to 2.0 (classification to the ledger) in the same revision.*
 

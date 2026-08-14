@@ -14,6 +14,7 @@ from pathlib import Path
 from corpus import ccsession, hashing, paths, records, ziparchive
 from corpus._cli import dispatch
 
+
 def _overlay_path() -> Path:
     """The live claude-code-session overlay, resolved through the MANIFEST —
     member locations are path-overridable (spec/athenaeum.md §2.3), so no test

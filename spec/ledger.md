@@ -38,12 +38,10 @@ The name is meant literally: a ledger is claims with evidence and an audit trail
 
 ### 1.2 One ledger
 
-The corpus layer is tenant-partitioned as a hard repo boundary because corpora are shareable artifacts. The ledger is not shared — it is the system's intermediate representation, consumed only by its owner's tooling and codices — so it is **one repository**, interpreting every corpus it declares (§2):
+The ledger is not shared — it is the system's intermediate representation, consumed only by its owner's tooling and codices — so it is **one repository**, interpreting every corpus it declares (§2). *(1.9 / ATH-ARCH v14: the corpus layer is likewise one repository; tenancy there is derived per record from origin declarations, §6.4 — nowhere in the system is privacy a repo partition anymore.)*
 
 ```
-corpus ─────────┐
-                ├──interprets──▶  ledger  ──compiles──▶  codices  (the publication surface)
-corpus-private ─┘
+corpus ──interprets──▶  ledger  ──compiles──▶  codices  (the publication surface)
 ```
 
 - **Sensitivity is derived, not partitioned.** A claim citing private evidence is **private-backed** (§6.4) — the placement rule of the two-hub design ("a fact lives with its most private evidence") survives as computed metadata instead of repo placement. One thing is one file, whatever mix of sensitivities its claims carry.
@@ -83,7 +81,7 @@ The ledger carries a `ledger.yaml` read by the tooling:
 name: ledger                    # == the repo/directory name
 description: >-
   …
-corpora: [corpus, corpus-private]   # the corpora this ledger interprets and covers (§9)
+corpora: [corpus]               # the corpora this ledger interprets and covers (§9)
 ```
 
 - `corpora` names manifest-registered corpora (`spec/athenaeum.md` §2.3). Evidence cites records **bare** — `corpus://{hash}` — and resolves by blake3 across the registered corpora (§6.2): a hash either resolves or it doesn't. Which corpus holds the bytes — and hence the evidence's sensitivity — is a **derived property** (§6.4), never URI syntax.
@@ -575,7 +573,7 @@ One concept carrying a public claim and a private-backed claim (one file — sen
     ]
   },
   {
-    // 55ab… resolves only in corpus-private → this claim is private-backed (§6.4);
+    // 55ab…'s record derives private tenancy → this claim is private-backed (§6.4);
     // public codex profiles filter it, and the leak check enforces that (spec/codex.md §6)
     "id": "pontiac-g8:owned-by", "predicate": "owned_by", "object": "steven-rahn",
     "status": "confirmed", "asof": "2026-05-12",

@@ -2,7 +2,6 @@
 # Anchored to the root: unanchored `ledger/` also swallowed tools/src/ledger (a whole
 # package silently untracked — found in the 2026-07-03 critical pass).
 /corpus/
-/corpora/
 /ledger/
 /codices/
 

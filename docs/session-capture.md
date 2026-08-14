@@ -29,13 +29,13 @@ transcribed into prose.
 
 A session bundle embeds every tool result verbatim — it routinely contains private records,
 emails, even medical PDFs the session read. **Always capture into `corpus-private`.** Run
-the command from inside `corpora/corpus-private` (auto-discovery) or pass
-`--corpus-root corpora/corpus-private`.
+the command from inside `corpus` (auto-discovery) or pass
+`--corpus-root corpus`.
 
 ## Everyday use
 
 ```bash
-cd corpora/corpus-private
+cd corpus
 
 corpus session list                       # discoverable sessions + stats (records, sub-agents, size)
 corpus session capture <session-id>       # bundle → ingest → draft  (accepts an <id>.jsonl path too)

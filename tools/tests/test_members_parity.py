@@ -33,6 +33,7 @@ import pytest
 
 from corpus import records
 
+
 # Live-corpus locations resolve through the MANIFEST (athenaeum.yaml walked up
 # from this file), never a hardcoded layout — member `path:` overrides moved the
 # public corpus to the workspace root in the single-corpus consolidation, and

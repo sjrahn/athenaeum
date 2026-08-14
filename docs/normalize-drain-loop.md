@@ -10,7 +10,7 @@ The loop serves **either corpus** — the queue is per-corpus state (`queue/` in
 root), so a monitor drains ONE hub; run one per corpus when both have work. **Boot the
 session at the athenaeum workspace root** (where the `normalizer` subagent is defined,
 `.claude/agents/normalizer.md`) and run the `corpus` commands with cwd inside the target
-corpus (`corpus` at the workspace root, or `corpora/corpus-private`) or with `--corpus-root`.
+corpus (`corpus` at the workspace root) or with `--corpus-root`.
 
 This is the *how-to for running the loop*. The generic request/claim contract and its two
 modes are the tooling's own runbook — read it first, don't restate it:
