@@ -61,6 +61,7 @@ class CorpusJoin:
         self._holders: dict[str, list[RegisteredCorpus]] = {}
         self._touch: dict[str, str] = {}
         self._deferred: dict[str, bool | None] = {}
+        self._tenancy_private: dict[str, bool] = {}
 
     @property
     def complete(self) -> bool:
@@ -86,11 +87,25 @@ class CorpusJoin:
         return bool(self.holders(hash_))
 
     def is_private(self, hash_: str) -> bool | None:
-        """§6.4: private iff the hash resolves ONLY in private corpora; None = unresolved."""
+        """§6.4 *(1.9)*: private iff no holding record's TENANCY is public; None =
+        unresolved. Tenancy derives per record — origin-overlay `tenancy:`
+        declarations and `corpus://` lineage inheritance, falling closed to the
+        holding corpus's manifest `visibility:` when nothing declares
+        (`ledger.tenancy.record_tenancy`). Any-public-wins across holders, which
+        preserves the same-bytes rule the corpus-membership lookup enforced:
+        bytes public anywhere are public evidence."""
         held = self.holders(hash_)
         if not held:
             return None
-        return all(c.private for c in held)
+        if hash_ not in self._tenancy_private:
+            from ledger.tenancy import record_tenancy
+
+            self._tenancy_private[hash_] = not any(
+                record_tenancy(c.root, hash_,
+                               default=("private" if c.private else "public")) == "public"
+                for c in held
+            )
+        return self._tenancy_private[hash_]
 
     def deferred_surface(self, hash_: str) -> bool | None:
         """*(1.8, §5.4/§13.2.4)* True when the record's citable surface is DEFERRED —

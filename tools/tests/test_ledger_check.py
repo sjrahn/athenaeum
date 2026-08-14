@@ -344,6 +344,57 @@ def test_sensitivity_is_derived(system: Path) -> None:
     assert rep.counts["private_files"] == 1
 
 
+def test_sensitivity_rekeys_to_record_tenancy(system: Path) -> None:
+    """§6.4 *(1.9)*: sensitivity derives from record TENANCY, not corpus
+    membership. An origin overlay declaring `tenancy: public` makes a
+    private-corpus record public evidence; a promoted member inherits through
+    its `corpus://` lineage; a `tenancy: private` declaration in a public
+    corpus is an answer, not the floor; and undeclared records keep the
+    manifest-visibility fallback (every other test in this suite rides it)."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    priv = system / "corpora" / "corpus-private"
+    pub = system / "corpora" / "corpus"
+    (priv / "schema" / "origin" / "web").mkdir(parents=True)
+    (priv / "schema" / "origin" / "web" / "openhost.yaml").write_text(
+        "tenancy: public\n", encoding="utf-8")
+    (pub / "schema" / "origin").mkdir(parents=True)
+    (pub / "schema" / "origin" / "sealed-export.yaml").write_text(
+        "tenancy: private\n", encoding="utf-8")
+
+    declared, member, sealed = "1" * 64, "2" * 64, "3" * 64
+
+    def _mk(root: Path, h: str, *, uri: str, schema_id: str | None,
+            touch: str = "corpus.ingest@0.1.0") -> None:
+        post = frontmatter.Post(
+            content="", **records.stub_frontmatter(record_id=h, touch_id=touch))
+        records.set_artifact_block(post, mime="text/plain", fields={})
+        records.append_origin_block(
+            post, uri=uri, snapshot="2026-01-01T00:00:00Z", schema_id=schema_id)
+        records.dump(post, paths.record_path(root, h))
+
+    _mk(priv, declared, uri="https://openhost/x", schema_id="openhost")
+    _mk(priv, member, uri=f"corpus://{declared}?path=a.txt", schema_id=None,
+        touch="corpus.promote@0.1.0")
+    _mk(pub, sealed, uri="file:///export/blob", schema_id="sealed-export")
+
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            _claim("x", "a", evidence=[{"_record": declared, "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"_record": member, "kind": "direct"}]),
+            _claim("x", "c", evidence=[{"_record": H_PRIV, "kind": "direct"}]),
+            _claim("x", "d", evidence=[{"_record": sealed, "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    # `declared` and `member` are public despite living only in corpus-private;
+    # H_PRIV keeps the private floor; `sealed` is private despite the public corpus
+    assert rep.counts["private_claims"] == 2
+
+
 def test_asserted_sensitivity_is_upward_only(system: Path) -> None:
     _fact(system, "person", {
         "id": "p", "type": "person", "name": "P", "sensitivity": "public",
