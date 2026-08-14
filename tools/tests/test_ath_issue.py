@@ -57,10 +57,10 @@ def test_the_host_comes_from_org_so_no_instance_is_hardcoded(tmp_path):
     assert t.snapshot == tmp_path / "books/tickets.md"
 
 
-def test_snapshot_defaults_into_the_skill_references(tmp_path):
+def test_snapshot_defaults_into_docs(tmp_path):
     root = _root(tmp_path, "org: https://h.test/o\ntracker:\n  repo: o/r\n")
     assert load_tracker(root).snapshot.name == "tickets.md"
-    assert "orchestrator" in str(load_tracker(root).snapshot)
+    assert load_tracker(root).snapshot.parent.name == "docs"
 
 
 @pytest.mark.parametrize(
