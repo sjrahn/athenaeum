@@ -315,6 +315,53 @@ def test_detect_inline_image_failure_thresholds():
     assert info is not None and info["severity"] == "info"
 
 
+def test_inline_image_srcs_cross_origin_self_referer():
+    """Cross-origin <img> fetches get a same-origin (self) referer so hotlink-protecting
+    hosts serve the un-degraded original; same-origin images are fetched unchanged."""
+    items = [
+        {"idx": 0, "src": "https://forum.example/attachments/a.jpg"},  # same-origin
+        {"idx": 1, "src": "http://iX.photobucket.com/albums/u/x.jpg"},  # cross-origin
+    ]
+
+    class _FakeResp:
+        status = 200
+
+        def __init__(self):
+            self.headers = {"content-type": "image/jpeg"}
+
+        def body(self):
+            return b"\xff\xd8\xff\xe0jpeg"
+
+    calls: list[tuple] = []
+
+    class _FakeReq:
+        def get(self, url, headers=None, timeout=None):
+            calls.append((url, dict(headers or {})))
+            return _FakeResp()
+
+    class _FakePage:
+        url = "https://forum.example/thread/1"
+
+        def __init__(self):
+            self._served_items = False
+
+        def evaluate(self, _js, arg=None):
+            if not self._served_items:
+                self._served_items = True
+                return items
+            return None  # the set-src evaluate
+
+    inlined, failed = capture._inline_image_srcs(page=_FakePage(), request_api=_FakeReq())
+    assert (inlined, failed) == (2, 0)
+    by_url = dict(calls)
+    # same-origin attachment: no forged referer
+    assert "referer" not in by_url["https://forum.example/attachments/a.jpg"]
+    # cross-origin image: referer is the image's OWN origin (not the embedding page)
+    assert by_url["http://iX.photobucket.com/albums/u/x.jpg"]["referer"] == (
+        "http://iX.photobucket.com/"
+    )
+
+
 def test_run_capture_detectors_multiple_fire():
     # A page that both redirected to a paywall surface AND carries paywall prose.
     snap = "<html><body><p>Subscribe to continue reading this story.</p></body></html>"

@@ -1291,13 +1291,29 @@ def _inline_image_srcs(*, page: Any, request_api: Any, quiet: bool = False) -> t
     if not items:
         return (0, 0)
     _log("pre-fetching %d external <img> srcs for inline embedding", len(items))
+    # Hotlink-protecting hosts (photobucket &c.) serve a watermarked/degraded image to a
+    # FOREIGN Referer but the clean original to a same-origin one. When a browser loads a
+    # cross-origin <img>, its Referer is the embedding page — exactly the watermark trigger.
+    # Our inline fetch goes through Playwright's request API, so for a cross-origin image we
+    # set Referer to the image's OWN origin: the host sees a self-referer and serves the
+    # un-degraded file. (Verified: photobucket returns the un-watermarked original to a
+    # photobucket referer; a foreign / empty referer gets the "Groupsy" watermark overlay.)
+    try:
+        _pg = urlparse(page.url or "")
+        page_key = (_pg.scheme, _pg.netloc) if _pg.netloc else None
+    except Exception:
+        page_key = None
     inlined = 0
     failed = 0
     for item in items:
         img_url = item["src"]
         idx = item["idx"]
         try:
-            resp = request_api.get(img_url, timeout=15_000)
+            _iu = urlparse(img_url)
+            headers = {}
+            if page_key and _iu.scheme and _iu.netloc and (_iu.scheme, _iu.netloc) != page_key:
+                headers["referer"] = f"{_iu.scheme}://{_iu.netloc}/"
+            resp = request_api.get(img_url, headers=headers, timeout=15_000)
             if resp.status >= 400:
                 failed += 1
                 continue
