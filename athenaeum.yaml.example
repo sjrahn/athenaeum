@@ -38,10 +38,15 @@ ledger:
     description: the knowledge layer — one ledger interpreting the corpus (spec/ledger.md)
 
 # Reference datasets (spec/ledger.md §6.5) — locally-mirrored external
-# databases cited as `ref://{dataset}/{id}` evidence; mirrors pinned by
-# snapshot version, never git members. Register mirrors as they land, e.g.:
+# databases cited as `ref://{dataset}/{id}` evidence (bare = the `latest` tag;
+# `ref://{dataset}@{tag}/{id}` pins a snapshot). Each snapshot's mirror bytes
+# are a corpus artifact — a terminal-contract record addressed by blake3 —
+# never a loose file. Register snapshots as they land, e.g.:
 #   wikipedia:
-#     description: English Wikipedia, ZIM mirror
-#     mirror: /mnt/mirrors/wikipedia_en_all_maxi.zim
-#     snapshot: "2026-06"
+#     description: English Wikipedia, ZIM mirrors
+#     adapter: zim
+#     latest: "2026-06"
+#     snapshots:
+#       "2025-12": { artifact: <64-hex blake3 of the ZIM's bytes> }
+#       "2026-06": { artifact: <64-hex blake3 of the ZIM's bytes> }
 references: {}

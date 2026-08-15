@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 16
+version: 17
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-14
+date_modified: 2026-08-15
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -63,7 +63,7 @@ Ownership stays disjoint by layer — the boundary each part's contract enforces
 | **Consumer** | Anything outside the system reading the product — a compilation (the codex estate), an expert agent, a deliverable pipeline. Consumers own presentation, never knowledge, and are bound by the consumption contract (Part III §12). |
 | **Artifact record** | One captured file's faithful markdown proxy in a corpus, named by the blake3 of its bytes. |
 | **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file (concept or edge) holds typed claims; each claim carries evidence entries whose `corpus://` / `ref://` URIs ground it in captured bytes or mirrored reference datasets. |
-| **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id + snapshot version via `ref://` (Part III §6.5). |
+| **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id via `ref://` — resolved at the dataset's `latest` snapshot tag, or pinned `@{tag}`; each registered snapshot's mirror is a corpus artifact, a terminal-contract record addressed by blake3 (Part III §6.5). |
 | **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 across the registered corpora. Grammar: Part II §6. |
 | **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — consumers read knowledge here, never from any rendered prose (Part III §12). |
 | **Normalizer** | The interpretive half of the corpus's one authoring pass: renders a record under its form contract where no mechanical shaper can — shaping only: faithful renderings, structural marks, and typed fidelity issues; there is no editorial vouch to author (Part II §8.1, §4.1). |
@@ -117,11 +117,13 @@ ledger:
     path: …                # optional — default {name}/ at the workspace root
     remote: …
 
-references:                # reference datasets (Part III §6.5) — mirrored databases, not git members
-  {dataset}:
+references:                # reference datasets (Part III §6.5) — mirrored databases, not git members;
+  {dataset}:               #   a snapshot's mirror bytes are a corpus ARTIFACT, never a loose file (v17)
     description: …
-    mirror: …              # the local mirror source (a ZIM file, a dump, an extract)
-    snapshot: …            # the pinned snapshot version cited by evidence verification
+    adapter: …             # the format adapter resolving native ids (zim, jsonl-index, …)
+    latest: …              # the default snapshot tag — names a key below, declared, never inferred
+    snapshots:
+      {tag}: { artifact: … }   # blake3 of the mirror's bytes — the pin verification stamps
 ```
 
 Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo, writing its manifest from the example, and running `ath sync`.
@@ -132,7 +134,8 @@ The tracker's `snapshot` (the committed offline read of the backlog) is deployme
 
 ```
 ledger ──corpus://──▶ corpus           (downward: claim evidence, blake3-resolved, span-precise)
-ledger ──ref://──▶ reference mirrors   (downward: linked external databases, snapshot-pinned)
+ledger ──ref://──▶ reference mirrors   (downward: registered datasets; a mirror resolves through
+                                        the corpus store by snapshot-artifact blake3 — v17)
 consumers ──ledger://──▶ ledger        (the product's knowledge-read surface — Part III §12)
 consumers ──corpus://──▶ corpus        (read-time resolution only: materializing citations the
                                         ledger already asserts — never independent evidence)
@@ -213,9 +216,11 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 
 ## 9. Out of scope
 
-Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; reference-mirror content resolution, adapter registration, and snapshot verification; a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
+Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5; the mirror layer itself is specified there as of v17); a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
+
+*Version 17 (2026-08-15) activates the reference-dataset layer (owner ruling). The manifest's `references:` entries become multi-snapshot — a tag-keyed `snapshots:` map with a declared `latest:` default and a format `adapter:` — and each snapshot's mirror bytes are a **corpus artifact**: a terminal-contract record addressed by blake3, distributed and integrity-checked through the corpus store rather than living as a loose file. The citation grammar gains the optional pin `ref://{dataset}@{tag}/{id}`; Part III specifies the bare-tracks/pinned-freezes semantics, tenancy-derived `ref://` sensitivity, the one-dataset-one-independent-source bar rule, and the mirror-grain coverage discharge (§6.4, §5.4, §6.5, §13). §9's descope narrows from the mirror layer wholesale to per-dataset anchor grammar. No existing citations move — nothing cited `ref://` before this version.*
 
 *Version 16 (2026-08-14) makes the orchestrator repo **deployment-agnostic** — a pure tooling-and-specification host, fit for public hosting. Deployment state leaves the tracked tree: the member manifest becomes an untracked workspace-root file (the repo ships `athenaeum.yaml.example`), the operational runbooks move to the member repos they operate (the corpus's `runbooks/`, the ledger's `docs/`), the tracker snapshot follows the manifest's `tracker.snapshot` into a member repo, and the persona brief (`CLAUDE.md`) is generic — instance specifics live in the deployment's own runbooks. No data contract changes.*
 
