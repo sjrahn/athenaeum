@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from ath.manifest import ManifestError, Member, find_root, load, load_references
+from ath.manifest import ManifestError, Member, Reference, find_root, load, load_references
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 
 _USAGE = """\
@@ -72,8 +72,8 @@ def _base_parser(prog: str, description: str) -> argparse.ArgumentParser:
     return ap
 
 
-def _system(root: Path | None) -> tuple[Path, CorpusJoin, set[str]]:
-    """(ledger root, corpus join, registered dataset names) from the manifest."""
+def _system(root: Path | None) -> tuple[Path, CorpusJoin, dict[str, Reference]]:
+    """(ledger root, corpus join, registered datasets by name) from the manifest."""
     base = find_root(root)
     members = load(base)
     ledgers = [m for m in members if m.layer == "ledger"]
@@ -99,7 +99,7 @@ def _system(root: Path | None) -> tuple[Path, CorpusJoin, set[str]]:
         registered.append(
             RegisteredCorpus(name=m.name, root=m.path, private=m.visibility == "private")
         )
-    datasets = {r.dataset for r in load_references(base)}
+    datasets = {r.dataset: r for r in load_references(base)}
     return ledger.path, CorpusJoin(registered), datasets
 
 

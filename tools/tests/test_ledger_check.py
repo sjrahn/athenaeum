@@ -9,10 +9,16 @@ from pathlib import Path
 import pytest
 
 from ath._cli import main as ath_main
+from ath.manifest import Reference
 from ledger._cli import main as ledger_main
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 from ledger.model import canonical_claim_state, ensure_source, intervals_overlap, period_interval
+
+_WIKIPEDIA_REF = Reference(
+    dataset="wikipedia", description="test mirror", adapter="zim", latest="2026-06",
+    snapshots={"2026-06": "9" * 64},
+)
 
 H_PUB = "a" * 64      # resolves in the public corpus
 H_PRIV = "b" * 64     # resolves only in the private corpus
@@ -51,8 +57,10 @@ def system(tmp_path: Path) -> Path:
         "references:\n"
         "  wikipedia:\n"
         "    description: test mirror\n"
-        "    mirror: /mirrors/wp.zim\n"
-        "    snapshot: '2026-06'\n"
+        "    adapter: zim\n"
+        "    latest: '2026-06'\n"
+        "    snapshots:\n"
+        "      '2026-06': { artifact: " + ("9" * 64) + " }\n"
     )
     pub = root / "corpora" / "corpus"
     priv = root / "corpora" / "corpus-private"
@@ -132,7 +140,7 @@ def _join(root: Path) -> CorpusJoin:
 
 
 def _check(root: Path, **kw):
-    return run_check(root / "ledger", _join(root), {"wikipedia"}, **kw)
+    return run_check(root / "ledger", _join(root), {"wikipedia": _WIKIPEDIA_REF}, **kw)
 
 
 def _regen(root: Path) -> None:
@@ -257,6 +265,127 @@ def test_evidence_source_discipline(system: Path) -> None:
     assert "does not resolve in this fact's sources" in msgs     # g (ghost)
     assert "retired inline `uri` field" in msgs                  # h
     assert "must not carry a leading '?'" in msgs                # i
+
+
+def test_sources_ref_pin_grammar(system: Path) -> None:
+    """*(v17, §6.5, §13.1)* A pinned `ref://{dataset}@{tag}/{id}` sources
+    entry is grammatically valid and registers exactly like a bare ref —
+    dataset registration keys on name only. A tag naming a real snapshot on
+    a registered dataset is clean; a bare ref is unaffected by pins at all;
+    a pin naming an unknown tag on a REGISTERED dataset is a dangling pin
+    (error, §13.1); a pin into an UNregistered dataset keeps producing only
+    the existing unregistered-dataset error — never a second, stacked
+    dangling-pin error."""
+    sources = {
+        "s1": {"ref": "wikipedia@2026-06/Gorguts"},      # pinned, registered tag — clean
+        "s2": {"ref": "wikipedia/Gorguts"},               # bare — unaffected by pins
+        "s3": {"ref": "wikipedia@no-such-tag/Gorguts"},   # pinned, unregistered tag — dangling
+        "s4": {"ref": "musicbrainz@2026-01/artist/1"},    # pinned, unregistered dataset
+    }
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "sources": sources,
+        "claims": [
+            _claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"source": "s2", "kind": "direct"}]),
+            _claim("x", "c", evidence=[{"source": "s3", "kind": "direct"}]),
+            _claim("x", "d", evidence=[{"source": "s4", "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "'musicbrainz' is not registered" in msgs
+    s3_errors = [e for e in rep.errors if "sources.s3" in e]
+    assert len(s3_errors) == 1
+    assert "dangling pin" in s3_errors[0] and "'wikipedia'" in s3_errors[0] \
+        and "'no-such-tag'" in s3_errors[0] and "§13.1" in s3_errors[0]
+    # unregistered-dataset pin (s4) draws exactly one error, not a stacked
+    # dangling-pin error on top of it
+    s4_errors = [e for e in rep.errors if "sources.s4" in e]
+    assert len(s4_errors) == 1
+    # registered pin (s1) and bare ref (s2) are clean
+    assert not any("sources.s1" in e or "sources.s2" in e for e in rep.errors)
+
+
+def test_based_on_ref_dangling_pin(system: Path) -> None:
+    """*(v17, §13.1)* The dangling-pin check also applies to interpretation
+    `based_on` `ref://` entries."""
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "x-guess", "kind": "assessment", "about": ["x"],
+        "statement": "s", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}", "ref://wikipedia@no-such-tag/Gorguts"],
+        "status": "standing", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    assert any("dangling pin" in e and "based_on" in e and "§13.1" in e
+               for e in rep.errors)
+
+
+def test_proposes_evidence_ref_dangling_pin(system: Path) -> None:
+    """*(v17, §13.1)* The dangling-pin check also applies to `proposes`
+    inline evidence `ref://` uris."""
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "x-guess", "kind": "hypothesis", "about": ["x"],
+        "statement": "s", "confidence": "plausible", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"],
+        "proposes": {
+            "id": "x:guess", "predicate": "guess", "value": "v",
+            "evidence": [
+                {"uri": "ref://wikipedia@no-such-tag/Gorguts", "kind": "direct"},
+            ],
+        },
+        "status": "open", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    assert any("dangling pin" in e and "proposes evidence" in e and "§13.1" in e
+               for e in rep.errors)
+
+
+_MIRROR_HASH = "9" * 64  # registered as wikipedia's 2026-06 snapshot artifact (_WIKIPEDIA_REF)
+
+
+def test_mirror_hash_as_evidence_warns(system: Path) -> None:
+    """*(v17, §6.5, §13.1)* A sources-table `record` matching a registered
+    mirror-artifact hash draws a warning naming the owning dataset — the
+    mirror's honest citation surface is `ref://`, not the corpus hash
+    directly. The SAME hash rostered on `artifacts[].uri` draws no such
+    warning: coverage discharges at the mirror grain via the roster (§6.5
+    'Never swept'), so warning there would fight the spec's own design."""
+    _record(system / "corpora" / "corpus", _MIRROR_HASH)
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "artifacts": [{"uri": f"corpus://{_MIRROR_HASH}", "role": "documents"}],
+        "sources": {"s1": {"record": _MIRROR_HASH}},
+        "claims": [_claim("x", "a", evidence=[{"source": "s1", "kind": "direct"}])],
+    })
+    rep = _check(system)
+    mirror_warnings = [w for w in rep.warnings if "mirror artifact for" in w]
+    assert len(mirror_warnings) == 1
+    assert "sources.s1" in mirror_warnings[0]
+    assert "'wikipedia'@'2026-06'" in mirror_warnings[0]
+
+
+def test_proposes_evidence_uri_mirror_hash_warns(system: Path) -> None:
+    """*(v17, §6.5, §13.1)* The mirror-hash-as-evidence warning also applies
+    to `proposes` inline evidence `uri:` citations."""
+    _record(system / "corpora" / "corpus", _MIRROR_HASH)
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "x-guess", "kind": "hypothesis", "about": ["x"],
+        "statement": "s", "confidence": "plausible", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"],
+        "proposes": {
+            "id": "x:guess", "predicate": "guess", "value": "v",
+            "evidence": [
+                {"uri": f"corpus://{_MIRROR_HASH}", "kind": "direct"},
+            ],
+        },
+        "status": "open", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    assert any("mirror artifact for 'wikipedia'@'2026-06'" in w for w in rep.warnings)
 
 
 def test_sources_duplicate_target(system: Path) -> None:

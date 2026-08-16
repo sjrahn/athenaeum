@@ -162,7 +162,7 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
         ],
     }))
     join = CorpusJoin(_corpora(system))
-    res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-02")
+    res = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-02")
     assert res.verified == 1 and res.stamped == 1
     assert any("quote not found" in e for e in res.errors)          # confirmed → error
     assert any("anchor does not resolve" in w for w in res.warnings)  # provisional → warn
@@ -177,7 +177,7 @@ def test_verify_quotes_and_anchors(system: Path) -> None:
         canonical_claim_state(fact["claims"][0], unstamped)
     # a later-day re-run must NOT re-stamp: only a moved touch identity may
     # rewrite fact files (else every verify run churns the whole tree)
-    res2 = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-03")
+    res2 = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-03")
     assert res2.verified == 1 and res2.stamped == 0
     fact2 = json.loads((ledger / "facts" / "person" / "mom.json").read_text())
     assert fact2["sources"]["s1"]["verified"]["at"] == "2026-07-02"
@@ -204,7 +204,7 @@ def test_verify_shared_source_stamps_only_if_all_citations_pass(system: Path) ->
         ],
     }))
     join = CorpusJoin(_corpora(system))
-    res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-02")
+    res = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-02")
     assert res.verified == 1  # dad:good's citation
     assert res.stamped == 0   # s1 is shared with dad:bad's failing citation
     fact = json.loads((ledger / "facts" / "person" / "dad.json").read_text())
@@ -250,9 +250,160 @@ def test_verify_embed_descriptions_and_inline_markup(system: Path) -> None:
         ],
     }))
     join = CorpusJoin(_corpora(system))
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 2
     assert not res.errors and not res.warnings
+
+
+def _ref_fact(ledger: Path, sources: dict, claims: list) -> None:
+    (ledger / "facts" / "band").mkdir(parents=True, exist_ok=True)
+    (ledger / "facts" / "band" / "acme.json").write_text(json.dumps({
+        "id": "acme", "type": "band", "name": "Acme",
+        "sources": sources, "claims": claims,
+    }))
+
+
+def test_verify_ref_bare_binds_latest_and_restamps_only_on_change(system: Path) -> None:
+    """§13.2.3: a bare `ref://` citation resolves through the dataset's
+    `latest` tag and stamps `{snapshot, artifact}` — content stays
+    unverifiable (no adapter exists yet) without blocking the stamp."""
+    from ath.manifest import Reference
+
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                          adapter="jsonl-index", latest="2026-01",
+                                          snapshots={"2026-01": v1})}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 1  # content: no adapter yet — every registered case
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact["sources"]["s1"]["verified"] == {
+        "snapshot": "2026-01", "artifact": v1, "at": "2026-07-02"}
+    # unchanged (tag, artifact) on a later run must not rewrite the binding
+    res2 = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-03")
+    assert res2.stamped == 0
+    fact2 = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact2["sources"]["s1"]["verified"]["at"] == "2026-07-02"
+
+
+def test_verify_ref_pinned_binds_pinned_tags_artifact(system: Path) -> None:
+    from ath.manifest import Reference
+
+    ledger = system / "ledger"
+    v1, v2 = "a" * 64, "b" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz@2025-01/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2025-06-01",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                          adapter="jsonl-index", latest="2026-01",
+                                          snapshots={"2025-01": v1, "2026-01": v2})}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 1
+    assert res.stamped == 1
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact["sources"]["s1"]["verified"] == {
+        "snapshot": "2025-01", "artifact": v1, "at": "2026-07-02"}
+
+
+def test_verify_ref_latest_bump_drifts_bare_cite_only(system: Path) -> None:
+    """A moved `latest` flags every bare citer for re-verification; a pinned
+    citation is drift-free by construction (§6.5, §13.2.3)."""
+    from ath.manifest import Reference
+
+    ledger = system / "ledger"
+    v1, v2 = "a" * 64, "b" * 64
+    _ref_fact(ledger, {
+        "s1": {"ref": "musicbrainz/artist/abc-123"},
+        "s2": {"ref": "musicbrainz@2026-01/artist/abc-123"},
+    }, [
+        {"id": "acme:mb-bare", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+        {"id": "acme:mb-pinned", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s2", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets_v1 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                             adapter="jsonl-index", latest="2026-01",
+                                             snapshots={"2026-01": v1})}
+    verify_ledger(ledger, join, datasets_v1, stamp=True, today="2026-07-02")
+    datasets_v2 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                             adapter="jsonl-index", latest="2026-02",
+                                             snapshots={"2026-01": v1, "2026-02": v2})}
+    res = verify_ledger(ledger, join, datasets_v2, stamp=False, today="2026-07-03")
+    drift = [w for w in res.warnings if "snapshot binding drifted" in w]
+    assert len(drift) == 1
+    assert "acme:mb-bare" in drift[0]
+    assert "acme:mb-pinned" not in drift[0]
+
+
+def test_verify_ref_pinned_artifact_repointed_drifts(system: Path) -> None:
+    """A pin's residual failure mode: the manifest re-points the pinned tag's
+    mirror-artifact hash out from under a frozen citation (§13.2.3 — the hash
+    is the true pin)."""
+    from ath.manifest import Reference
+
+    ledger = system / "ledger"
+    v1, v2 = "a" * 64, "b" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz@2025-01/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2025-06-01",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets_v1 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                             adapter="jsonl-index", latest="2025-01",
+                                             snapshots={"2025-01": v1})}
+    verify_ledger(ledger, join, datasets_v1, stamp=True, today="2026-07-02")
+    datasets_repointed = {"musicbrainz": Reference(
+        dataset="musicbrainz", description="test", adapter="jsonl-index",
+        latest="2025-01", snapshots={"2025-01": v2})}
+    res = verify_ledger(ledger, join, datasets_repointed, stamp=False, today="2026-07-03")
+    assert any("snapshot binding drifted" in w for w in res.warnings)
+
+
+def test_verify_ref_unregistered_dataset_and_dangling_pin_are_unverifiable(
+    system: Path,
+) -> None:
+    """No crash, no stamp — check owns the hard error for both (§13.1); verify
+    stays honestly unverifiable."""
+    from ath.manifest import Reference
+
+    ledger = system / "ledger"
+    _ref_fact(ledger, {
+        "s1": {"ref": "wikidata/artist/abc-123"},           # unregistered dataset
+        "s2": {"ref": "musicbrainz@2099-01/artist/abc-123"},  # dangling pin
+    }, [
+        {"id": "acme:unreg", "predicate": "x", "value": "x",
+         "status": "provisional", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "incidental"}]},
+        {"id": "acme:dangling", "predicate": "x", "value": "x",
+         "status": "provisional", "asof": "2026-07-02",
+         "evidence": [{"source": "s2", "kind": "incidental"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
+                                          adapter="jsonl-index", latest="2026-01",
+                                          snapshots={"2026-01": "a" * 64})}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 2
+    assert res.stamped == 0
+    assert not res.errors  # a validation-error class, not verify's to raise
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert "verified" not in fact["sources"]["s1"]
+    assert "verified" not in fact["sources"]["s2"]
 
 
 def test_promote_and_stamp(system: Path) -> None:
@@ -395,7 +546,7 @@ def test_unchecked_anchor_quote_counts_record_scoped(system: Path) -> None:
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin(_corpora(system))
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1 and res.record_scoped == 1
 
 
@@ -445,7 +596,7 @@ def test_verify_derived_title_with_no_frontmatter_pair(tmp_path: Path) -> None:
                                   "kind": "authoritative"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1
     assert not res.errors and not res.warnings
 
@@ -487,7 +638,7 @@ def test_verify_section_header_title_quote(tmp_path: Path) -> None:
                                   "kind": "authoritative"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1
     assert not res.errors and not res.warnings
 
@@ -530,7 +681,7 @@ def test_verify_row_axis_falls_back_to_record_scoped(tmp_path: Path) -> None:
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1 and res.record_scoped == 1
     assert not res.errors and not res.warnings
 
@@ -566,7 +717,7 @@ def test_verify_segments_surface_no_persisted_segments_is_deferred(tmp_path: Pat
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=True)
+    res = verify_ledger(ledger, join, {}, stamp=True)
     assert res.verified == 0
     assert res.deferred == 1
     assert res.demand == {h: 1}
@@ -610,7 +761,7 @@ def test_verify_deferred_surface_byte_fact_quote_still_verifies(tmp_path: Path) 
                     ]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1
     assert res.deferred == 1
     assert res.demand == {h: 1}
@@ -649,7 +800,7 @@ def test_verify_segments_surface_with_persisted_segments_verifies(tmp_path: Path
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1
     assert not res.errors and not res.warnings
 
@@ -683,7 +834,7 @@ def test_verify_interpretation_may_reference_segmentless_html_with_enqueue_need(
         "needs": [{"action": "enqueue", "record": f"corpus://{h}", "why": "normalize"}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert not res.errors and not res.warnings
     assert res.demand == {h: 1}
 
@@ -716,7 +867,7 @@ def test_verify_interpretation_reference_without_need_is_clean_demand(
         "based_on": [f"corpus://{h}"],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert not res.errors and not res.warnings
     assert res.demand == {h: 1}
 
@@ -763,7 +914,7 @@ def test_verify_interpretation_proposes_inline_uri_joins_demand(
         },
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert not res.errors and not res.warnings
     assert res.demand == {h: 1}  # `other` is text/plain — raw surface, no demand
 
@@ -838,7 +989,7 @@ def test_verify_derived_surface_prop_anchor_resolves_via_resolver(tmp_path: Path
                                   "quote": "Pioneer of computing", "kind": "authoritative"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-19")
+    res = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-19")
     assert res.verified == 1 and res.derived_resolved == 1
     assert not res.errors and not res.warnings
 
@@ -851,7 +1002,7 @@ def test_verify_derived_surface_prop_anchor_resolves_via_resolver(tmp_path: Path
     assert verified["ops"] == {"prop": "vcard-prop@1"}
 
     # unchanged pin (and touch): a later-day re-run must NOT re-stamp
-    res2 = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-20")
+    res2 = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-20")
     assert res2.verified == 1 and res2.stamped == 0
     fact2 = json.loads((ledger / "facts" / "person" / "ada.json").read_text())
     assert fact2["sources"]["s1"]["verified"]["at"] == "2026-07-19"
@@ -876,7 +1027,7 @@ def test_verify_derived_surface_quote_mismatch_is_a_real_failure(tmp_path: Path)
                                   "kind": "authoritative"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 0 and res.derived_resolved == 0 and res.unverifiable == 0
     assert len(res.errors) == 1  # confirmed status → error severity
     assert "quote not found verbatim in the derived surface" in res.errors[0]
@@ -903,7 +1054,7 @@ def test_verify_derived_surface_honestly_unverifiable_when_op_cannot_run(
                                   "quote": "anything", "kind": "incidental"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 0 and res.derived_resolved == 0
     assert res.unverifiable == 1
     assert not res.errors and not res.warnings
@@ -932,7 +1083,7 @@ def test_verify_derived_surface_ops_pin_drift_warns(tmp_path: Path) -> None:
                                   "quote": "Pioneer of computing", "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    stamp_res = verify_ledger(ledger, join, set(), stamp=True, today="2026-07-19")
+    stamp_res = verify_ledger(ledger, join, {}, stamp=True, today="2026-07-19")
     assert stamp_res.stamped == 1
 
     real_op_engine_map = verify_mod._op_engine_map
@@ -945,7 +1096,7 @@ def test_verify_derived_surface_ops_pin_drift_warns(tmp_path: Path) -> None:
 
     verify_mod._op_engine_map = _upgraded_engine
     try:
-        res = verify_ledger(ledger, join, set(), stamp=False)
+        res = verify_ledger(ledger, join, {}, stamp=False)
     finally:
         verify_mod._op_engine_map = real_op_engine_map
     assert any("derivation-op pin drifted" in w for w in res.warnings)
@@ -1006,7 +1157,7 @@ def test_verify_derived_surface_path_member_reads_real_file_not_stringified_path
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1 and res.derived_resolved == 1
     assert not res.errors and not res.warnings
 
@@ -1043,6 +1194,6 @@ def test_verify_derived_surface_preserves_literal_markup_characters(tmp_path: Pa
                                   "kind": "direct"}]}],
     }))
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
-    res = verify_ledger(ledger, join, set(), stamp=False)
+    res = verify_ledger(ledger, join, {}, stamp=False)
     assert res.verified == 1 and res.derived_resolved == 1
     assert not res.errors and not res.warnings

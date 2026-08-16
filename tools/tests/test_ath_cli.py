@@ -68,23 +68,93 @@ def test_manifest_exactly_one_ledger(tmp_path: Path) -> None:
         load(tmp_path)
 
 
+_H1 = "1" * 64
+_H2 = "2" * 64
+
+
+def _write_references(tmp_path: Path, body: str) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(f"org: https://x\nreferences:\n{body}")
+
+
 def test_manifest_references(tmp_path: Path) -> None:
-    (tmp_path / "athenaeum.yaml").write_text(
-        "org: https://x\n"
-        "references:\n"
+    """*(v17, spec/athenaeum.md §2.3)* multi-snapshot shape: adapter, latest,
+    a tag-keyed snapshots map of blake3 mirror-artifact hashes."""
+    _write_references(
+        tmp_path,
         "  wikipedia:\n"
         "    description: English Wikipedia, ZIM mirror\n"
-        "    mirror: /mirrors/wikipedia.zim\n"
-        "    snapshot: '2026-06'\n"
+        "    adapter: zim\n"
+        "    latest: '2026-06'\n"
+        "    snapshots:\n"
+        f"      '2026-06': {{ artifact: {_H1} }}\n"
+        f"      '2026-01': {{ artifact: {_H2} }}\n",
     )
     (ref,) = load_references(tmp_path)
     assert ref.dataset == "wikipedia"
-    assert ref.mirror == "/mirrors/wikipedia.zim"
-    assert ref.snapshot == "2026-06"
+    assert ref.adapter == "zim"
+    assert ref.latest == "2026-06"
+    assert ref.snapshots == {"2026-06": _H1, "2026-01": _H2}
     (tmp_path / "athenaeum.yaml").write_text("org: https://x\nreferences: {}\n")
     assert load_references(tmp_path) == []
     (tmp_path / "athenaeum.yaml").write_text("org: https://x\n")
     assert load_references(tmp_path) == []
+
+
+def test_manifest_references_retired_shape_errors(tmp_path: Path) -> None:
+    """The pre-v17 `mirror:`/`snapshot:` keys are retired — the error names
+    the v17 shape rather than failing silently or cryptically."""
+    _write_references(
+        tmp_path,
+        "  wikipedia:\n    mirror: /mirrors/wp.zim\n    snapshot: '2026-06'\n",
+    )
+    with pytest.raises(ManifestError, match="v17"):
+        load_references(tmp_path)
+
+
+def test_manifest_references_missing_adapter(tmp_path: Path) -> None:
+    _write_references(
+        tmp_path,
+        f"  wikipedia:\n    latest: t\n    snapshots:\n      t: {{ artifact: {_H1} }}\n",
+    )
+    with pytest.raises(ManifestError, match="adapter"):
+        load_references(tmp_path)
+
+
+def test_manifest_references_missing_snapshots(tmp_path: Path) -> None:
+    _write_references(tmp_path, "  wikipedia:\n    adapter: zim\n    latest: t\n")
+    with pytest.raises(ManifestError, match="snapshots"):
+        load_references(tmp_path)
+
+
+def test_manifest_references_latest_must_name_a_snapshot(tmp_path: Path) -> None:
+    _write_references(
+        tmp_path,
+        f"  wikipedia:\n    adapter: zim\n    latest: nope\n    snapshots:\n"
+        f"      t: {{ artifact: {_H1} }}\n",
+    )
+    with pytest.raises(ManifestError, match="latest"):
+        load_references(tmp_path)
+
+
+def test_manifest_references_bad_artifact_hash(tmp_path: Path) -> None:
+    _write_references(
+        tmp_path,
+        "  wikipedia:\n    adapter: zim\n    latest: t\n    snapshots:\n"
+        "      t: { artifact: not-a-hash }\n",
+    )
+    with pytest.raises(ManifestError, match="blake3"):
+        load_references(tmp_path)
+
+
+def test_manifest_references_bad_tag_charset(tmp_path: Path) -> None:
+    """Tags ride in `ref://` URIs after `@` — `/` and `@` must be impossible."""
+    _write_references(
+        tmp_path,
+        "  wikipedia:\n    adapter: zim\n    latest: 'bad/tag'\n    snapshots:\n"
+        f"      'bad/tag': {{ artifact: {_H1} }}\n",
+    )
+    with pytest.raises(ManifestError, match="\\^\\[a-z0-9\\]"):
+        load_references(tmp_path)
 
 
 def test_manifest_overrides_and_errors(tmp_path: Path) -> None:

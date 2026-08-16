@@ -138,7 +138,7 @@ def test_migration_preserves_challenge_pins(tmp_path: Path) -> None:
     )
     (ledger / "ledger.yaml").write_text("name: ledger\ncorpora: []\n")
 
-    rep = run_check(ledger, CorpusJoin([]), set(), no_corpus=True)
+    rep = run_check(ledger, CorpusJoin([]), {}, no_corpus=True)
     assert not any("re-review" in w for w in rep.warnings)
 
 

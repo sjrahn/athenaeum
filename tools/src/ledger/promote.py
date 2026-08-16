@@ -111,7 +111,10 @@ def _land_evidence(fact: dict, evidence: list) -> list:
             if anchor:
                 e2["anchor"] = anchor
         elif rm:
-            e2["source"] = ensure_source(fact, ref=f"{rm.group(1)}/{rm.group(2)}")
+            # group(2) is the optional pinned tag (§6.5) — carry it through so a
+            # pinned inline uri lands as a pinned sources-table ref, not a bare one.
+            pin = f"@{rm.group(2)}" if rm.group(2) else ""
+            e2["source"] = ensure_source(fact, ref=f"{rm.group(1)}{pin}/{rm.group(3)}")
         landed.append(e2)
     return landed
 

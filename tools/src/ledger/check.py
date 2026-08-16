@@ -12,8 +12,10 @@ work the ledger tracks but tolerates; a `note` is information.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ledger import invariants as invariants_mod
 from ledger import views
@@ -56,6 +58,9 @@ from ledger.model import (
 )
 from ledger.schemas import load_schemas
 
+if TYPE_CHECKING:
+    from ath.manifest import Reference
+
 _RETIRED_QUALIFIERS_HINT = "time lives in `period`/`asof`, never ad-hoc qualifiers"
 
 
@@ -83,7 +88,7 @@ class Report:
 def run_check(
     ledger_root: Path,
     join: CorpusJoin,
-    datasets: set[str],
+    datasets: Mapping[str, Reference],
     *,
     no_corpus: bool = False,
 ) -> Report:
@@ -187,6 +192,17 @@ def run_check(
     retired = views.retired_terms(ledger_root)
     used_sources: dict[Path, set[str]] = {}
 
+    # *(17, §6.5/§13.1)* every registered mirror-artifact hash, hash -> the
+    # (dataset, tag) that registered it — first registrant wins on a hash
+    # collision across datasets (vanishingly unlikely; a blake3 collision or a
+    # deliberately shared mirror). Built once, purely from the manifest (no
+    # corpus join needed), and consulted below wherever claim evidence could
+    # cite a mirror's bytes directly instead of through `ref://`.
+    mirror_hash_owner: dict[str, tuple[str, str]] = {}
+    for dname, dref in datasets.items():
+        for tag, h in (dref.snapshots or {}).items():
+            mirror_hash_owner.setdefault(h, (dname, tag))
+
     # ------------------------------------------------------------- fact files
     all_claims: list[tuple[Path, dict, dict]] = []
     for f, o in facts.items():
@@ -242,6 +258,12 @@ def run_check(
                             rep.err(where, f"schema: participants[{i}] {pid!r} is a "
                                            f"{got!r}, declared {want!r}")
 
+        # *(17, §6.5)* deliberately no mirror-hash-as-evidence warning here: a
+        # roster entry citing a mirror artifact's corpus hash is not evidence
+        # standing in for `ref://` content — it's the coverage-discharge
+        # mechanism itself ("snapshot records roster on the dataset's own
+        # concept ... never per entry"). Warning here would fight the spec's
+        # own design.
         for entry in o.get("artifacts") or []:
             if not isinstance(entry, dict):
                 rep.err(where, "roster entries must be objects")
@@ -313,6 +335,14 @@ def run_check(
                                        f"{dup!r}) — one sources entry per target")
                     else:
                         targets_seen[("record", h)] = skey
+                    owner = mirror_hash_owner.get(h)
+                    if owner is not None:
+                        odset, otag = owner
+                        rep.warn(swhere, f"record {h[:12]}… is the mirror artifact for "
+                                        f"{odset!r}@{otag!r} — the mirror record exists "
+                                        "for provenance and distribution; its content's "
+                                        f"honest citation surface is ref://{odset}/{{id}}, "
+                                        "not the corpus hash directly (§6.5, §13.1)")
                     if resolve_live and FULL_HASH_RE.match(h):
                         if not join.resolves(h):
                             rep.err(swhere, f"cites corpus://{h[:12]}… which resolves "
@@ -330,6 +360,15 @@ def run_check(
                     elif rm.group(1) not in datasets:
                         rep.err(swhere, f"ref:// dataset {rm.group(1)!r} is not "
                                        "registered in the manifest's references:")
+                    elif rm.group(2) is not None \
+                            and rm.group(2) not in datasets[rm.group(1)].snapshots:
+                        # *(17, §13.1)* the dataset is registered but the pinned
+                        # tag is not one of its snapshots — a dangling pin. A pin
+                        # into an unregistered dataset is caught by the branch
+                        # above and never reaches here, so exactly one error.
+                        rep.err(swhere, f"ref:// pin {rm.group(1)!r}@{rm.group(2)!r} is a "
+                                       f"dangling pin: {rm.group(2)!r} is not a registered "
+                                       f"snapshot tag on {rm.group(1)!r} (§13.1)")
                     dup = targets_seen.get(("ref", r))
                     if dup is not None:
                         rep.err(swhere, f"duplicate source for ref {r!r} (also {dup!r}) "
@@ -623,6 +662,11 @@ def run_check(
             if rm:
                 if rm.group(1) not in datasets:
                     rep.err(where, f"based_on ref:// dataset {rm.group(1)!r} unregistered")
+                elif rm.group(2) is not None \
+                        and rm.group(2) not in datasets[rm.group(1)].snapshots:
+                    rep.err(where, f"based_on ref:// pin {rm.group(1)!r}@{rm.group(2)!r} is "
+                                   f"a dangling pin: {rm.group(2)!r} is not a registered "
+                                   f"snapshot tag on {rm.group(1)!r} (§13.1)")
                 continue
             if QUALIFIED_URI_RE.match(b):
                 rep.err(where, f"based_on {b!r} uses the retired qualified corpus form")
@@ -682,10 +726,26 @@ def run_check(
                                 rep.err(where, f"proposes evidence cites "
                                                f"corpus://{pcm.group(1)[:12]}… which "
                                                "resolves in no registered corpus")
+                            owner = mirror_hash_owner.get(pcm.group(1))
+                            if owner is not None:
+                                odset, otag = owner
+                                rep.warn(where, f"proposes evidence cites "
+                                               f"corpus://{pcm.group(1)[:12]}…, the mirror "
+                                               f"artifact for {odset!r}@{otag!r} — the "
+                                               "mirror record's honest citation surface is "
+                                               f"ref://{odset}/{{id}}, not the corpus hash "
+                                               "directly (§6.5, §13.1)")
                         elif prm:
                             if prm.group(1) not in datasets:
                                 rep.err(where, f"proposes evidence ref:// dataset "
                                                f"{prm.group(1)!r} is not registered")
+                            elif prm.group(2) is not None \
+                                    and prm.group(2) not in datasets[prm.group(1)].snapshots:
+                                rep.err(where, f"proposes evidence ref:// pin "
+                                               f"{prm.group(1)!r}@{prm.group(2)!r} is a "
+                                               f"dangling pin: {prm.group(2)!r} is not a "
+                                               f"registered snapshot tag on "
+                                               f"{prm.group(1)!r} (§13.1)")
                         elif QUALIFIED_URI_RE.match(puri):
                             rep.err(where, f"proposes evidence uri {puri!r} uses the "
                                            "retired qualified form — cite bare "

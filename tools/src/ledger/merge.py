@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin
@@ -27,6 +29,9 @@ from ledger.model import (
     next_source_key,
     source_target,
 )
+
+if TYPE_CHECKING:
+    from ath.manifest import Reference
 
 _WIKILINK_TARGET_RE = re.compile(r"\[\[([^\]|#]+)")
 
@@ -451,7 +456,7 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
 
 def apply_merge(
     ledger_root: Path, plan: dict, join: CorpusJoin | None = None,
-    datasets: set[str] | None = None,
+    datasets: Mapping[str, Reference] | None = None,
 ) -> None:
     """Execute a plan from `plan_merge`. Refuses a plan carrying errors.
     Writes every file the plan computed, then gates on `ath ledger check`
@@ -466,7 +471,7 @@ def apply_merge(
 
     no_corpus = join is None
     real_join = join if join is not None else CorpusJoin([])
-    real_datasets = datasets if datasets is not None else set()
+    real_datasets = datasets if datasets is not None else {}
     baseline = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
 
     def _write_all(mapping: dict[str, str | None]) -> None:

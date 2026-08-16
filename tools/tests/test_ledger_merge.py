@@ -129,7 +129,7 @@ def test_happy_merge_end_to_end(ledger: Path) -> None:
 
     from ledger.check import run_check
     from ledger.corpora import CorpusJoin
-    rep = run_check(ledger, CorpusJoin([]), set(), no_corpus=True)
+    rep = run_check(ledger, CorpusJoin([]), {}, no_corpus=True)
     assert rep.ok, rep.errors
 
 
@@ -306,5 +306,5 @@ def test_challenges_claim_rewritten_and_repinned(ledger: Path) -> None:
 
     from ledger.check import run_check
     from ledger.corpora import CorpusJoin
-    rep = run_check(ledger, CorpusJoin([]), set(), no_corpus=True)
+    rep = run_check(ledger, CorpusJoin([]), {}, no_corpus=True)
     assert rep.ok, rep.errors

@@ -56,7 +56,9 @@ def _target_of(uri: str) -> tuple[Target | None, str]:
         return ("record", m.group(1)), anchor
     m = REF_URI_RE.match(uri)
     if m:
-        return ("ref", f"{m.group(1)}/{m.group(2)}"), ""
+        # group(2) is the optional pinned tag (§6.5) — preserve it in the target.
+        pin = f"@{m.group(2)}" if m.group(2) else ""
+        return ("ref", f"{m.group(1)}{pin}/{m.group(3)}"), ""
     return None, ""
 
 

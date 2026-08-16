@@ -15,8 +15,17 @@ resolver itself (`corpus.resolver.resolve`, the same path `corpus resolve`
 uses) before falling back to `unverifiable` — the honestly-unverifiable
 residue narrows to ops the verifying environment genuinely can't run
 (artifact bytes absent, an optional extra missing, a non-textual result).
-`ref://` citations (resolver deferred post-reforge) still report
-`unverifiable`, never failure.
+
+*(v17, §6.5/§13.2.3)* `ref://` citations resolve against the manifest's
+registered datasets — a bare citation tracks `latest`, a pinned citation
+freezes its tag — and the resolved `(tag, mirror-artifact blake3)` pair
+stamps onto the source as a snapshot binding, drift-checked every run
+exactly like the derivation-op pin above. Resolution is a mechanical
+manifest lookup and stamps regardless of content: no dataset adapter exists
+yet, so quote verification stays `unverifiable`, never failure — the
+binding records that the citation *resolves*, not that its content was
+checked. An unregistered dataset or a dangling pin resolves to nothing
+(check's own finding, §13.1) — unverifiable, no stamp, no crash.
 
 A claim whose evidence FAILS is flagged at the severity of its status:
 `confirmed` failing is an error; lower rungs warn.
@@ -41,13 +50,18 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from corpus import functional_uri as furi
 from corpus import textnorm as _textnorm
 from ledger.corpora import CorpusJoin
-from ledger.model import CORPUS_URI_RE, derived_uri
+from ledger.model import CORPUS_URI_RE, SOURCE_REF_RE, derived_uri
+
+if TYPE_CHECKING:
+    from ath.manifest import Reference
 
 _SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 _UNCHECKED_PARAMS = {"time_range", "frame", "bbox", "path", "region", "rotate"}
@@ -380,7 +394,7 @@ def _derived_resolution(
 def verify_ledger(
     ledger_root: Path,
     join: CorpusJoin,
-    datasets: set[str],
+    datasets: Mapping[str, Reference],
     *,
     stamp: bool = False,
     only_ids: set[str] | None = None,
@@ -427,6 +441,13 @@ def verify_ledger(
         # written into the source's `verified.ops` binding at --stamp
         source_ops: dict[str, dict[str, str]] = {}
         ops_drift_warned: set[str] = set()
+        # *(v17, §6.5/§13.2.3)* {skey: (resolved tag, resolved mirror-artifact
+        # blake3)} — every `ref` source resolved against `datasets` this run,
+        # independent of `source_ok`/`bad`/`ok`: the binding records
+        # RESOLUTION, not quote verification, so a resolved ref is stampable
+        # even while its content stays unverifiable (no adapter exists yet).
+        ref_resolved: dict[str, tuple[str, str]] = {}
+        ref_drift_warned: set[str] = set()
         referenced: set[str] = set()
 
         def bad(skey: str, _map: dict[str, bool] = source_ok) -> None:
@@ -458,9 +479,74 @@ def verify_ledger(
                 if not isinstance(entry, dict):
                     continue
                 if "ref" in entry:
+                    # *(v17, §6.5/§13.2.3)* resolution is a pure manifest
+                    # lookup — dataset registration, then tag → mirror-artifact
+                    # — tracked in `referenced` the same as a record source so
+                    # unreferenced-entry accounting stays coherent.
+                    referenced.add(skey)
+                    ref_str = str(entry["ref"])
+                    rm = SOURCE_REF_RE.match(ref_str)
+                    reference = datasets.get(rm.group(1)) if rm else None
+                    if rm is None or reference is None:
+                        # unregistered dataset (or unparseable grammar) — a
+                        # check finding (§13.1), not a verify crash; nothing
+                        # to resolve or stamp
+                        res.unverifiable += 1
+                        res.notes.append(
+                            f"{where}: ref://{ref_str} unverifiable (dataset not "
+                            "registered in the manifest's references:)")
+                        continue
+                    tag = rm.group(2)
+                    if tag is not None:
+                        artifact = reference.snapshots.get(tag)
+                        if artifact is None:
+                            # dangling pin (§13.1, 17) — check errors it;
+                            # verify stays honestly unverifiable, no stamp
+                            res.unverifiable += 1
+                            res.notes.append(
+                                f"{where}: ref://{ref_str} unverifiable (pinned tag "
+                                f"{tag!r} is not a registered snapshot of "
+                                f"{rm.group(1)!r})")
+                            continue
+                        resolved_tag = tag
+                    else:
+                        resolved_tag = reference.latest
+                        artifact = reference.snapshots.get(resolved_tag)
+                        if artifact is None:
+                            res.unverifiable += 1
+                            res.notes.append(
+                                f"{where}: ref://{ref_str} unverifiable "
+                                f"({rm.group(1)!r}'s latest tag {resolved_tag!r} is "
+                                "not a registered snapshot)")
+                            continue
+                    # drift (§13.2.3, always-on — not gated on --stamp): a bare
+                    # cite's resolved (tag, artifact) moving off the stamped
+                    # binding, or a pinned cite's artifact moving under its
+                    # frozen tag, means the dataset changed under the citation
+                    # since it was last bound — flagged once per (fact,
+                    # source), mirroring the derivation-op pin-drift warning
+                    # above.
+                    verified_block = entry.get("verified")
+                    if isinstance(verified_block, dict) and skey not in ref_drift_warned:
+                        old_tag = verified_block.get("snapshot")
+                        old_artifact = verified_block.get("artifact")
+                        if old_tag is not None and \
+                                (old_tag, old_artifact) != (resolved_tag, artifact):
+                            ref_drift_warned.add(skey)
+                            res.warnings.append(
+                                f"{where}: snapshot binding drifted for "
+                                f"ref://{ref_str} ({old_tag}@"
+                                f"{str(old_artifact)[:12]}… → {resolved_tag}@"
+                                f"{artifact[:12]}…) — re-verification needed")
+                    ref_resolved[skey] = (resolved_tag, artifact)
+                    # content verification: no dataset adapter exists yet
+                    # (§6.5) — the resolution above is mechanically true and
+                    # stampable regardless; the quote itself stays honestly
+                    # unverifiable until an adapter lands
                     res.unverifiable += 1
-                    res.notes.append(f"{where}: ref://{entry['ref']} unverifiable "
-                                     "(mirror resolver lands post-reforge)")
+                    res.notes.append(
+                        f"{where}: ref://{ref_str} content unverifiable (no adapter "
+                        f"available for dataset {rm.group(1)!r})")
                     continue
                 h = str(entry.get("record", ""))
                 if not h:
@@ -618,9 +704,29 @@ def verify_ledger(
                 ok(skey)
         if stamp:
             for skey in referenced:
+                entry = sources[skey]
+                if skey in ref_resolved:
+                    # *(v17, §13.2.3)* resolution-keyed re-stamping: an
+                    # unchanged (tag, artifact) never rewrites the binding —
+                    # the same discipline as the record path's touch-keyed
+                    # re-stamp. Unlike the record path this never gates on
+                    # `source_ok` — a resolved ref stamps even though its
+                    # content is (and stays) unverifiable.
+                    tag, artifact = ref_resolved[skey]
+                    prev = entry.get("verified")
+                    prev_tag = prev.get("snapshot") if isinstance(prev, dict) else None
+                    prev_artifact = prev.get("artifact") if isinstance(prev, dict) else None
+                    if prev_tag == tag and prev_artifact == artifact:
+                        continue
+                    ref_stamped: dict[str, str] = {"snapshot": tag, "artifact": artifact}
+                    if today:
+                        ref_stamped["at"] = today
+                    entry["verified"] = ref_stamped
+                    res.stamped += 1
+                    dirty = True
+                    continue
                 if not source_ok.get(skey, False):
                     continue
-                entry = sources[skey]
                 touch = source_touch.get(skey, "")
                 # (1.5) the ops binding: one entry per derivation-op axis any of
                 # this source's evidence resolved through this run, pinned to the

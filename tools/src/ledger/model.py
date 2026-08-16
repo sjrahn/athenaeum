@@ -25,18 +25,23 @@ CLAIM_ID_RE = re.compile(r"^([a-z0-9]+(?:--?[a-z0-9]+)*):([a-z0-9]+(?:--?[a-z0-9
 CORPUS_URI_RE = re.compile(r"^corpus://([0-9a-f]{64})([?#].*)?$")
 QUALIFIED_URI_RE = re.compile(r"^corpus://[a-z0-9-]+/[0-9a-f]{64}")
 CORPUS_REF_RE = re.compile(r"corpus://([0-9a-f]{64})")
-REF_URI_RE = re.compile(r"^ref://([a-z0-9][a-z0-9._-]*)/(.+)$")
+# *(v17, §6.5)* group(1) dataset, group(2) optional pinned snapshot tag (None
+# for a bare ref, which resolves/tracks the dataset's `latest`), group(3) the
+# native id. `ref://{dataset}/{id}` bare tracks; `ref://{dataset}@{tag}/{id}`
+# pins a registered snapshot permanently.
+REF_URI_RE = re.compile(r"^ref://([a-z0-9][a-z0-9._-]*)(?:@([a-z0-9][a-z0-9._-]*))?/(.+)$")
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")
 
 # The per-fact sources table: a claim evidence entry cites a `source` key
 # instead of an inline `uri`; the fact-level `sources` mapping resolves each
 # key to exactly one `record` (a full 64-hex blake3) or `ref` (a bare
-# `{dataset}/{id}`, the same grammar REF_URI_RE carries past its `ref://`
-# prefix). The derived citation URI is reconstructed at every point that used
-# to read an inline `uri` (see `derived_uri`).
+# `{dataset}/{id}` or pinned `{dataset}@{tag}/{id}`, the same grammar
+# REF_URI_RE carries past its `ref://` prefix — group(1) dataset, group(2)
+# optional tag, group(3) id). The derived citation URI is reconstructed at
+# every point that used to read an inline `uri` (see `derived_uri`).
 SOURCE_KEY_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 FULL_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-SOURCE_REF_RE = re.compile(r"^([a-z0-9][a-z0-9._-]*)/(.+)$")
+SOURCE_REF_RE = re.compile(r"^([a-z0-9][a-z0-9._-]*)(?:@([a-z0-9][a-z0-9._-]*))?/(.+)$")
 
 PERIOD_RE = re.compile(
     r"^~?\d{4}(-\d{2}(-\d{2})?)?(T\d{2}:\d{2})?"

@@ -12,7 +12,11 @@ athenaeum.md §5, v15).
 
 Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
 locally-mirrored external databases cited as `ref://` evidence. They are
-mirrors pinned by snapshot version, not git members.
+mirrors, not git members. *(v17)* A dataset registers **multiple snapshots**
+— a tag-keyed `snapshots:` map (tag → the mirror's blake3 `artifact`), an
+explicit `latest:` default naming one of those tags, and a format `adapter:`
+resolving native ids. A snapshot's mirror bytes are a corpus artifact,
+distributed and integrity-checked through the corpus store.
 
 The issue tracker registers under `tracker:` — the Forgejo repo whose issues
 carry the system's backlog, and the in-repo path of the snapshot `ath issue
@@ -21,6 +25,7 @@ sync` writes. Host derives from `org:`, so no tooling hardcodes an instance.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,14 +81,24 @@ class Tracker:
         return f"{self.base.removesuffix('/api/v1')}/{self.owner}/{self.repo}/issues"
 
 
+_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_ARTIFACT_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
 @dataclass(frozen=True)
 class Reference:
-    """A registered reference dataset — a local mirror, not a git member."""
+    """A registered reference dataset — a local mirror, not a git member.
+
+    *(v17)* Multi-snapshot: `snapshots` maps tag → mirror-artifact blake3,
+    `latest` names the default tag. `ref://{dataset}@{tag}/{id}` (spec/ledger.md
+    §6.5) pins a snapshot; bare `ref://{dataset}/{id}` tracks `latest`.
+    """
 
     dataset: str
     description: str
-    mirror: str  # the local mirror source (a ZIM file, a dump, an extract)
-    snapshot: str  # the pinned snapshot version cited by evidence verification
+    adapter: str  # the format adapter resolving native ids (zim, jsonl-index, …)
+    latest: str  # the default snapshot tag — a key of snapshots
+    snapshots: dict[str, str]  # tag -> 64-hex blake3 mirror-artifact hash
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -139,19 +154,52 @@ def load(root: Path) -> list[Member]:
 
 
 def load_references(root: Path) -> list[Reference]:
-    """Parse the manifest's `references:` section — registered reference datasets."""
+    """Parse the manifest's `references:` section — registered reference datasets
+    (`spec/ledger.md` §6.5, v17 multi-snapshot shape)."""
     entries = _read(root).get("references") or {}
     if not isinstance(entries, dict):
         raise ManifestError("manifest references: expected a dataset-keyed mapping")
-    return [
-        Reference(
-            dataset=str(name),
-            description=str((spec or {}).get("description") or ""),
-            mirror=str((spec or {}).get("mirror") or ""),
-            snapshot=str((spec or {}).get("snapshot") or ""),
+    refs: list[Reference] = []
+    for name, spec in entries.items():
+        spec = spec or {}
+        if "mirror" in spec or "snapshot" in spec:
+            raise ManifestError(
+                f"references/{name}: 'mirror:'/'snapshot:' are retired — v17 registers "
+                "'adapter:', 'latest:', and a tag-keyed 'snapshots:' map "
+                "(spec/athenaeum.md §2.3)"
+            )
+        adapter = str(spec.get("adapter") or "")
+        if not adapter:
+            raise ManifestError(f"references/{name}: missing/empty adapter")
+        snapshots_raw = spec.get("snapshots") or {}
+        if not isinstance(snapshots_raw, dict) or not snapshots_raw:
+            raise ManifestError(f"references/{name}: snapshots must be a non-empty "
+                                "tag-keyed mapping")
+        snapshots: dict[str, str] = {}
+        for tag, snap in snapshots_raw.items():
+            tag = str(tag)
+            if not _TAG_RE.match(tag):
+                raise ManifestError(f"references/{name}: snapshot tag {tag!r} must match "
+                                    "^[a-z0-9][a-z0-9._-]*$ (rides in ref:// URIs after '@')")
+            artifact = str((snap or {}).get("artifact") or "")
+            if not _ARTIFACT_RE.match(artifact):
+                raise ManifestError(f"references/{name}/{tag}: artifact must be a 64-hex "
+                                    f"lowercase blake3, got {artifact!r}")
+            snapshots[tag] = artifact
+        latest = str(spec.get("latest") or "")
+        if not latest or latest not in snapshots:
+            raise ManifestError(f"references/{name}: latest {latest!r} must name a key "
+                                "of snapshots")
+        refs.append(
+            Reference(
+                dataset=str(name),
+                description=str(spec.get("description") or ""),
+                adapter=adapter,
+                latest=latest,
+                snapshots=snapshots,
+            )
         )
-        for name, spec in entries.items()
-    ]
+    return refs
 
 
 def load_tracker(root: Path) -> Tracker:
