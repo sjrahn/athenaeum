@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 18
+version: 19
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -223,6 +223,8 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5; the mirror layer itself is specified there as of v17); a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
+
+*Version 19 (2026-08-16) is a Part III amendment (owner ruling): element-level evidence binding for array-valued claims — an evidence entry MAY bind to one element of an array `value`, and the authentication bar evaluates such claims per element (Part III §5.4, §6.1). Nothing in this part changes.*
 
 *Version 18 (2026-08-16) adds the interim mirror-materialization override (owner ruling): a manifest snapshot entry MAY carry `path:` — a deployment-local file the resolver reads in place, tried before the corpus store. Identity and verification are unchanged (the `artifact` blake3 remains the pin); the key exists so mirrors are usable while store custody mechanics for tens-of-GB artifacts are worked out, and store resolution supersedes it when they land (Part III §6.5).*
 

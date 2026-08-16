@@ -652,6 +652,81 @@ def test_authentication_bar_excludes_deferred_surfaces(system: Path) -> None:
     assert any("x:auth-deferred" in e for e in bar_errors)
 
 
+def test_ref_dataset_counts_once_toward_bar(system: Path) -> None:
+    """*(17, §5.4)* A reference dataset is one independent source: corpus
+    record + ref citation clears the two-source bar, while two entries of the
+    same dataset alone do not."""
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            _claim("x", "corroborated", status="confirmed",
+                   evidence=[{"_record": H_PUB, "kind": "direct"},
+                             {"_ref": "wikipedia/A", "kind": "direct"}]),
+            _claim("x", "one-dataset", status="confirmed",
+                   evidence=[{"_ref": "wikipedia/A", "kind": "direct"},
+                             {"_ref": "wikipedia/B", "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    bar_errors = [e for e in rep.errors if "authentication bar" in e]
+    assert len(bar_errors) == 1
+    assert "x:one-dataset" in bar_errors[0]
+
+
+def test_evidence_element_validation(system: Path) -> None:
+    """*(19, §6.1)* `element` must be an integer index into an array value."""
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            _claim("x", "not-array",
+                   evidence=[{"_record": H_PUB, "kind": "direct", "element": 0}]),
+            _claim("x", "out-of-range", value=["a", "b"],
+                   evidence=[{"_record": H_PUB, "kind": "direct", "element": 2}]),
+            _claim("x", "not-int", value=["a"],
+                   evidence=[{"_record": H_PUB, "kind": "direct", "element": True}]),
+            _claim("x", "ok", value=["a", "b"],
+                   evidence=[{"_record": H_PUB, "kind": "direct", "element": 1}]),
+        ],
+    })
+    rep = _check(system)
+    el_errors = [e for e in rep.errors if "element" in e]
+    assert sum("not an array" in e for e in el_errors) == 1
+    assert sum("out of range" in e for e in el_errors) == 1
+    assert sum("not an integer" in e for e in el_errors) == 1
+    assert not any("x:ok" in e for e in el_errors)
+
+
+def test_element_level_authentication_bar(system: Path) -> None:
+    """*(19, §5.4)* Array-valued claims clear the bar per element: whole-value
+    evidence counts toward every element, bound evidence toward its own; one
+    uncorroborated element fails the claim and is named."""
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [
+            # whole-value record + ref bound to 0 and 1 — element 2 uncorroborated
+            _claim("x", "partial", status="confirmed", value=["a", "b", "c"],
+                   evidence=[{"_record": H_PUB, "kind": "direct"},
+                             {"_ref": "wikipedia/A", "kind": "direct", "element": 0},
+                             {"_ref": "wikipedia/A", "kind": "direct", "element": 1}]),
+            # every element covered: whole-value record + per-element ref
+            _claim("x", "covered", status="confirmed", value=["a", "b"],
+                   evidence=[{"_record": H_PUB, "kind": "direct"},
+                             {"_ref": "wikipedia/A", "kind": "direct", "element": 0},
+                             {"_ref": "wikipedia/B", "kind": "direct", "element": 1}]),
+            # an element-bound authoritative artifact clears its element alone
+            _claim("x", "auth-element", status="confirmed", value=["a"],
+                   evidence=[{"_record": H_PUB, "kind": "authoritative",
+                              "element": 0}]),
+        ],
+    })
+    rep = _check(system)
+    bar_errors = [e for e in rep.errors if "authentication bar" in e]
+    assert len(bar_errors) == 1
+    assert "x:partial" in bar_errors[0]
+    assert "element grain" in bar_errors[0]
+    assert "2" in bar_errors[0].split("element(s)")[1]
+
+
 def test_reported_requires_attribution(system: Path) -> None:
     _fact(system, "artist", {
         "id": "x", "type": "artist", "name": "X",

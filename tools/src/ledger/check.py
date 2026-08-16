@@ -503,17 +503,19 @@ def run_check(
         evs = c.get("evidence") or []
         if not evs:
             rep.err(where, "no evidence")
-        hashes: set[str] = set()
-        has_auth = False
+        value_is_array = isinstance(c.get("value"), list)
         # *(1.8, §5.4)* the bar counts only verifiable-surface evidence: entries
         # citing a DEFERRED surface (a segments-surface record persisting no
         # segments yet — join.deferred_surface) are admissible but carry nothing
         # toward `confirmed`. `ref://` entries and environment-limited ops stay
-        # countable — verifiable in principle. Offline (no live corpora) the
-        # surface state is unknowable, so everything counts: fail open here,
-        # because inventing bar failures a resolver never saw helps no one.
-        countable_hashes: set[str] = set()
-        auth_countable = False
+        # countable — verifiable in principle; a reference dataset is ONE
+        # independent source however many of its entries are cited *(17)*.
+        # Offline (no live corpora) the surface state is unknowable, so
+        # everything counts: fail open here, because inventing bar failures a
+        # resolver never saw helps no one. Each entry reduces to
+        # (countable, kind, independent-source id, element) so the bar can
+        # evaluate whole-claim or per-element *(19, §5.4)*.
+        ev_infos: list[tuple[bool, object, tuple[str, str] | None, int | None]] = []
         priv = c.get("sensitivity") == "private"
         for e in evs:
             if not isinstance(e, dict):
@@ -531,8 +533,23 @@ def run_check(
             if kind not in EVIDENCE_KINDS:
                 rep.err(where, f"evidence kind {kind!r} missing/invalid "
                                f"(authoritative|direct|incidental)")
-            has_auth = has_auth or kind == "authoritative"
+            el = e.get("element")
+            if el is not None:
+                # *(19, §6.1)* `element` binds the entry to value[el] of an
+                # array-valued claim — integer, in range, arrays only
+                if isinstance(el, bool) or not isinstance(el, int):
+                    rep.err(where, f"evidence `element` {el!r} is not an integer index")
+                    el = None
+                elif not value_is_array:
+                    rep.err(where, "evidence carries `element` but the claim's "
+                                   "value is not an array (§6.1)")
+                    el = None
+                elif not 0 <= el < len(c["value"]):
+                    rep.err(where, f"evidence `element` {el} out of range for the "
+                                   f"{len(c['value'])}-element value")
+                    el = None
             entry_countable = True  # flipped only by a provably deferred surface
+            src_id: tuple[str, str] | None = None
             anchor = e.get("anchor")
             if isinstance(anchor, str) and anchor.startswith("?"):
                 rep.err(where, f"anchor {anchor!r} must not carry a leading '?'")
@@ -551,37 +568,66 @@ def run_check(
                 if isinstance(entry, dict) and "record" in entry:
                     h = str(entry["record"])
                     if FULL_HASH_RE.match(h):
-                        hashes.add(h)
+                        src_id = ("record", h)
                         if resolve_live and join.deferred_surface(h) is True:
                             entry_countable = False
-                        else:
-                            countable_hashes.add(h)
                         if resolve_live and join.resolves(h) and join.is_private(h):
                             priv = True
-                elif isinstance(entry, dict) and "ref" in entry and anchor:
-                    # §6.5 "Anchors are entry-level": a ref:// citation carries
-                    # no span parameters — quotes verify against the adapter's
-                    # rendered entry as a whole, so an `anchor` on evidence
-                    # citing a ref source is a grammar error, not merely unchecked.
-                    rep.err(where, f"evidence.source {skey!r} cites ref://"
-                                   f"{entry['ref']} with anchor {anchor!r} — ref:// "
-                                   "citations carry no span parameters (§6.5)")
-            if entry_countable and kind == "authoritative":
-                auth_countable = True
-        if st == "confirmed" and evs \
-                and not (auth_countable or len(countable_hashes) >= 2):
-            if has_auth or len(hashes) >= 2:
-                # the classic bar shape is met, but only by deferred surfaces —
-                # name the actual defect so the fix (form, or demote) is legible
-                rep.err(where, "fails the authentication bar for `confirmed`: its "
-                               "bar-carrying evidence cites deferred surfaces — "
-                               "records whose declared citation surface has no "
-                               "persisted segments yet (§5.4, 1.8). Form the "
-                               "records (the citations are standing demand) or "
-                               "demote the claim")
+                elif isinstance(entry, dict) and "ref" in entry:
+                    srm = SOURCE_REF_RE.match(str(entry["ref"]))
+                    if srm:
+                        # the dataset, not the entry: one dataset = one
+                        # independent source however many entries cite it (§5.4)
+                        src_id = ("dataset", srm.group(1))
+                    if anchor:
+                        # §6.5 "Anchors are entry-level": a ref:// citation carries
+                        # no span parameters — quotes verify against the adapter's
+                        # rendered entry as a whole, so an `anchor` on evidence
+                        # citing a ref source is a grammar error, not merely unchecked.
+                        rep.err(where, f"evidence.source {skey!r} cites ref://"
+                                       f"{entry['ref']} with anchor {anchor!r} — ref:// "
+                                       "citations carry no span parameters (§6.5)")
+            ev_infos.append((entry_countable, kind, src_id, el))
+
+        def _bar(infos: list[tuple[bool, object, tuple[str, str] | None, int | None]],
+                 ) -> tuple[bool, set[tuple[str, str]]]:
+            auth = any(cnt and k == "authoritative" for cnt, k, _s, _e in infos)
+            srcs = {s for cnt, _k, s, _e in infos if cnt and s is not None}
+            return auth, srcs
+
+        if st == "confirmed" and evs:
+            if value_is_array and any(inf[3] is not None for inf in ev_infos):
+                # *(19, §5.4)* per-element bar: whole-value entries (no
+                # `element`) count toward every element, bound entries toward
+                # theirs alone; every element must clear
+                failing = []
+                for i in range(len(c["value"])):
+                    auth, srcs = _bar([inf for inf in ev_infos
+                                       if inf[3] is None or inf[3] == i])
+                    if not (auth or len(srcs) >= 2):
+                        failing.append(i)
+                if failing:
+                    rep.err(where, "fails the authentication bar for `confirmed` at "
+                                   f"element grain (§5.4): element(s) "
+                                   f"{', '.join(map(str, failing))} lack an "
+                                   "authoritative artifact or ≥2 independent sources")
             else:
-                rep.err(where, "fails the authentication bar for `confirmed` (needs an "
-                               "authoritative artifact or ≥2 independent records)")
+                auth, srcs = _bar(ev_infos)
+                if not (auth or len(srcs) >= 2):
+                    has_auth = any(k == "authoritative" for _c, k, _s, _e in ev_infos)
+                    all_srcs = {s for _c, _k, s, _e in ev_infos if s is not None}
+                    if has_auth or len(all_srcs) >= 2:
+                        # the classic bar shape is met, but only by deferred surfaces —
+                        # name the actual defect so the fix (form, or demote) is legible
+                        rep.err(where, "fails the authentication bar for `confirmed`: its "
+                                       "bar-carrying evidence cites deferred surfaces — "
+                                       "records whose declared citation surface has no "
+                                       "persisted segments yet (§5.4, 1.8). Form the "
+                                       "records (the citations are standing demand) or "
+                                       "demote the claim")
+                    else:
+                        rep.err(where, "fails the authentication bar for `confirmed` (needs an "
+                                       "authoritative artifact or ≥2 independent sources)")
         if priv:
             private_claims += 1
         c["_private"] = priv  # consumed by the file-level pass below, then dropped

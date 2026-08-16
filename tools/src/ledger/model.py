@@ -67,7 +67,7 @@ CLAIM_KEYS = {
 # per-fact sources table, replacing the old {uri, quote, note, kind, verified}
 # shape. `verified` moves to the sources entry (one stamp per fact/source,
 # not per evidence entry).
-EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind"}
+EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind", "element"}
 SOURCES_ENTRY_KEYS = {"record", "ref", "verified"}
 ROSTER_KEYS = {"uri", "role", "note", "provenance"}
 # A hypothesis's `proposes` draft claim (§7.2) predates the fact it targets, so
@@ -76,7 +76,7 @@ ROSTER_KEYS = {"uri", "role", "note", "provenance"}
 # target fact (hoisting into that fact's `sources`, minting/reusing entries).
 # `source`/`anchor` don't belong here; neither does `verified` (nothing to
 # stamp before the citation resolves against a real fact).
-PROPOSES_EVIDENCE_KEYS = {"uri", "quote", "note", "kind"}
+PROPOSES_EVIDENCE_KEYS = {"uri", "quote", "note", "kind", "element"}
 
 CLAIM_STATUSES = {"confirmed", "provisional", "inferred", "reported", "disputed", "conflicting"}
 EVIDENCE_KINDS = {"authoritative", "direct", "incidental"}

@@ -2,7 +2,7 @@
 spec_id: ATH
 part: III
 title: "Athenaeum Specification — Part III: The Ledger"
-version: 18
+version: 19
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
@@ -18,6 +18,8 @@ date_modified: 2026-08-16
 The **ledger** is the Athenaeum system's knowledge layer ([Part I](athenaeum.md)): the single fact substrate atop the corpora (faithful bytes, [Part II](corpus.md)) — with them it forms the system's **end product**, consumed from outside by compilations and expert agents under the consumption contract (§12). It holds **concepts** — materialized real-world things (§4) carrying typed claims in which **every claim carries evidence**: `corpus://` URIs into captured bytes (span-precise where verified) and `ref://` URIs into mirrored reference datasets (§6.5) — and **interpretations**, the pre-assertion workspace beside them.
 
 The name is meant literally: a ledger is claims with evidence and an audit trail. Entries are *posted* (claims — asserted, each with computable trust) or held in *suspense* (interpretations — not yet assertable). The boundary between the two is physical (§1.3), which is what lets every consumer of the fact graph trust that everything in it is asserted knowledge.
+
+**Version 19** *(2026-08-16, owner ruling)* adds **element-level evidence binding** for array-valued claims, the gap the first `ref://` corroboration pass surfaced: partial corroboration of an array value had nowhere structural to live, so a second source attesting three of four elements could only be prose in `reasoning` and could never move status. An evidence entry MAY carry **`element`** — a 0-based index into the claim's array `value`, binding the entry to that one element; an entry without it supports the whole value, exactly as before (§6.1). The §5.4 bar evaluates array-valued claims **per element**: every element must clear the bar, counting whole-value evidence plus the evidence bound to it — so corroboration accumulates element by element and confirms the claim when the last element clears, instead of partial backing counting for nothing. Binding is bar/coverage structure only: verification of the entry (§13.2) is unchanged — the quote still checks against the cited surface. `element` on a non-array value, a non-integer, or an out-of-range index is a check error (§13.1). Existing evidence carries no `element` and is untouched.
 
 **Version 18** *(2026-08-16, owner ruling)* adds the interim mirror-materialization override: a manifest snapshot entry MAY carry `path:` — a deployment-local mirror file the resolver reads in place, tried before the corpus store (§6.5). Identity, stamping, and drift are untouched (the artifact blake3 remains the pin); the override exists so registered mirrors are usable while store custody for tens-of-GB artifacts is worked out, and it retires when that lands.
 
@@ -272,7 +274,7 @@ Semantics:
 Field semantics:
 
 - **`value` + `object` together is legitimate**: on a relational claim, `object` is the machine edge and `value` a human gloss. One claim's worth of content per claim — if a `value` hides several independently-checkable assertions of different confidence, split it.
-- **Structured values over prose blobs**: list-shaped knowledge (form cues, ingredients, steps, spec tables) takes array/object values, one checkable element each.
+- **Structured values over prose blobs**: list-shaped knowledge (form cues, ingredients, steps, spec tables) takes array/object values, one checkable element each. Evidence binds to a single element via `element` where a source attests part of the array *(19, §6.1)* — the array stays one claim precisely because partial backing is expressible.
 - **`reasoning`** carries inference rationale — never smuggled into an evidence `note`.
 - Wikilinks (`[[slug]]`) in string values are permitted and validated against fact ids.
 - Never store a relation *and* its inverse; symmetric relations are stored once. Which side stores a directed relation is a ledger convention, documented per type (`facts/SCHEMA.md`).
@@ -307,6 +309,8 @@ A claim may be **`confirmed`** only when it has:
 
 *(1.8)* The bar counts only evidence resolving on **verifiable surfaces**. An evidence entry citing a **deferred surface** — a record whose mime declares `citation_surface: segments` (corpus §7.1) and which persists no segments yet — is admissible on every lower rung but contributes nothing toward `confirmed`: not as the authoritative artifact, not toward record independence. (Environment gaps are different: evidence whose derivation op the verifying environment merely cannot run is verifiable *in principle* and still counts — deferral is a property of the surface, never of the machine.) When the record's declared surface lands, the same evidence starts counting; that promotion path is what deferral buys.
 
+*(19)* **Array-valued claims clear the bar per element.** Where a claim's `value` is an array, each element must individually meet the bar, counting the claim's whole-value evidence (entries with no `element`) plus the entries bound to that element (`element`, §6.1) — the authoritative artifact or the two independent sources may differ from element to element. A claim whose elements all clear confirms; one uncorroborated element holds the whole claim below `confirmed`, and validation names it. This is the same bar applied at the value's real grain — it neither weakens the whole-claim reading (a claim with no element-bound evidence is checked exactly as before) nor licenses splitting arrays to dodge it.
+
 Validation enforces the bar mechanically. Corroboration is multiple evidence entries on one claim; conflict is `conflicting` with all evidence kept; a graph contradiction is `disputed` plus the challenging `correction`.
 
 ## 6. Evidence
@@ -329,13 +333,15 @@ Citations are two-level: a fact-level **`sources` table** names each cited artif
   "anchor": "time_range=00:54-00:58",   // optional span parameters, no leading `?`; omitted = record-level cite
   "quote": "…",                         // optional verbatim span from the resolved content
   "note": "…",                          // optional human hint about the ARTIFACT (what/why)
-  "kind": "direct"                      // authoritative | direct | incidental
+  "kind": "direct",                     // authoritative | direct | incidental
+  "element": 2                          // optional (19): binds this entry to value[2] of an array-valued claim
 }
 ```
 
 - **Source keys** match `^[a-z][a-z0-9-]{0,31}$`, are local to their fact, and carry no meaning — renames are free (challenge pins canonicalize on the derived citation, §7.3).
 - A sources entry carries exactly one of **`record`** (a full 64-hex blake3) or **`ref`** (`{dataset}/{id}`, §6.5). Two entries in one fact naming the same target is a validation error — the table exists so each artifact appears once. Every entry must be referenced by at least one evidence entry (unreferenced = warning); every `evidence.source` must resolve in its own fact's table (unresolved = error).
 - The **derived citation** is `corpus://{record}` — plus, when an `anchor` is present, `?` and the anchor verbatim (or the anchor alone when it begins with `#`, the fragment form) — or `ref://{ref}`. All §6.2 discipline applies to the derived form.
+- *(19)* **`element`** — a 0-based integer index into the claim's array `value`, binding the entry to that one element where the source attests part of the array. Only legal on a claim whose `value` is an array, and only in range — anything else is a check error (§13.1). One element per entry: a quote backing several elements becomes several entries, each quoting what backs its element. Omitted = the entry supports the whole value (every element), the pre-19 reading of all existing evidence. The binding feeds the §5.4 per-element bar and reads as documentation everywhere else; §13.2 verification of the entry is unchanged.
 - Rosters (`artifacts[].uri`) and interpretation `based_on` lists (§7.2) are references, not evidence: they keep the direct URI form. A draft claim inside `proposes` likewise cites inline (`uri:`) — it has no fact table to reference; `ledger promote` materializes its citations into the target fact's sources table.
 
 **`kind` grades the artifact so trust is computed, not vibed:**
@@ -529,7 +535,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; the lineage map (§4.1) satisfies references and resolves in one hop (every value names a living fact, never another key; keys collide with no living id; no fact file carries a retired shape).
 
-**Epistemics** — the authentication bar for every `confirmed` claim, counting only verifiable-surface evidence (§5.4, 1.8); `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
+**Epistemics** — the authentication bar for every `confirmed` claim, counting only verifiable-surface evidence (§5.4, 1.8) — per element for array-valued claims, naming each element that fails *(19)*; `element` bindings well-formed: integer, in range, on an array `value` only *(19)*; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
 **Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution across the registered corpora); `ref://` citations name registered datasets — and, when pinned, registered snapshot tags: a pin whose tag is no longer registered is an error, a dangling pin *(17)* — (§6.5); claim evidence citing a corpus hash registered as a mirror artifact warns — the content's citation surface is `ref://` *(17)*; *(1.1)* every citation resolves to a **verifiable surface** and passes §13.2 — the 1.0 cited-records-are-`normalized` check retires with the corpus `status` field (`spec/corpus.md` §4.1).
 
