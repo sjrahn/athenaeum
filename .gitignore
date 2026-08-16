@@ -3,7 +3,6 @@
 # package silently untracked — found in the 2026-07-03 critical pass).
 /corpus/
 /ledger/
-/codices/
 
 # macOS Finder metadata
 .DS_Store
@@ -21,3 +20,4 @@ tools/.ruff_cache/
 # workspace root but belong to the deployment, never to this repo (spec Part I §2.2 v16).
 /athenaeum.yaml
 /tickets.md
+/athenaeum.code-workspace
