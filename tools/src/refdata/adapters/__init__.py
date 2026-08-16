@@ -13,6 +13,12 @@ An adapter module exposes three functions:
 - `resolve_entry(handle: Any, native_id: str) -> AdapterResult` — resolve one
   entry against an already-open handle; raises `refdata.errors.EntryNotFound`
   on a miss.
+- `search_entries(handle: Any, query: str, limit: int) -> list[AdapterSearchHit]`
+  — the discovery step ahead of `resolve_entry` (spec/ledger.md §6.5): words
+  in, candidate native ids out, best match first. An empty list is a valid
+  answer (no hits, or the mirror carries no search index) — never an error;
+  a missing optional dependency is `AdapterUnavailable` at the `refdata`
+  layer, raised before this is ever called.
 
 `ADAPTERS` maps adapter name -> module; `adapter_available` is the guarded
 lookup `refdata.resolve()` and callers use before assuming a dataset's
@@ -39,6 +45,17 @@ class AdapterResult:
     title: str | None
     text: str | None
     content_type: str | None
+
+
+@dataclass(frozen=True)
+class AdapterSearchHit:
+    """One adapter's search hit against an open mirror handle — a native id
+    ready to paste into `resolve_entry` / a sources-table `ref://` citation,
+    plus a display title. No `content_type`/`text`: search is discovery, not
+    resolution — the caller resolves the id it picks."""
+
+    native_id: str
+    title: str | None
 
 
 def _load_zim() -> ModuleType:

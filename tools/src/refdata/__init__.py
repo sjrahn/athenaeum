@@ -3,7 +3,7 @@ downward": `(dataset, tag)` -> the snapshot's mirror-artifact blake3 ->
 bytes materialized on local disk -> the dataset's adapter renders the
 requested entry (title, plain text, content type) for quote verification.
 
-Two entry points:
+Three entry points:
 
 - `materialize(reference, tag, corpora_roots)` — the snapshot's bytes on
   local disk, or None. Tries the snapshot's declared `path:` override first
@@ -16,6 +16,12 @@ Two entry points:
   branch on (§6.5: content resolution absent is *unverifiable*, never a
   crash — callers catch these and report accordingly, they are not meant to
   propagate to a user-facing traceback).
+- `search(reference, query, tag, corpora_roots, limit)` — the discovery step
+  ahead of `resolve`: ids aren't guessable, so a scribe searches a dataset by
+  words first and pastes a hit's `native_id` into `resolve` (or straight into
+  a `ref://` citation). Same tag/adapter/mirror preamble and typed errors as
+  `resolve`; an empty result list is a normal answer (no hits, or the mirror
+  carries no search index), never one of those errors.
 
 Archive handles are expensive to open and verification resolves many
 entries against one snapshot, so open handles are cached per absolute
@@ -30,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ath.manifest import Reference
+from ath.manifest import Reference, Snapshot
 from corpus import paths as corpus_paths
 
 from .adapters import ADAPTERS, AdapterResult, adapter_available
@@ -50,10 +56,12 @@ __all__ = [
     "MirrorUnavailable",
     "RefdataError",
     "ResolvedEntry",
+    "SearchHit",
     "UnknownTag",
     "adapter_available",
     "materialize",
     "resolve",
+    "search",
 ]
 
 
@@ -69,6 +77,15 @@ class ResolvedEntry:
     title: str | None
     text: str | None  # plain-text rendering for quote matching; None if no text projection
     content_type: str | None
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """One `search()` hit — a native id ready to paste into `resolve` or a
+    `ref://{dataset}[@{tag}]/{id}` citation, plus a display title."""
+
+    native_id: str
+    title: str | None
 
 
 def materialize(
@@ -131,21 +148,15 @@ def _open_handle(adapter_name: str, mirror_path: Path) -> Any:
     return handle
 
 
-def resolve(
-    reference: Reference,
-    native_id: str,
-    tag: str | None = None,
-    corpora_roots: Sequence[Path] = (),
-) -> ResolvedEntry:
-    """Resolve one `ref://` citation's native id. `tag` None tracks
-    `reference.latest` (a bare citation, §6.5); an explicit tag is a pin.
-
-    Raises `UnknownTag` if the resolved tag names no registered snapshot,
-    `AdapterUnavailable` if `reference.adapter` is unregistered or its
-    optional dependency is missing, `MirrorUnavailable` if `materialize()`
-    finds no local bytes, and `EntryNotFound` if the mirror opens but
-    `native_id` isn't in it.
-    """
+def _resolve_handle(
+    reference: Reference, tag: str | None, corpora_roots: Sequence[Path]
+) -> tuple[str, Snapshot, Any]:
+    """Shared preamble of `resolve()` and `search()`: tag -> registered
+    snapshot -> adapter availability -> materialized mirror -> open handle.
+    Raises the same three typed errors both callers document (`UnknownTag`,
+    `AdapterUnavailable`, `MirrorUnavailable`) — the fourth, `EntryNotFound`,
+    is `resolve_entry`'s alone, since "no hits" is `search`'s normal `[]`,
+    not a failure."""
     resolved_tag = reference.latest if tag is None else tag
     snapshot = reference.snapshots.get(resolved_tag)
     if snapshot is None:
@@ -164,6 +175,25 @@ def resolve(
             "path: override nor any given corpus root's artifact store)"
         )
     handle = _open_handle(reference.adapter, mirror_path)
+    return resolved_tag, snapshot, handle
+
+
+def resolve(
+    reference: Reference,
+    native_id: str,
+    tag: str | None = None,
+    corpora_roots: Sequence[Path] = (),
+) -> ResolvedEntry:
+    """Resolve one `ref://` citation's native id. `tag` None tracks
+    `reference.latest` (a bare citation, §6.5); an explicit tag is a pin.
+
+    Raises `UnknownTag` if the resolved tag names no registered snapshot,
+    `AdapterUnavailable` if `reference.adapter` is unregistered or its
+    optional dependency is missing, `MirrorUnavailable` if `materialize()`
+    finds no local bytes, and `EntryNotFound` if the mirror opens but
+    `native_id` isn't in it.
+    """
+    resolved_tag, snapshot, handle = _resolve_handle(reference, tag, corpora_roots)
     result = ADAPTERS[reference.adapter].resolve_entry(handle, native_id)
     return ResolvedEntry(
         dataset=reference.dataset,
@@ -175,3 +205,23 @@ def resolve(
         text=result.text,
         content_type=result.content_type,
     )
+
+
+def search(
+    reference: Reference,
+    query: str,
+    tag: str | None = None,
+    corpora_roots: Sequence[Path] = (),
+    limit: int = 10,
+) -> list[SearchHit]:
+    """Discovery step ahead of `resolve()` (spec/ledger.md §6.5): native ids
+    aren't guessable, so a scribe searches a dataset by words and pastes a
+    hit's `native_id` onward. `tag` and error semantics match `resolve()`
+    exactly (`UnknownTag`, `AdapterUnavailable`, `MirrorUnavailable`); an
+    empty return is a normal outcome (no hits, or the mirror has no search
+    index at all — §6.5 "absence … is honestly unverifiable, never a
+    crash"), not one of those errors.
+    """
+    _, _, handle = _resolve_handle(reference, tag, corpora_roots)
+    hits = ADAPTERS[reference.adapter].search_entries(handle, query, limit)
+    return [SearchHit(native_id=hit.native_id, title=hit.title) for hit in hits]

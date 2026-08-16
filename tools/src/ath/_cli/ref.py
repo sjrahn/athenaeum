@@ -16,6 +16,10 @@ verbs:
             warning: … its content's honest citation surface is `ref://`") —
             this command never resolves corpus records itself, that is
             `corpus resolve`'s job.
+  search    the discovery step ahead of `resolve` (§6.5): search a dataset by
+            words, print candidate native ids — ids aren't guessable, so a
+            ledger scribe searches first and pastes a hit's id into `resolve`
+            or straight into a `ref://` citation.
   hash      blake3 a candidate mirror file (streamed — mirrors run tens of GB)
             and print a manifest snapshot snippet, the registration helper for
             onboarding a new dataset/tag.
@@ -47,6 +51,9 @@ Commands:
   resolve URI         resolve a ref:// citation (prints metadata + content);
                       or field a corpus:// courtesy redirect. --meta suppresses
                       the content body
+  search DATASET Q    search a dataset by words; print candidate native ids
+                      (id<TAB>title, one per line). --tag pins a snapshot,
+                      --limit caps the hit count (default 10)
   hash FILE           blake3 a mirror file; print the digest and a
                       ready-to-paste manifest snapshot snippet
 
@@ -173,6 +180,51 @@ def _cmd_resolve(argv: Sequence[str]) -> int:
     return _resolve_ref(root, dataset, tag, native_id, meta_only=ns.meta)
 
 
+def _cmd_search(argv: Sequence[str]) -> int:
+    ap = base_parser(
+        "ath ref search", "Search a dataset by words; print candidate native ids."
+    )
+    ap.add_argument("dataset")
+    ap.add_argument("query")
+    ap.add_argument("--tag", default=None, help="pin a snapshot (default: the dataset's latest)")
+    ap.add_argument("--limit", type=int, default=10, help="max hits to print (default 10)")
+    ns = ap.parse_args(list(argv))
+    root = resolve_root(ns.root)
+
+    refs = {r.dataset: r for r in load_references(root)}
+    reference = refs.get(ns.dataset)
+    if reference is None:
+        print(f"ath ref search: unregistered dataset {ns.dataset!r}", file=sys.stderr)
+        return 1
+
+    from refdata import search
+    from refdata.errors import AdapterUnavailable, MirrorUnavailable, UnknownTag
+
+    try:
+        hits = search(
+            reference, ns.query, tag=ns.tag, corpora_roots=_corpora_roots(root), limit=ns.limit
+        )
+    except UnknownTag as e:
+        print(f"ath ref search: unknown snapshot tag — {e}", file=sys.stderr)
+        return 1
+    except AdapterUnavailable as e:
+        print(f"ath ref search: adapter unavailable — {e}", file=sys.stderr)
+        return 1
+    except MirrorUnavailable as e:
+        print(f"ath ref search: mirror unavailable — {e}", file=sys.stderr)
+        return 1
+
+    resolved_tag = ns.tag if ns.tag is not None else reference.latest
+    print(f"{reference.dataset}@{resolved_tag}  {len(hits)} hit(s)", file=sys.stderr)
+    if not hits:
+        print("ath ref search: no hits", file=sys.stderr)
+        return 0
+    for hit in hits:
+        title = hit.title if hit.title is not None else "(no title)"
+        print(f"{hit.native_id}\t{title}")
+    return 0
+
+
 def _cmd_hash(argv: Sequence[str]) -> int:
     # Not `base_parser` — a pure local hashing helper, no manifest to resolve.
     ap = argparse.ArgumentParser(
@@ -199,7 +251,12 @@ def run(argv: Sequence[str]) -> int:
         print(_USAGE, end="")
         return 0
     cmd, rest = args[0], args[1:]
-    handlers = {"status": _cmd_status, "resolve": _cmd_resolve, "hash": _cmd_hash}
+    handlers = {
+        "status": _cmd_status,
+        "resolve": _cmd_resolve,
+        "search": _cmd_search,
+        "hash": _cmd_hash,
+    }
     if cmd not in handlers:
         print(f"ath ref: unknown command {cmd!r}", file=sys.stderr)
         print("Run 'ath ref --help' to see available commands.", file=sys.stderr)

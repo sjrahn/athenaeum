@@ -17,11 +17,14 @@ import libzim.writer as zw  # noqa: E402
 
 from ath.manifest import Reference, Snapshot  # noqa: E402
 from refdata import (  # noqa: E402
+    AdapterUnavailable,
     EntryNotFound,
     MirrorUnavailable,
+    UnknownTag,
     adapter_available,
     materialize,
     resolve,
+    search,
 )
 
 _HOME_HTML = "<html><body><h1>Home</h1><p>Hello   world,\nthis is home.</p></body></html>"
@@ -158,6 +161,94 @@ def test_path_override_wins_over_store(tmp_path: Path) -> None:
     assert resolved_path == override_zim
     entry = resolve(ref, "only-in-override", corpora_roots=(store_root,))
     assert entry.text == "override content"
+
+
+# --- search ----------------------------------------------------------------
+#
+# `zim_path` (above) is built with a plain `zw.Creator` — no
+# `config_indexing(True, "eng")` — so its archive carries a title index
+# (built unconditionally from each item's non-empty title, on a text/*-ish
+# entry) but *not* a full-text index. `search()` therefore exercises the
+# suggestion (title) path here, never the full-text fallback; a fixture that
+# needs the fallback path builds its own archive with `config_indexing` set
+# before the `Creator` is entered (libzim raises if it's set after).
+
+
+def test_search_returns_hit_by_title_word(zim_path: Path) -> None:
+    ref = _ref("t", "a" * 64, path=str(zim_path))
+    hits = search(ref, "Home")
+    assert any(h.native_id == "home" and h.title == "Home" for h in hits)
+
+
+def test_search_limit_respected(tmp_path: Path) -> None:
+    p = tmp_path / "many.zim"
+    with zw.Creator(str(p)) as creator:
+        for i in range(5):
+            creator.add_item(
+                _Item(f"widget-{i}", f"Widget {i}", f"Widget number {i}.", "text/plain")
+            )
+        creator.set_mainpath("widget-0")
+    ref = _ref("t", "b" * 64, path=str(p))
+    hits = search(ref, "Widget", limit=2)
+    assert len(hits) == 2
+
+
+class _UnindexedItem(zw.Item):
+    """An item with no title, a non-text mimetype, and *no* FRONT_ARTICLE
+    hint — unlike `_Item` above, which always sets that hint (and so is
+    title-indexed even with an empty title). Empirically, dropping the hint
+    is what actually suppresses the title index; content merely being
+    non-text is not enough by itself."""
+
+    def get_path(self) -> str:
+        return "blob"
+
+    def get_title(self) -> str:
+        return ""
+
+    def get_mimetype(self) -> str:
+        return "image/png"
+
+    def get_contentprovider(self) -> zw.ContentProvider:
+        return zw.StringProvider(_PNG_BYTES)
+
+    def get_hints(self) -> dict:
+        return {}
+
+
+def test_search_no_index_returns_empty_list(tmp_path: Path) -> None:
+    """No FRONT_ARTICLE hint + empty title + non-text content builds neither
+    a title nor a full-text index (empirically verified against the
+    installed libzim: `Archive.has_title_index` and `has_fulltext_index` both
+    False) — absence of an index is a property of the mirror, not a search
+    failure."""
+    p = tmp_path / "noindex.zim"
+    with zw.Creator(str(p)) as creator:
+        creator.add_item(_UnindexedItem())
+        creator.set_mainpath("blob")
+    ref = _ref("t", "c" * 64, path=str(p))
+    assert search(ref, "anything") == []
+
+
+def test_search_unknown_tag() -> None:
+    ref = _ref("t", "a" * 64)
+    with pytest.raises(UnknownTag):
+        search(ref, "home", tag="nope")
+
+
+def test_search_adapter_unavailable() -> None:
+    ref = Reference(
+        dataset="testwiki", description="test", adapter="not-a-real-adapter",
+        latest="t", snapshots={"t": Snapshot(artifact="a" * 64)},
+    )
+    with pytest.raises(AdapterUnavailable):
+        search(ref, "home")
+
+
+def test_search_mirror_unavailable() -> None:
+    ref = _ref("t", "a" * 64)  # no path:, no corpora_roots given
+    with pytest.raises(MirrorUnavailable):
+        search(ref, "home", corpora_roots=())
 
 
 def test_store_fallback_when_no_path_override(tmp_path: Path) -> None:

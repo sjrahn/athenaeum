@@ -256,6 +256,52 @@ def test_resolve_corpus_redirect_miss(root: Path, capsys: pytest.CaptureFixture[
 # --- hash ------------------------------------------------------------------
 
 
+# --- search ------------------------------------------------------------
+
+
+def test_search_happy_path(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # `root`'s testwiki@v2 has a redirect titled "Redirect" and a home entry
+    # titled "Home" — search by a title word to get id<TAB>title lines.
+    rc = main(["ref", "search", "testwiki", "Home", "--root", str(root)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "testwiki@v2" in captured.err
+    assert "1 hit" in captured.err
+    lines = captured.out.splitlines()
+    assert lines == ["home\tHome"]
+
+
+def test_search_limit(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["ref", "search", "testwiki", "Home", "--limit", "0", "--root", str(root)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_search_zero_hits(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["ref", "search", "testwiki", "no-such-word-anywhere", "--root", str(root)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no hits" in captured.err
+
+
+def test_search_unregistered_dataset(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["ref", "search", "ghost", "anything", "--root", str(root)])
+    assert rc == 1
+    assert "unregistered dataset" in capsys.readouterr().err
+
+
+def test_search_pinned_tag(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # v1 has no redirect and different body text, but the same "Home" title —
+    # confirms --tag actually pins the snapshot searched.
+    rc = main(["ref", "search", "testwiki", "Home", "--tag", "v1", "--root", str(root)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "testwiki@v1" in captured.err
+    assert captured.out.splitlines() == ["home\tHome"]
+
+
 def test_hash_digest_and_snippet(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     f = tmp_path / "mirror.bin"
     data = b"some mirror bytes" * 1000
