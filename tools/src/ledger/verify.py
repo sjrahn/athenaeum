@@ -21,11 +21,21 @@ registered datasets — a bare citation tracks `latest`, a pinned citation
 freezes its tag — and the resolved `(tag, mirror-artifact blake3)` pair
 stamps onto the source as a snapshot binding, drift-checked every run
 exactly like the derivation-op pin above. Resolution is a mechanical
-manifest lookup and stamps regardless of content: no dataset adapter exists
-yet, so quote verification stays `unverifiable`, never failure — the
-binding records that the citation *resolves*, not that its content was
-checked. An unregistered dataset or a dangling pin resolves to nothing
-(check's own finding, §13.1) — unverifiable, no stamp, no crash.
+manifest lookup and stamps regardless of content — an environment gap (no
+adapter registered for the dataset, or the mirror's bytes not locally
+materialized) stays honestly `unverifiable` and still stamps, the binding
+recording that the citation *resolves* even when its content couldn't be
+checked here. *(Phase 1, §13.2.2)* Where the adapter is available and the
+mirror is local, content verification is now real: `refdata.resolve`
+renders the cited native id through the dataset's adapter, and a `quote`
+checks against the rendered entry exactly as it would against a record's
+text. An entry the mirror doesn't carry is a FAILURE (graded at the
+citing claim's status severity, same as any other evidence failure) that
+withdraws the stamp for that source; a quote that isn't found does the
+same. The unverifiable residue narrows to genuine environment gaps — no
+adapter, no locally materialized mirror. An unregistered dataset or a
+dangling pin resolves to nothing (check's own finding, §13.1) —
+unverifiable, no stamp, no crash.
 
 A claim whose evidence FAILS is flagged at the severity of its status:
 `confirmed` failing is an error; lower rungs warn.
@@ -55,6 +65,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import refdata
 from corpus import functional_uri as furi
 from corpus import textnorm as _textnorm
 from ledger.corpora import CorpusJoin
@@ -411,6 +422,10 @@ def verify_ledger(
     # for the whole run — resolver calls may be slow (container extraction) —
     # shared across every fact/source that cites the same (hash, anchor) pair
     derived_cache: dict[str, tuple[bool, str, str, dict[str, str]]] = {}
+    # (Phase 1, §6.5) every registered corpus's root — `refdata.resolve`'s
+    # fallback for a snapshot with no `path:` override (the mirror lives in
+    # the corpus artifact store like any other terminal-contract record)
+    corpora_roots = tuple(c.root for c in join.corpora)
 
     def content_for(h: str) -> RecordContent | None:
         if h not in cache:
@@ -498,8 +513,8 @@ def verify_ledger(
                         continue
                     tag = rm.group(2)
                     if tag is not None:
-                        artifact = reference.snapshots.get(tag)
-                        if artifact is None:
+                        snap = reference.snapshots.get(tag)
+                        if snap is None:
                             # dangling pin (§13.1, 17) — check errors it;
                             # verify stays honestly unverifiable, no stamp
                             res.unverifiable += 1
@@ -509,16 +524,18 @@ def verify_ledger(
                                 f"{rm.group(1)!r})")
                             continue
                         resolved_tag = tag
+                        artifact = snap.artifact
                     else:
                         resolved_tag = reference.latest
-                        artifact = reference.snapshots.get(resolved_tag)
-                        if artifact is None:
+                        snap = reference.snapshots.get(resolved_tag)
+                        if snap is None:
                             res.unverifiable += 1
                             res.notes.append(
                                 f"{where}: ref://{ref_str} unverifiable "
                                 f"({rm.group(1)!r}'s latest tag {resolved_tag!r} is "
                                 "not a registered snapshot)")
                             continue
+                        artifact = snap.artifact
                     # drift (§13.2.3, always-on — not gated on --stamp): a bare
                     # cite's resolved (tag, artifact) moving off the stamped
                     # binding, or a pinned cite's artifact moving under its
@@ -539,14 +556,66 @@ def verify_ledger(
                                 f"{str(old_artifact)[:12]}… → {resolved_tag}@"
                                 f"{artifact[:12]}…) — re-verification needed")
                     ref_resolved[skey] = (resolved_tag, artifact)
-                    # content verification: no dataset adapter exists yet
-                    # (§6.5) — the resolution above is mechanically true and
-                    # stampable regardless; the quote itself stays honestly
-                    # unverifiable until an adapter lands
-                    res.unverifiable += 1
-                    res.notes.append(
-                        f"{where}: ref://{ref_str} content unverifiable (no adapter "
-                        f"available for dataset {rm.group(1)!r})")
+                    # *(Phase 1, §6.5/§13.2.2)* content verification: a real
+                    # attempt through refdata now that the adapter foundation
+                    # exists. The manifest resolution above is mechanically
+                    # true and stamps regardless of what follows; only an
+                    # ENTRY-level failure (the mirror doesn't carry the cited
+                    # native id) or a FAILING quote withdraws the stamp for
+                    # this source — an environment gap (no adapter, no local
+                    # mirror bytes) stays honestly unverifiable and never
+                    # touches the binding, exactly like the dangling-pin case
+                    # above.
+                    quote = e.get("quote")
+                    try:
+                        resolved_entry = refdata.resolve(
+                            reference, rm.group(3), tag=tag, corpora_roots=corpora_roots)
+                    except (refdata.AdapterUnavailable, refdata.MirrorUnavailable) as exc:
+                        res.unverifiable += 1
+                        res.notes.append(
+                            f"{where}: ref://{ref_str} content unverifiable ({exc})")
+                        continue
+                    except refdata.EntryNotFound:
+                        # the mirror opened and the adapter ran, but the cited
+                        # native id names no entry in it — an entry-level
+                        # failure exactly like a bad anchor into a record: the
+                        # dataset/tag resolved, what's cited inside it does
+                        # not, so the stamp is withdrawn for this source
+                        sev.append(f"{where}: ref://{ref_str} names no entry in "
+                                   f"{rm.group(1)!r}@{resolved_tag!r}")
+                        ref_resolved.pop(skey, None)
+                        continue
+                    except refdata.RefdataError as exc:
+                        # defensive: the manifest/tag guards above make this
+                        # unreachable in practice — an unexpected resolver
+                        # failure must never crash a verify run
+                        res.unverifiable += 1
+                        res.notes.append(
+                            f"{where}: ref://{ref_str} content unverifiable "
+                            f"({exc.__class__.__name__}: {exc})")
+                        continue
+                    if quote:
+                        if resolved_entry.text is None:
+                            # no text projection (an image entry, e.g.) — the
+                            # quote is held, not wrong
+                            res.unverifiable += 1
+                            res.notes.append(
+                                f"{where}: ref://{ref_str} carries no text projection "
+                                "— quote unverifiable")
+                        # strip_markup=False: adapter-rendered text is external
+                        # database content, never normalizer-authored markdown
+                        # (the same convention the derivation-op path above uses)
+                        elif _quote_found(str(quote), resolved_entry.text,
+                                          strip_markup=False):
+                            res.verified += 1
+                        else:
+                            sev.append(f"{where}: quote not found verbatim in "
+                                       f"ref://{ref_str} — «{str(quote)[:60]}…»")
+                            ref_resolved.pop(skey, None)
+                    else:
+                        # no quote: a bare existence citation — the entry
+                        # resolving at all is what it asserts, and it does
+                        res.verified += 1
                     continue
                 h = str(entry.get("record", ""))
                 if not h:

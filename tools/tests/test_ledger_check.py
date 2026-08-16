@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from ath._cli import main as ath_main
-from ath.manifest import Reference
+from ath.manifest import Reference, Snapshot
 from ledger._cli import main as ledger_main
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin, RegisteredCorpus
@@ -17,7 +17,7 @@ from ledger.model import canonical_claim_state, ensure_source, intervals_overlap
 
 _WIKIPEDIA_REF = Reference(
     dataset="wikipedia", description="test mirror", adapter="zim", latest="2026-06",
-    snapshots={"2026-06": "9" * 64},
+    snapshots={"2026-06": Snapshot(artifact="9" * 64)},
 )
 
 H_PUB = "a" * 64      # resolves in the public corpus
@@ -267,6 +267,31 @@ def test_evidence_source_discipline(system: Path) -> None:
     assert "must not carry a leading '?'" in msgs                # i
 
 
+def test_ref_evidence_anchor_is_rejected(system: Path) -> None:
+    """(§6.5 "Anchors are entry-level") A `ref://` citation carries no span
+    parameters — an `anchor` on evidence citing a ref source is a grammar
+    error naming the claim, source key, and the offending anchor. The same
+    evidence shape against a record source is unaffected (record anchors are
+    verify's concern, §13.2, not check's)."""
+    sources = {
+        "s1": {"ref": "wikipedia/Gorguts"},
+        "s2": {"record": H_PUB},
+    }
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "sources": sources,
+        "claims": [
+            _claim("x", "a", evidence=[{"source": "s1", "anchor": "el=1", "kind": "direct"}]),
+            _claim("x", "b", evidence=[{"source": "s2", "anchor": "el=1", "kind": "direct"}]),
+        ],
+    })
+    rep = _check(system)
+    rejections = [e for e in rep.errors
+                 if "ref:// citations carry no span parameters" in e]
+    assert len(rejections) == 1
+    assert "s1" in rejections[0] and "el=1" in rejections[0] and "§6.5" in rejections[0]
+
+
 def test_sources_ref_pin_grammar(system: Path) -> None:
     """*(v17, §6.5, §13.1)* A pinned `ref://{dataset}@{tag}/{id}` sources
     entry is grammatically valid and registers exactly like a bare ref —
@@ -341,6 +366,29 @@ def test_proposes_evidence_ref_dangling_pin(system: Path) -> None:
     rep = _check(system)
     assert any("dangling pin" in e and "proposes evidence" in e and "§13.1" in e
                for e in rep.errors)
+
+
+def test_proposes_evidence_ref_uri_with_span_param_is_rejected(system: Path) -> None:
+    """(§6.5) `proposes` inline evidence citing a `ref://` uri with a
+    `?`-style span parameter is rejected. `REF_URI_RE`'s id group (`(.+)$`)
+    is greedy enough to otherwise swallow the param silently — matching the
+    uri whole rather than failing the grammar and falling through to the
+    generic "not a citation" error — so the rejection has to be explicit."""
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "x-guess", "kind": "hypothesis", "about": ["x"],
+        "statement": "s", "confidence": "plausible", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"],
+        "proposes": {
+            "id": "x:guess", "predicate": "guess", "value": "v",
+            "evidence": [
+                {"uri": "ref://wikipedia/Gorguts?el=1", "kind": "direct"},
+            ],
+        },
+        "status": "open", "asof": "2026-07-02",
+    })
+    rep = _check(system)
+    assert any("carries a span parameter" in e and "§6.5" in e for e in rep.errors)
 
 
 _MIRROR_HASH = "9" * 64  # registered as wikipedia's 2026-06 snapshot artifact (_WIKIPEDIA_REF)

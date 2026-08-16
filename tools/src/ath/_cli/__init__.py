@@ -27,6 +27,8 @@ System:
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
                 promote, stamp, worklist, regen (spec/ledger.md)
+  ref ...       the reference-dataset resolver: status, resolve, hash
+                (spec/ledger.md §6.5)
 
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)
@@ -51,6 +53,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ledger._cli import main as ledger_main
 
         return ledger_main(rest)
+    if cmd == "ref":
+        from ath._cli.ref import run as ref_run
+
+        return ref_run(rest)
     if cmd == "sync":
         from ath._cli.sync import run
 

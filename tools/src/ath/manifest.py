@@ -13,7 +13,8 @@ athenaeum.md §5, v15).
 Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
 locally-mirrored external databases cited as `ref://` evidence. They are
 mirrors, not git members. *(v17)* A dataset registers **multiple snapshots**
-— a tag-keyed `snapshots:` map (tag → the mirror's blake3 `artifact`), an
+— a tag-keyed `snapshots:` map (tag → a `Snapshot`: the mirror's blake3
+`artifact`, plus *(v18)* an optional deployment-local `path:` override), an
 explicit `latest:` default naming one of those tags, and a format `adapter:`
 resolving native ids. A snapshot's mirror bytes are a corpus artifact,
 distributed and integrity-checked through the corpus store.
@@ -86,10 +87,26 @@ _ARTIFACT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
+class Snapshot:
+    """One registered snapshot of a reference dataset (spec/athenaeum.md §2.3).
+
+    `artifact` is identity — the blake3 pin verification stamps (§13.2); it
+    never changes meaning. *(v18)* `path` is the interim deployment-local
+    materialization override: a mirror file read in place, tried before the
+    corpus artifact store (spec/ledger.md §6.5 "Resolution is downward").
+    Presence isn't checked at load time — the file may live on a mount that
+    isn't up; that's a resolver/status concern, not a manifest-parse one.
+    """
+
+    artifact: str  # 64-hex blake3 — the pin verification stamps
+    path: str | None = None  # v18 interim materialization override
+
+
+@dataclass(frozen=True)
 class Reference:
     """A registered reference dataset — a local mirror, not a git member.
 
-    *(v17)* Multi-snapshot: `snapshots` maps tag → mirror-artifact blake3,
+    *(v17)* Multi-snapshot: `snapshots` maps tag → `Snapshot`,
     `latest` names the default tag. `ref://{dataset}@{tag}/{id}` (spec/ledger.md
     §6.5) pins a snapshot; bare `ref://{dataset}/{id}` tracks `latest`.
     """
@@ -98,7 +115,7 @@ class Reference:
     description: str
     adapter: str  # the format adapter resolving native ids (zim, jsonl-index, …)
     latest: str  # the default snapshot tag — a key of snapshots
-    snapshots: dict[str, str]  # tag -> 64-hex blake3 mirror-artifact hash
+    snapshots: dict[str, Snapshot]  # tag -> Snapshot (artifact hash + optional path)
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -175,17 +192,21 @@ def load_references(root: Path) -> list[Reference]:
         if not isinstance(snapshots_raw, dict) or not snapshots_raw:
             raise ManifestError(f"references/{name}: snapshots must be a non-empty "
                                 "tag-keyed mapping")
-        snapshots: dict[str, str] = {}
+        snapshots: dict[str, Snapshot] = {}
         for tag, snap in snapshots_raw.items():
             tag = str(tag)
             if not _TAG_RE.match(tag):
                 raise ManifestError(f"references/{name}: snapshot tag {tag!r} must match "
                                     "^[a-z0-9][a-z0-9._-]*$ (rides in ref:// URIs after '@')")
-            artifact = str((snap or {}).get("artifact") or "")
+            snap = snap or {}
+            artifact = str(snap.get("artifact") or "")
             if not _ARTIFACT_RE.match(artifact):
                 raise ManifestError(f"references/{name}/{tag}: artifact must be a 64-hex "
                                     f"lowercase blake3, got {artifact!r}")
-            snapshots[tag] = artifact
+            # (v18) no existence check here — a declared path may live on a
+            # mount that isn't up; presence is a resolver/status concern.
+            path = snap.get("path")
+            snapshots[tag] = Snapshot(artifact=artifact, path=str(path) if path else None)
         latest = str(spec.get("latest") or "")
         if not latest or latest not in snapshots:
             raise ManifestError(f"references/{name}: latest {latest!r} must name a key "

@@ -200,8 +200,8 @@ def run_check(
     # cite a mirror's bytes directly instead of through `ref://`.
     mirror_hash_owner: dict[str, tuple[str, str]] = {}
     for dname, dref in datasets.items():
-        for tag, h in (dref.snapshots or {}).items():
-            mirror_hash_owner.setdefault(h, (dname, tag))
+        for tag, snap in (dref.snapshots or {}).items():
+            mirror_hash_owner.setdefault(snap.artifact, (dname, tag))
 
     # ------------------------------------------------------------- fact files
     all_claims: list[tuple[Path, dict, dict]] = []
@@ -558,6 +558,14 @@ def run_check(
                             countable_hashes.add(h)
                         if resolve_live and join.resolves(h) and join.is_private(h):
                             priv = True
+                elif isinstance(entry, dict) and "ref" in entry and anchor:
+                    # §6.5 "Anchors are entry-level": a ref:// citation carries
+                    # no span parameters — quotes verify against the adapter's
+                    # rendered entry as a whole, so an `anchor` on evidence
+                    # citing a ref source is a grammar error, not merely unchecked.
+                    rep.err(where, f"evidence.source {skey!r} cites ref://"
+                                   f"{entry['ref']} with anchor {anchor!r} — ref:// "
+                                   "citations carry no span parameters (§6.5)")
             if entry_countable and kind == "authoritative":
                 auth_countable = True
         if st == "confirmed" and evs \
@@ -736,6 +744,16 @@ def run_check(
                                                f"ref://{odset}/{{id}}, not the corpus hash "
                                                "directly (§6.5, §13.1)")
                         elif prm:
+                            if "?" in prm.group(3):
+                                # §6.5 "Anchors are entry-level": REF_URI_RE's id
+                                # group is greedy (`(.+)$`), so a param'd uri
+                                # still MATCHES — it doesn't fall through to the
+                                # generic "not a citation" error below; the
+                                # rejection has to be explicit here instead.
+                                rep.err(where, f"proposes evidence ref:// uri "
+                                               f"{puri!r} carries a span parameter — "
+                                               "ref:// citations carry no anchors "
+                                               "(§6.5)")
                             if prm.group(1) not in datasets:
                                 rep.err(where, f"proposes evidence ref:// dataset "
                                                f"{prm.group(1)!r} is not registered")

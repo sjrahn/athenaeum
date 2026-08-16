@@ -267,7 +267,7 @@ def test_verify_ref_bare_binds_latest_and_restamps_only_on_change(system: Path) 
     """§13.2.3: a bare `ref://` citation resolves through the dataset's
     `latest` tag and stamps `{snapshot, artifact}` — content stays
     unverifiable (no adapter exists yet) without blocking the stamp."""
-    from ath.manifest import Reference
+    from ath.manifest import Reference, Snapshot
 
     ledger = system / "ledger"
     v1 = "a" * 64
@@ -279,7 +279,7 @@ def test_verify_ref_bare_binds_latest_and_restamps_only_on_change(system: Path) 
     join = CorpusJoin(_corpora(system))
     datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
                                           adapter="jsonl-index", latest="2026-01",
-                                          snapshots={"2026-01": v1})}
+                                          snapshots={"2026-01": Snapshot(artifact=v1)})}
     res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
     assert res.unverifiable == 1  # content: no adapter yet — every registered case
     assert res.stamped == 1
@@ -295,7 +295,7 @@ def test_verify_ref_bare_binds_latest_and_restamps_only_on_change(system: Path) 
 
 
 def test_verify_ref_pinned_binds_pinned_tags_artifact(system: Path) -> None:
-    from ath.manifest import Reference
+    from ath.manifest import Reference, Snapshot
 
     ledger = system / "ledger"
     v1, v2 = "a" * 64, "b" * 64
@@ -305,9 +305,9 @@ def test_verify_ref_pinned_binds_pinned_tags_artifact(system: Path) -> None:
          "evidence": [{"source": "s1", "kind": "authoritative"}]},
     ])
     join = CorpusJoin(_corpora(system))
-    datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
-                                          adapter="jsonl-index", latest="2026-01",
-                                          snapshots={"2025-01": v1, "2026-01": v2})}
+    datasets = {"musicbrainz": Reference(
+        dataset="musicbrainz", description="test", adapter="jsonl-index", latest="2026-01",
+        snapshots={"2025-01": Snapshot(artifact=v1), "2026-01": Snapshot(artifact=v2)})}
     res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
     assert res.unverifiable == 1
     assert res.stamped == 1
@@ -319,7 +319,7 @@ def test_verify_ref_pinned_binds_pinned_tags_artifact(system: Path) -> None:
 def test_verify_ref_latest_bump_drifts_bare_cite_only(system: Path) -> None:
     """A moved `latest` flags every bare citer for re-verification; a pinned
     citation is drift-free by construction (§6.5, §13.2.3)."""
-    from ath.manifest import Reference
+    from ath.manifest import Reference, Snapshot
 
     ledger = system / "ledger"
     v1, v2 = "a" * 64, "b" * 64
@@ -337,11 +337,11 @@ def test_verify_ref_latest_bump_drifts_bare_cite_only(system: Path) -> None:
     join = CorpusJoin(_corpora(system))
     datasets_v1 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
                                              adapter="jsonl-index", latest="2026-01",
-                                             snapshots={"2026-01": v1})}
+                                             snapshots={"2026-01": Snapshot(artifact=v1)})}
     verify_ledger(ledger, join, datasets_v1, stamp=True, today="2026-07-02")
-    datasets_v2 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
-                                             adapter="jsonl-index", latest="2026-02",
-                                             snapshots={"2026-01": v1, "2026-02": v2})}
+    datasets_v2 = {"musicbrainz": Reference(
+        dataset="musicbrainz", description="test", adapter="jsonl-index", latest="2026-02",
+        snapshots={"2026-01": Snapshot(artifact=v1), "2026-02": Snapshot(artifact=v2)})}
     res = verify_ledger(ledger, join, datasets_v2, stamp=False, today="2026-07-03")
     drift = [w for w in res.warnings if "snapshot binding drifted" in w]
     assert len(drift) == 1
@@ -353,7 +353,7 @@ def test_verify_ref_pinned_artifact_repointed_drifts(system: Path) -> None:
     """A pin's residual failure mode: the manifest re-points the pinned tag's
     mirror-artifact hash out from under a frozen citation (§13.2.3 — the hash
     is the true pin)."""
-    from ath.manifest import Reference
+    from ath.manifest import Reference, Snapshot
 
     ledger = system / "ledger"
     v1, v2 = "a" * 64, "b" * 64
@@ -365,11 +365,11 @@ def test_verify_ref_pinned_artifact_repointed_drifts(system: Path) -> None:
     join = CorpusJoin(_corpora(system))
     datasets_v1 = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
                                              adapter="jsonl-index", latest="2025-01",
-                                             snapshots={"2025-01": v1})}
+                                             snapshots={"2025-01": Snapshot(artifact=v1)})}
     verify_ledger(ledger, join, datasets_v1, stamp=True, today="2026-07-02")
     datasets_repointed = {"musicbrainz": Reference(
         dataset="musicbrainz", description="test", adapter="jsonl-index",
-        latest="2025-01", snapshots={"2025-01": v2})}
+        latest="2025-01", snapshots={"2025-01": Snapshot(artifact=v2)})}
     res = verify_ledger(ledger, join, datasets_repointed, stamp=False, today="2026-07-03")
     assert any("snapshot binding drifted" in w for w in res.warnings)
 
@@ -379,7 +379,7 @@ def test_verify_ref_unregistered_dataset_and_dangling_pin_are_unverifiable(
 ) -> None:
     """No crash, no stamp — check owns the hard error for both (§13.1); verify
     stays honestly unverifiable."""
-    from ath.manifest import Reference
+    from ath.manifest import Reference, Snapshot
 
     ledger = system / "ledger"
     _ref_fact(ledger, {
@@ -396,7 +396,7 @@ def test_verify_ref_unregistered_dataset_and_dangling_pin_are_unverifiable(
     join = CorpusJoin(_corpora(system))
     datasets = {"musicbrainz": Reference(dataset="musicbrainz", description="test",
                                           adapter="jsonl-index", latest="2026-01",
-                                          snapshots={"2026-01": "a" * 64})}
+                                          snapshots={"2026-01": Snapshot(artifact="a" * 64)})}
     res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
     assert res.unverifiable == 2
     assert res.stamped == 0
@@ -404,6 +404,201 @@ def test_verify_ref_unregistered_dataset_and_dangling_pin_are_unverifiable(
     fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
     assert "verified" not in fact["sources"]["s1"]
     assert "verified" not in fact["sources"]["s2"]
+
+
+def _ref_zim_path(tmp_path: Path) -> Path:
+    """A tiny fixture mirror standing in for a `ref://` dataset (§6.5): one
+    text entry a quote can hit or miss, one image entry with no text
+    projection. Local copy of `test_refdata.py`'s fixture pattern — this
+    suite doesn't import across test modules."""
+    import libzim.writer as zw
+
+    class _Item(zw.Item):
+        def __init__(self, path: str, title: str, content, mimetype: str):
+            super().__init__()
+            self._path, self._title = path, title
+            self._content, self._mimetype = content, mimetype
+
+        def get_path(self) -> str:
+            return self._path
+
+        def get_title(self) -> str:
+            return self._title
+
+        def get_mimetype(self) -> str:
+            return self._mimetype
+
+        def get_contentprovider(self):
+            return zw.StringProvider(self._content)
+
+        def get_hints(self) -> dict:
+            return {zw.Hint.FRONT_ARTICLE: 1}
+
+    p = tmp_path / "musicbrainz.zim"
+    with zw.Creator(str(p)) as creator:
+        creator.add_item(_Item(
+            "artist/abc-123", "Acme",
+            "<html><body><p>Acme is a fictional test band from "
+            "Testville.</p></body></html>", "text/html"))
+        creator.add_item(_Item("artist/no-text", "No Text",
+                               b"\x89PNG\r\n\x1a\n" + b"\x00" * 16, "image/png"))
+        creator.set_mainpath("artist/abc-123")
+    return p
+
+
+def _mb_reference(tag: str, artifact: str, *, adapter: str = "zim", path: str | None = None):
+    from ath.manifest import Reference, Snapshot
+
+    return Reference(dataset="musicbrainz", description="test", adapter=adapter,
+                     latest=tag, snapshots={tag: Snapshot(artifact=artifact, path=path)})
+
+
+def test_verify_ref_quote_found_counts_verified_and_stamps(system: Path) -> None:
+    """*(Phase 1, §6.5/§13.2.2)* A ref citation's quote checks against the
+    adapter's rendered entry — found, it counts toward `verified` and the
+    resolution binding still stamps."""
+    pytest.importorskip("libzim")
+    zim_path = _ref_zim_path(system)
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:tagline", "predicate": "tagline", "value": "x",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "quote": "fictional test band from Testville",
+                       "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, path=str(zim_path))}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.verified == 1
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact["sources"]["s1"]["verified"] == {
+        "snapshot": "t", "artifact": v1, "at": "2026-07-02"}
+
+
+def test_verify_ref_quote_absent_fails_at_claim_severity_no_stamp(system: Path) -> None:
+    pytest.importorskip("libzim")
+    zim_path = _ref_zim_path(system)
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:bogus", "predicate": "bogus", "value": "x",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "quote": "this never appears anywhere",
+                       "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, path=str(zim_path))}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.verified == 0
+    assert res.stamped == 0
+    assert any("quote not found" in e for e in res.errors)  # confirmed → error
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert "verified" not in fact["sources"]["s1"]
+
+
+def test_verify_ref_entry_not_found_fails_no_stamp(system: Path) -> None:
+    pytest.importorskip("libzim")
+    zim_path = _ref_zim_path(system)
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/does-not-exist"}}, [
+        {"id": "acme:missing", "predicate": "x", "value": "x",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, path=str(zim_path))}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.stamped == 0
+    assert any("names no entry" in e for e in res.errors)
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert "verified" not in fact["sources"]["s1"]
+
+
+def test_verify_ref_adapter_unavailable_stamps_unverifiable(system: Path) -> None:
+    """An unregistered adapter name is an honest environment gap (§6.5) —
+    unverifiable, but the resolution binding still stamps (unchanged from
+    Phase 0 for this specific gap)."""
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "quote": "irrelevant", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, adapter="nonexistent")}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 1
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact["sources"]["s1"]["verified"] == {
+        "snapshot": "t", "artifact": v1, "at": "2026-07-02"}
+
+
+def test_verify_ref_mirror_absent_stamps_unverifiable(system: Path) -> None:
+    """No `path:` override and no corpus store holds the artifact — a mirror
+    gap, honestly unverifiable, still stamps the resolution binding. (Works
+    whether or not `libzim` is installed: an unavailable adapter and an
+    absent mirror degrade identically here, so this doesn't need gating.)"""
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1)}  # no path:, no corpus store entry
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 1
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
+    fact = json.loads((ledger / "facts" / "band" / "acme.json").read_text())
+    assert fact["sources"]["s1"]["verified"] == {
+        "snapshot": "t", "artifact": v1, "at": "2026-07-02"}
+
+
+def test_verify_ref_no_quote_existence_citation_verified(system: Path) -> None:
+    pytest.importorskip("libzim")
+    zim_path = _ref_zim_path(system)
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/abc-123"}}, [
+        {"id": "acme:mb-id", "predicate": "musicbrainz-id", "value": "abc-123",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "kind": "authoritative"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, path=str(zim_path))}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.verified == 1
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
+
+
+def test_verify_ref_no_text_projection_unverifiable_stamp_proceeds(system: Path) -> None:
+    """(§6.5) An entry with no text projection (an image) — the quote is
+    held, not wrong: unverifiable, but the stamp still proceeds."""
+    pytest.importorskip("libzim")
+    zim_path = _ref_zim_path(system)
+    ledger = system / "ledger"
+    v1 = "a" * 64
+    _ref_fact(ledger, {"s1": {"ref": "musicbrainz/artist/no-text"}}, [
+        {"id": "acme:cover-art", "predicate": "cover-art", "value": "x",
+         "status": "confirmed", "asof": "2026-07-02",
+         "evidence": [{"source": "s1", "quote": "anything", "kind": "incidental"}]},
+    ])
+    join = CorpusJoin(_corpora(system))
+    datasets = {"musicbrainz": _mb_reference("t", v1, path=str(zim_path))}
+    res = verify_ledger(ledger, join, datasets, stamp=True, today="2026-07-02")
+    assert res.unverifiable == 1
+    assert res.stamped == 1
+    assert not res.errors and not res.warnings
 
 
 def test_promote_and_stamp(system: Path) -> None:

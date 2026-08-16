@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from ath._cli import main
-from ath.manifest import ManifestError, find_root, load, load_references
+from ath.manifest import ManifestError, Snapshot, find_root, load, load_references
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -78,7 +78,8 @@ def _write_references(tmp_path: Path, body: str) -> None:
 
 def test_manifest_references(tmp_path: Path) -> None:
     """*(v17, spec/athenaeum.md §2.3)* multi-snapshot shape: adapter, latest,
-    a tag-keyed snapshots map of blake3 mirror-artifact hashes."""
+    a tag-keyed snapshots map of blake3 mirror-artifact hashes. *(v18)* an
+    optional per-snapshot `path:` materialization override."""
     _write_references(
         tmp_path,
         "  wikipedia:\n"
@@ -86,14 +87,18 @@ def test_manifest_references(tmp_path: Path) -> None:
         "    adapter: zim\n"
         "    latest: '2026-06'\n"
         "    snapshots:\n"
-        f"      '2026-06': {{ artifact: {_H1} }}\n"
+        f"      '2026-06': {{ artifact: {_H1}, path: /mnt/mirrors/wp.zim }}\n"
         f"      '2026-01': {{ artifact: {_H2} }}\n",
     )
     (ref,) = load_references(tmp_path)
     assert ref.dataset == "wikipedia"
     assert ref.adapter == "zim"
     assert ref.latest == "2026-06"
-    assert ref.snapshots == {"2026-06": _H1, "2026-01": _H2}
+    assert ref.snapshots == {
+        "2026-06": Snapshot(artifact=_H1, path="/mnt/mirrors/wp.zim"),
+        "2026-01": Snapshot(artifact=_H2),
+    }
+    assert ref.snapshots["2026-01"].path is None
     (tmp_path / "athenaeum.yaml").write_text("org: https://x\nreferences: {}\n")
     assert load_references(tmp_path) == []
     (tmp_path / "athenaeum.yaml").write_text("org: https://x\n")
