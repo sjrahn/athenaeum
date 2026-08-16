@@ -13,12 +13,20 @@ An adapter module exposes three functions:
 - `resolve_entry(handle: Any, native_id: str) -> AdapterResult` — resolve one
   entry against an already-open handle; raises `refdata.errors.EntryNotFound`
   on a miss.
-- `search_entries(handle: Any, query: str, limit: int) -> list[AdapterSearchHit]`
-  — the discovery step ahead of `resolve_entry` (spec/ledger.md §6.5): words
-  in, candidate native ids out, best match first. An empty list is a valid
-  answer (no hits, or the mirror carries no search index) — never an error;
-  a missing optional dependency is `AdapterUnavailable` at the `refdata`
-  layer, raised before this is ever called.
+- `search_entries(handle: Any, query: str, limit: int, mode: str = "blend") ->
+  list[AdapterSearchHit]` — the discovery step ahead of `resolve_entry`
+  (spec/ledger.md §6.5): words in, candidate native ids out, best match
+  first. `mode` selects which index tier(s) to draw from — `"blend"`
+  (default: title-index hits first, then full-text hits appended and
+  deduplicated — an archive missing one index tier degrades gracefully
+  within that mode rather than erroring), `"suggest"` (title index only), or
+  `"fulltext"` (full-text index only); an unrecognized mode is `ValueError`.
+  An empty list is a valid answer (no hits, or the mirror carries no index
+  for the requested tier) — never an error; a missing optional dependency is
+  `AdapterUnavailable` at the `refdata` layer, raised before this is ever
+  called. Archive open failures (truncated/corrupted mirror bytes) are
+  `refdata.errors.MirrorCorrupt`, raised by `open_archive` before a handle
+  ever reaches this function.
 
 `ADAPTERS` maps adapter name -> module; `adapter_available` is the guarded
 lookup `refdata.resolve()` and callers use before assuming a dataset's

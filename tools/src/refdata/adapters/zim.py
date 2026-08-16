@@ -13,7 +13,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
-from ..errors import EntryNotFound
+from ..errors import EntryNotFound, MirrorCorrupt
 from . import AdapterResult, AdapterSearchHit
 
 try:
@@ -39,9 +39,19 @@ def available() -> bool:
 def open_archive(mirror_path: Path) -> Any:
     """Open the ZIM at `mirror_path`. Caller (refdata's handle cache) owns
     not re-opening the same path twice; libzim's `Archive` is otherwise a
-    plain read handle with no explicit close."""
+    plain read handle with no explicit close.
+
+    A truncated (still downloading) or corrupted ZIM makes libzim raise a
+    raw `RuntimeError` here (empirically: "Zim file(s) is of bad size or
+    corrupted" — construction is where libzim actually validates the file,
+    not any later call) — wrapped as `MirrorCorrupt` so it joins the typed
+    `RefdataError` hierarchy every other caller already branches on, instead
+    of propagating as an unrelated crash."""
     assert _Archive is not None, "zim adapter unavailable — check available() first"
-    return _Archive(str(mirror_path))
+    try:
+        return _Archive(str(mirror_path))
+    except RuntimeError as exc:
+        raise MirrorCorrupt(f"{mirror_path}: {exc}") from exc
 
 
 def resolve_entry(handle: Any, native_id: str) -> AdapterResult:
@@ -61,21 +71,49 @@ def resolve_entry(handle: Any, native_id: str) -> AdapterResult:
     )
 
 
-def search_entries(handle: Any, query: str, limit: int) -> list[AdapterSearchHit]:
+def search_entries(
+    handle: Any, query: str, limit: int, mode: str = "blend"
+) -> list[AdapterSearchHit]:
     """Discovery step ahead of `resolve_entry` (spec/ledger.md §6.5): words in,
-    candidate native ids out. Prefers the *suggestion* (title) search — ZIMs
-    build a title index by default (`Archive.has_title_index`, empirically
-    true even without `Creator.config_indexing`, since it derives from each
-    item's title), so this is the common path. Only when suggestions come up
-    empty AND the archive was built with a full-text Xapian index
-    (`has_fulltext_index` — `config_indexing(True, lang)` at write time;
-    `Searcher.search()` raises `RuntimeError` without one, so this checks
-    first rather than catching) does this fall back to full-text search. An
-    archive with neither index is a legitimate absence, not a failure — `[]`.
+    candidate native ids out.
+
+    `mode` picks which of a ZIM's two independent indexes to draw from:
+
+    - `"suggest"` — title index only (`Archive.has_title_index`, empirically
+      built by default even without `Creator.config_indexing`, since it
+      derives from each item's title). Title matches are the strongest
+      signal (an exact/near title hit is almost always what's wanted).
+    - `"fulltext"` — the Xapian full-text index only (`has_fulltext_index`,
+      built only when `config_indexing(True, lang)` ran at write time;
+      `Searcher.search()` raises `RuntimeError` without one, so this checks
+      the flag first rather than catching). Absent the index, `[]` — a
+      legitimate absence, not a failure.
+    - `"blend"` (default) — title hits first, then full-text hits appended,
+      deduplicated by path (a title hit standing its ground over a
+      lower-priority full-text rediscovery of the same entry). Every mirror
+      in this deployment carries both indexes, and a body-only phrase (e.g.
+      "builtin functions" for `docs.python.org/3/library/functions.html`,
+      whose title is just "Built-in Functions" — matched by full text but
+      not by common substrings of the query) never surfaces under
+      suggestion-only search; blending catches it without giving up title
+      search's precedence for the common case. An archive lacking one index
+      degrades gracefully — that tier simply contributes no paths.
+
+    Any other `mode` is a caller bug, not a data condition — `ValueError`.
     """
-    paths = _dedupe_paths(_suggest_paths(handle, query, limit)) if handle.has_title_index else []
-    if not paths and handle.has_fulltext_index:
-        paths = _dedupe_paths(_fulltext_paths(handle, query, limit))
+    if mode not in ("blend", "suggest", "fulltext"):
+        raise ValueError(f"unknown search mode {mode!r} (want 'blend', 'suggest', or 'fulltext')")
+
+    suggest_paths = (
+        _dedupe_paths(_suggest_paths(handle, query, limit))
+        if mode in ("blend", "suggest") and handle.has_title_index
+        else []
+    )
+    fulltext_paths: list[str] = []
+    if mode in ("blend", "fulltext") and handle.has_fulltext_index:
+        fulltext_paths = _dedupe_paths(_fulltext_paths(handle, query, limit))
+
+    paths = _dedupe_paths(suggest_paths + fulltext_paths)
     hits = []
     for path in paths[:limit]:
         try:

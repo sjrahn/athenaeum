@@ -19,7 +19,8 @@ verbs:
   search    the discovery step ahead of `resolve` (§6.5): search a dataset by
             words, print candidate native ids — ids aren't guessable, so a
             ledger scribe searches first and pastes a hit's id into `resolve`
-            or straight into a `ref://` citation.
+            or straight into a `ref://` citation. Blends title-index and
+            full-text hits by default (`--mode` narrows to one tier).
   hash      blake3 a candidate mirror file (streamed — mirrors run tens of GB)
             and print a manifest snapshot snippet, the registration helper for
             onboarding a new dataset/tag.
@@ -53,7 +54,8 @@ Commands:
                       the content body
   search DATASET Q    search a dataset by words; print candidate native ids
                       (id<TAB>title, one per line). --tag pins a snapshot,
-                      --limit caps the hit count (default 10)
+                      --limit caps the hit count (default 10), --mode picks
+                      blend (default) / suggest (title only) / fulltext
   hash FILE           blake3 a mirror file; print the digest and a
                       ready-to-paste manifest snapshot snippet
 
@@ -114,7 +116,13 @@ def _resolve_ref(
         return 1
 
     from refdata import resolve
-    from refdata.errors import AdapterUnavailable, EntryNotFound, MirrorUnavailable, UnknownTag
+    from refdata.errors import (
+        AdapterUnavailable,
+        EntryNotFound,
+        MirrorCorrupt,
+        MirrorUnavailable,
+        UnknownTag,
+    )
 
     try:
         entry = resolve(reference, native_id, tag=tag, corpora_roots=_corpora_roots(root))
@@ -126,6 +134,9 @@ def _resolve_ref(
         return 1
     except MirrorUnavailable as e:
         print(f"ath ref resolve: mirror unavailable — {e}", file=sys.stderr)
+        return 1
+    except MirrorCorrupt as e:
+        print(f"ath ref resolve: mirror file corrupt or still downloading: {e}", file=sys.stderr)
         return 1
     except EntryNotFound as e:
         print(f"ath ref resolve: entry not found — {e}", file=sys.stderr)
@@ -188,6 +199,11 @@ def _cmd_search(argv: Sequence[str]) -> int:
     ap.add_argument("query")
     ap.add_argument("--tag", default=None, help="pin a snapshot (default: the dataset's latest)")
     ap.add_argument("--limit", type=int, default=10, help="max hits to print (default 10)")
+    ap.add_argument(
+        "--mode", choices=("blend", "suggest", "fulltext"), default="blend",
+        help="blend (default): title hits then full-text hits, deduplicated; "
+             "suggest: title index only; fulltext: full-text index only",
+    )
     ns = ap.parse_args(list(argv))
     root = resolve_root(ns.root)
 
@@ -198,11 +214,12 @@ def _cmd_search(argv: Sequence[str]) -> int:
         return 1
 
     from refdata import search
-    from refdata.errors import AdapterUnavailable, MirrorUnavailable, UnknownTag
+    from refdata.errors import AdapterUnavailable, MirrorCorrupt, MirrorUnavailable, UnknownTag
 
     try:
         hits = search(
-            reference, ns.query, tag=ns.tag, corpora_roots=_corpora_roots(root), limit=ns.limit
+            reference, ns.query, tag=ns.tag, corpora_roots=_corpora_roots(root), limit=ns.limit,
+            mode=ns.mode,
         )
     except UnknownTag as e:
         print(f"ath ref search: unknown snapshot tag — {e}", file=sys.stderr)
@@ -212,6 +229,9 @@ def _cmd_search(argv: Sequence[str]) -> int:
         return 1
     except MirrorUnavailable as e:
         print(f"ath ref search: mirror unavailable — {e}", file=sys.stderr)
+        return 1
+    except MirrorCorrupt as e:
+        print(f"ath ref search: mirror file corrupt or still downloading: {e}", file=sys.stderr)
         return 1
 
     resolved_tag = ns.tag if ns.tag is not None else reference.latest

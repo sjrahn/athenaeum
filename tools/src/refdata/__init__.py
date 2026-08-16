@@ -16,12 +16,21 @@ Three entry points:
   branch on (§6.5: content resolution absent is *unverifiable*, never a
   crash — callers catch these and report accordingly, they are not meant to
   propagate to a user-facing traceback).
-- `search(reference, query, tag, corpora_roots, limit)` — the discovery step
-  ahead of `resolve`: ids aren't guessable, so a scribe searches a dataset by
-  words first and pastes a hit's `native_id` into `resolve` (or straight into
-  a `ref://` citation). Same tag/adapter/mirror preamble and typed errors as
-  `resolve`; an empty result list is a normal answer (no hits, or the mirror
-  carries no search index), never one of those errors.
+- `search(reference, query, tag, corpora_roots, limit, mode)` — the discovery
+  step ahead of `resolve`: ids aren't guessable, so a scribe searches a
+  dataset by words first and pastes a hit's `native_id` into `resolve` (or
+  straight into a `ref://` citation). Same tag/adapter/mirror preamble and
+  typed errors as `resolve`; an empty result list is a normal answer (no
+  hits, or the mirror carries no index for the requested tier), never one of
+  those errors. `mode` (default `"blend"`) picks title-index hits, full-text
+  hits, or both blended together — see `adapters.search_entries`'s
+  docstring for the tier semantics; an unrecognized mode is `ValueError`.
+
+A mirror whose bytes exist but fail to open as the adapter's format
+(truncated mid-download, or corrupted) surfaces as `MirrorCorrupt` from both
+`resolve` and `search` — distinct from `MirrorUnavailable` (no bytes at
+all), but the same honestly-unverifiable-never-a-crash contract every other
+`RefdataError` subclass carries.
 
 Archive handles are expensive to open and verification resolves many
 entries against one snapshot, so open handles are cached per absolute
@@ -43,6 +52,7 @@ from .adapters import ADAPTERS, AdapterResult, adapter_available
 from .errors import (
     AdapterUnavailable,
     EntryNotFound,
+    MirrorCorrupt,
     MirrorUnavailable,
     RefdataError,
     UnknownTag,
@@ -53,6 +63,7 @@ __all__ = [
     "AdapterResult",
     "AdapterUnavailable",
     "EntryNotFound",
+    "MirrorCorrupt",
     "MirrorUnavailable",
     "RefdataError",
     "ResolvedEntry",
@@ -140,6 +151,12 @@ _HANDLES: dict[tuple[str, str], Any] = {}
 
 
 def _open_handle(adapter_name: str, mirror_path: Path) -> Any:
+    """Cache lookup around `open_archive`. A failed open (`MirrorCorrupt` —
+    truncated or corrupted bytes) propagates straight out of
+    `open_archive()`, before the assignment into `_HANDLES` below runs — so
+    a bad path is never cached as a live handle, and a later retry (e.g.
+    after a download finishes) opens fresh rather than replaying the
+    failure."""
     key = (adapter_name, str(mirror_path.resolve()))
     handle = _HANDLES.get(key)
     if handle is None:
@@ -153,10 +170,11 @@ def _resolve_handle(
 ) -> tuple[str, Snapshot, Any]:
     """Shared preamble of `resolve()` and `search()`: tag -> registered
     snapshot -> adapter availability -> materialized mirror -> open handle.
-    Raises the same three typed errors both callers document (`UnknownTag`,
-    `AdapterUnavailable`, `MirrorUnavailable`) — the fourth, `EntryNotFound`,
-    is `resolve_entry`'s alone, since "no hits" is `search`'s normal `[]`,
-    not a failure."""
+    Raises the same typed errors both callers document (`UnknownTag`,
+    `AdapterUnavailable`, `MirrorUnavailable`, and `MirrorCorrupt` from
+    `_open_handle` when bytes exist but aren't a valid archive) — the
+    remaining one, `EntryNotFound`, is `resolve_entry`'s alone, since "no
+    hits" is `search`'s normal `[]`, not a failure."""
     resolved_tag = reference.latest if tag is None else tag
     snapshot = reference.snapshots.get(resolved_tag)
     if snapshot is None:
@@ -190,8 +208,9 @@ def resolve(
     Raises `UnknownTag` if the resolved tag names no registered snapshot,
     `AdapterUnavailable` if `reference.adapter` is unregistered or its
     optional dependency is missing, `MirrorUnavailable` if `materialize()`
-    finds no local bytes, and `EntryNotFound` if the mirror opens but
-    `native_id` isn't in it.
+    finds no local bytes, `MirrorCorrupt` if bytes exist but the adapter
+    can't open them as its format, and `EntryNotFound` if the mirror opens
+    but `native_id` isn't in it.
     """
     resolved_tag, snapshot, handle = _resolve_handle(reference, tag, corpora_roots)
     result = ADAPTERS[reference.adapter].resolve_entry(handle, native_id)
@@ -213,15 +232,26 @@ def search(
     tag: str | None = None,
     corpora_roots: Sequence[Path] = (),
     limit: int = 10,
+    mode: str = "blend",
 ) -> list[SearchHit]:
     """Discovery step ahead of `resolve()` (spec/ledger.md §6.5): native ids
     aren't guessable, so a scribe searches a dataset by words and pastes a
     hit's `native_id` onward. `tag` and error semantics match `resolve()`
-    exactly (`UnknownTag`, `AdapterUnavailable`, `MirrorUnavailable`); an
-    empty return is a normal outcome (no hits, or the mirror has no search
-    index at all — §6.5 "absence … is honestly unverifiable, never a
-    crash"), not one of those errors.
+    exactly (`UnknownTag`, `AdapterUnavailable`, `MirrorUnavailable`,
+    `MirrorCorrupt`); an empty return is a normal outcome (no hits, or the
+    mirror has no index for the requested tier — §6.5 "absence … is
+    honestly unverifiable, never a crash"), not one of those errors.
+
+    `mode` (default `"blend"`) is passed straight through to the adapter's
+    `search_entries`: `"blend"` returns title-index hits first, then
+    full-text hits appended and deduplicated (an archive missing one tier
+    degrades gracefully within blend rather than erroring — every
+    registered mirror in this deployment happens to carry both, but the
+    contract doesn't assume it); `"suggest"` is title-index only (the old
+    default, still available for exact-title lookups); `"fulltext"` is
+    full-text-index only. An unrecognized mode is `ValueError`, raised by
+    the adapter.
     """
     _, _, handle = _resolve_handle(reference, tag, corpora_roots)
-    hits = ADAPTERS[reference.adapter].search_entries(handle, query, limit)
+    hits = ADAPTERS[reference.adapter].search_entries(handle, query, limit, mode=mode)
     return [SearchHit(native_id=hit.native_id, title=hit.title) for hit in hits]

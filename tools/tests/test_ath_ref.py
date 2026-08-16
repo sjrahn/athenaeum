@@ -302,6 +302,72 @@ def test_search_pinned_tag(root: Path, capsys: pytest.CaptureFixture[str]) -> No
     assert captured.out.splitlines() == ["home\tHome"]
 
 
+def test_search_mode_flag_reaches_suggest_only(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`testwiki`'s v2 mirror carries no full-text index (`_build_zim`
+    doesn't `config_indexing`), so `--mode suggest` and the blend default
+    must agree here — this just proves the flag is actually wired through
+    argparse into `refdata.search`'s `mode=`, not that blend/suggest ever
+    disagree (that's `test_refdata.py`'s job, with an indexed fixture)."""
+    rc = main([
+        "ref", "search", "testwiki", "Home", "--mode", "suggest", "--root", str(root),
+    ])
+    assert rc == 0
+    assert capsys.readouterr().out.splitlines() == ["home\tHome"]
+
+
+def test_search_mode_invalid_choice_rejected_by_argparse(
+    root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        main(["ref", "search", "testwiki", "Home", "--mode", "nope", "--root", str(root)])
+    assert "invalid choice" in capsys.readouterr().err
+
+
+# --- corrupted mirror (increment 2) -----------------------------------------
+
+
+@pytest.fixture
+def corrupt_root(tmp_path: Path) -> Path:
+    """A manifest registering one dataset, `corruptset`, whose snapshot
+    `path:` points at bytes that exist but aren't a valid ZIM — standing in
+    for a truncated mid-download or genuinely corrupted mirror (empirically
+    reproduced against a real half-downloaded ZIM: libzim's `Archive()`
+    raises a raw `RuntimeError`, wrapped as `refdata.errors.MirrorCorrupt`
+    by the zim adapter)."""
+    bad = tmp_path / "corrupt.zim"
+    bad.write_bytes(b"not a zim file, just garbage" * 100)
+    manifest = f"""\
+org: https://x.test/athenaeum
+ledger:
+  ledger: {{}}
+references:
+  corruptset:
+    description: a truncated or corrupted mirror
+    adapter: zim
+    latest: t
+    snapshots:
+      t: {{ artifact: {"8" * 64}, path: {bad} }}
+"""
+    (tmp_path / "athenaeum.yaml").write_text(manifest, encoding="utf-8")
+    return tmp_path
+
+
+def test_resolve_mirror_corrupt(corrupt_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["ref", "resolve", "ref://corruptset/home", "--root", str(corrupt_root)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "mirror file corrupt or still downloading" in err
+
+
+def test_search_mirror_corrupt(corrupt_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["ref", "search", "corruptset", "anything", "--root", str(corrupt_root)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "mirror file corrupt or still downloading" in err
+
+
 def test_hash_digest_and_snippet(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     f = tmp_path / "mirror.bin"
     data = b"some mirror bytes" * 1000

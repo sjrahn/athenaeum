@@ -15,10 +15,12 @@ libzim = pytest.importorskip("libzim")
 
 import libzim.writer as zw  # noqa: E402
 
+import refdata  # noqa: E402
 from ath.manifest import Reference, Snapshot  # noqa: E402
 from refdata import (  # noqa: E402
     AdapterUnavailable,
     EntryNotFound,
+    MirrorCorrupt,
     MirrorUnavailable,
     UnknownTag,
     adapter_available,
@@ -268,3 +270,116 @@ def test_store_fallback_when_no_path_override(tmp_path: Path) -> None:
     assert resolved_path == store_zim
     entry = resolve(ref, "home", corpora_roots=(store_root,))
     assert entry.title == "Home"
+
+
+# --- corrupted mirror (increment 2) -----------------------------------------
+
+
+def test_mirror_corrupt_on_resolve_and_search(tmp_path: Path) -> None:
+    """Garbage bytes at a `.zim`-named path — standing in for a truncated
+    mid-download or genuinely corrupted mirror (empirically reproduced
+    against a real half-downloaded ZIM: libzim's `Archive()` construction
+    raises a raw `RuntimeError`, wrapped as `MirrorCorrupt` by the zim
+    adapter's `open_archive`). Both `resolve` and `search` share the same
+    `_resolve_handle` preamble, so both must raise it identically; the
+    handle cache must hold no entry for the failed path afterward — a
+    later retry (mirror finishes downloading) should open fresh, not
+    replay the cached failure."""
+    bad = tmp_path / "corrupt.zim"
+    bad.write_bytes(b"not a zim file, just garbage" * 100)
+    ref = _ref("t", "e" * 64, path=str(bad))
+    cache_key = ("zim", str(bad.resolve()))
+
+    with pytest.raises(MirrorCorrupt):
+        resolve(ref, "home")
+    assert cache_key not in refdata._HANDLES
+
+    with pytest.raises(MirrorCorrupt):
+        search(ref, "home")
+    assert cache_key not in refdata._HANDLES
+
+
+# --- search modes: blend / suggest / fulltext (increment 1) ----------------
+#
+# `zim_path` (module-top) carries a title index but no full-text index — the
+# blend/suggest cases against it above already prove blend degrades to the
+# title tier alone when full-text is absent. The fixture below is built
+# *with* `config_indexing(True, "eng")` (must run before the `Creator`
+# context is entered — libzim raises if set after) so it carries both
+# indexes, exercising the tiers this dispatch adds.
+
+
+def _build_indexed_zim(path: Path) -> None:
+    """Two articles: `home`'s title contains "Home" and its body separately
+    contains "gadget" nowhere; `gizmo`'s title carries no search-relevant
+    word at all, but its body repeats "gadget" — a body-only match the
+    title (suggestion) index cannot find, only full-text can. `home`'s body
+    also says "Home" again, so a title-word query for "Home" hits `home` via
+    *both* tiers — the blend dedupe case."""
+    creator = zw.Creator(str(path))
+    creator.config_indexing(True, "eng")
+    with creator as c:
+        c.add_item(_Item(
+            "home", "Home Base",
+            "<html><body><p>Hello world, this is home, the home page.</p></body></html>",
+            "text/html",
+        ))
+        c.add_item(_Item(
+            "gizmo", "Totally Unrelated Title",
+            "<html><body><p>This page mentions gadget several times: gadget, "
+            "gadget, gadget.</p></body></html>",
+            "text/html",
+        ))
+        c.set_mainpath("home")
+
+
+@pytest.fixture
+def indexed_zim_path(tmp_path: Path) -> Path:
+    p = tmp_path / "indexed.zim"
+    _build_indexed_zim(p)
+    return p
+
+
+def test_search_blend_surfaces_body_only_match(indexed_zim_path: Path) -> None:
+    ref = _ref("t", "f" * 64, path=str(indexed_zim_path))
+    hits = search(ref, "gadget", mode="blend")
+    assert any(h.native_id == "gizmo" for h in hits)
+
+
+def test_search_suggest_excludes_body_only_match(indexed_zim_path: Path) -> None:
+    """The same body-only word, `mode="suggest"` — title index has no
+    match, so this must come back empty, unlike blend above."""
+    ref = _ref("t", "f" * 64, path=str(indexed_zim_path))
+    assert search(ref, "gadget", mode="suggest") == []
+
+
+def test_search_fulltext_mode_finds_body_only_match(indexed_zim_path: Path) -> None:
+    ref = _ref("t", "f" * 64, path=str(indexed_zim_path))
+    hits = search(ref, "gadget", mode="fulltext")
+    assert any(h.native_id == "gizmo" for h in hits)
+
+
+def test_search_fulltext_mode_on_no_fulltext_archive_returns_empty(zim_path: Path) -> None:
+    """`zim_path` (module-top fixture) carries no full-text index (no
+    `config_indexing` at write time) — `mode="fulltext"` there is a
+    legitimate absence, `[]`, not an error."""
+    ref = _ref("t", "a" * 64, path=str(zim_path))
+    assert search(ref, "home", mode="fulltext") == []
+
+
+def test_search_blend_dedupes_title_hit_first(indexed_zim_path: Path) -> None:
+    """"Home" is a title word (suggestion match) *and* appears in `home`'s
+    body (full-text match too) — both tiers find the same path. Blend must
+    return it once, and — since suggestion hits are placed ahead of
+    full-text hits in the pre-dedupe concatenation — it must be first."""
+    ref = _ref("t", "f" * 64, path=str(indexed_zim_path))
+    hits = search(ref, "Home", mode="blend")
+    home_hits = [h for h in hits if h.native_id == "home"]
+    assert len(home_hits) == 1
+    assert hits[0].native_id == "home"
+
+
+def test_search_invalid_mode_raises(indexed_zim_path: Path) -> None:
+    ref = _ref("t", "f" * 64, path=str(indexed_zim_path))
+    with pytest.raises(ValueError):
+        search(ref, "home", mode="not-a-real-mode")
