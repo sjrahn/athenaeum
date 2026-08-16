@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 17
+version: 18
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-15
+date_modified: 2026-08-16
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -123,7 +123,11 @@ references:                # reference datasets (Part III §6.5) — mirrored da
     adapter: …             # the format adapter resolving native ids (zim, jsonl-index, …)
     latest: …              # the default snapshot tag — names a key below, declared, never inferred
     snapshots:
-      {tag}: { artifact: … }   # blake3 of the mirror's bytes — the pin verification stamps
+      {tag}:
+        artifact: …          # blake3 of the mirror's bytes — the pin verification stamps
+        path: …              # optional (v18) — interim deployment-local materialization:
+                             #   the mirror file read in place; identity stays the artifact
+                             #   hash, and store custody supersedes this when it lands
 ```
 
 Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo, writing its manifest from the example, and running `ath sync`.
@@ -219,6 +223,8 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5; the mirror layer itself is specified there as of v17); a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
+
+*Version 18 (2026-08-16) adds the interim mirror-materialization override (owner ruling): a manifest snapshot entry MAY carry `path:` — a deployment-local file the resolver reads in place, tried before the corpus store. Identity and verification are unchanged (the `artifact` blake3 remains the pin); the key exists so mirrors are usable while store custody mechanics for tens-of-GB artifacts are worked out, and store resolution supersedes it when they land (Part III §6.5).*
 
 *Version 17 (2026-08-15) activates the reference-dataset layer (owner ruling). The manifest's `references:` entries become multi-snapshot — a tag-keyed `snapshots:` map with a declared `latest:` default and a format `adapter:` — and each snapshot's mirror bytes are a **corpus artifact**: a terminal-contract record addressed by blake3, distributed and integrity-checked through the corpus store rather than living as a loose file. The citation grammar gains the optional pin `ref://{dataset}@{tag}/{id}`; Part III specifies the bare-tracks/pinned-freezes semantics, tenancy-derived `ref://` sensitivity, the one-dataset-one-independent-source bar rule, and the mirror-grain coverage discharge (§6.4, §5.4, §6.5, §13). §9's descope narrows from the mirror layer wholesale to per-dataset anchor grammar. No existing citations move — nothing cited `ref://` before this version.*
 

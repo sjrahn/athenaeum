@@ -48,5 +48,8 @@ ledger:
 #     latest: "2026-06"
 #     snapshots:
 #       "2025-12": { artifact: <64-hex blake3 of the ZIM's bytes> }
-#       "2026-06": { artifact: <64-hex blake3 of the ZIM's bytes> }
+#       "2026-06":
+#         artifact: <64-hex blake3 of the ZIM's bytes>
+#         path: /mnt/mirrors/wikipedia_2026-06.zim   # optional interim materialization (v18):
+#                                                    #   read in place until store custody lands
 references: {}
