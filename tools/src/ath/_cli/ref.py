@@ -33,6 +33,7 @@ here directly from `ath.manifest` rather than importing `ledger._cli`.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -148,7 +149,13 @@ def _resolve_ref(
     print(header)
     print(f"title: {entry.title if entry.title is not None else '(none)'}")
     print(f"content-type: {entry.content_type if entry.content_type is not None else '(none)'}")
-    print(f"artifact: {entry.artifact[:12]}")
+    # Full hash: verify compares stamped bindings against the manifest's 64-hex
+    # value, so a truncated print here would seed drift-warning stamps.
+    print(f"artifact: {entry.artifact}")
+    if meta_only:
+        today = _dt.date.today().isoformat()
+        print(f'binding: {{"snapshot": "{entry.tag}", '
+              f'"artifact": "{entry.artifact}", "at": "{today}"}}')
     if not meta_only:
         print()
         print(entry.text if entry.text is not None else "(no text projection)")
