@@ -3,13 +3,16 @@
 Reference datasets are linked, not captured per entry: a registered snapshot's
 mirror bytes are an ordinary corpus artifact, but its *entries* (a Wikipedia
 article, an MBID) are cited `ref://{dataset}[@{tag}]/{id}` and resolved on
-demand through the dataset's format adapter — never per-entry records. Three
+demand through the dataset's format adapter — never per-entry records. Five
 verbs:
 
   status    one row per registered dataset x snapshot: adapter availability,
-            materialization state (path / store / absent). Fast — filesystem
-            stat + store-path lookup only (`refdata.materialize`), no hashing,
-            no archive opens.
+            materialization state (path / store / absent), and — for
+            snapshots of an adapter that carries a sidecar index (`osm-pbf`)
+            and is materialized locally — its index state (indexed / missing
+            / stale). Fast — filesystem stat + store-path lookup only
+            (`refdata.materialize`), no hashing, no archive opens (index
+            state is a sqlite metadata read, not a rescan).
   resolve   resolve a `ref://` citation through `refdata.resolve` and print
             its content; or field the `corpus://` courtesy redirect (§6.5:
             "Claim evidence citing a mirror's corpus hash directly draws a
@@ -21,6 +24,12 @@ verbs:
             ledger scribe searches first and pastes a hit's id into `resolve`
             or straight into a `ref://` citation. Blends title-index and
             full-text hits by default (`--mode` narrows to one tier).
+  index     (re)build a dataset's sidecar index (`refdata.adapters.osm_pbf`'s
+            optional index API) — some formats are a compressed stream with
+            no random access and no search index of their own, so `resolve`/
+            `search` against them raise `MirrorUnindexed` until this has run
+            once. A no-op error for an adapter that needs no sidecar (zim
+            mirrors are born indexed).
   hash      blake3 a candidate mirror file (streamed — mirrors run tens of GB)
             and print a manifest snapshot snippet, the registration helper for
             onboarding a new dataset/tag.
@@ -57,6 +66,9 @@ Commands:
                       (id<TAB>title, one per line). --tag pins a snapshot,
                       --limit caps the hit count (default 10), --mode picks
                       blend (default) / suggest (title only) / fulltext
+  index DATASET       (re)build a dataset's sidecar index (adapters that need
+                      one, e.g. osm-pbf). --tag pins a snapshot (default: the
+                      dataset's latest)
   hash FILE           blake3 a mirror file; print the digest and a
                       ready-to-paste manifest snapshot snippet
 
@@ -71,17 +83,22 @@ def _corpora_roots(root: Path) -> list[Path]:
     return [m.path for m in load(root) if m.layer == "corpora"]
 
 
-def _materialization_state(reference: Reference, tag: str, corpora_roots: Sequence[Path]) -> str:
-    """`path` (the snapshot's declared `path:` override exists), `store` (found
-    in a local corpus artifact store), or `absent` — mirrors `refdata.materialize`'s
-    own try-path-then-store priority so status agrees with what resolution will
-    actually do, without opening or hashing anything."""
+def _materialization_state(
+    reference: Reference, tag: str, corpora_roots: Sequence[Path]
+) -> tuple[str, Path | None]:
+    """(`path`|`store`|`absent`, the materialized path or None) — mirrors
+    `refdata.materialize`'s own try-path-then-store priority so status agrees
+    with what resolution will actually do, without opening or hashing
+    anything. The path is returned too (not just the state label) so a caller
+    wanting the adapter's `index_state` for this snapshot doesn't have to
+    materialize a second time."""
     snapshot = reference.snapshots[tag]
     if snapshot.path is not None and Path(snapshot.path).is_file():
-        return "path"
+        return "path", Path(snapshot.path)
     from refdata import materialize
 
-    return "store" if materialize(reference, tag, corpora_roots) is not None else "absent"
+    mirror_path = materialize(reference, tag, corpora_roots)
+    return ("store", mirror_path) if mirror_path is not None else ("absent", None)
 
 
 def _cmd_status(argv: Sequence[str]) -> int:
@@ -92,18 +109,27 @@ def _cmd_status(argv: Sequence[str]) -> int:
     if not refs:
         print("no reference datasets registered")
         return 0
-    from refdata import adapter_available
+    from refdata import ADAPTERS, adapter_available
 
     corpora_roots = _corpora_roots(root)
     for reference in refs:
         avail = "available" if adapter_available(reference.adapter) else "UNAVAILABLE"
         print(f"{reference.dataset}  adapter={reference.adapter} ({avail})  "
               f"{reference.description}")
+        # Sidecar index state only for an adapter that carries one (osm-pbf)
+        # and only when its optional dependency is actually importable here —
+        # a zim row (no `index_state`) or an unavailable adapter is unchanged.
+        index_state_fn = None
+        if avail == "available":
+            index_state_fn = getattr(ADAPTERS[reference.adapter], "index_state", None)
         for tag in reference.snapshots:
             marker = " (latest)" if tag == reference.latest else ""
             snapshot = reference.snapshots[tag]
-            state = _materialization_state(reference, tag, corpora_roots)
-            print(f"  {tag}{marker}  {snapshot.artifact[:12]}  {state}")
+            state, mirror_path = _materialization_state(reference, tag, corpora_roots)
+            row = f"  {tag}{marker}  {snapshot.artifact[:12]}  {state}"
+            if index_state_fn is not None and mirror_path is not None:
+                row += f"  index={index_state_fn(mirror_path)}"
+            print(row)
     return 0  # status is informational — never a failing exit
 
 
@@ -122,6 +148,7 @@ def _resolve_ref(
         EntryNotFound,
         MirrorCorrupt,
         MirrorUnavailable,
+        MirrorUnindexed,
         UnknownTag,
     )
 
@@ -138,6 +165,9 @@ def _resolve_ref(
         return 1
     except MirrorCorrupt as e:
         print(f"ath ref resolve: mirror file corrupt or still downloading: {e}", file=sys.stderr)
+        return 1
+    except MirrorUnindexed as e:
+        print(f"ath ref resolve: mirror not indexed — {e}", file=sys.stderr)
         return 1
     except EntryNotFound as e:
         print(f"ath ref resolve: entry not found — {e}", file=sys.stderr)
@@ -221,7 +251,13 @@ def _cmd_search(argv: Sequence[str]) -> int:
         return 1
 
     from refdata import search
-    from refdata.errors import AdapterUnavailable, MirrorCorrupt, MirrorUnavailable, UnknownTag
+    from refdata.errors import (
+        AdapterUnavailable,
+        MirrorCorrupt,
+        MirrorUnavailable,
+        MirrorUnindexed,
+        UnknownTag,
+    )
 
     try:
         hits = search(
@@ -240,6 +276,9 @@ def _cmd_search(argv: Sequence[str]) -> int:
     except MirrorCorrupt as e:
         print(f"ath ref search: mirror file corrupt or still downloading: {e}", file=sys.stderr)
         return 1
+    except MirrorUnindexed as e:
+        print(f"ath ref search: mirror not indexed — {e}", file=sys.stderr)
+        return 1
 
     resolved_tag = ns.tag if ns.tag is not None else reference.latest
     print(f"{reference.dataset}@{resolved_tag}  {len(hits)} hit(s)", file=sys.stderr)
@@ -249,6 +288,96 @@ def _cmd_search(argv: Sequence[str]) -> int:
     for hit in hits:
         title = hit.title if hit.title is not None else "(no title)"
         print(f"{hit.native_id}\t{title}")
+    return 0
+
+
+def _cmd_index(argv: Sequence[str]) -> int:
+    ap = base_parser(
+        "ath ref index", "(Re)build a dataset's sidecar index (adapters that need one)."
+    )
+    ap.add_argument("dataset")
+    ap.add_argument("--tag", default=None, help="pin a snapshot (default: the dataset's latest)")
+    ns = ap.parse_args(list(argv))
+    root = resolve_root(ns.root)
+
+    refs = {r.dataset: r for r in load_references(root)}
+    reference = refs.get(ns.dataset)
+    if reference is None:
+        print(f"ath ref index: unregistered dataset {ns.dataset!r}", file=sys.stderr)
+        return 1
+
+    tag = ns.tag if ns.tag is not None else reference.latest
+    if tag not in reference.snapshots:
+        print(
+            f"ath ref index: unknown snapshot tag — {reference.dataset}: {tag!r} is not "
+            "a registered snapshot",
+            file=sys.stderr,
+        )
+        return 1
+
+    from refdata import ADAPTERS, adapter_available
+
+    if not adapter_available(reference.adapter):
+        print(
+            f"ath ref index: adapter unavailable — {reference.dataset}: adapter "
+            f"{reference.adapter!r} is unregistered or its optional dependency is not "
+            "installed in this environment",
+            file=sys.stderr,
+        )
+        return 1
+
+    adapter_module = ADAPTERS[reference.adapter]
+    build_index = getattr(adapter_module, "build_index", None)
+    if build_index is None:
+        print(
+            f"ath ref index: adapter '{reference.adapter}' needs no sidecar index",
+            file=sys.stderr,
+        )
+        return 1
+
+    from refdata import materialize
+    from refdata.errors import MirrorCorrupt
+
+    mirror_path = materialize(reference, tag, _corpora_roots(root))
+    if mirror_path is None:
+        print(
+            f"ath ref index: mirror unavailable — {reference.dataset}@{tag}: no local "
+            "bytes (neither the declared path: override nor any given corpus root's "
+            "artifact store)",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Chatty per-batch progress would flood stderr on a real multi-GB extract
+    # (~55M tagged elements over ~1000 flushes on the Canada extract) — print
+    # only every 5M elements' worth of progress.
+    last_reported = 0
+
+    def progress(elements: int) -> None:
+        nonlocal last_reported
+        if elements - last_reported >= 5_000_000:
+            print(f"  indexed {elements:,} elements...", file=sys.stderr)
+            last_reported = elements
+
+    try:
+        counts = build_index(mirror_path, progress=progress)
+    except MirrorCorrupt as e:
+        print(f"ath ref index: mirror file corrupt or still downloading: {e}", file=sys.stderr)
+        return 1
+
+    # Confirm the build actually left the sidecar in a state resolve/search
+    # will accept — the CLI never hardcodes the sidecar's own path/suffix,
+    # that's the adapter's business (`refdata.adapters` module docstring).
+    if adapter_module.index_state(mirror_path) != "indexed":
+        print(
+            f"ath ref index: {reference.dataset}@{tag}: build_index reported success but "
+            "index_state is not 'indexed' — this is an adapter bug, not a data condition",
+            file=sys.stderr,
+        )
+        return 1
+    elements = counts.get("elements", 0)
+    named = counts.get("named", 0)
+    print(f"{reference.dataset}@{tag}: indexed {elements:,} element(s) ({named:,} named)")
     return 0
 
 
@@ -282,6 +411,7 @@ def run(argv: Sequence[str]) -> int:
         "status": _cmd_status,
         "resolve": _cmd_resolve,
         "search": _cmd_search,
+        "index": _cmd_index,
         "hash": _cmd_hash,
     }
     if cmd not in handlers:

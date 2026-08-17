@@ -36,6 +36,11 @@ Archive handles are expensive to open and verification resolves many
 entries against one snapshot, so open handles are cached per absolute
 mirror path, process-lifetime (no TTL — a corpus artifact's bytes are
 content-addressed and immutable, so a cached handle never goes stale).
+
+Some formats (e.g. `osm-pbf`) need a one-time sidecar index before they can
+resolve or search at all — absent or stale, that adapter raises
+`MirrorUnindexed`, joining the same honestly-unverifiable-never-a-crash
+`RefdataError` hierarchy as every other resolution failure here.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ from .errors import (
     EntryNotFound,
     MirrorCorrupt,
     MirrorUnavailable,
+    MirrorUnindexed,
     RefdataError,
     UnknownTag,
 )
@@ -65,6 +71,7 @@ __all__ = [
     "EntryNotFound",
     "MirrorCorrupt",
     "MirrorUnavailable",
+    "MirrorUnindexed",
     "RefdataError",
     "ResolvedEntry",
     "SearchHit",
@@ -209,8 +216,9 @@ def resolve(
     `AdapterUnavailable` if `reference.adapter` is unregistered or its
     optional dependency is missing, `MirrorUnavailable` if `materialize()`
     finds no local bytes, `MirrorCorrupt` if bytes exist but the adapter
-    can't open them as its format, and `EntryNotFound` if the mirror opens
-    but `native_id` isn't in it.
+    can't open them as its format, `MirrorUnindexed` if the adapter needs a
+    sidecar index (e.g. `osm-pbf`) and none exists or it's stale, and
+    `EntryNotFound` if the mirror opens but `native_id` isn't in it.
     """
     resolved_tag, snapshot, handle = _resolve_handle(reference, tag, corpora_roots)
     result = ADAPTERS[reference.adapter].resolve_entry(handle, native_id)
@@ -241,6 +249,9 @@ def search(
     `MirrorCorrupt`); an empty return is a normal outcome (no hits, or the
     mirror has no index for the requested tier — §6.5 "absence … is
     honestly unverifiable, never a crash"), not one of those errors.
+    `MirrorUnindexed` is raised instead when the adapter itself needs a
+    sidecar index to search at all (e.g. `osm-pbf`) and none exists or it's
+    stale — distinct from a mirror that opens fine but lacks a given tier.
 
     `mode` (default `"blend"`) is passed straight through to the adapter's
     `search_entries`: `"blend"` returns title-index hits first, then

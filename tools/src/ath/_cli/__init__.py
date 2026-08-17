@@ -27,8 +27,8 @@ System:
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
                 promote, stamp, worklist, regen (spec/ledger.md)
-  ref ...       the reference-dataset resolver: status, resolve, hash
-                (spec/ledger.md §6.5)
+  ref ...       the reference-dataset resolver: status, resolve, search,
+                index, hash (spec/ledger.md §6.5)
 
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)

@@ -44,3 +44,16 @@ class MirrorCorrupt(RefdataError):
 class EntryNotFound(RefdataError):
     """The mirror opened and the adapter ran, but `native_id` names no entry
     in it (after redirect-namespace fallback, where the adapter supports one)."""
+
+
+class MirrorUnindexed(RefdataError):
+    """The adapter's format needs a sidecar index to resolve or search — e.g.
+    `osm-pbf`'s SQLite index over a PBF's tagged elements (spec/ledger.md
+    §6.5): a PBF is a compressed stream with no random access by element id
+    and no search index of its own — and none exists yet, or the one on disk
+    was built from different mirror bytes or a different index-builder
+    version than what's on disk now (stale). Distinct from `MirrorCorrupt`
+    (the mirror bytes themselves don't open as the declared format): here the
+    mirror is fine, only its optional derived index is missing or stale —
+    honestly unverifiable, never a crash, same as every other `RefdataError`
+    subclass. Fixed by (re)building the index (`ath ref index <dataset>`)."""

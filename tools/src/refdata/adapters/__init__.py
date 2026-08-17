@@ -31,6 +31,26 @@ An adapter module exposes three functions:
 `ADAPTERS` maps adapter name -> module; `adapter_available` is the guarded
 lookup `refdata.resolve()` and callers use before assuming a dataset's
 content is resolvable in this environment.
+
+**Optional index API.** Some formats have no random access by native id and
+no search index of their own — an OSM PBF extract is a compressed stream,
+unlike ZIM's indexed archive — so their adapter (`osm_pbf`) additionally
+exposes, as ordinary module-level functions beyond the four above:
+
+- `build_index(mirror_path: Path, *, progress: Callable[[int], None] | None
+  = None) -> dict[str, int]` — scans the mirror once and writes a sidecar
+  index beside it, atomically (`<path>.<ext>.tmp` then `os.replace`).
+  Optionally reports cumulative progress as it goes. Returns format-specific
+  counts (e.g. `{"elements": n, "named": m}`).
+- `index_state(mirror_path: Path) -> str` — `"indexed"` | `"missing"` |
+  `"stale"` (built by an older index-builder version, or from different
+  mirror bytes than are on disk now).
+
+`resolve_entry`/`search_entries` on such an adapter raise
+`refdata.errors.MirrorUnindexed` — distinct from `MirrorCorrupt` — when the
+index is absent or stale; this is not part of the required four-function
+contract every adapter carries, only the formats that need a sidecar at all.
+The `ath ref index <dataset>` CLI verb is what calls `build_index`.
 """
 
 from __future__ import annotations
@@ -72,10 +92,16 @@ def _load_zim() -> ModuleType:
     return zim
 
 
+def _load_osm_pbf() -> ModuleType:
+    from . import osm_pbf
+
+    return osm_pbf
+
+
 # Adapter name -> module. Registered by name rather than instantiated so an
 # adapter whose optional dependency is missing still imports cleanly (the
 # module's own `available()` reports the guarded truth).
-ADAPTERS: dict[str, ModuleType] = {"zim": _load_zim()}
+ADAPTERS: dict[str, ModuleType] = {"zim": _load_zim(), "osm-pbf": _load_osm_pbf()}
 
 
 def adapter_available(name: str) -> bool:

@@ -49,6 +49,9 @@ tokens         = ["tiktoken>=0.8"]
 # Guard-imported in refdata/adapters/zim.py so the base install + adapter_available() guard
 # stay clean without this extra.
 zim            = ["libzim>=3.4"]
+# OSM PBF reference-dataset adapter (spec/ledger.md §6.5) — Geofabrik extract mirrors.
+# Guard-imported in refdata/adapters/osm_pbf.py, same pattern as zim above.
+osm            = ["osmium>=4.3"]
 
 [project.scripts]
 ath = "ath._cli:main"
