@@ -10,6 +10,7 @@ multipart/alternative + a fake attachment), and a second plain message.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import zipfile
@@ -352,11 +353,18 @@ def test_declare_then_promote_round_trip(tmp_path):
     _draft_cli(root, mbox_id, messages="2")
 
     assert _promote(root, f"corpus://{mbox_id}?msg=2") == 0
-    pid = _b3(members[1])  # the promoted id equals the embed's blake3 transport
+    payload = members[1]
+    pid = _b3(payload)  # the promoted id equals the embed's blake3 transport
     post = records.load(paths.record_path(root, pid))
     assert post.metadata["id"] == pid
     assert records.media_type_for(post) == "message/rfc822"
-    assert str(post.metadata.get("transport")).startswith("sha256:")
+    # *(v20)* sha256+md5 ride the corpus-wide default set (spec §7.9) — `corpus promote`
+    # computes the resolved recipe union while the member is streamed out of the
+    # container (Wave 2a), same free moment `corpus ingest` gets.
+    assert records.record_hashes(post) == {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "md5": hashlib.md5(payload).hexdigest(),
+    }
     # The origin records the containment lineage as history; a message has no member filename.
     origin = next(records.iter_origin_blocks(post))["fields"]
     assert origin["uri"] == f"corpus://{mbox_id}?msg=2"

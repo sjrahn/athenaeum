@@ -795,8 +795,7 @@ def _render(
 
     parts.append("<section><h2>identity</h2>")
     parts.append(_kv("media type", media_type))
-    parts.append(_kv("transport", post.metadata.get("transport")))
-    parts.append(_kv("canonical", post.metadata.get("canonical")))
+    parts.append(_kv("hash", post.metadata.get("hash")))
     touch = post.metadata.get("touch")
     parts.append(_kv("touch", touch if isinstance(touch, str) else (touch or [])[-1:] or ""))
     for origin in records.iter_origin_blocks(post):

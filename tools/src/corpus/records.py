@@ -22,12 +22,21 @@ Exposes:
   `iter_context_blocks`, `iter_issue_blocks`, `primary_origin_uri`.
 - Mutators: `set_artifact_block`, `append_origin_block`,
   `append_embed_block`, `append_context_block`, `append_issue_block`.
-- Hash helpers: `format_hash(algo, hex_value)`.
+- Hash helpers: `format_hash(algo, hex_value)`, `record_hashes(post)`,
+  `set_record_hashes(post, values)` (spec §4.2.1, §7.6, §7.9 — v20).
 - Stub creation: `stub_frontmatter(...)` returns the minimal frontmatter dict; the
   caller emits the artifact + origin blocks via the mutators.
 
 Frontmatter core fields (spec §4.2 — the only fields, in spec order):
-    id, title, description, transport, canonical, perceptual, touch, visibility
+    id, title, description, hash, touch, visibility
+
+*(v20)* `hash` succeeds `transport` (§4.2.1, §2) — a lingering `transport:` on a
+legacy record reads tolerantly as `hash:` (see `loads()`), and `dumps()` of a record
+loaded that way writes `hash:`; the fleet-wide rename sweep is a separate migration.
+`canonical`/`perceptual` retire from this list (their record residency now expressed
+as tagged `hash:` values, or the derived hash index, per §7.9) but still parse
+tolerantly into `post.metadata` — nothing here special-cases them, since a value not
+in `_CORE_FIELD_ORDER` is simply never re-emitted by `dumps()`.
 
 *(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19): a record's state is
 derived, never stored. `load()` still reads a legacy `status:` key tolerantly (it survives
@@ -84,7 +93,7 @@ from typing import Any
 import frontmatter
 import yaml
 
-from . import paths
+from . import hashing, paths
 
 # Spec §4.2 core-fields order. `status` retired 3.1 (§4.1, §12.19) — a legacy `status:` key
 # on input parses tolerantly into `post.metadata` (lint sees it) but is never written back;
@@ -93,9 +102,7 @@ _CORE_FIELD_ORDER = [
     "id",
     "title",
     "description",
-    "transport",
-    "canonical",
-    "perceptual",
+    "hash",
     "touch",
     "visibility",
 ]
@@ -157,6 +164,52 @@ def format_hash(algo: str, hex_value: str) -> str:
     return f"{algo}:{hex_value}"
 
 
+def record_hashes(post: frontmatter.Post) -> dict[str, str]:
+    """Return the record's frontmatter `hash:` values as `{tag: hex}` (spec §4.2.1,
+    §7.6). Reads the already-normalized `hash:` field — `loads()` folds a lingering
+    legacy `transport:` into it at parse time, so this accessor never re-reads
+    `transport` itself. Value shape is `str` or `list[str]`, each `<tag>:<hex>`, split
+    on the FIRST `:`. A malformed entry (no `:`) is skipped rather than raised — a read
+    accessor stays tolerant; a malformed value is lint's to report."""
+    raw = post.metadata.get("hash")
+    if raw is None:
+        return {}
+    values = raw if isinstance(raw, list) else [raw]
+    out: dict[str, str] = {}
+    for v in values:
+        tag, sep, hexval = str(v).partition(":")
+        if not sep:
+            continue
+        out[tag] = hexval
+    return out
+
+
+def set_record_hashes(post: frontmatter.Post, values: dict[str, str]) -> None:
+    """Merge `values` (`{tag: hex}`) into the record's frontmatter `hash:` field (spec
+    §4.2.1), overwriting any existing entry with the same tag and leaving every other
+    existing entry untouched. Deterministic order on write: byte-stable tags first,
+    then procedure-versioned tags, alphabetical within each class
+    (`hashing.parse_tag` classifies each tag) — so an unchanged value set always
+    serializes identically, and a diff shows a real content change, never reordering.
+    A single resulting entry is stored as a bare string; two or more as a list (spec
+    §7.6's one-liner-friendly list style, kept flow-style by `dumps()`)."""
+    merged = record_hashes(post)
+    merged.update(values)
+
+    def sort_key(tag: str) -> tuple[int, str]:
+        try:
+            residency = hashing.parse_tag(tag).residency
+        except ValueError:
+            return (2, tag)  # malformed tag: kept, sorted last, never dropped silently
+        return (0 if residency == "byte-stable" else 1, tag)
+
+    ordered = [
+        format_hash(tag, hexval)
+        for tag, hexval in sorted(merged.items(), key=lambda kv: sort_key(kv[0]))
+    ]
+    post.metadata["hash"] = ordered[0] if len(ordered) == 1 else ordered
+
+
 # ---------- read / write ---------- #
 
 
@@ -183,6 +236,13 @@ def loads(text: str) -> frontmatter.Post:
     view. Used where a record exists only as a string (a proposed rewrite being checked
     before it is written)."""
     post = frontmatter.loads(text)
+    # *(v20)* Tolerant read (spec §4.2.1): a lingering `transport:` and no `hash:`
+    # normalizes into `hash:` here, raw value untouched — the fleet-wide rename sweep
+    # is a separate migration. Every reader downstream sees `hash` regardless of which
+    # key the record carries on disk; `dumps()` writes `hash:` either way, since
+    # `transport` is not in `_CORE_FIELD_ORDER`.
+    if "hash" not in post.metadata and "transport" in post.metadata:
+        post.metadata["hash"] = post.metadata["transport"]
     body = post.content or ""
     metadata_blocks, after_metadata = _extract_metadata_blocks(body)
     content_body, annotations_body = _split_annotations(after_metadata)
@@ -241,7 +301,20 @@ def dumps(post: frontmatter.Post) -> str:
         if key in _EDITORIAL_OVERRIDE_KEYS and isinstance(value, str) and value == "":
             continue
         core[key] = value
+    # *(v20)* A list-valued `hash:` is one-liner-friendly (spec §7.6): `_FlowList`
+    # flags it for `_Dumper` so it renders on one line, bracketed, rather than the
+    # block-style sequence every other list field gets.
+    hash_is_list = isinstance(core.get("hash"), list)
+    if hash_is_list:
+        core["hash"] = _FlowList(core["hash"])
     fm_text = _dump_yaml_block(core)
+    if hash_is_list:
+        # PyYAML's emitter quotes a flow scalar containing ANY `:` (even with no
+        # following space, which is the only case the *block*-style emitter cares
+        # about) — a `<tag>:<hex>` value round-trips identically either way (§7.6's
+        # grammar never needs quoting), so this drops the quotes the emitter added
+        # rather than fighting its flow-context scalar analysis.
+        fm_text = _FLOW_HASH_LINE_RE.sub(_unquote_flow_hash_values, fm_text, count=1)
 
     # Build the metadata zone — artifact, origins, classifies, the roster.
     metadata_parts: list[str] = []
@@ -755,11 +828,39 @@ def _split_namespaced(arg: str) -> tuple[str, str, str | None]:
     return parts[0], parts[1], parts[2]
 
 
+class _FlowList(list):
+    """A list that `_Dumper` renders flow-style (`[a, b]`) rather than block-style.
+
+    *(v20)* Marks a list-valued `hash:` field for its one-liner-friendly rendering
+    (spec §7.6) without changing how every OTHER list field in the frontmatter/blocks
+    dumps — those stay block-style for readability, per `_Dumper`'s general rule."""
+
+
 class _Dumper(yaml.SafeDumper):
-    """SafeDumper with block-style sequences for readable lists."""
+    """SafeDumper with block-style sequences for readable lists — except a `_FlowList`,
+    which renders flow-style (v20's `hash:` list, spec §7.6)."""
 
     def represent_sequence(self, tag, sequence, flow_style=None):  # type: ignore[override]
+        if isinstance(sequence, _FlowList):
+            return super().represent_sequence(tag, sequence, flow_style=True)
         return super().represent_sequence(tag, sequence, flow_style=False)
+
+
+# `SafeRepresenter` only registers an exact-type representer for `list`, so a `list`
+# SUBCLASS (`_FlowList`) is otherwise "cannot represent an object" — explicit
+# registration is what makes `represent_sequence`'s isinstance check above ever run.
+_Dumper.add_representer(
+    _FlowList, lambda dumper, data: dumper.represent_sequence("tag:yaml.org,2002:seq", data)
+)
+
+# The rendered `hash: [...]` line — quoted values and all — for `dumps()`'s post-pass
+# that strips the quotes PyYAML's flow-context scalar analysis adds unnecessarily.
+_FLOW_HASH_LINE_RE = re.compile(r"^hash: \[.*\]$", re.MULTILINE)
+_QUOTED_SCALAR_RE = re.compile(r"""['"]([^'"]*)['"]""")
+
+
+def _unquote_flow_hash_values(match: re.Match[str]) -> str:
+    return _QUOTED_SCALAR_RE.sub(r"\1", match.group(0))
 
 
 # ---------- accessors ---------- #
@@ -1166,6 +1267,12 @@ def content_key(post: frontmatter.Post) -> tuple[str, tuple[str, ...]] | None:
     NB: meaningful only when capture strips page chrome — otherwise per-page chrome
     text (breadcrumbs, personalized headers) perturbs the canonical hash so two
     same-content pages never match. See the `remove:` capture interaction.
+
+    Currently a no-op in practice: `canonical:`'s write path is disabled tool-wide
+    (spec §7.1 status note — content-canonical identity stays retired under v20,
+    §7.9's "two tiers"), so no record carries the field and this always returns
+    `None`. Kept for whenever content-canonical identity re-enters as a versioned
+    `derived_hashes:` recipe.
     """
     canonical = str(post.metadata.get("canonical") or "").strip()
     if not canonical:
@@ -1850,14 +1957,19 @@ def derived_state(post: frontmatter.Post, corpus_root: Path | None = None) -> st
 def stub_frontmatter(
     *,
     record_id: str,
+    hash_value: str | list[str] | None = None,
     transport: str | list[str] | None = None,
     touch_id: str,
 ) -> dict[str, Any]:
     """Build a fresh stub-record frontmatter dict.
 
-    `record_id` is the bare blake3 hex (becomes `id`). `transport` is alternative
-    byte hashes (`<algo>:<hex>` or list); the primary blake3 lives on `id` and is NOT
-    duplicated here. `touch_id` bootstraps the touch chain.
+    `record_id` is the bare blake3 hex (becomes `id`). `hash_value` is the record's
+    `residency: record` byte-stable recipe values (spec §4.2.1, §7.9 — v20's `hash:`
+    field, succeeding `transport:`): `<tag>:<hex>` or a list; the primary blake3 lives
+    on `id` and is NOT duplicated here. `transport` is a deprecated alias for
+    `hash_value`, kept so pre-v20 callers (`corpus ingest`/`promote`/`reseat`) keep
+    compiling with no edit — both write to the same frontmatter `hash:` key;
+    `hash_value` wins if both are given. `touch_id` bootstraps the touch chain.
 
     *(3.1)* No `status` field — the record is born the artifact's proxy (§4.1), not a
     `stub` awaiting one; its state is derived, never stored.
@@ -1871,8 +1983,9 @@ def stub_frontmatter(
     The caller is responsible for emitting the artifact + first origin blocks via
     `set_artifact_block()` and `append_origin_block()`.
     """
+    value = hash_value if hash_value is not None else transport
     fm: dict[str, Any] = {"id": record_id}
-    if transport:
-        fm["transport"] = transport
+    if value:
+        fm["hash"] = value
     fm["touch"] = touch_id
     return fm

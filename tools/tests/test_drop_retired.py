@@ -39,9 +39,7 @@ def _record(tmp_path, blocks, *, contexts=(), canonical=True):
     LocalArtifactStore(root).put(rid, "html", src)
 
     post = frontmatter.Post("")
-    post.metadata.update({"id": rid, "transport": f"sha256:{h['sha256']}"})
-    if canonical:
-        post.metadata["canonical"] = f"blake3:{rid}"
+    post.metadata.update({"id": rid, "hash": f"sha256:{h['sha256']}"})
     records.set_artifact_block(post, mime="text/html", fields={"title": "Page Title - SITE"})
     records.append_origin_block(post, uri="https://x.test/p", snapshot="2026-01-01T00:00:00Z")
     post.content = segments.emit(blocks)
@@ -49,6 +47,13 @@ def _record(tmp_path, blocks, *, contexts=(), canonical=True):
         post.metadata.setdefault("_contexts", []).append(ctx)
     rf = paths.record_path(root, rid)
     records.dump(post, rf)
+    if canonical:
+        # `canonical:` is retired from `_CORE_FIELD_ORDER` (v20) — `dumps()` would never
+        # write it, so a legacy-shaped "before" fixture is spliced in as raw text
+        # instead, exactly the record a pre-sweep corpus actually carries on disk.
+        text = rf.read_text(encoding="utf-8")
+        new_head = f"id: {rid}\ncanonical: blake3:{rid}\n"
+        rf.write_text(text.replace(f"id: {rid}\n", new_head, 1), "utf-8")
     return root, rf
 
 

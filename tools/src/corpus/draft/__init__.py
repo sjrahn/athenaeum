@@ -38,7 +38,10 @@ merges onto the record:
                    drafter-authored byte-fact; the display description is derived from
                    role-marked fields instead (§4.2.3). No drafter should populate this key.
     issues       — spec §4.3.3.1 issue dicts: {id, severity, resolution, detector, address?, ...}
-    canonical    — `<algo>:<hex>` if the mime schema declared a canonical_strategy; else None
+    canonical    — `<algo>:<hex>` if the mime schema declared a canonical_strategy; else None.
+                   Also DISCARDED by `derive.apply_drafter_result` — the write path into a
+                   record's `canonical:` field is disabled (spec §7.1 status note); content-
+                   canonical identity stays retired under v20 (§7.9's "two tiers")
     origin_fields — non-primary-source enrichment (e.g. a media `ytdlp_*` set) → origin block
     origin_uri_aliases — URLs aliasing the captured origin (canonical/final); folded into
                    the origin block's uri: list, not artifact fields (spec §7.2)

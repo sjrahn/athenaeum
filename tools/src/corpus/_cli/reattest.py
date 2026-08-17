@@ -15,6 +15,16 @@ itself when it actually changed something). `--dry-run` reports the set without 
 
 Distinct from `corpus compile`, which reassembles a record from a decomposed *manifest*
 (the normalize edit substrate) rather than from the source *artifact*.
+
+*(v20)* Also the derived-hash index's per-record refresh point (spec §12.9.1): as each
+record's artifact is streamed for attestation, its resolved derived-hash recipe union
+(§7.9) is recomputed and every value upserted into the index. A `residency: record`
+byte-stable recipe MISSING from the record's `hash:` field is filled in — the same free
+moment ingest had, arriving late for a record ingested before the recipe existed. An
+EXISTING `hash:` entry is never overwritten: a byte-stable hash that disagrees with the
+freshly recomputed one is surfaced loudly (the bytes or the record changed — a serious
+integrity signal) rather than silently rewritten. Procedure-versioned values never reach
+`hash:` here — index-only; flushing them is `corpus hash flush`'s deliberate act.
 """
 
 from __future__ import annotations
@@ -38,13 +48,17 @@ def reattest_record(
     *,
     fingerprint_cli: bool | None = None,
     messages: list[int] | None = None,
+    dry_run: bool = False,
 ) -> str:
     """Re-derive the attested layer of the record at `record_file`, **in memory**; return
     the serialized record (NOT written). Strips + re-derives the attested layer while
-    preserving the authored layer (`derive.attest(strip=True)`). `messages` is the mbox
-    selective declaration (§12.11, the re-homed `--messages`). Idempotent: when the attested
-    facts re-derive identically the original text is returned unchanged — no touch appended,
-    no rewrite. Raises `DeriveError` / `ArtifactMissing`.
+    preserving the authored layer (`derive.attest(strip=True)`), then refreshes the derived
+    hash index and fills any missing byte-stable `hash:` entry (`_refresh_hashes`, spec
+    §12.9.1). `messages` is the mbox selective declaration (§12.11, the re-homed
+    `--messages`). Idempotent: when the attested facts AND the resolved hash values re-derive
+    identically the original text is returned unchanged — no touch appended, no rewrite.
+    `dry_run` skips the index write (a query cache, but "writing nothing" means nothing).
+    Raises `DeriveError` / `ArtifactMissing`.
 
     A pre-3.4 record converts here: its per-asset blocks are deleted and the members block
     replaces them, so the `description`s they carried are **dropped** (§4.3.1.4, §12.26).
@@ -62,11 +76,92 @@ def reattest_record(
     mime_schema_id = derive.attest(
         post, corpus_root, fingerprint_cli=fingerprint_cli, strip=True, messages=messages
     )
+    record_id = str(post.metadata.get("id") or "")
+    if record_id:
+        _refresh_hashes(post, corpus_root, record_id, dry_run=dry_run)
     after = records.dumps(post)
     if after == before:
-        return before  # attested layer unchanged — the pass records nothing
+        return before  # attested layer + resolved hashes unchanged — the pass records nothing
     touches.record_touch(post, touches.script_identifier("attest." + (mime_schema_id or "unknown")))
     return records.dumps(post)
+
+
+def _refresh_hashes(
+    post, corpus_root: Path, record_id: str, *, dry_run: bool = False
+) -> None:
+    """The reattest-time hash-index refresh point (spec §12.9.1, §2): recompute the record's
+    resolved derived-hash recipe union (§7.9) over its artifact and upsert every value into the
+    index — the same free moment ingest had, arriving late for a record ingested (or an
+    origin/mime schema written) before the recipe existed.
+
+    Mutates `post` in place to fill a MISSING `residency: record` byte-stable `hash:` entry
+    only. An EXISTING entry is never overwritten: the record is content-addressed, so a
+    byte-stable hash disagreeing with the freshly recomputed one over the SAME bytes means the
+    stored value or the record itself changed by some other route — a serious integrity signal,
+    surfaced loudly (printed) rather than silently rewritten. Procedure-versioned values never
+    reach `hash:` here — index-only; `corpus hash flush` is the deliberate write (§12.9.1).
+
+    Best-effort like the rest of re-attest: unresolvable bytes (`ArtifactMissing`) skip the
+    refresh entirely, and an index write failure is reported and swallowed rather than failing
+    the pass — the index is deployment state, never authoritative."""
+    from corpus import containment, hashindex, hashing, schemas
+    from corpus import mime as mime_mod
+    from corpus.store import ArtifactMissing
+
+    media_type = records.media_type_for(post)
+    mt_schema = schemas.load_mime_schema(corpus_root, media_type)
+    overlay_schemas = [
+        schema
+        for _id, schema in schemas.origin_overlays_for_uris(
+            corpus_root, list(records.iter_origin_uris(post))
+        )
+    ]
+    recipes = hashing.resolve_recipes(mt_schema, overlay_schemas)
+
+    try:
+        bytes_path = containment.ensure_local_bytes(
+            corpus_root, record_id, mime_mod.extension_for(media_type)
+        )
+    except ArtifactMissing:
+        return
+
+    values = hashing.compute_hashes(bytes_path, recipes)
+    if not values:
+        return
+
+    existing = records.record_hashes(post)
+    to_fill: dict[str, str] = {}
+    for v in values:
+        if not v.record_resident:
+            continue
+        prior = existing.get(v.tag)
+        if prior is None:
+            to_fill[v.tag] = v.hex
+        elif prior != v.hex:
+            print(
+                f"  MISMATCH {record_id[:12]}…: stored hash {v.tag}:{prior[:12]}… != "
+                f"recomputed {v.tag}:{v.hex[:12]}… — the bytes or the record changed; "
+                f"NOT rewritten (a byte-stable hash can never legitimately drift, spec §2)",
+                file=sys.stderr,
+            )
+    if to_fill:
+        records.set_record_hashes(post, to_fill)
+
+    if dry_run:
+        return
+    try:
+        with hashindex.open_index(corpus_root) as conn:
+            hashindex.upsert_rows(
+                conn,
+                [
+                    hashindex.HashRow(
+                        record_id=record_id, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param
+                    )
+                    for v in values
+                ],
+            )
+    except Exception as exc:  # deployment state (§12.9.1) — never fails reattest
+        print(f"  note {record_id[:12]}…: hash-index update failed ({exc}) — continuing", file=sys.stderr)
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -171,7 +266,9 @@ def run(args: argparse.Namespace) -> int:
 
         rid = str(post.metadata.get("id") or "")[:12]
         try:
-            new_text = reattest_record(rf, corpus_root, fingerprint_cli=fp, messages=ordinals)
+            new_text = reattest_record(
+                rf, corpus_root, fingerprint_cli=fp, messages=ordinals, dry_run=args.dry_run
+            )
         except mbox_manifest.MessageHashConflict as exc:
             sys.exit(str(exc))  # stale declaration — a hard error (§12.11), never papered over
         except (DeriveError, ArtifactMissing, MuxFailed) as exc:

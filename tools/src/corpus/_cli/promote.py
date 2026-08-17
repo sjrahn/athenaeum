@@ -15,6 +15,12 @@ Re-promoting the same member folds like a re-capture (§5.2): if a record with t
 exists — a prior promote, or a standalone ingest of the same bytes — the containment origin is
 appended to it rather than erroring. Streaming throughout, so a multi-GB member never loads
 whole.
+
+The same stream also computes the member's resolved derived-hash recipe union (§7.9): the
+corpus-wide default set layered with the member's own mime schema's `derived_hashes:` — no
+origin overlay layer, since a promoted member's origin is containment lineage, never a producer
+URI. `residency: record` values land on the minted stub's `hash:`; every resolved value lands
+in the derived hash index (§12.9.1), best-effort.
 """
 
 from __future__ import annotations
@@ -24,12 +30,12 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import blake3
 import frontmatter
 
-from corpus import containment, mime, mux, paths, records, schemas, touches
+from corpus import containment, hashindex, hashing, mime, mux, paths, records, schemas, touches
 from corpus import functional_uri as furi
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
@@ -37,6 +43,112 @@ from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 # (mime._SNIFF_BYTES). A member smaller than this streams whole into the head buffer.
 _HEAD = 512
 _CHUNK = 1 << 20
+
+# The prefix-ladder rungs (spec §7.9's registry table) — mirrored here rather than imported
+# from `corpus.hashing` (private there) because a container member is never a standalone Path:
+# it is streamed straight out of the container, so its recipe values are computed in the SAME
+# pass as the identity blake3 (`_sniff_and_hash` below) rather than via `hashing.compute_hashes`
+# (which needs a materialized file) — a second pass over a multi-GB member is exactly what the
+# streaming design exists to avoid.
+_LADDER_RUNGS: tuple[tuple[int, str], ...] = (
+    (4 * 1024, "blake3-4k"),
+    (64 * 1024, "blake3-64k"),
+    (1024 * 1024, "blake3-1m"),
+)
+
+
+def _stream_identity_and_recipe_hashes(
+    head: bytes, fp: IO[bytes], recipes: tuple[hashing.Recipe, ...]
+) -> tuple[str, list[hashing.HashValue]]:
+    """Stream `head` + the rest of `fp` exactly once, computing the blake3 identity digest
+    (spec §2) alongside every value of `recipes` (spec §7.9) — the member-stream analogue of
+    `hashing.hash_file` + `hashing.compute_hashes` combined (both need a standalone Path; a
+    container member is never one — it is streamed straight out of the container, so identity
+    and recipes share this one pass rather than two, spec §8.1's "while the bytes are in
+    hand"). `html-stampfree@1` is the one recipe that needs the whole member buffered
+    (mirroring `compute_hashes`'s own note: HTML members are not the multi-gigabyte population
+    this streams for)."""
+    hashlib_recipes = [r for r in recipes if r.residency == "byte-stable" and not r.multivalue]
+    want_ladder = any(r.multivalue for r in recipes)
+    want_stampfree = any(r.id == "html-stampfree@1" for r in recipes)
+
+    b3 = blake3.blake3()
+    aux = {r.id: hashlib.new(r.id) for r in hashlib_recipes}
+    ladder = {length: blake3.blake3() for length, _tag in _LADDER_RUNGS} if want_ladder else {}
+    buf = bytearray() if want_stampfree else None
+
+    def _chunks():
+        if head:
+            yield head
+        while chunk := fp.read(_CHUNK):
+            yield chunk
+
+    bytes_read = 0
+    for chunk in _chunks():
+        start, end = bytes_read, bytes_read + len(chunk)
+        b3.update(chunk)
+        for h in aux.values():
+            h.update(chunk)
+        for length, hasher in ladder.items():
+            if start >= length:
+                continue
+            take = min(length, end) - start
+            if take > 0:
+                hasher.update(chunk[:take])
+        if buf is not None:
+            buf.extend(chunk)
+        bytes_read = end
+    file_size = bytes_read
+
+    values: list[hashing.HashValue] = [
+        hashing.HashValue(
+            recipe=r.id, tag=r.id, hex=aux[r.id].hexdigest(), record_resident=r.record_resident
+        )
+        for r in hashlib_recipes
+    ]
+    if want_ladder:
+        for length, tag in _LADDER_RUNGS:
+            if file_size >= length:
+                values.append(
+                    hashing.HashValue(
+                        recipe="blake3-prefix-ladder",
+                        tag=tag,
+                        hex=ladder[length].hexdigest(),
+                        param=str(length),
+                    )
+                )
+    if want_stampfree:
+        values.append(
+            hashing.HashValue(
+                recipe="html-stampfree@1",
+                tag="html-stampfree@1",
+                hex=hashing.html_stampfree_digest(bytes(buf or b"")),
+            )
+        )
+    return b3.hexdigest(), values
+
+
+def _write_hash_index_rows(
+    corpus_root: Path, record_id: str, hash_values: list[hashing.HashValue]
+) -> None:
+    """Mirror `hash_values` into the derived hash index (spec §12.9.1) — best-effort
+    deployment state, never authoritative: a write failure here is reported and swallowed
+    rather than failing an otherwise-successful promote."""
+    if not hash_values:
+        return
+    try:
+        with hashindex.open_index(corpus_root) as conn:
+            hashindex.upsert_rows(
+                conn,
+                [
+                    hashindex.HashRow(
+                        record_id=record_id, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param
+                    )
+                    for v in hash_values
+                ],
+            )
+    except Exception as exc:  # deployment state (§12.9.1) — never fails promote
+        print(f"  note: hash-index write failed for {record_id[:12]}…: {exc}", file=sys.stderr)
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -111,10 +223,11 @@ def run(args: argparse.Namespace) -> int:
     )
     basename = containment.member_sniff_name(member_address, meta.get("filename"))
 
-    # 4. Stream the member once: sniff MIME + compute blake3 (and the member schema's aux
-    #    transport_algos). Never loads the member whole (spec §8.1 / §12.9).
+    # 4. Stream the member once: sniff MIME + compute blake3 identity plus the member schema's
+    #    resolved derived-hash recipe union (spec §7.9). Never loads the member whole (§8.1 /
+    #    §12.9).
     try:
-        media_type, computed_id, aux = _sniff_and_hash(
+        media_type, computed_id, hash_values = _sniff_and_hash(
             corpus_root,
             container_path,
             container_media_type,
@@ -212,9 +325,12 @@ def run(args: argparse.Namespace) -> int:
         )
     else:
         outcome = _mint_stub(
-            record_file, computed_id, media_type, aux, containment_uri, origin_fields,
+            record_file, computed_id, media_type, hash_values, containment_uri, origin_fields,
             cutting_stamp=cutting_stamp, framing_stamp=framing_stamp,
         )
+    # Bytes were in hand for THIS pass regardless of outcome (verified above) — the index is
+    # deployment state (§12.9.1), so it's kept warm on a re-promote fold too, not just a mint.
+    _write_hash_index_rows(corpus_root, computed_id, hash_values)
 
     result = {
         "id": computed_id,
@@ -257,30 +373,27 @@ def _sniff_and_hash(
     basename: str | None,
     *,
     el_addressing: dict | None = None,
-) -> tuple[str, str, dict[str, str]]:
-    """Stream the member once → `(media_type, blake3_hex, {aux_algo: hex})`. Sniffs MIME from
-    the leading bytes (so the member's schema — hence its `transport_algos` — is known before
-    the pass completes), then digests the whole member (head + rest) with blake3 and each
-    declared aux algorithm in the same pass. Never materializes the member whole."""
+) -> tuple[str, str, list[hashing.HashValue]]:
+    """Stream the member once → `(media_type, blake3_hex, hash_values)`. Sniffs MIME from the
+    leading bytes (so the member's schema — hence its resolved recipe union, spec §7.9 — is
+    known before the pass completes), then digests the whole member (head + rest) with blake3
+    identity plus every resolved recipe in the same pass. Never materializes the member whole
+    (`_stream_recipe_hashes`'s one exception, `html-stampfree@1`, buffers only when a member's
+    own mime schema declares it — never the default case).
+
+    No origin overlay layers in here (spec §7.9's third layer): a promoted member's origin is
+    containment lineage (`corpus://<container>?<address>`), never a producer URI, so there is
+    no overlay to match — the mime schema + corpus-wide default set is the correct floor."""
     with containment.open_member_stream(
         container_path, container_media_type, member_address, el_addressing=el_addressing
     ) as fp:
         head = fp.read(_HEAD)
         media_type = mime.sniff_head(head, basename)
-        # The member's own schema decides the aux byte-hashes to record (like ingest); a member
-        # with no schema is tolerated (blake3 id only) rather than refused.
+        # A member with no schema is tolerated (blake3 id only) rather than refused.
         schema = schemas.load_mime_schema(corpus_root, media_type) or {}
-        algos = tuple(str(a) for a in schema.get("transport_algos", []) if a and str(a) != "blake3")
-        b3 = blake3.blake3()
-        aux = {a: hashlib.new(a) for a in algos}
-        b3.update(head)
-        for h in aux.values():
-            h.update(head)
-        while chunk := fp.read(_CHUNK):
-            b3.update(chunk)
-            for h in aux.values():
-                h.update(chunk)
-    return media_type, b3.hexdigest(), {a: h.hexdigest() for a, h in aux.items()}
+        recipes = hashing.resolve_recipes(schema, ())
+        computed_id, recipe_values = _stream_identity_and_recipe_hashes(head, fp, recipes)
+    return media_type, computed_id, recipe_values
 
 
 def _origin_already_present(post: frontmatter.Post, containment_uri: str) -> bool:
@@ -341,7 +454,7 @@ def _mint_stub(
     record_file: Path,
     record_id: str,
     media_type: str,
-    aux: dict[str, str],
+    hash_values: list[hashing.HashValue],
     containment_uri: str,
     origin_fields: dict[str, Any],
     *,
@@ -351,21 +464,14 @@ def _mint_stub(
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
     first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
     the container."""
-    transport = [records.format_hash(algo, hexval) for algo, hexval in aux.items()]
-    transport_value: str | list[str] | None
-    if not transport:
-        transport_value = None
-    elif len(transport) == 1:
-        transport_value = transport[0]
-    else:
-        transport_value = transport
-
     fm = records.stub_frontmatter(
         record_id=record_id,
-        transport=transport_value,
         touch_id=touches.script_identifier("promote"),
     )
     post = frontmatter.Post(content="", **fm)
+    record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
+    if record_hash_entries:
+        records.set_record_hashes(post, record_hash_entries)
     # Declaration order follows §7.2.1's: `framing:` (what produced these bytes) ahead of
     # `cutting:` (a resolution computed over them), so a diff of two leaves reads top to
     # bottom in the same order the spec presents them.

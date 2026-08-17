@@ -38,8 +38,6 @@ address_scheme:
   description: |-
     Audio stream identifier (`a0`, `a1`, ...) matching a key in the frontmatter `streams:`
     map. Present in addresses only when the file carries more than one audio track.
-transport_algos:
-- sha256
 extended_fields:
   duration:
     type: number

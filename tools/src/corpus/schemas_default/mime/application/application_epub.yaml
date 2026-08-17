@@ -47,8 +47,10 @@ address_scheme:
     `<start>-<end>` (or a single `<n>`) — the spine-document range a `<!--section-->`
     spans, the grouping form of `spine`. Distinct param from a segment's `spine=<N>`
     point, mirroring the PDF schema's `pages=` (section) vs `page=` (segment) convention.
-transport_algos:
-- sha256
+# Computed at draft time but NOT persisted — the write path into a record's `canonical:`
+# field is disabled (spec §7.1 status note; content-canonical identity stays retired
+# under v20, §7.9's "two tiers" — the `hash:` field admits only `html-stampfree@1`-style
+# recipes that clear that bar, and this one hasn't).
 canonical_strategy:
   algo: blake3-canonical-epub
   canonicalization:

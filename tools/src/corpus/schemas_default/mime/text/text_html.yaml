@@ -49,8 +49,18 @@ members:
       type: integer
       required: true
       description: "The member's size in bytes, uncompressed. Present so size accounting over a corpus of containers costs one pass over records and no artifact reads (spec §4.3.1.4)."
-transport_algos:
-- sha256
+# sha256/md5 now ride the corpus-wide default set (spec §7.9) — no declaration needed.
+# `html-stampfree@1` is this format's own recipe: a capture-invariant identity hashing
+# the artifact bytes after neutralizing only the corpus's own injected capture stamps
+# (the `corpus-*` meta tags, the SingleFile save banner) — index-first, flush-only
+# (spec §7.9's registry table; §4.2.1).
+derived_hashes:
+- html-stampfree@1
+# Computed at draft time but NOT persisted — the write path into a record's `canonical:`
+# field is disabled (spec §7.1 status note; content-canonical identity stays retired
+# under v20, §7.9's "two tiers" — distinct from `html-stampfree@1` above, which IS a live
+# `hash:`-flushable recipe: that one is capture-invariant identity, scoped to neutralizing
+# only the corpus's own injected capture stamps, never a judgment about page content).
 canonical_strategy:
   algo: blake3-canonical-html
   canonicalization:

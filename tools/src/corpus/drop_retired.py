@@ -107,6 +107,45 @@ def _reserialized_section_headers(text: str) -> int:
     return count
 
 
+_FRONTMATTER_BLOCK_RE = re.compile(r"\A(---\n)(.*?\n)(---\n)", re.DOTALL)
+_TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)
+
+
+def _license_v20_frontmatter_rename(text: str) -> str:
+    """*(v20)* `records.dumps()` now UNCONDITIONALLY folds a legacy `transport:` key
+    into `hash:` and drops `canonical:`/`perceptual:` (spec §4.2.1) — a difference it
+    introduces on every load→dump cycle of a record still carrying those keys, not
+    something this sweep asked for. That is exactly the kind of intended, disclosed
+    difference `_outside_section_headers` already licenses for a section's `address:`
+    line (§12.28's rule: "the only differences the serializer may introduce must be
+    intended or disclosed") — this licenses the other one, on the RAW-disk side of the
+    stability comparison, so a record merely carrying legacy frontmatter fields doesn't
+    itself trip the guard before the sweep does anything. `retired.census`'s own
+    accounting reads the true `original` text separately and is unaffected.
+
+    Operates only within the frontmatter delimiter span (`---\\n...\\n---\\n`) — a
+    member row's own `transport:` field (§2, unchanged vocabulary) lives in the body
+    and is never touched.
+    """
+    m = _FRONTMATTER_BLOCK_RE.match(text)
+    if not m:
+        return text
+    fm = m.group(2)
+    starts = [mm.start() for mm in _TOP_LEVEL_KEY_RE.finditer(fm)] + [len(fm)]
+    spans = [fm[starts[i] : starts[i + 1]] for i in range(len(starts) - 1)]
+    has_hash = any(s.startswith("hash:") for s in spans)
+    kept: list[str] = []
+    for span in spans:
+        if span.startswith("canonical:") or span.startswith("perceptual:"):
+            continue
+        if span.startswith("transport:"):
+            if has_hash:
+                continue  # dumps() drops a redundant legacy transport: outright
+            span = "hash:" + span[len("transport:") :]
+        kept.append(span)
+    return text[: m.start(2)] + "".join(kept) + text[m.end(2) :]
+
+
 def _outside_section_headers(text: str) -> str:
     """`text` with every section-header block removed entirely.
 
@@ -289,7 +328,8 @@ def sweep_record(
     # it and the bytes on disk is the removal of `address:` lines from section headers. Any
     # other drift is still a hold.
     baseline = records.dumps(post)
-    if _outside_section_headers(baseline) != _outside_section_headers(original):
+    normalized_original = _license_v20_frontmatter_rename(original)
+    if _outside_section_headers(baseline) != _outside_section_headers(normalized_original):
         report.hold = "record is not dumps-stable; the serializer would introduce unrelated changes"
         return report
     content = post.content or ""

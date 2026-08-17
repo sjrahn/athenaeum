@@ -6,7 +6,7 @@ themselves or to provenance** is preserved.
 
 What survives:
 
-- `id`, `transport` — byte-intrinsic hashes.
+- `id`, `hash` — byte-intrinsic hashes.
 - The artifact block's opener (the MIME).
 - All `<!--origin-->` blocks VERBATIM — overlay qualifier (id/subtype), the
   universal `uri:` / `snapshot:`, and any overlay-declared extended fields. Origin
@@ -63,12 +63,12 @@ def restub_post(post: frontmatter.Post, *, touch_chain: list[str]) -> frontmatte
         )
 
     visibility = metadata.get("visibility")
-    transport_value = metadata.get("transport")
+    hash_value = metadata.get("hash")
 
     seed = touch_chain[0] if touch_chain else touches.script_identifier(_RESTUB_MODULE)
     fm = records.stub_frontmatter(
         record_id=record_id,
-        transport=transport_value,
+        hash_value=hash_value,
         touch_id=seed,
     )
     if visibility:

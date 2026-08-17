@@ -279,24 +279,60 @@ def validity_violations(
     return out[:limit]
 
 
-def canonical_duplicate_clusters(refs: list[RecordRef], *, limit: int = 50) -> list[dict[str, Any]]:
-    """Records that share a content identity (same `canonical:` hash AND the same embed
-    set) yet live as separate records — the same content reached by different URLs that
-    wasn't collapsed into one record. The draft step auto-merges these going forward
-    (folding the duplicate's URL into the original); this surfaces any that predate that
-    feature or slipped through. Each cluster lists its member ids for an operator to
-    merge. Undrafted stubs (no `canonical:`) are excluded — they aren't dedup-able yet."""
-    clusters: dict[tuple[str, tuple[str, ...]], list[str]] = defaultdict(list)
-    for r in refs:
-        key = records.content_key(r.post)
-        if key is not None:
-            clusters[key].append(r.record_id)
-    out = [
-        {"canonical": canonical, "count": len(ids), "ids": sorted(ids)}
-        for (canonical, _embeds), ids in clusters.items()
-        if len(ids) > 1
-    ]
-    return out[:limit]
+def canonical_duplicate_clusters(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50, **_kw: Any
+) -> dict[str, Any]:
+    """Records that are the SAME delivered document captured twice — joined on the
+    `html-stampfree@1` recipe (spec §7.9, §12.9.1), the capture-invariant identity a
+    `text/html` record earns by neutralizing only the corpus's own capture-injected
+    stamps. Zero artifact reads: this is a pure index join (`hashindex.values_by_algo`)
+    over rows ingest/reattest/backfill already computed while bytes were in hand — the
+    inert predecessor here keyed on `records.content_key()` (a retired `canonical:`
+    content-canonical hash, §7.1, §4.2.1), which no record has populated since 3.5, so
+    this signal covered zero ground fleet-wide until now.
+
+    A cluster is 2+ *currently live* record ids sharing one `html-stampfree@1` value —
+    restricted to `refs` (the scanned population) so a hash orphaned by a since-removed
+    record never phantom-joins. `unindexed_ids` names `text/html` records with no
+    `html-stampfree@1` row yet (the `corpus hash-index backfill` worklist) — reported,
+    never silently skipped, per the index's "absent is unindexed, not a failure"
+    contract (spec §12.9.1)."""
+    from . import hashindex
+
+    html_ids = {r.record_id for r in refs if records.media_type_for(r.post) == "text/html"}
+    if not html_ids:
+        return {"clusters": [], "total_clusters": 0, "unindexed_count": 0, "unindexed_ids": []}
+
+    db_path = hashindex.db_path(corpus_root)
+    if not db_path.exists():
+        ids = sorted(html_ids)
+        return {
+            "clusters": [],
+            "total_clusters": 0,
+            "unindexed_count": len(ids),
+            "unindexed_ids": ids[:limit],
+        }
+
+    live_ids = {r.record_id for r in refs}
+    with hashindex.open_index(corpus_root) as conn:
+        by_value = hashindex.values_by_algo(conn, "html-stampfree@1")
+
+    indexed_ids: set[str] = set()
+    clusters: list[dict[str, Any]] = []
+    for value, ids in by_value.items():
+        indexed_ids.update(ids)
+        present = sorted(rid for rid in ids if rid in live_ids)
+        if len(present) > 1:
+            clusters.append({"digest": value, "count": len(present), "ids": present})
+    clusters.sort(key=lambda c: (-c["count"], c["digest"]))
+
+    unindexed_ids = sorted(html_ids - indexed_ids)
+    return {
+        "clusters": clusters[:limit],
+        "total_clusters": len(clusters),
+        "unindexed_count": len(unindexed_ids),
+        "unindexed_ids": unindexed_ids[:limit],
+    }
 
 
 def dangling_origin_refs(
@@ -365,24 +401,71 @@ def dangling_origin_refs(
     return {sev: items[:limit] for sev, items in grouped.items()}
 
 
+_CONFIRM_CHUNK = 1 << 20  # 1 MiB — matches `hashing.CHUNK`
+
+
+def _confirm_prefix(path_a: Path, path_b: Path) -> tuple[str, bool] | None:
+    """Stream `path_a`/`path_b` in lockstep, bounded chunks — confirming (or rejecting)
+    what the index screen only admitted as a candidate (spec §7.9: "a screen, not a
+    proof"). Never loads a whole file and never holds both files' bytes at once — the
+    motivating OOM measurement (§12.9.1) was one same-filename group holding 9 GB in
+    memory simultaneously.
+
+    Which file is shorter is discovered here, not assumed from the screen (the ladder's
+    rung count only orders files that cross a *different* number of rungs; two files
+    tied on rung count can still differ in true length beyond the highest common rung).
+    Returns `(kind, a_is_shorter)`: `kind` is `"identical"` (equal length, every byte
+    equal) or `"prefix"` (the shorter is a byte-prefix of the longer); `a_is_shorter`
+    says which input that was. Returns `None` when the streams diverge before either
+    ends — a screen false-positive (a rung match without proof), not a match.
+    """
+    with path_a.open("rb") as fa, path_b.open("rb") as fb:
+        while True:
+            ca = fa.read(_CONFIRM_CHUNK)
+            cb = fb.read(_CONFIRM_CHUNK)
+            n = min(len(ca), len(cb))
+            if ca[:n] != cb[:n]:
+                return None
+            if len(ca) == len(cb):
+                if not ca:
+                    return "identical", True
+                continue  # both still going, matched so far — keep streaming
+            # A `read()` returns fewer bytes than requested only at EOF, so whichever
+            # chunk came back shorter marks that file's true end — decided at most one
+            # `_CONFIRM_CHUNK` past where the ladder's rungs ran out.
+            return "prefix", len(ca) < len(cb)
+
+
 def prefix_duplicate_artifacts(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50, **_kw: Any
 ) -> dict[str, Any]:
     """Distinct records that are the SAME source document captured twice — one artifact
-    byte-identical to another, or a byte-prefix of it, once capture-injected stamps
-    (`corpus-origin-*` meta tags) and the document-closing tag run are neutralized. The
-    live case is a producer re-emitting a grown export file into a later bundle (an
-    iMessage window one message longer, #147): two blake3-distinct records, one
-    conversation — which the ledger's two-independent-records evidence bar cannot see.
-    Candidates are joined on the origin `filename:` (a re-emission keeps its name), so
-    only same-name groups are ever byte-compared."""
-    import re as _re
+    byte-identical to another, or a byte-prefix of it. The live case is a producer
+    re-emitting a grown export file into a later bundle (an iMessage window one message
+    longer, #147): two blake3-distinct records, one conversation — which the ledger's
+    two-independent-records evidence bar cannot see.
 
-    from . import containment
+    Candidates are joined on the origin `filename:` (a re-emission keeps its name, as
+    before), then screened via the `blake3-prefix-ladder` index rows (spec §7.9,
+    §12.9.1) before any byte is read: two files are prefix-candidates iff every ladder
+    rung *both* reach agrees (rungs nest — 64k implies 4k — so the rungs one file lacks
+    say nothing, and the rungs both share are the only ones a mismatch could hide in).
+    Only screen survivors are confirmed, by `_confirm_prefix`'s bounded streaming
+    compare — never a whole-group `read_bytes()`. This replaces the byte-reading
+    predecessor that read 19.75 GB across 251 same-filename groups on the 25k-record /
+    157 GB corpus and held one group's 9 GB in memory at once, dying on the OOM killer
+    (exit 137); index-joined, the steady state costs zero artifact reads until a
+    candidate actually needs confirming.
+
+    A record with NO index rows at all is `unindexed` — reported (with a count and its
+    ids), never silently skipped or read around (spec §12.9.1's "absent is unindexed,
+    not a failure"); it never enters screening. A screen-passing pair whose bytes
+    aren't locally resident is `unconfirmed` — nothing here pulls remote bytes to
+    confirm a health signal (spec §12.9.1's flush/hydrate economics are an operator's
+    deliberate choice, not a side effect of a scan)."""
+    from . import hashindex
     from . import mime as mime_mod
-
-    stamp_re = _re.compile(rb'<meta name="corpus-origin-[^"]*" content="[^"]*">\n?')
-    tail_re = _re.compile(rb"(?:\s|</\w+>)+$")
+    from .store import get_store
 
     groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     for r in refs:
@@ -393,38 +476,88 @@ def prefix_duplicate_artifacts(
             groups[(records.media_type_for(r.post), filename)].append(r.record_id)
 
     multi = {k: ids for k, ids in groups.items() if len(ids) > 1}
-    idx = containment.build_member_index(corpus_root) if multi else {}
+    empty: dict[str, Any] = {
+        "groups_scanned": 0,
+        "pairs_compared": 0,
+        "pairs": [],
+        "total_pairs": 0,
+        "unindexed_count": 0,
+        "unindexed_ids": [],
+        "unconfirmed_count": 0,
+        "unconfirmed": [],
+    }
+    if not multi:
+        return empty
+
+    db_path = hashindex.db_path(corpus_root)
+    if not db_path.exists():
+        # Fresh-clone case (spec §12.9.1): nothing to screen against — every candidate
+        # is unindexed, zero reads, fast.
+        unindexed_ids = sorted({rid for ids in multi.values() for rid in ids})
+        return {
+            **empty,
+            "groups_scanned": len(multi),
+            "unindexed_count": len(unindexed_ids),
+            "unindexed_ids": unindexed_ids[:limit],
+        }
+
+    store = get_store(corpus_root)
+    ext_by_mime: dict[str, str] = {}
+
+    def _ext(media_type: str) -> str:
+        if media_type not in ext_by_mime:
+            ext_by_mime[media_type] = mime_mod.extension_for(media_type)
+        return ext_by_mime[media_type]
+
     pairs: list[dict[str, Any]] = []
-    compared = 0
-    for (media_type, filename), ids in sorted(multi.items()):
-        cores: list[tuple[str, bytes]] = []
-        for rid in ids:
-            try:
-                raw = containment.ensure_local_bytes(
-                    corpus_root, rid, mime_mod.extension_for(media_type), member_index=idx
-                ).read_bytes()
-            except Exception:  # bytes unavailable → not this signal's finding
-                continue
-            cores.append((rid, tail_re.sub(b"", stamp_re.sub(b"", raw))))
-        cores.sort(key=lambda x: len(x[1]))
-        for i in range(len(cores)):
-            for j in range(i + 1, len(cores)):
-                a, b = cores[i], cores[j]
-                compared += 1
-                if a[1] == b[1]:
-                    kind = "identical"
-                elif b[1].startswith(a[1]):
-                    kind = "prefix"
-                else:
+    unconfirmed: list[dict[str, Any]] = []
+    unindexed_ids: set[str] = set()
+    screened = 0
+
+    with hashindex.open_index(corpus_root) as conn:
+        for (media_type, filename), ids in sorted(multi.items()):
+            rung_by_id: dict[str, dict[str, str]] = {}
+            for rid in ids:
+                rows = hashindex.rows_for(conn, rid)
+                if not rows:
+                    unindexed_ids.add(rid)
                     continue
-                pairs.append(
-                    {"kind": kind, "filename": filename, "shorter": a[0], "longer": b[0]}
-                )
+                rung_by_id[rid] = {
+                    row.algo: row.value for row in rows if row.recipe == "blake3-prefix-ladder"
+                }
+            screenable = sorted(rung_by_id)
+            ext = _ext(media_type)
+            for i in range(len(screenable)):
+                for j in range(i + 1, len(screenable)):
+                    a_id, b_id = screenable[i], screenable[j]
+                    a_rungs, b_rungs = rung_by_id[a_id], rung_by_id[b_id]
+                    common = set(a_rungs) & set(b_rungs)
+                    if any(a_rungs[tag] != b_rungs[tag] for tag in common):
+                        continue  # screen rejects — definitively unrelated
+                    screened += 1
+                    if not (store.is_local(a_id, ext) and store.is_local(b_id, ext)):
+                        unconfirmed.append({"filename": filename, "ids": sorted([a_id, b_id])})
+                        continue
+                    result = _confirm_prefix(
+                        store.local_path(a_id, ext), store.local_path(b_id, ext)
+                    )
+                    if result is None:
+                        continue  # screen false-positive — confirm rejected it
+                    kind, a_is_shorter = result
+                    shorter, longer = (a_id, b_id) if a_is_shorter else (b_id, a_id)
+                    pairs.append(
+                        {"kind": kind, "filename": filename, "shorter": shorter, "longer": longer}
+                    )
+
     return {
         "groups_scanned": len(multi),
-        "pairs_compared": compared,
+        "pairs_compared": screened,
         "pairs": pairs[:limit],
         "total_pairs": len(pairs),
+        "unindexed_count": len(unindexed_ids),
+        "unindexed_ids": sorted(unindexed_ids)[:limit],
+        "unconfirmed_count": len(unconfirmed),
+        "unconfirmed": unconfirmed[:limit],
     }
 
 
@@ -580,7 +713,9 @@ def scan_all(
     if "validity_violations" in selected:
         report["validity_violations"] = validity_violations(refs, corpus_root, limit=limit)
     if "canonical_duplicate_clusters" in selected:
-        report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(refs, limit=limit)
+        report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(
+            refs, corpus_root, limit=limit
+        )
     if "dangling_origin_refs" in selected:
         report["dangling_origin_refs"] = dangling_origin_refs(refs, corpus_root, limit=limit)
     if "normalization_pressure" in selected:

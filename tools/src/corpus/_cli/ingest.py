@@ -1,10 +1,15 @@
 """Ingest a single file from capture/ → records/<shard>/<hash>.md.
 
-Computes blake3 + auxiliary byte hashes declared by the matching mime schema's
-`transport_algos`. MIME detect → `<!--artifact <mime>-->` opener. Every transport is
-self-contained (spec §1.2, 2.1): a raw archive lands as one record and drafts as an
-embed manifest; its members are reachable by promotion (`corpus promote`, §8.1), not
-by exploding at ingest.
+Computes blake3 (the artifact's identity, `id`) plus the resolved derived-hash recipe
+union — the corpus-wide default set (`sha256`/`md5` record-resident; the blake3
+prefix ladder index-only) additively layered with the matching mime schema's and
+matched origin overlay's `derived_hashes:` (spec §7.9) — while the staged bytes are
+still in hand. `residency: record` byte-stable values land in frontmatter `hash:`
+*and* the derived hash index; everything else is index-only (§2, §12.3.3, §12.9.1).
+MIME detect → `<!--artifact <mime>-->` opener. Every transport is self-contained (spec
+§1.2, 2.1): a raw archive lands as one record and drafts as an embed manifest; its
+members are reachable by promotion (`corpus promote`, §8.1), not by exploding at
+ingest.
 
 If the file's bytes are already in the corpus, this is an idempotent re-encounter:
 the existing record gains a touch entry. If the capture URL differs from any
@@ -75,14 +80,13 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     # disposition anymore, and no explode-at-ingest path. A raw archive is ingested as one
     # record and drafts as an embed manifest; a schema still declaring `artifact_kind` is
     # ignored (tolerant parsing, §7.1 / §12.17). Members become records via `corpus promote`.
-    aux_algos = tuple(str(a) for a in mt_schema.get("transport_algos", []) if a)
-    digests = hashing.hash_file(src, also=aux_algos)
-    record_id = digests["blake3"]
-    transport_hashes = [
-        records.format_hash(algo, digests[algo])
-        for algo in aux_algos
-        if algo in digests and algo.lower() != "blake3"
-    ]
+    #
+    # Identity (blake3) is computed separately from the recipe union (spec §7.9): `hash_file`
+    # is the identity path (unchanged API other callsites depend on, `hashing.py`'s own
+    # docstring), `compute_hashes` the recipes-over-staged-bytes path — both read the staged
+    # file while it is still in hand, before `store.put` persists it and `src.unlink()` drops
+    # the staging copy.
+    record_id = hashing.hash_file(src, also=())["blake3"]
 
     extension = mime.extension_for(media_type, fallback=src.suffix.lstrip(".") or "bin")
     record_file = paths.record_path(corpus_root, record_id)
@@ -109,24 +113,27 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
             print(f"  +origin: {origin_uri or origin_fields.get('filename', '(local file)')}")
         return 0
 
+    # The derived-hash recipe union (spec §7.9): corpus-wide default set, additively layered
+    # with this mime schema's `derived_hashes:` and the matched origin overlay's — computed
+    # NOW, while `src` still holds the staged bytes (§8.1's free moment), before the store
+    # persists them and the staging copy is unlinked.
+    overlay_schemas = _origin_overlay_schemas(corpus_root, origin_schema, origin_uri)
+    recipes = hashing.resolve_recipes(mt_schema, overlay_schemas)
+    hash_values = hashing.compute_hashes(src, recipes)
+
     # Persist bytes via the store, then unlink the staging file.
     store.put(record_id, extension, src)
     src.unlink()
 
-    transport_value: str | list[str] | None
-    if not transport_hashes:
-        transport_value = None
-    elif len(transport_hashes) == 1:
-        transport_value = transport_hashes[0]
-    else:
-        transport_value = transport_hashes
+    record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
 
     fm = records.stub_frontmatter(
         record_id=record_id,
-        transport=transport_value,
         touch_id=touches.script_identifier("ingest"),
     )
     post = frontmatter.Post(content="", **fm)
+    if record_hash_entries:
+        records.set_record_hashes(post, record_hash_entries)
     # The artifact block carries no generic `title`: a capture-sidecar title (e.g. a yt-dlp
     # title) is non-primary-source metadata whose home is the origin block's `ytdlp_title`,
     # merged at draft. The frontmatter carries no `title`/`description` at birth at all
@@ -152,6 +159,11 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     _attest_stub(post, corpus_root, record_id)
     records.dump(post, record_file)
 
+    # Record-resident values land in the index too (spec §2/§7.9); every other resolved value
+    # is index-ONLY. Best-effort: the index is deployment state (§12.9.1), never authoritative
+    # — a write failure here must never fail an ingest that otherwise succeeded.
+    _write_hash_index_rows(corpus_root, record_id, hash_values)
+
     _cleanup_sidecar(src)
     _cleanup_enrichment(corpus_root, record_id)
 
@@ -159,6 +171,8 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     print(f"  hash:       {record_id}")
     print(f"  media_type: {media_type}")
     print(f"  binary:     {store.local_path(record_id, extension).relative_to(corpus_root)}")
+    if hash_values:
+        print(f"  hashes:     {', '.join(v.encoded() for v in hash_values)}")
     return 0
 
 
@@ -178,6 +192,51 @@ def _attest_stub(post: frontmatter.Post, corpus_root: Path, record_id: str) -> N
         logging.getLogger("corpus.ingest").debug(
             "no attestation for %s: %s", record_id[:12], exc
         )
+
+
+def _origin_overlay_schemas(
+    corpus_root: Path, origin_schema: str | None, origin_uri: str | None
+) -> list[dict[str, Any]]:
+    """The origin overlay schema(s) whose `derived_hashes:` layers into the ingest-time
+    recipe union (spec §7.9's third layer, producer knowledge). The sidecar-declared overlay
+    id wins when present — the same resolution the chrome-strip declaration already uses
+    (`_sidecar_origin_schema`, §12.3.13) — otherwise every overlay the capture URI matches
+    (`schemas.origin_overlays_for_uris`). Neither present yields no overlay layer at all: the
+    mime schema + corpus-wide default set is the correct floor (§7.9) for a uri-less local
+    file or an undeclared producer."""
+    from corpus import schemas
+
+    if origin_schema:
+        overlay = schemas.load_origin_overlay_by_id(corpus_root, origin_schema)
+        return [overlay] if overlay else []
+    if origin_uri:
+        return [schema for _id, schema in schemas.origin_overlays_for_uris(corpus_root, [origin_uri])]
+    return []
+
+
+def _write_hash_index_rows(corpus_root: Path, record_id: str, hash_values: list) -> None:
+    """Mirror every resolved recipe value into the derived hash index (spec §12.9.1) —
+    record-resident and index-only alike, since the index is a superset view over both. The
+    index is deployment state in the resolver-cache mold: untracked, never authoritative, so a
+    write failure here is reported and swallowed rather than failing an otherwise-successful
+    ingest."""
+    if not hash_values:
+        return
+    from corpus import hashindex
+
+    try:
+        with hashindex.open_index(corpus_root) as conn:
+            hashindex.upsert_rows(
+                conn,
+                [
+                    hashindex.HashRow(
+                        record_id=record_id, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param
+                    )
+                    for v in hash_values
+                ],
+            )
+    except Exception as exc:  # deployment state (§12.9.1) — never fails ingest
+        print(f"  note: hash-index write failed for {record_id[:12]}…: {exc}", file=sys.stderr)
 
 
 def _cleanup_enrichment(corpus_root: Path, record_id: str) -> None:

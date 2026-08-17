@@ -50,11 +50,32 @@ from typing import Any
 import blake3
 import frontmatter
 
-from corpus import containment, lint, mime, paths, records, schemas, segments, touches
+from corpus import (
+    containment,
+    hashindex,
+    hashing,
+    lint,
+    mime,
+    paths,
+    records,
+    schemas,
+    segments,
+    touches,
+)
 from corpus.store import ArtifactMissing
 
 #: Touch identifier stamped on every record the migration rewrites — parents and leaves alike.
 TOUCH_ID = "migrate.placement-38"
+
+# The prefix-ladder rungs (spec §7.9's registry table) — mirrored rather than imported from
+# `corpus.hashing` (private there): a leaf's bytes are already fully resident here
+# (`_MemberSource.bytes_for`), so `_bytes_recipe_hashes` computes them directly rather than
+# through `hashing.compute_hashes` (which needs a standalone Path).
+_LADDER_RUNGS: tuple[tuple[int, str], ...] = (
+    (4 * 1024, "blake3-4k"),
+    (64 * 1024, "blake3-64k"),
+    (1024 * 1024, "blake3-1m"),
+)
 
 #: Address params that legitimately chain onto an image member and carry over to its own
 #: record unchanged: the registered image ops (`corpus.transforms.image`). Anything else in a
@@ -356,28 +377,86 @@ def _mint_leaf(
     if media_type == "unknown" and declared_media_type:
         media_type = declared_media_type
     schema = schemas.load_mime_schema(corpus_root, media_type) or {}
-    algos = tuple(str(a) for a in schema.get("transport_algos", []) if a and str(a) != "blake3")
-    aux = {a: hashlib.new(a, raw).hexdigest() for a in algos}
-    transport = [records.format_hash(algo, hexval) for algo, hexval in aux.items()]
-    transport_value: str | list[str] | None
-    if not transport:
-        transport_value = None
-    elif len(transport) == 1:
-        transport_value = transport[0]
-    else:
-        transport_value = transport
+    # No origin overlay layer (spec §7.9's third layer): the leaf's origin is containment
+    # lineage (below), never a producer URI, exactly as a plain `corpus promote` mint — the
+    # mime schema + corpus-wide default set is the correct floor.
+    hash_values = _bytes_recipe_hashes(raw, hashing.resolve_recipes(schema, ()))
+    record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
 
     fm = records.stub_frontmatter(
         record_id=member_hex,
-        transport=transport_value,
         touch_id=touches.script_identifier(TOUCH_ID),
     )
     post = frontmatter.Post(content="", **fm)
+    if record_hash_entries:
+        records.set_record_hashes(post, record_hash_entries)
     records.set_artifact_block(post, mime=media_type, fields={})
     records.append_origin_block(
         post, uri=containment_uri, snapshot=touches.now_iso(), fields=origin_fields or None
     )
+    _write_hash_index_rows(corpus_root, member_hex, hash_values)
     return post
+
+
+def _bytes_recipe_hashes(
+    data: bytes, recipes: tuple[hashing.Recipe, ...]
+) -> list[hashing.HashValue]:
+    """Compute every value of `recipes` over `data` (spec §7.9) — the in-memory-bytes analogue
+    of `hashing.compute_hashes` (which needs a standalone Path): the member bytes are already
+    fully resident here (`_MemberSource.bytes_for`), so there is no stream to chunk and no
+    reason to write them to disk first. `html-stampfree@1` reads `data` directly, same as every
+    other recipe — nothing extra to buffer when the whole member is already in hand."""
+    byte_stable = [r for r in recipes if r.residency == "byte-stable" and not r.multivalue]
+    values: list[hashing.HashValue] = [
+        hashing.HashValue(
+            recipe=r.id,
+            tag=r.id,
+            hex=hashlib.new(r.id, data).hexdigest(),
+            record_resident=r.record_resident,
+        )
+        for r in byte_stable
+    ]
+    if any(r.multivalue for r in recipes):
+        for length, tag in _LADDER_RUNGS:
+            if len(data) >= length:
+                values.append(
+                    hashing.HashValue(
+                        recipe="blake3-prefix-ladder",
+                        tag=tag,
+                        hex=blake3.blake3(data[:length]).hexdigest(),
+                        param=str(length),
+                    )
+                )
+    if any(r.id == "html-stampfree@1" for r in recipes):
+        values.append(
+            hashing.HashValue(
+                recipe="html-stampfree@1",
+                tag="html-stampfree@1",
+                hex=hashing.html_stampfree_digest(data),
+            )
+        )
+    return values
+
+
+def _write_hash_index_rows(corpus_root: Path, record_id: str, hash_values: list) -> None:
+    """Mirror `hash_values` into the derived hash index (spec §12.9.1) — best-effort
+    deployment state, never authoritative: a write failure here is reported and swallowed
+    rather than failing an otherwise-successful reseat."""
+    if not hash_values:
+        return
+    try:
+        with hashindex.open_index(corpus_root) as conn:
+            hashindex.upsert_rows(
+                conn,
+                [
+                    hashindex.HashRow(
+                        record_id=record_id, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param
+                    )
+                    for v in hash_values
+                ],
+            )
+    except Exception as exc:  # deployment state (§12.9.1) — never fails reseat
+        print(f"  note: hash-index write failed for {record_id[:12]}…: {exc}")
 
 
 def _moved_segment(seg: segments.Segment, address: str) -> segments.Segment:

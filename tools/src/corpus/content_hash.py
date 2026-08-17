@@ -9,10 +9,15 @@ Each media-type schema MAY declare:
         - <step-2>
         - ...
 
-The drafter computes the strategy at draft time and writes the result into the
-record's `canonical:` frontmatter field as `<algo>:<hex>`. The strategy lets two
-records be compared for "same content?" even when timestamps, producer strings, or
-other ever-changing metadata cause the byte hash to drift.
+The strategy lets two records be compared for "same content?" even when timestamps,
+producer strings, or other ever-changing metadata cause the byte hash to drift — but
+the write path into a record is disabled (spec §7.1 status note: it collapsed
+unrelated text-empty PDFs); a drafter still computes the value into its result dict's
+`canonical` key, and `derive.py` deliberately discards it rather than persisting it.
+This "content-canonical" tier is distinct from — and stays retired independently of —
+the `hash:` field's *(v20)* procedure-versioned tier (§7.9): if a content-canonical
+strategy ever clears the 3.5 bar, it re-enters as a new versioned `derived_hashes:`
+recipe there, not by reviving this field.
 
 This module registers each algo name against an implementation function; the drafter
 dispatches via `compute(algo, path)`.

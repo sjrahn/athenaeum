@@ -180,9 +180,12 @@ def canonical_content_selector_for_url(
     """Return the per-host `canonical.content_selector` (a CSS selector or list) for
     `url`'s host, or None. A host declares this to scope its canonical-content hash to the
     article-content region — excluding per-page framing (title, breadcrumb, entry-specific
-    headings) — so the same article reached by different links collapses to one record via
-    the existing content-dedup. Opt-in: absent the section, canonical stays whole-document.
-    Consumed at draft time; see `content_hash._canonicalize_html`."""
+    headings). Opt-in: absent the section, canonical stays whole-document. Consumed at draft
+    time; see `content_hash._canonicalize_html`. Dormant configuration (spec §7.2's `canonical:`
+    status note): the value this scopes is computed but its write path into a record is
+    disabled (§7.1), so declaring this selector does not currently collapse anything —
+    it is preserved for whenever content-canonical identity re-enters as a versioned
+    `derived_hashes:` recipe (§7.9)."""
     cfg = _overlay_section_for_url(corpus_root, url, "canonical")
     if not isinstance(cfg, dict):
         return None

@@ -23,8 +23,10 @@ address_scheme:
   type: rect
   description: |-
     <x>,<y>,<w>,<h> — relative floats in [0.0, 1.0]. Origin top-left. The default address `bbox=0,0,1,1` names the whole image.
-transport_algos:
-- sha256
+# Computed at draft time but NOT persisted — the write path into a record's `canonical:`
+# field is disabled (spec §7.1 status note; content-canonical identity stays retired
+# under v20, §7.9's "two tiers" — the `hash:` field admits only `html-stampfree@1`-style
+# recipes that clear that bar, and this one hasn't).
 canonical_strategy:
   algo: blake3-canonical-image
   canonicalization:

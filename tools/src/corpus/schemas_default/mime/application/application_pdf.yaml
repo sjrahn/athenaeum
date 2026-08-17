@@ -19,8 +19,11 @@ address_scheme:
   type: rect
   description: |-
     <x>,<y>,<w>,<h> — relative floats in [0.0, 1.0]. Origin top-left. x+w ≤ 1.0, y+h ≤ 1.0.
-transport_algos:
-- sha256
+# Computed at draft time but NOT persisted — the write path into a record's `canonical:`
+# field is disabled (spec §7.1 status note: it collapsed unrelated text-empty PDFs;
+# content-canonical identity stays retired under v20, §7.9's "two tiers" — the `hash:`
+# field admits only `html-stampfree@1`-style recipes that clear that bar, and this one
+# hasn't).
 canonical_strategy:
   algo: blake3-canonical-pdf
   canonicalization:

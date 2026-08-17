@@ -28,6 +28,7 @@ from typing import Any
 
 import frontmatter
 
+from corpus import hashing as _hashing
 from corpus import paths as _paths
 from corpus import records as _records
 from corpus import schemas as _schemas
@@ -126,37 +127,186 @@ def _rule_legacy_status(post, blocks, root) -> Iterator[Finding]:
     )
 
 
-def _rule_transport_format(post, blocks, root) -> Iterator[Finding]:
-    """`transport:` is `<algo>:<hex>` or list thereof (spec §4.2)."""
-    raw = post.metadata.get("transport")
+#: Plausible byte-length bound for the hex half of a `<tag>:<hex>` hash value (spec §7.6)
+#: - the same 32-128 hex-char floor/ceiling `_HASH_RE` enforced pre-v20, now applied
+#: independently of tag shape (a procedure-versioned tag carries no algorithm to bound
+#: the digest by, §7.6).
+_HASH_HEXLEN = range(32, 129)
+
+
+def _rule_hash_tag_grammar(post, blocks, root) -> Iterator[Finding]:
+    """*(v20)* Every frontmatter `hash:` value is `<tag>:<hex>` (spec §7.6): a nonempty
+    lowercase hex digest of plausible length, tagged either a bare algorithm id or a
+    `<procedure>@<version>` (`hashing.parse_value`). Two tag classes are inadmissible on
+    top of the grammar (spec §4.2.1, §7.9):
+
+    - `blake3` bare — the primary identity lives on `id` alone and is never duplicated
+      here (§4.2.1).
+    - a tag whose registered recipe is **similarity**-class — `hash:` is identity-class
+      only; a similarity value there would invite an equality join it cannot support
+      (§7.9).
+
+    An unknown-but-well-formed tag is NOT a finding: the recipe registry is open to
+    extension (§7.9), so a value a newer deployment or a corpus-local recipe wrote must
+    not lint red here just because this process's registry hasn't loaded it.
+
+    Reads the already-normalized `hash:` field — `records.loads()` folds a lingering
+    legacy `transport:` into it at parse time (spec §4.2.1), so this rule is oblivious
+    to which frontmatter key produced the value; that provenance detail is
+    `hash-legacy-transport`'s to report, not this rule's."""
+    raw = post.metadata.get("hash")
     if raw is None:
         return
     values = raw if isinstance(raw, list) else [raw]
     for v in values:
-        if not isinstance(v, str) or not _HASH_RE.match(v):
+        if not isinstance(v, str):
             yield Finding(
-                rule_id="transport-format",
+                rule_id="hash-tag-grammar",
+                severity="error",
+                message=f"`hash` entry {v!r} is not a string (spec §7.6).",
+            )
+            continue
+        try:
+            info, hexval = _hashing.parse_value(v)
+        except ValueError as e:
+            yield Finding(
+                rule_id="hash-tag-grammar",
+                severity="error",
+                message=f"`hash` entry {v!r} is not `<tag>:<hex>`: {e} (spec §7.6).",
+            )
+            continue
+        if len(hexval) not in _HASH_HEXLEN:
+            yield Finding(
+                rule_id="hash-tag-grammar",
                 severity="error",
                 message=(
-                    f"`transport` entry {v!r} is not `<algo>:<hex>` "
-                    f"(e.g. `sha256:abc…`, spec §4.2)."
+                    f"`hash` entry {v!r} digest is {len(hexval)} hex chars, outside the "
+                    f"plausible {_HASH_HEXLEN.start}-{_HASH_HEXLEN.stop - 1} range "
+                    f"(spec §7.6)."
+                ),
+            )
+        if info.tag == "blake3":
+            yield Finding(
+                rule_id="hash-tag-grammar",
+                severity="error",
+                message=(
+                    "`hash` entry tagged bare `blake3` duplicates the primary identity, "
+                    "which lives on `id` alone and is never repeated in `hash:` "
+                    "(spec §4.2.1)."
+                ),
+            )
+            continue
+        recipe = _hashing.get_recipe(info.tag)
+        if recipe is not None and recipe.comparison == "similarity":
+            yield Finding(
+                rule_id="hash-tag-grammar",
+                severity="error",
+                message=(
+                    f"`hash` entry {v!r} is tagged with recipe `{info.tag}`, a "
+                    f"similarity-class recipe (§7.9) — `hash:` admits identity-class "
+                    f"values only; a fingerprint's equality claims nothing (spec "
+                    f"§4.2.1, §7.9)."
                 ),
             )
 
 
-def _rule_perceptual_format(post, blocks, root) -> Iterator[Finding]:
-    """Record-scope `perceptual:` is `<algo>:<hex>` (spec §7.7)."""
-    raw = post.metadata.get("perceptual")
+#: Legacy pre-v20 frontmatter keys `hash:` succeeds or absorbs (spec §4.2.1): `transport`
+#: renames to `hash` (tolerantly folded at parse time, `records.loads()`); `canonical` is
+#: retired outright; record-scope `perceptual` retires to the derived hash index with a
+#: fleet population of zero (§7.7). All three parse tolerantly and are dropped on the
+#: record's next write — none is re-emitted by `records.dumps()`.
+_LEGACY_HASH_KEYS: tuple[str, ...] = ("transport", "canonical", "perceptual")
+
+
+def _rule_hash_legacy_key(post, blocks, root) -> Iterator[Finding]:
+    """*(v20)* A record still carrying a legacy hash-adjacent frontmatter key — same
+    advisory discipline as `_rule_legacy_status` (spec §4.1): the key is read
+    tolerantly (a lingering `transport:` folds into `hash:` at parse time, spec §4.2.1)
+    but never re-emitted — `records.dumps()` drops it on the record's next write, so a
+    stray key is transitional, not a defect. Flags `transport` (renamed `hash`),
+    `canonical` (retired outright), and record-scope `perceptual` (retired to the
+    derived hash index, §7.7) — one finding per key present, so a record carrying more
+    than one gets more than one nudge rather than one that hides the rest."""
+    for key in _LEGACY_HASH_KEYS:
+        if key not in post.metadata:
+            continue
+        yield Finding(
+            rule_id="hash-legacy-transport",
+            severity="info",
+            message=(
+                f"frontmatter carries a legacy `{key}: {post.metadata.get(key)!r}` key "
+                f"(spec §4.2.1) — a pre-v20 field, ignored and dropped on the record's "
+                f"next write."
+            ),
+            subtype=key,
+        )
+
+
+def _registered_recipe_versions(procedure: str) -> list[str]:
+    """Every version currently registered for `procedure` (spec §7.9) — i.e. every
+    registered recipe id that parses as a `<procedure>@<version>` tag naming it. Reads
+    the registry's id space through the public `parse_tag`/`get_recipe` surface rather
+    than a procedure-name index, since none exists (`hashing` indexes recipes by their
+    full tag, §7.9) and adding one is out of this rule's scope."""
+    out: list[str] = []
+    for rid in _hashing._REGISTRY:  # read-only registry scan, see docstring above
+        try:
+            info = _hashing.parse_tag(rid)
+        except ValueError:
+            continue
+        if info.residency == "procedure-versioned" and info.procedure == procedure:
+            out.append(info.version)
+    return out
+
+
+def _rule_hash_superseded_recipe_version(post, blocks, root) -> Iterator[Finding]:
+    """*(v20)* A `<procedure>@<version>` value in `hash:` whose procedure is registered
+    at a DIFFERENT version (spec §7.9) — e.g. a stored `html-stampfree@1` when the
+    registry now ships `html-stampfree@2`. Version comparison is exact string
+    inequality on the same procedure name (the version is an opaque tag, never a
+    numeric ordering, spec §7.6).
+
+    The stored value is not wrong — it stands as exactly what the OLD procedure
+    computed, and stays that way: §7.9 is explicit that "a revision never rewrites
+    stored values... lint may flag them for a deliberate re-flush, never silently."
+    Warning, never error, on that authority — a superseded value is stale, honest
+    attestation, not a malformed one."""
+    raw = post.metadata.get("hash")
     if raw is None:
         return
     values = raw if isinstance(raw, list) else [raw]
     for v in values:
-        if not isinstance(v, str) or not _PERCEPTUAL_RE.match(v):
-            yield Finding(
-                rule_id="perceptual-format",
-                severity="error",
-                message=f"frontmatter `perceptual` entry {v!r} is not `<algo>:<hex>`.",
-            )
+        if not isinstance(v, str):
+            continue
+        try:
+            info, _hexval = _hashing.parse_value(v)
+        except ValueError:
+            continue  # hash-tag-grammar already reports a malformed entry
+        if info.residency != "procedure-versioned":
+            continue
+        current = _registered_recipe_versions(info.procedure)
+        if not current or info.version in current:
+            # No registered recipe names this procedure at all (this process's registry
+            # doesn't know it — not this rule's business, same "unknown, allowed"
+            # discipline as `hash-tag-grammar`), or the stored version IS one of the
+            # currently-registered versions for it — not superseded.
+            continue
+        yield Finding(
+            rule_id="hash-superseded-recipe-version",
+            severity="warning",
+            message=(
+                f"`hash` entry `{v}` is procedure `{info.procedure}` at version "
+                f"`{info.version}`, but the registry now ships "
+                f"{', '.join(f'{info.procedure}@{c}' for c in current)} — the stored "
+                f"value stands as the old procedure's output; flag for a deliberate "
+                f"re-flush, never rewritten automatically (spec §7.9)."
+            ),
+            fields={
+                "procedure": info.procedure,
+                "stored_version": info.version,
+                "current_versions": current,
+            },
+        )
 
 
 def _rule_visibility_invalid(post, blocks, root) -> Iterator[Finding]:
@@ -436,7 +586,8 @@ def _check_perceptual_shape(seg: _segments.Segment) -> Iterator[Finding]:
     if seg.perceptual is None:
         return
     # §7.6: a perceptual field is `str` OR `list[str]` (multi-region segments). Validate
-    # each entry, mirroring the record-scope `_rule_perceptual_format`.
+    # each entry. *(v20)* Record-scope `perceptual:` retired outright (§4.2.1/§7.7,
+    # `hash-legacy-transport`) — this is now the only surviving `perceptual:` shape check.
     values = seg.perceptual if isinstance(seg.perceptual, list) else [seg.perceptual]
     for v in values:
         if not isinstance(v, str) or not _PERCEPTUAL_RE.match(v):
@@ -1995,8 +2146,9 @@ def _rule_segment_address_fidelity(post, blocks, root) -> Iterator[Finding]:
 _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("id-format", _rule_id_format),
     ("frontmatter-legacy-status", _rule_legacy_status),
-    ("transport-format", _rule_transport_format),
-    ("perceptual-format", _rule_perceptual_format),
+    ("hash-tag-grammar", _rule_hash_tag_grammar),
+    ("hash-legacy-transport", _rule_hash_legacy_key),
+    ("hash-superseded-recipe-version", _rule_hash_superseded_recipe_version),
     ("visibility-invalid", _rule_visibility_invalid),
     ("touch-format", _rule_touch_format),
     ("artifact-block-missing", _rule_artifact_block_missing),
@@ -2058,7 +2210,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
 # frontmatter/structure checks (athenaeum's idiomatic rule_ids).
 DIAGNOSE_QUICK_RULES: tuple[str, ...] = (
     "frontmatter-legacy-status",
-    "transport-format",
+    "hash-tag-grammar",
     "touch-format",
     "artifact-block-missing",
     "origins-empty",

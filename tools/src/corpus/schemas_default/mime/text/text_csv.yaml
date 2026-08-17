@@ -58,5 +58,3 @@ address_scheme:
     name matches one of the header's fields; otherwise the value is taken as a 1-indexed
     integer column. `col=` alone, with no preceding `row=`, is a hard error — there is no
     row to read a column from (`transforms/csv.py`).
-transport_algos:
-- sha256

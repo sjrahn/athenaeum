@@ -285,38 +285,67 @@ def test_health_cli_summary_and_filter(tmp_path, capsys):
     assert "unshaped:" in out
 
 
-def test_prefix_duplicate_artifacts(tmp_path):
-    """Two records carrying the SAME origin filename whose artifacts are byte-identical, or
-    prefix-related once capture stamps and the document-closing tag run are neutralized, are
-    one source document captured twice (#147) — invisible to the evidence-independence bar
-    unless surfaced. A third record with different content in the same-name group stays out."""
+def _write_group_record(
+    root: Path, rid: str, *, filename: str, media_type: str, ext: str, payload: bytes
+) -> Path:
+    """A minimal ingested-looking record carrying an origin `filename:` (the join key
+    `prefix_duplicate_artifacts` groups candidates on) plus its artifact bytes on disk."""
+    fm = records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
+    post = frontmatter.Post(content="", **fm)
+    records.set_artifact_block(post, mime=media_type, fields={})
+    records.append_origin_block(
+        post, uri=None, snapshot="2026-07-31T00:00:00Z", fields={"filename": filename}
+    )
+    records.dump(post, paths.record_path(root, rid))
+    art = paths.artifact_path(root, rid, ext)
+    paths.ensure_parent(art)
+    art.write_bytes(payload)
+    return art
+
+
+def _index_bytes(root: Path, rid: str, path: Path, recipes) -> None:
+    """Compute + upsert real hash-index rows for `path` under `rid` — the same rows
+    ingest/reattest would write (spec §12.9.1), so the fixtures exercise the real
+    screen/confirm logic rather than hand-typed hex."""
+    from corpus import hashindex
+    from corpus import hashing as hashing_mod
+
+    values = hashing_mod.compute_hashes(path, recipes)
+    rows = [
+        hashindex.HashRow(record_id=rid, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param)
+        for v in values
+    ]
+    with hashindex.open_index(root) as conn:
+        hashindex.upsert_rows(conn, rows)
+
+
+def test_prefix_duplicate_artifacts_confirmed_prefix(tmp_path):
+    """A record whose bytes are an exact byte-prefix of another's, same origin filename —
+    the grown-export case (#147) — is screened via the `blake3-prefix-ladder` index rows and
+    confirmed via bounded streaming, never a whole-group `read_bytes()` (spec §7.9, §12.9.1).
+    A third same-name record is deliberately left unindexed to exercise that reporting
+    alongside a real confirmed pair — it must be excluded from screening entirely, not
+    silently read around."""
+    from corpus import hashing as hashing_mod
+
     root = _corpus(tmp_path)
-    base = (
-        b'<html><head><meta name="corpus-origin-period" content="2025-12">\n'
-        b"</head><body><p>hello</p>"
+    rid_a, rid_b, rid_other = "f0" * 32, "f1" * 32, "f2" * 32
+    base = b"<html>" + b"x" * 5000 + b"</html>"
+    grown = base + b"<p>more</p>"
+    other = b"<html>unrelated</html>"
+
+    path_a = _write_group_record(
+        root, rid_a, filename="window.html", media_type="text/html", ext="html", payload=base
     )
-    grown = (
-        b'<html><head><meta name="corpus-origin-period" content="2026-W01">\n'
-        b"</head><body><p>hello</p><p>more</p>"
+    path_b = _write_group_record(
+        root, rid_b, filename="window.html", media_type="text/html", ext="html", payload=grown
     )
-    other = b"<html><head></head><body><p>unrelated</p></body></html>"
-    trio = {
-        "f0" * 32: base + b"</body></html>",
-        "f1" * 32: grown + b"</body></html>",
-        "f2" * 32: other,
-    }
-    for rid, payload in trio.items():
-        fm = records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
-        post = frontmatter.Post(content="", **fm)
-        records.set_artifact_block(post, mime="text/html", fields={})
-        records.append_origin_block(
-            post, uri=None, snapshot="2026-07-31T00:00:00Z",
-            fields={"filename": "window.html"},
-        )
-        records.dump(post, paths.record_path(root, rid))
-        art = paths.artifact_path(root, rid, "html")
-        paths.ensure_parent(art)
-        art.write_bytes(payload)
+    _write_group_record(
+        root, rid_other, filename="window.html", media_type="text/html", ext="html",
+        payload=other,
+    )
+    _index_bytes(root, rid_a, path_a, hashing_mod.DEFAULT_SET)
+    _index_bytes(root, rid_b, path_b, hashing_mod.DEFAULT_SET)
 
     refs = health.load_all_records(root)
     report = health.prefix_duplicate_artifacts(refs, root)
@@ -324,5 +353,168 @@ def test_prefix_duplicate_artifacts(tmp_path):
     assert report["total_pairs"] == 1
     (pair,) = report["pairs"]
     assert pair["kind"] == "prefix"
-    assert pair["shorter"] == "f0" * 32
-    assert pair["longer"] == "f1" * 32
+    assert pair["shorter"] == rid_a
+    assert pair["longer"] == rid_b
+    assert report["unindexed_count"] == 1
+    assert report["unindexed_ids"] == [rid_other]
+
+
+def test_prefix_duplicate_artifacts_rung_match_rejected_by_confirm(tmp_path):
+    """A rung match is a SCREEN, not a proof (spec §7.9): two files sharing an identical
+    first 4 KiB (so their `blake3-4k` rung agrees) but diverging immediately after — well
+    within the shorter file's own length — must pass the index screen (only rung reached by
+    both is checked) and then be REJECTED by the streaming confirm, never reported as a
+    pair."""
+    from corpus import hashing as hashing_mod
+
+    root = _corpus(tmp_path)
+    rid_a, rid_b = "a1" * 32, "a2" * 32
+    shared_head = b"H" * 4096
+    a_payload = shared_head + b"A" * 900  # 4996 bytes — reaches the 4k rung, not 64k
+    b_payload = shared_head + b"B" * 900 + b"C" * 200  # diverges right after the shared head
+
+    path_a = _write_group_record(
+        root, rid_a, filename="dup.bin", media_type="application/octet-stream", ext="bin",
+        payload=a_payload,
+    )
+    path_b = _write_group_record(
+        root, rid_b, filename="dup.bin", media_type="application/octet-stream", ext="bin",
+        payload=b_payload,
+    )
+    _index_bytes(root, rid_a, path_a, hashing_mod.DEFAULT_SET)
+    _index_bytes(root, rid_b, path_b, hashing_mod.DEFAULT_SET)
+
+    refs = health.load_all_records(root)
+    report = health.prefix_duplicate_artifacts(refs, root)
+    assert report["groups_scanned"] == 1
+    assert report["pairs_compared"] == 1  # the 4k rung screen passed
+    assert report["total_pairs"] == 0  # the streaming confirm rejected it
+    assert report["pairs"] == []
+    assert report["unconfirmed"] == []
+
+
+def test_prefix_duplicate_artifacts_unconfirmed_missing_local_bytes(tmp_path):
+    """A screen-passing candidate whose local bytes are gone (evicted to a remote store,
+    §12.9.1's flush/hydrate economics) is reported `unconfirmed` — never read around, and
+    never counted as a confirmed pair. Nothing here pulls remote bytes for a health scan."""
+    from corpus import hashing as hashing_mod
+
+    root = _corpus(tmp_path)
+    rid_a, rid_b = "b1" * 32, "b2" * 32
+    payload = b"<html>" + b"z" * 5000 + b"</html>"
+    path_a = _write_group_record(
+        root, rid_a, filename="w.html", media_type="text/html", ext="html", payload=payload
+    )
+    path_b = _write_group_record(
+        root, rid_b, filename="w.html", media_type="text/html", ext="html", payload=payload
+    )
+    _index_bytes(root, rid_a, path_a, hashing_mod.DEFAULT_SET)
+    _index_bytes(root, rid_b, path_b, hashing_mod.DEFAULT_SET)
+    path_b.unlink()  # indexed, but no longer locally resident
+
+    refs = health.load_all_records(root)
+    report = health.prefix_duplicate_artifacts(refs, root)
+    assert report["pairs_compared"] == 1
+    assert report["total_pairs"] == 0
+    assert report["unconfirmed_count"] == 1
+    (entry,) = report["unconfirmed"]
+    assert sorted(entry["ids"]) == sorted([rid_a, rid_b])
+
+
+def test_prefix_duplicate_artifacts_no_index_file(tmp_path):
+    """The fresh-clone case (spec §12.9.1): no `cache/hashes.db` at all → every candidate
+    reports unindexed, zero reads, fast — and the read-only scan must not create the index
+    file as a side effect."""
+    from corpus import hashindex
+
+    root = _corpus(tmp_path)
+    rid_a, rid_b = "c1" * 32, "c2" * 32
+    payload = b"hello world " * 500
+    _write_group_record(
+        root, rid_a, filename="dup.bin", media_type="application/octet-stream", ext="bin",
+        payload=payload,
+    )
+    _write_group_record(
+        root, rid_b, filename="dup.bin", media_type="application/octet-stream", ext="bin",
+        payload=payload,
+    )
+    assert not hashindex.db_path(root).exists()
+
+    refs = health.load_all_records(root)
+    report = health.prefix_duplicate_artifacts(refs, root)
+    assert report["groups_scanned"] == 1
+    assert report["pairs_compared"] == 0
+    assert report["total_pairs"] == 0
+    assert report["unindexed_count"] == 2
+    assert set(report["unindexed_ids"]) == {rid_a, rid_b}
+    assert not hashindex.db_path(root).exists()  # never created by a read-only scan
+
+
+# ---------- canonical_duplicate_clusters (html-stampfree@1 join) ---------- #
+
+
+def test_canonical_duplicate_clusters_stampfree_join(tmp_path):
+    """Two captures of the byte-identical delivered content, differing only in the
+    corpus-injected capture-stamp meta tag, join on `html-stampfree@1` — a pure index join,
+    zero artifact reads (spec §7.9, §12.9.1). A third, genuinely different document stays
+    out; a fourth is left unindexed to exercise that reporting."""
+    from corpus import hashing as hashing_mod
+
+    root = _corpus(tmp_path)
+    rid_a, rid_b, rid_c, rid_d = "d1" * 32, "d2" * 32, "d3" * 32, "d4" * 32
+    doc_a = (
+        b'<html><head><meta name="corpus-origin-period" content="2025-12"></head>'
+        b"<body><p>hello</p></body></html>"
+    )
+    doc_b = (
+        b'<html><head><meta name="corpus-origin-period" content="2026-W01"></head>'
+        b"<body><p>hello</p></body></html>"
+    )
+    doc_c = b"<html><head></head><body><p>unrelated</p></body></html>"
+    doc_d = b"<html><head></head><body><p>never indexed</p></body></html>"
+
+    path_a = _write_group_record(
+        root, rid_a, filename="a.html", media_type="text/html", ext="html", payload=doc_a
+    )
+    path_b = _write_group_record(
+        root, rid_b, filename="b.html", media_type="text/html", ext="html", payload=doc_b
+    )
+    path_c = _write_group_record(
+        root, rid_c, filename="c.html", media_type="text/html", ext="html", payload=doc_c
+    )
+    _write_group_record(
+        root, rid_d, filename="d.html", media_type="text/html", ext="html", payload=doc_d
+    )
+    _index_bytes(root, rid_a, path_a, (hashing_mod.HTML_STAMPFREE_1,))
+    _index_bytes(root, rid_b, path_b, (hashing_mod.HTML_STAMPFREE_1,))
+    _index_bytes(root, rid_c, path_c, (hashing_mod.HTML_STAMPFREE_1,))
+    # rid_d deliberately left unindexed
+
+    refs = health.load_all_records(root)
+    report = health.canonical_duplicate_clusters(refs, root)
+    assert report["total_clusters"] == 1
+    (cluster,) = report["clusters"]
+    assert sorted(cluster["ids"]) == sorted([rid_a, rid_b])
+    assert report["unindexed_count"] == 1
+    assert report["unindexed_ids"] == [rid_d]
+
+
+def test_canonical_duplicate_clusters_no_index_file(tmp_path):
+    """No `cache/hashes.db` at all → every `text/html` record reports unindexed, zero reads,
+    and the scan does not create the index file."""
+    from corpus import hashindex
+
+    root = _corpus(tmp_path)
+    rid = "e1" * 32
+    _write_group_record(
+        root, rid, filename="only.html", media_type="text/html", ext="html",
+        payload=b"<html></html>",
+    )
+    assert not hashindex.db_path(root).exists()
+
+    refs = health.load_all_records(root)
+    report = health.canonical_duplicate_clusters(refs, root)
+    assert report["total_clusters"] == 0
+    assert report["unindexed_count"] == 1
+    assert report["unindexed_ids"] == [rid]
+    assert not hashindex.db_path(root).exists()

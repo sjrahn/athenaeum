@@ -30,9 +30,7 @@ CORE_FIELDS = (
     "id",
     "title",
     "description",
-    "transport",
-    "canonical",
-    "perceptual",
+    "hash",
     "visibility",
     "touch",
 )

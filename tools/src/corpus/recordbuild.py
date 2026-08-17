@@ -36,7 +36,7 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
     record  id=<hex>
     member  <mime> addr=<a|[a|b…]> transport=<algo:hex> [bytes=<n>]
     section [form=<form-id>] [addr=<a>] [k=v ...]
-    seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [perceptual=..] [k=v ...]
+    seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]
     seg     structural addr=<a> level=<int> [mark=..]     # §4.3.2.3 byte-mark
     issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]
 
@@ -60,6 +60,12 @@ a note/aside legitimately narrates). The asymmetry is #116's, unchanged: acquiri
 increase over the base record) is refused; carrying one never is. A structural mark's own
 text still folds tolerantly from a legacy `mark=`/`entry=` into the segment BODY (§12.32) —
 a separate, unaffected mechanism.
+
+*(v20)* A content segment's `perceptual=` (fleet population zero, §4.2.1/§7.7) drops from
+this taught grammar for the same reason: fingerprints are similarity-class and live only in
+the derived hash index (§12.9.1), never a segment header field going forward. `write_workdir`
+still round-trips a value an in-memory `Segment` already carries, same carve-out as `desc=`/
+`entry=` above.
 
 *(3.1)* `status` is retired from the frontmatter (spec §4.1, §12.19). A legacy `record
 id=<hex> status=<s>` line reads parse-tolerantly (the `status=` key is accepted and ignored)
@@ -90,9 +96,7 @@ _CORE = (
     "id",
     "title",
     "description",
-    "transport",
-    "canonical",
-    "perceptual",
+    "hash",
     "visibility",
     "touch",
 )
@@ -671,6 +675,9 @@ def write_workdir(
             parts.append("desc=" + _desc_ref(loc, seg.address, seg.description))
         if seg.entry:
             parts.append("entry=" + shlex.quote(seg.entry))
+        # *(v20)* `perceptual=` is likewise retired going forward (§4.2.1/§7.7 — fingerprints
+        # live only in the derived hash index now, §12.9.1); round-tripped here ONLY when the
+        # in-memory Segment already carries a legacy value, same carve-out as `desc=`/`entry=`.
         if seg.perceptual:
             parts.append(f"perceptual={seg.perceptual}")
         for k, v in (seg.extra or {}).items():

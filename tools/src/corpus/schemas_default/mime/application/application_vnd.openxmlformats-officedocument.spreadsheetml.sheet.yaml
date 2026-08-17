@@ -31,8 +31,6 @@ address_scheme:
   type: string
   description: |-
     Path inside the unzipped OOXML to a NON-worksheet container part — embedded raster media (`/xl/media/imageN.png`) or a chart part (`/xl/charts/chartN.xml`). Worksheet cell grids use `sheet=`/`bbox=`, not xpath.
-transport_algos:
-- sha256
 normalization:
   guidance: |
     This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xlsx drafter is the structural-content authority for an xlsx record: deterministically, it walks the OOXML zip, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `workbook_*`, `formula_count`, `external_links`, `named_ranges`, `has_pivot_tables`, `has_macros`), and renders each worksheet either as a transcribable cell-grid body (a static-data sheet) or as an empty body with a per-sheet `format-loss` issue (formula / external-ref / chart / empty sheets). The normalizer refines that first-pass output into the section/segment shape below — one `<!--section-->` per worksheet, eventually asserted `document` (see "Asserting the structural form"), with `text/data-table` / `text/data-table-dynamic` segments underneath.

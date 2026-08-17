@@ -14,8 +14,9 @@ silently; a changed hash for an already-declared ordinal is a hard error (`Messa
 A plain draft with no ordinals declares an empty manifest (the mailbox summary only).
 
 The single streaming pass (`mboxfile.scan`) never loads the mailbox — or a whole message —
-whole. `transport_algos` (the promoted message's `sha256`) are NOT pre-computed here: they
-are a promote/ingest concern (§12.3.3), derived from the `message/rfc822` schema when a
+whole. Derived-hash recipe values (the promoted message's `sha256`, §7.9) are NOT
+pre-computed here: they are a promote/ingest concern (§12.3.3), resolved per the union
+(default set + `message/rfc822`'s `derived_hashes:` + any matched origin overlay's) when a
 message is actually promoted, exactly as archive members are — so the embed carries the
 blake3 identity only, like every other manifest drafter.
 """

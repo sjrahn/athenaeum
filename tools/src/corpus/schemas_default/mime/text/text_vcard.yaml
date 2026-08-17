@@ -49,8 +49,6 @@ whole_address_count: card_count
 # Resolver's initial working kind for the functional-URI pipeline: `card=<N>` materializes one
 # card's exact member bytes (`transforms/vcard.py`).
 working_kind: vcard
-transport_algos:
-- sha256
 draft:
   strategy: vcard-manifest
 address_scheme:

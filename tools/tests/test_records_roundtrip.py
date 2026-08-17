@@ -20,7 +20,7 @@ def _make_golden(tmp_path):
             "id": "a" * 64,
             "description": "Test golden record exercising every block family.",
             "status": "draft",
-            "transport": "sha256:" + "b" * 64,
+            "hash": "sha256:" + "b" * 64,
             "touch": ["corpus.ingest@0.1.0", "corpus.draft.mime/application/pdf@0.1.0"],
         }
     )
@@ -77,7 +77,7 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     loaded = records.load(p)
     # Core frontmatter preserved. `status` is NOT among these — dumps() never emits it
     # (spec §4.1, §12.19), so a round-tripped record carries no status line to read back.
-    for k in ("id", "description", "transport"):
+    for k in ("id", "description", "hash"):
         assert loaded.metadata[k] == post.metadata[k]
     assert loaded.metadata["touch"] == post.metadata["touch"]
     assert "status" not in loaded.metadata
@@ -455,7 +455,7 @@ def test_dump_emits_canonical_frontmatter_field_order(tmp_path):
     # (§4.1, §12.19) — never emitted, so it's not one of them.
     pre = raw.split("---", 2)[1]
     indices = []
-    for key in ["id", "description", "transport", "touch"]:
+    for key in ["id", "description", "hash", "touch"]:
         indices.append(pre.index(f"{key}:"))
     assert indices == sorted(indices)
 
@@ -473,3 +473,100 @@ def test_dump_never_emits_legacy_status(tmp_path):
     records.dump(post, p)
     reloaded = records.load(p)
     assert "status" not in reloaded.metadata
+
+
+# ---------- v20: `hash:` succeeds `transport:` (spec §4.2.1, §2, §7.6) ---------- #
+
+
+def test_legacy_transport_reads_as_hash_and_reserializes_as_hash(tmp_path):
+    """A record on disk still carrying `transport:` (pre-sweep) reads tolerantly as
+    `hash:` — every accessor sees `hash` regardless — and a write of that loaded record
+    emits `hash:`, never `transport:` (spec §4.2.1's tolerant-read rule)."""
+    p = tmp_path / "ab" / ("b" * 64 + ".md")
+    p.parent.mkdir(parents=True)
+    text = (
+        "---\n"
+        "id: " + "b" * 64 + "\n"
+        "transport: sha256:" + "c" * 64 + "\n"
+        "touch: corpus.ingest@0.1.0\n"
+        "---\n"
+    )
+    p.write_text(text, encoding="utf-8")
+
+    loaded = records.load(p)
+    assert loaded.metadata["hash"] == "sha256:" + "c" * 64
+    assert records.record_hashes(loaded) == {"sha256": "c" * 64}
+
+    records.dump(loaded, p)
+    raw = p.read_text("utf-8")
+    pre = raw.split("---", 2)[1]
+    assert "hash:" in pre
+    assert "transport:" not in pre
+
+    reloaded = records.load(p)
+    assert reloaded.metadata["hash"] == "sha256:" + "c" * 64
+
+
+def test_hash_list_values_roundtrip_flow_style(tmp_path):
+    """A multi-entry `hash:` round-trips as a list and re-serializes flow-style
+    (spec §7.6's one-liner-friendly list convention)."""
+    p = tmp_path / "ab" / ("c" * 64 + ".md")
+    p.parent.mkdir(parents=True)
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "c" * 64, "touch": "corpus.ingest@0.1.0"})
+    records.set_record_hashes(post, {"sha256": "d" * 64, "html-stampfree@1": "e" * 64})
+
+    records.dump(post, p)
+    raw = p.read_text("utf-8")
+    pre = raw.split("---", 2)[1]
+    # Flow-style: one line, both values inside `[...]`.
+    hash_line = next(line for line in pre.splitlines() if line.startswith("hash:"))
+    assert hash_line == f"hash: [sha256:{'d' * 64}, html-stampfree@1:{'e' * 64}]"
+
+    reloaded = records.load(p)
+    assert records.record_hashes(reloaded) == {"sha256": "d" * 64, "html-stampfree@1": "e" * 64}
+
+
+def test_set_record_hashes_orders_byte_stable_before_procedure_versioned(tmp_path):
+    """`set_record_hashes` sorts byte-stable tags before procedure-versioned ones, and
+    alphabetically within each class — a stable write order regardless of merge order."""
+    post = frontmatter.Post("")
+    post.metadata.update({"id": "d" * 64})
+    records.set_record_hashes(post, {"html-stampfree@1": "1" * 64, "sha256": "2" * 64})
+    records.set_record_hashes(post, {"md5": "3" * 32})
+    assert post.metadata["hash"] == [
+        f"md5:{'3' * 32}",
+        f"sha256:{'2' * 64}",
+        f"html-stampfree@1:{'1' * 64}",
+    ]
+
+
+def test_retired_canonical_and_perceptual_parse_tolerantly_and_drop_on_write(tmp_path):
+    """`canonical:`/`perceptual:` are gone from `_CORE_FIELD_ORDER` (v20) but still parse
+    into `post.metadata` (tolerant read) and are silently dropped on the next write —
+    exactly the `status:`/`title:` precedent (spec §4.2.1)."""
+    p = tmp_path / "ab" / ("e" * 64 + ".md")
+    p.parent.mkdir(parents=True)
+    text = (
+        "---\n"
+        "id: " + "e" * 64 + "\n"
+        "canonical: blake3:" + "f" * 64 + "\n"
+        "perceptual: simhash:" + "0" * 16 + "\n"
+        "touch: corpus.ingest@0.1.0\n"
+        "---\n"
+    )
+    p.write_text(text, encoding="utf-8")
+
+    loaded = records.load(p)
+    assert loaded.metadata["canonical"] == "blake3:" + "f" * 64
+    assert loaded.metadata["perceptual"] == "simhash:" + "0" * 16
+
+    text2 = records.dumps(loaded)
+    pre = text2.split("---", 2)[1]
+    assert "canonical:" not in pre
+    assert "perceptual:" not in pre
+
+    records.dump(loaded, p)
+    reloaded = records.load(p)
+    assert "canonical" not in reloaded.metadata
+    assert "perceptual" not in reloaded.metadata

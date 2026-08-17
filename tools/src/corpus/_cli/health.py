@@ -147,12 +147,23 @@ def _format_summary(report: dict[str, Any]) -> str:
             for msg in msgs[:3]:
                 lines.append(f"  - {oid}: {msg}")
 
+    if "canonical_duplicate_clusters" in report:
+        cdc = report["canonical_duplicate_clusters"]
+        lines.append(
+            f"canonical_duplicate_clusters: {cdc['total_clusters']} cluster(s) "
+            f"({cdc['unindexed_count']} text/html record(s) unindexed for html-stampfree@1)"
+        )
+        for c in cdc["clusters"][:5]:
+            ids = ", ".join(i[:8] + "…" for i in c["ids"][:4])
+            lines.append(f"  - {c['digest'][:8]}… ({c['count']}): {ids}")
+
     if "prefix_duplicate_artifacts" in report:
         pda = report["prefix_duplicate_artifacts"]
         lines.append(
             f"prefix_duplicate_artifacts: {pda['total_pairs']} pair(s) "
-            f"({pda['pairs_compared']} candidate pair(s) across {pda['groups_scanned']} "
-            f"same-filename group(s))"
+            f"({pda['pairs_compared']} screened candidate pair(s) across "
+            f"{pda['groups_scanned']} same-filename group(s); "
+            f"{pda['unindexed_count']} unindexed, {pda['unconfirmed_count']} unconfirmed)"
         )
         for p in pda["pairs"][:5]:
             lines.append(

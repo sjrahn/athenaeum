@@ -21,8 +21,6 @@ address_scheme:
   type: string
   description: |-
     1-indexed ordinal of a block-level element (a paragraph `<w:p>` or a table `<w:tbl>`) in `word/document.xml` document order, after `<w:sdt>` content controls are unwrapped. A single element is `block=<N>`; a span is `block=<start>-<end>`. Word documents carry no fixed pages in the XML (pagination is render-time), so block position — not page — is the stable structural locator. Unlike `pdf`'s `page=` axis, `block=` addresses are NOT resolvable to rasterized images; the resolver does not render docx.
-transport_algos:
-- sha256
 normalization:
   guidance: |
     This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The docx drafter is the structural-content authority for a docx record: deterministically, it walks `word/document.xml` (unwrapping `<w:sdt>` content controls), populates frontmatter (`paragraph_count`, `table_count`, `page_count`, `word_count`, `docx_*` from docProps, `has_images`), and emits one `<!--section-->` per top-level heading. **The drafter still writes `entry:` directly from the heading text on each section** (a write-path defect tracked separately, not yet closed) — `entry:` retired from the section header in 3.5 (spec §4.3.2.1) and is migration residue on sight, not a field to preserve or extend. Every normalize pass converts it: open each section with a `<!--segment structural addr=block=<N> level=1-->` whose body is the heading text verbatim (spec §4.3.2.3), and strip the section's own `entry:`. Each section then holds that structural mark plus one `atom: text` segment whose body is the rendered markdown for that section.

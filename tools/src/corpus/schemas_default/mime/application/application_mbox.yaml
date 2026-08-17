@@ -35,8 +35,6 @@ whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `msg=<N>` materializes a
 # single message's bytes (`transforms/mbox.py`).
 working_kind: mbox
-transport_algos:
-- sha256
 # Mailbox chrome strip (spec §12.3.13): this mime schema provides INTERACTION POINTS
 # only — it does not itself declare the strip. Strip ACTIONS — header names whose lines
 # (folded continuations included) are removed from every member's HEADER ZONE at ingest,

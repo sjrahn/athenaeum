@@ -17,8 +17,10 @@ address_scheme:
   type: string
   description: |-
     JSONPath expression rooted at the line's JSON object, naming a sub-element (e.g. `$.message.content[0].text`, `$.message.content[2].source.data` for an inline image).
-transport_algos:
-- sha256
+# Computed at draft time but NOT persisted — the write path into a record's `canonical:`
+# field is disabled (spec §7.1 status note; content-canonical identity stays retired
+# under v20, §7.9's "two tiers" — the `hash:` field admits only `html-stampfree@1`-style
+# recipes that clear that bar, and this one hasn't).
 canonical_strategy:
   algo: blake3-canonical-claude-session
   canonicalization:

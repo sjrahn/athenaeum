@@ -8,6 +8,7 @@ containment lineage. Re-promoting folds like a re-capture; a hash mismatch is a 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import zipfile
 from pathlib import Path
@@ -96,13 +97,18 @@ def test_promote_mbox_member_detects_and_hashes(tmp_path):
     cid = _container(tmp_path, root)
     assert _promote(root, f"corpus://{cid}?path=mail.mbox") == 0
 
-    pid = _b3(_MEMBERS["mail.mbox"])
+    payload = _MEMBERS["mail.mbox"]
+    pid = _b3(payload)
     post = records.load(paths.record_path(root, pid))
     assert records.media_type_for(post) == "application/mbox"  # `From ` magic, not the .mbox ext
-    # The mbox schema declares transport_algos: [sha256] → the promoted stub carries it.
-    transport = post.metadata.get("transport")
-    assert str(transport).startswith("sha256:")
-    assert str(transport).split(":", 1)[1] == hashing.hash_bytes(_MEMBERS["mail.mbox"])["sha256"]
+    # *(v20)* sha256+md5 ride the corpus-wide default set (spec §7.9) — `corpus promote`
+    # computes the resolved recipe union while the member is streamed out of the
+    # container (Wave 2a), same free moment `corpus ingest` gets. The payload is well
+    # under any prefix-ladder rung, so no ladder rows land in the index for it.
+    assert records.record_hashes(post) == {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "md5": hashlib.md5(payload).hexdigest(),
+    }
 
 
 def test_promote_json_member_cheap_path_and_resolves(tmp_path):

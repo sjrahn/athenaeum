@@ -43,8 +43,6 @@ mode: body-draft
 # Resolver's initial working kind: `part=<N>` materializes a MIME part's decoded bytes
 # (`transforms/message.py`).
 working_kind: message
-transport_algos:
-- sha256
 address_scheme:
 - param: part
   type: integer

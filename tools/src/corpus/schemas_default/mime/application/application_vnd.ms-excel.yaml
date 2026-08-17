@@ -39,8 +39,6 @@ address_scheme:
     splits into more than one. `bbox` is per-MIME — for a spreadsheet
     it is an A1 cell range, not the relative-float crop used by
     image/PDF. Identical to the xlsx scheme.
-transport_algos:
-- sha256
 normalization:
   guidance: |
     This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The xls drafter is the structural-content authority for an xls record: deterministically, it walks the OLE2 workbook via xlrd, populates workbook-level frontmatter (`sheet_names`, `sheet_count`, `modified_by` if present, `named_ranges` if any user-defined names exist), and renders one section per visible worksheet (hidden sheets are skipped). Every populated sheet is rendered as a static cell-grid (a `text/data-table` segment) by default — the drafter cannot detect formula cells, so deciding which sheets are actually live calculators falls to the normalizer.

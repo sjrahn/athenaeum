@@ -127,6 +127,168 @@ def test_no_legacy_status_key_not_flagged(tmp_path):
     assert not any(f.rule_id == "frontmatter-legacy-status" for f in findings)
 
 
+def test_transport_and_perceptual_format_rules_are_retired(tmp_path):
+    """*(v20)* `_rule_transport_format`/`_rule_perceptual_format` (record scope) retire:
+    grammar duty moves to `hash-tag-grammar`, legacy-detection to
+    `hash-legacy-transport` (§4.2.1). Segment-scope `segment-perceptual-format` is
+    untouched (§7.7/§4.3.2.2) and stays registered."""
+    registered = {rid for rid, _fn in lint._REGISTRY}
+    assert "transport-format" not in registered
+    assert "perceptual-format" not in registered
+    assert "segment-perceptual-format" in registered
+    assert "transport-format" not in lint.DIAGNOSE_QUICK_RULES
+    assert "hash-tag-grammar" in lint.DIAGNOSE_QUICK_RULES
+
+
+def test_hash_tag_grammar_valid_values_pass(tmp_path):
+    """A bare-algorithm tag, a procedure-versioned tag, and a flow list of both are all
+    well-formed `<tag>:<hex>` (spec §7.6) and lint clean."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "sha256:" + "a" * 64
+    assert not any(f.rule_id == "hash-tag-grammar" for f in _lint(post, root))
+
+    post.metadata["hash"] = ["sha256:" + "a" * 64, "html-stampfree@1:" + "b" * 64]
+    assert not any(f.rule_id == "hash-tag-grammar" for f in _lint(post, root))
+
+
+def test_hash_tag_grammar_bad_hex_fails(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "sha256:not-hex"
+    assert any(f.rule_id == "hash-tag-grammar" for f in _lint(post, root))
+
+
+def test_hash_tag_grammar_malformed_tag_fails(tmp_path):
+    """No `:` separator, or an empty procedure/version half of an `@`-tag, is a
+    grammar violation (spec §7.6)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    for bad in ["sha256-no-colon", "@1:" + "a" * 32, "html-stampfree@:" + "a" * 32]:
+        post.metadata["hash"] = bad
+        assert any(f.rule_id == "hash-tag-grammar" for f in _lint(post, root)), bad
+
+
+def test_hash_tag_grammar_blake3_tag_is_inadmissible(tmp_path):
+    """`blake3` as a `hash:` tag duplicates the primary identity on `id` — inadmissible
+    even though it is grammatically a well-formed bare algorithm tag (spec §4.2.1)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "blake3:" + "a" * 64
+    findings = [f for f in _lint(post, root) if f.rule_id == "hash-tag-grammar"]
+    assert findings and findings[0].severity == "error"
+
+
+def test_hash_tag_grammar_unknown_tag_is_allowed(tmp_path):
+    """A well-formed tag this process's registry has never heard of is NOT a finding —
+    the recipe registry is open to extension (spec §7.9); an unrecognized-but-valid tag
+    must not lint red just because it's unfamiliar."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "some-future-algo:" + "a" * 40
+    assert not any(f.rule_id == "hash-tag-grammar" for f in _lint(post, root))
+
+
+def test_hash_tag_grammar_similarity_recipe_is_inadmissible(tmp_path):
+    """A tag whose registered recipe is similarity-class is never admissible in
+    `hash:` — that field's contract is "equality means same content", which a
+    similarity value cannot support (spec §4.2.1, §7.9)."""
+    from corpus import hashing
+
+    hashing.register_recipe(
+        hashing.Recipe(
+            id="test-simhash@1", residency="procedure-versioned", comparison="similarity"
+        )
+    )
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "test-simhash@1:" + "a" * 32
+    findings = [f for f in _lint(post, root) if f.rule_id == "hash-tag-grammar"]
+    assert findings and findings[0].severity == "error"
+
+
+def test_hash_legacy_transport_flags_each_legacy_key(tmp_path):
+    """`transport`/`canonical`/`perceptual` frontmatter keys are each pre-v20 fields
+    (spec §4.2.1) — present, they fire the advisory, one finding per key."""
+    root = _make_corpus(tmp_path)
+    for key in ("transport", "canonical", "perceptual"):
+        post = _clean_post()
+        post.metadata[key] = "sha256:" + "a" * 64
+        hits = [f for f in _lint(post, root) if f.rule_id == "hash-legacy-transport"]
+        assert hits and hits[0].severity == "info" and hits[0].subtype == key
+
+
+def test_hash_legacy_transport_not_flagged_when_absent(tmp_path):
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    assert not any(f.rule_id == "hash-legacy-transport" for f in _lint(post, root))
+
+
+def test_legacy_transport_well_formed_folds_into_hash_without_grammar_error(tmp_path):
+    """`records.loads()`'s tolerant fold (spec §4.2.1) leaves BOTH `hash:` (the folded
+    value, what every other rule reads) and the raw `transport:` key (what
+    `hash-legacy-transport` reads) in `post.metadata`. A well-formed folded value trips
+    only the advisory, never `hash-tag-grammar` — reproduced here directly, mirroring
+    what `records.loads()` does to a record whose only hash key is `transport:`,
+    without depending on this module's raw record-text grammar."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    hashval = "sha256:" + "b" * 64
+    post.metadata["transport"] = hashval
+    post.metadata["hash"] = hashval  # what `records.loads()`'s fold would have produced
+    findings = _lint(post, root)
+    assert any(f.rule_id == "hash-legacy-transport" and f.subtype == "transport" for f in findings)
+    assert not any(f.rule_id == "hash-tag-grammar" for f in findings)
+
+
+def test_hash_superseded_recipe_version_fires_against_newer_registered_version(tmp_path):
+    """A stored `<procedure>@<old-version>` whose procedure is registered at a
+    DIFFERENT version is flagged for deliberate re-flush — never rewritten, never an
+    error (spec §7.9)."""
+    from corpus import hashing
+
+    hashing.register_recipe(
+        hashing.Recipe(id="test-proc@2", residency="procedure-versioned", comparison="identity")
+    )
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "test-proc@1:" + "a" * 32
+    findings = [
+        f for f in _lint(post, root) if f.rule_id == "hash-superseded-recipe-version"
+    ]
+    assert findings
+    assert findings[0].severity == "warning"
+    assert findings[0].fields["procedure"] == "test-proc"
+    assert findings[0].fields["stored_version"] == "1"
+    assert "2" in findings[0].fields["current_versions"]
+
+
+def test_hash_superseded_recipe_version_current_version_not_flagged(tmp_path):
+    """The exact currently-registered version is not superseded."""
+    from corpus import hashing
+
+    hashing.register_recipe(
+        hashing.Recipe(id="test-proc-b@1", residency="procedure-versioned", comparison="identity")
+    )
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "test-proc-b@1:" + "a" * 32
+    assert not any(
+        f.rule_id == "hash-superseded-recipe-version" for f in _lint(post, root)
+    )
+
+
+def test_hash_superseded_recipe_version_unknown_procedure_not_flagged(tmp_path):
+    """A procedure-versioned tag this process's registry has never heard of at all is
+    not this rule's business — same open-registry discipline as `hash-tag-grammar`."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    post.metadata["hash"] = "wholly-unregistered-proc@1:" + "a" * 32
+    assert not any(
+        f.rule_id == "hash-superseded-recipe-version" for f in _lint(post, root)
+    )
+
+
 def test_touch_grammar(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()

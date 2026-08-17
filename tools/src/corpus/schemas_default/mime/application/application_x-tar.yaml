@@ -19,8 +19,6 @@ whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
 # materializes a member's bytes (`transforms/tar.py`).
 working_kind: tar
-transport_algos:
-- sha256
 draft:
   strategy: tar-manifest
 address_scheme:

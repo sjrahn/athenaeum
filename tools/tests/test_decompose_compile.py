@@ -27,7 +27,7 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
             "id": "a" * 64,
             "description": "Round-trip golden.",
             "status": "draft",
-            "transport": "sha256:" + "b" * 64,
+            "hash": "sha256:" + "b" * 64,
             "touch": ["corpus.ingest@0.1.0", "corpus.draft.mime/application/pdf@0.1.0"],
         }
     )
@@ -243,7 +243,7 @@ def test_restub_preserves_byte_and_provenance_state(tmp_path):
     re_loaded = records.load(rec)
     # Survives:
     assert re_loaded.metadata["id"] == original_id
-    assert re_loaded.metadata["transport"] == "sha256:" + "b" * 64
+    assert re_loaded.metadata["hash"] == "sha256:" + "b" * 64
     assert records.media_type_for(re_loaded) == "application/pdf"
     origins = list(records.iter_origin_blocks(re_loaded))
     assert len(origins) == 1
@@ -333,7 +333,7 @@ def test_list_valued_extra_round_trips_through_manifest(tmp_path):
             "id": "a" * 64,
             "title": "",
             "description": "",
-            "transport": "sha256:" + "b" * 64,
+            "hash": "sha256:" + "b" * 64,
             "touch": "corpus.ingest@0.1.0",
         }
     )

@@ -25,12 +25,9 @@ def run(args: argparse.Namespace) -> int:
     print(f"title:       {title_field.value}  (layer: {title_field.layer or 'none'})")
     print(f"description: {desc_field.value[:200]}  (layer: {desc_field.layer or 'none'})")
     print(f"mime:        {records.media_type_for(post)}")
-    transport = post.metadata.get("transport")
-    if transport:
-        print(f"transport:   {transport}")
-    canonical = post.metadata.get("canonical")
-    if canonical:
-        print(f"canonical:   {canonical}")
+    hash_value = post.metadata.get("hash")
+    if hash_value:
+        print(f"hash:        {hash_value}")
     touch = post.metadata.get("touch")
     if isinstance(touch, list):
         print(f"touch[{len(touch)}]:")

@@ -23,8 +23,6 @@ whole_address: forbidden
 # Resolver's initial working kind for the functional-URI pipeline: `path=<relpath>`
 # materializes a member's bytes (`transforms/zip.py`).
 working_kind: zip
-transport_algos:
-- sha256
 draft:
   strategy: zip-manifest
 # (3.2) `comment` (the zip archive comment, when present) is role-marked title: real

@@ -74,6 +74,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "home-rail":       ("Maintenance",            "#89 migration: render a my.alldata.com related-information rail out of its retired relation blocks into a trailing index span (dry-run by default)"),
     "reshape-index":   ("Maintenance",            "#164 migration: deterministically re-author a my.alldata.com index page from its DOM — title byte-mark, linked entry list, verbatim crumb in a trailing nav span (dry-run by default)"),
     "relink-table":    ("Maintenance",            "#164 migration: re-derive a data-table segment's body from its addressed element with the DOM's own anchors as links (dry-run by default)"),
+    "hash":            ("Maintenance",            "hash flush — write index-only identity hash values into records' `hash:` field"),
+    "hash-index":      ("Maintenance",            "hash-index backfill — fill missing derived-hash index rows for the fleet"),
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
