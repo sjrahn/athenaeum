@@ -15,6 +15,7 @@ read passes as practical.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -325,18 +326,78 @@ _SINGLEFILE_BANNER_RE = re.compile(
 )
 
 
+# A corpus-injected meta tag is a few hundred bytes (a URL, a timestamp, a fidelity
+# word); the carry only needs to exceed the longest possible match so an
+# incomplete-at-buffer-end tag always sits wholly inside the carried tail. 64 KiB is
+# orders of magnitude past any real stamp.
+_STAMP_CARRY = 1 << 16
+
+
+def _stampfree_from_stream(fh, *, chunk_size: int = CHUNK) -> str:
+    """The one `html-stampfree@1` implementation (spec §7.9), bounded-memory: stream
+    `fh`, remove the corpus-injected `corpus-*` meta tags wherever they fall, remove
+    the SingleFile banner comment within the first `singlefile.HEAD_BYTES` of the
+    *cleaned* stream, and blake3 what remains. Never holds the input in memory — the
+    fleet's largest text/html artifact is a 9.68 GB iMessage export member, and the
+    whole-file predecessor died on the OOM killer hashing it.
+
+    Chunk-boundary correctness: each round scans `carry + chunk`; a complete tag match
+    anywhere in that buffer is removed, and an INCOMPLETE tag can only start within
+    one tag-length of the buffer's end, so holding back a `_STAMP_CARRY` tail (far
+    longer than any real tag) guarantees the next round sees it whole. Re-scanning the
+    carried tail is idempotent — a self-contained match in it would already have been
+    removed the round before.
+    """
+    hasher = _blake3.blake3()
+    head_pending = b""  # cleaned bytes awaiting the banner pass, first HEAD_BYTES only
+    head_done = False
+
+    def _emit(cleaned: bytes) -> None:
+        nonlocal head_pending, head_done
+        if head_done:
+            hasher.update(cleaned)
+            return
+        head_pending += cleaned
+        if len(head_pending) >= singlefile.HEAD_BYTES:
+            head = _SINGLEFILE_BANNER_RE.sub(
+                b"", head_pending[: singlefile.HEAD_BYTES], count=1
+            )
+            hasher.update(head)
+            hasher.update(head_pending[singlefile.HEAD_BYTES :])
+            head_pending = b""
+            head_done = True
+
+    carry = b""
+    while chunk := fh.read(chunk_size):
+        buf = _CORPUS_META_RE.sub(b"", carry + chunk)
+        if len(buf) > _STAMP_CARRY:
+            _emit(buf[:-_STAMP_CARRY])
+            carry = buf[-_STAMP_CARRY:]
+        else:
+            carry = buf
+    _emit(carry)
+    if not head_done:  # input shorter than HEAD_BYTES: banner pass over what there is
+        hasher.update(_SINGLEFILE_BANNER_RE.sub(b"", head_pending, count=1))
+    return hasher.hexdigest()
+
+
 def html_stampfree_digest(data: bytes) -> str:
     """Compute the `html-stampfree@1` recipe value (spec §7.9): blake3 of `data` after
     removing ONLY the bytes the corpus's own capture pipeline injected — the three
     `corpus-*` meta tags (wherever they fall) and the SingleFile save banner comment
     (scanned within `singlefile.HEAD_BYTES`, mirroring that module's own bound). Bytes
     the pipeline did not inject are never touched: no reparse, no reserialization, no
-    whitespace normalization beyond the removed spans.
+    whitespace normalization beyond the removed spans. Delegates to the streaming core
+    so bytes-in-hand and file callers can never diverge.
     """
-    cleaned = _CORPUS_META_RE.sub(b"", data)
-    head, rest = cleaned[: singlefile.HEAD_BYTES], cleaned[singlefile.HEAD_BYTES :]
-    head = _SINGLEFILE_BANNER_RE.sub(b"", head, count=1)
-    return _blake3.blake3(head + rest).hexdigest()
+    return _stampfree_from_stream(io.BytesIO(data))
+
+
+def html_stampfree_digest_file(path: Path, *, chunk_size: int = CHUNK) -> str:
+    """`html_stampfree_digest` over a file path, bounded memory — the form
+    `compute_hashes` uses so a multi-gigabyte artifact never loads whole."""
+    with path.open("rb") as fh:
+        return _stampfree_from_stream(fh, chunk_size=chunk_size)
 
 
 def compute_hashes(path: Path, recipes: Iterable[Recipe]) -> list[HashValue]:
@@ -391,6 +452,6 @@ def compute_hashes(path: Path, recipes: Iterable[Recipe]) -> list[HashValue]:
                     )
                 )
     if want_stampfree:
-        digest = html_stampfree_digest(path.read_bytes())
+        digest = html_stampfree_digest_file(path)
         values.append(HashValue(recipe="html-stampfree@1", tag="html-stampfree@1", hex=digest))
     return values

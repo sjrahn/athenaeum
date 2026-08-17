@@ -296,3 +296,48 @@ def test_compute_hashes_html_stampfree(tmp_path):
     assert values[0].recipe == "html-stampfree@1"
     assert values[0].record_resident is False
     assert values[0].hex == hashing.html_stampfree_digest(html_bytes)
+
+
+def test_html_stampfree_streaming_matches_whole_file(tmp_path):
+    """The streaming file form must be byte-equivalent to the in-memory form — chunk
+    boundaries landing INSIDE a stamp included (the carry-tail contract). The fleet's
+    9.68 GB iMessage-export HTML member is why the file form exists at all."""
+    import blake3 as _blake3
+
+    meta = _meta_block("https://example.com/deep", "2026-08-16T01:02:03Z", "lean")
+    banner = _banner("Sun Aug 16 2026 01:02:03 GMT-0600 (Mountain Daylight Time)")
+    filler_a = b"A" * 5000  # pushes past HEAD_BYTES so the head/rest split is exercised
+    filler_b = b"B" * 3000
+    data = (
+        banner
+        + b"<html><head>"
+        + meta
+        + b"</head><body>"
+        + filler_a
+        + meta  # a stamp deep in the body, far past HEAD_BYTES
+        + filler_b
+        + b"</body></html>"
+    )
+    # The in-memory form is the reference (its strip semantics have their own tests
+    # above); what THIS test pins is that chunked streaming can never diverge from it.
+    reference = hashing.html_stampfree_digest(data)
+    assert reference != _blake3.blake3(data).hexdigest()  # the stamps really stripped
+
+    f = tmp_path / "big.html"
+    f.write_bytes(data)
+
+    # Tiny chunk sizes force boundaries through every stamp position.
+    for chunk_size in (7, 64, 1024, 1 << 20):
+        assert hashing.html_stampfree_digest_file(f, chunk_size=chunk_size) == reference
+
+
+def test_html_stampfree_streaming_short_file(tmp_path):
+    """A file shorter than HEAD_BYTES still gets its banner pass (the head_done=False
+    EOF path)."""
+    banner = _banner("Sun Aug 16 2026 01:02:03 GMT-0600 (Mountain Daylight Time)")
+    data = banner + b"<html><body>tiny</body></html>"
+    f = tmp_path / "tiny.html"
+    f.write_bytes(data)
+    assert hashing.html_stampfree_digest_file(f, chunk_size=5) == hashing.html_stampfree_digest(
+        data
+    )
