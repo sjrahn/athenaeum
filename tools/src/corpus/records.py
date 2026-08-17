@@ -191,8 +191,8 @@ def set_record_hashes(post: frontmatter.Post, values: dict[str, str]) -> None:
     then procedure-versioned tags, alphabetical within each class
     (`hashing.parse_tag` classifies each tag) — so an unchanged value set always
     serializes identically, and a diff shows a real content change, never reordering.
-    A single resulting entry is stored as a bare string; two or more as a list (spec
-    §7.6's one-liner-friendly list style, kept flow-style by `dumps()`)."""
+    A single resulting entry is stored as a bare string; two or more as a block-style
+    list, one `- <tag>:<hex>` row per value — the same shape `touch:` uses (§7.6)."""
     merged = record_hashes(post)
     merged.update(values)
 
@@ -301,20 +301,7 @@ def dumps(post: frontmatter.Post) -> str:
         if key in _EDITORIAL_OVERRIDE_KEYS and isinstance(value, str) and value == "":
             continue
         core[key] = value
-    # *(v20)* A list-valued `hash:` is one-liner-friendly (spec §7.6): `_FlowList`
-    # flags it for `_Dumper` so it renders on one line, bracketed, rather than the
-    # block-style sequence every other list field gets.
-    hash_is_list = isinstance(core.get("hash"), list)
-    if hash_is_list:
-        core["hash"] = _FlowList(core["hash"])
     fm_text = _dump_yaml_block(core)
-    if hash_is_list:
-        # PyYAML's emitter quotes a flow scalar containing ANY `:` (even with no
-        # following space, which is the only case the *block*-style emitter cares
-        # about) — a `<tag>:<hex>` value round-trips identically either way (§7.6's
-        # grammar never needs quoting), so this drops the quotes the emitter added
-        # rather than fighting its flow-context scalar analysis.
-        fm_text = _FLOW_HASH_LINE_RE.sub(_unquote_flow_hash_values, fm_text, count=1)
 
     # Build the metadata zone — artifact, origins, classifies, the roster.
     metadata_parts: list[str] = []
@@ -828,39 +815,12 @@ def _split_namespaced(arg: str) -> tuple[str, str, str | None]:
     return parts[0], parts[1], parts[2]
 
 
-class _FlowList(list):
-    """A list that `_Dumper` renders flow-style (`[a, b]`) rather than block-style.
-
-    *(v20)* Marks a list-valued `hash:` field for its one-liner-friendly rendering
-    (spec §7.6) without changing how every OTHER list field in the frontmatter/blocks
-    dumps — those stay block-style for readability, per `_Dumper`'s general rule."""
-
-
 class _Dumper(yaml.SafeDumper):
-    """SafeDumper with block-style sequences for readable lists — except a `_FlowList`,
-    which renders flow-style (v20's `hash:` list, spec §7.6)."""
+    """SafeDumper with block-style sequences for readable lists — every frontmatter
+    list, v20's `hash:` included (§7.6), renders as `- item` rows like `touch:`."""
 
     def represent_sequence(self, tag, sequence, flow_style=None):  # type: ignore[override]
-        if isinstance(sequence, _FlowList):
-            return super().represent_sequence(tag, sequence, flow_style=True)
         return super().represent_sequence(tag, sequence, flow_style=False)
-
-
-# `SafeRepresenter` only registers an exact-type representer for `list`, so a `list`
-# SUBCLASS (`_FlowList`) is otherwise "cannot represent an object" — explicit
-# registration is what makes `represent_sequence`'s isinstance check above ever run.
-_Dumper.add_representer(
-    _FlowList, lambda dumper, data: dumper.represent_sequence("tag:yaml.org,2002:seq", data)
-)
-
-# The rendered `hash: [...]` line — quoted values and all — for `dumps()`'s post-pass
-# that strips the quotes PyYAML's flow-context scalar analysis adds unnecessarily.
-_FLOW_HASH_LINE_RE = re.compile(r"^hash: \[.*\]$", re.MULTILINE)
-_QUOTED_SCALAR_RE = re.compile(r"""['"]([^'"]*)['"]""")
-
-
-def _unquote_flow_hash_values(match: re.Match[str]) -> str:
-    return _QUOTED_SCALAR_RE.sub(r"\1", match.group(0))
 
 
 # ---------- accessors ---------- #

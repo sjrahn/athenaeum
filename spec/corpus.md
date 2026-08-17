@@ -1340,7 +1340,7 @@ Every hash value outside the `id` field — the frontmatter `hash:` field, the m
 
 - Value type: `str` or `list[str]`.
 - Value format: `<tag>:<hex>` — tag as colon-prefix, lowercase hex value following.
-- Lists are one-liner-friendly: `hash: [sha256:<hex>, html-stampfree@1:<hex>]`.
+- A multi-valued `hash:` renders as a block-style list — one `- <tag>:<hex>` row per value — the same shape every other frontmatter list (`touch:`) uses; a single value stays a bare scalar.
 - Parsing: split on the first `:` to obtain `(tag, value)`.
 - *(v20)* The tag grammar carries the §2 classification. A **bare algorithm id** (`sha256`, `md5`, `blake3-64k`) tags a byte-stable value — the algorithm is the whole identity, and holding candidate bytes lets anyone verify against it. A **`<procedure>@<version>`** tag (`html-stampfree@1`, `eml-stripped@2.1` — the `@` versioning the touch-identifier grammar already uses, §4.2.2) tags a procedure-versioned value. The procedure tag deliberately names the canonicalization and NOT the digest algorithm inside it (§7.9): the algorithm is an implementation detail pinned by the recipe's versioned definition, and surfacing it would invite a byte-verification that cannot succeed against a canonicalized value. The version is part of the tag, compared exactly; the same first-`:` split applies.
 

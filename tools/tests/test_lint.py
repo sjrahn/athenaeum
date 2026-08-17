@@ -141,7 +141,7 @@ def test_transport_and_perceptual_format_rules_are_retired(tmp_path):
 
 
 def test_hash_tag_grammar_valid_values_pass(tmp_path):
-    """A bare-algorithm tag, a procedure-versioned tag, and a flow list of both are all
+    """A bare-algorithm tag, a procedure-versioned tag, and a list of both are all
     well-formed `<tag>:<hex>` (spec §7.6) and lint clean."""
     root = _make_corpus(tmp_path)
     post = _clean_post()

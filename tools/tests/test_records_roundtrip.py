@@ -507,9 +507,10 @@ def test_legacy_transport_reads_as_hash_and_reserializes_as_hash(tmp_path):
     assert reloaded.metadata["hash"] == "sha256:" + "c" * 64
 
 
-def test_hash_list_values_roundtrip_flow_style(tmp_path):
-    """A multi-entry `hash:` round-trips as a list and re-serializes flow-style
-    (spec §7.6's one-liner-friendly list convention)."""
+def test_hash_list_values_roundtrip_block_style(tmp_path):
+    """A multi-entry `hash:` round-trips as a list and re-serializes as a block-style
+    list — one unquoted `- <tag>:<hex>` row per value, the same shape `touch:` uses
+    (spec §7.6)."""
     p = tmp_path / "ab" / ("c" * 64 + ".md")
     p.parent.mkdir(parents=True)
     post = frontmatter.Post("")
@@ -519,9 +520,10 @@ def test_hash_list_values_roundtrip_flow_style(tmp_path):
     records.dump(post, p)
     raw = p.read_text("utf-8")
     pre = raw.split("---", 2)[1]
-    # Flow-style: one line, both values inside `[...]`.
-    hash_line = next(line for line in pre.splitlines() if line.startswith("hash:"))
-    assert hash_line == f"hash: [sha256:{'d' * 64}, html-stampfree@1:{'e' * 64}]"
+    lines = pre.splitlines()
+    i = lines.index("hash:")
+    assert lines[i + 1] == f"- sha256:{'d' * 64}"
+    assert lines[i + 2] == f"- html-stampfree@1:{'e' * 64}"
 
     reloaded = records.load(p)
     assert records.record_hashes(reloaded) == {"sha256": "d" * 64, "html-stampfree@1": "e" * 64}
