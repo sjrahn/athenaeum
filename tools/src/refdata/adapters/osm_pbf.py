@@ -96,12 +96,22 @@ def open_archive(mirror_path: Path) -> _Handle:
     `_Handle.connection`, checked lazily per call instead)."""
     assert _osmium is not None, "osm-pbf adapter unavailable — check available() first"
     try:
-        reader = _osmium.io.Reader(str(mirror_path))
+        reader = _reader_header_only(mirror_path)
         reader.header()
         reader.close()
     except (RuntimeError, OSError) as exc:
         raise MirrorCorrupt(f"{mirror_path}: {exc}") from exc
     return _Handle(mirror_path)
+
+
+def _reader_header_only(mirror_path: Path):  # type: ignore[no-untyped-def]
+    """A Reader restricted to `osm_entity_bits.NOTHING` — a default Reader
+    eagerly spins up threaded decompression of the whole file even when only
+    `header()` is wanted (measured: ~38s of CPU on the 6 GB Canada extract vs
+    ~1ms restricted; corrupt/missing files raise the same `RuntimeError`s
+    either way)."""
+    assert _osmium is not None
+    return _osmium.io.Reader(str(mirror_path), _osmium.osm.osm_entity_bits.NOTHING)
 
 
 def index_state(mirror_path: Path) -> str:
@@ -158,7 +168,7 @@ def build_index(
         tmp_path.unlink()
 
     try:
-        header = _osmium.io.Reader(str(mirror_path)).header()
+        header = _reader_header_only(mirror_path).header()
         replication_timestamp = header.get("osmosis_replication_timestamp", "")
     except (RuntimeError, OSError) as exc:
         raise MirrorCorrupt(f"{mirror_path}: {exc}") from exc
@@ -216,6 +226,11 @@ def build_index(
         except RuntimeError as exc:
             raise MirrorCorrupt(f"{mirror_path}: {exc}") from exc
 
+        # Merge the FTS index's write-side segments before first read: ~1,100
+        # batch commits leave hundreds of unmerged b-tree segments, and every
+        # MATCH walks all of them (measured: a two-token query on the Canada
+        # extract ran >30s unmerged, sub-second after 'optimize').
+        conn.execute("INSERT INTO names(names) VALUES ('optimize')")
         conn.executemany(
             "INSERT INTO meta(key, value) VALUES (?,?)",
             [
