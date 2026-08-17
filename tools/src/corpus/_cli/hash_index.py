@@ -183,8 +183,20 @@ def _backfill(args: argparse.Namespace) -> int:
                     print(f"  skip {rid[:12]}: unresolvable ({exc})")
                     skipped_unresolvable += 1
                 continue
+            except Exception as exc:
+                # container is that record's data problem (health's ground, e.g. a stale
+                # el= path); one record must never kill a fleet pass. Reported, counted,
+                # never silent (§12.9.1).
+                print(f"  skip {rid[:12]}: unresolvable ({type(exc).__name__}: {exc})")
+                skipped_unresolvable += 1
+                continue
 
-            values = hashing.compute_hashes(artifact_path, need)
+            try:
+                values = hashing.compute_hashes(artifact_path, need)
+            except Exception as exc:
+                print(f"  skip {rid[:12]}: compute failed ({type(exc).__name__}: {exc})")
+                skipped_unresolvable += 1
+                continue
             rows = [
                 hashindex.HashRow(
                     record_id=rid, recipe=v.recipe, algo=v.tag, value=v.hex, param=v.param

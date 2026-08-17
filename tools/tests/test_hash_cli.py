@@ -243,3 +243,24 @@ def test_backfill_missing_artifact_skip_is_reported_not_fatal(tmp_path, capsys):
     with hashindex.open_index(root) as conn:
         rows = hashindex.rows_for(conn, A)
     assert rows == []  # nothing computed — no bytes were ever found
+
+
+def test_backfill_survives_resolution_crash(tmp_path, monkeypatch, capsys):
+    """A record whose byte-resolution raises something OTHER than ArtifactMissing (a
+    stale el= member address, a corrupt container) is a reported skip, never a crash —
+    one bad record must not kill a fleet pass (§12.9.1's never-silent contract)."""
+    from corpus import containment
+
+    root = _corpus(tmp_path)
+    rid = "c" * 64
+    _write_record(root, rid, mime="text/html")  # no artifact on disk anywhere
+
+    def _boom(*a, **k):
+        raise ValueError("el=1.1.1: component walks to child 1, but <img> has 0 children")
+
+    monkeypatch.setattr(containment, "ensure_local_bytes", _boom)
+
+    rc = dispatch(["hash-index", "backfill", "--corpus-root", str(root)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "unresolvable" in out and "ValueError" in out
