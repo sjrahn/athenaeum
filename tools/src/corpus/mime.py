@@ -438,6 +438,12 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
         "application/epub+zip": "epub",
         "application/java-archive": "jar",
+        # Reference-dataset mirror formats (§7.1 ref_adapter): without canonical entries
+        # these fall through to the "bin" fallback, and every corpus-root-free
+        # `extension_for(media_type)` caller (move, health) would derive a different
+        # extension than ingest's source-suffix fallback wrote to disk.
+        "application/x-openzim": "zim",
+        "application/x-osm+pbf": "pbf",
         # Promoted media-container tracks (spec §12.20.1) — the pinned elementary forms.
         "video/h264": "h264",
         "video/hevc": "h265",

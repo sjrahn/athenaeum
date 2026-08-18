@@ -7,11 +7,16 @@ Subcommands:
   date (§12.1.1's attest pass): unchanged files are left alone, new/changed files are
   blake3-hashed, vanished files' rows are removed. Prints running progress every 500
   files to stderr, then the final counts.
-- `list` — one row per configured location: name, kind, path, indexed row count, stale
-  row count.
+- `list` — one row per configured location: attached locations show name, kind, path,
+  indexed row count, stale row count; store locations show name, kind, path, and their
+  placement role (§12.1.1's `ingest_types` / `ingest_default`).
 - `promote NAME RELPATH` (or `--all-matching GLOB`) — mint a corpus record for one (or a
   batch of) already-attested location file(s), bytes staying in place (§12.1.1: "promotion
   mints records without moving bytes"). See `_promote_one` for the full contract.
+- `move RECORD DEST` — relocate a record's **standalone copy** between store locations,
+  the co-located `artifacts/` tree counting as one (`DEST` is a store location name, or
+  the literal `corpus`). Copy-verify-then-remove per §12.1.1's "Move semantics": see
+  `_move` for the full contract.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import sys
 from pathlib import Path
 
 from corpus import config as config_mod
-from corpus import locationindex
+from corpus import locationindex, paths, placement
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
@@ -70,6 +75,18 @@ def configure(parser: argparse.ArgumentParser) -> None:
     )
     add_corpus_root_arg(p_promote)
 
+    p_move = sub.add_parser(
+        "move",
+        help="Relocate a record's standalone copy between store locations (or `corpus`).",
+    )
+    p_move.add_argument("record", help="Record id, hex prefix, or path to a record .md file.")
+    p_move.add_argument(
+        "dest",
+        help="Destination: a store location name (corpus.toml [[corpus.location]] "
+        "name=), or the literal `corpus` for the co-located artifacts/ tree.",
+    )
+    add_corpus_root_arg(p_move)
+
 
 def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
@@ -79,6 +96,8 @@ def run(args: argparse.Namespace) -> int:
         return _list(corpus_root)
     if args.action == "promote":
         return _promote(corpus_root, args.name, args.relpath, args.all_matching, args.source_urls)
+    if args.action == "move":
+        return _move(corpus_root, args.record, args.dest)
     print(f"unknown action: {args.action}", file=sys.stderr)
     return 2
 
@@ -127,10 +146,24 @@ def _list(corpus_root) -> int:
     for loc_name, _relpath, _hash in locationindex.stale_rows(corpus_root):
         stale_by_location[loc_name] = stale_by_location.get(loc_name, 0) + 1
     for loc in cfg.locations:
+        if loc.kind == "store":
+            print(f"{loc.name}  kind=store  path={loc.path}{_store_role(loc)}")
+            continue
         rows = locationindex.row_count(corpus_root, loc.name)
         stale = stale_by_location.get(loc.name, 0)
         print(f"{loc.name}  kind={loc.kind}  path={loc.path}  rows={rows}  stale={stale}")
     return 0
+
+
+def _store_role(loc: config_mod.LocationConfig) -> str:
+    """The placement-role suffix for a `list` row (spec §12.1.1, v22): the location's
+    claimed format list, `ingest: default`, or nothing at all when it holds neither —
+    a store location resolved only, never a write destination (`placement.py`)."""
+    if loc.ingest_types:
+        return f"  ingest: {', '.join(loc.ingest_types)}"
+    if loc.ingest_default:
+        return "  ingest: default"
+    return ""
 
 
 # ---------- promote ---------- #
@@ -320,3 +353,121 @@ def _fold_existing(corpus_root: Path, record_file: Path, uris_to_add: list[str])
     records.dump(post, record_file)
     outcome = "aliased" if added_any else "already-promoted"
     return f"{outcome}: {record_file.relative_to(corpus_root)}"
+
+
+# ---------- move ---------- #
+
+
+def _move(corpus_root: Path, record_arg: str, dest_name: str) -> int:
+    """`corpus location move RECORD DEST` (spec §12.1.1's "Move semantics" paragraph,
+    v22): relocate a record's **standalone copy** — the co-located `artifacts/` tree
+    counting as one location alongside the configured store locations — between store
+    locations (or back to `corpus`), copy-verify-then-remove.
+
+    Route order for the source: co-located tree first, then store locations in
+    declaration order (`placement.find_in_stores`'s own order). Attached-location
+    files and containment-only members have no standalone copy and refuse outright —
+    attached files are operator-managed (never moved by this command); a
+    containment-only member's standalone copy would have to be materialized first,
+    which is `corpus replicate`'s job, not `move`'s.
+
+    The destination is verified content-addressed: bytes stream to a `.part` temp name
+    and the full blake3 is checked against the record id BEFORE the rename unveils the
+    final name, so the id is resolvable through the route being replaced at every
+    instant up to that point. A destination that already holds the bytes is an
+    idempotent success (verify, then drop the source); a destination holding DIFFERENT
+    bytes is refused as corruption, touching nothing.
+    """
+    from corpus import hashing, mime, records
+
+    record_id, record_file = paths.resolve_record(corpus_root, record_arg)
+    post = records.load(record_file)
+    media_type = records.media_type_for(post)
+    extension = mime.extension_for(media_type)
+
+    src, src_display = _find_standalone(corpus_root, record_id, extension)
+    if src is None:
+        if locationindex.route_for(corpus_root, record_id) is not None:
+            sys.exit(
+                f"corpus location move: {record_id} has no standalone copy — it "
+                f"resolves only through an attached location, and attached-location "
+                f"files never move (operator-managed, spec §12.1.1)."
+            )
+        sys.exit(
+            f"corpus location move: {record_id} has no standalone copy — it is a "
+            f"containment-only member; materializing one is `corpus replicate`'s "
+            f"job, not `move`'s (spec §12.1.1)."
+        )
+
+    dest, dest_display = _resolve_move_dest(corpus_root, dest_name, record_id, extension)
+
+    if src.resolve() == dest.resolve():
+        print(f"{record_id}.{extension} already at {dest_display}: no-op")
+        return 0
+
+    if dest.is_file():
+        dest_hash = hashing.hash_file(dest, also=())["blake3"]
+        if dest_hash == record_id:
+            src.unlink()
+            print(
+                f"moved {record_id}.{extension}: {src_display} -> {dest_display} "
+                f"(destination already held identical bytes; source removed)"
+            )
+            return 0
+        sys.exit(
+            f"corpus location move: destination {dest} already holds DIFFERENT "
+            f"bytes (hash {dest_hash}, expected {record_id}) — refusing, nothing "
+            f"touched (source left at {src})"
+        )
+
+    try:
+        placement.copy_verified(src, dest, record_id)
+    except placement.MoveVerificationError as e:
+        sys.exit(
+            f"corpus location move: copy failed to verify (expected {e.expected}, "
+            f"got {e.actual}) — temp removed, source untouched at {src}"
+        )
+    src.unlink()
+    print(f"moved {record_id}.{extension}: {src_display} -> {dest_display}")
+    return 0
+
+
+def _find_standalone(
+    corpus_root: Path, record_id: str, extension: str
+) -> tuple[Path | None, str | None]:
+    """The record's standalone copy and a display name for where it lives — co-located
+    `artifacts/` tree first (`"corpus"`), then store locations in declaration order
+    (spec §12.1.1). `(None, None)` when no standalone copy exists at all."""
+    co_located = paths.artifact_path(corpus_root, record_id, extension)
+    if co_located.is_file():
+        return co_located, "corpus"
+    for loc in placement.store_locations(corpus_root):
+        candidate = placement.location_artifact_path(loc, record_id, extension)
+        if candidate.is_file():
+            return candidate, loc.name
+    return None, None
+
+
+def _resolve_move_dest(
+    corpus_root: Path, dest_name: str, record_id: str, extension: str
+) -> tuple[Path, str]:
+    """DEST's content-addressed path and display name — `paths.artifact_path` for the
+    literal `corpus`, else a configured `kind = "store"` location's path (spec
+    §12.1.1). Exits with an actionable message for an unknown name or an attached
+    location (move only ever targets `corpus` or a store)."""
+    if dest_name == "corpus":
+        return paths.artifact_path(corpus_root, record_id, extension), "corpus"
+    loc = _resolve_location(corpus_root, dest_name)
+    if loc is None:
+        cfg = config_mod.load_config(corpus_root)
+        configured = ", ".join(sorted(loc2.name for loc2 in cfg.locations)) or "(none configured)"
+        sys.exit(
+            f"corpus location move: no location named {dest_name!r}; configured: "
+            f"{configured} (or use `corpus` for the co-located tree)"
+        )
+    if loc.kind != "store":
+        sys.exit(
+            f"corpus location move: {dest_name!r} is a {loc.kind!r} location, not a "
+            f"store — move only targets `corpus` or a `kind = \"store\"` location."
+        )
+    return placement.location_artifact_path(loc, record_id, extension), dest_name

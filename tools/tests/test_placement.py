@@ -369,3 +369,13 @@ path = "{bulk}"
     )
     resolved = materialize(ref, "t", corpora_roots=(root,))
     assert resolved == dest
+
+
+def test_mirror_format_extensions_are_canonical():
+    # Regression: without canonical entries these derived "bin" via the fallback,
+    # while ingest's source-suffix fallback wrote .pbf/.zim to disk — so every
+    # corpus-root-free extension_for caller (move, health) missed the artifact.
+    from corpus import mime
+
+    assert mime.extension_for("application/x-openzim") == "zim"
+    assert mime.extension_for("application/x-osm+pbf") == "pbf"
