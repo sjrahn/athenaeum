@@ -19,6 +19,35 @@ export const MANIFEST_FILENAME = "manifest.sqlite";
 export type ScanMode = "cold" | "incremental" | "scrub" | "compact" | "bench";
 
 /**
+ * Default basename deny-list for filesystem-metadata junk — a CURATED POSITIVE list,
+ * deliberately NOT "skip every hidden dotfile" (many dotfiles, e.g. `.config`, are wanted
+ * content). Motivating incident: macOS AppleDouble `._*` sidecars indexed off an unRAID share
+ * are permanently unreachable over SMB (Samba vetoes `._*`), producing rows that can never
+ * resolve. A trailing `*` means "prefix match" (see `matchesIgnorePattern` in walk.ts); every
+ * other entry is an exact basename match. A matched file is skipped; a matched directory is
+ * pruned (its subtree is never entered). `._*` deliberately also catches `.__*` lock-style
+ * names, matching Samba's own veto behavior. This is the scanner's half of a two-language
+ * shared list — `tools/src/corpus/locationindex.py`'s `_DEFAULT_IGNORE_PATTERNS` is the
+ * sibling copy and must be kept in sync by hand; there's no single build step spanning both
+ * languages.
+ */
+export const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
+  ".DS_Store",
+  "._*",
+  ".AppleDouble",
+  ".AppleDesktop",
+  ".TemporaryItems",
+  ".Trashes",
+  ".Spotlight-V100",
+  ".fseventsd",
+  ".DocumentRevisions-V100",
+  "Thumbs.db",
+  "desktop.ini",
+  "@eaDir",
+  ".@__thumb",
+];
+
+/**
  * Content-identity state, one row per live `(dev, ino)`. Mirrors the `identities` table.
  * The four filesystem-identity numerics are native SQLite INTEGERs (int64) — mtime_ns
  * (~1.7e18) fits comfortably under 2^63, so schema v2 drops the decimal-string encoding
@@ -52,6 +81,7 @@ export interface ScanSummary {
   seeded: number; // identity rows adopted from another manifest this run (nested-child auto-seed or --seed-from)
   deleted: number; // path rows removed
   skipped: number; // files logged-and-skipped
+  ignored: number; // files and pruned dirs skipped by the ignore-pattern deny-list this walk
   scrubbed: number; // files re-hashed by the scrub sampler
   corrupt: number; // scrub mismatches at a stable stat tuple
   bytesHashed: string; // decimal-string bigint — this is a JSON blob field (summary_json), not a

@@ -67,6 +67,43 @@ CREATE TABLE IF NOT EXISTS manifest_imports (
 #: writer's own versioned cross-language contract, deliberately outside this spec.
 MANIFEST_SCHEMA_VERSION = 2
 
+#: Filesystem-metadata junk excluded from the walking attest — a CURATED POSITIVE
+#: deny-list, deliberately NOT "skip every hidden dotfile": an attached tree may carry
+#: wanted dotfile content (`.config`, `.git`, ...) which the walking attest now indexes
+#: like any other file. A trailing `*` is a prefix match (see `_is_ignored_name`); every
+#: other entry is an exact basename match. A matched directory is pruned — its subtree is
+#: never walked. This is the Python half of a two-language shared list: the residence
+#: scanner's `scanner/src/schema.ts` DEFAULT_IGNORE_PATTERNS is the sibling copy and must
+#: be kept in sync by hand — there's no single build step spanning both languages.
+_DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
+    ".DS_Store",
+    "._*",
+    ".AppleDouble",
+    ".AppleDesktop",
+    ".TemporaryItems",
+    ".Trashes",
+    ".Spotlight-V100",
+    ".fseventsd",
+    ".DocumentRevisions-V100",
+    "Thumbs.db",
+    "desktop.ini",
+    "@eaDir",
+    ".@__thumb",
+)
+
+
+def _is_ignored_name(name: str, patterns: tuple[str, ...] = _DEFAULT_IGNORE_PATTERNS) -> bool:
+    """Whether basename `name` matches any pattern in `patterns` — a trailing `*` is a
+    prefix match, everything else is an exact match. Mirrors the scanner's
+    `matchesIgnorePattern`/`isIgnoredName` in `scanner/src/walk.ts`."""
+    for pattern in patterns:
+        if pattern.endswith("*"):
+            if name.startswith(pattern[:-1]):
+                return True
+        elif name == pattern:
+            return True
+    return False
+
 
 def db_path(corpus_root: Path) -> Path:
     """`<corpus_root>/cache/locations.db` (spec §12.9.2). `cache/` is created if
@@ -124,16 +161,20 @@ def open_index(corpus_root: Path) -> Iterator[sqlite3.Connection]:
 
 
 def _iter_files(root: Path) -> Iterator[Path]:
-    """Every regular file under `root`, skipping hidden dotfiles/dot-directories (an
-    attached tree is operator-managed and may carry its own `.git`, `.DS_Store`, etc.
-    — none of it is corpus content) and our own sidecar debris."""
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        yield p
+    """Every regular file under `root`, skipping the filesystem-metadata junk deny-list
+    (`_DEFAULT_IGNORE_PATTERNS`, above — a matched directory is pruned, its subtree never
+    walked) plus `.athenaeum` (the residence scanner's manifest dir — infrastructure,
+    never content, always pruned unconditionally). This is NOT a blanket hidden-dotfile
+    skip: an attached tree's other dotfiles (`.config`, `.git`, ...) are ordinary content
+    and are indexed like anything else."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != ".athenaeum" and not _is_ignored_name(d)]
+        for name in filenames:
+            if _is_ignored_name(name):
+                continue
+            p = Path(dirpath) / name
+            if p.is_file():
+                yield p
 
 
 def attest_location(

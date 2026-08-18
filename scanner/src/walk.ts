@@ -8,7 +8,7 @@
 
 import { readdir, lstat, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { MANIFEST_DIRNAME, MANIFEST_FILENAME } from "./schema.ts";
+import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME } from "./schema.ts";
 
 export interface FileEntry {
   kind: "file";
@@ -42,9 +42,33 @@ export interface NestedManifestEntry {
   relpath: string;
 }
 
-export type WalkEntry = FileEntry | SkipEntry | NestedManifestEntry;
+/** A basename matched the ignore-pattern deny-list (see schema.ts's DEFAULT_IGNORE_PATTERNS):
+ * a file was skipped, or a directory was pruned (its subtree never entered). Never marked
+ * seen by the caller — so a previously-indexed junk row reconciles away as a deletion on the
+ * next scan, healing rows that predate the deny-list without any special-case cleanup. */
+export interface IgnoredEntry {
+  kind: "ignored";
+  relpath: string;
+  abspath: string;
+  isDir: boolean;
+}
+
+export type WalkEntry = FileEntry | SkipEntry | NestedManifestEntry | IgnoredEntry;
 
 const toPosix = (p: string): string => (sep === "/" ? p : p.split(sep).join("/"));
+
+/** Matches a basename against one ignore pattern: a trailing `*` is a prefix match against
+ * everything before it, anything else is an exact match. The default list only needs these
+ * two forms, so this stays a few lines rather than pulling in a glob dependency. */
+export function matchesIgnorePattern(name: string, pattern: string): boolean {
+  if (pattern.endsWith("*")) return name.startsWith(pattern.slice(0, -1));
+  return name === pattern;
+}
+
+/** Whether `name` matches any pattern in the (already-combined default+custom) list. */
+export function isIgnoredName(name: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => matchesIgnorePattern(name, p));
+}
 
 function errCode(e: unknown): string {
   const c = (e as { code?: string })?.code;
@@ -67,9 +91,16 @@ async function fileExists(p: string): Promise<boolean> {
  * `rootAbs`'s own manifest dir at `excludeAbs` — that's self, not a nested child). `excludeAbs`
  * (this run's own manifest dir, when it lives under root under a non-`.athenaeum` name) and
  * its subtree are omitted from content; every `.athenaeum`-named directory is omitted from
- * content unconditionally, regardless of `excludeAbs`.
+ * content unconditionally, regardless of `excludeAbs`. `ignorePatterns` (default
+ * `DEFAULT_IGNORE_PATTERNS`; pass `[]` for none) is the basename deny-list: a matching file
+ * yields an `IgnoredEntry` instead of a `FileEntry`, a matching directory yields one
+ * `IgnoredEntry` and is never pushed onto the walk stack (subtree pruned).
  */
-export async function* walkTree(rootAbs: string, excludeAbs: string | null): AsyncGenerator<WalkEntry> {
+export async function* walkTree(
+  rootAbs: string,
+  excludeAbs: string | null,
+  ignorePatterns: readonly string[] = DEFAULT_IGNORE_PATTERNS,
+): AsyncGenerator<WalkEntry> {
   const stack: string[] = [rootAbs];
 
   while (stack.length > 0) {
@@ -107,7 +138,15 @@ export async function* walkTree(rootAbs: string, excludeAbs: string | null): Asy
 
       if (st.isSymbolicLink()) continue; // never follow; not a regular file
       if (st.isDirectory()) {
+        if (isIgnoredName(name, ignorePatterns)) {
+          yield { kind: "ignored", relpath: toPosix(relative(rootAbs, abs)), abspath: abs, isDir: true };
+          continue; // pruned — never pushed onto the stack, subtree never entered
+        }
         stack.push(abs);
+        continue;
+      }
+      if (isIgnoredName(name, ignorePatterns)) {
+        yield { kind: "ignored", relpath: toPosix(relative(rootAbs, abs)), abspath: abs, isDir: false };
         continue;
       }
       if (!st.isFile()) {

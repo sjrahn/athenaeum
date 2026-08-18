@@ -8,7 +8,7 @@ import { parseArgs } from "node:util";
 import { resolve, join, sep } from "node:path";
 import { stat, access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { MANIFEST_DIRNAME, MANIFEST_FILENAME, SCANNER_VERSION, SCHEMA_VERSION } from "./schema.ts";
+import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME, SCANNER_VERSION, SCHEMA_VERSION } from "./schema.ts";
 import { blake3Factory } from "./hasher.ts";
 import { Logger, type LogLevel } from "./log.ts";
 import { scan, compact, formatSummary, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD } from "./scanner.ts";
@@ -36,6 +36,11 @@ OPTIONS
                          if none is found or it fails verification)
   --native-threshold <bytes>  files at/above this size use native b3sum instead of in-process
                          WASM, when a b3sum is available (default ${DEFAULT_NATIVE_THRESHOLD})
+  --ignore <pattern>     extra basename to skip (repeatable); trailing "*" is a prefix match,
+                         e.g. "foo*"; a default deny-list already covers filesystem-metadata
+                         junk, matched dirs are pruned (never entered):
+                         ${DEFAULT_IGNORE_PATTERNS.join(" ")}
+  --no-default-ignores   drop the built-in deny-list above; --ignore patterns still apply
   --bench                benchmark only
   --compact              compact only
   --json                 emit the run summary / bench result as JSON on stdout
@@ -122,6 +127,8 @@ async function main(): Promise<number> {
         "seed-from": { type: "string", multiple: true },
         b3sum: { type: "string" },
         "native-threshold": { type: "string" },
+        ignore: { type: "string", multiple: true },
+        "no-default-ignores": { type: "boolean", default: false },
         json: { type: "boolean", default: false },
         quiet: { type: "boolean", default: false },
         verbose: { type: "boolean", default: false },
@@ -208,6 +215,8 @@ async function main(): Promise<number> {
     seedFrom,
     b3sumPath,
     nativeThresholdBytes,
+    ignorePatterns: values.ignore,
+    noDefaultIgnores: values["no-default-ignores"],
   });
 
   if (values.json) process.stdout.write(JSON.stringify(summary) + "\n");

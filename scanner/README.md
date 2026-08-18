@@ -75,6 +75,10 @@ ath-scan <root> --compact           drop orphaned identities, VACUUM, republish
                          beside this executable, then on PATH; WASM-only if none verifies)
   --native-threshold <bytes>  files at/above this size use native b3sum instead of WASM,
                          when one is available (default 1048576, i.e. 1 MiB)
+  --ignore <pattern>     extra basename to skip (repeatable); trailing "*" is a prefix match;
+                         layers on top of the built-in junk deny-list — see "Ignoring
+                         filesystem-metadata junk" below
+  --no-default-ignores   drop the built-in deny-list; --ignore patterns still apply
   --json                 emit the run summary / bench result as JSON on stdout
   --quiet | --verbose    log level
   --version | --help
@@ -98,6 +102,7 @@ scan summary — generation 7 (incremental)
   seeded        0
   deleted       1
   skipped       0
+  ignored       39
   scrubbed      16   corrupt 0
   bytes hashed  48.20 GiB
   elapsed       0:03:12
@@ -111,7 +116,36 @@ path (renames and new hardlinks — zero re-hash). A rename shows as one `moved`
 counts identity rows adopted from another manifest this run — a nested child root's manifest
 (auto-detected) or an explicit `--seed-from` source — see "Manifest seeding" below. `hashed
 native` is the subset of `hashed` that went through native b3sum rather than WASM — see
-"Native b3sum hashing" below.
+"Native b3sum hashing" below. `ignored` counts files and pruned directories skipped by the
+junk deny-list this walk — see "Ignoring filesystem-metadata junk" below.
+
+## Ignoring filesystem-metadata junk
+
+The walk skips a small, **curated positive list** of filesystem-metadata basenames — it does
+**not** blanket-skip hidden dotfiles, since many dotfiles (`.config`, `.gitignore`, ...) are
+wanted content, not junk. Motivating incident: an unRAID share accumulated 37 macOS
+AppleDouble `._*` sidecar files and 2 `.__*`-style lock files; Samba vetoes `._*` over SMB, so
+once indexed those rows are permanently unreachable ("stale") from any SMB-mounted reader.
+
+The default deny-list (basename match; a matched directory is **pruned** — its subtree is
+never entered):
+
+```
+.DS_Store   ._*   .AppleDouble   .AppleDesktop   .TemporaryItems   .Trashes
+.Spotlight-V100   .fseventsd   .DocumentRevisions-V100   Thumbs.db   desktop.ini
+@eaDir   .@__thumb
+```
+
+`._*` deliberately also catches `.__*`-style lock names, matching Samba's own veto behavior.
+A pattern ending in `*` is a prefix match; every other entry is an exact basename match.
+
+- `--ignore <pattern>` (repeatable) adds more basenames/prefixes on top of the defaults.
+- `--no-default-ignores` drops the built-in list entirely; any `--ignore` patterns given still
+  apply on top of nothing.
+
+A file or directory matched by the deny-list is **never marked seen** for this walk — so a
+junk row indexed by an earlier run (before the list existed, or before a `--ignore` addition)
+reconciles away as an ordinary deletion on the next scan, with no special-case cleanup.
 
 ## Manifest seeding: subdir scanned first, root scanned later
 

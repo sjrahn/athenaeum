@@ -133,7 +133,9 @@ to the last committed batch are still valid, it simply never finished, and it **
 forever** (the next run opens a *new* generation number rather than resuming the same one —
 this NULL is the crash marker). `summary_json` is the `ScanSummary` JSON, set at close:
 `{ mode, generation, filesSeen, hashed, hashedNative, moved, migrated, seeded, deleted,
-skipped, scrubbed, corrupt, bytesHashed (decimal string), elapsedMs }`. `seeded` counts
+skipped, ignored, scrubbed, corrupt, bytesHashed (decimal string), elapsedMs }`. `ignored`
+counts files and pruned directories skipped by the basename junk deny-list this walk — see
+README.md's "Ignoring filesystem-metadata junk" section. `seeded` counts
 identity rows adopted from another manifest this run (a nested child root's manifest,
 auto-detected mid-walk, or an explicit `--seed-from` source) — see the "Manifest seeding"
 section of README.md. `hashedNative` is the subset of `hashed` that went through the native
@@ -217,6 +219,12 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
+  an `ignored` field: files and pruned directories skipped by the scanner's basename
+  junk deny-list (`.DS_Store`, `._*` AppleDouble sidecars, `@eaDir`, etc. — see README.md's
+  "Ignoring filesystem-metadata junk"). Same compatibility note as the other informational
+  additions below — `summary_json` is a free-form JSON blob, not a SQL column, so this doesn't
+  change `SCHEMA_VERSION` (still `2`), no table changes.
 - **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
   a `hashedNative` field: the subset of `hashed` that went through a native b3sum binary
   (spawned for files at/above `--native-threshold`) instead of the in-process WASM hasher.

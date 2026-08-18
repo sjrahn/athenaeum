@@ -8,7 +8,7 @@ import { open, stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { walkTree, type FileEntry } from "./walk.ts";
 import { Manifest } from "./manifest.ts";
-import { identityKey, type IdentityState, type ScanMode, type ScanSummary } from "./schema.ts";
+import { DEFAULT_IGNORE_PATTERNS, identityKey, type IdentityState, type ScanMode, type ScanSummary } from "./schema.ts";
 import { discoverNativeHasher, type HasherFactory, type Hasher, type NativeHasher } from "./hasher.ts";
 import { Logger, humanBytes, humanCount, humanDuration, humanRate } from "./log.ts";
 
@@ -39,6 +39,11 @@ export interface ScanOptions {
   /** Explicit manifest.sqlite paths to seed identities/paths from before the walk starts
    * (repeatable). Ignored (not even validated) when `full` is set — full means trust nothing. */
   seedFrom?: string[];
+  /** Extra basename patterns (repeatable `--ignore`) appended to the ignore deny-list — see
+   * schema.ts's DEFAULT_IGNORE_PATTERNS for the matching rules. */
+  ignorePatterns?: string[];
+  /** Drop the built-in DEFAULT_IGNORE_PATTERNS; `ignorePatterns` above still applies on top. */
+  noDefaultIgnores?: boolean;
   /** Explicit b3sum binary path (--b3sum). Unset falls through to auto-discovery (a binary
    * beside the running executable, then PATH). */
   b3sumPath?: string;
@@ -125,6 +130,7 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
     seeded: 0,
     deleted: 0,
     skipped: 0,
+    ignored: 0,
     scrubbed: 0,
     corrupt: 0,
     bytesHashed: "0",
@@ -169,6 +175,13 @@ async function runScanBody(
   const { root, log, factory } = opts;
   const started = performance.now();
 
+  // Custom --ignore patterns always apply, layered on top of the built-in defaults unless
+  // --no-default-ignores dropped them.
+  const ignorePatterns = [
+    ...(opts.noDefaultIgnores ? [] : DEFAULT_IGNORE_PATTERNS),
+    ...(opts.ignorePatterns ?? []),
+  ];
+
   // ── phase 1: walk + classify ──────────────────────────────────────────────────
   const toHash: FileEntry[] = [];
   let bytesToHash = 0n;
@@ -176,11 +189,19 @@ async function runScanBody(
   let walkCount = 0;
 
   mf.beginWalk();
-  for await (const entry of walkTree(root, excludeAbs)) {
+  for await (const entry of walkTree(root, excludeAbs, ignorePatterns)) {
     if (entry.kind === "skip") {
       summary.skipped++;
       mf.putSkip(entry.relpath, entry.reason, gen);
       log.debug(`skip ${entry.relpath} (${entry.reason})`);
+      continue;
+    }
+    if (entry.kind === "ignored") {
+      // Never marked seen: a previously-indexed junk row (predating the deny-list, or newly
+      // matched by a --ignore addition) reconciles away as a deletion via the normal
+      // "not seen this walk" path — no special-case cleanup needed.
+      summary.ignored++;
+      log.debug(`ignored ${entry.relpath} (${entry.isDir ? "dir pruned" : "file"})`);
       continue;
     }
     if (entry.kind === "nested-manifest") {
@@ -244,7 +265,8 @@ async function runScanBody(
   log.info(
     `walk done: ${humanCount(summary.filesSeen)} files seen, ${humanCount(toHash.length)} to hash ` +
       `(${humanBytes(bytesToHash)}), ${humanCount(summary.moved)} moved, ${humanCount(summary.migrated)} migrated, ` +
-      `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped`,
+      `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped, ` +
+      `${humanCount(summary.ignored)} ignored`,
   );
 
   // ── phase 2: hash pool(s) ─────────────────────────────────────────────────────────
@@ -427,6 +449,7 @@ export async function compact(root: string, manifestDir: string, log: Logger): P
     seeded: 0,
     deleted: res.orphansDropped,
     skipped: 0,
+    ignored: 0,
     scrubbed: 0,
     corrupt: 0,
     bytesHashed: "0",
@@ -451,6 +474,7 @@ export function formatSummary(s: ScanSummary, root: string): string {
     `  seeded        ${humanCount(s.seeded)}`,
     `  deleted       ${humanCount(s.deleted)}`,
     `  skipped       ${humanCount(s.skipped)}`,
+    `  ignored       ${humanCount(s.ignored)}`,
     `  scrubbed      ${humanCount(s.scrubbed)}   corrupt ${humanCount(s.corrupt)}`,
     `  bytes hashed  ${humanBytes(BigInt(s.bytesHashed))}`,
     `  elapsed       ${humanDuration(s.elapsedMs)}`,

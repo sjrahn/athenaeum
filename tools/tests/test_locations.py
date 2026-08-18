@@ -283,18 +283,44 @@ def test_attest_removes_deleted_file_row(tmp_path):
     assert rows == []
 
 
-def test_attest_skips_hidden_files(tmp_path):
+def test_attest_indexes_wanted_dotfiles(tmp_path):
+    """The walking attest no longer blanket-skips hidden files (owner ruling): only the
+    curated junk deny-list is excluded. A plain dotfile or a `.git` directory's contents
+    are ordinary attached content and get indexed like anything else."""
     root = _corpus(tmp_path)
     tree = tmp_path / "tree"
     tree.mkdir()
     (tree / "a.txt").write_bytes(b"visible")
-    (tree / ".hidden").write_bytes(b"should be skipped")
+    (tree / ".hidden").write_bytes(b"a wanted dotfile, now indexed")
     (tree / ".git").mkdir()
-    (tree / ".git" / "config").write_bytes(b"also skipped")
+    (tree / ".git" / "config").write_bytes(b"also indexed now")
+    loc = _loc("t", tree)
+
+    counts = locationindex.attest_location(root, loc)
+    assert counts["files"] == 3
+
+
+def test_attest_skips_junk_deny_list_and_prunes_matched_dirs(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "a.txt").write_bytes(b"keep")
+    (tree / "._junk").write_bytes(b"AppleDouble sidecar")
+    (tree / ".DS_Store").write_bytes(b"finder junk")
+    (tree / "@eaDir").mkdir()
+    (tree / "@eaDir" / "thumb.jpg").write_bytes(b"synology junk under a pruned subtree")
+    (tree / ".athenaeum").mkdir()
+    (tree / ".athenaeum" / "manifest.sqlite").write_bytes(b"scanner infra, always pruned")
     loc = _loc("t", tree)
 
     counts = locationindex.attest_location(root, loc)
     assert counts["files"] == 1
+
+    with locationindex.open_index(root) as conn:
+        rows = {r[0] for r in conn.execute(
+            "SELECT relpath FROM locations WHERE location = 't'"
+        ).fetchall()}
+    assert rows == {"a.txt"}
 
 
 def test_attest_progress_callback_invoked(tmp_path):
