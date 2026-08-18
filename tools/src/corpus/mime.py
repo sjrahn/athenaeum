@@ -101,6 +101,15 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     # vCard address book: every file opens with the `BEGIN:VCARD` delimiter. Confirms the type
     # for an extension-less drop; a BOM-prefixed file falls through to the `.vcf` extension.
     (0, b"BEGIN:VCARD", "text/vcard"),
+    # ZIM archive (Kiwix reference-dataset mirrors, ledger.md §6.5): the openZIM magic
+    # number 0x044D495A little-endian — "ZIM\x04" at offset 0. Verified against the
+    # deployment's real Kiwix downloads.
+    (0, b"ZIM\x04", "application/x-openzim"),
+    # OSM PBF extract (Geofabrik mirrors): no formal magic, but the leading BlobHeader is
+    # in practice a 4-byte big-endian length followed by protobuf field 1 (`\x0a`), length
+    # 9, "OSMHeader" — stable across osmium-produced files, verified against the real
+    # Canada extract. The `.pbf` extension alone would also resolve via mimetypes below.
+    (4, b"\x0a\x09OSMHeader", "application/x-osm+pbf"),
 )
 
 
