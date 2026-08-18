@@ -270,6 +270,11 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
+  `directReads` and `directFallbacks` fields: counts from `--byte-path unraid` (see README.md's
+  "unRAID direct byte path"), the number of files hashed via a resolved backing disk path vs.
+  falling back to the ordinary share path. Additive, `summary_json` only — no `SCHEMA_VERSION`
+  change, no table changes; both fields are simply `0` on any scan that didn't use the flag.
 - **v3** (2026-08-18) — catalog metadata (spec/corpus.md §12.1.1 *(25)*): four **additive,
   nullable** columns on `identities` — `ctime_ns`, `btime_ns`, `mode`, `mime_claim` — plus a
   `sniffed` field on `ScanSummary`. See "Catalog metadata (v3)" above for the full semantics.

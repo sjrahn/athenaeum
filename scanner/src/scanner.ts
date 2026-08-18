@@ -12,6 +12,8 @@ import { DEFAULT_IGNORE_PATTERNS, identityKey, type ScanMode, type ScanSummary }
 import { discoverNativeHasher, type HasherFactory, type Hasher, type NativeHasher } from "./hasher.ts";
 import { sniffMime, readHead, SNIFF_HEAD_BYTES } from "./sniff.ts";
 import { Logger, humanBytes, humanCount, humanDuration, humanRate } from "./log.ts";
+import { planHashPath, type BytePathResolver, type HashPathTarget, type HashPathPlan } from "./bytepath.ts";
+import { groupByElement, runElementAwarePool, type ElementKey } from "./scheduler.ts";
 
 /** Raw stat birth time of `0n` means the filesystem doesn't report one (see walk.ts's
  * FileEntry.birthtimeNs) — the catalog column stores that as SQL NULL, not 0. Exported (like
@@ -57,6 +59,11 @@ export interface ScanOptions {
   /** Explicit b3sum binary path (--b3sum). Unset falls through to auto-discovery (a binary
    * beside the running executable, then PATH). */
   b3sumPath?: string;
+  /** Direct byte path (--byte-path unraid): when set, hashing (WASM, native, and scrub
+   * re-reads) prefers a resolved backing path over the share path, verified by lstat pin
+   * before every use — see bytepath.ts. Also switches the native queue's scheduling from the
+   * plain shuffle to disk-aware least-active-element pulling — see scheduler.ts. */
+  bytePathResolver?: BytePathResolver;
   /** Files at/above this size use native b3sum instead of WASM, when a b3sum is available
    * (default DEFAULT_NATIVE_THRESHOLD, 1 MiB). */
   nativeThresholdBytes?: number;
@@ -102,6 +109,41 @@ async function hashFile(abspath: string, hasher: Hasher, chunkBytes: number): Pr
     await fh.close();
   }
   return { digest: hasher.digest(), bytes, head: head ?? Buffer.alloc(0) };
+}
+
+/**
+ * Run `attempt` against a hash-path `plan` (see bytepath.ts's planHashPath), counting
+ * directReads/directFallbacks on `summary` as it goes. When `plan.direct` is true and `attempt`
+ * throws mid-read (b3sum nonzero exit, a read error — e.g. the unRAID mover relocated the file
+ * between the walk's lstat and the hash), retries ONCE against the share path (`target.abspath`)
+ * before letting the error propagate to the caller's normal per-file skip handling; that retry
+ * reclassifies the file as a fallback rather than a direct read. When `plan` is null (no
+ * resolver active) or already non-direct, a thrown error propagates straight through — there's
+ * nothing to retry, the caller's existing skip handling is unchanged. Returns the successful
+ * value plus the path bytes actually came from (so an unchunked reader — native b3sum — can
+ * point its separate head-read at the same path that verified).
+ */
+async function hashWithDirectFallback<T>(
+  plan: HashPathPlan | null,
+  target: HashPathTarget,
+  summary: ScanSummary,
+  attempt: (path: string) => Promise<T>,
+): Promise<{ value: T; pathUsed: string }> {
+  const readPath = plan?.path ?? target.abspath;
+  if (plan) {
+    if (plan.direct) summary.directReads++;
+    else summary.directFallbacks++;
+  }
+  try {
+    return { value: await attempt(readPath), pathUsed: readPath };
+  } catch (e) {
+    if (!plan?.direct) throw e;
+    // The pin verified but the read itself failed mid-flight — the mover can relocate a file
+    // between the walk's lstat and this read. One retry against the share path, uncontested.
+    summary.directReads--;
+    summary.directFallbacks++;
+    return { value: await attempt(target.abspath), pathUsed: target.abspath };
+  }
 }
 
 /** Fisher-Yates shuffle, in place. */
@@ -158,6 +200,8 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
     scrubbed: 0,
     corrupt: 0,
     sniffed: 0,
+    directReads: 0,
+    directFallbacks: 0,
     bytesHashed: "0",
     elapsedMs: 0,
   };
@@ -345,10 +389,36 @@ async function runScanBody(
   // policy tends to put a whole directory's files on the same disk — so the native queue,
   // built in walk (directory) order, has long same-disk runs. A pool of size K>1 draining it
   // in order would mostly contend for the same spindle instead of fanning out across disks.
-  // Shuffling decorrelates queue order from directory/disk locality. Order was never load-bearing
-  // for resume correctness (identities commit independently, keyed by dev/ino), so this is safe.
-  // WASM queue is untouched — small files, spawn/seek locality doesn't matter there.
-  shuffle(nativeQueue);
+  // WASM queue is untouched either way — small files, spawn/seek locality doesn't matter there.
+  //
+  // With a byte-path resolver active, we know the real element (disk/pool) each file lives on
+  // — no need to guess via shuffling, group by element instead and let the scheduler (below)
+  // pull from whichever element has the fewest active readers. Without a resolver, order was
+  // never load-bearing for resume correctness (identities commit independently, keyed by
+  // dev/ino), so the plain shuffle (decorrelating queue order from directory/disk locality)
+  // remains the fallback.
+  const resolver = opts.bytePathResolver;
+  let nativeGrouped: Map<ElementKey, FileEntry[]> | null = null;
+  if (resolver) {
+    nativeGrouped = groupByElement(nativeQueue, (entry) => resolver.resolve(entry.abspath)?.element ?? null);
+  } else {
+    shuffle(nativeQueue);
+  }
+
+  const nativeConcurrency = ((): number => {
+    const explicit = opts._nativeConcurrency ?? opts.nativeConcurrency;
+    if (explicit !== undefined) return explicit;
+    if (resolver && nativeGrouped) {
+      // Enqueue-time resolution gives us the real distinct-disk count for this run's native
+      // work — auto-scale the pool to it (min 2, max 8) rather than the fixed non-direct
+      // default, since a direct read fans out across spindles instead of contending on shfs.
+      const distinctElements = Array.from(nativeGrouped.keys()).filter((e) => e !== null).length;
+      const auto = Math.min(Math.max(distinctElements, 2), 8);
+      log.info(`auto native-concurrency: ${auto} (${distinctElements} distinct disk element${distinctElements === 1 ? "" : "s"} with queued native work)`);
+      return auto;
+    }
+    return DEFAULT_NATIVE_CONCURRENCY;
+  })();
 
   let hashedBytes = 0n;
   const hashStart = performance.now();
@@ -392,60 +462,70 @@ async function runScanBody(
     }
   };
 
+  const wasmWorker = async (entry: FileEntry): Promise<void> => {
+    const plan = resolver ? await planHashPath(resolver, entry) : null;
+    let result: { digest: string; bytes: bigint; head: Buffer };
+    try {
+      ({ value: result } = await hashWithDirectFallback(plan, entry, summary, async (path) => {
+        const hasher: Hasher = await factory.create();
+        return hashFile(path, hasher, chunkBytes);
+      }));
+    } catch (e) {
+      // file vanished or turned unreadable between the walk and the hash — log-and-skip
+      const code = (e as { code?: string })?.code?.toLowerCase() ?? "eunknown";
+      summary.skipped++;
+      mf.putSkip(entry.relpath, code, gen);
+      log.debug(`skip ${entry.relpath} during hash (${code})`);
+      return;
+    }
+    // Free on this path: the head bytes came along for the ride in hashFile's first chunk —
+    // identical regardless of which path (direct or share) was actually read.
+    const mimeClaim = sniffMime(result.head, entry.relpath);
+    if (mimeClaim !== null) summary.sniffed++;
+    mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
+    hashedBytes += result.bytes;
+    recordHashed();
+  };
+
+  const nativeWorker = async (entry: FileEntry): Promise<void> => {
+    const plan = resolver ? await planHashPath(resolver, entry) : null;
+    let digest: string;
+    let pathUsed: string;
+    try {
+      ({ value: digest, pathUsed } = await hashWithDirectFallback(plan, entry, summary, (path) => nativeHasher!.hashFile(path)));
+    } catch (e) {
+      // b3sum failure (nonzero exit, bad output, vanished file) — log-and-skip, never abort.
+      summary.skipped++;
+      mf.putSkip(entry.relpath, "b3sum-failed", gen);
+      log.debug(`skip ${entry.relpath} during native hash (${(e as Error).message})`);
+      return;
+    }
+    // b3sum reads the file itself, so unlike the WASM path there's no chunk to piggyback a
+    // head off of — a separate bounded head-read from whichever path the hash actually came
+    // from, best-effort (a failure here must not undo an already-successful hash; the identity
+    // is still written with a null claim).
+    let mimeClaim: string | null = null;
+    try {
+      mimeClaim = sniffMime(await readHead(pathUsed), entry.relpath);
+    } catch {
+      mimeClaim = null;
+    }
+    if (mimeClaim !== null) summary.sniffed++;
+    mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
+    // b3sum reads the file itself — no chunked-read loop here to count bytes off of, so
+    // this is the walk-time stat size rather than an actually-observed read count.
+    hashedBytes += entry.size;
+    summary.hashedNative++;
+    recordHashed();
+  };
+
   try {
     // allSettled, not all: if one pool's worker throws (e.g. the fault-injection hook), we
     // still want the other pool to reach a clean stopping point before genClose/mf.close() —
     // otherwise an orphaned worker could touch `mf` after the connection is closed.
     const results = await Promise.allSettled([
-      runPool(wasmQueue, k, async (entry) => {
-        let hasher: Hasher;
-        let result: { digest: string; bytes: bigint; head: Buffer };
-        try {
-          hasher = await factory.create();
-          result = await hashFile(entry.abspath, hasher, chunkBytes);
-        } catch (e) {
-          // file vanished or turned unreadable between the walk and the hash — log-and-skip
-          const code = (e as { code?: string })?.code?.toLowerCase() ?? "eunknown";
-          summary.skipped++;
-          mf.putSkip(entry.relpath, code, gen);
-          log.debug(`skip ${entry.relpath} during hash (${code})`);
-          return;
-        }
-        // Free on this path: the head bytes came along for the ride in hashFile's first chunk.
-        const mimeClaim = sniffMime(result.head, entry.relpath);
-        if (mimeClaim !== null) summary.sniffed++;
-        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
-        hashedBytes += result.bytes;
-        recordHashed();
-      }),
-      runPool(nativeQueue, opts._nativeConcurrency ?? opts.nativeConcurrency ?? DEFAULT_NATIVE_CONCURRENCY, async (entry) => {
-        let digest: string;
-        try {
-          digest = await nativeHasher!.hashFile(entry.abspath);
-        } catch (e) {
-          // b3sum failure (nonzero exit, bad output, vanished file) — log-and-skip, never abort.
-          summary.skipped++;
-          mf.putSkip(entry.relpath, "b3sum-failed", gen);
-          log.debug(`skip ${entry.relpath} during native hash (${(e as Error).message})`);
-          return;
-        }
-        // b3sum reads the file itself, so unlike the WASM path there's no chunk to piggyback
-        // a head off of — a separate bounded head-read, best-effort (a failure here must not
-        // undo an already-successful hash; the identity is still written with a null claim).
-        let mimeClaim: string | null = null;
-        try {
-          mimeClaim = sniffMime(await readHead(entry.abspath), entry.relpath);
-        } catch {
-          mimeClaim = null;
-        }
-        if (mimeClaim !== null) summary.sniffed++;
-        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
-        // b3sum reads the file itself — no chunked-read loop here to count bytes off of, so
-        // this is the walk-time stat size rather than an actually-observed read count.
-        hashedBytes += entry.size;
-        summary.hashedNative++;
-        recordHashed();
-      }),
+      runPool(wasmQueue, k, wasmWorker),
+      nativeGrouped ? runElementAwarePool(nativeGrouped, nativeConcurrency, nativeWorker) : runPool(nativeQueue, nativeConcurrency, nativeWorker),
     ]);
     const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
     if (rejected) throw rejected.reason;
@@ -458,7 +538,7 @@ async function runScanBody(
 
   // ── optional scrub ──────────────────────────────────────────────────────────────
   if (opts.scrub && opts.scrub > 0) {
-    const res = await scrubSample(mf, root, opts.scrub, gen, factory, chunkBytes, log);
+    const res = await scrubSample(mf, root, opts.scrub, gen, factory, chunkBytes, log, resolver, summary);
     summary.scrubbed = res.scrubbed;
     summary.corrupt = res.corrupt;
   }
@@ -469,7 +549,10 @@ async function runScanBody(
   return summary;
 }
 
-/** Re-hash N randomly-sampled identities and compare to the stored digest. */
+/** Re-hash N randomly-sampled identities and compare to the stored digest. `resolver` is the
+ * same optional byte-path resolver runScanBody carries — when set, a scrub re-read gets the
+ * same direct-path-with-pin-verify treatment as a normal hash (see hashWithDirectFallback),
+ * counted on `summary`. */
 async function scrubSample(
   mf: Manifest,
   root: string,
@@ -478,6 +561,8 @@ async function scrubSample(
   factory: HasherFactory,
   chunkBytes: number,
   log: Logger,
+  resolver: BytePathResolver | undefined,
+  summary: ScanSummary,
 ): Promise<{ scrubbed: number; corrupt: number }> {
   const sample = mf.scrubSample(n);
 
@@ -496,11 +581,16 @@ async function scrubSample(
       continue; // vanished; the next stat-walk reconciles it
     }
     if (st.size !== id.size || st.mtimeNs !== id.mtimeNs) continue; // legitimately changed; not a scrub verdict
-    let hasher: Hasher;
+    const target: HashPathTarget = { abspath, size: st.size, mtimeNs: st.mtimeNs };
+    const plan = resolver ? await planHashPath(resolver, target) : null;
     let digest: string;
     try {
-      hasher = await factory.create();
-      ({ digest } = await hashFile(abspath, hasher, chunkBytes));
+      ({
+        value: { digest },
+      } = await hashWithDirectFallback(plan, target, summary, async (path) => {
+        const hasher: Hasher = await factory.create();
+        return hashFile(path, hasher, chunkBytes);
+      }));
     } catch {
       continue;
     }
@@ -537,6 +627,8 @@ export async function compact(root: string, manifestDir: string, log: Logger): P
     scrubbed: 0,
     corrupt: 0,
     sniffed: 0,
+    directReads: 0,
+    directFallbacks: 0,
     bytesHashed: "0",
     elapsedMs: Math.round(performance.now() - started),
   };
@@ -546,7 +638,7 @@ export async function compact(root: string, manifestDir: string, log: Logger): P
   log.info(`compact generation ${gen}: ${humanCount(res.identities)} identities, ${humanCount(res.paths)} paths, ${humanCount(res.orphansDropped)} orphans dropped`);
 }
 
-export function formatSummary(s: ScanSummary, root: string): string {
+export function formatSummary(s: ScanSummary, root: string, opts: { bytePathActive?: boolean } = {}): string {
   const rate = s.elapsedMs > 0 ? humanRate(BigInt(s.bytesHashed), s.elapsedMs) : "—";
   const lines = [
     `scan summary — generation ${s.generation} (${s.mode})`,
@@ -554,6 +646,9 @@ export function formatSummary(s: ScanSummary, root: string): string {
     `  files seen    ${humanCount(s.filesSeen)}`,
     `  hashed        ${humanCount(s.hashed)}  (${humanBytes(BigInt(s.bytesHashed))})`,
     `  hashed native ${humanCount(s.hashedNative)}`,
+    ...(opts.bytePathActive
+      ? [`  direct reads      ${humanCount(s.directReads)}`, `  direct fallbacks  ${humanCount(s.directFallbacks)}`]
+      : []),
     `  moved         ${humanCount(s.moved)}`,
     `  migrated      ${humanCount(s.migrated)}`,
     `  seeded        ${humanCount(s.seeded)}`,

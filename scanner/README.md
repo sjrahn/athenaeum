@@ -362,6 +362,54 @@ across reboots), so the usual pattern is:
    (see above), that would look like a whole-tree content change and trigger a full re-hash.
    `--full` still bypasses it, if you specifically want a verify-everything pass.
 
+## unRAID direct byte path
+
+`/mnt/user/<share>` is `shfs`, a FUSE union of the array's disks — convenient, but it caps
+*aggregate* read throughput well below what the underlying disks can do individually (measured
+on the real deployment host: ~130 MiB/s through shfs, regardless of how many disks are actually
+involved). `--byte-path unraid` bypasses FUSE for the hashing reads themselves, while changing
+nothing else: **the share view is the truth.** The walk, identity (`dev`/`ino` from the
+share-side `lstat`), paths, and every published manifest field are still derived from
+`/mnt/user/...`, exactly as without the flag — the manifest a direct-path scan produces is
+byte-identical to one from a plain scan of the same tree. The only thing that changes is *where
+the bytes for hashing come from*.
+
+**How it works**: unRAID tags every file with a `system.LOCATION` xattr naming its backing
+storage element — a disk (`disk7`) or a cache/pool name (`warm`). The real bytes live at
+`/mnt/<element>/<path relative to /mnt/user/>`. For each file about to be hashed, the scanner
+reads that xattr, computes the candidate backing path, and `lstat`s it: only if `size` **and**
+`mtime_ns` match the share-side stat *exactly* does it trust the backing path and read from
+there (`directReads` in the summary); any mismatch, or an xattr/`lstat` failure, falls back to
+the ordinary share-path read (`directFallbacks`). This applies uniformly to the in-process WASM
+hasher, the native b3sum path, and scrub re-reads.
+
+**Mover-race safety**: the unRAID mover can relocate a file between disks at any time, including
+between this scanner's pin-verify `lstat` and the read that follows it. If a direct-path read
+fails mid-flight (a nonzero b3sum exit, a read error) after the pin verified, the scanner
+retries **once**, against the share path, before falling into the ordinary per-file skip
+handling — so a mover race costs one extra read, never a wrongly-skipped or wrongly-hashed file.
+
+**Disk-aware native scheduling**: with a resolver active, the native (b3sum) queue is no longer
+just shuffled — each file's element is resolved at enqueue time and the pool always pulls the
+next file from whichever element currently has the fewest active readers, so K workers
+naturally fan out across up to K distinct disks instead of piling onto whichever file happened
+to be shuffled first. Files whose element couldn't be resolved land in an unordered bucket read
+via the share path.
+
+**Auto concurrency**: when `--byte-path unraid` is active and `--native-concurrency` is *not*
+given explicitly, the native pool size defaults to `min(max(distinct disk elements with queued
+native work, 2), 8)` instead of the fixed default of 2 — since direct reads fan out across real
+spindles rather than contending on `shfs`. Pass `--native-concurrency` explicitly to override.
+
+```bash
+ath-scan /mnt/user/film --byte-path unraid --scrub 100
+```
+
+Usage: only `unraid` is a valid `--byte-path` value; the root must be under `/mnt/user/` (an
+operator error there is a startup error, not a silent no-op). A run using it logs one line up
+front — `direct byte path: unraid` — and the end-of-scan summary gains two lines (`direct
+reads`, `direct fallbacks`) whenever a resolver was active.
+
 ## Prototype boundaries / notes
 
 - **WASM hashing is single-threaded.** `--concurrency K` overlaps file **reads** (async I/O)

@@ -95,6 +95,8 @@ export interface ScanSummary {
   scrubbed: number; // files re-hashed by the scrub sampler
   corrupt: number; // scrub mismatches at a stable stat tuple
   sniffed: number; // mime_claim values written this run (new-identity hash-time sniffs + walk-time backfill sniffs of pre-existing NULL claims); carried-forward claims (inode migration) don't count
+  directReads: number; // files hashed straight from a direct byte path (--byte-path unraid) after its lstat pin verified against the share-side stat
+  directFallbacks: number; // files that had a direct byte path candidate but fell back to the share path (pin mismatch, lstat failure, or a mid-read retry after a mover race)
   bytesHashed: string; // decimal-string bigint — this is a JSON blob field (summary_json), not a
   // SQL column, so it keeps the v1 encoding: JSON numbers are still IEEE-754 doubles regardless
   // of what the SQL schema stores.

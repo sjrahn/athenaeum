@@ -13,6 +13,7 @@ import { blake3Factory } from "./hasher.ts";
 import { Logger, type LogLevel } from "./log.ts";
 import { scan, compact, formatSummary, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD, DEFAULT_NATIVE_CONCURRENCY } from "./scanner.ts";
 import { benchmark } from "./bench.ts";
+import { createUnraidResolver, type BytePathResolver } from "./bytepath.ts";
 
 const HELP = `ath-scan ${SCANNER_VERSION} — residence scanner (manifest schema v${SCHEMA_VERSION})
 
@@ -36,10 +37,17 @@ OPTIONS
                          if none is found or it fails verification)
   --native-threshold <bytes>  files at/above this size use native b3sum instead of in-process
                          WASM, when a b3sum is available (default ${DEFAULT_NATIVE_THRESHOLD})
-  --native-concurrency <K>  concurrent native b3sum spawns (default ${DEFAULT_NATIVE_CONCURRENCY});
-                         multi-disk arrays (e.g. unRAID) benefit from 4-8 since each hasher
-                         pins one spindle; b3sum is itself CPU-multithreaded, so a pure-NVMe
-                         root rarely needs more than 2
+  --native-concurrency <K>  concurrent native b3sum spawns (default ${DEFAULT_NATIVE_CONCURRENCY};
+                         auto-scaled when --byte-path unraid is active and this flag is
+                         omitted — see below); multi-disk arrays (e.g. unRAID) benefit from
+                         4-8 since each hasher pins one spindle; b3sum is itself
+                         CPU-multithreaded, so a pure-NVMe root rarely needs more than 2
+  --byte-path <mode>     bypass a union-filesystem mount for hashing reads; only "unraid" is
+                         accepted — reads via each file's system.LOCATION xattr-resolved
+                         backing disk instead of /mnt/user, verified against the share-side
+                         stat before every use; --native-concurrency auto-scales to the
+                         number of distinct disks with queued work (min 2, max 8) unless set
+                         explicitly; see README's "unRAID direct byte path" section
   --ignore <pattern>     extra basename to skip (repeatable); trailing "*" is a prefix match,
                          e.g. "foo*"; a default deny-list already covers filesystem-metadata
                          junk, matched dirs are pruned (never entered):
@@ -134,6 +142,7 @@ async function main(): Promise<number> {
         b3sum: { type: "string" },
         "native-threshold": { type: "string" },
         "native-concurrency": { type: "string" },
+        "byte-path": { type: "string" },
         ignore: { type: "string", multiple: true },
         "no-default-ignores": { type: "boolean", default: false },
         json: { type: "boolean", default: false },
@@ -181,7 +190,22 @@ async function main(): Promise<number> {
     }
   }
   const nativeThresholdBytes = parseIntArg("native-threshold", values["native-threshold"], DEFAULT_NATIVE_THRESHOLD);
-  const nativeConcurrency = parseIntArg("native-concurrency", values["native-concurrency"], DEFAULT_NATIVE_CONCURRENCY, 1);
+  // Left undefined (rather than defaulted here) when the flag wasn't given, so scan() can tell
+  // "operator didn't ask for anything specific" apart from "operator asked for the default" —
+  // that distinction is what lets --byte-path unraid auto-scale this instead of always 2.
+  const nativeConcurrency =
+    values["native-concurrency"] !== undefined ? parseIntArg("native-concurrency", values["native-concurrency"], DEFAULT_NATIVE_CONCURRENCY, 1) : undefined;
+
+  let bytePathResolver: BytePathResolver | undefined;
+  if (values["byte-path"] !== undefined) {
+    if (values["byte-path"] !== "unraid") die(`--byte-path must be "unraid" (got "${values["byte-path"]}")`);
+    try {
+      bytePathResolver = createUnraidResolver(root);
+    } catch (e) {
+      die((e as Error).message);
+    }
+    log.info(`direct byte path: unraid`);
+  }
 
   if (values.bench) {
     const excludeAbs = manifestDir === root || manifestDir.startsWith(root + sep) ? manifestDir : null;
@@ -226,10 +250,11 @@ async function main(): Promise<number> {
     nativeConcurrency,
     ignorePatterns: values.ignore,
     noDefaultIgnores: values["no-default-ignores"],
+    bytePathResolver,
   });
 
   if (values.json) process.stdout.write(JSON.stringify(summary) + "\n");
-  else process.stdout.write(formatSummary(summary, root) + "\n");
+  else process.stdout.write(formatSummary(summary, root, { bytePathActive: !!bytePathResolver }) + "\n");
 
   return summary.corrupt > 0 ? 2 : 0;
 }
