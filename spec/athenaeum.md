@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 20
+version: 21
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-16
+date_modified: 2026-08-17
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -120,14 +120,19 @@ ledger:
 references:                # reference datasets (Part III §6.5) — mirrored databases, not git members;
   {dataset}:               #   a snapshot's mirror bytes are a corpus ARTIFACT, never a loose file (v17)
     description: …
-    adapter: …             # the format adapter resolving native ids (zim, jsonl-index, …)
+    adapter: …             # optional since v21 — the format adapter resolving native ids
+                           #   (zim, osm-pbf, …); when omitted, derived from the mirror
+                           #   record's mime overlay `ref_adapter` (Part II §7.1); an
+                           #   explicit declaration wins (bootstrap and override path)
     latest: …              # the default snapshot tag — names a key below, declared, never inferred
     snapshots:
       {tag}:
         artifact: …          # blake3 of the mirror's bytes — the pin verification stamps
-        path: …              # optional (v18) — interim deployment-local materialization:
-                             #   the mirror file read in place; identity stays the artifact
-                             #   hash, and store custody supersedes this when it lands
+        path: …              # DEPRECATED (v21; was the v18 interim) — read-in-place override,
+                             #   superseded by attached locations (Part II §12.1.1): register
+                             #   the mirrors directory as a location and the artifact hash
+                             #   resolves there with no bytes moved. Read tolerantly until
+                             #   every registered snapshot store-resolves, then removed
 ```
 
 Members are keyed by name; manifest order is presentation order. The manifest records **membership, not pins** — members are living repos, and the tooling synchronizes them (`ath sync`: clone missing, fetch and report the rest, fast-forward only on request). A deployment bootstraps by cloning the orchestrator repo, writing its manifest from the example, and running `ath sync`.
@@ -223,6 +228,8 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; multi-corpus capture in one invocation; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5; the mirror layer itself is specified there as of v17); a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
+
+*Version 21 (2026-08-17, owner ruling) is the custody amendment, landing the store mechanics v18 waited on. Part II generalizes artifact custody to declared **locations** — content-addressed store roots the corpus writes (local or remote; rclone as the generic remote transport) and **attached** operator-managed trees whose files stay in place, unrenamed, id-addressable through a derived location index once an attest pass has hashed them (Part II §12.1.1, §12.9.2 — the containment model generalized). For this manifest: `references:` entries MAY omit `adapter:` where the mirror record's mime overlay declares `ref_adapter` (Part II §7.1; an explicit declaration wins), and the v18 snapshot `path:` override is **deprecated** — an attached location over the mirrors directory supersedes it with no bytes moved; the key is read tolerantly until every registered snapshot resolves through the store, then removed. Part II also sketches overlay-declared redundancy floors (`replicas:`, max across mime/origin layers) and exempts the persistent derived indexes from gc's cache sweep by name.*
 
 *Version 19 (2026-08-16) is a Part III amendment (owner ruling): element-level evidence binding for array-valued claims — an evidence entry MAY bind to one element of an array `value`, and the authentication bar evaluates such claims per element (Part III §5.4, §6.1). Nothing in this part changes.*
 
