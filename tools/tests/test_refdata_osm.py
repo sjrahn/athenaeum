@@ -304,3 +304,116 @@ def test_refdata_resolve_mirror_unindexed(pbf_path: Path) -> None:
     ref = _ref("t", "a" * 64, path=str(pbf_path))
     with pytest.raises(MirrorUnindexed):
         refdata.resolve(ref, "node/1")
+
+
+# --- canonical sidecar index path (21) ---------------------------------------
+#
+# `refdata.canonical_index_path` computes `<corpus root>/cache/refidx/
+# <artifact>.sqlite`; the adapter's own `index_path` kwarg (`open_archive`,
+# `build_index`, `index_state`) makes that location authoritative over the
+# legacy beside-the-mirror sidecar, with a migration-grace fallback to the
+# legacy location when the canonical one carries nothing yet.
+
+
+def test_build_index_writes_to_index_path_not_legacy(tmp_path: Path, pbf_path: Path) -> None:
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    assert not canonical.exists()
+    osm_pbf.build_index(pbf_path, index_path=canonical)
+    assert canonical.is_file()
+    assert not Path(str(pbf_path) + ".refidx").exists()
+
+
+def test_index_state_reports_missing_at_canonical_when_neither_exists(
+    pbf_path: Path, tmp_path: Path
+) -> None:
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    assert osm_pbf.index_state(pbf_path, index_path=canonical) == "missing"
+
+
+def test_resolve_entry_reads_from_canonical_index_path(
+    tmp_path: Path, pbf_path: Path
+) -> None:
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    osm_pbf.build_index(pbf_path, index_path=canonical)
+    handle = osm_pbf.open_archive(pbf_path, index_path=canonical)
+    result = osm_pbf.resolve_entry(handle, "node/1")
+    assert result.title == "Test Location"
+
+
+def test_legacy_sidecar_still_honored_when_canonical_absent(
+    tmp_path: Path, pbf_path: Path
+) -> None:
+    """Migration grace: a sidecar built the old way (beside the mirror,
+    pre-21) still resolves when a caller supplies a canonical `index_path`
+    that doesn't exist yet."""
+    osm_pbf.build_index(pbf_path)  # legacy location, no index_path given
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    assert not canonical.exists()
+    assert osm_pbf.index_state(pbf_path, index_path=canonical) == "indexed"
+    handle = osm_pbf.open_archive(pbf_path, index_path=canonical)
+    result = osm_pbf.resolve_entry(handle, "node/1")
+    assert result.title == "Test Location"
+
+
+def test_canonical_wins_when_both_locations_indexed(
+    tmp_path: Path, pbf_path: Path
+) -> None:
+    """Canonical and legacy both carry a built index — reads must come from
+    the canonical one. Proven by sabotaging the legacy sidecar's bytes
+    *after* both are built: a read that still succeeds could only have come
+    from the canonical copy."""
+    osm_pbf.build_index(pbf_path)  # legacy
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    osm_pbf.build_index(pbf_path, index_path=canonical)  # canonical, same mirror
+    # Sabotage the legacy sidecar so a read through it would raise/mismatch.
+    legacy = Path(str(pbf_path) + ".refidx")
+    legacy.write_bytes(b"not a sqlite file")
+    handle = osm_pbf.open_archive(pbf_path, index_path=canonical)
+    result = osm_pbf.resolve_entry(handle, "node/1")
+    assert result.title == "Test Location"
+
+
+def test_mirror_unindexed_when_neither_location_has_an_index(
+    tmp_path: Path, pbf_path: Path
+) -> None:
+    canonical = tmp_path / "cache" / "refidx" / "somehash.sqlite"
+    handle = osm_pbf.open_archive(pbf_path, index_path=canonical)
+    with pytest.raises(MirrorUnindexed):
+        osm_pbf.resolve_entry(handle, "node/1")
+
+
+def test_refdata_resolve_end_to_end_through_location_route(
+    tmp_path: Path, pbf_path: Path
+) -> None:
+    """End-to-end through `refdata.resolve`: a mirror resolved via an
+    attached corpus-root location (no `path:` override, no `artifacts/`
+    copy) builds and reads its sidecar at the canonical `cache/refidx/`
+    path under that same corpus root."""
+    import blake3
+
+    from corpus import config as config_mod
+    from corpus import locationindex
+
+    root = tmp_path / "corpus"
+    (root / "records").mkdir(parents=True)
+    (root / "schema").mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    mirror = data_dir / "extract.osm.pbf"
+    mirror.write_bytes(pbf_path.read_bytes())
+    digest = blake3.blake3(mirror.read_bytes()).hexdigest()
+    (root / "corpus.toml").write_text(
+        f'[[corpus.location]]\nname = "data"\nkind = "attached"\npath = "{data_dir}"\n',
+        encoding="utf-8",
+    )
+    cfg = config_mod.load_config(root)
+    (loc,) = cfg.locations
+    locationindex.attest_location(root, loc)
+
+    ref = _ref("t", digest)
+    index_path = refdata.canonical_index_path(ref, "t", corpora_roots=(root,))
+    assert index_path == root / "cache" / "refidx" / f"{digest}.sqlite"
+    osm_pbf.build_index(mirror, index_path=index_path)
+
+    entry = refdata.resolve(ref, "node/1", corpora_roots=(root,))
+    assert entry.title == "Test Location"

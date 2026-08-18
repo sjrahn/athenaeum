@@ -167,6 +167,107 @@ def test_status_no_datasets(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert "no reference datasets registered" in capsys.readouterr().out
 
 
+# --- adapter derivation (21): manifest without adapter: ---------------------
+
+
+def test_status_shows_derived_adapter_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No `adapter:` in the manifest — the mirror record's mime overlay
+    declares `ref_adapter: zim`, and status must both resolve and label it
+    `(derived)`, distinct from an explicit declaration."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    mirror = tmp_path / "derived.zim"
+    _build_zim(mirror, "Derived revision.")
+    digest = "9" * 64
+
+    corpus_root = tmp_path / "corpus"
+    (corpus_root / "records").mkdir(parents=True)
+    schema_dir = corpus_root / "schema" / "mime" / "testfmt"
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "testfmt_mirror.yaml").write_text(
+        "applies_to:\n  content_types: [application/x-testzim]\nref_adapter: zim\n",
+        encoding="utf-8",
+    )
+    post = frontmatter.Post(
+        content="",
+        **records.stub_frontmatter(record_id=digest, touch_id="corpus.ingest@0.1.0"),
+    )
+    records.set_artifact_block(post, mime="application/x-testzim", fields={})
+    records.dump(post, paths.record_path(corpus_root, digest))
+
+    manifest = f"""\
+org: https://x.test/athenaeum
+corpora:
+  corpus:
+    visibility: public
+    path: corpus
+ledger:
+  ledger: {{}}
+references:
+  derivedwiki:
+    description: adapter derived from mime overlay
+    latest: t
+    snapshots:
+      t: {{ artifact: {digest}, path: {mirror} }}
+"""
+    (tmp_path / "athenaeum.yaml").write_text(manifest, encoding="utf-8")
+
+    assert main(["ref", "status", "--root", str(tmp_path)]) == 0
+    header, _ = _parse_status(capsys.readouterr().out)["derivedwiki"]
+    assert "adapter=zim (derived)" in header
+    assert "UNAVAILABLE" not in header
+
+
+def test_status_no_record_reports_unresolved_not_a_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No `adapter:` and no mirror record anywhere to derive from — status
+    is informational and never a failing exit, so this reports as its own
+    row rather than raising."""
+    manifest = f"""\
+org: https://x.test/athenaeum
+ledger:
+  ledger: {{}}
+references:
+  ghostwiki:
+    description: adapter cannot be derived, no record anywhere
+    latest: t
+    snapshots:
+      t: {{ artifact: {"9" * 64} }}
+"""
+    (tmp_path / "athenaeum.yaml").write_text(manifest, encoding="utf-8")
+    rc = main(["ref", "status", "--root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ghostwiki" in out
+    assert "UNRESOLVED" in out
+    assert "explicit manifest adapter" in out
+
+
+def test_resolve_reports_derivation_failure_as_adapter_unavailable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = f"""\
+org: https://x.test/athenaeum
+ledger:
+  ledger: {{}}
+references:
+  ghostwiki:
+    description: adapter cannot be derived, no record anywhere
+    latest: t
+    snapshots:
+      t: {{ artifact: {"9" * 64} }}
+"""
+    (tmp_path / "athenaeum.yaml").write_text(manifest, encoding="utf-8")
+    rc = main(["ref", "resolve", "ref://ghostwiki/x", "--root", str(tmp_path)])
+    assert rc == 1
+    assert "adapter unavailable" in capsys.readouterr().err
+
+
 # --- resolve: ref:// ------------------------------------------------------
 
 

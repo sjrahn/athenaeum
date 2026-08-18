@@ -116,13 +116,16 @@ def test_manifest_references_retired_shape_errors(tmp_path: Path) -> None:
         load_references(tmp_path)
 
 
-def test_manifest_references_missing_adapter(tmp_path: Path) -> None:
+def test_manifest_references_missing_adapter_is_optional(tmp_path: Path) -> None:
+    """v21: `adapter:` is optional — derived at resolution time from the mirror
+    record's mime overlay `ref_adapter` (refdata.resolve_adapter_name); loading
+    just records the absence."""
     _write_references(
         tmp_path,
         f"  wikipedia:\n    latest: t\n    snapshots:\n      t: {{ artifact: {_H1} }}\n",
     )
-    with pytest.raises(ManifestError, match="adapter"):
-        load_references(tmp_path)
+    (ref,) = load_references(tmp_path)
+    assert ref.adapter is None
 
 
 def test_manifest_references_missing_snapshots(tmp_path: Path) -> None:

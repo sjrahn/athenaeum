@@ -40,13 +40,30 @@ unlike ZIM's indexed archive — so their adapter (`osm_pbf`) additionally
 exposes, as ordinary module-level functions beyond the four above:
 
 - `build_index(mirror_path: Path, *, progress: Callable[[int], None] | None
-  = None) -> dict[str, int]` — scans the mirror once and writes a sidecar
-  index beside it, atomically (`<path>.<ext>.tmp` then `os.replace`).
-  Optionally reports cumulative progress as it goes. Returns format-specific
-  counts (e.g. `{"elements": n, "named": m}`).
-- `index_state(mirror_path: Path) -> str` — `"indexed"` | `"missing"` |
-  `"stale"` (built by an older index-builder version, or from different
-  mirror bytes than are on disk now).
+  = None, index_path: Path | None = None) -> dict[str, int]` — scans the
+  mirror once and writes a sidecar index, atomically (`<sidecar>.tmp` then
+  `os.replace`). Optionally reports cumulative progress as it goes. Returns
+  format-specific counts (e.g. `{"elements": n, "named": m}`).
+- `index_state(mirror_path: Path, *, index_path: Path | None = None) -> str`
+  — `"indexed"` | `"missing"` | `"stale"` (built by an older index-builder
+  version, or from different mirror bytes than are on disk now).
+- `open_archive(mirror_path: Path, *, index_path: Path | None = None) ->
+  Any` — same four-function contract as above; the sidecar-carrying adapters
+  additionally accept `index_path` here so the handle they return knows
+  where its sidecar lives.
+
+*(21)* All three take a keyword-only **`index_path`**: when given, it IS the
+sidecar location (`refdata` computes this as the corpus's
+`cache/refidx/<artifact>.sqlite`, spec/ledger.md §6.5) — a mirror-adjacent
+sidecar's naming isn't assumed. When `index_path` is omitted, the adapter
+falls back to its legacy beside-the-mirror path (`<mirror_path>.<ext>` for
+`osm_pbf`) — bare adapter-module usage and existing sidecars keep working
+unchanged. When `index_path` is given but nothing exists there yet, the
+adapter also checks the legacy beside-the-mirror location (if present and
+not stale, it's used — migration grace for a sidecar built before the
+canonical path existed); `MirrorUnindexed`/`"missing"` only when neither
+location has one. `ath ref index` always **builds** at the canonical path
+when the caller can supply one.
 
 `resolve_entry`/`search_entries` on such an adapter raise
 `refdata.errors.MirrorUnindexed` — distinct from `MirrorCorrupt` — when the

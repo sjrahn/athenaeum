@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -121,15 +122,91 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     recipes = hashing.resolve_recipes(mt_schema, overlay_schemas)
     hash_values = hashing.compute_hashes(src, recipes)
 
-    # Persist bytes via the store, then unlink the staging file.
-    store.put(record_id, extension, src)
-    src.unlink()
+    def _pre_attest(post: frontmatter.Post) -> None:
+        _emit_sidecar_issues(post, sidecar)
+        # Stage an enrichment sidecar (a yt-dlp `.info.json`) as `capture/<hash>.info.json`
+        # BEFORE attestation so the sidecar-lift can consume it (spec §7.2, §8.1).
+        _relocate_info_sidecar(src, record_id)
+
+    mint_stub(
+        corpus_root,
+        src,
+        record_id=record_id,
+        media_type=media_type,
+        extension=extension,
+        record_file=record_file,
+        hash_values=hash_values,
+        origin_uri=origin_uri,
+        origin_snapshot=origin_at,
+        origin_fields=origin_fields,
+        origin_schema=origin_schema,
+        touch_script="ingest",
+        store_bytes=True,
+        pre_attest=_pre_attest,
+    )
+
+    _cleanup_sidecar(src)
+    _cleanup_enrichment(corpus_root, record_id)
+
+    print(f"new stub: {record_file.relative_to(corpus_root)}")
+    print(f"  hash:       {record_id}")
+    print(f"  media_type: {media_type}")
+    print(f"  binary:     {store.local_path(record_id, extension).relative_to(corpus_root)}")
+    if hash_values:
+        print(f"  hashes:     {', '.join(v.encoded() for v in hash_values)}")
+    return 0
+
+
+def mint_stub(
+    corpus_root: Path,
+    src: Path,
+    *,
+    record_id: str,
+    media_type: str,
+    extension: str,
+    record_file: Path,
+    hash_values: list,
+    origin_uri: str | list[str] | None,
+    origin_snapshot: str,
+    origin_fields: dict[str, Any] | None,
+    origin_schema: str | None,
+    touch_script: str,
+    store_bytes: bool = True,
+    pre_attest: Callable[[frontmatter.Post], None] | None = None,
+) -> frontmatter.Post:
+    """The shared record-minting core (spec §8.1) for a materialized file whose identity
+    and recipe union the caller has already resolved: frontmatter `hash:`, artifact block,
+    first origin block, byte-fact attestation (`derive.attest`, best-effort), and hash-index
+    rows (spec §12.9.1). Used by both `corpus ingest` (`store_bytes=True`: `src` is persisted
+    into the artifact store via `store.put` and the staging copy unlinked) and `corpus
+    location promote` (`store_bytes=False`, spec §12.1.1: `src` stays exactly where it is —
+    bytes stay resident at their attached-location path, never copied into `artifacts/`).
+    `store_bytes` is the ONLY behavioral difference between the two callers. Attestation
+    reads the record's bytes back through `containment.ensure_local_bytes`, which for a
+    `store_bytes=False` mint resolves them through the location index (§12.1.1) rather than
+    the store — no special-casing needed here.
+
+    `pre_attest`, when given, runs on the freshly-built post BEFORE attestation — ingest's
+    hook for capture-sidecar issue replay + info-sidecar relocation, concerns a location
+    promotion has none of.
+
+    Never folds into an existing record — the caller checks `record_file.is_file()` first;
+    each caller has its own fold/re-encounter convention, since their origin shapes differ
+    enough (capture URL vs. containment lineage vs. `file://` location provenance) that a
+    shared fold path is not the right reuse boundary."""
+    from corpus import records, touches
+    from corpus.store import get_store
+
+    if store_bytes:
+        store = get_store(corpus_root)
+        store.put(record_id, extension, src)
+        src.unlink()
 
     record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
 
     fm = records.stub_frontmatter(
         record_id=record_id,
-        touch_id=touches.script_identifier("ingest"),
+        touch_id=touches.script_identifier(touch_script),
     )
     post = frontmatter.Post(content="", **fm)
     if record_hash_entries:
@@ -143,15 +220,12 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     records.append_origin_block(
         post,
         uri=origin_uri,
-        snapshot=origin_at,
+        snapshot=origin_snapshot,
         schema_id=origin_schema,
         fields=origin_fields or None,
     )
-    _emit_sidecar_issues(post, sidecar)
-
-    # Stage an enrichment sidecar (a yt-dlp `.info.json`) as `capture/<hash>.info.json` BEFORE
-    # attestation so the sidecar-lift can consume it (spec §7.2, §8.1).
-    _relocate_info_sidecar(src, record_id)
+    if pre_attest is not None:
+        pre_attest(post)
     # 3.0: attest the byte-facts at stub time (§8.1) — artifact-block fields, manifest/
     # exposable embeds, sidecar-lifted origin fields, drafter issues. The body is NOT stored
     # (the `body` op derives it on demand). Best-effort: a type with no drafter or unreadable
@@ -161,19 +235,9 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
 
     # Record-resident values land in the index too (spec §2/§7.9); every other resolved value
     # is index-ONLY. Best-effort: the index is deployment state (§12.9.1), never authoritative
-    # — a write failure here must never fail an ingest that otherwise succeeded.
+    # — a write failure here must never fail a mint that otherwise succeeded.
     _write_hash_index_rows(corpus_root, record_id, hash_values)
-
-    _cleanup_sidecar(src)
-    _cleanup_enrichment(corpus_root, record_id)
-
-    print(f"new stub: {record_file.relative_to(corpus_root)}")
-    print(f"  hash:       {record_id}")
-    print(f"  media_type: {media_type}")
-    print(f"  binary:     {store.local_path(record_id, extension).relative_to(corpus_root)}")
-    if hash_values:
-        print(f"  hashes:     {', '.join(v.encoded() for v in hash_values)}")
-    return 0
+    return post
 
 
 def _attest_stub(post: frontmatter.Post, corpus_root: Path, record_id: str) -> None:

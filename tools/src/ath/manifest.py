@@ -14,10 +14,14 @@ Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
 locally-mirrored external databases cited as `ref://` evidence. They are
 mirrors, not git members. *(v17)* A dataset registers **multiple snapshots**
 — a tag-keyed `snapshots:` map (tag → a `Snapshot`: the mirror's blake3
-`artifact`, plus *(v18)* an optional deployment-local `path:` override), an
-explicit `latest:` default naming one of those tags, and a format `adapter:`
-resolving native ids. A snapshot's mirror bytes are a corpus artifact,
-distributed and integrity-checked through the corpus store.
+`artifact`, plus *(v18, deprecated v21)* an optional deployment-local
+`path:` override), and an explicit `latest:` default naming one of those
+tags. *(v21)* `adapter:` — the format resolving native ids — is OPTIONAL:
+an explicit declaration still wins, but when absent it derives at
+resolution time from the latest snapshot's mirror record's mime overlay
+`ref_adapter` (`refdata.resolve_adapter_name`, spec/corpus.md §7.1). A
+snapshot's mirror bytes are a corpus artifact, distributed and
+integrity-checked through the corpus store.
 
 The issue tracker registers under `tracker:` — the Forgejo repo whose issues
 carry the system's backlog, and the in-repo path of the snapshot `ath issue
@@ -91,11 +95,14 @@ class Snapshot:
     """One registered snapshot of a reference dataset (spec/athenaeum.md §2.3).
 
     `artifact` is identity — the blake3 pin verification stamps (§13.2); it
-    never changes meaning. *(v18)* `path` is the interim deployment-local
-    materialization override: a mirror file read in place, tried before the
-    corpus artifact store (spec/ledger.md §6.5 "Resolution is downward").
-    Presence isn't checked at load time — the file may live on a mount that
-    isn't up; that's a resolver/status concern, not a manifest-parse one.
+    never changes meaning. *(v18, DEPRECATED v21)* `path` is the interim
+    deployment-local materialization override: a mirror file read in place,
+    tried before the corpus store's routes (spec/ledger.md §6.5 "Resolution
+    is downward"). Superseded by an attached location over the mirrors
+    directory (spec/corpus.md §12.1.1) — read tolerantly until every
+    registered snapshot store-resolves. Presence isn't checked at load time
+    — the file may live on a mount that isn't up; that's a resolver/status
+    concern, not a manifest-parse one.
     """
 
     artifact: str  # 64-hex blake3 — the pin verification stamps
@@ -109,13 +116,19 @@ class Reference:
     *(v17)* Multi-snapshot: `snapshots` maps tag → `Snapshot`,
     `latest` names the default tag. `ref://{dataset}@{tag}/{id}` (spec/ledger.md
     §6.5) pins a snapshot; bare `ref://{dataset}/{id}` tracks `latest`.
+
+    *(v21)* `adapter` is optional — an explicit declaration still wins (the
+    bootstrap and override path), but when absent the format adapter is
+    derived from the latest snapshot's mirror record's mime overlay
+    `ref_adapter` (spec/corpus.md §7.1, spec/athenaeum.md §2.3) via
+    `refdata.resolve_adapter_name`.
     """
 
     dataset: str
     description: str
-    adapter: str  # the format adapter resolving native ids (zim, jsonl-index, …)
     latest: str  # the default snapshot tag — a key of snapshots
     snapshots: dict[str, Snapshot]  # tag -> Snapshot (artifact hash + optional path)
+    adapter: str | None = None  # explicit override; None derives from the mirror's mime overlay
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -185,9 +198,10 @@ def load_references(root: Path) -> list[Reference]:
                 "'adapter:', 'latest:', and a tag-keyed 'snapshots:' map "
                 "(spec/athenaeum.md §2.3)"
             )
-        adapter = str(spec.get("adapter") or "")
-        if not adapter:
-            raise ManifestError(f"references/{name}: missing/empty adapter")
+        # (v21) adapter: optional — a missing/empty declaration derives at
+        # resolution time from the mirror record's mime overlay ref_adapter
+        # (refdata.resolve_adapter_name); this is no longer a load-time error.
+        adapter = str(spec.get("adapter") or "") or None
         snapshots_raw = spec.get("snapshots") or {}
         if not isinstance(snapshots_raw, dict) or not snapshots_raw:
             raise ManifestError(f"references/{name}: snapshots must be a non-empty "

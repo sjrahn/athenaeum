@@ -91,11 +91,15 @@ def _materialization_state(
     reference: Reference, tag: str, corpora_roots: Sequence[Path]
 ) -> tuple[str, Path | None]:
     """(`path`|`store`|`absent`, the materialized path or None) — mirrors
-    `refdata.materialize`'s own try-path-then-store priority so status agrees
-    with what resolution will actually do, without opening or hashing
-    anything. The path is returned too (not just the state label) so a caller
-    wanting the adapter's `index_state` for this snapshot doesn't have to
-    materialize a second time."""
+    `refdata.materialize`'s own try-path-then-corpus-routes priority so
+    status agrees with what resolution will actually do, without opening or
+    hashing anything. *(21)* A mirror resolved through a corpus root's
+    attached-location route is store custody too — it reports `store`, not
+    a fourth label, since `materialize()` folds both the artifact-store and
+    location-route lookups into one path result. The path is returned too
+    (not just the state label) so a caller wanting the adapter's
+    `index_state` for this snapshot doesn't have to materialize a second
+    time."""
     snapshot = reference.snapshots[tag]
     if snapshot.path is not None and Path(snapshot.path).is_file():
         return "path", Path(snapshot.path)
@@ -113,26 +117,43 @@ def _cmd_status(argv: Sequence[str]) -> int:
     if not refs:
         print("no reference datasets registered")
         return 0
-    from refdata import ADAPTERS, adapter_available
+    from refdata import ADAPTERS, adapter_available, canonical_index_path, resolve_adapter_name
+    from refdata.errors import AdapterUnavailable
 
     corpora_roots = _corpora_roots(root)
     for reference in refs:
-        avail = "available" if adapter_available(reference.adapter) else "UNAVAILABLE"
-        print(f"{reference.dataset}  adapter={reference.adapter} ({avail})  "
+        # (21) adapter: is optional — derive from the mirror record's mime
+        # overlay when unset; status must never crash on a derivation
+        # failure (informational, never a failing exit), so it's reported
+        # as its own row state instead.
+        try:
+            adapter_name = resolve_adapter_name(reference, corpora_roots)
+        except AdapterUnavailable as e:
+            print(f"{reference.dataset}  adapter=UNRESOLVED — {e}  {reference.description}")
+            for tag in reference.snapshots:
+                marker = " (latest)" if tag == reference.latest else ""
+                snapshot = reference.snapshots[tag]
+                state, _ = _materialization_state(reference, tag, corpora_roots)
+                print(f"  {tag}{marker}  {snapshot.artifact[:12]}  {state}")
+            continue
+        derived_marker = "" if reference.adapter else " (derived)"
+        avail = "available" if adapter_available(adapter_name) else "UNAVAILABLE"
+        print(f"{reference.dataset}  adapter={adapter_name}{derived_marker} ({avail})  "
               f"{reference.description}")
         # Sidecar index state only for an adapter that carries one (osm-pbf)
         # and only when its optional dependency is actually importable here —
         # a zim row (no `index_state`) or an unavailable adapter is unchanged.
         index_state_fn = None
         if avail == "available":
-            index_state_fn = getattr(ADAPTERS[reference.adapter], "index_state", None)
+            index_state_fn = getattr(ADAPTERS[adapter_name], "index_state", None)
         for tag in reference.snapshots:
             marker = " (latest)" if tag == reference.latest else ""
             snapshot = reference.snapshots[tag]
             state, mirror_path = _materialization_state(reference, tag, corpora_roots)
             row = f"  {tag}{marker}  {snapshot.artifact[:12]}  {state}"
             if index_state_fn is not None and mirror_path is not None:
-                row += f"  index={index_state_fn(mirror_path)}"
+                index_path = canonical_index_path(reference, tag, corpora_roots)
+                row += f"  index={index_state_fn(mirror_path, index_path=index_path)}"
             print(row)
     return 0  # status is informational — never a failing exit
 
@@ -322,38 +343,51 @@ def _cmd_index(argv: Sequence[str]) -> int:
         )
         return 1
 
-    from refdata import ADAPTERS, adapter_available
+    from refdata import ADAPTERS, adapter_available, resolve_adapter_name
+    from refdata.errors import AdapterUnavailable
 
-    if not adapter_available(reference.adapter):
+    corpora_roots = _corpora_roots(root)
+    try:
+        adapter_name = resolve_adapter_name(reference, corpora_roots)
+    except AdapterUnavailable as e:
+        print(f"ath ref index: adapter unavailable — {e}", file=sys.stderr)
+        return 1
+
+    if not adapter_available(adapter_name):
         print(
             f"ath ref index: adapter unavailable — {reference.dataset}: adapter "
-            f"{reference.adapter!r} is unregistered or its optional dependency is not "
+            f"{adapter_name!r} is unregistered or its optional dependency is not "
             "installed in this environment",
             file=sys.stderr,
         )
         return 1
 
-    adapter_module = ADAPTERS[reference.adapter]
+    adapter_module = ADAPTERS[adapter_name]
     build_index = getattr(adapter_module, "build_index", None)
     if build_index is None:
         print(
-            f"ath ref index: adapter '{reference.adapter}' needs no sidecar index",
+            f"ath ref index: adapter '{adapter_name}' needs no sidecar index",
             file=sys.stderr,
         )
         return 1
 
-    from refdata import materialize
+    from refdata import canonical_index_path, materialize
     from refdata.errors import MirrorCorrupt
 
-    mirror_path = materialize(reference, tag, _corpora_roots(root))
+    mirror_path = materialize(reference, tag, corpora_roots)
     if mirror_path is None:
         print(
             f"ath ref index: mirror unavailable — {reference.dataset}@{tag}: no local "
             "bytes (neither the declared path: override nor any given corpus root's "
-            "artifact store)",
+            "artifact store or attached location)",
             file=sys.stderr,
         )
         return 1
+
+    # (21) the sidecar's canonical home — cache/refidx/ under the corpus root
+    # the mirror resolved through (or the first registered root, bare path:
+    # override case); `ath ref index` always BUILDS there.
+    index_path = canonical_index_path(reference, tag, corpora_roots)
 
     # Chatty per-batch progress would flood stderr on a real multi-GB extract
     # (~55M tagged elements over ~1000 flushes on the Canada extract) — print
@@ -367,7 +401,7 @@ def _cmd_index(argv: Sequence[str]) -> int:
             last_reported = elements
 
     try:
-        counts = build_index(mirror_path, progress=progress)
+        counts = build_index(mirror_path, progress=progress, index_path=index_path)
     except MirrorCorrupt as e:
         print(f"ath ref index: mirror file corrupt or still downloading: {e}", file=sys.stderr)
         return 1
@@ -375,7 +409,7 @@ def _cmd_index(argv: Sequence[str]) -> int:
     # Confirm the build actually left the sidecar in a state resolve/search
     # will accept — the CLI never hardcodes the sidecar's own path/suffix,
     # that's the adapter's business (`refdata.adapters` module docstring).
-    if adapter_module.index_state(mirror_path) != "indexed":
+    if adapter_module.index_state(mirror_path, index_path=index_path) != "indexed":
         print(
             f"ath ref index: {reference.dataset}@{tag}: build_index reported success but "
             "index_state is not 'indexed' — this is an adapter bug, not a data condition",

@@ -15,6 +15,18 @@ raise `refdata.errors.MirrorUnindexed` rather than crash or silently degrade
 Native id grammar: `{node|way|relation}/{decimal id}` (e.g. `way/12345`).
 OSM has no redirects, so `canonical_id == native_id` always — unlike ZIM,
 which follows a redirect to report a different canonical path.
+
+*(21)* `open_archive`, `build_index`, and `index_state` each take a
+keyword-only `index_path`: the canonical sidecar location `refdata` computes
+under a resolving corpus root's `cache/refidx/` (spec/ledger.md §6.5) —
+required because an attached-location mirror may not even be locally
+writable, so a beside-the-mirror sidecar can't always be assumed. When
+`index_path` is omitted, the legacy beside-the-mirror path (`_sidecar_path`)
+is used, exactly as before v21 — bare adapter-module use and every
+already-built sidecar (e.g. the Canada extract's 6.5 GB sidecar) keep
+working unchanged. When `index_path` is given but nothing indexed lives
+there yet, the legacy beside-the-mirror location is checked too (migration
+grace) before reporting unindexed — see `_select_sidecar`.
 """
 
 from __future__ import annotations
@@ -73,26 +85,33 @@ class _Handle:
     built after the mirror is registered) and connecting is what needs to
     happen lazily. Staleness is re-checked only when (re)opening the
     connection, not on every query — a live connection stays live until the
-    handle itself is discarded (process-lifetime, per `refdata._HANDLES`)."""
+    handle itself is discarded (process-lifetime, per `refdata._HANDLES`).
 
-    def __init__(self, mirror_path: Path) -> None:
+    *(21)* `index_path`, when given, is the canonical sidecar location
+    (`refdata.canonical_index_path`); `None` means legacy beside-the-mirror
+    only — see `_select_sidecar`."""
+
+    def __init__(self, mirror_path: Path, index_path: Path | None = None) -> None:
         self.mirror_path = mirror_path
+        self.index_path = index_path
         self._conn: sqlite3.Connection | None = None
 
     def connection(self) -> sqlite3.Connection:
         if self._conn is not None:
             return self._conn
-        state = index_state(self.mirror_path)
-        if state != "indexed":
+        sidecar = _select_sidecar(self.mirror_path, self.index_path)
+        if sidecar is None:
+            state = index_state(self.mirror_path, index_path=self.index_path)
+            locations = _sidecar_locations_desc(self.mirror_path, self.index_path)
             raise MirrorUnindexed(
-                f"{self.mirror_path}: sidecar index {_sidecar_path(self.mirror_path)} "
-                f"is {state} — build it with `ath ref index <dataset>`"
+                f"{self.mirror_path}: sidecar index at {locations} is {state} — "
+                "build it with `ath ref index <dataset>`"
             )
-        self._conn = sqlite3.connect(str(_sidecar_path(self.mirror_path)))
+        self._conn = sqlite3.connect(str(sidecar))
         return self._conn
 
 
-def open_archive(mirror_path: Path) -> _Handle:
+def open_archive(mirror_path: Path, *, index_path: Path | None = None) -> _Handle:
     """Validate the pbf opens (a header read — the same "construction is
     where the library actually validates the file" empirical fact as libzim,
     confirmed against pyosmium 4.3.1: a truncated/corrupted pbf raises
@@ -100,7 +119,9 @@ def open_archive(mirror_path: Path) -> _Handle:
     as `MirrorCorrupt` so it joins the typed `RefdataError` hierarchy. The
     sidecar index is deliberately NOT checked here — a handle opened before
     the index exists must keep working once one is built later (see
-    `_Handle.connection`, checked lazily per call instead)."""
+    `_Handle.connection`, checked lazily per call instead). *(21)* `index_path`
+    — the canonical sidecar location — is cached on the handle for that
+    lazy check; `None` falls back to the legacy beside-the-mirror path."""
     assert _osmium is not None, "osm-pbf adapter unavailable — check available() first"
     try:
         reader = _reader_header_only(mirror_path)
@@ -108,7 +129,7 @@ def open_archive(mirror_path: Path) -> _Handle:
         reader.close()
     except (RuntimeError, OSError) as exc:
         raise MirrorCorrupt(f"{mirror_path}: {exc}") from exc
-    return _Handle(mirror_path)
+    return _Handle(mirror_path, index_path)
 
 
 def _reader_header_only(mirror_path: Path):  # type: ignore[no-untyped-def]
@@ -121,14 +142,13 @@ def _reader_header_only(mirror_path: Path):  # type: ignore[no-untyped-def]
     return _osmium.io.Reader(str(mirror_path), _osmium.osm.osm_entity_bits.NOTHING)
 
 
-def index_state(mirror_path: Path) -> str:
-    """`"indexed"` | `"missing"` | `"stale"`. Stale covers both an
-    index-schema mismatch (`builder` != current — read this code's sidecar
-    with old assumptions rather than rebuild would be a silent bug) and a
-    changed mirror (`source_size` != the pbf's current byte size — the
-    cheapest drift signal available without re-scanning; content-addressed
-    mirrors don't change size without changing bytes)."""
-    sidecar = _sidecar_path(mirror_path)
+def _index_state_at(mirror_path: Path, sidecar: Path) -> str:
+    """`"indexed"` | `"missing"` | `"stale"` of `sidecar` specifically.
+    Stale covers both an index-schema mismatch (`builder` != current — read
+    this code's sidecar with old assumptions rather than rebuild would be a
+    silent bug) and a changed mirror (`source_size` != the pbf's current
+    byte size — the cheapest drift signal available without re-scanning;
+    content-addressed mirrors don't change size without changing bytes)."""
     if not sidecar.is_file():
         return "missing"
     try:
@@ -150,16 +170,64 @@ def index_state(mirror_path: Path) -> str:
     return "indexed"
 
 
+def _select_sidecar(mirror_path: Path, index_path: Path | None) -> Path | None:
+    """*(21)* Which sidecar location, if either, is actually indexed —
+    the two-location resolution order `refdata.__init__`'s module docstring
+    promises: when `index_path` (the canonical location) is given, it wins
+    if indexed; otherwise the legacy beside-the-mirror sidecar is checked as
+    migration grace. When `index_path` is None, only the legacy location is
+    ever considered (bare adapter-module use, pre-21 behavior unchanged).
+    `None` when nothing indexed exists at either location."""
+    if index_path is not None:
+        if _index_state_at(mirror_path, index_path) == "indexed":
+            return index_path
+        legacy = _sidecar_path(mirror_path)
+        if _index_state_at(mirror_path, legacy) == "indexed":
+            return legacy
+        return None
+    legacy = _sidecar_path(mirror_path)
+    return legacy if _index_state_at(mirror_path, legacy) == "indexed" else None
+
+
+def _sidecar_locations_desc(mirror_path: Path, index_path: Path | None) -> str:
+    """Human-readable description of the location(s) `_select_sidecar`
+    checked, for `MirrorUnindexed` messages."""
+    if index_path is not None:
+        return f"{index_path} (or legacy {_sidecar_path(mirror_path)})"
+    return str(_sidecar_path(mirror_path))
+
+
+def index_state(mirror_path: Path, *, index_path: Path | None = None) -> str:
+    """`"indexed"` | `"missing"` | `"stale"`. *(21)* With `index_path` given,
+    reports `"indexed"` if EITHER the canonical location or the legacy
+    beside-the-mirror sidecar is indexed (canonical wins when both are —
+    `_select_sidecar` checks it first); otherwise reports the canonical
+    location's own missing/stale state (`ath ref index` always builds
+    there). With `index_path` omitted, reports the legacy location's state
+    alone — pre-21 behavior, unchanged."""
+    if _select_sidecar(mirror_path, index_path) is not None:
+        return "indexed"
+    target = index_path if index_path is not None else _sidecar_path(mirror_path)
+    return _index_state_at(mirror_path, target)
+
+
 def build_index(
-    mirror_path: Path, *, progress: Callable[[int], None] | None = None
+    mirror_path: Path,
+    *,
+    progress: Callable[[int], None] | None = None,
+    index_path: Path | None = None,
 ) -> dict[str, int]:
-    """Scan `mirror_path` once, writing the sidecar SQLite index beside it
-    (`_sidecar_path`). Tagged elements only: pyosmium's `EmptyTagFilter`
-    drops untagged nodes — bare geometry vertices, never quotable content —
-    before Python sees them, at C++ speed (~55M tagged elements / ~91s on
-    the real 6 GB Canada Geofabrik extract). Inserts batch at `_BATCH_SIZE`
-    rows (`executemany`); `progress`, if given, is called with the
-    cumulative indexed-element count at each batch flush.
+    """Scan `mirror_path` once, writing the sidecar SQLite index. *(21)*
+    Written at `index_path` when given (the canonical `cache/refidx/`
+    location `refdata` computes — its parent directory is created here,
+    lazily, the only place this adapter ever creates it); otherwise at the
+    legacy beside-the-mirror path (`_sidecar_path`), unchanged from pre-21.
+    Tagged elements only: pyosmium's `EmptyTagFilter` drops untagged nodes —
+    bare geometry vertices, never quotable content — before Python sees
+    them, at C++ speed (~55M tagged elements / ~91s on the real 6 GB Canada
+    Geofabrik extract). Inserts batch at `_BATCH_SIZE` rows (`executemany`);
+    `progress`, if given, is called with the cumulative indexed-element
+    count at each batch flush.
 
     Written atomically: built at `<sidecar>.tmp`, then `os.replace`d into
     place, so a reader (via `index_state`/`_Handle.connection`) never
@@ -169,7 +237,8 @@ def build_index(
     Raises `MirrorCorrupt` if pyosmium can't read `mirror_path` as a pbf.
     """
     assert _osmium is not None, "osm-pbf adapter unavailable — check available() first"
-    sidecar = _sidecar_path(mirror_path)
+    sidecar = index_path if index_path is not None else _sidecar_path(mirror_path)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = Path(str(sidecar) + ".tmp")
     if tmp_path.exists():
         tmp_path.unlink()
