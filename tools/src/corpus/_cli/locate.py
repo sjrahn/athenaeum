@@ -72,17 +72,29 @@ def run(args: argparse.Namespace) -> int:
             "size": asize,
         }
 
-    by_name = {loc.name: loc.path for loc in config_mod.load_config(corpus_root).locations}
+    locations = config_mod.load_config(corpus_root).locations
+    by_name = {loc.name: loc for loc in locations}
+    declared_order = {loc.name: i for i, loc in enumerate(locations)}
     with locationindex.open_index(corpus_root) as conn:
         rows = conn.execute(
-            "SELECT location, relpath, size, mtime, source FROM locations WHERE hash = ?",
+            "SELECT location, relpath, size, mtime, source, mime_claim FROM locations "
+            "WHERE hash = ?",
             (hash_,),
         ).fetchall()
-    for loc_name, relpath, size, mtime, source in rows:
-        base = by_name.get(loc_name)
+
+    # Ordered cheapest-first (spec §12.1.1, v25 "Route preference": locate orders
+    # residencies by cost) — a stable sort, so declaration order breaks a cost tie; an
+    # unconfigured location's rows (if any) sort last, past every configured cost.
+    def _sort_key(row: tuple) -> tuple[int, int]:
+        loc = by_name.get(row[0])
+        cost = config_mod.effective_cost(loc) if loc is not None else 2**31
+        return (cost, declared_order.get(row[0], 2**31))
+
+    for loc_name, relpath, size, mtime, source, mime_claim in sorted(rows, key=_sort_key):
+        loc = by_name.get(loc_name)
         current = False
-        if base is not None:
-            candidate = base / relpath
+        if loc is not None:
+            candidate = loc.path / relpath
             try:
                 st = candidate.stat()
             except OSError:
@@ -97,6 +109,8 @@ def run(args: argparse.Namespace) -> int:
                 "relpath": relpath,
                 "source": source,
                 "status": "current" if current else "stale",
+                "mime_claim": mime_claim,
+                "cost": loc.cost if loc is not None else None,
             }
         )
 
@@ -123,9 +137,14 @@ def _print_human(result: dict[str, Any]) -> None:
     if result["attached"]:
         print(f"  attached rows ({len(result['attached'])}):")
         for row in result["attached"]:
+            extra = ""
+            if row.get("mime_claim"):
+                extra += f"  mime={row['mime_claim']}"
+            if row.get("cost") is not None:
+                extra += f"  cost={row['cost']}"
             print(
                 f"    {row['location']}/{row['relpath']}  source={row['source']}  "
-                f"{row['status']}"
+                f"{row['status']}{extra}"
             )
     else:
         print("  attached rows: none")

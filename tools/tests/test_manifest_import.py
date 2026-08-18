@@ -40,11 +40,38 @@ manifest = true
     return next(loc for loc in config_mod.load_config(root).locations if loc.name == name)
 
 
-_MANIFEST_SCHEMA = """
+_MANIFEST_SCHEMA_V2 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE identities (
   dev INTEGER NOT NULL, ino INTEGER NOT NULL,
   size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+  blake3 TEXT NOT NULL, generation INTEGER NOT NULL,
+  PRIMARY KEY (dev, ino)
+) WITHOUT ROWID;
+CREATE TABLE paths (
+  path TEXT PRIMARY KEY, dev INTEGER NOT NULL, ino INTEGER NOT NULL,
+  generation INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE generations (
+  generation INTEGER PRIMARY KEY, mode TEXT NOT NULL, scanner TEXT NOT NULL,
+  started_at TEXT NOT NULL, finished_at TEXT, summary_json TEXT
+);
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY, generation INTEGER NOT NULL, type TEXT NOT NULL,
+  path TEXT NOT NULL, detail_json TEXT NOT NULL
+);
+"""
+
+# v3 (spec §12.1.1 (25), "Catalog-metadata amendment"): identities grows the light-
+# catalog columns — ctime_ns/btime_ns/mode are stat facts this reader never imports
+# (they "stay queryable in the cached manifest"); mime_claim is the one column
+# locationindex.attest_from_manifest actually copies forward.
+_MANIFEST_SCHEMA_V3 = """
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE identities (
+  dev INTEGER NOT NULL, ino INTEGER NOT NULL,
+  size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+  ctime_ns INTEGER, btime_ns INTEGER, mode INTEGER, mime_claim TEXT,
   blake3 TEXT NOT NULL, generation INTEGER NOT NULL,
   PRIMARY KEY (dev, ino)
 ) WITHOUT ROWID;
@@ -72,17 +99,19 @@ def _make_manifest(
     also_open_generation: bool = False,
     user_version: int = 2,
 ) -> None:
-    """Build a fake contract-v2 manifest.sqlite (spec §12.1.1 (24)) at `manifest_path`
-    (replacing any prior one — each call models the scanner republishing a whole new
-    generation-checkpointed db). `entries`: dicts with `path`, `size`, `mtime_ns`,
-    `blake3`, and an optional `ino` — entries sharing an `ino` become hardlinks (one
-    identity, one hash, two path rows). `finished=False` leaves the generation open
-    (no `finished_at`) — the "scanner cold pass still running" refusal case."""
+    """Build a fake contract-v2-or-v3 manifest.sqlite (spec §12.1.1 (24)/(25)) at
+    `manifest_path` (replacing any prior one — each call models the scanner
+    republishing a whole new generation-checkpointed db). `entries`: dicts with
+    `path`, `size`, `mtime_ns`, `blake3`, an optional `ino` (entries sharing an `ino`
+    become hardlinks — one identity, one hash, two path rows), and — `user_version=3`
+    only — an optional `mime_claim`. `finished=False` leaves the generation open (no
+    `finished_at`) — the "scanner cold pass still running" refusal case."""
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.unlink(missing_ok=True)
+    schema = _MANIFEST_SCHEMA_V3 if user_version >= 3 else _MANIFEST_SCHEMA_V2
     conn = sqlite3.connect(manifest_path)
     try:
-        conn.executescript(_MANIFEST_SCHEMA)
+        conn.executescript(schema)
         conn.execute(f"PRAGMA user_version = {int(user_version)}")
         conn.executemany(
             "INSERT INTO meta (key, value) VALUES (?, ?)",
@@ -116,12 +145,28 @@ def _make_manifest(
                 next_ino += 1
             if ino not in seen_idents:
                 seen_idents.add(ino)
-                conn.execute(
-                    "INSERT INTO identities "
-                    "(dev, ino, size, mtime_ns, blake3, generation) "
-                    "VALUES (1, ?, ?, ?, ?, ?)",
-                    (ino, entry["size"], entry["mtime_ns"], entry["blake3"], generation),
-                )
+                if user_version >= 3:
+                    conn.execute(
+                        "INSERT INTO identities "
+                        "(dev, ino, size, mtime_ns, ctime_ns, btime_ns, mode, "
+                        "mime_claim, blake3, generation) "
+                        "VALUES (1, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)",
+                        (
+                            ino,
+                            entry["size"],
+                            entry["mtime_ns"],
+                            entry.get("mime_claim"),
+                            entry["blake3"],
+                            generation,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO identities "
+                        "(dev, ino, size, mtime_ns, blake3, generation) "
+                        "VALUES (1, ?, ?, ?, ?, ?)",
+                        (ino, entry["size"], entry["mtime_ns"], entry["blake3"], generation),
+                    )
             conn.execute(
                 "INSERT INTO paths (path, dev, ino, generation) VALUES (?, 1, ?, ?)",
                 (entry["path"], ino, generation),
@@ -500,6 +545,37 @@ path = "{plain_tree}"
     assert not lines["plain"].endswith("  manifest")
 
 
+def test_cli_list_shows_cost_when_declared(tmp_path, capsys):
+    """`corpus location list` appends `cost=<N>` to a row when declared — attached and
+    store alike (spec §12.1.1, v25 "Route preference")."""
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    bulk = tmp_path / "bulk"
+    (root / "corpus.toml").write_text(
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+cost = 30
+
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+""",
+        "utf-8",
+    )
+
+    rc = location_cli.run(argparse.Namespace(action="list", corpus_root=str(root)))
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = {line.split(" ")[0]: line for line in out.splitlines()}
+    assert "cost=30" in lines["loc"]
+    assert "cost=" not in lines["bulk"]  # undeclared on bulk — nothing shown
+
+
 # ---------- schema migration ---------- #
 
 
@@ -540,3 +616,182 @@ def test_old_schema_db_upgrades_on_connect_and_keeps_rows_computed(tmp_path):
             ("loc", "a.bin"),
         ).fetchone()
     assert row == (HASH_A, 5, 111, "computed")
+
+
+def test_old_locations_db_gains_mime_claim_column_nullable(tmp_path):
+    """A pre-v25 `locations.db` (no `mime_claim` column at all — v24's own `source`
+    migration already applied) upgrades in place on `connect`; every pre-existing row
+    lands with `mime_claim = NULL` (spec §12.1.1 (25))."""
+    root = _corpus(tmp_path)
+    db_path = locationindex.db_path(root)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    raw = sqlite3.connect(db_path)
+    try:
+        raw.executescript(
+            """
+            CREATE TABLE locations (
+                hash     TEXT NOT NULL,
+                location TEXT NOT NULL,
+                relpath  TEXT NOT NULL,
+                size     INTEGER NOT NULL,
+                mtime    INTEGER NOT NULL,
+                source   TEXT NOT NULL DEFAULT 'computed',
+                PRIMARY KEY (location, relpath)
+            );
+            CREATE INDEX idx_locations_hash ON locations (hash);
+            """
+        )
+        raw.execute(
+            "INSERT INTO locations (hash, location, relpath, size, mtime, source) "
+            "VALUES (?, ?, ?, ?, ?, 'computed')",
+            (HASH_A, "loc", "a.bin", 5, 111),
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    with locationindex.open_index(root) as conn:
+        row = conn.execute(
+            "SELECT hash, size, mtime, source, mime_claim FROM locations "
+            "WHERE location = ? AND relpath = ?",
+            ("loc", "a.bin"),
+        ).fetchone()
+    assert row == (HASH_A, 5, 111, "computed", None)
+
+
+# ---------- mime_claim import (spec §12.1.1 (25), v25 "Catalog-metadata amendment") ---------- #
+
+
+def test_v3_manifest_import_lands_mime_claim(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    loc = _attach_presenting(root, tree)
+    _make_manifest(
+        tree / ".athenaeum" / "manifest.sqlite",
+        entries=[
+            {
+                "path": "a.bin",
+                "size": 5,
+                "mtime_ns": 111,
+                "blake3": HASH_A,
+                "mime_claim": "application/x-openzim",
+            },
+            {"path": "b.bin", "size": 7, "mtime_ns": 222, "blake3": HASH_B},
+        ],
+        generation=1,
+        user_version=3,
+    )
+
+    outcome = locationindex.attest_from_manifest(root, loc)
+    assert outcome == {"files": 2, "generation": 1, "skipped": False}
+
+    with locationindex.open_index(root) as conn:
+        rows = conn.execute(
+            "SELECT relpath, mime_claim FROM locations WHERE location = ? "
+            "ORDER BY relpath",
+            ("loc",),
+        ).fetchall()
+    assert rows == [("a.bin", "application/x-openzim"), ("b.bin", None)]
+
+
+def test_v2_manifest_import_lands_null_mime_claim(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    loc = _attach_presenting(root, tree)
+    _make_manifest(
+        tree / ".athenaeum" / "manifest.sqlite",
+        entries=[{"path": "a.bin", "size": 5, "mtime_ns": 111, "blake3": HASH_A}],
+        generation=1,
+        user_version=2,
+    )
+
+    outcome = locationindex.attest_from_manifest(root, loc)
+    assert outcome == {"files": 1, "generation": 1, "skipped": False}
+
+    with locationindex.open_index(root) as conn:
+        row = conn.execute(
+            "SELECT mime_claim FROM locations WHERE location = ? AND relpath = ?",
+            ("loc", "a.bin"),
+        ).fetchone()
+    assert row == (None,)
+
+
+def test_v3_schema_version_accepted_alongside_v2(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    loc = _attach_presenting(root, tree)
+    _make_manifest(
+        tree / ".athenaeum" / "manifest.sqlite",
+        entries=[{"path": "a.bin", "size": 5, "mtime_ns": 111, "blake3": HASH_A}],
+        generation=1,
+        user_version=3,
+    )
+    # No ValueError — v3 is accepted exactly like v2.
+    outcome = locationindex.attest_from_manifest(root, loc)
+    assert outcome["skipped"] is False
+
+
+def test_unknown_schema_version_error_names_both_accepted(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    loc = _attach_presenting(root, tree)
+    _make_manifest(
+        tree / ".athenaeum" / "manifest.sqlite",
+        entries=[{"path": "a.bin", "size": 5, "mtime_ns": 111, "blake3": HASH_A}],
+        generation=1,
+        user_version=4,
+    )
+    with pytest.raises(ValueError, match="2 or 3"):
+        locationindex.attest_from_manifest(root, loc)
+
+
+def test_walking_attest_clears_mime_claim_on_a_previously_presented_row(tmp_path):
+    """A walking attest always overwrites a presented row as computed (existing
+    behavior); it must also clear any `mime_claim` that row carried — a computed row
+    never sniffs bytes, so it never carries a claim (spec §12.1.1 (25))."""
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    f = tree / "a.bin"
+    data = b"walked after presented"
+    f.write_bytes(data)
+    loc = _attach_presenting(root, tree)
+
+    from corpus import hashing
+
+    real_hash = hashing.hash_file(f, also=())["blake3"]
+    st = f.stat()
+    _make_manifest(
+        tree / ".athenaeum" / "manifest.sqlite",
+        entries=[
+            {
+                "path": "a.bin",
+                "size": st.st_size,
+                "mtime_ns": st.st_mtime_ns,
+                "blake3": real_hash,
+                "mime_claim": "application/octet-stream",
+            }
+        ],
+        generation=1,
+        user_version=3,
+    )
+    locationindex.attest_from_manifest(root, loc)
+    with locationindex.open_index(root) as conn:
+        claim = conn.execute(
+            "SELECT mime_claim FROM locations WHERE location = ? AND relpath = ?",
+            ("loc", "a.bin"),
+        ).fetchone()
+    assert claim == ("application/octet-stream",)
+
+    locationindex.attest_location(root, loc)
+    with locationindex.open_index(root) as conn:
+        row = conn.execute(
+            "SELECT source, mime_claim FROM locations WHERE location = ? AND relpath = ?",
+            ("loc", "a.bin"),
+        ).fetchone()
+    assert row == ("computed", None)

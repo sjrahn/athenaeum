@@ -49,6 +49,10 @@ File schema (all keys optional):
                                       # remote host publishes
                                       # `<path>/.athenaeum/manifest.sqlite`, and attest
                                       # reads it instead of walking
+    cost = 20                        # both kinds, optional (v25): route-preference —
+                                      # any non-negative integer, lower is nearer;
+                                      # undeclared defaults preserve today's class
+                                      # order (store nearer than attached)
 
 Env vars override the file (later wins):
 
@@ -98,7 +102,13 @@ class LocationConfig:
     `manifest` (spec §12.1.1, v24) is meaningful only on `kind == "attached"`: `true`
     declares that the tree **presents its own manifest** — a residence scanner running
     on the remote host publishes `<path>/.athenaeum/manifest.sqlite` — so `corpus
-    location attest` reads that manifest instead of walking the tree itself."""
+    location attest` reads that manifest instead of walking the tree itself.
+
+    `cost` (spec §12.1.1, v25 "Route preference" amendment) is meaningful on BOTH
+    kinds: an optional non-negative integer, lower is nearer. Undeclared (`None`), the
+    class default applies — see `effective_cost` — which preserves today's resolution
+    order for a zero-config deployment. A declaration only ever reorders WITHIN a route
+    class (§12.1.1); it never promotes an attached location ahead of a store location."""
 
     name: str
     kind: str
@@ -107,6 +117,29 @@ class LocationConfig:
     ingest_default: bool = False
     ingest_origins: tuple[str, ...] = ()
     manifest: bool = False
+    cost: int | None = None
+
+
+#: Class-default costs applied by `effective_cost` when a location declares no `cost`
+#: (spec §12.1.1, v25): preserves today's resolution order — the co-located tree
+#: (implicitly cost 0, never a `LocationConfig` at all) nearest, then store locations,
+#: then attached — for a zero-config deployment.
+_DEFAULT_COST_STORE = 10
+_DEFAULT_COST_ATTACHED = 20
+
+
+def effective_cost(loc: LocationConfig) -> int:
+    """A location's resolver-preference cost (spec §12.1.1, v25 "Route preference"):
+    the declared `cost` if any, else a class default — `10` for `kind == "store"`,
+    `20` for `kind == "attached"`. These defaults exist only to preserve today's
+    resolution order when nothing is declared; a declaration reorders WITHIN a route
+    class (a remote store costlier than a local one), it never promotes a route class
+    past another — cross-class comparison never actually happens because each caller
+    (`placement.find_in_stores`, `locationindex.route_for`) only ever orders locations
+    of one kind at a time, per the resolver's own route-class sequence."""
+    if loc.cost is not None:
+        return loc.cost
+    return _DEFAULT_COST_STORE if loc.kind == "store" else _DEFAULT_COST_ATTACHED
 
 
 @dataclass(frozen=True)
@@ -275,6 +308,23 @@ def _resolve_manifest_key(name: str, entry: dict[str, Any]) -> bool:
     )
 
 
+def _resolve_cost_key(name: str, entry: dict[str, Any]) -> int | None:
+    """Resolve a location's optional `cost` key (spec §12.1.1, v25 "Route preference"
+    amendment) — any non-negative integer, lower is nearer; valid on BOTH `kind`s.
+    Absent → `None` (the class default applies, `effective_cost`). `bool` is rejected
+    even though Python's `bool` is an `int` subclass — `true`/`false` is never a
+    sensible cost. Any other shape is an operator error."""
+    if "cost" not in entry:
+        return None
+    value = entry["cost"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"corpus.toml [[corpus.location]] {name!r}: 'cost' must be a non-negative "
+            f"integer, got {value!r}."
+        )
+    return value
+
+
 def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
     """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21/v22). No
     env-var overrides — locations are deployment topology, not secrets or transport
@@ -350,6 +400,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
         )
         ingest_origins = _resolve_ingest_origins_key(name, entry) if kind == "store" else ()
         manifest = _resolve_manifest_key(name, entry) if kind == "attached" else False
+        cost = _resolve_cost_key(name, entry)
         if ingest_default:
             if default_name is not None:
                 raise ValueError(
@@ -368,6 +419,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 ingest_default=ingest_default,
                 ingest_origins=ingest_origins,
                 manifest=manifest,
+                cost=cost,
             )
         )
     return tuple(out)

@@ -32,8 +32,9 @@ _COPY_CHUNK = 1 << 20  # 1 MiB — mirrors hashing.CHUNK
 
 def store_locations(corpus_root: Path) -> tuple[config_mod.LocationConfig, ...]:
     """Every `kind = "store"` location configured for `corpus_root`, in declaration
-    order (spec §12.1.1) — the order `ingest_destination` and `find_in_stores` both
-    walk, so a corpus.toml's location order is itself the tie-break."""
+    order (spec §12.1.1) — the order `ingest_destination` walks outright, and the base
+    order `find_in_stores` refines by cost (v25 "Route preference"), so a corpus.toml's
+    location order is itself the tie-break within one cost."""
     return tuple(
         loc for loc in config_mod.load_config(corpus_root).locations if loc.kind == "store"
     )
@@ -48,12 +49,14 @@ def location_artifact_path(loc: config_mod.LocationConfig, record_id: str, exten
 
 
 def find_in_stores(corpus_root: Path, record_id: str, extension: str) -> Path | None:
-    """The first store location holding a standalone copy of `record_id`'s bytes under
-    `extension`, or `None` (spec §12.1.1's route order: co-located store → OTHER store
-    locations → attached-location index → member index → remote hydration). Several
-    locations may hold the same bytes; any route yields identical bytes (§2), so
-    declaration order alone decides which is returned."""
-    for loc in store_locations(corpus_root):
+    """The cheapest store location holding a standalone copy of `record_id`'s bytes
+    under `extension`, or `None` (spec §12.1.1's route order: co-located store → OTHER
+    store locations → attached-location index → member index → remote hydration).
+    Several locations may hold the same bytes; any route yields identical bytes (§2),
+    so locations are tried cheapest-first (`config.effective_cost`, v25 "Route
+    preference") — a stable sort, so declaration order still breaks a cost tie."""
+    ordered = sorted(store_locations(corpus_root), key=config_mod.effective_cost)
+    for loc in ordered:
         candidate = location_artifact_path(loc, record_id, extension)
         if candidate.is_file():
             return candidate

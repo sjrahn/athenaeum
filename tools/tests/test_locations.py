@@ -428,6 +428,109 @@ path = "{tree}"
     assert stale[0][1] == "a.txt"
 
 
+# ---------- route_for cost ordering (spec §12.1.1, v25 "Route preference") ---------- #
+
+
+def test_route_for_prefers_cheaper_location(tmp_path):
+    root = _corpus(tmp_path)
+    cheap_tree = tmp_path / "cheap"
+    pricey_tree = tmp_path / "pricey"
+    cheap_tree.mkdir()
+    pricey_tree.mkdir()
+    data = b"same bytes in two attached locations"
+    (cheap_tree / "a.bin").write_bytes(data)
+    (pricey_tree / "a.bin").write_bytes(data)
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "pricey"
+kind = "attached"
+path = "{pricey_tree}"
+cost = 99
+
+[[corpus.location]]
+name = "cheap"
+kind = "attached"
+path = "{cheap_tree}"
+cost = 1
+""",
+    )
+    for loc in config_mod.load_config(root).locations:
+        locationindex.attest_location(root, loc)
+
+    digest = hashing.hash_file(cheap_tree / "a.bin", also=())["blake3"]
+    assert locationindex.route_for(root, digest) == cheap_tree / "a.bin"
+
+
+def test_route_for_falls_through_to_costlier_when_cheaper_stale(tmp_path):
+    root = _corpus(tmp_path)
+    cheap_tree = tmp_path / "cheap"
+    pricey_tree = tmp_path / "pricey"
+    cheap_tree.mkdir()
+    pricey_tree.mkdir()
+    data = b"same bytes, one goes stale"
+    (cheap_tree / "a.bin").write_bytes(data)
+    (pricey_tree / "a.bin").write_bytes(data)
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "cheap"
+kind = "attached"
+path = "{cheap_tree}"
+cost = 1
+
+[[corpus.location]]
+name = "pricey"
+kind = "attached"
+path = "{pricey_tree}"
+cost = 99
+""",
+    )
+    for loc in config_mod.load_config(root).locations:
+        locationindex.attest_location(root, loc)
+
+    digest = hashing.hash_file(cheap_tree / "a.bin", also=())["blake3"]
+    assert locationindex.route_for(root, digest) == cheap_tree / "a.bin"
+
+    # Tamper the cheap copy without re-attesting: its row goes stale, so the costlier
+    # CURRENT row must serve instead (falling through exactly as routes fall through
+    # today, spec §12.1.1 v25).
+    (cheap_tree / "a.bin").write_bytes(b"tampered")
+    assert locationindex.route_for(root, digest) == pricey_tree / "a.bin"
+
+
+def test_route_for_declaration_order_breaks_cost_tie(tmp_path):
+    root = _corpus(tmp_path)
+    first_tree = tmp_path / "first"
+    second_tree = tmp_path / "second"
+    first_tree.mkdir()
+    second_tree.mkdir()
+    data = b"tied cost, declaration order decides"
+    (first_tree / "a.bin").write_bytes(data)
+    (second_tree / "a.bin").write_bytes(data)
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "first"
+kind = "attached"
+path = "{first_tree}"
+
+[[corpus.location]]
+name = "second"
+kind = "attached"
+path = "{second_tree}"
+""",
+    )
+    for loc in config_mod.load_config(root).locations:
+        locationindex.attest_location(root, loc)
+
+    digest = hashing.hash_file(first_tree / "a.bin", also=())["blake3"]
+    assert locationindex.route_for(root, digest) == first_tree / "a.bin"
+
+
 # ---------- containment integration ---------- #
 
 

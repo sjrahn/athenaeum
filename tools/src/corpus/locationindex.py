@@ -6,17 +6,23 @@ untracked, never authoritative, gc-excluded by name (§12.8) because recomputati
 needs *bytes*, which for a multi-GB attached tree is hours, not milliseconds. A missing
 row means "unattested", never a failure.
 
-Row shape `(hash, location, relpath, size, mtime, source)` (§12.9.2, `source` added
-§12.1.1 (24)): `hash` is the bare-hex blake3 (the corpus identity algorithm, §2);
-`location` names the `[[corpus.location]]` entry (`config.py`); `relpath` is the
-file's path relative to the location's root, POSIX-separated; `size` + `mtime`
-(`st_mtime_ns`) are the **staleness pins** an attached file's mutability demands
-(§12.1.1) — compared via `pins_match`, exactly for `source='computed'`, tolerant of
-sub-100ns drift for `source='presented'` (see `pins_match`'s docstring). `source` is a
-row's provenance: `'computed'` (an ordinary walking attest hashed the bytes itself) or
-`'presented'` (imported from a residence scanner's manifest, §12.1.1 (24) — a host
-claim the corpus has not independently observed). Primary key `(location, relpath)` —
-one row per file; an index on `hash` serves `route_for`'s lookup.
+Row shape `(hash, location, relpath, size, mtime, source, mime_claim)` (§12.9.2,
+`source` added §12.1.1 (24), `mime_claim` added §12.1.1 (25)): `hash` is the bare-hex
+blake3 (the corpus identity algorithm, §2); `location` names the `[[corpus.location]]`
+entry (`config.py`); `relpath` is the file's path relative to the location's root,
+POSIX-separated; `size` + `mtime` (`st_mtime_ns`) are the **staleness pins** an
+attached file's mutability demands (§12.1.1) — compared via `pins_match`, exactly for
+`source='computed'`, tolerant of sub-100ns drift for `source='presented'` (see
+`pins_match`'s docstring). `source` is a row's provenance: `'computed'` (an ordinary
+walking attest hashed the bytes itself) or `'presented'` (imported from a residence
+scanner's manifest, §12.1.1 (24) — a host claim the corpus has not independently
+observed). `mime_claim` (nullable) is the advisory sniffed-format claim a presenting
+manifest's light catalog carries beside the pins (§12.1.1 (25)) — copied forward only
+when the source manifest is a v3+ contract carrying the column; always `NULL` for a
+`'computed'` row (an ordinary walking attest never sniffs bytes) and for any import
+from a v2 manifest. It is a claim, never authoritative — nothing normative may depend
+on it. Primary key `(location, relpath)` — one row per file; an index on `hash` serves
+`route_for`'s lookup.
 
 `manifest_imports(location, generation, imported_at)` tracks, per presenting location,
 the manifest generation last imported by `attest_from_manifest` — the no-op guard for a
@@ -47,12 +53,13 @@ from . import hashing, paths, touches
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS locations (
-    hash     TEXT NOT NULL,
-    location TEXT NOT NULL,
-    relpath  TEXT NOT NULL,
-    size     INTEGER NOT NULL,
-    mtime    INTEGER NOT NULL,
-    source   TEXT NOT NULL DEFAULT 'computed',
+    hash        TEXT NOT NULL,
+    location    TEXT NOT NULL,
+    relpath     TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    mtime       INTEGER NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'computed',
+    mime_claim  TEXT,
     PRIMARY KEY (location, relpath)
 );
 CREATE INDEX IF NOT EXISTS idx_locations_hash ON locations (hash);
@@ -63,9 +70,17 @@ CREATE TABLE IF NOT EXISTS manifest_imports (
 );
 """
 
-#: The manifest contract version this reader is pinned to (spec §12.1.1 (24)) — the
-#: writer's own versioned cross-language contract, deliberately outside this spec.
-MANIFEST_SCHEMA_VERSION = 2
+#: The manifest contract versions this reader accepts (spec §12.1.1 (24)/(25)) — the
+#: writer's own versioned cross-language contract, deliberately outside this spec. v2
+#: is the residence-map-only shape; v3 adds the light-catalog columns (`ctime_ns`,
+#: `btime_ns`, `mode`, `mime_claim`) — only `mime_claim` is imported here (§12.1.1
+#: (25): "the rest stays queryable in the cached manifest").
+MANIFEST_SCHEMA_VERSION = frozenset({2, 3})
+
+#: Sort-key fallback for `route_for`'s cost ordering when a row's location is no
+#: longer declared in `corpus.toml` — sorts dead last, after every configured location
+#: regardless of its cost, rather than crashing or being treated as free.
+_UNCONFIGURED_COST = 2**31
 
 #: Filesystem-metadata junk excluded from the walking attest — a CURATED POSITIVE
 #: deny-list, deliberately NOT "skip every hidden dotfile": an attached tree may carry
@@ -120,6 +135,15 @@ def _migrate_source_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE locations ADD COLUMN source TEXT NOT NULL DEFAULT 'computed'")
 
 
+def _migrate_mime_claim_column(conn: sqlite3.Connection) -> None:
+    """Add `locations.mime_claim` (spec §12.1.1 (25)) to a pre-v25 db in place —
+    nullable, no default: every existing row predates the catalog-metadata amendment
+    and carries no claim, exactly like a fresh `'computed'` row today."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(locations)")}
+    if "mime_claim" not in cols:
+        conn.execute("ALTER TABLE locations ADD COLUMN mime_claim TEXT")
+
+
 def connect(corpus_root: Path) -> sqlite3.Connection:
     """Open (creating if absent) the index at `db_path(corpus_root)`, WAL mode — the
     same resolver-cache posture as `hashindex.connect` (§12.9.1/§12.9.2: deployment
@@ -129,6 +153,7 @@ def connect(corpus_root: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
     _migrate_source_column(conn)
+    _migrate_mime_claim_column(conn)
     return conn
 
 
@@ -246,12 +271,16 @@ def attest_location(
                 progress(files_seen)
 
         if upserts:
+            # `mime_claim` is explicitly reset to NULL, insert and update alike: a walking
+            # attest never sniffs bytes, so a `computed` row never carries a claim — even
+            # one overwriting a `presented` row that did (spec §12.1.1 (25)).
             conn.executemany(
-                "INSERT INTO locations (hash, location, relpath, size, mtime, source) "
-                "VALUES (?, ?, ?, ?, ?, 'computed') "
+                "INSERT INTO locations "
+                "(hash, location, relpath, size, mtime, source, mime_claim) "
+                "VALUES (?, ?, ?, ?, ?, 'computed', NULL) "
                 "ON CONFLICT (location, relpath) DO UPDATE SET "
                 "hash = excluded.hash, size = excluded.size, mtime = excluded.mtime, "
-                "source = excluded.source",
+                "source = excluded.source, mime_claim = excluded.mime_claim",
                 upserts,
             )
 
@@ -277,21 +306,26 @@ def attest_from_manifest(
     force: bool = False,
 ) -> dict:
     """Import a presenting location's published `<location.path>/.athenaeum/
-    manifest.sqlite` (spec §12.1.1 (24), manifest contract v2) — the residence
-    scanner's own generation-checkpointed database — into `locations.db` as
+    manifest.sqlite` (spec §12.1.1 (24)/(25), manifest contract v2 or v3) — the
+    residence scanner's own generation-checkpointed database — into `locations.db` as
     `source='presented'` rows, instead of walking the tree ourselves.
 
     Refuses (`ValueError`) when the scanner hasn't published a manifest yet, when its
-    `PRAGMA user_version` isn't the pinned contract version 2, or when it carries no
-    completed generation (`MAX(generation) WHERE finished_at IS NOT NULL` is `NULL` —
-    the scanner's cold pass is still running). A no-op (`{"skipped": True, "generation":
-    g}`) when the manifest's current generation already equals the one recorded in
+    `PRAGMA user_version` isn't one of the accepted contract versions
+    (`MANIFEST_SCHEMA_VERSION`), or when it carries no completed generation
+    (`MAX(generation) WHERE finished_at IS NOT NULL` is `NULL` — the scanner's cold
+    pass is still running). A no-op (`{"skipped": True, "generation": g}`) when the
+    manifest's current generation already equals the one recorded in
     `manifest_imports` for this location, unless `force`. Otherwise every row for this
     location — both provenances, since a presenting location is now wholly
     manifest-described — is replaced in one transaction with one row per `(path x
     identity)` join (hardlinked paths share one identity and so one hash, but each
     still gets its own row), and `manifest_imports` is upserted to the new generation.
-    Returns `{"files": n, "generation": g, "skipped": False}`.
+    A v3 manifest's `identities.mime_claim` column (§12.1.1 (25)) is copied forward
+    into the row's own `mime_claim`; a v2 manifest carries no such column, so its rows
+    land with `mime_claim = NULL` — only that one catalog fact rides along, per spec
+    ("the rest stays queryable in the cached manifest"). Returns `{"files": n,
+    "generation": g, "skipped": False}`.
 
     The manifest is copied to a temp file under the corpus cache dir before it is
     opened — never opened in place over SMB/NFS — and that copy is removed again once
@@ -314,12 +348,12 @@ def attest_from_manifest(
         mconn = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
         try:
             (version,) = mconn.execute("PRAGMA user_version").fetchone()
-            if version != MANIFEST_SCHEMA_VERSION:
+            if version not in MANIFEST_SCHEMA_VERSION:
+                accepted = " or ".join(str(v) for v in sorted(MANIFEST_SCHEMA_VERSION))
                 raise ValueError(
                     f"attached location {location.name!r}: manifest at {manifest_path} "
-                    f"declares schema version {version}, expected "
-                    f"{MANIFEST_SCHEMA_VERSION} (spec §12.1.1 (24), manifest contract "
-                    f"v{MANIFEST_SCHEMA_VERSION}) — refusing to import."
+                    f"declares schema version {version}, expected {accepted} (spec "
+                    f"§12.1.1 (24)/(25)) — refusing to import."
                 )
             (generation,) = mconn.execute(
                 "SELECT MAX(generation) FROM generations WHERE finished_at IS NOT NULL"
@@ -339,21 +373,38 @@ def attest_from_manifest(
                 if prior is not None and prior[0] == generation and not force:
                     return {"skipped": True, "generation": generation}
 
-                rows = mconn.execute(
-                    "SELECT p.path, i.size, i.mtime_ns, i.blake3 "
-                    "FROM paths p JOIN identities i ON p.dev = i.dev AND p.ino = i.ino"
-                ).fetchall()
+                # `mime_claim` (spec §12.1.1 (25)) exists only on a v3+ manifest's
+                # `identities` table — introspect rather than trust `PRAGMA user_version`
+                # alone, since the contract's own column inventory is the ground truth.
+                identity_cols = {
+                    row[1] for row in mconn.execute("PRAGMA table_info(identities)")
+                }
+                has_mime_claim = "mime_claim" in identity_cols
+                if has_mime_claim:
+                    rows = mconn.execute(
+                        "SELECT p.path, i.size, i.mtime_ns, i.blake3, i.mime_claim "
+                        "FROM paths p JOIN identities i ON p.dev = i.dev AND p.ino = i.ino"
+                    ).fetchall()
+                else:
+                    rows = [
+                        (path, size, mtime_ns, blake3, None)
+                        for path, size, mtime_ns, blake3 in mconn.execute(
+                            "SELECT p.path, i.size, i.mtime_ns, i.blake3 "
+                            "FROM paths p JOIN identities i "
+                            "ON p.dev = i.dev AND p.ino = i.ino"
+                        ).fetchall()
+                    ]
 
                 conn.execute("BEGIN")
                 try:
                     conn.execute("DELETE FROM locations WHERE location = ?", (location.name,))
                     conn.executemany(
                         "INSERT INTO locations "
-                        "(hash, location, relpath, size, mtime, source) "
-                        "VALUES (?, ?, ?, ?, ?, 'presented')",
+                        "(hash, location, relpath, size, mtime, source, mime_claim) "
+                        "VALUES (?, ?, ?, ?, ?, 'presented', ?)",
                         [
-                            (blake3, location.name, path, size, mtime_ns)
-                            for path, size, mtime_ns, blake3 in rows
+                            (blake3, location.name, path, size, mtime_ns, mime_claim)
+                            for path, size, mtime_ns, blake3, mime_claim in rows
                         ],
                     )
                     conn.execute(
@@ -386,10 +437,13 @@ def route_for(corpus_root: Path, hash_: str) -> Path | None:
     never silently at read time (§12.9.2).
 
     Several rows may share a hash (the same bytes attested under more than one
-    location, or more than one path within one) — the first one whose pins still
-    verify is returned; any route yields identical bytes (§2). Pins are compared via
-    `pins_match` — exact for `source='computed'` rows, tolerant of sub-100ns mtime
-    drift for `source='presented'` rows (§12.1.1 (24))."""
+    location, or more than one path within one) — candidates are tried cheapest-first
+    (`config.effective_cost`, v25 "Route preference"; a stable sort, so declaration
+    order breaks a cost tie), and the first one whose pins still verify is returned; a
+    costlier CURRENT row still serves when the cheapest one is stale — falling through
+    exactly as routes fall through today. Any route yields identical bytes (§2). Pins
+    are compared via `pins_match` — exact for `source='computed'` rows, tolerant of
+    sub-100ns mtime drift for `source='presented'` rows (§12.1.1 (24))."""
     with open_index(corpus_root) as conn:
         cur = conn.execute(
             "SELECT location, relpath, size, mtime, source FROM locations WHERE hash = ?",
@@ -399,12 +453,20 @@ def route_for(corpus_root: Path, hash_: str) -> Path | None:
     if not rows:
         return None
 
-    by_name = {loc.name: loc.path for loc in config_mod.load_config(corpus_root).locations}
-    for loc_name, relpath, size, mtime, source in rows:
-        base = by_name.get(loc_name)
-        if base is None:
+    locations = config_mod.load_config(corpus_root).locations
+    by_name = {loc.name: loc for loc in locations}
+    declared_order = {loc.name: i for i, loc in enumerate(locations)}
+
+    def _sort_key(row: tuple) -> tuple[int, int]:
+        loc = by_name.get(row[0])
+        cost = config_mod.effective_cost(loc) if loc is not None else _UNCONFIGURED_COST
+        return (cost, declared_order.get(row[0], _UNCONFIGURED_COST))
+
+    for loc_name, relpath, size, mtime, source in sorted(rows, key=_sort_key):
+        loc = by_name.get(loc_name)
+        if loc is None:
             continue  # location no longer configured
-        candidate = base / relpath
+        candidate = loc.path / relpath
         try:
             st = candidate.stat()
         except OSError:

@@ -170,6 +170,8 @@ def test_locate_reports_current_attached_row(tmp_path, capsys):
         "relpath": "a.bin",
         "source": "computed",
         "status": "current",
+        "mime_claim": None,
+        "cost": None,
     }
 
 
@@ -209,3 +211,70 @@ def test_locate_json_shape_and_searched_field(tmp_path, capsys):
         "co-located + store artifacts",
         "attached-location index",
     ]
+
+
+# ---------- cost ordering + mime/cost display (spec §12.1.1, v25) ---------- #
+
+
+def _attach_with_cost(root: Path, tree: Path, name: str, cost: int) -> None:
+    existing = (root / "corpus.toml").read_text("utf-8") if (root / "corpus.toml").is_file() else ""
+    existing += f"""
+[[corpus.location]]
+name = "{name}"
+kind = "attached"
+path = "{tree}"
+cost = {cost}
+"""
+    (root / "corpus.toml").write_text(existing, "utf-8")
+    loc = next(loc for loc in config_mod.load_config(root).locations if loc.name == name)
+    locationindex.attest_location(root, loc)
+
+
+def test_locate_orders_attached_rows_by_cost(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    cheap = tmp_path / "cheap"
+    pricey = tmp_path / "pricey"
+    cheap.mkdir()
+    pricey.mkdir()
+    data = b"same bytes, two attached locations"
+    (cheap / "a.bin").write_bytes(data)
+    (pricey / "a.bin").write_bytes(data)
+    _attach_with_cost(root, pricey, "pricey", 99)
+    _attach_with_cost(root, cheap, "cheap", 1)
+    rid = hashing.hash_file(cheap / "a.bin", also=())["blake3"]
+
+    rc = _locate(root, rid, as_json=True)
+    assert rc == 0
+    data_out = json.loads(capsys.readouterr().out)
+    assert [row["location"] for row in data_out["attached"]] == ["cheap", "pricey"]
+
+
+def test_locate_shows_mime_and_cost(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    f = tree / "a.bin"
+    f.write_bytes(b"mime and cost bytes")
+    _attach_with_cost(root, tree, "loc", 7)
+    rid = hashing.hash_file(f, also=())["blake3"]
+
+    # Stamp a mime_claim directly (the reader-side import path is exercised in
+    # test_manifest_import.py; here we only need a claim on the row to check display).
+    with locationindex.open_index(root) as conn:
+        conn.execute(
+            "UPDATE locations SET mime_claim = ? WHERE location = ? AND relpath = ?",
+            ("text/plain", "loc", "a.bin"),
+        )
+
+    rc = _locate(root, rid, as_json=True)
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    row = data["attached"][0]
+    assert row["mime_claim"] == "text/plain"
+    assert row["cost"] == 7
+
+    rc = _locate(root, rid)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "mime=text/plain" in out
+    assert "cost=7" in out

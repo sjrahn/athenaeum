@@ -232,19 +232,27 @@ def _list(corpus_root) -> int:
         rows = locationindex.row_count(corpus_root, loc.name)
         stale = stale_by_location.get(loc.name, 0)
         marker = "  manifest" if loc.manifest else ""
-        print(f"{loc.name}  kind={loc.kind}  path={loc.path}  rows={rows}  stale={stale}{marker}")
+        cost_suffix = f"  cost={loc.cost}" if loc.cost is not None else ""
+        print(
+            f"{loc.name}  kind={loc.kind}  path={loc.path}  rows={rows}  stale={stale}"
+            f"{marker}{cost_suffix}"
+        )
     return 0
 
 
 def _store_role(loc: config_mod.LocationConfig) -> str:
-    """The placement-role suffix for a `list` row (spec §12.1.1, v22): the location's
-    claimed format list, `ingest: default`, or nothing at all when it holds neither —
-    a store location resolved only, never a write destination (`placement.py`)."""
+    """The placement-role suffix for a `list` row (spec §12.1.1, v22/v25): the
+    location's claimed format list, `ingest: default`, or nothing at all when it holds
+    neither — a store location resolved only, never a write destination
+    (`placement.py`) — plus `cost=<N>` (v25 "Route preference") when declared."""
+    parts: list[str] = []
     if loc.ingest_types:
-        return f"  ingest: {', '.join(loc.ingest_types)}"
-    if loc.ingest_default:
-        return "  ingest: default"
-    return ""
+        parts.append(f"ingest: {', '.join(loc.ingest_types)}")
+    elif loc.ingest_default:
+        parts.append("ingest: default")
+    if loc.cost is not None:
+        parts.append(f"cost={loc.cost}")
+    return "".join(f"  {p}" for p in parts)
 
 
 # ---------- promote ---------- #

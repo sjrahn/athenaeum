@@ -676,3 +676,213 @@ def test_mirror_format_extensions_are_canonical():
 
     assert mime.extension_for("application/x-openzim") == "zim"
     assert mime.extension_for("application/x-osm+pbf") == "pbf"
+
+
+# ---------- cost config parsing (spec §12.1.1, v25 "Route preference") ---------- #
+
+
+def test_cost_parses_on_store_location(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+cost = 5
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.cost == 5
+
+
+def test_cost_parses_on_attached_location(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+cost = 30
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.cost == 30
+
+
+def test_cost_undeclared_is_none(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.cost is None
+
+
+def test_cost_negative_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+cost = -1
+""",
+    )
+    with pytest.raises(ValueError, match="cost"):
+        config_mod.load_config(root)
+
+
+def test_cost_non_int_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+cost = "cheap"
+""",
+    )
+    with pytest.raises(ValueError, match="cost"):
+        config_mod.load_config(root)
+
+
+def test_cost_bool_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+cost = true
+""",
+    )
+    with pytest.raises(ValueError, match="cost"):
+        config_mod.load_config(root)
+
+
+# ---------- effective_cost class defaults ---------- #
+
+
+def test_effective_cost_defaults_by_kind():
+    store = _loc("s", Path("/s"))
+    attached = config_mod.LocationConfig(name="a", kind="attached", path=Path("/a"))
+    assert config_mod.effective_cost(store) == 10
+    assert config_mod.effective_cost(attached) == 20
+
+
+def test_effective_cost_prefers_declared_value():
+    loc = config_mod.LocationConfig(name="s", kind="store", path=Path("/s"), cost=0)
+    assert config_mod.effective_cost(loc) == 0
+
+
+# ---------- find_in_stores cost ordering ---------- #
+
+
+def test_find_in_stores_prefers_cheaper_location(tmp_path):
+    root = _corpus(tmp_path)
+    cheap = tmp_path / "cheap"
+    pricey = tmp_path / "pricey"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "pricey"
+kind = "store"
+path = "{pricey}"
+cost = 50
+
+[[corpus.location]]
+name = "cheap"
+kind = "store"
+path = "{cheap}"
+cost = 5
+""",
+    )
+    digest = "d" * 64
+    for base in (cheap, pricey):
+        dest = base / paths.shard(digest) / f"{digest}.bin"
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"same bytes everywhere")
+
+    found = placement.find_in_stores(root, digest, "bin")
+    assert found == cheap / paths.shard(digest) / f"{digest}.bin"
+
+
+def test_find_in_stores_declaration_order_breaks_cost_tie(tmp_path):
+    root = _corpus(tmp_path)
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "first"
+kind = "store"
+path = "{first}"
+
+[[corpus.location]]
+name = "second"
+kind = "store"
+path = "{second}"
+""",
+    )
+    digest = "e" * 64
+    for base in (first, second):
+        dest = base / paths.shard(digest) / f"{digest}.bin"
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"same bytes everywhere")
+
+    found = placement.find_in_stores(root, digest, "bin")
+    assert found == first / paths.shard(digest) / f"{digest}.bin"
+
+
+def test_find_in_stores_only_cheaper_location_missing_falls_to_costlier(tmp_path):
+    root = _corpus(tmp_path)
+    cheap = tmp_path / "cheap"
+    pricey = tmp_path / "pricey"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "cheap"
+kind = "store"
+path = "{cheap}"
+cost = 1
+
+[[corpus.location]]
+name = "pricey"
+kind = "store"
+path = "{pricey}"
+cost = 99
+""",
+    )
+    digest = "f" * 64
+    # Only pricey holds the file — cheap has nothing.
+    dest = pricey / paths.shard(digest) / f"{digest}.bin"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"only here")
+
+    found = placement.find_in_stores(root, digest, "bin")
+    assert found == dest
