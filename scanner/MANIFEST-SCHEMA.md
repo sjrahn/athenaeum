@@ -132,8 +132,12 @@ NULL`.** A row with `finished_at IS NULL` is an interrupted run — its identity
 to the last committed batch are still valid, it simply never finished, and it **stays NULL
 forever** (the next run opens a *new* generation number rather than resuming the same one —
 this NULL is the crash marker). `summary_json` is the `ScanSummary` JSON, set at close:
-`{ mode, generation, filesSeen, hashed, moved, migrated, deleted, skipped, scrubbed, corrupt,
-bytesHashed (decimal string), elapsedMs }`.
+`{ mode, generation, filesSeen, hashed, hashedNative, moved, migrated, seeded, deleted,
+skipped, scrubbed, corrupt, bytesHashed (decimal string), elapsedMs }`. `seeded` counts
+identity rows adopted from another manifest this run (a nested child root's manifest,
+auto-detected mid-walk, or an explicit `--seed-from` source) — see the "Manifest seeding"
+section of README.md. `hashedNative` is the subset of `hashed` that went through the native
+b3sum path rather than in-process WASM — see README.md's "Native b3sum hashing" section.
 
 ### `events`
 
@@ -213,6 +217,16 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
+  a `hashedNative` field: the subset of `hashed` that went through a native b3sum binary
+  (spawned for files at/above `--native-threshold`) instead of the in-process WASM hasher.
+  Same compatibility note as `seeded` below — `summary_json` is a free-form JSON blob, not a
+  SQL column, so this doesn't change `SCHEMA_VERSION` (still `2`), no table changes.
+- **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
+  a `seeded` field: identity rows adopted from a nested child root's `manifest.sqlite` (via
+  mid-walk auto-seed) or an explicit `--seed-from` source. `summary_json` is a free-form JSON
+  blob, not a SQL column, so this is a compatible addition — `SCHEMA_VERSION` stays `2`, no
+  table changes.
 - **v2** (2026-08-18) — replaced the JSONL journal/snapshot pair with SQLite (`state.sqlite`
   private / `manifest.sqlite` published). Rationale: v1 required replaying the entire journal
   and snapshot into two in-memory `Map`s on every open — linear RAM and startup cost in tree

@@ -1,10 +1,14 @@
 // The tree walk. Iterative (an explicit stack, not recursion, so a deep tree can't blow the
 // call stack), lstat with { bigint: true } for an exact identity tuple, symlinks never
-// followed, only regular files indexed, everything else logged-and-skipped. The manifest
-// directory is excluded from its own scan.
+// followed, only regular files indexed, everything else logged-and-skipped. Manifest
+// directories are infrastructure, never indexed as content: any directory literally named
+// `.athenaeum`, at any depth, is excluded unconditionally (even under --full) — not just the
+// current root's own manifest dir. `excludeAbs` remains for a `--manifest-dir` that lives
+// under root under a name other than `.athenaeum`.
 
-import { readdir, lstat } from "node:fs/promises";
+import { readdir, lstat, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { MANIFEST_DIRNAME, MANIFEST_FILENAME } from "./schema.ts";
 
 export interface FileEntry {
   kind: "file";
@@ -23,7 +27,22 @@ export interface SkipEntry {
   reason: string; // "eacces", "eio", "special-file", ...
 }
 
-export type WalkEntry = FileEntry | SkipEntry;
+/**
+ * A directory just listed during the walk turned out to itself be a scanned root: it has a
+ * `.athenaeum` subdirectory whose published `manifest.sqlite` exists. `abspath` is that
+ * manifest.sqlite; `relpath` is the containing directory's path relative to our own root
+ * (POSIX, "" if it IS our root) — the prefix a seeding caller must prepend to every path it
+ * imports from that manifest. Always yielded before any file/dir entry from the same
+ * directory listing, so a caller that seeds from it does so before classifying anything at
+ * or below that directory.
+ */
+export interface NestedManifestEntry {
+  kind: "nested-manifest";
+  abspath: string;
+  relpath: string;
+}
+
+export type WalkEntry = FileEntry | SkipEntry | NestedManifestEntry;
 
 const toPosix = (p: string): string => (sep === "/" ? p : p.split(sep).join("/"));
 
@@ -32,9 +51,23 @@ function errCode(e: unknown): string {
   return typeof c === "string" ? c.toLowerCase() : "eunknown";
 }
 
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Walk `rootAbs`, yielding one FileEntry per regular file and one SkipEntry per
- * unreadable-or-special path. `excludeAbs` (the manifest dir) and its subtree are omitted.
+ * Walk `rootAbs`, yielding one FileEntry per regular file, one SkipEntry per
+ * unreadable-or-special path, and one NestedManifestEntry the first time a `.athenaeum`
+ * subdirectory with a published manifest is discovered under a listed directory (never for
+ * `rootAbs`'s own manifest dir at `excludeAbs` — that's self, not a nested child). `excludeAbs`
+ * (this run's own manifest dir, when it lives under root under a non-`.athenaeum` name) and
+ * its subtree are omitted from content; every `.athenaeum`-named directory is omitted from
+ * content unconditionally, regardless of `excludeAbs`.
  */
 export async function* walkTree(rootAbs: string, excludeAbs: string | null): AsyncGenerator<WalkEntry> {
   const stack: string[] = [rootAbs];
@@ -49,8 +82,19 @@ export async function* walkTree(rootAbs: string, excludeAbs: string | null): Asy
       continue;
     }
 
+    if (names.includes(MANIFEST_DIRNAME)) {
+      const candidate = join(dir, MANIFEST_DIRNAME);
+      if (candidate !== excludeAbs) {
+        const manifestSqlite = join(candidate, MANIFEST_FILENAME);
+        if (await fileExists(manifestSqlite)) {
+          yield { kind: "nested-manifest", abspath: manifestSqlite, relpath: toPosix(relative(rootAbs, dir)) };
+        }
+      }
+    }
+
     for (const name of names) {
       const abs = join(dir, name);
+      if (name === MANIFEST_DIRNAME) continue; // infrastructure, never content — unconditional
       if (excludeAbs !== null && (abs === excludeAbs || abs.startsWith(excludeAbs + sep))) continue;
 
       let st;

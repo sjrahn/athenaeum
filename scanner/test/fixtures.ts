@@ -57,9 +57,21 @@ export async function runScan(root: string, extra: Partial<ScanOptions> = {}): P
     full: extra.full,
     scrub: extra.scrub,
     chunkBytes: extra.chunkBytes,
+    seedFrom: extra.seedFrom,
+    b3sumPath: extra.b3sumPath,
+    nativeThresholdBytes: extra.nativeThresholdBytes,
     _faultAfterHashes: extra._faultAfterHashes,
     _identityBatchSize: extra._identityBatchSize,
     _identityBatchIntervalMs: extra._identityBatchIntervalMs,
+    // Default OFF unless a test opts in (by passing b3sumPath or _noNativeHasher explicitly):
+    // real discovery would otherwise probe PATH on every single test in the suite. Harmless
+    // either way (fixtures are always far below the native threshold) but this keeps every
+    // existing/unrelated test fully deterministic regardless of the host's PATH.
+    _noNativeHasher: extra._noNativeHasher ?? extra.b3sumPath === undefined,
+    _nativeConcurrency: extra._nativeConcurrency,
+    _hashProgressEvery: extra._hashProgressEvery,
+    _hashProgressFloorMs: extra._hashProgressFloorMs,
+    _hashProgressTickMs: extra._hashProgressTickMs,
   });
   return { summary, hashCount: factory.count, manifestDir };
 }

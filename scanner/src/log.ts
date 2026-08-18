@@ -3,8 +3,24 @@
 
 export type LogLevel = "quiet" | "normal" | "verbose";
 
+export interface LoggerOptions {
+  /** non-TTY only: minimum time between two emitted progress lines (default 1000ms). Callers
+   * (the scanner's hash-phase heartbeat) decide WHEN it's worth attempting a line — every N
+   * hashed files, or a stall-floor timer — this is the final defensive clamp against those
+   * attempts arriving faster than is useful for a log, e.g. a burst of tiny files. */
+  progressMinIntervalMs?: number;
+}
+
 export class Logger {
-  constructor(private readonly level: LogLevel = "normal") {}
+  private readonly progressMinIntervalMs: number;
+  private lastNonTtyProgressAt = -Infinity;
+
+  constructor(
+    private readonly level: LogLevel = "normal",
+    opts: LoggerOptions = {},
+  ) {
+    this.progressMinIntervalMs = opts.progressMinIntervalMs ?? 1000;
+  }
 
   info(msg: string): void {
     if (this.level !== "quiet") process.stderr.write(msg + "\n");
@@ -22,15 +38,28 @@ export class Logger {
     process.stderr.write("error: " + msg + "\n");
   }
 
-  /** Rewrites the current stderr line (progress ticker); no-op when not a TTY or quiet. */
+  /**
+   * Report progress. On a TTY, rewrites the current stderr line (unchanged behavior — called
+   * as often as the caller likes, e.g. once a second). Off a TTY (piped to a file, over plain
+   * ssh, a cron log) a carriage-return rewrite is meaningless and would otherwise leave a
+   * multi-day run's log silent between "walk done" and the final summary — so instead this
+   * emits a plain, newline-terminated line, rate-limited to `progressMinIntervalMs` apart.
+   * No-op when quiet.
+   */
   progress(msg: string): void {
     if (this.level === "quiet") return;
     if (process.stderr.isTTY) {
       process.stderr.write("\r\x1b[2K" + msg);
+      return;
     }
+    const now = performance.now();
+    if (now - this.lastNonTtyProgressAt < this.progressMinIntervalMs) return;
+    this.lastNonTtyProgressAt = now;
+    process.stderr.write(msg + "\n");
   }
 
-  /** Ends a progress line so the next info() starts clean. */
+  /** Ends a progress line so the next info() starts clean. No-op off a TTY — non-TTY
+   * progress() lines already end in "\n", so there's nothing to close out. */
   endProgress(): void {
     if (this.level !== "quiet" && process.stderr.isTTY) process.stderr.write("\n");
   }

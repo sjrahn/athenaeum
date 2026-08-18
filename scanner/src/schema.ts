@@ -45,9 +45,11 @@ export interface ScanSummary {
   mode: ScanMode;
   generation: number;
   filesSeen: number; // regular files walked
-  hashed: number; // files hashed this run (new content-versions)
+  hashed: number; // files hashed this run (new content-versions) — WASM + native combined
+  hashedNative: number; // subset of `hashed` that went through the native b3sum path (informational addition; see MANIFEST-SCHEMA.md changelog)
   moved: number; // path rows added referencing a PRE-EXISTING identity (rename / new hardlink; zero re-hash)
   migrated: number; // path rows carried onto a NEW (dev,ino) at an unchanged (size,mtimeNs); zero re-hash
+  seeded: number; // identity rows adopted from another manifest this run (nested-child auto-seed or --seed-from)
   deleted: number; // path rows removed
   skipped: number; // files logged-and-skipped
   scrubbed: number; // files re-hashed by the scrub sampler

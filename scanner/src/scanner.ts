@@ -9,11 +9,23 @@ import { sep } from "node:path";
 import { walkTree, type FileEntry } from "./walk.ts";
 import { Manifest } from "./manifest.ts";
 import { identityKey, type IdentityState, type ScanMode, type ScanSummary } from "./schema.ts";
-import type { HasherFactory, Hasher } from "./hasher.ts";
+import { discoverNativeHasher, type HasherFactory, type Hasher, type NativeHasher } from "./hasher.ts";
 import { Logger, humanBytes, humanCount, humanDuration, humanRate } from "./log.ts";
 
 export const DEFAULT_CHUNK = 4 * 1024 * 1024;
 export const DEFAULT_CONCURRENCY = 4;
+/** Files at or above this size are routed to the native b3sum path instead of in-process
+ * WASM (when a b3sum binary is available) — see hasher.ts's discoverNativeHasher. */
+export const DEFAULT_NATIVE_THRESHOLD = 1024 * 1024; // 1 MiB
+/** b3sum is internally multithreaded (rayon, all cores) — spawning several at once doesn't
+ * help and just contends for the same cores, so this is NOT multiplied by --concurrency. */
+export const DEFAULT_NATIVE_CONCURRENCY = 2;
+/** non-TTY progress heartbeat: one line per this many hashed files... */
+export const HASH_PROGRESS_EVERY = 16;
+/** ...but never silent longer than this during a stretch of huge files (hashed count stuck
+ * mid-file for a long time) — see log.ts's Logger.progress() for the 1s-min-spacing clamp
+ * that sits on top of both triggers. */
+export const HASH_PROGRESS_FLOOR_MS = 30_000;
 
 export interface ScanOptions {
   root: string; // absolute
@@ -21,14 +33,35 @@ export interface ScanOptions {
   factory: HasherFactory;
   log: Logger;
   concurrency?: number;
-  full?: boolean; // force re-hash of every file (also disables the inode-migration heuristic)
+  full?: boolean; // force re-hash of every file (also disables the inode-migration heuristic and all seeding)
   scrub?: number; // re-hash N random files as a bit-rot check
   chunkBytes?: number;
+  /** Explicit manifest.sqlite paths to seed identities/paths from before the walk starts
+   * (repeatable). Ignored (not even validated) when `full` is set — full means trust nothing. */
+  seedFrom?: string[];
+  /** Explicit b3sum binary path (--b3sum). Unset falls through to auto-discovery (a binary
+   * beside the running executable, then PATH). */
+  b3sumPath?: string;
+  /** Files at/above this size use native b3sum instead of WASM, when a b3sum is available
+   * (default DEFAULT_NATIVE_THRESHOLD, 1 MiB). */
+  nativeThresholdBytes?: number;
   /** test hook: throw after N successful hashes (each already applied to the open batch) to simulate a kill. */
   _faultAfterHashes?: number;
   /** test/tuning hook: identity batch commit thresholds (default 64 files / 5000ms). */
   _identityBatchSize?: number;
   _identityBatchIntervalMs?: number;
+  /** test hook: skip native-hasher discovery entirely — deterministic "nothing found" runs
+   * regardless of what's actually on the test host's PATH. */
+  _noNativeHasher?: boolean;
+  /** test/tuning hook: override the native-hash concurrency cap (default DEFAULT_NATIVE_CONCURRENCY). */
+  _nativeConcurrency?: number;
+  /** test/tuning hook: override the non-TTY hash-progress cadence (default HASH_PROGRESS_EVERY). */
+  _hashProgressEvery?: number;
+  /** test/tuning hook: override the non-TTY hash-progress stall floor in ms (default HASH_PROGRESS_FLOOR_MS). */
+  _hashProgressFloorMs?: number;
+  /** test hook: override the hash-phase ticker's own interval (default 1000ms) — lets a test
+   * observe the stall floor without waiting a full tick. */
+  _hashProgressTickMs?: number;
 }
 
 class SimulatedInterrupt extends Error {}
@@ -86,8 +119,10 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
     generation: gen,
     filesSeen: 0,
     hashed: 0,
+    hashedNative: 0,
     moved: 0,
     migrated: 0,
+    seeded: 0,
     deleted: 0,
     skipped: 0,
     scrubbed: 0,
@@ -98,6 +133,18 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
 
   mf.genOpen(mode, gen);
   log.info(`scan ${mode} generation ${gen}: ${root}  (concurrency ${k}${full ? ", full re-hash" : ""})`);
+
+  // Explicit --seed-from sources import before the walk starts. Ignored entirely under
+  // --full: full means "trust nothing, ignore every cache, including seeds."
+  if (!full && opts.seedFrom && opts.seedFrom.length > 0) {
+    for (const src of opts.seedFrom) {
+      const imported = await mf.seedFrom(src, "", gen, /* explicit */ true);
+      if (imported !== null) {
+        summary.seeded += imported;
+        log.info(`seeded ${humanCount(imported)} identities from --seed-from ${src}`);
+      }
+    }
+  }
 
   try {
     return await runScanBody(mf, opts, summary, gen, full, k, chunkBytes, excludeAbs);
@@ -134,6 +181,18 @@ async function runScanBody(
       summary.skipped++;
       mf.putSkip(entry.relpath, entry.reason, gen);
       log.debug(`skip ${entry.relpath} (${entry.reason})`);
+      continue;
+    }
+    if (entry.kind === "nested-manifest") {
+      if (full) {
+        log.debug(`nested manifest at ${entry.relpath || "."} — auto-seed disabled under --full`);
+        continue;
+      }
+      const imported = await mf.seedFrom(entry.abspath, entry.relpath, gen, /* explicit */ false);
+      if (imported !== null) {
+        summary.seeded += imported;
+        log.info(`seeded ${humanCount(imported)} identities from nested manifest at ${entry.relpath || "."}`);
+      }
       continue;
     }
     summary.filesSeen++;
@@ -188,43 +247,104 @@ async function runScanBody(
       `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped`,
   );
 
-  // ── phase 2: hash pool ─────────────────────────────────────────────────────────
+  // ── phase 2: hash pool(s) ─────────────────────────────────────────────────────────
+  // Route files at/above the native threshold to a discovered b3sum binary (multi-core,
+  // reads the file itself) and everything else to the in-process WASM pool, run concurrently.
+  const nativeHasher: NativeHasher | null = opts._noNativeHasher ? null : await discoverNativeHasher(opts.b3sumPath, log);
+  const nativeThreshold = BigInt(opts.nativeThresholdBytes ?? DEFAULT_NATIVE_THRESHOLD);
+  const wasmQueue: FileEntry[] = [];
+  const nativeQueue: FileEntry[] = [];
+  for (const entry of toHash) {
+    if (nativeHasher && entry.size >= nativeThreshold) nativeQueue.push(entry);
+    else wasmQueue.push(entry);
+  }
+
   let hashedBytes = 0n;
   const hashStart = performance.now();
+  const hashProgressEvery = opts._hashProgressEvery ?? HASH_PROGRESS_EVERY;
+  const hashProgressFloorMs = opts._hashProgressFloorMs ?? HASH_PROGRESS_FLOOR_MS;
+  let lastHashProgressAt = hashStart;
+
+  const hashProgressMsg = (): string => {
+    const elapsed = performance.now() - hashStart;
+    return (
+      `hash: ${humanCount(summary.hashed)}/${humanCount(toHash.length)} files, ` +
+      `${humanBytes(hashedBytes)}/${humanBytes(bytesToHash)}, ${humanRate(hashedBytes, elapsed)}`
+    );
+  };
+  const emitHashProgress = (): void => {
+    log.progress(hashProgressMsg());
+    lastHashProgressAt = performance.now();
+  };
+
   let ticker: ReturnType<typeof setInterval> | null = null;
   if (toHash.length > 0 && !process.env.ATH_SCAN_NO_TICKER) {
     ticker = setInterval(() => {
-      const elapsed = performance.now() - hashStart;
-      log.progress(
-        `hash: ${humanCount(summary.hashed)}/${humanCount(toHash.length)} files, ` +
-          `${humanBytes(hashedBytes)}/${humanBytes(bytesToHash)}, ${humanRate(hashedBytes, elapsed)}`,
-      );
-    }, 1000);
+      // TTY: redraw every tick, unchanged (Logger always rewrites on a TTY regardless of how
+      // often it's called). non-TTY: the every-N-hashed-files trigger below is the primary
+      // heartbeat cadence; this tick only forces a line once the stall floor is crossed, so a
+      // stretch of huge files (hashed count not advancing) still heartbeats.
+      if (process.stderr.isTTY || performance.now() - lastHashProgressAt >= hashProgressFloorMs) {
+        emitHashProgress();
+      }
+    }, opts._hashProgressTickMs ?? 1000);
   }
 
-  try {
-    await runPool(toHash, k, async (entry) => {
-      let hasher: Hasher;
-      let result: { digest: string; bytes: bigint };
-      try {
-        hasher = await factory.create();
-        result = await hashFile(entry.abspath, hasher, chunkBytes);
-      } catch (e) {
-        // file vanished or turned unreadable between the walk and the hash — log-and-skip
-        const code = (e as { code?: string })?.code?.toLowerCase() ?? "eunknown";
-        summary.skipped++;
-        mf.putSkip(entry.relpath, code, gen);
-        log.debug(`skip ${entry.relpath} during hash (${code})`);
-        return;
-      }
-      mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen);
-      summary.hashed++;
-      hashedBytes += result.bytes;
+  // Shared by both pools: bumps summary.hashed, fires the count-driven heartbeat, and is the
+  // one place the fault-injection test hook can interrupt (used by exactly one pool in every
+  // existing test, since fixtures are always far below the native threshold).
+  const recordHashed = (): void => {
+    summary.hashed++;
+    if (summary.hashed % hashProgressEvery === 0) emitHashProgress();
+    if (opts._faultAfterHashes !== undefined && summary.hashed >= opts._faultAfterHashes) {
+      throw new SimulatedInterrupt(`fault after ${summary.hashed} hashes`);
+    }
+  };
 
-      if (opts._faultAfterHashes !== undefined && summary.hashed >= opts._faultAfterHashes) {
-        throw new SimulatedInterrupt(`fault after ${summary.hashed} hashes`);
-      }
-    });
+  try {
+    // allSettled, not all: if one pool's worker throws (e.g. the fault-injection hook), we
+    // still want the other pool to reach a clean stopping point before genClose/mf.close() —
+    // otherwise an orphaned worker could touch `mf` after the connection is closed.
+    const results = await Promise.allSettled([
+      runPool(wasmQueue, k, async (entry) => {
+        let hasher: Hasher;
+        let result: { digest: string; bytes: bigint };
+        try {
+          hasher = await factory.create();
+          result = await hashFile(entry.abspath, hasher, chunkBytes);
+        } catch (e) {
+          // file vanished or turned unreadable between the walk and the hash — log-and-skip
+          const code = (e as { code?: string })?.code?.toLowerCase() ?? "eunknown";
+          summary.skipped++;
+          mf.putSkip(entry.relpath, code, gen);
+          log.debug(`skip ${entry.relpath} during hash (${code})`);
+          return;
+        }
+        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen);
+        hashedBytes += result.bytes;
+        recordHashed();
+      }),
+      runPool(nativeQueue, opts._nativeConcurrency ?? DEFAULT_NATIVE_CONCURRENCY, async (entry) => {
+        let digest: string;
+        try {
+          digest = await nativeHasher!.hashFile(entry.abspath);
+        } catch (e) {
+          // b3sum failure (nonzero exit, bad output, vanished file) — log-and-skip, never abort.
+          summary.skipped++;
+          mf.putSkip(entry.relpath, "b3sum-failed", gen);
+          log.debug(`skip ${entry.relpath} during native hash (${(e as Error).message})`);
+          return;
+        }
+        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, digest, gen);
+        // b3sum reads the file itself — no chunked-read loop here to count bytes off of, so
+        // this is the walk-time stat size rather than an actually-observed read count.
+        hashedBytes += entry.size;
+        summary.hashedNative++;
+        recordHashed();
+      }),
+    ]);
+    const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (rejected) throw rejected.reason;
   } finally {
     if (ticker) clearInterval(ticker);
     log.endProgress();
@@ -301,8 +421,10 @@ export async function compact(root: string, manifestDir: string, log: Logger): P
     generation: gen,
     filesSeen: 0,
     hashed: 0,
+    hashedNative: 0,
     moved: 0,
     migrated: 0,
+    seeded: 0,
     deleted: res.orphansDropped,
     skipped: 0,
     scrubbed: 0,
@@ -323,8 +445,10 @@ export function formatSummary(s: ScanSummary, root: string): string {
     `  root          ${root}`,
     `  files seen    ${humanCount(s.filesSeen)}`,
     `  hashed        ${humanCount(s.hashed)}  (${humanBytes(BigInt(s.bytesHashed))})`,
+    `  hashed native ${humanCount(s.hashedNative)}`,
     `  moved         ${humanCount(s.moved)}`,
     `  migrated      ${humanCount(s.migrated)}`,
+    `  seeded        ${humanCount(s.seeded)}`,
     `  deleted       ${humanCount(s.deleted)}`,
     `  skipped       ${humanCount(s.skipped)}`,
     `  scrubbed      ${humanCount(s.scrubbed)}   corrupt ${humanCount(s.corrupt)}`,

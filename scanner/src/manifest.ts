@@ -353,6 +353,82 @@ export class Manifest {
     this.insEvent.run(generation, "scrub-corrupt", path, JSON.stringify(detail));
   }
 
+  // ── seeding: import identities/paths from another manifest.sqlite ───────────────────────
+
+  /**
+   * Import `identities` and `paths` from another manifest.sqlite — a nested child root's
+   * published manifest discovered mid-walk, or an explicit `--seed-from` source — into our
+   * own state. `INSERT OR IGNORE` on both tables: existing rows always win (both are claims;
+   * the stat-tuple check at classify time is what actually disposes a re-hash), so this is
+   * idempotent and safe to re-run. `pathPrefix` (POSIX, no trailing slash, "" for none) is
+   * prepended to every imported path — a nested child's paths are relative to ITS root, not
+   * ours. Imported identity rows are stamped with `generation` (the CURRENT generation, not
+   * whatever generation wrote them in the source). Returns the number of identity rows
+   * actually adopted (rows that lost the `OR IGNORE` race because we already had them don't
+   * count), or `null` if the source was skipped for a schema mismatch.
+   *
+   * Version check: opens the source read-only first, `PRAGMA user_version` must equal
+   * `SCHEMA_VERSION`. `explicit` controls the failure mode on mismatch — hard error for
+   * `--seed-from` (an operator named this file), warn-and-skip for auto-seed (a big scan
+   * must not die because one nested child's manifest is stale).
+   *
+   * `ATTACH DATABASE` cannot run inside an open transaction. If the walk transaction is open
+   * (mid-walk auto-seed), it's committed first and reopened after import — the walk tx only
+   * holds cheap-to-redo path/skip writes (a fresh stat-walk reproduces them from scratch), so
+   * this early commit is not a durability concern the way losing a hash batch would be.
+   */
+  async seedFrom(sourceManifestPath: string, pathPrefix: string, generation: number, explicit: boolean): Promise<number | null> {
+    const srcDb = new Database(sourceManifestPath, { readonly: true, safeIntegers: true });
+    let found: number;
+    try {
+      const uv = srcDb.query<{ user_version: bigint }, []>("PRAGMA user_version").get();
+      found = uv ? Number(uv.user_version) : -1;
+    } finally {
+      srcDb.close();
+    }
+    if (found !== SCHEMA_VERSION) {
+      const msg = `${sourceManifestPath}: schema mismatch (found user_version=${found}, expected ${SCHEMA_VERSION})`;
+      if (explicit) throw new Error(msg);
+      this.log.warn(`seed skipped — ${msg}`);
+      return null;
+    }
+
+    const walkTxWasOpen = this.txOpen;
+    if (walkTxWasOpen) {
+      this.db.run("COMMIT");
+      this.txOpen = false;
+    }
+    let imported = 0;
+    try {
+      this.db.query<never, [string]>("ATTACH DATABASE ? AS seed").run(sourceManifestPath);
+      try {
+        this.db.run("BEGIN");
+        const idRes = this.db
+          .query<never, [number]>(
+            "INSERT OR IGNORE INTO main.identities (dev,ino,size,mtime_ns,blake3,generation) " +
+              "SELECT dev,ino,size,mtime_ns,blake3,? FROM seed.identities",
+          )
+          .run(generation);
+        this.db
+          .query<never, [string, string, number]>(
+            "INSERT OR IGNORE INTO main.paths (path,dev,ino,generation) " +
+              "SELECT CASE WHEN ?='' THEN path ELSE ? || '/' || path END, dev, ino, ? FROM seed.paths",
+          )
+          .run(pathPrefix, pathPrefix, generation);
+        this.db.run("COMMIT");
+        imported = idRes.changes;
+      } finally {
+        this.db.run("DETACH DATABASE seed");
+      }
+    } finally {
+      if (walkTxWasOpen) {
+        this.db.run("BEGIN");
+        this.txOpen = true;
+      }
+    }
+    return imported;
+  }
+
   // ── compaction ──────────────────────────────────────────────────────────────────────
 
   /** Drop orphaned identities (zero referencing paths) and VACUUM. Publish is the caller's job. */
