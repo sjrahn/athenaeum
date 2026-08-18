@@ -66,6 +66,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
     # Storage (P3)
     "store":           ("Storage",                "Status / push / pull / fetch against the configured ArtifactStore"),
+    "location":        ("Storage",                "Attest / list attached [[corpus.location]] byte roots (spec §12.1.1)"),
     # Maintenance — derived-data hygiene + deliberate record removal
     "remap-el":        ("Maintenance",            "§12.28 migration: rewrite legacy el=N addresses to child-index paths + stamp addressing (dry-run by default)"),
     "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired (dry-run by default)"),

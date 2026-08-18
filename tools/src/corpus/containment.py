@@ -30,8 +30,8 @@ from typing import IO
 import frontmatter
 
 from . import functional_uri as furi
+from . import locationindex, paths, records, tararchive, ziparchive
 from . import mime as mime_mod
-from . import paths, records, tararchive, ziparchive
 from .store import ArtifactMissing, ArtifactStore, get_store
 
 _CHUNK = 1 << 20
@@ -306,11 +306,11 @@ def ensure_local_bytes(
     _seen: frozenset[str] | None = None,
 ) -> Path:
     """Return a local path to `record_id`'s bytes — the containment-aware replacement for a
-    bare `store.ensure_local` (spec §2, §12.9). A standalone file (local, or hydrated from a
-    remote store) wins whenever it exists; otherwise the bytes are materialized through the
-    record's container into the resolver cache, streaming (no whole-member load) and recursing
-    when the container is itself promoted. Raises `ArtifactMissing` when unresolvable by any
-    route."""
+    bare `store.ensure_local` (spec §2, §12.1.1, §12.9). A standalone file (local, or hydrated
+    from a remote store) wins whenever it exists; else an attached-location route serves the
+    file in place (§12.1.1); else the bytes are materialized through the record's container
+    into the resolver cache, streaming (no whole-member load) and recursing when the container
+    is itself promoted. Raises `ArtifactMissing` when unresolvable by any route."""
     store = store or get_store(corpus_root)
     _seen = _seen if _seen is not None else frozenset()
     if record_id in _seen:
@@ -325,6 +325,14 @@ def ensure_local_bytes(
         return store.ensure_local(record_id, ext)
     except ArtifactMissing:
         pass
+
+    # No standalone file — try the attached-location index next (spec §12.1.1's route
+    # order: co-located store -> other store locations (not yet implemented) ->
+    # attached-location index -> member index (containment) -> remote hydration). The
+    # bytes are served IN PLACE — never copied into artifacts/ (residence is invisible).
+    located = locationindex.route_for(corpus_root, record_id)
+    if located is not None:
+        return located
 
     # No standalone file — resolve through the container. The member index is the ONLY route
     # (the promoted record's origin uri: is history, never consulted for lookup, §12.9).

@@ -117,6 +117,31 @@ def _prune_empty_dir(d: Path) -> None:
         pass
 
 
+# Persistent derived indexes under `cache/` the sweep must exclude **by name** (spec
+# §12.8 (21)): regenerable in principle (nothing normative depends on them) but
+# hours-expensive in practice — a hash-index backfill needs bytes in hand, and a sidecar
+# rebuild re-scans a multi-GB mirror — the opposite economics of the resolver-output
+# cache the sweep exists to prune. Their reclamation is a deliberate deletion, never an
+# age sweep.
+_CACHE_EXCLUDE_FILES = {
+    "hashes.db",
+    "hashes.db-wal",
+    "hashes.db-shm",
+    "locations.db",
+    "locations.db-wal",
+    "locations.db-shm",
+}
+_CACHE_EXCLUDE_DIRS = {"refidx"}
+
+
+def _cache_excluded(rel: Path) -> bool:
+    """True if `rel` (a path relative to the `cache/` dir) names a persistent derived
+    index the sweep must never touch — see `_CACHE_EXCLUDE_FILES`/`_CACHE_EXCLUDE_DIRS`."""
+    if rel.parts and rel.parts[0] in _CACHE_EXCLUDE_DIRS:
+        return True
+    return rel.name in _CACHE_EXCLUDE_FILES
+
+
 def _sweep_dir(
     corpus_root: Path,
     target: Path,
@@ -126,12 +151,17 @@ def _sweep_dir(
     out: list[SweepItem],
 ) -> None:
     """Prune every file under `target` older than `cutoff` (recursively). The dir's
-    whole contents are regenerable, so the only gate is age."""
+    whole contents are regenerable, so the only gate is age — except the `cache`
+    category, which also excludes the persistent derived indexes by name (§12.8 (21));
+    those are hours-expensive to regenerate, so their removal is never an age sweep."""
     if not target.is_dir():
         return
     empties: set[Path] = set()
     for f in sorted(target.rglob("*")):
         if not f.is_file():
+            continue
+        rel = f.relative_to(target)
+        if category == "cache" and _cache_excluded(rel):
             continue
         try:
             st = f.stat()

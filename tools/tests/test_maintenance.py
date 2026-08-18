@@ -155,6 +155,65 @@ def test_sweep_empty_corpus_no_crash(tmp_path):
     assert result.total_size == 0
 
 
+# ---------- gc / sweep: cache excludes persistent derived indexes by name (§12.8, v21) ---------- #
+
+
+def _persistent_index_tree(root: Path) -> dict[str, Path]:
+    """A cache/ tree with the persistent derived indexes (all old enough to be swept by
+    age alone) plus one ordinary cache entry."""
+    return {
+        "hashes_db": _mkfile(root / "cache" / "hashes.db", age_days=30),
+        "hashes_wal": _mkfile(root / "cache" / "hashes.db-wal", age_days=30),
+        "hashes_shm": _mkfile(root / "cache" / "hashes.db-shm", age_days=30),
+        "locations_db": _mkfile(root / "cache" / "locations.db", age_days=30),
+        "locations_wal": _mkfile(root / "cache" / "locations.db-wal", age_days=30),
+        "locations_shm": _mkfile(root / "cache" / "locations.db-shm", age_days=30),
+        "refidx": _mkfile(root / "cache" / "refidx" / "aa62.sqlite", age_days=30),
+        "ordinary": _mkfile(root / "cache" / "ab" / "abcd.txt", age_days=30),
+    }
+
+
+def test_sweep_dry_run_excludes_persistent_indexes(tmp_path):
+    root = _corpus(tmp_path)
+    files = _persistent_index_tree(root)
+    result = maintenance.sweep(root, older_than_days=0, dry_run=True)
+    assert [i.path for i in result.items] == ["cache/ab/abcd.txt"]
+    for key, f in files.items():
+        assert f.exists(), f"dry run must not touch {key}"
+
+
+def test_sweep_deletes_ordinary_keeps_persistent_indexes(tmp_path):
+    root = _corpus(tmp_path)
+    files = _persistent_index_tree(root)
+    result = maintenance.sweep(root, older_than_days=0, dry_run=False)
+    assert [i.path for i in result.items] == ["cache/ab/abcd.txt"]
+    assert not files["ordinary"].exists()
+    for key in (
+        "hashes_db",
+        "hashes_wal",
+        "hashes_shm",
+        "locations_db",
+        "locations_wal",
+        "locations_shm",
+        "refidx",
+    ):
+        assert files[key].exists(), f"real sweep must keep {key}"
+
+
+def test_sweep_staging_export_unaffected_by_cache_exclusions(tmp_path):
+    root = _corpus(tmp_path)
+    _persistent_index_tree(root)
+    staging = _mkfile(root / "capture" / "leftover.info.json", age_days=30)
+    export = _mkfile(root / "export" / "bundle.zip", age_days=30)
+    result = maintenance.sweep(
+        root, include=["staging", "export"], older_than_days=7, dry_run=False
+    )
+    cats = {i.category for i in result.items}
+    assert cats == {"staging", "export"}
+    assert not staging.exists()
+    assert not export.exists()
+
+
 # ---------- gc / sweep: orphan artifacts ---------- #
 
 

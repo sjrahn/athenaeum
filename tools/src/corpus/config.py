@@ -26,6 +26,13 @@ File schema (all keys optional):
     [corpus.capture]
     default_transport = "headless"   # browser transport when overlay + --transport unset
 
+    [[corpus.location]]              # additional byte roots (spec §12.1.1, v21)
+    name = "..."                     # required, unique
+    kind = "attached"                # required: "attached" (only kind implemented so
+                                      # far — "store" is accepted here but rejected at
+                                      # load with a not-yet-implemented error)
+    path = "/abs/path"               # required for attached, must be absolute
+
 Env vars override the file (later wins):
 
     CORPUS_STORE          → store.backend
@@ -53,17 +60,33 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class LocationConfig:
+    """One `[[corpus.location]]` table (spec §12.1.1, v21) — an additional byte root
+    beyond the co-located `artifacts/` tree. ATTACHED only this wave: `kind` is always
+    `"attached"` by the time this is constructed — `"store"` locations (content-
+    addressed, corpus-written, local or remote) are a later wave and never reach here
+    (`_resolve_locations_section` raises at load instead)."""
+
+    name: str
+    kind: str
+    path: Path
+
+
+@dataclass(frozen=True)
 class CorpusConfig:
     """Merged file + env configuration for a corpus.
 
     `store` always carries at least `{"backend": "local"|"azure"|"s3"}`; backend-
     specific keys are present only when configured.
     `transcription` always carries at least `{"adapter": "noop"|"http-whisper"}`.
+    `locations` is empty when no `[[corpus.location]]` tables are declared — every
+    existing behavior is unchanged for a corpus that declares none.
     """
 
     store: dict[str, Any] = field(default_factory=dict)
     transcription: dict[str, Any] = field(default_factory=dict)
     capture: dict[str, Any] = field(default_factory=dict)
+    locations: tuple[LocationConfig, ...] = field(default_factory=tuple)
 
 
 def load_config(corpus_root: Path) -> CorpusConfig:
@@ -84,12 +107,16 @@ def load_config(corpus_root: Path) -> CorpusConfig:
     file_store = dict(file_data.get("store") or {})
     file_transcription = dict(file_data.get("transcription") or {})
     file_capture = dict(file_data.get("capture") or {})
+    file_locations = file_data.get("location") or []
 
     store = _resolve_store_section(file_store)
     transcription = _resolve_transcription_section(file_transcription)
     capture = _resolve_capture_section(file_capture)
+    locations = _resolve_locations_section(file_locations)
 
-    return CorpusConfig(store=store, transcription=transcription, capture=capture)
+    return CorpusConfig(
+        store=store, transcription=transcription, capture=capture, locations=locations
+    )
 
 
 def _resolve_store_section(file_store: dict[str, Any]) -> dict[str, Any]:
@@ -159,3 +186,63 @@ def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
             )
         out["default_transport"] = transport
     return out
+
+
+def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
+    """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21). No env-var
+    overrides — locations are deployment topology, not secrets or transport tuning.
+
+    `kind = "store"` is a later wave: accepted as a recognized key so a deployment's
+    corpus.toml can declare its full intended topology up front, but rejected here with
+    an actionable not-yet-implemented error rather than silently parsed and ignored.
+    """
+    if not isinstance(raw, list):
+        raise ValueError(
+            "corpus.toml [corpus.location] must be an array of tables "
+            "(use [[corpus.location]], not [corpus.location])."
+        )
+    out: list[LocationConfig] = []
+    seen: set[str] = set()
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ValueError(f"corpus.toml [[corpus.location]] entry {i}: expected a table.")
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"corpus.toml [[corpus.location]] entry {i}: missing required 'name'.")
+        if name in seen:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: duplicate name — "
+                f"location names must be unique."
+            )
+        kind = str(entry.get("kind") or "").strip().lower()
+        if not kind:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: missing required 'kind' "
+                f"(attached | store)."
+            )
+        if kind == "store":
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: kind = \"store\" is not "
+                f"implemented yet (spec §12.1.1) — only kind = \"attached\" is "
+                f"supported in this wave."
+            )
+        if kind != "attached":
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: unknown kind {kind!r}; "
+                f"must be 'attached' (kind = \"store\" is not yet implemented)."
+            )
+        raw_path = entry.get("path")
+        if not raw_path:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: kind = \"attached\" "
+                f"requires a 'path'."
+            )
+        path = Path(str(raw_path))
+        if not path.is_absolute():
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: 'path' must be an "
+                f"absolute path, got {raw_path!r}."
+            )
+        seen.add(name)
+        out.append(LocationConfig(name=name, kind=kind, path=path))
+    return tuple(out)
