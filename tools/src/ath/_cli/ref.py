@@ -23,7 +23,9 @@ verbs:
             words, print candidate native ids — ids aren't guessable, so a
             ledger scribe searches first and pastes a hit's id into `resolve`
             or straight into a `ref://` citation. Blends title-index and
-            full-text hits by default (`--mode` narrows to one tier).
+            full-text hits by default (`--mode` narrows to one tier). A hit
+            carrying disambiguating context (e.g. an osm-pbf element's
+            classifying tag and coordinates) prints a third column.
   index     (re)build a dataset's sidecar index (`refdata.adapters.osm_pbf`'s
             optional index API) — some formats are a compressed stream with
             no random access and no search index of their own, so `resolve`/
@@ -63,9 +65,11 @@ Commands:
                       or field a corpus:// courtesy redirect. --meta suppresses
                       the content body
   search DATASET Q    search a dataset by words; print candidate native ids
-                      (id<TAB>title, one per line). --tag pins a snapshot,
-                      --limit caps the hit count (default 10), --mode picks
-                      blend (default) / suggest (title only) / fulltext
+                      (id<TAB>title, or id<TAB>title<TAB>context when the
+                      adapter supplies disambiguating context, one per line).
+                      --tag pins a snapshot, --limit caps the hit count
+                      (default 10), --mode picks blend (default) / suggest
+                      (title only) / fulltext
   index DATASET       (re)build a dataset's sidecar index (adapters that need
                       one, e.g. osm-pbf). --tag pins a snapshot (default: the
                       dataset's latest)
@@ -287,7 +291,10 @@ def _cmd_search(argv: Sequence[str]) -> int:
         return 0
     for hit in hits:
         title = hit.title if hit.title is not None else "(no title)"
-        print(f"{hit.native_id}\t{title}")
+        if hit.context is not None:
+            print(f"{hit.native_id}\t{title}\t{hit.context}")
+        else:
+            print(f"{hit.native_id}\t{title}")
     return 0
 
 

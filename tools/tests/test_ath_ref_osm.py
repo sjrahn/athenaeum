@@ -177,7 +177,9 @@ def test_resolve_and_search_after_indexing(
     rc = main(["ref", "search", "osm-test", "Location", "--root", str(root)])
     assert rc == 0
     captured = capsys.readouterr()
-    assert captured.out.splitlines() == ["node/1\tTest Location"]
+    # Three columns: node/1 carries context (amenity=cafe + rounded coords) —
+    # this is the search-hit disambiguation column (athenaeum#203).
+    assert captured.out.splitlines() == ["node/1\tTest Location\tamenity=cafe @43.654,-79.123"]
 
 
 # --- status --------------------------------------------------------------

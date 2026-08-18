@@ -46,6 +46,13 @@ _ETYPE_FROM_CODE = {"n": "node", "w": "way", "r": "relation"}
 # naming tags, in order of specificity/reliability); the first present,
 # non-empty value wins.
 _NAME_TAGS = ("name", "name:en", "official_name", "alt_name")
+# The common OSM top-level classifying keys, most identity-bearing first —
+# search context uses the first of these present on an element's tags.
+_CONTEXT_TAGS = (
+    "place", "boundary", "amenity", "shop", "leisure", "tourism", "natural",
+    "historic", "man_made", "landuse", "building", "highway", "railway",
+    "waterway", "aeroway", "power", "office", "craft", "sport",
+)
 
 
 def available() -> bool:
@@ -326,7 +333,14 @@ def search_entries(
     The query is tokenized defensively for FTS5 (`\\w+` word tokens, each
     double-quoted to neutralize FTS5 query-syntax characters, joined with
     implicit-AND spaces) — an empty token list (blank or punctuation-only
-    query) is `[]`, not an FTS5 syntax error."""
+    query) is `[]`, not an FTS5 syntax error.
+
+    Each hit additionally carries a `context` hint (`_search_context`) —
+    first-scribe-pass finding: identically-titled hits (a common name
+    repeated across a Geofabrik extract's whole province/country) are
+    otherwise indistinguishable without resolving each one in turn; a
+    classifying tag plus rough coordinates lets a scribe pick the right hit
+    from the search results alone."""
     if mode not in ("blend", "suggest", "fulltext"):
         raise ValueError(f"unknown search mode {mode!r} (want 'blend', 'suggest', or 'fulltext')")
     if mode == "fulltext":
@@ -342,4 +356,38 @@ def search_entries(
         "SELECT etype, id, name FROM names WHERE names MATCH ? ORDER BY bm25(names) LIMIT ?",
         (fts_query, limit),
     ).fetchall()
-    return [AdapterSearchHit(native_id=f"{etype}/{eid}", title=name) for etype, eid, name in rows]
+    return [
+        AdapterSearchHit(
+            native_id=f"{etype}/{eid}", title=name, context=_search_context(conn, etype, eid)
+        )
+        for etype, eid, name in rows
+    ]
+
+
+def _search_context(conn: sqlite3.Connection, etype: str, eid: int) -> str | None:
+    """A short disambiguating hint for one search hit: `{key}={value}` for
+    the first `_CONTEXT_TAGS` key present on the element, a `@{lat:.3f},
+    {lon:.3f}` coordinate (~100 m — enough to tell provinces apart while
+    keeping rows short) for nodes, joined with a single space — either part
+    may be absent (a way with no classifying tag has no coordinates of its
+    own; an element with no `_CONTEXT_TAGS` key has no classifying part).
+    Both absent, or the element row missing (index inconsistency), is
+    `None` — never a crash."""
+    row = conn.execute(
+        "SELECT lat, lon, tags FROM elements WHERE etype = ? AND id = ?", (etype, eid)
+    ).fetchone()
+    if row is None:
+        return None
+    lat, lon, tags_json = row
+    tags: dict[str, str] = json.loads(tags_json)
+
+    parts = []
+    for key in _CONTEXT_TAGS:
+        value = tags.get(key)
+        if value:
+            parts.append(f"{key}={value}")
+            break
+    if etype == "node" and lat is not None and lon is not None:
+        parts.append(f"@{lat:.3f},{lon:.3f}")
+
+    return " ".join(parts) if parts else None

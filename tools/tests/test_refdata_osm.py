@@ -24,23 +24,33 @@ from refdata.errors import EntryNotFound  # noqa: E402
 # node (dropped by EmptyTagFilter — never reaches the index), one tagged way
 # with a name, one tagged relation with no name. Node 1's name ("Test
 # Location") and way 10's name ("Test Way") deliberately share the word
-# "Test" — that's what the limit/search tests below exercise.
+# "Test" — that's what the limit/search tests below exercise. Node 4 and way
+# 11 are named but carry no `_CONTEXT_TAGS` key — "Bare" is their shared
+# word — exercising the coords-only (node) / None (way) context outcomes.
 
 _NODE_NAMED = (1, -79.123456, 43.654321, {"name": "Test Location", "amenity": "cafe"})
 _NODE_UNNAMED = (2, -79.5, 43.5, {"amenity": "bench"})
 _NODE_UNTAGGED = (3, -79.6, 43.6, {})
+_NODE_NO_CONTEXT_TAG = (4, -79.7, 43.7, {"name": "Bare Node"})
 
 
 def _build_pbf(path: Path) -> None:
     writer = osmium.SimpleWriter(str(path))
     try:
-        for node_id, lon, lat, tags in (_NODE_NAMED, _NODE_UNNAMED, _NODE_UNTAGGED):
+        for node_id, lon, lat, tags in (
+            _NODE_NAMED, _NODE_UNNAMED, _NODE_UNTAGGED, _NODE_NO_CONTEXT_TAG,
+        ):
             writer.add_node(
                 osmium.osm.mutable.Node(id=node_id, location=(lon, lat), tags=tags)
             )
         writer.add_way(
             osmium.osm.mutable.Way(
                 id=10, nodes=[1, 2], tags={"name": "Test Way", "highway": "residential"}
+            )
+        )
+        writer.add_way(
+            osmium.osm.mutable.Way(
+                id=11, nodes=[1, 2], tags={"name": "Bare Way"}
             )
         )
         writer.add_relation(
@@ -215,12 +225,48 @@ def test_search_empty_or_punctuation_query_returns_empty(
     assert osm_pbf.search_entries(handle, query, limit=10) == []
 
 
+# --- search: context ---------------------------------------------------------
+
+
+def test_search_node_context_has_classifying_tag_and_coords(indexed_pbf_path: Path) -> None:
+    """Node 1 carries `amenity=cafe` (a `_CONTEXT_TAGS` key) — its context
+    is the tag plus `@lat,lon` rounded to 3 decimals."""
+    handle = osm_pbf.open_archive(indexed_pbf_path)
+    hits = osm_pbf.search_entries(handle, "Location", limit=10)
+    assert len(hits) == 1
+    assert hits[0].native_id == "node/1"
+    assert hits[0].context == "amenity=cafe @43.654,-79.123"
+
+
+def test_search_way_context_has_classifying_tag_no_coords(indexed_pbf_path: Path) -> None:
+    """Way 10 carries `highway=residential` but ways carry no lat/lon — its
+    context is the tag alone, with no `@` part. Both query tokens are
+    required ("Test" alone also hits node/1; "Way" alone also hits way/11)
+    to isolate way/10 exactly."""
+    handle = osm_pbf.open_archive(indexed_pbf_path)
+    hits = osm_pbf.search_entries(handle, "Test Way", limit=10)
+    assert len(hits) == 1
+    assert hits[0].native_id == "way/10"
+    assert hits[0].context == "highway=residential"
+
+
+def test_search_context_missing_classifying_tag(indexed_pbf_path: Path) -> None:
+    """Node 4 and way 11 are named but carry no `_CONTEXT_TAGS` key: the node
+    falls back to coords-only context, the way (no coords of its own) to
+    None."""
+    handle = osm_pbf.open_archive(indexed_pbf_path)
+    hits = {h.native_id: h for h in osm_pbf.search_entries(handle, "Bare", limit=10)}
+    assert set(hits) == {"node/4", "way/11"}
+    assert hits["node/4"].context == "@43.700,-79.700"
+    assert hits["way/11"].context is None
+
+
 # --- build_index / index_state ----------------------------------------------
 
 
 def test_build_index_counts(pbf_path: Path) -> None:
     counts = osm_pbf.build_index(pbf_path)
-    assert counts == {"elements": 4, "named": 2}
+    assert counts == {"elements": 6, "named": 4}
 
 
 def test_index_state_transitions(pbf_path: Path) -> None:

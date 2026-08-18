@@ -16,7 +16,9 @@ An adapter module exposes three functions:
 - `search_entries(handle: Any, query: str, limit: int, mode: str = "blend") ->
   list[AdapterSearchHit]` — the discovery step ahead of `resolve_entry`
   (spec/ledger.md §6.5): words in, candidate native ids out, best match
-  first. `mode` selects which index tier(s) to draw from — `"blend"`
+  first, each optionally carrying a short `context` hint to disambiguate
+  same-titled hits (an adapter with nothing to add leaves it None). `mode`
+  selects which index tier(s) to draw from — `"blend"`
   (default: title-index hits first, then full-text hits appended and
   deduplicated — an archive missing one index tier degrades gracefully
   within that mode rather than erroring), `"suggest"` (title index only), or
@@ -79,11 +81,14 @@ class AdapterResult:
 class AdapterSearchHit:
     """One adapter's search hit against an open mirror handle — a native id
     ready to paste into `resolve_entry` / a sources-table `ref://` citation,
-    plus a display title. No `content_type`/`text`: search is discovery, not
-    resolution — the caller resolves the id it picks."""
+    plus a display title and an optional short `context` hint (e.g. an OSM
+    element's classifying tag and coordinates) for telling same-titled hits
+    apart without resolving each one. No `content_type`/`text`: search is
+    discovery, not resolution — the caller resolves the id it picks."""
 
     native_id: str
     title: str | None
+    context: str | None = None
 
 
 def _load_zim() -> ModuleType:

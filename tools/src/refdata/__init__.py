@@ -100,10 +100,12 @@ class ResolvedEntry:
 @dataclass(frozen=True)
 class SearchHit:
     """One `search()` hit — a native id ready to paste into `resolve` or a
-    `ref://{dataset}[@{tag}]/{id}` citation, plus a display title."""
+    `ref://{dataset}[@{tag}]/{id}` citation, plus a display title and an
+    optional short `context` hint for disambiguating same-titled hits."""
 
     native_id: str
     title: str | None
+    context: str | None = None
 
 
 def materialize(
@@ -265,4 +267,7 @@ def search(
     """
     _, _, handle = _resolve_handle(reference, tag, corpora_roots)
     hits = ADAPTERS[reference.adapter].search_entries(handle, query, limit, mode=mode)
-    return [SearchHit(native_id=hit.native_id, title=hit.title) for hit in hits]
+    return [
+        SearchHit(native_id=hit.native_id, title=hit.title, context=hit.context)
+        for hit in hits
+    ]
