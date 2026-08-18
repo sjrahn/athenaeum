@@ -130,17 +130,37 @@ test("a killed cold pass resumes without re-hashing completed files", async () =
   await put(root, "f3", "three");
   await put(root, "f4", "four");
 
-  // concurrency 1 makes the fault deterministic: exactly 2 files hashed before the "kill".
-  await expect(runScan(root, { concurrency: 1, _faultAfterHashes: 2 })).rejects.toThrow();
+  // concurrency 1 + batch size 2 makes the fault deterministic: the first identity batch
+  // (f1, f2) commits, the second batch is opened for f3 and never committed before the "kill".
+  await expect(
+    runScan(root, { concurrency: 1, _identityBatchSize: 2, _faultAfterHashes: 3 }),
+  ).rejects.toThrow();
   const partial = await loadState(join(root, ".athenaeum"), root);
-  expect(partial.identities.size).toBe(2);
+  expect(partial.identities.size).toBe(2); // only the committed batch survived
 
   const { hashCount } = await runScan(root, { concurrency: 1 });
-  expect(hashCount).toBe(2); // only the two that were never hashed
+  expect(hashCount).toBe(2); // f3 (lost with the uncommitted batch) + f4
 
   const final = await loadState(join(root, ".athenaeum"), root);
   expect(final.identities.size).toBe(4);
   expect(final.paths.size).toBe(4);
+});
+
+test("a killed cold pass loses nothing when the fault lands exactly on a batch boundary", async () => {
+  const root = await tmpTree();
+  await put(root, "f1", "one");
+  await put(root, "f2", "two");
+
+  // batch size 2, fault after exactly 2 hashes: putIdentity's own threshold check commits the
+  // batch synchronously before the fault throws, so both survive the "kill".
+  await expect(
+    runScan(root, { concurrency: 1, _identityBatchSize: 2, _faultAfterHashes: 2 }),
+  ).rejects.toThrow();
+  const partial = await loadState(join(root, ".athenaeum"), root);
+  expect(partial.identities.size).toBe(2);
+
+  const { hashCount } = await runScan(root, { concurrency: 1 });
+  expect(hashCount).toBe(0); // nothing left to hash
 });
 
 test("snapshot round-trip preserves identities and paths", async () => {

@@ -1,13 +1,14 @@
 // The scan orchestration. Two phases: (1) walk + stat-classify every file, updating path
 // rows and reconciling deletions, deciding which files need a (re)hash; (2) a bounded pool
-// hashes just those, appending an identity row and fsyncing per file so a kill resumes
-// without re-hashing completed work. Then an optional scrub sampler and the run summary.
+// hashes just those, appending an identity row in batched transactions (durable within
+// `batchSize` files / `batchIntervalMs`, whichever first — a crash loses at most the last
+// batch). Then an optional scrub sampler, the publish step, and the run summary.
 
 import { open, stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { walkTree, type FileEntry } from "./walk.ts";
-import { Manifest, type IdentityState } from "./manifest.ts";
-import { identityKey, type ScanMode, type ScanSummary } from "./schema.ts";
+import { Manifest } from "./manifest.ts";
+import { identityKey, type IdentityState, type ScanMode, type ScanSummary } from "./schema.ts";
 import type { HasherFactory, Hasher } from "./hasher.ts";
 import { Logger, humanBytes, humanCount, humanDuration, humanRate } from "./log.ts";
 
@@ -20,11 +21,14 @@ export interface ScanOptions {
   factory: HasherFactory;
   log: Logger;
   concurrency?: number;
-  full?: boolean; // force re-hash of every file
+  full?: boolean; // force re-hash of every file (also disables the inode-migration heuristic)
   scrub?: number; // re-hash N random files as a bit-rot check
   chunkBytes?: number;
-  /** test hook: throw after N successful hashes (each already flushed) to simulate a kill. */
+  /** test hook: throw after N successful hashes (each already applied to the open batch) to simulate a kill. */
   _faultAfterHashes?: number;
+  /** test/tuning hook: identity batch commit thresholds (default 64 files / 5000ms). */
+  _identityBatchSize?: number;
+  _identityBatchIntervalMs?: number;
 }
 
 class SimulatedInterrupt extends Error {}
@@ -65,8 +69,11 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
   const chunkBytes = opts.chunkBytes ?? DEFAULT_CHUNK;
   const full = opts.full ?? false;
 
-  const mf = await Manifest.open(opts.manifestDir, root, log);
-  const isCold = mf.identities.size === 0 && mf.paths.size === 0;
+  const mf = await Manifest.open(opts.manifestDir, root, log, {
+    batchSize: opts._identityBatchSize,
+    batchIntervalMs: opts._identityBatchIntervalMs,
+  });
+  const isCold = mf.isEmpty();
   const mode: ScanMode = isCold ? "cold" : "incremental";
   const gen = mf.generation + 1;
 
@@ -80,6 +87,7 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
     filesSeen: 0,
     hashed: 0,
     moved: 0,
+    migrated: 0,
     deleted: 0,
     skipped: 0,
     scrubbed: 0,
@@ -94,8 +102,9 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
   try {
     return await runScanBody(mf, opts, summary, gen, full, k, chunkBytes, excludeAbs);
   } finally {
-    // Always flush the buffer and close the journal handle — even on interrupt, so the
-    // per-file-flushed journal is left clean for the next resume.
+    // Always roll back any open batch and close the connection — even on interrupt, so a
+    // killed run leaves state.sqlite consistent (crash marker: this generation's finished_at
+    // stays NULL) for the next resume.
     await mf.close();
   }
 }
@@ -116,10 +125,10 @@ async function runScanBody(
   // ── phase 1: walk + classify ──────────────────────────────────────────────────
   const toHash: FileEntry[] = [];
   let bytesToHash = 0n;
-  const seenPaths = new Set<string>();
   const queuedKeys = new Set<string>(); // identities already queued this run (dedupe hardlinks)
   let walkCount = 0;
 
+  mf.beginWalk();
   for await (const entry of walkTree(root, excludeAbs)) {
     if (entry.kind === "skip") {
       summary.skipped++;
@@ -128,17 +137,32 @@ async function runScanBody(
       continue;
     }
     summary.filesSeen++;
-    seenPaths.add(entry.relpath);
+    mf.markSeen(entry.relpath);
+
+    const prevPath = mf.getPathIdentity(entry.relpath);
+    const pathChanged = !prevPath || prevPath.dev !== entry.dev || prevPath.ino !== entry.ino;
+
+    // Inode-migration heuristic (FUSE/shfs remounts, e.g. unRAID's /mnt/user): the SAME path
+    // now presents a NEW (dev,ino). If the OLD identity that path referenced has an exactly
+    // matching (size, mtimeNs), carry its blake3 forward onto the new identity — zero re-hash.
+    // Disabled under --full, which means "ignore every cache, including this one."
+    let migrated = false;
+    if (!full && prevPath && pathChanged) {
+      const oldIdentity = mf.getIdentity(prevPath.dev, prevPath.ino);
+      if (oldIdentity && oldIdentity.size === entry.size && oldIdentity.mtimeNs === entry.mtimeNs) {
+        mf.putMigratedIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, oldIdentity.blake3, gen);
+        summary.migrated++;
+        migrated = true;
+      }
+    }
 
     const key = identityKey(entry.dev, entry.ino);
-    const existing = mf.identities.get(key);
-    const contentKnown = !!existing && existing.size === entry.size && existing.mtimeNs === entry.mtimeNs;
-    // Identities are materialized in phase 2, so a second hardlink/path to the same inode in
-    // this run must dedupe against what's already queued, not just against prior state.
-    const needHash = !queuedKeys.has(key) && (full || !contentKnown);
+    const existing = migrated ? undefined : mf.getIdentity(entry.dev, entry.ino);
+    const contentKnown = migrated || (!!existing && existing.size === entry.size && existing.mtimeNs === entry.mtimeNs);
+    // Identities are materialized as they're hashed, so a second hardlink/path to the same
+    // inode in this run must dedupe against what's already queued, not just prior state.
+    const needHash = !queuedKeys.has(key) && !migrated && (full || !contentKnown);
 
-    const prevPath = mf.paths.get(entry.relpath);
-    const pathChanged = !prevPath || prevPath.dev !== entry.dev || prevPath.ino !== entry.ino;
     if (pathChanged) {
       // A new path onto an already-known, unchanged identity is a rename or new hardlink to
       // pre-existing content: zero re-hash. (A brand-new file is counted by `hashed`.)
@@ -156,18 +180,12 @@ async function runScanBody(
   }
   log.endProgress();
 
-  // reconcile deletions (snapshot keys first — deletePath mutates the map)
-  for (const relpath of [...mf.paths.keys()]) {
-    if (!seenPaths.has(relpath)) {
-      mf.deletePath(relpath, gen);
-      summary.deleted++;
-    }
-  }
-  await mf.flush();
+  summary.deleted = mf.reconcileDeletions();
+  mf.commitWalk();
   log.info(
     `walk done: ${humanCount(summary.filesSeen)} files seen, ${humanCount(toHash.length)} to hash ` +
-      `(${humanBytes(bytesToHash)}), ${humanCount(summary.moved)} moved, ${humanCount(summary.deleted)} deleted, ` +
-      `${humanCount(summary.skipped)} skipped`,
+      `(${humanBytes(bytesToHash)}), ${humanCount(summary.moved)} moved, ${humanCount(summary.migrated)} migrated, ` +
+      `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped`,
   );
 
   // ── phase 2: hash pool ─────────────────────────────────────────────────────────
@@ -202,7 +220,6 @@ async function runScanBody(
       mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen);
       summary.hashed++;
       hashedBytes += result.bytes;
-      await mf.flush(); // durability at file granularity: resume never re-hashes this file
 
       if (opts._faultAfterHashes !== undefined && summary.hashed >= opts._faultAfterHashes) {
         throw new SimulatedInterrupt(`fault after ${summary.hashed} hashes`);
@@ -212,6 +229,7 @@ async function runScanBody(
     if (ticker) clearInterval(ticker);
     log.endProgress();
   }
+  mf.flushBatch(); // commit whatever's left in the final partial batch — only reached on success
   summary.bytesHashed = hashedBytes.toString();
 
   // ── optional scrub ──────────────────────────────────────────────────────────────
@@ -222,7 +240,8 @@ async function runScanBody(
   }
 
   summary.elapsedMs = Math.round(performance.now() - started);
-  mf.genClose(summary); // only reached on the success path; the caller's finally closes the manifest
+  mf.genClose(summary); // only reached on the success path
+  await mf.publish(); // unveil this complete generation to remote readers
   return summary;
 }
 
@@ -236,25 +255,13 @@ async function scrubSample(
   chunkBytes: number,
   log: Logger,
 ): Promise<{ scrubbed: number; corrupt: number }> {
-  // reverse index: identity -> one representative live path
-  const rep = new Map<string, string>();
-  for (const [relpath, p] of mf.paths) {
-    const key = identityKey(p.dev, p.ino);
-    if (mf.identities.has(key) && !rep.has(key)) rep.set(key, relpath);
-  }
-  const keys = [...rep.keys()];
-  // Fisher-Yates partial shuffle for a uniform sample of size n.
-  for (let i = 0; i < Math.min(n, keys.length); i++) {
-    const j = i + Math.floor(Math.random() * (keys.length - i));
-    [keys[i], keys[j]] = [keys[j]!, keys[i]!];
-  }
-  const sample = keys.slice(0, Math.min(n, keys.length));
+  const sample = mf.scrubSample(n);
 
   let scrubbed = 0;
   let corrupt = 0;
-  for (const key of sample) {
-    const id = mf.identities.get(key)!;
-    const relpath = rep.get(key)!;
+  for (const row of sample) {
+    const id: IdentityState = { dev: row.dev, ino: row.ino, size: row.size, mtimeNs: row.mtimeNs, blake3: row.blake3, generation: 0 };
+    const relpath = row.path;
     const abspath = root + sep + (sep === "/" ? relpath : relpath.split("/").join(sep));
     let st;
     try {
@@ -282,12 +289,29 @@ async function scrubSample(
   return { scrubbed, corrupt };
 }
 
-/** Standalone compaction: fold journal into a fresh snapshot at a new generation. */
+/** Standalone compaction: drop orphaned identities, VACUUM, publish. */
 export async function compact(root: string, manifestDir: string, log: Logger): Promise<void> {
+  const started = performance.now();
   const mf = await Manifest.open(manifestDir, root, log);
   const gen = mf.generation + 1;
   mf.genOpen("compact", gen);
-  const res = await mf.compact(gen);
+  const res = mf.compact(gen);
+  const summary: ScanSummary = {
+    mode: "compact",
+    generation: gen,
+    filesSeen: 0,
+    hashed: 0,
+    moved: 0,
+    migrated: 0,
+    deleted: res.orphansDropped,
+    skipped: 0,
+    scrubbed: 0,
+    corrupt: 0,
+    bytesHashed: "0",
+    elapsedMs: Math.round(performance.now() - started),
+  };
+  mf.genClose(summary);
+  await mf.publish();
   await mf.close();
   log.info(`compact generation ${gen}: ${humanCount(res.identities)} identities, ${humanCount(res.paths)} paths, ${humanCount(res.orphansDropped)} orphans dropped`);
 }
@@ -300,6 +324,7 @@ export function formatSummary(s: ScanSummary, root: string): string {
     `  files seen    ${humanCount(s.filesSeen)}`,
     `  hashed        ${humanCount(s.hashed)}  (${humanBytes(BigInt(s.bytesHashed))})`,
     `  moved         ${humanCount(s.moved)}`,
+    `  migrated      ${humanCount(s.migrated)}`,
     `  deleted       ${humanCount(s.deleted)}`,
     `  skipped       ${humanCount(s.skipped)}`,
     `  scrubbed      ${humanCount(s.scrubbed)}   corrupt ${humanCount(s.corrupt)}`,

@@ -58,15 +58,18 @@ export async function runScan(root: string, extra: Partial<ScanOptions> = {}): P
     scrub: extra.scrub,
     chunkBytes: extra.chunkBytes,
     _faultAfterHashes: extra._faultAfterHashes,
+    _identityBatchSize: extra._identityBatchSize,
+    _identityBatchIntervalMs: extra._identityBatchIntervalMs,
   });
   return { summary, hashCount: factory.count, manifestDir };
 }
 
-/** Load the manifest state (identities + paths) for assertions. */
+/** Load the manifest state (identities + paths) for assertions. Test/inspection only —
+ * dumpIdentities/dumpPaths materialize the full tables into memory, fine for small fixtures. */
 export async function loadState(manifestDir: string, root: string) {
   const mf = await Manifest.open(manifestDir, root, quietLog);
-  const identities = new Map(mf.identities);
-  const paths = new Map(mf.paths);
+  const identities = mf.dumpIdentities();
+  const paths = mf.dumpPaths();
   const generation = mf.generation;
   await mf.close();
   return { identities, paths, generation };
