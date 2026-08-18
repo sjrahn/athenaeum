@@ -75,6 +75,10 @@ ath-scan <root> --compact           drop orphaned identities, VACUUM, republish
                          beside this executable, then on PATH; WASM-only if none verifies)
   --native-threshold <bytes>  files at/above this size use native b3sum instead of WASM,
                          when one is available (default 1048576, i.e. 1 MiB)
+  --native-concurrency <K>  concurrent native b3sum spawns (default 2); multi-disk arrays
+                         (e.g. unRAID) benefit from 4-8 since each hasher pins one spindle;
+                         b3sum is itself CPU-multithreaded, so a pure-NVMe root rarely needs
+                         more than 2
   --ignore <pattern>     extra basename to skip (repeatable); trailing "*" is a prefix match;
                          layers on top of the built-in junk deny-list — see "Ignoring
                          filesystem-metadata junk" below
@@ -206,10 +210,18 @@ exit 0, and it must reproduce hash-wasm's BLAKE3 digest of a small known vector 
 temp file). Either check failing refuses the binary with a warning and falls back to WASM —
 this never aborts a run over a bad/wrong/missing b3sum.
 
-**Concurrency**: b3sum is internally multithreaded, so spawning several at once just makes
-them contend for the same cores instead of helping — native hashing is capped at 2 concurrent
-spawns regardless of `--concurrency` (which still governs the WASM pool for small files, run
-concurrently alongside the native pool).
+**Concurrency**: b3sum is internally multithreaded, so on a pure-NVMe/SSD root spawning
+several at once just makes them contend for the same cores instead of helping — native
+hashing defaults to 2 concurrent spawns, independent of `--concurrency` (which still governs
+the WASM pool for small files, run concurrently alongside the native pool). On a multi-disk
+array where each file lives wholly on one physical disk (e.g. unRAID's file-based array),
+that default leaves throughput on the table: one b3sum stream tops out at one spindle's read
+speed, so aggregate throughput scales with how many *distinct disks* are being read from at
+once, not with CPU. `--native-concurrency <K>` raises the pool size — 4-8 is a reasonable
+starting point on such arrays. The native queue is also shuffled before pooling, since
+unRAID's allocation policy tends to place a whole directory's files on the same disk and the
+queue is built in walk (directory) order — without shuffling, adjacent queue entries would
+likely be same-disk and a bigger pool would just contend harder rather than fanning out.
 
 **Per-file failures** (nonzero exit, bad output, a file that vanishes mid-hash) are logged and
 skipped the same way an unreadable file is — reason `b3sum-failed` — never abort the run.

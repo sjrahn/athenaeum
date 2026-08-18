@@ -60,6 +60,7 @@ export async function runScan(root: string, extra: Partial<ScanOptions> = {}): P
     seedFrom: extra.seedFrom,
     b3sumPath: extra.b3sumPath,
     nativeThresholdBytes: extra.nativeThresholdBytes,
+    nativeConcurrency: extra.nativeConcurrency,
     ignorePatterns: extra.ignorePatterns,
     noDefaultIgnores: extra.noDefaultIgnores,
     _faultAfterHashes: extra._faultAfterHashes,

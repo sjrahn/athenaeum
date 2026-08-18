@@ -33,6 +33,9 @@ export interface ScanOptions {
   factory: HasherFactory;
   log: Logger;
   concurrency?: number;
+  /** Native (b3sum) pool size — see `--native-concurrency` (default DEFAULT_NATIVE_CONCURRENCY).
+   * `_nativeConcurrency` (test/tuning hook) wins if both are set. */
+  nativeConcurrency?: number;
   full?: boolean; // force re-hash of every file (also disables the inode-migration heuristic and all seeding)
   scrub?: number; // re-hash N random files as a bit-rot check
   chunkBytes?: number;
@@ -86,6 +89,14 @@ async function hashFile(abspath: string, hasher: Hasher, chunkBytes: number): Pr
     await fh.close();
   }
   return { digest: hasher.digest(), bytes };
+}
+
+/** Fisher-Yates shuffle, in place. */
+function shuffle<T>(items: T[]): void {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j]!, items[i]!];
+  }
 }
 
 /** Run `worker` over `items` with at most `k` in flight. */
@@ -280,6 +291,14 @@ async function runScanBody(
     if (nativeHasher && entry.size >= nativeThreshold) nativeQueue.push(entry);
     else wasmQueue.push(entry);
   }
+  // unRAID's file-based array places every file on exactly one physical disk, and allocation
+  // policy tends to put a whole directory's files on the same disk — so the native queue,
+  // built in walk (directory) order, has long same-disk runs. A pool of size K>1 draining it
+  // in order would mostly contend for the same spindle instead of fanning out across disks.
+  // Shuffling decorrelates queue order from directory/disk locality. Order was never load-bearing
+  // for resume correctness (identities commit independently, keyed by dev/ino), so this is safe.
+  // WASM queue is untouched — small files, spawn/seek locality doesn't matter there.
+  shuffle(nativeQueue);
 
   let hashedBytes = 0n;
   const hashStart = performance.now();
@@ -346,7 +365,7 @@ async function runScanBody(
         hashedBytes += result.bytes;
         recordHashed();
       }),
-      runPool(nativeQueue, opts._nativeConcurrency ?? DEFAULT_NATIVE_CONCURRENCY, async (entry) => {
+      runPool(nativeQueue, opts._nativeConcurrency ?? opts.nativeConcurrency ?? DEFAULT_NATIVE_CONCURRENCY, async (entry) => {
         let digest: string;
         try {
           digest = await nativeHasher!.hashFile(entry.abspath);

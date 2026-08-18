@@ -11,7 +11,7 @@ import { constants as fsConstants } from "node:fs";
 import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME, SCANNER_VERSION, SCHEMA_VERSION } from "./schema.ts";
 import { blake3Factory } from "./hasher.ts";
 import { Logger, type LogLevel } from "./log.ts";
-import { scan, compact, formatSummary, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD } from "./scanner.ts";
+import { scan, compact, formatSummary, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD, DEFAULT_NATIVE_CONCURRENCY } from "./scanner.ts";
 import { benchmark } from "./bench.ts";
 
 const HELP = `ath-scan ${SCANNER_VERSION} — residence scanner (manifest schema v${SCHEMA_VERSION})
@@ -36,6 +36,10 @@ OPTIONS
                          if none is found or it fails verification)
   --native-threshold <bytes>  files at/above this size use native b3sum instead of in-process
                          WASM, when a b3sum is available (default ${DEFAULT_NATIVE_THRESHOLD})
+  --native-concurrency <K>  concurrent native b3sum spawns (default ${DEFAULT_NATIVE_CONCURRENCY});
+                         multi-disk arrays (e.g. unRAID) benefit from 4-8 since each hasher
+                         pins one spindle; b3sum is itself CPU-multithreaded, so a pure-NVMe
+                         root rarely needs more than 2
   --ignore <pattern>     extra basename to skip (repeatable); trailing "*" is a prefix match,
                          e.g. "foo*"; a default deny-list already covers filesystem-metadata
                          junk, matched dirs are pruned (never entered):
@@ -55,10 +59,12 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-function parseIntArg(name: string, raw: string | undefined, dflt: number): number {
+function parseIntArg(name: string, raw: string | undefined, dflt: number, min = 0): number {
   if (raw === undefined) return dflt;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) die(`--${name} must be a non-negative integer (got "${raw}")`);
+  if (!Number.isInteger(n) || n < min) {
+    die(min > 0 ? `--${name} must be an integer >= ${min} (got "${raw}")` : `--${name} must be a non-negative integer (got "${raw}")`);
+  }
   return n;
 }
 
@@ -127,6 +133,7 @@ async function main(): Promise<number> {
         "seed-from": { type: "string", multiple: true },
         b3sum: { type: "string" },
         "native-threshold": { type: "string" },
+        "native-concurrency": { type: "string" },
         ignore: { type: "string", multiple: true },
         "no-default-ignores": { type: "boolean", default: false },
         json: { type: "boolean", default: false },
@@ -174,6 +181,7 @@ async function main(): Promise<number> {
     }
   }
   const nativeThresholdBytes = parseIntArg("native-threshold", values["native-threshold"], DEFAULT_NATIVE_THRESHOLD);
+  const nativeConcurrency = parseIntArg("native-concurrency", values["native-concurrency"], DEFAULT_NATIVE_CONCURRENCY, 1);
 
   if (values.bench) {
     const excludeAbs = manifestDir === root || manifestDir.startsWith(root + sep) ? manifestDir : null;
@@ -215,6 +223,7 @@ async function main(): Promise<number> {
     seedFrom,
     b3sumPath,
     nativeThresholdBytes,
+    nativeConcurrency,
     ignorePatterns: values.ignore,
     noDefaultIgnores: values["no-default-ignores"],
   });
