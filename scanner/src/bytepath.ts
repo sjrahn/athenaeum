@@ -31,7 +31,7 @@ export interface BytePathResolver {
 type XattrBackend = "ffi" | "getfattr";
 
 let cachedBackend: XattrBackend | null = null;
-let ffiGetxattr: ((pathBuf: Buffer, nameBuf: Buffer, valueBuf: Buffer, size: number) => number) | null = null;
+let ffiGetxattr: ((pathBuf: Buffer, nameBuf: Buffer, valueBuf: Buffer | null, size: number) => number) | null = null;
 
 /** Attempt to load libc's getxattr via bun:ffi. Wrapped in try/catch: `dlopen("libc.so.6", ...)`
  * may simply not be loadable on some host (missing glibc, FFI disabled in this Bun build,
@@ -45,14 +45,20 @@ function tryInitFfi(): boolean {
         returns: FFIType.i64,
       },
     });
-    ffiGetxattr = (pathBuf, nameBuf, valueBuf, size) => Number(lib.symbols.getxattr(ptr(pathBuf), ptr(nameBuf), ptr(valueBuf), BigInt(size)));
+    ffiGetxattr = (pathBuf, nameBuf, valueBuf, size) => Number(lib.symbols.getxattr(ptr(pathBuf), ptr(nameBuf), valueBuf ? ptr(valueBuf) : null, BigInt(size)));
     return true;
   } catch {
     return false;
   }
 }
 
-const XATTR_VALUE_BYTES = 256;
+// unRAID's shfs FUSE layer advertises system.LOCATION as 4096 bytes in the getxattr size
+// query and rejects ANY smaller value buffer with ERANGE — even though the actual value is a
+// few bytes ("disk7", "warm"). Measured live on unRAID 6.12 (kernel 6.12.54): buf 256 → ERANGE,
+// size-query → 4096, buf 4096 → n=4. So the first attempt uses 4096, and a failure falls back
+// to the standard two-call dance (size query with a null buffer, then an exact-size retry) for
+// any filesystem with yet another opinion.
+const XATTR_VALUE_BYTES = 4096;
 
 function getLocationViaFfi(path: string): string | null {
   if (!ffiGetxattr) return null;
@@ -60,8 +66,17 @@ function getLocationViaFfi(path: string): string | null {
     const pathBuf = Buffer.from(path + "\0", "utf8");
     const nameBuf = Buffer.from("system.LOCATION\0", "utf8");
     const valueBuf = Buffer.alloc(XATTR_VALUE_BYTES);
-    const n = ffiGetxattr(pathBuf, nameBuf, valueBuf, XATTR_VALUE_BYTES);
-    if (n < 0) return null; // ENODATA, ENOTSUP, ENOENT, ... — no such attribute, not fatal
+    let n = ffiGetxattr(pathBuf, nameBuf, valueBuf, XATTR_VALUE_BYTES);
+    if (n < 0) {
+      // Could be ERANGE from a filesystem that wants an even bigger buffer — ask it.
+      const need = ffiGetxattr(pathBuf, nameBuf, null, 0);
+      if (need <= XATTR_VALUE_BYTES) return null; // ENODATA, ENOTSUP, ENOENT, ... — not fatal
+      const bigBuf = Buffer.alloc(need);
+      n = ffiGetxattr(pathBuf, nameBuf, bigBuf, need);
+      if (n < 0) return null;
+      const value = bigBuf.subarray(0, n).toString("utf8").trim();
+      return value.length > 0 ? value : null;
+    }
     const value = valueBuf.subarray(0, n).toString("utf8").trim();
     return value.length > 0 ? value : null;
   } catch {

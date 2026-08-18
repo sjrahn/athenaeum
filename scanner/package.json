@@ -1,6 +1,6 @@
 {
   "name": "ath-scan",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Residence scanner: maintains an on-share blake3 presented manifest for the Athenaeum corpus tooling.",
   "type": "module",
   "bin": {
