@@ -310,6 +310,41 @@ def shadowed_copies(
     return out[:limit]
 
 
+def duplicate_residencies(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50, **_kw: Any
+) -> list[dict[str, Any]]:
+    """Hashes holding TWO OR MORE **current** attached-location rows (spec §12.1.1
+    (24)) — pure attached-side duplication: the same bytes living at two attached
+    paths, whether on one tree or two, independent of any store copy (the store-vs-
+    attached pairing is `shadowed_copies`'s case; this is the general one, the
+    residency query's own "a hash with multiple residencies is the dedup surface").
+    Each entry names a record id when one is promoted for the hash (dedup is a
+    property of the bytes, so an unpromoted duplicate surfaces exactly the same way).
+
+    Zero byte reads: an index-only join over `locationindex.current_rows_by_hash`
+    (the same staleness-screened rows `shadowed_copies` and `route_for` use) — a stale
+    row never counts toward a hash's residency count."""
+    from . import locationindex
+
+    by_hash = locationindex.current_rows_by_hash(corpus_root)
+    if not by_hash:
+        return []
+
+    record_ids = {r.record_id for r in refs}
+    out: list[dict[str, Any]] = []
+    for hash_, rows in sorted(by_hash.items()):
+        if len(rows) < 2:
+            continue
+        out.append(
+            {
+                "hash": hash_,
+                "record": hash_ if hash_ in record_ids else None,
+                "residencies": [{"location": loc, "relpath": rp} for loc, rp in rows],
+            }
+        )
+    return out[:limit]
+
+
 def validity_violations(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
 ) -> list[dict[str, Any]]:
@@ -657,6 +692,7 @@ SIGNAL_NAMES = (
     "overlay_declarations",
     "prefix_duplicate_artifacts",
     "shadowed_copies",
+    "duplicate_residencies",
 )
 
 
@@ -809,4 +845,6 @@ def scan_all(
         )
     if "shadowed_copies" in selected:
         report["shadowed_copies"] = shadowed_copies(refs, corpus_root, limit=limit)
+    if "duplicate_residencies" in selected:
+        report["duplicate_residencies"] = duplicate_residencies(refs, corpus_root, limit=limit)
     return report

@@ -394,6 +394,81 @@ def test_shadowed_copies_cli_summary(tmp_path, capsys):
     assert "shadowed_copies: 0 record(s)" in out
 
 
+# ---------- duplicate residencies (pure attached-side dedup, spec §12.1.1 v24) ---------- #
+
+
+def test_duplicate_residencies_two_attached_copies_surface(tmp_path):
+    root = _corpus(tmp_path)
+    tree1 = tmp_path / "tree1"
+    tree2 = tmp_path / "tree2"
+    tree1.mkdir()
+    tree2.mkdir()
+    data = b"identical bytes, two attached homes"
+    (tree1 / "a.bin").write_bytes(data)
+    (tree2 / "b.bin").write_bytes(data)
+
+    (root / "corpus.toml").write_text(
+        f"""
+[[corpus.location]]
+name = "loc1"
+kind = "attached"
+path = "{tree1}"
+
+[[corpus.location]]
+name = "loc2"
+kind = "attached"
+path = "{tree2}"
+""",
+        "utf-8",
+    )
+    cfg = config_mod.load_config(root)
+    for loc in cfg.locations:
+        locationindex.attest_location(root, loc)
+
+    rid = hashing.hash_file(tree1 / "a.bin", also=())["blake3"]
+
+    refs = health.load_all_records(root)
+    items = health.duplicate_residencies(refs, root)
+    assert len(items) == 1
+    entry = items[0]
+    assert entry["hash"] == rid
+    assert entry["record"] is None  # never promoted
+    assert sorted(
+        (r["location"], r["relpath"]) for r in entry["residencies"]
+    ) == [("loc1", "a.bin"), ("loc2", "b.bin")]
+
+
+def test_duplicate_residencies_single_copy_does_not_surface(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "solo.bin").write_bytes(b"only one home")
+    (root / "corpus.toml").write_text(
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+""",
+        "utf-8",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    locationindex.attest_location(root, loc)
+
+    refs = health.load_all_records(root)
+    assert health.duplicate_residencies(refs, root) == []
+
+
+def test_duplicate_residencies_cli_summary(tmp_path, capsys):
+    root = _populate(tmp_path)
+    rc = dispatch(
+        ["health", "--summary", "--filter", "duplicate_residencies", "--corpus-root", str(root)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "duplicate_residencies: 0 hash(es)" in out
+
+
 # ---------- CLI ---------- #
 
 

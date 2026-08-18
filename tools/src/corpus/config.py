@@ -44,6 +44,11 @@ File schema (all keys optional):
                                       # destination for artifacts whose minting origin
                                       # matched one — beats `ingest` format claims;
                                       # composes freely with `ingest`
+    manifest = true                  # attached only, optional (v24): the tree presents
+                                      # its own manifest — a residence scanner on the
+                                      # remote host publishes
+                                      # `<path>/.athenaeum/manifest.sqlite`, and attest
+                                      # reads it instead of walking
 
 Env vars override the file (later wins):
 
@@ -88,7 +93,12 @@ class LocationConfig:
     lands here, outranking a format claim. All empty/False is the common case — a store
     location with no placement role, resolved only, never a write destination.
     `ingest_origins` composes freely with `ingest_types`/`ingest_default` — a location
-    may declare either, both, or neither axis."""
+    may declare either, both, or neither axis.
+
+    `manifest` (spec §12.1.1, v24) is meaningful only on `kind == "attached"`: `true`
+    declares that the tree **presents its own manifest** — a residence scanner running
+    on the remote host publishes `<path>/.athenaeum/manifest.sqlite` — so `corpus
+    location attest` reads that manifest instead of walking the tree itself."""
 
     name: str
     kind: str
@@ -96,6 +106,7 @@ class LocationConfig:
     ingest_types: tuple[str, ...] = ()
     ingest_default: bool = False
     ingest_origins: tuple[str, ...] = ()
+    manifest: bool = False
 
 
 @dataclass(frozen=True)
@@ -248,6 +259,22 @@ def _resolve_ingest_origins_key(name: str, entry: dict[str, Any]) -> tuple[str, 
     )
 
 
+def _resolve_manifest_key(name: str, entry: dict[str, Any]) -> bool:
+    """Resolve an attached location's optional `manifest` key (spec §12.1.1, v24): `true`
+    declares that the tree presents its own manifest — a residence scanner publishes
+    `<path>/.athenaeum/manifest.sqlite`, and attest reads it instead of walking. Absent →
+    `False` (an ordinary walked location). Any non-bool value is an operator error."""
+    if "manifest" not in entry:
+        return False
+    value = entry["manifest"]
+    if isinstance(value, bool):
+        return value
+    raise ValueError(
+        f"corpus.toml [[corpus.location]] {name!r}: 'manifest' must be a bool "
+        f"(true or false), got {value!r}."
+    )
+
+
 def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
     """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21/v22). No
     env-var overrides — locations are deployment topology, not secrets or transport
@@ -300,6 +327,12 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 f"valid on kind = \"store\" — an attached location is operator-managed "
                 f"and never an ingest destination."
             )
+        if kind == "store" and "manifest" in entry:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: 'manifest' is only valid "
+                f"on kind = \"attached\" — a store location is corpus-managed "
+                f"content-addressed storage, never a presenting tree."
+            )
         raw_path = entry.get("path")
         if not raw_path:
             raise ValueError(
@@ -316,6 +349,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
             _resolve_ingest_key(name, entry) if kind == "store" else ((), False)
         )
         ingest_origins = _resolve_ingest_origins_key(name, entry) if kind == "store" else ()
+        manifest = _resolve_manifest_key(name, entry) if kind == "attached" else False
         if ingest_default:
             if default_name is not None:
                 raise ValueError(
@@ -333,6 +367,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 ingest_types=ingest_types,
                 ingest_default=ingest_default,
                 ingest_origins=ingest_origins,
+                manifest=manifest,
             )
         )
     return tuple(out)

@@ -49,6 +49,19 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "attest", help="Attest a configured location's tree into locations.db."
     )
     p_attest.add_argument("name", help="Location name (corpus.toml [[corpus.location]] name=).")
+    p_attest.add_argument(
+        "--walk",
+        action="store_true",
+        help="Force an ordinary walking attest even on a manifest-presenting location "
+        "(spec §12.1.1 (24)'s re-verification path) — rows land as source=computed, "
+        "overwriting any presented rows.",
+    )
+    p_attest.add_argument(
+        "--force",
+        action="store_true",
+        help="Reimport a manifest even when its generation is already the one "
+        "recorded (manifest-presenting locations only; ignored with --walk).",
+    )
     add_corpus_root_arg(p_attest)
 
     p_list = sub.add_parser("list", help="List configured locations + index status.")
@@ -132,7 +145,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
     if args.action == "attest":
-        return _attest(corpus_root, args.name)
+        return _attest(corpus_root, args.name, args.walk, args.force)
     if args.action == "list":
         return _list(corpus_root)
     if args.action == "promote":
@@ -161,7 +174,7 @@ def _resolve_location(corpus_root, name: str) -> config_mod.LocationConfig | Non
     return by_name.get(name)
 
 
-def _attest(corpus_root, name: str) -> int:
+def _attest(corpus_root, name: str, walk: bool = False, force: bool = False) -> int:
     cfg = config_mod.load_config(corpus_root)
     if not cfg.locations:
         sys.exit(
@@ -174,6 +187,23 @@ def _attest(corpus_root, name: str) -> int:
         sys.exit(
             f"corpus location attest: no location named {name!r}; configured: {configured}"
         )
+
+    if location.manifest and not walk:
+        try:
+            outcome = locationindex.attest_from_manifest(corpus_root, location, force=force)
+        except ValueError as e:
+            sys.exit(str(e))
+        if outcome["skipped"]:
+            print(
+                f"location {name!r}: generation {outcome['generation']} already "
+                f"imported — nothing to do"
+            )
+        else:
+            print(
+                f"location {name!r}: imported {outcome['files']} file(s) from "
+                f"manifest generation {outcome['generation']}"
+            )
+        return 0
 
     def _progress(n: int) -> None:
         print(f"  ...{n} files scanned", file=sys.stderr)
@@ -201,7 +231,8 @@ def _list(corpus_root) -> int:
             continue
         rows = locationindex.row_count(corpus_root, loc.name)
         stale = stale_by_location.get(loc.name, 0)
-        print(f"{loc.name}  kind={loc.kind}  path={loc.path}  rows={rows}  stale={stale}")
+        marker = "  manifest" if loc.manifest else ""
+        print(f"{loc.name}  kind={loc.kind}  path={loc.path}  rows={rows}  stale={stale}{marker}")
     return 0
 
 
@@ -302,7 +333,8 @@ def _promote_one(
 
     with locationindex.open_index(corpus_root) as conn:
         row = conn.execute(
-            "SELECT hash, size, mtime FROM locations WHERE location = ? AND relpath = ?",
+            "SELECT hash, size, mtime, source FROM locations WHERE location = ? "
+            "AND relpath = ?",
             (location.name, relpath),
         ).fetchone()
     if row is None:
@@ -310,7 +342,7 @@ def _promote_one(
             f"{relpath!r} has no attested row in location {location.name!r} — run "
             f"`corpus location attest {location.name}` first."
         )
-    indexed_hash, indexed_size, indexed_mtime = row
+    indexed_hash, indexed_size, indexed_mtime, indexed_source = row
 
     try:
         st = abs_path.stat()
@@ -320,7 +352,9 @@ def _promote_one(
             f"`corpus location attest {location.name}` once it's back."
         ) from e
 
-    if st.st_size != indexed_size or st.st_mtime_ns != indexed_mtime:
+    if not locationindex.pins_match(
+        indexed_size, indexed_mtime, st.st_size, st.st_mtime_ns, indexed_source
+    ):
         raise LocationPromoteError(
             f"{relpath!r}: stale in the location index (size/mtime changed since "
             f"attest) — run `corpus location attest {location.name}` to re-attest "
@@ -670,7 +704,8 @@ def _adopt_one(
 
     with locationindex.open_index(corpus_root) as conn:
         row = conn.execute(
-            "SELECT hash, size, mtime FROM locations WHERE location = ? AND relpath = ?",
+            "SELECT hash, size, mtime, source FROM locations WHERE location = ? "
+            "AND relpath = ?",
             (location.name, relpath),
         ).fetchone()
     if row is None:
@@ -678,7 +713,7 @@ def _adopt_one(
             f"{relpath!r} has no attested row in location {location.name!r} — run "
             f"`corpus location attest {location.name}` first."
         )
-    indexed_hash, indexed_size, indexed_mtime = row
+    indexed_hash, indexed_size, indexed_mtime, indexed_source = row
 
     try:
         st = abs_path.stat()
@@ -688,7 +723,9 @@ def _adopt_one(
             f"`corpus location attest {location.name}` once it's back."
         ) from e
 
-    if st.st_size != indexed_size or st.st_mtime_ns != indexed_mtime:
+    if not locationindex.pins_match(
+        indexed_size, indexed_mtime, st.st_size, st.st_mtime_ns, indexed_source
+    ):
         raise LocationAdoptError(
             f"{relpath!r}: stale in the location index (size/mtime changed since "
             f"attest) — run `corpus location attest {location.name}` to re-attest "

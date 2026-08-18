@@ -153,6 +153,78 @@ path = "relative/dir"
         config_mod.load_config(root)
 
 
+# ---------- manifest key (spec §12.1.1, v24) ---------- #
+
+
+def test_manifest_key_accepted_on_attached(tmp_path):
+    root = _corpus(tmp_path)
+    data_dir = tmp_path / "datasets"
+    data_dir.mkdir()
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "datasets"
+kind = "attached"
+path = "{data_dir}"
+manifest = true
+""",
+    )
+    cfg = config_mod.load_config(root)
+    assert cfg.locations[0].manifest is True
+
+
+def test_manifest_key_defaults_false(tmp_path):
+    root = _corpus(tmp_path)
+    data_dir = tmp_path / "datasets"
+    data_dir.mkdir()
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "datasets"
+kind = "attached"
+path = "{data_dir}"
+""",
+    )
+    cfg = config_mod.load_config(root)
+    assert cfg.locations[0].manifest is False
+
+
+def test_manifest_key_refused_on_store(tmp_path):
+    root = _corpus(tmp_path)
+    _write_toml(
+        root,
+        """
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "/mnt/slow/artifacts"
+manifest = true
+""",
+    )
+    with pytest.raises(ValueError, match="attached"):
+        config_mod.load_config(root)
+
+
+def test_manifest_key_non_bool_error(tmp_path):
+    root = _corpus(tmp_path)
+    data_dir = tmp_path / "datasets"
+    data_dir.mkdir()
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "datasets"
+kind = "attached"
+path = "{data_dir}"
+manifest = "yes"
+""",
+    )
+    with pytest.raises(ValueError, match="bool"):
+        config_mod.load_config(root)
+
+
 # ---------- attest pass ---------- #
 
 

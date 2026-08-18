@@ -177,4 +177,11 @@ def _format_summary(report: dict[str, Any]) -> str:
             rows = ", ".join(f"{r['location']}/{r['relpath']}" for r in item["attached_rows"][:3])
             lines.append(f"  - {item['id'][:8]}… at {item['store_location']} + {rows}")
 
+    if "duplicate_residencies" in report:
+        dr = report["duplicate_residencies"]
+        lines.append(f"duplicate_residencies: {len(dr)} hash(es) with 2+ attached copies")
+        for item in dr[:5]:
+            rows = ", ".join(f"{r['location']}/{r['relpath']}" for r in item["residencies"][:3])
+            lines.append(f"  - {item['hash'][:8]}… at {rows}")
+
     return "\n".join(lines) + "\n"
