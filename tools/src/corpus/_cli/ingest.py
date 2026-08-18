@@ -57,7 +57,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _ingest_one(corpus_root: Path, src: Path) -> int:
-    from corpus import hashing, mime, paths, records, schemas, touches
+    from corpus import hashing, mime, paths, placement, records, schemas, touches
     from corpus.store import get_store
 
     media_type = mime.detect(src, corpus_root)
@@ -148,10 +148,21 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     _cleanup_sidecar(src)
     _cleanup_enrichment(corpus_root, record_id)
 
+    # The placement decision (spec §12.1.1, v22) is recomputed here — cheap (config-only,
+    # no I/O) and deterministic — purely to report where `mint_stub` actually put the
+    # bytes. A claiming store location's path is outside corpus_root in general, so it
+    # prints `{location}:{absolute path}` rather than `.relative_to(corpus_root)`, which
+    # would raise ValueError on it; the co-located case keeps its familiar relative form.
+    dest_loc = placement.ingest_destination(corpus_root, media_type)
+    if dest_loc is not None:
+        binary_display = f"{dest_loc.name}:{placement.location_artifact_path(dest_loc, record_id, extension)}"
+    else:
+        binary_display = str(store.local_path(record_id, extension).relative_to(corpus_root))
+
     print(f"new stub: {record_file.relative_to(corpus_root)}")
     print(f"  hash:       {record_id}")
     print(f"  media_type: {media_type}")
-    print(f"  binary:     {store.local_path(record_id, extension).relative_to(corpus_root)}")
+    print(f"  binary:     {binary_display}")
     if hash_values:
         print(f"  hashes:     {', '.join(v.encoded() for v in hash_values)}")
     return 0
@@ -178,9 +189,11 @@ def mint_stub(
     and recipe union the caller has already resolved: frontmatter `hash:`, artifact block,
     first origin block, byte-fact attestation (`derive.attest`, best-effort), and hash-index
     rows (spec §12.9.1). Used by both `corpus ingest` (`store_bytes=True`: `src` is persisted
-    into the artifact store via `store.put` and the staging copy unlinked) and `corpus
-    location promote` (`store_bytes=False`, spec §12.1.1: `src` stays exactly where it is —
-    bytes stay resident at their attached-location path, never copied into `artifacts/`).
+    via `placement.ingest_destination` — a claiming store location (§12.1.1, v22) when one
+    exists, else `store.put` into the co-located tree — and the staging copy unlinked) and
+    `corpus location promote` (`store_bytes=False`, spec §12.1.1: `src` stays exactly where
+    it is — bytes stay resident at their attached-location path, never copied into
+    `artifacts/`).
     `store_bytes` is the ONLY behavioral difference between the two callers. Attestation
     reads the record's bytes back through `containment.ensure_local_bytes`, which for a
     `store_bytes=False` mint resolves them through the location index (§12.1.1) rather than
@@ -194,13 +207,21 @@ def mint_stub(
     each caller has its own fold/re-encounter convention, since their origin shapes differ
     enough (capture URL vs. containment lineage vs. `file://` location provenance) that a
     shared fold path is not the right reuse boundary."""
-    from corpus import records, touches
+    from corpus import placement, records, touches
     from corpus.store import get_store
 
     if store_bytes:
-        store = get_store(corpus_root)
-        store.put(record_id, extension, src)
-        src.unlink()
+        dest_loc = placement.ingest_destination(corpus_root, media_type)
+        if dest_loc is not None:
+            # A claiming store location (spec §12.1.1, v22) — format list or the
+            # corpus-wide default — is the destination instead of the co-located tree.
+            # `put_at` may RENAME `src` away (same-device), so the unlink below is
+            # tolerant of it already being gone.
+            placement.put_at(dest_loc, record_id, extension, src)
+        else:
+            store = get_store(corpus_root)
+            store.put(record_id, extension, src)
+        src.unlink(missing_ok=True)
 
     record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
 

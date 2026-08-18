@@ -30,7 +30,7 @@ from typing import IO
 import frontmatter
 
 from . import functional_uri as furi
-from . import locationindex, paths, records, tararchive, ziparchive
+from . import locationindex, paths, placement, records, tararchive, ziparchive
 from . import mime as mime_mod
 from .store import ArtifactMissing, ArtifactStore, get_store
 
@@ -318,18 +318,24 @@ def ensure_local_bytes(
             f"containment cycle resolving {record_id} (revisited via {sorted(_seen)})"
         )
 
-    # Standalone residence wins whenever it exists (§2) — local first, then remote hydration.
+    # Standalone residence wins whenever it exists (§2) — co-located first, then other
+    # store locations (§12.1.1, v22), then remote hydration.
     if store.is_local(record_id, ext):
         return store.local_path(record_id, ext)
+
+    other_store = placement.find_in_stores(corpus_root, record_id, ext)
+    if other_store is not None:
+        return other_store
+
     try:
         return store.ensure_local(record_id, ext)
     except ArtifactMissing:
         pass
 
     # No standalone file — try the attached-location index next (spec §12.1.1's route
-    # order: co-located store -> other store locations (not yet implemented) ->
-    # attached-location index -> member index (containment) -> remote hydration). The
-    # bytes are served IN PLACE — never copied into artifacts/ (residence is invisible).
+    # order: co-located store -> other store locations -> attached-location index ->
+    # member index (containment) -> remote hydration). The bytes are served IN PLACE —
+    # never copied into artifacts/ (residence is invisible).
     located = locationindex.route_for(corpus_root, record_id)
     if located is not None:
         return located

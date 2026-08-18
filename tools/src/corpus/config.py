@@ -26,12 +26,19 @@ File schema (all keys optional):
     [corpus.capture]
     default_transport = "headless"   # browser transport when overlay + --transport unset
 
-    [[corpus.location]]              # additional byte roots (spec §12.1.1, v21)
+    [[corpus.location]]              # additional byte roots (spec §12.1.1, v21/v22)
     name = "..."                     # required, unique
-    kind = "attached"                # required: "attached" (only kind implemented so
-                                      # far — "store" is accepted here but rejected at
-                                      # load with a not-yet-implemented error)
-    path = "/abs/path"               # required for attached, must be absolute
+    kind = "store"                   # required: "attached" | "store"
+    path = "/abs/path"               # required, must be absolute (local only — a
+                                      # "remote" key is accepted syntactically but
+                                      # rejected at load: rclone transport is ticket
+                                      # #204, not yet implemented)
+    ingest = ["application/x-openzim"]   # store only, optional: format list claims
+                                          # these media types as ingest destinations
+    # ingest = true                  # store only, optional: this location is the
+                                      # DEFAULT ingest destination (at most one
+                                      # location may declare it) — mutually exclusive
+                                      # with the list form above
 
 Env vars override the file (later wins):
 
@@ -61,15 +68,24 @@ from typing import Any
 
 @dataclass(frozen=True)
 class LocationConfig:
-    """One `[[corpus.location]]` table (spec §12.1.1, v21) — an additional byte root
-    beyond the co-located `artifacts/` tree. ATTACHED only this wave: `kind` is always
-    `"attached"` by the time this is constructed — `"store"` locations (content-
-    addressed, corpus-written, local or remote) are a later wave and never reach here
-    (`_resolve_locations_section` raises at load instead)."""
+    """One `[[corpus.location]]` table (spec §12.1.1, v21/v22) — an additional byte
+    root beyond the co-located `artifacts/` tree. `kind` is `"attached"` (operator-
+    managed, files stay in place) or `"store"` (content-addressed `<shard>/<hash>.<ext>`
+    tree the corpus writes — local path only this wave; a `remote =` key is rejected at
+    load, ticket #204).
+
+    `ingest_types` / `ingest_default` are meaningful only on `kind == "store"` — the
+    placement policy (`corpus.placement`, v22): a non-empty `ingest_types` claims those
+    media types as this location's ingest destination; `ingest_default` (at most one
+    location corpus-wide) makes this the destination for everything no format list
+    claims. Both empty/False is the common case — a store location with no placement
+    role, resolved only, never a write destination."""
 
     name: str
     kind: str
     path: Path
+    ingest_types: tuple[str, ...] = ()
+    ingest_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,14 +204,28 @@ def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
-    """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21). No env-var
-    overrides — locations are deployment topology, not secrets or transport tuning.
+def _resolve_ingest_key(name: str, entry: dict[str, Any]) -> tuple[tuple[str, ...], bool]:
+    """Resolve a store location's optional `ingest` key (spec §12.1.1, v22) to
+    `(ingest_types, ingest_default)`. `true` → the default destination; a non-empty
+    list of content-type strings → a format claim; absent → neither (a plain store
+    location, resolved only). Any other shape is an operator error."""
+    if "ingest" not in entry:
+        return (), False
+    value = entry["ingest"]
+    if value is True:
+        return (), True
+    if isinstance(value, list) and value and all(isinstance(v, str) and v.strip() for v in value):
+        return tuple(str(v).strip() for v in value), False
+    raise ValueError(
+        f"corpus.toml [[corpus.location]] {name!r}: 'ingest' must be `true` (default "
+        f"destination) or a non-empty list of content-type strings, got {value!r}."
+    )
 
-    `kind = "store"` is a later wave: accepted as a recognized key so a deployment's
-    corpus.toml can declare its full intended topology up front, but rejected here with
-    an actionable not-yet-implemented error rather than silently parsed and ignored.
-    """
+
+def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
+    """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21/v22). No
+    env-var overrides — locations are deployment topology, not secrets or transport
+    tuning."""
     if not isinstance(raw, list):
         raise ValueError(
             "corpus.toml [corpus.location] must be an array of tables "
@@ -203,6 +233,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
         )
     out: list[LocationConfig] = []
     seen: set[str] = set()
+    default_name: str | None = None
     for i, entry in enumerate(raw):
         if not isinstance(entry, dict):
             raise ValueError(f"corpus.toml [[corpus.location]] entry {i}: expected a table.")
@@ -220,22 +251,28 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 f"corpus.toml [[corpus.location]] {name!r}: missing required 'kind' "
                 f"(attached | store)."
             )
-        if kind == "store":
-            raise ValueError(
-                f"corpus.toml [[corpus.location]] {name!r}: kind = \"store\" is not "
-                f"implemented yet (spec §12.1.1) — only kind = \"attached\" is "
-                f"supported in this wave."
-            )
-        if kind != "attached":
+        if kind not in ("attached", "store"):
             raise ValueError(
                 f"corpus.toml [[corpus.location]] {name!r}: unknown kind {kind!r}; "
-                f"must be 'attached' (kind = \"store\" is not yet implemented)."
+                f"must be 'attached' or 'store'."
+            )
+        if entry.get("remote"):
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: 'remote' transport is not "
+                f"implemented yet (spec §12.1.1, ticket #204) — declare a local 'path' "
+                f"instead."
+            )
+        if kind == "attached" and "ingest" in entry:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: 'ingest' is only valid on "
+                f"kind = \"store\" — an attached location is operator-managed and "
+                f"never an ingest destination."
             )
         raw_path = entry.get("path")
         if not raw_path:
             raise ValueError(
-                f"corpus.toml [[corpus.location]] {name!r}: kind = \"attached\" "
-                f"requires a 'path'."
+                f"corpus.toml [[corpus.location]] {name!r}: kind = {kind!r} requires a "
+                f"'path'."
             )
         path = Path(str(raw_path))
         if not path.is_absolute():
@@ -243,6 +280,25 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 f"corpus.toml [[corpus.location]] {name!r}: 'path' must be an "
                 f"absolute path, got {raw_path!r}."
             )
+        ingest_types, ingest_default = (
+            _resolve_ingest_key(name, entry) if kind == "store" else ((), False)
+        )
+        if ingest_default:
+            if default_name is not None:
+                raise ValueError(
+                    f"corpus.toml [[corpus.location]] {name!r}: 'ingest = true' — but "
+                    f"{default_name!r} already declares the default ingest "
+                    f"destination; at most one location may (spec §12.1.1, v22)."
+                )
+            default_name = name
         seen.add(name)
-        out.append(LocationConfig(name=name, kind=kind, path=path))
+        out.append(
+            LocationConfig(
+                name=name,
+                kind=kind,
+                path=path,
+                ingest_types=ingest_types,
+                ingest_default=ingest_default,
+            )
+        )
     return tuple(out)

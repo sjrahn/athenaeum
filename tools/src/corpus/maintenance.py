@@ -257,8 +257,12 @@ class RemovalPlan:
     record_id: str
     exists: bool
     record_path: str | None  # relative to corpus_root
-    artifact_path: str | None  # relative to corpus_root
+    # *(22)* Relative to corpus_root for the co-located tree (artifact_location is None,
+    # the historical shape) — else an ABSOLUTE path string under `artifact_location`'s
+    # store location (spec §12.1.1: a store location may sit anywhere on disk).
+    artifact_path: str | None
     artifact_size: int
+    artifact_location: str | None = None  # store location name, or None for co-located
     referrers: list[Referrer] = field(default_factory=list)
     # Promoted member records this record is a CONTAINER for (spec §12.8, fourth guard). The
     # guard is route-aware (§12.17): removing this container strands a promoted member ONLY when
@@ -352,7 +356,7 @@ def _analyze_contained(
         seen.add(member_hex)
         if not paths.record_path(corpus_root, member_hex).is_file():
             continue  # not a promoted record — no record-borne bytes to strand
-        apath, _ = _find_artifact(corpus_root, member_hex)
+        apath, _, _ = _find_artifact(corpus_root, member_hex)
         if apath is not None:
             surviving.append((member_hex, f"standalone artifact {apath.name}"))
             continue
@@ -365,17 +369,36 @@ def _analyze_contained(
     return stranded, surviving
 
 
-def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int]:
-    """Return the content-addressed artifact path + size for `record_id`, or (None, 0)."""
+def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int, str | None]:
+    """Return the content-addressed artifact path + size for `record_id`, or
+    `(None, 0, None)`. Co-located `artifacts/` wins; failing that, *(22)* every
+    configured store location is checked in declaration order (spec §12.1.1) — the
+    third element names the location the file lives in (`None` for the co-located
+    tree), so a caller can tell an absolute store-location path apart from a
+    corpus-root-relative one without re-deriving it."""
     shard_dir = corpus_root / "artifacts" / paths.shard(record_id)
     if shard_dir.is_dir():
         for f in sorted(shard_dir.iterdir()):
             if f.is_file() and f.name.split(".", 1)[0] == record_id:
                 try:
-                    return f, f.stat().st_size
+                    return f, f.stat().st_size, None
                 except OSError:
-                    return f, 0
-    return None, 0
+                    return f, 0, None
+    from . import placement
+
+    for loc in placement.store_locations(corpus_root):
+        loc_shard_dir = loc.path / paths.shard(record_id)
+        if not loc_shard_dir.is_dir():
+            continue
+        for f in sorted(loc_shard_dir.iterdir()):
+            # `.part` is `placement.put_at`'s temp suffix — an interrupted write, not
+            # the artifact.
+            if f.is_file() and f.name.split(".", 1)[0] == record_id and f.suffix != ".part":
+                try:
+                    return f, f.stat().st_size, loc.name
+                except OSError:
+                    return f, 0, loc.name
+    return None, 0, None
 
 
 def plan_removal(
@@ -392,15 +415,22 @@ def plan_removal(
     for rid in ids:
         rpath = paths.record_path(corpus_root, rid)
         exists = rpath.is_file()
-        apath, asize = _find_artifact(corpus_root, rid)
+        apath, asize, aloc = _find_artifact(corpus_root, rid)
+        if apath is None:
+            artifact_path_str = None
+        elif aloc is None:
+            artifact_path_str = str(apath.relative_to(corpus_root))
+        else:
+            artifact_path_str = str(apath)  # store location — may sit outside corpus_root
         stranded, surviving = _analyze_contained(corpus_root, rid, member_index)
         plans.append(
             RemovalPlan(
                 record_id=rid,
                 exists=exists,
                 record_path=str(rpath.relative_to(corpus_root)) if exists else None,
-                artifact_path=str(apath.relative_to(corpus_root)) if apath else None,
+                artifact_path=artifact_path_str,
                 artifact_size=asize,
+                artifact_location=aloc,
                 referrers=inbound.get(rid, []),
                 stranded_promoted=stranded,
                 surviving_routes=surviving,
@@ -440,7 +470,14 @@ def remove_records(
             rpath.unlink(missing_ok=True)
             _prune_empty_dir(rpath.parent)
             if not keep_artifact and plan.artifact_path:
-                apath = corpus_root / plan.artifact_path
+                # *(22)* A store-location artifact_path is already absolute (§12.1.1 —
+                # the location may sit outside corpus_root); the co-located shape stays
+                # relative-to-corpus_root, unchanged from before this wave.
+                apath = (
+                    Path(plan.artifact_path)
+                    if plan.artifact_location
+                    else corpus_root / plan.artifact_path
+                )
                 apath.unlink(missing_ok=True)
                 _prune_empty_dir(apath.parent)
         removed.append(plan.record_id)

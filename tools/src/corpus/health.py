@@ -190,7 +190,7 @@ def missing_artifacts(
     the configured remote store), `lost` (absent there too), or `unknown` (remote not
     checked). Cheap — an index lookup, never byte streaming. Routes through the `ArtifactStore`,
     so it works on any backend."""
-    from . import containment, paths
+    from . import containment, paths, placement
     from . import mime as mime_mod
     from .store import get_store
 
@@ -218,6 +218,10 @@ def missing_artifacts(
         # still checkable — don't skip it just because its MIME has no canonical extension.
         ext = mime_mod.extension_for(mime)
         if store.is_local(r.record_id, ext):
+            continue
+        # *(22)* A standalone copy in a store location (spec §12.1.1) is present, not
+        # missing — it just isn't the co-located copy the store's own is_local checks.
+        if placement.find_in_stores(corpus_root, r.record_id, ext) is not None:
             continue
         if r.record_id in container_resolvable:
             continue  # no standalone file, but resolvable through its container (§12.9)
@@ -463,7 +467,7 @@ def prefix_duplicate_artifacts(
     aren't locally resident is `unconfirmed` — nothing here pulls remote bytes to
     confirm a health signal (spec §12.9.1's flush/hydrate economics are an operator's
     deliberate choice, not a side effect of a scan)."""
-    from . import hashindex
+    from . import hashindex, placement
     from . import mime as mime_mod
     from .store import get_store
 
@@ -535,12 +539,23 @@ def prefix_duplicate_artifacts(
                     if any(a_rungs[tag] != b_rungs[tag] for tag in common):
                         continue  # screen rejects — definitively unrelated
                     screened += 1
-                    if not (store.is_local(a_id, ext) and store.is_local(b_id, ext)):
+                    # *(22)* "locally resident" now also covers a standalone copy parked
+                    # in a store location (spec §12.1.1) — a co-located miss falls back
+                    # to `placement.find_in_stores` before counting the pair unconfirmed.
+                    a_path = (
+                        store.local_path(a_id, ext)
+                        if store.is_local(a_id, ext)
+                        else placement.find_in_stores(corpus_root, a_id, ext)
+                    )
+                    b_path = (
+                        store.local_path(b_id, ext)
+                        if store.is_local(b_id, ext)
+                        else placement.find_in_stores(corpus_root, b_id, ext)
+                    )
+                    if a_path is None or b_path is None:
                         unconfirmed.append({"filename": filename, "ids": sorted([a_id, b_id])})
                         continue
-                    result = _confirm_prefix(
-                        store.local_path(a_id, ext), store.local_path(b_id, ext)
-                    )
+                    result = _confirm_prefix(a_path, b_path)
                     if result is None:
                         continue  # screen false-positive — confirm rejected it
                     kind, a_is_shorter = result

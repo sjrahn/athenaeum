@@ -52,7 +52,9 @@ path = "{data_dir}"
     assert loc.path == data_dir
 
 
-def test_store_kind_not_implemented_error(tmp_path):
+def test_store_kind_with_local_path_parses(tmp_path):
+    # (v22) store kind is implemented now — config parsing detail lives in
+    # test_placement.py; this just confirms the old not-implemented rejection is gone.
     root = _corpus(tmp_path)
     _write_toml(
         root,
@@ -61,6 +63,22 @@ def test_store_kind_not_implemented_error(tmp_path):
 name = "bulk"
 kind = "store"
 path = "/mnt/slow/artifacts"
+""",
+    )
+    cfg = config_mod.load_config(root)
+    assert cfg.locations[0].kind == "store"
+
+
+def test_remote_key_not_implemented_error(tmp_path):
+    root = _corpus(tmp_path)
+    _write_toml(
+        root,
+        """
+[[corpus.location]]
+name = "offsite"
+kind = "store"
+path = "/mnt/slow/artifacts"
+remote = "rclone:b2-corpus"
 """,
     )
     with pytest.raises(ValueError, match="not implemented"):

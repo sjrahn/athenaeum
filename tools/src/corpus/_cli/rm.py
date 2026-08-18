@@ -73,7 +73,11 @@ def _print_plans(result: maintenance.RemovalResult) -> None:
         print(f"{plan.record_id[:12]}  record: {plan.record_path}")
         if plan.artifact_path:
             kept = " (kept)" if result.keep_artifact else ""
-            print(f"{'':14}artifact: {plan.artifact_path} ({human_bytes(plan.artifact_size)}){kept}")
+            loc_prefix = f"{plan.artifact_location}:" if plan.artifact_location else ""
+            print(
+                f"{'':14}artifact: {loc_prefix}{plan.artifact_path} "
+                f"({human_bytes(plan.artifact_size)}){kept}"
+            )
             if not result.keep_artifact:
                 warn_repro = True
         for ref in plan.referrers:
@@ -117,6 +121,7 @@ def _to_dict(result: maintenance.RemovalResult) -> dict:
                 "exists": p.exists,
                 "record_path": p.record_path,
                 "artifact_path": p.artifact_path,
+                "artifact_location": p.artifact_location,
                 "artifact_bytes": p.artifact_size,
                 "referrers": [
                     {"id": r.record_id, "via": r.via, "pointer": r.pointer} for r in p.referrers

@@ -9,10 +9,12 @@ Three entry points:
   local disk, or None. Tries the snapshot's declared `path:` override first
   *(v18, DEPRECATED v21, spec/athenaeum.md §2.3)* — read tolerantly, since
   not every registered snapshot has migrated off it yet — then, per given
-  corpus root, the artifact store (`artifacts/<shard>/`) and *(21)* the
-  attached-location route (`corpus.locationindex.route_for`, spec/corpus.md
-  §12.1.1), the `path:` override's successor. A declared-but-absent `path:`
-  is simply a miss, not an error — it falls through to the corpus routes.
+  corpus root, the artifact store (`artifacts/<shard>/`), *(22)* every
+  configured store location (`corpus.placement.store_locations`, spec/
+  corpus.md §12.1.1), and *(21)* the attached-location route
+  (`corpus.locationindex.route_for`, spec/corpus.md §12.1.1), the `path:`
+  override's successor. A declared-but-absent `path:` is simply a miss, not
+  an error — it falls through to the corpus routes.
 - `resolve_adapter_name(reference, corpora_roots)` — *(21)* the format
   adapter name for `reference`: an explicit `reference.adapter` wins; else
   it's derived from the latest snapshot's mirror record's mime overlay
@@ -67,6 +69,7 @@ from typing import Any
 from ath.manifest import Reference, Snapshot
 from corpus import locationindex as corpus_locationindex
 from corpus import paths as corpus_paths
+from corpus import placement as corpus_placement
 from corpus import records as corpus_records
 from corpus import schemas as corpus_schemas
 
@@ -147,10 +150,11 @@ def _materialize_with_root(
     override served the bytes, or nothing resolved at all.
 
     Per corpus root, tries — in order — the co-located artifact store
-    (`artifacts/<shard>/`) then *(21)* the attached-location route
-    (`corpus.locationindex.route_for`, spec/corpus.md §12.1.1). The `path:`
-    override is tried first, ahead of every corpus root, exactly as before
-    *(v18, DEPRECATED v21)*."""
+    (`artifacts/<shard>/`), *(22)* every configured store location
+    (`corpus.placement.store_locations`, spec/corpus.md §12.1.1), then
+    *(21)* the attached-location route (`corpus.locationindex.route_for`,
+    spec/corpus.md §12.1.1). The `path:` override is tried first, ahead of
+    every corpus root, exactly as before *(v18, DEPRECATED v21)*."""
     snapshot = reference.snapshots.get(tag)
     if snapshot is None:
         return None, None
@@ -164,6 +168,9 @@ def _materialize_with_root(
             return p, None
     for root in corpora_roots:
         p = _corpus_store_path(root, snapshot.artifact)
+        if p is not None:
+            return p, root
+        p = _store_location_path(root, snapshot.artifact)
         if p is not None:
             return p, root
         p = corpus_locationindex.route_for(root, snapshot.artifact)
@@ -201,6 +208,26 @@ def _corpus_store_path(corpus_root: Path, artifact_hash: str) -> Path | None:
     for p in sorted(shard_dir.glob(f"{artifact_hash}.*")):
         if p.is_file():
             return p
+    return None
+
+
+def _store_location_path(corpus_root: Path, artifact_hash: str) -> Path | None:
+    """*(22)* A mirror snapshot registered as a standalone copy in one of
+    `corpus_root`'s configured store locations (spec/corpus.md §12.1.1) —
+    `<location path>/<shard>/<hash>.<ext>`, the co-located tree's layout at
+    another root. Extension unknown ahead of time exactly as in
+    `_corpus_store_path` above, so each location's shard directory is
+    globbed for a matching stem; the first hit across locations, in
+    declaration order, wins (any route yields identical bytes)."""
+    for loc in corpus_placement.store_locations(corpus_root):
+        shard_dir = loc.path / corpus_paths.shard(artifact_hash)
+        if not shard_dir.is_dir():
+            continue
+        for p in sorted(shard_dir.glob(f"{artifact_hash}.*")):
+            # `.part` is `placement.put_at`'s temp suffix — an interrupted write, never
+            # servable bytes.
+            if p.is_file() and p.suffix != ".part":
+                return p
     return None
 
 
