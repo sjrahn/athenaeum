@@ -108,6 +108,7 @@ scan summary — generation 7 (incremental)
   skipped       0
   ignored       39
   scrubbed      16   corrupt 0
+  sniffed       11
   bytes hashed  48.20 GiB
   elapsed       0:03:12
   hash rate     0.86 GiB/s
@@ -121,7 +122,9 @@ counts identity rows adopted from another manifest this run — a nested child r
 (auto-detected) or an explicit `--seed-from` source — see "Manifest seeding" below. `hashed
 native` is the subset of `hashed` that went through native b3sum rather than WASM — see
 "Native b3sum hashing" below. `ignored` counts files and pruned directories skipped by the
-junk deny-list this walk — see "Ignoring filesystem-metadata junk" below.
+junk deny-list this walk — see "Ignoring filesystem-metadata junk" below. `sniffed` counts
+`mime_claim` values written this run (new files plus backfilled pre-existing ones) — see
+"Catalog metadata" below.
 
 ## Ignoring filesystem-metadata junk
 
@@ -225,6 +228,43 @@ likely be same-disk and a bigger pool would just contend harder rather than fann
 
 **Per-file failures** (nonzero exit, bad output, a file that vanishes mid-hash) are logged and
 skipped the same way an unreadable file is — reason `b3sum-failed` — never abort the run.
+
+## Catalog metadata
+
+Schema v3 grows the manifest from a residence map into a **light catalog** (spec/corpus.md
+§12.1.1): four nullable columns on `identities` — `ctime_ns`, `btime_ns`, `mode`,
+`mime_claim` — so format-and-placement questions are answerable straight from the manifest,
+without a reader touching bytes over the wire. See
+[`MANIFEST-SCHEMA.md`](./MANIFEST-SCHEMA.md)'s "Catalog metadata (v3)" section for the
+column-by-column contract; this is the operator-facing summary.
+
+**What's captured, and when**: the three stat facts come from the walk's existing `lstat` —
+free, since it already stats every file. They're written when a new identity is hashed, and
+**refreshed** on every later walk for a known, unchanged identity whenever they've drifted
+(a `chmod` is the common case: it changes `ctime`/`mode` but not `mtime`, so it costs zero
+re-hashes) or are still NULL. `mime_claim` is sniffed from the leading bytes (capped at 16
+KiB) once per new identity — free on the WASM hash path (piggybacked on the first chunk
+already being read), one small extra bounded read on the native b3sum path (which otherwise
+never touches the bytes itself in-process). A pre-v3 tree gets caught up gradually: any known
+identity whose `mime_claim` is still NULL gets sniffed (and written) the next time its path is
+walked, no re-hash — the `sniffed` summary field counts these.
+
+**Why `atime` is excluded**: access time is the one stat field that changes on a *read*, not a
+write — capturing it would make every scan (which reads every new/changed file to hash it, and
+every scrubbed file to verify it) perturb the very metadata it's recording, and many
+filesystems mount with `relatime`/`noatime` anyway, making it unreliable as a signal even when
+present. `ctime`/`btime`/`mode` don't have that problem: nothing in a normal scan run touches
+them.
+
+**The sniffer is deliberately coarse**, by design (`src/sniff.ts`): magic bytes first (JPEG,
+PNG, GIF, WebP, WAV, AVI, BMP, TIFF, HEIC/HEIF, MP4/M4A/M4V/MOV, MKV/WebM, MP3, FLAC, OGG, PDF,
+ZIP, gzip, xz, zstd, 7z, RAR, tar, SQLite3), then a small extension fallback for text-ish
+formats magic can't settle (`.srt`, `.json`, `.csv`, `.md`), then a last-resort "looks like
+UTF-8/ASCII text" heuristic, else `null`. A ZIP is always `application/zip` — this never opens
+the archive to guess `.docx`/`.xlsx`/etc from its members. **`mime_claim` is advisory, not
+authoritative** — the corpus's own content-based format detection is the one thing that gets
+to decide what a file actually is; nothing normative may ever depend on this claim. Treat it
+as a cheap first filter, never a verdict.
 
 ## Non-TTY progress heartbeat
 

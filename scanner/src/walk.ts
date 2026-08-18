@@ -18,6 +18,9 @@ export interface FileEntry {
   ino: bigint;
   size: bigint;
   mtimeNs: bigint;
+  ctimeNs: bigint; // catalog metadata (spec/corpus.md §12.1.1 *(25)*) — raw stat ctime
+  birthtimeNs: bigint; // raw stat birth time; 0n means the fs doesn't report one (caller maps to null)
+  mode: bigint; // raw stat st_mode
 }
 
 export interface SkipEntry {
@@ -163,6 +166,9 @@ export async function* walkTree(
         ino: st.ino,
         size: st.size,
         mtimeNs: st.mtimeNs,
+        ctimeNs: st.ctimeNs,
+        birthtimeNs: st.birthtimeNs,
+        mode: st.mode,
       };
     }
   }

@@ -7,7 +7,7 @@
 
 import pkg from "../package.json" with { type: "json" };
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const SCANNER_VERSION: string = pkg.version;
 
 export const MANIFEST_DIRNAME = ".athenaeum";
@@ -52,6 +52,12 @@ export const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
  * The four filesystem-identity numerics are native SQLite INTEGERs (int64) — mtime_ns
  * (~1.7e18) fits comfortably under 2^63, so schema v2 drops the decimal-string encoding
  * v1 needed to survive JSON's float-precision ceiling.
+ *
+ * v3 (catalog metadata — spec/corpus.md §12.1.1 *(25)*) adds four nullable columns: three
+ * universal stat facts refreshed by the walk when they drift (ctimeNs, btimeNs, mode), plus
+ * an advisory mimeClaim sniffed from the leading bytes once per new identity. All four are
+ * `null` on a row that hasn't been touched by v3 code yet (a pre-v3 row surviving the v2->v3
+ * migration, or a v2 seed source) until the walk's backfill/refresh pass catches it up.
  */
 export interface IdentityState {
   dev: bigint;
@@ -60,6 +66,10 @@ export interface IdentityState {
   mtimeNs: bigint;
   blake3: string; // 64-hex lowercase (BLAKE3-256)
   generation: number;
+  ctimeNs: bigint | null; // stat ctime, ns
+  btimeNs: bigint | null; // stat birth time, ns; null where the fs doesn't report one (raw 0n)
+  mode: bigint | null; // stat st_mode
+  mimeClaim: string | null; // advisory, sniffed from the leading bytes — see sniff.ts
 }
 
 /** A path → identity mapping. Mirrors the `paths` table. */
@@ -84,6 +94,7 @@ export interface ScanSummary {
   ignored: number; // files and pruned dirs skipped by the ignore-pattern deny-list this walk
   scrubbed: number; // files re-hashed by the scrub sampler
   corrupt: number; // scrub mismatches at a stable stat tuple
+  sniffed: number; // mime_claim values written this run (new-identity hash-time sniffs + walk-time backfill sniffs of pre-existing NULL claims); carried-forward claims (inode migration) don't count
   bytesHashed: string; // decimal-string bigint — this is a JSON blob field (summary_json), not a
   // SQL column, so it keeps the v1 encoding: JSON numbers are still IEEE-754 doubles regardless
   // of what the SQL schema stores.

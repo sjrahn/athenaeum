@@ -45,6 +45,7 @@ CREATE TABLE identities (
   dev INTEGER NOT NULL, ino INTEGER NOT NULL,
   size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
   blake3 TEXT NOT NULL, generation INTEGER NOT NULL,
+  ctime_ns INTEGER, btime_ns INTEGER, mode INTEGER, mime_claim TEXT,
   PRIMARY KEY (dev, ino)
 ) WITHOUT ROWID;
 CREATE INDEX idx_identities_blake3 ON identities(blake3);
@@ -86,11 +87,27 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/** v2 -> v3 in-place migration (catalog metadata, spec/corpus.md §12.1.1 *(25)*): four
+ * additive nullable columns on `identities`. Existing rows' new columns stay NULL until the
+ * walk's per-identity refresh/backfill catches them up — see scanner.ts. */
+function migrateV2ToV3(db: Database): void {
+  db.run("ALTER TABLE identities ADD COLUMN ctime_ns INTEGER");
+  db.run("ALTER TABLE identities ADD COLUMN btime_ns INTEGER");
+  db.run("ALTER TABLE identities ADD COLUMN mode INTEGER");
+  db.run("ALTER TABLE identities ADD COLUMN mime_claim TEXT");
+  db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  db.query<never, [string]>("UPDATE meta SET value = ? WHERE key = 'schema'").run(String(SCHEMA_VERSION));
+}
+
 interface IdentityRow {
   size: bigint;
   mtimeNs: bigint;
   blake3: string;
   generation: bigint;
+  ctimeNs: bigint | null;
+  btimeNs: bigint | null;
+  mode: bigint | null;
+  mimeClaim: string | null;
 }
 interface PathRow {
   dev: bigint;
@@ -123,6 +140,8 @@ export class Manifest {
   private readonly selPath;
   private readonly insIdentity;
   private readonly insPath;
+  private readonly updIdentityStat;
+  private readonly updIdentityMime;
   // walk_seen is a TEMP TABLE, dropped and recreated by every beginWalk() (it must never leak
   // into the published manifest.sqlite, which is a byte-for-byte copy of state.sqlite's main
   // file — temp tables live in SQLite's separate temp database, never in the main file, which
@@ -156,14 +175,25 @@ export class Manifest {
     this.batchIntervalMs = opts.batchIntervalMs ?? DEFAULT_IDENTITY_BATCH_INTERVAL_MS;
 
     this.selIdentity = db.query<IdentityRow, [bigint, bigint]>(
-      "SELECT size, mtime_ns as mtimeNs, blake3, generation FROM identities WHERE dev=? AND ino=?",
+      "SELECT size, mtime_ns as mtimeNs, blake3, generation, ctime_ns as ctimeNs, btime_ns as btimeNs, mode, mime_claim as mimeClaim " +
+        "FROM identities WHERE dev=? AND ino=?",
     );
     this.selPath = db.query<PathRow, [string]>("SELECT dev, ino, generation FROM paths WHERE path=?");
-    this.insIdentity = db.query<never, [bigint, bigint, bigint, bigint, string, number]>(
-      "INSERT OR REPLACE INTO identities (dev,ino,size,mtime_ns,blake3,generation) VALUES (?,?,?,?,?,?)",
+    this.insIdentity = db.query<never, [bigint, bigint, bigint, bigint, string, number, bigint | null, bigint | null, bigint | null, string | null]>(
+      "INSERT OR REPLACE INTO identities (dev,ino,size,mtime_ns,blake3,generation,ctime_ns,btime_ns,mode,mime_claim) VALUES (?,?,?,?,?,?,?,?,?,?)",
     );
     this.insPath = db.query<never, [string, bigint, bigint, number]>(
       "INSERT OR REPLACE INTO paths (path,dev,ino,generation) VALUES (?,?,?,?)",
+    );
+    // Catalog refresh (walk-time, no re-hash): stat facts for a KNOWN identity that drifted or
+    // was NULL, and mime_claim backfill for a pre-v3/pre-sniff identity — two separate prepared
+    // UPDATEs since one runs unconditionally-when-different and the other only when NULL, and
+    // the mime one needs an async head-read the stat one doesn't.
+    this.updIdentityStat = db.query<never, [bigint, bigint | null, bigint, bigint, bigint]>(
+      "UPDATE identities SET ctime_ns=?, btime_ns=?, mode=? WHERE dev=? AND ino=?",
+    );
+    this.updIdentityMime = db.query<never, [string, bigint, bigint]>(
+      "UPDATE identities SET mime_claim=? WHERE dev=? AND ino=?",
     );
     this.insEvent = db.query<never, [number, string, string, string]>(
       "INSERT INTO events (generation,type,path,detail_json) VALUES (?,?,?,?)",
@@ -188,8 +218,11 @@ export class Manifest {
        GROUP BY i.dev, i.ino
        ORDER BY RANDOM() LIMIT ?`,
     );
-    this.dumpIdentitiesStmt = db.query<{ dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; blake3: string; generation: bigint }, []>(
-      "SELECT dev, ino, size, mtime_ns as mtimeNs, blake3, generation FROM identities",
+    this.dumpIdentitiesStmt = db.query<
+      { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; blake3: string; generation: bigint; ctimeNs: bigint | null; btimeNs: bigint | null; mode: bigint | null; mimeClaim: string | null },
+      []
+    >(
+      "SELECT dev, ino, size, mtime_ns as mtimeNs, blake3, generation, ctime_ns as ctimeNs, btime_ns as btimeNs, mode, mime_claim as mimeClaim FROM identities",
     );
     this.dumpPathsStmt = db.query<{ path: string; dev: bigint; ino: bigint; generation: bigint }, []>(
       "SELECT path, dev, ino, generation FROM paths",
@@ -224,7 +257,9 @@ export class Manifest {
     } else {
       const uv = db.query<{ user_version: bigint }, []>("PRAGMA user_version").get();
       const found = uv ? Number(uv.user_version) : -1;
-      if (found !== SCHEMA_VERSION) {
+      if (found === 2) {
+        migrateV2ToV3(db);
+      } else if (found !== SCHEMA_VERSION) {
         db.close();
         throw new Error(
           `${statePath}: schema mismatch (found user_version=${found}, expected ${SCHEMA_VERSION}) — ` +
@@ -248,7 +283,18 @@ export class Manifest {
   getIdentity(dev: bigint, ino: bigint): IdentityState | undefined {
     const row = this.selIdentity.get(dev, ino);
     if (!row) return undefined;
-    return { dev, ino, size: row.size, mtimeNs: row.mtimeNs, blake3: row.blake3, generation: Number(row.generation) };
+    return {
+      dev,
+      ino,
+      size: row.size,
+      mtimeNs: row.mtimeNs,
+      blake3: row.blake3,
+      generation: Number(row.generation),
+      ctimeNs: row.ctimeNs,
+      btimeNs: row.btimeNs,
+      mode: row.mode,
+      mimeClaim: row.mimeClaim,
+    };
   }
 
   getPathIdentity(path: string): PathState | undefined {
@@ -284,9 +330,36 @@ export class Manifest {
     this.insEvent.run(generation, "skip", path, JSON.stringify({ reason }));
   }
 
-  /** Inode-migration heuristic: carry a known blake3 onto a new (dev,ino) at an unchanged (size,mtimeNs). */
-  putMigratedIdentity(dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, blake3: string, generation: number): void {
-    this.insIdentity.run(dev, ino, size, mtimeNs, blake3, generation);
+  /** Inode-migration heuristic: carry a known blake3 onto a new (dev,ino) at an unchanged
+   * (size,mtimeNs). Stat facts (ctimeNs, btimeNs, mode) are the NEW inode's own — freshly
+   * stat'd, not carried — but mimeClaim IS carried forward from the old identity: the content
+   * is unchanged by definition here, so re-sniffing would be pure waste. */
+  putMigratedIdentity(
+    dev: bigint,
+    ino: bigint,
+    size: bigint,
+    mtimeNs: bigint,
+    blake3: string,
+    generation: number,
+    ctimeNs: bigint,
+    btimeNs: bigint | null,
+    mode: bigint,
+    mimeClaim: string | null,
+  ): void {
+    this.insIdentity.run(dev, ino, size, mtimeNs, blake3, generation, ctimeNs, btimeNs, mode, mimeClaim);
+  }
+
+  /** Walk-time catalog refresh for a KNOWN (no-rehash) identity: stat facts drifted or were
+   * NULL. Must run inside the open walk transaction. */
+  updateIdentityStat(dev: bigint, ino: bigint, ctimeNs: bigint, btimeNs: bigint | null, mode: bigint): void {
+    this.updIdentityStat.run(ctimeNs, btimeNs, mode, dev, ino);
+  }
+
+  /** Walk-time mime_claim backfill for a KNOWN identity whose claim is still NULL (a pre-v3
+   * row, or one whose sniff previously came back unrecognized). Must run inside the open walk
+   * transaction. */
+  updateIdentityMime(dev: bigint, ino: bigint, mimeClaim: string): void {
+    this.updIdentityMime.run(mimeClaim, dev, ino);
   }
 
   /** Drop path rows not seen this walk. Must run inside the open walk transaction, before commitWalk(). */
@@ -302,14 +375,25 @@ export class Manifest {
 
   // ── hash phase: batched transactions (durability window: batchSize rows or batchIntervalMs) ──
 
-  putIdentity(dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, blake3: string, generation: number): void {
+  putIdentity(
+    dev: bigint,
+    ino: bigint,
+    size: bigint,
+    mtimeNs: bigint,
+    blake3: string,
+    generation: number,
+    ctimeNs: bigint,
+    btimeNs: bigint | null,
+    mode: bigint,
+    mimeClaim: string | null,
+  ): void {
     if (!this.txOpen) {
       this.db.run("BEGIN");
       this.txOpen = true;
       this.batchCount = 0;
       this.batchStart = performance.now();
     }
-    this.insIdentity.run(dev, ino, size, mtimeNs, blake3, generation);
+    this.insIdentity.run(dev, ino, size, mtimeNs, blake3, generation, ctimeNs, btimeNs, mode, mimeClaim);
     this.batchCount++;
     if (this.batchCount >= this.batchSize || performance.now() - this.batchStart >= this.batchIntervalMs) {
       this.flushBatch();
@@ -368,9 +452,13 @@ export class Manifest {
    * count), or `null` if the source was skipped for a schema mismatch.
    *
    * Version check: opens the source read-only first, `PRAGMA user_version` must equal
-   * `SCHEMA_VERSION`. `explicit` controls the failure mode on mismatch — hard error for
-   * `--seed-from` (an operator named this file), warn-and-skip for auto-seed (a big scan
-   * must not die because one nested child's manifest is stale).
+   * `SCHEMA_VERSION` — **or 2**: a v2 source predates the `identities` table's four catalog
+   * columns (ctime_ns/btime_ns/mode/mime_claim), so it's still accepted, just imported with
+   * those four columns NULL (the walk's normal backfill/refresh catches such rows up later,
+   * same as any other pre-v3 row). Anything else is a real mismatch. `explicit` controls the
+   * failure mode on a real mismatch — hard error for `--seed-from` (an operator named this
+   * file), warn-and-skip for auto-seed (a big scan must not die because one nested child's
+   * manifest is stale).
    *
    * `ATTACH DATABASE` cannot run inside an open transaction. If the walk transaction is open
    * (mid-walk auto-seed), it's committed first and reopened after import — the walk tx only
@@ -386,12 +474,15 @@ export class Manifest {
     } finally {
       srcDb.close();
     }
-    if (found !== SCHEMA_VERSION) {
-      const msg = `${sourceManifestPath}: schema mismatch (found user_version=${found}, expected ${SCHEMA_VERSION})`;
+    if (found !== SCHEMA_VERSION && found !== 2) {
+      const msg = `${sourceManifestPath}: schema mismatch (found user_version=${found}, expected ${SCHEMA_VERSION} or 2)`;
       if (explicit) throw new Error(msg);
       this.log.warn(`seed skipped — ${msg}`);
       return null;
     }
+    // A v2 source's `identities` table has no catalog columns to select — seed NULL for all
+    // four rather than referencing columns that don't exist on that side of the ATTACH.
+    const identitySelectCols = found === 2 ? "NULL, NULL, NULL, NULL" : "ctime_ns, btime_ns, mode, mime_claim";
 
     const walkTxWasOpen = this.txOpen;
     if (walkTxWasOpen) {
@@ -405,8 +496,8 @@ export class Manifest {
         this.db.run("BEGIN");
         const idRes = this.db
           .query<never, [number]>(
-            "INSERT OR IGNORE INTO main.identities (dev,ino,size,mtime_ns,blake3,generation) " +
-              "SELECT dev,ino,size,mtime_ns,blake3,? FROM seed.identities",
+            "INSERT OR IGNORE INTO main.identities (dev,ino,size,mtime_ns,blake3,generation,ctime_ns,btime_ns,mode,mime_claim) " +
+              `SELECT dev,ino,size,mtime_ns,blake3,?,${identitySelectCols} FROM seed.identities`,
           )
           .run(generation);
         this.db
@@ -471,7 +562,18 @@ export class Manifest {
   dumpIdentities(): Map<string, IdentityState> {
     const m = new Map<string, IdentityState>();
     for (const r of this.dumpIdentitiesStmt.all()) {
-      m.set(identityKey(r.dev, r.ino), { dev: r.dev, ino: r.ino, size: r.size, mtimeNs: r.mtimeNs, blake3: r.blake3, generation: Number(r.generation) });
+      m.set(identityKey(r.dev, r.ino), {
+        dev: r.dev,
+        ino: r.ino,
+        size: r.size,
+        mtimeNs: r.mtimeNs,
+        blake3: r.blake3,
+        generation: Number(r.generation),
+        ctimeNs: r.ctimeNs,
+        btimeNs: r.btimeNs,
+        mode: r.mode,
+        mimeClaim: r.mimeClaim,
+      });
     }
     return m;
   }

@@ -8,9 +8,16 @@ import { open, stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { walkTree, type FileEntry } from "./walk.ts";
 import { Manifest } from "./manifest.ts";
-import { DEFAULT_IGNORE_PATTERNS, identityKey, type IdentityState, type ScanMode, type ScanSummary } from "./schema.ts";
+import { DEFAULT_IGNORE_PATTERNS, identityKey, type ScanMode, type ScanSummary } from "./schema.ts";
 import { discoverNativeHasher, type HasherFactory, type Hasher, type NativeHasher } from "./hasher.ts";
+import { sniffMime, readHead, SNIFF_HEAD_BYTES } from "./sniff.ts";
 import { Logger, humanBytes, humanCount, humanDuration, humanRate } from "./log.ts";
+
+/** Raw stat birth time of `0n` means the filesystem doesn't report one (see walk.ts's
+ * FileEntry.birthtimeNs) — the catalog column stores that as SQL NULL, not 0. Exported (like
+ * cli.ts's resolve.../assert... helpers) so this mapping is directly unit-testable without
+ * depending on a real filesystem's birthtime support, which is host/fs-dependent. */
+export const toBtimeNs = (raw: bigint): bigint | null => (raw === 0n ? null : raw);
 
 export const DEFAULT_CHUNK = 4 * 1024 * 1024;
 export const DEFAULT_CONCURRENCY = 4;
@@ -74,21 +81,27 @@ export interface ScanOptions {
 
 class SimulatedInterrupt extends Error {}
 
-async function hashFile(abspath: string, hasher: Hasher, chunkBytes: number): Promise<{ digest: string; bytes: bigint }> {
+/** Streams the file through `hasher`, AND captures its leading bytes (bounded to
+ * SNIFF_HEAD_BYTES) for the mime sniffer — free on this path since the first chunk read
+ * already has them; `head` is a copy (the read buffer is reused/overwritten by later reads,
+ * an empty file yields a zero-length head). */
+async function hashFile(abspath: string, hasher: Hasher, chunkBytes: number): Promise<{ digest: string; bytes: bigint; head: Buffer }> {
   const fh = await open(abspath, "r");
   const buf = Buffer.allocUnsafe(chunkBytes);
   let bytes = 0n;
+  let head: Buffer | null = null;
   try {
     while (true) {
       const { bytesRead } = await fh.read(buf, 0, chunkBytes, null);
       if (bytesRead === 0) break;
+      if (head === null) head = Buffer.from(buf.subarray(0, Math.min(bytesRead, SNIFF_HEAD_BYTES)));
       hasher.update(buf.subarray(0, bytesRead));
       bytes += BigInt(bytesRead);
     }
   } finally {
     await fh.close();
   }
-  return { digest: hasher.digest(), bytes };
+  return { digest: hasher.digest(), bytes, head: head ?? Buffer.alloc(0) };
 }
 
 /** Fisher-Yates shuffle, in place. */
@@ -144,6 +157,7 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
     ignored: 0,
     scrubbed: 0,
     corrupt: 0,
+    sniffed: 0,
     bytesHashed: "0",
     elapsedMs: 0,
   };
@@ -241,7 +255,20 @@ async function runScanBody(
     if (!full && prevPath && pathChanged) {
       const oldIdentity = mf.getIdentity(prevPath.dev, prevPath.ino);
       if (oldIdentity && oldIdentity.size === entry.size && oldIdentity.mtimeNs === entry.mtimeNs) {
-        mf.putMigratedIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, oldIdentity.blake3, gen);
+        // Stat facts are the NEW inode's own; mimeClaim is carried forward (content is
+        // unchanged by definition here — re-sniffing would be pure waste).
+        mf.putMigratedIdentity(
+          entry.dev,
+          entry.ino,
+          entry.size,
+          entry.mtimeNs,
+          oldIdentity.blake3,
+          gen,
+          entry.ctimeNs,
+          toBtimeNs(entry.birthtimeNs),
+          entry.mode,
+          oldIdentity.mimeClaim,
+        );
         summary.migrated++;
         migrated = true;
       }
@@ -265,6 +292,29 @@ async function runScanBody(
       queuedKeys.add(key);
       toHash.push(entry);
       bytesToHash += entry.size;
+    } else if (!migrated && existing) {
+      // A KNOWN, unchanged identity (no re-hash this walk): refresh drifted/NULL stat facts,
+      // and backfill mime_claim for a pre-v3 (or previously-unsniffed) row — both zero-hash,
+      // walk-time-only writes inside the open walk transaction. Safe against duplicate work
+      // across multiple hardlinked paths to the same identity in one walk: getIdentity() reads
+      // back this transaction's own prior writes, so a second path here already sees the
+      // refreshed/backfilled row and does nothing further.
+      const btimeNs = toBtimeNs(entry.birthtimeNs);
+      if (existing.ctimeNs !== entry.ctimeNs || existing.btimeNs !== btimeNs || existing.mode !== entry.mode) {
+        mf.updateIdentityStat(entry.dev, entry.ino, entry.ctimeNs, btimeNs, entry.mode);
+      }
+      if (existing.mimeClaim === null) {
+        let claim: string | null = null;
+        try {
+          claim = sniffMime(await readHead(entry.abspath), entry.relpath);
+        } catch {
+          claim = null; // vanished/unreadable between the walk-stat and this backfill read — best-effort, not fatal
+        }
+        if (claim !== null) {
+          mf.updateIdentityMime(entry.dev, entry.ino, claim);
+          summary.sniffed++;
+        }
+      }
     }
 
     if (++walkCount % 2000 === 0) log.progress(`walk: ${humanCount(walkCount)} files, ${humanCount(toHash.length)} to hash`);
@@ -349,7 +399,7 @@ async function runScanBody(
     const results = await Promise.allSettled([
       runPool(wasmQueue, k, async (entry) => {
         let hasher: Hasher;
-        let result: { digest: string; bytes: bigint };
+        let result: { digest: string; bytes: bigint; head: Buffer };
         try {
           hasher = await factory.create();
           result = await hashFile(entry.abspath, hasher, chunkBytes);
@@ -361,7 +411,10 @@ async function runScanBody(
           log.debug(`skip ${entry.relpath} during hash (${code})`);
           return;
         }
-        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen);
+        // Free on this path: the head bytes came along for the ride in hashFile's first chunk.
+        const mimeClaim = sniffMime(result.head, entry.relpath);
+        if (mimeClaim !== null) summary.sniffed++;
+        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, result.digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
         hashedBytes += result.bytes;
         recordHashed();
       }),
@@ -376,7 +429,17 @@ async function runScanBody(
           log.debug(`skip ${entry.relpath} during native hash (${(e as Error).message})`);
           return;
         }
-        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, digest, gen);
+        // b3sum reads the file itself, so unlike the WASM path there's no chunk to piggyback
+        // a head off of — a separate bounded head-read, best-effort (a failure here must not
+        // undo an already-successful hash; the identity is still written with a null claim).
+        let mimeClaim: string | null = null;
+        try {
+          mimeClaim = sniffMime(await readHead(entry.abspath), entry.relpath);
+        } catch {
+          mimeClaim = null;
+        }
+        if (mimeClaim !== null) summary.sniffed++;
+        mf.putIdentity(entry.dev, entry.ino, entry.size, entry.mtimeNs, digest, gen, entry.ctimeNs, toBtimeNs(entry.birthtimeNs), entry.mode, mimeClaim);
         // b3sum reads the file itself — no chunked-read loop here to count bytes off of, so
         // this is the walk-time stat size rather than an actually-observed read count.
         hashedBytes += entry.size;
@@ -421,7 +484,9 @@ async function scrubSample(
   let scrubbed = 0;
   let corrupt = 0;
   for (const row of sample) {
-    const id: IdentityState = { dev: row.dev, ino: row.ino, size: row.size, mtimeNs: row.mtimeNs, blake3: row.blake3, generation: 0 };
+    // Structural subset only (matches putScrubCorrupt's param type) — not a full IdentityState,
+    // scrub doesn't need the v3 catalog columns.
+    const id = { dev: row.dev, ino: row.ino, size: row.size, mtimeNs: row.mtimeNs, blake3: row.blake3 };
     const relpath = row.path;
     const abspath = root + sep + (sep === "/" ? relpath : relpath.split("/").join(sep));
     let st;
@@ -471,6 +536,7 @@ export async function compact(root: string, manifestDir: string, log: Logger): P
     ignored: 0,
     scrubbed: 0,
     corrupt: 0,
+    sniffed: 0,
     bytesHashed: "0",
     elapsedMs: Math.round(performance.now() - started),
   };
@@ -495,6 +561,7 @@ export function formatSummary(s: ScanSummary, root: string): string {
     `  skipped       ${humanCount(s.skipped)}`,
     `  ignored       ${humanCount(s.ignored)}`,
     `  scrubbed      ${humanCount(s.scrubbed)}   corrupt ${humanCount(s.corrupt)}`,
+    `  sniffed       ${humanCount(s.sniffed)}`,
     `  bytes hashed  ${humanBytes(BigInt(s.bytesHashed))}`,
     `  elapsed       ${humanDuration(s.elapsedMs)}`,
     `  hash rate     ${rate}`,

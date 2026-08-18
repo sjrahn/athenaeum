@@ -1,4 +1,4 @@
-# Presented-manifest schema — v2
+# Presented-manifest schema — v3
 
 This is the **cross-language contract** between the scanner (TypeScript, the writer) and the
 Athenaeum corpus tooling (Python, the reader). The scanner writes it; nothing else does.
@@ -6,7 +6,9 @@ The corpus side reads the manifest through the share mount and never walks or ha
 share itself. Treat this document as authoritative and version it: any incompatible change
 bumps `schema` (`PRAGMA user_version`) and is recorded in the changelog at the bottom.
 
-`SCHEMA_VERSION = 2`.
+`SCHEMA_VERSION = 3`. A v2 reader must not be pointed at a v3 file (it lacks the four new
+`identities` columns v2 code never expects); a v3 reader should accept both v2 and v3 files —
+see "Reader procedure" below.
 
 ## Files
 
@@ -76,10 +78,10 @@ re-hash everything." After a mass inode migration the old identity rows become o
 ## Schema (identical on both databases)
 
 ```sql
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- keys: 'schema'='2', 'scanner'=<version that created this state.sqlite>,
+-- keys: 'schema'='3', 'scanner'=<version that created this state.sqlite>,
 --       'root'=<absolute scanned root, informational — paths are root-relative>,
 --       'created_at'=<ISO-8601 UTC, set once at creation, never rewritten>
 
@@ -87,6 +89,7 @@ CREATE TABLE identities (
   dev INTEGER NOT NULL, ino INTEGER NOT NULL,
   size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
   blake3 TEXT NOT NULL, generation INTEGER NOT NULL,
+  ctime_ns INTEGER, btime_ns INTEGER, mode INTEGER, mime_claim TEXT,
   PRIMARY KEY (dev, ino)
 ) WITHOUT ROWID;
 CREATE INDEX idx_identities_blake3 ON identities(blake3);
@@ -116,7 +119,49 @@ Informational key/value pairs, written once when `state.sqlite` is created and n
 
 One row per live `(dev, ino)`. `blake3` is 64-character lowercase hex (BLAKE3-256).
 `generation` is the generation that produced this content-version (the scan run, compaction,
-or migration-carry that last wrote it).
+or migration-carry that last wrote it). Four columns are **v3 catalog metadata** — see the
+dedicated section below.
+
+### Catalog metadata (v3)
+
+`ctime_ns`, `btime_ns`, `mode`, `mime_claim` are the light-catalog columns added in v3
+(spec/corpus.md §12.1.1 *(25)*): free — the walk already `lstat`s every file — universal stat
+facts, plus one advisory claim, so format-and-placement questions are answerable without
+touching bytes over the wire. All four are **nullable**: NULL on a row a v3-aware scanner
+hasn't caught up to yet (a pre-v3 row surviving the v2→v3 migration below, or a row adopted
+from a v2 `--seed-from`/nested-manifest source) — never treat NULL here as a claim of "empty"
+or "zero", only as "not captured (yet)".
+
+- **`ctime_ns`** — stat ctime, nanoseconds since epoch. Same 64-bit `INTEGER` / same 100ns-SMB
+  caveat as `mtime_ns` (see the number-encoding rule and reader-procedure notes above).
+- **`btime_ns`** — stat birth time, nanoseconds since epoch, or **SQL NULL** when the
+  filesystem doesn't report one (Node reports a raw birthtime of `0` in that case — the
+  scanner maps that to NULL at write time; a NULL here is a genuine "unsupported on this fs",
+  not a missing capture).
+- **`mode`** — raw stat `st_mode` (permission bits + file-type bits, POSIX-encoded).
+- **`mime_claim`** — an **advisory** MIME type sniffed from the leading bytes (capped at
+  16 KiB) of the file, once per new identity, at hash time. **This is a claim, not a
+  verdict**: deliberately coarse (magic bytes first, a small extension fallback, then a
+  last-resort "looks like UTF-8/ASCII text" heuristic, else NULL for anything unrecognized —
+  see the scanner's `src/sniff.ts`), and never authoritative — the corpus's own
+  content-based format detection (§12.3.2) is the one thing that gets to decide what a file
+  *is*; nothing normative may depend on this claim. NULL means "not yet sniffed", not
+  "definitely unknown forever" — see refresh/backfill below.
+
+**Refresh** (every walk, for a KNOWN identity that isn't being re-hashed this run): `ctime_ns`,
+`btime_ns`, and `mode` are re-stat'd and, if any actually differ from the stored row (or the
+stored row is NULL), overwritten with the current values — a plain `chmod` (which changes
+`ctime` and `mode` but not `mtime`/`size`) is the common case this exists for, and it costs
+zero re-hashes. **Backfill**: a KNOWN identity whose `mime_claim` IS NULL gets one bounded
+head-read + sniff on its next walk, no re-hash — the one-time catch-up path for content that
+predates v3 (or whose earlier sniff came back unrecognized; note that an unrecognized file is
+re-sniffed on every subsequent walk, since a NULL claim looks identical to a not-yet-attempted
+one — a deliberate simplicity tradeoff for this coarse a sniffer). Both refresh and backfill
+happen inside the walk's own transaction. `ScanSummary.sniffed` (see `generations` below)
+counts every `mime_claim` value actually **written** this run — new-identity hash-time sniffs
+plus backfill sniffs — but not carried-forward claims (the inode-migration heuristic below
+carries the old identity's `mime_claim` onto the new `(dev,ino)` verbatim, since the content
+is unchanged by definition there; that's a carry, not a sniff, and isn't counted).
 
 ### `paths`
 
@@ -133,12 +178,14 @@ to the last committed batch are still valid, it simply never finished, and it **
 forever** (the next run opens a *new* generation number rather than resuming the same one —
 this NULL is the crash marker). `summary_json` is the `ScanSummary` JSON, set at close:
 `{ mode, generation, filesSeen, hashed, hashedNative, moved, migrated, seeded, deleted,
-skipped, ignored, scrubbed, corrupt, bytesHashed (decimal string), elapsedMs }`. `ignored`
-counts files and pruned directories skipped by the basename junk deny-list this walk — see
-README.md's "Ignoring filesystem-metadata junk" section. `seeded` counts
+skipped, ignored, scrubbed, corrupt, sniffed, bytesHashed (decimal string), elapsedMs }`.
+`ignored` counts files and pruned directories skipped by the basename junk deny-list this walk
+— see README.md's "Ignoring filesystem-metadata junk" section. `seeded` counts
 identity rows adopted from another manifest this run (a nested child root's manifest,
 auto-detected mid-walk, or an explicit `--seed-from` source) — see the "Manifest seeding"
-section of README.md. `hashedNative` is the subset of `hashed` that went through the native
+section of README.md. `sniffed` counts `mime_claim` values written this run (new-identity
+hash-time sniffs plus walk-time backfill sniffs) — see "Catalog metadata (v3)" above.
+`hashedNative` is the subset of `hashed` that went through the native
 b3sum path rather than in-process WASM — see README.md's "Native b3sum hashing" section.
 
 ### `events`
@@ -188,8 +235,12 @@ tree is a normal complete generation, not a special case.
 
 1. Open `manifest.sqlite` **read-only**, or copy it to local storage first and open the copy
    — never open `state.sqlite`, and never write to `manifest.sqlite`.
-2. Check `PRAGMA user_version` — must equal `2`. A mismatch means an incompatible schema; do
-   not attempt to read it as v2.
+2. Check `PRAGMA user_version` — a v3-aware reader should accept both `2` and `3` (the four
+   catalog columns are additive; a v2 file simply has none of them, read as if every
+   `identities` row's `ctime_ns`/`btime_ns`/`mode`/`mime_claim` were NULL). A **v2 reader**
+   (one that predates this amendment and has no idea the catalog columns exist) **must not**
+   be pointed at a v3 file — pin its own version check to `2` and refuse anything else; any
+   other value is a genuine incompatible schema, not just "newer than I expected".
 3. Find the current generation: `SELECT MAX(generation) FROM generations WHERE finished_at IS
    NOT NULL`. Rows from a still-open (interrupted) generation may be present (they travel
    with the file since it's a whole-file copy) — ignore them; they represent a run that never
@@ -219,6 +270,15 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **v3** (2026-08-18) — catalog metadata (spec/corpus.md §12.1.1 *(25)*): four **additive,
+  nullable** columns on `identities` — `ctime_ns`, `btime_ns`, `mode`, `mime_claim` — plus a
+  `sniffed` field on `ScanSummary`. See "Catalog metadata (v3)" above for the full semantics.
+  An existing v2 `state.sqlite` migrates in place on open (`ALTER TABLE` + `PRAGMA
+  user_version = 3`); existing rows' four new columns stay NULL until the walk's own
+  refresh/backfill catches them up. `--seed-from` and nested-manifest auto-seed both accept a
+  v2 source (imported with NULL catalog columns) alongside a v3 one — see the "Reader
+  procedure" note on why a v2 reader must still refuse a v3 file even though the reverse
+  (a v3-aware reader accepting a v2 file) is fine.
 - **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
   an `ignored` field: files and pruned directories skipped by the scanner's basename
   junk deny-list (`.DS_Store`, `._*` AppleDouble sidecars, `@eaDir`, etc. — see README.md's
