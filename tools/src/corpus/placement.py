@@ -1,14 +1,15 @@
-"""Store-location placement (spec §12.1.1, v22 placement amendment).
+"""Store-location placement (spec §12.1.1, v22/v23 placement amendments).
 
 A **store** location is a content-addressed `<shard>/<hash>.<ext>` tree the corpus
 writes at another root — §12.1's layout, relocated. This module answers the two
-questions that layout raises: given a media type, which store location (if any) is a
-new artifact's destination (`ingest_destination`) — the most specific claim wins, a
-format list beating the `ingest = true` default, the co-located `artifacts/` tree the
-fallback when nothing matches — and, for byte resolution, whether an EXISTING standalone
-copy already lives in one (`find_in_stores`). `put_at` is the write side: it lands bytes
-at a store location's content-addressed path without ever leaving a half-written file at
-the final name.
+questions that layout raises: given a media type (and, v23, the origin overlay the
+minting origin resolved to), which store location (if any) is a new artifact's
+destination (`ingest_destination`) — the most specific claim wins: an origin claim
+beats a format claim beats the `ingest = true` default, the co-located `artifacts/`
+tree the fallback when nothing matches — and, for byte resolution, whether an EXISTING
+standalone copy already lives in one (`find_in_stores`). `put_at` is the write side: it
+lands bytes at a store location's content-addressed path without ever leaving a
+half-written file at the final name.
 
 Local paths only this wave — a `remote =` key is rejected at config load (ticket #204),
 so every `LocationConfig` reaching this module has a real local `path`.
@@ -59,15 +60,29 @@ def find_in_stores(corpus_root: Path, record_id: str, extension: str) -> Path | 
     return None
 
 
-def ingest_destination(corpus_root: Path, media_type: str) -> config_mod.LocationConfig | None:
+def ingest_destination(
+    corpus_root: Path, media_type: str, *, origin_schema: str | None = None
+) -> config_mod.LocationConfig | None:
     """Which store location a NEW artifact of `media_type` should land in (spec
-    §12.1.1, v22) — the **most specific claim wins**: the first location (declaration
-    order) whose `ingest_types` names `media_type`, else the location declaring
-    `ingest = true` (the corpus-wide default destination — config load already
-    guarantees at most one), else `None`. `None` means the co-located `artifacts/`
-    tree is the destination — the fallback when no location claims the format."""
+    §12.1.1, v22/v23) — the **most specific claim wins**, most specific first: an
+    **origin claim** (the first location, declaration order, whose `ingest_origins`
+    contains `origin_schema` — the origin overlay id the minting origin resolved to,
+    §7.2), else a **format claim** (the first location whose `ingest_types` names
+    `media_type`), else the location declaring `ingest = true` (the corpus-wide default
+    destination — config load already guarantees at most one), else `None`. `None`
+    means the co-located `artifacts/` tree is the destination — the fallback when no
+    location claims anything.
+
+    `origin_schema=None` (no matched origin overlay, or the caller has none to offer)
+    skips the origin axis entirely — an artifact minted with no matched origin overlay
+    can never satisfy an origin claim (spec §12.1.1 (23))."""
+    locs = store_locations(corpus_root)
+    if origin_schema is not None:
+        for loc in locs:
+            if origin_schema in loc.ingest_origins:
+                return loc
     default: config_mod.LocationConfig | None = None
-    for loc in store_locations(corpus_root):
+    for loc in locs:
         if media_type in loc.ingest_types:
             return loc
         if loc.ingest_default:

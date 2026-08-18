@@ -122,6 +122,12 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     recipes = hashing.resolve_recipes(mt_schema, overlay_schemas)
     hash_values = hashing.compute_hashes(src, recipes)
 
+    # The origin overlay id the minting origin resolved to (spec §12.1.1 (23)) — computed
+    # ONCE here and threaded into both `mint_stub`'s put decision and this function's own
+    # display recomputation below, so the two `placement.ingest_destination` calls see
+    # identical inputs and can never disagree on where the bytes landed.
+    origin_overlay_id = _resolve_origin_overlay_id(corpus_root, origin_schema, origin_uri)
+
     def _pre_attest(post: frontmatter.Post) -> None:
         _emit_sidecar_issues(post, sidecar)
         # Stage an enrichment sidecar (a yt-dlp `.info.json`) as `capture/<hash>.info.json`
@@ -143,17 +149,20 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         touch_script="ingest",
         store_bytes=True,
         pre_attest=_pre_attest,
+        origin_overlay_id=origin_overlay_id,
     )
 
     _cleanup_sidecar(src)
     _cleanup_enrichment(corpus_root, record_id)
 
-    # The placement decision (spec §12.1.1, v22) is recomputed here — cheap (config-only,
+    # The placement decision (spec §12.1.1, v22/v23) is recomputed here — cheap (config-only,
     # no I/O) and deterministic — purely to report where `mint_stub` actually put the
-    # bytes. A claiming store location's path is outside corpus_root in general, so it
-    # prints `{location}:{absolute path}` rather than `.relative_to(corpus_root)`, which
-    # would raise ValueError on it; the co-located case keeps its familiar relative form.
-    dest_loc = placement.ingest_destination(corpus_root, media_type)
+    # bytes. `origin_overlay_id` is the SAME value passed to `mint_stub` above, so this call
+    # and mint_stub's internal one see identical inputs and agree by construction. A
+    # claiming store location's path is outside corpus_root in general, so it prints
+    # `{location}:{absolute path}` rather than `.relative_to(corpus_root)`, which would
+    # raise ValueError on it; the co-located case keeps its familiar relative form.
+    dest_loc = placement.ingest_destination(corpus_root, media_type, origin_schema=origin_overlay_id)
     if dest_loc is not None:
         binary_display = f"{dest_loc.name}:{placement.location_artifact_path(dest_loc, record_id, extension)}"
     else:
@@ -184,6 +193,7 @@ def mint_stub(
     touch_script: str,
     store_bytes: bool = True,
     pre_attest: Callable[[frontmatter.Post], None] | None = None,
+    origin_overlay_id: str | None = None,
 ) -> frontmatter.Post:
     """The shared record-minting core (spec §8.1) for a materialized file whose identity
     and recipe union the caller has already resolved: frontmatter `hash:`, artifact block,
@@ -203,6 +213,14 @@ def mint_stub(
     hook for capture-sidecar issue replay + info-sidecar relocation, concerns a location
     promotion has none of.
 
+    `origin_overlay_id` (spec §12.1.1 (23)) is the origin overlay id the minting origin
+    resolved to — the value `placement.ingest_destination`'s origin axis matches
+    `ingest_origins` against, threaded through by the caller (`_resolve_origin_overlay_id`
+    in this module) so it agrees by construction with any display-side recomputation of
+    the same placement decision. `None` (a location-promotion caller has no minting
+    origin to resolve, or ingest matched no overlay) skips the origin axis entirely —
+    only the format claim / default / co-located fallback apply.
+
     Never folds into an existing record — the caller checks `record_file.is_file()` first;
     each caller has its own fold/re-encounter convention, since their origin shapes differ
     enough (capture URL vs. containment lineage vs. `file://` location provenance) that a
@@ -211,7 +229,9 @@ def mint_stub(
     from corpus.store import get_store
 
     if store_bytes:
-        dest_loc = placement.ingest_destination(corpus_root, media_type)
+        dest_loc = placement.ingest_destination(
+            corpus_root, media_type, origin_schema=origin_overlay_id
+        )
         if dest_loc is not None:
             # A claiming store location (spec §12.1.1, v22) — format list or the
             # corpus-wide default — is the destination instead of the co-located tree.
@@ -297,6 +317,30 @@ def _origin_overlay_schemas(
     if origin_uri:
         return [schema for _id, schema in schemas.origin_overlays_for_uris(corpus_root, [origin_uri])]
     return []
+
+
+def _resolve_origin_overlay_id(
+    corpus_root: Path, origin_schema: str | None, origin_uri: str | None
+) -> str | None:
+    """The origin overlay id the minting origin resolved to (spec §12.1.1 (23)) — the
+    value `placement.ingest_destination`'s origin axis matches a location's
+    `ingest_origins` against. The overlay IS the origin's identity (no second pattern
+    syntax), so this mirrors `_origin_overlay_schemas`'s resolution — sidecar-declared
+    overlay id wins when present, else the first overlay the capture URI matches
+    (`schemas.origin_overlays_for_uris`'s declaration order) — but returns the id
+    itself rather than the schema bodies `_origin_overlay_schemas` layers for hashing.
+    A sidecar-declared id that doesn't resolve to a real overlay, or no uri/schema at
+    all, yields `None`: an artifact minted with no matched origin overlay can never
+    satisfy an origin claim."""
+    from corpus import schemas
+
+    if origin_schema:
+        return origin_schema if schemas.load_origin_overlay_by_id(corpus_root, origin_schema) else None
+    if origin_uri:
+        matches = schemas.origin_overlays_for_uris(corpus_root, [origin_uri])
+        if matches:
+            return matches[0][0]
+    return None
 
 
 def _write_hash_index_rows(corpus_root: Path, record_id: str, hash_values: list) -> None:

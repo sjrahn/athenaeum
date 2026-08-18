@@ -145,12 +145,129 @@ ingest = "application/json"
         config_mod.load_config(root)
 
 
+# ---------- ingest_origins config parsing (spec §12.1.1, v23) ---------- #
+
+
+def test_store_location_with_ingest_origins_parses(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+ingest_origins = ["download.geofabrik.de", "example.com"]
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.kind == "store"
+    assert loc.ingest_origins == ("download.geofabrik.de", "example.com")
+    assert loc.ingest_types == ()
+    assert loc.ingest_default is False
+
+
+def test_ingest_origins_key_on_attached_location_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    d = tmp_path / "d"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "d"
+kind = "attached"
+path = "{d}"
+ingest_origins = ["example.com"]
+""",
+    )
+    with pytest.raises(ValueError, match="only valid on"):
+        config_mod.load_config(root)
+
+
+def test_ingest_origins_wrong_shape_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+ingest_origins = "download.geofabrik.de"
+""",
+    )
+    with pytest.raises(ValueError, match="ingest_origins"):
+        config_mod.load_config(root)
+
+
+def test_ingest_origins_empty_list_is_a_config_error(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+ingest_origins = []
+""",
+    )
+    with pytest.raises(ValueError, match="ingest_origins"):
+        config_mod.load_config(root)
+
+
+def test_ingest_origins_composes_with_ingest_list(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+ingest = ["application/x-openzim"]
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.ingest_types == ("application/x-openzim",)
+    assert loc.ingest_origins == ("download.geofabrik.de",)
+
+
+def test_ingest_origins_composes_with_ingest_true(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+ingest = true
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    loc = config_mod.load_config(root).locations[0]
+    assert loc.ingest_default is True
+    assert loc.ingest_origins == ("download.geofabrik.de",)
+
+
 # ---------- ingest_destination precedence ---------- #
 
 
-def _loc(name, path, *, ingest_types=(), ingest_default=False):
+def _loc(name, path, *, ingest_types=(), ingest_default=False, ingest_origins=()):
     return config_mod.LocationConfig(
-        name=name, kind="store", path=path, ingest_types=ingest_types, ingest_default=ingest_default
+        name=name,
+        kind="store",
+        path=path,
+        ingest_types=ingest_types,
+        ingest_default=ingest_default,
+        ingest_origins=ingest_origins,
     )
 
 
@@ -203,6 +320,124 @@ ingest = ["application/x-openzim"]
 def test_ingest_destination_none_with_no_store_locations(tmp_path):
     root = _corpus(tmp_path)
     assert placement.ingest_destination(root, "text/html") is None
+
+
+# ---------- ingest_destination origin-claim precedence (spec §12.1.1, v23) ---------- #
+
+
+def test_ingest_destination_origin_claim_beats_format_claim(tmp_path):
+    root = _corpus(tmp_path)
+    format_path = tmp_path / "format"
+    origin_path = tmp_path / "origin"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "format"
+kind = "store"
+path = "{format_path}"
+ingest = ["application/x-osm+pbf"]
+
+[[corpus.location]]
+name = "origin"
+kind = "store"
+path = "{origin_path}"
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    # Same media type — the origin claim wins because origin_schema matches it.
+    dest = placement.ingest_destination(
+        root, "application/x-osm+pbf", origin_schema="download.geofabrik.de"
+    )
+    assert dest is not None
+    assert dest.name == "origin"
+
+    # No matched origin overlay (origin_schema=None) — falls to the format claim.
+    dest2 = placement.ingest_destination(root, "application/x-osm+pbf", origin_schema=None)
+    assert dest2 is not None
+    assert dest2.name == "format"
+
+    # A DIFFERENT resolved origin id that no location claims — also falls to format.
+    dest3 = placement.ingest_destination(
+        root, "application/x-osm+pbf", origin_schema="unrelated.example"
+    )
+    assert dest3 is not None
+    assert dest3.name == "format"
+
+
+def test_ingest_destination_origin_claim_beats_default(tmp_path):
+    root = _corpus(tmp_path)
+    default_path = tmp_path / "default"
+    origin_path = tmp_path / "origin"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "default"
+kind = "store"
+path = "{default_path}"
+ingest = true
+
+[[corpus.location]]
+name = "origin"
+kind = "store"
+path = "{origin_path}"
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    dest = placement.ingest_destination(
+        root, "text/html", origin_schema="download.geofabrik.de"
+    )
+    assert dest is not None
+    assert dest.name == "origin"
+
+
+def test_ingest_destination_origin_schema_none_skips_origin_axis(tmp_path):
+    """`origin_schema=None` skips the origin axis entirely — a location's `ingest_origins`
+    can never match a `None` and is not even consulted (spec: no matched overlay can ever
+    satisfy an origin claim)."""
+    root = _corpus(tmp_path)
+    origin_path = tmp_path / "origin"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "origin"
+kind = "store"
+path = "{origin_path}"
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    assert placement.ingest_destination(root, "text/html", origin_schema=None) is None
+    # Calling with the *default* keyword value behaves identically.
+    assert placement.ingest_destination(root, "text/html") is None
+
+
+def test_ingest_destination_origin_claim_declaration_order_breaks_tie(tmp_path):
+    root = _corpus(tmp_path)
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "first"
+kind = "store"
+path = "{first_path}"
+ingest_origins = ["download.geofabrik.de"]
+
+[[corpus.location]]
+name = "second"
+kind = "store"
+path = "{second_path}"
+ingest_origins = ["download.geofabrik.de"]
+""",
+    )
+    dest = placement.ingest_destination(
+        root, "text/html", origin_schema="download.geofabrik.de"
+    )
+    assert dest is not None
+    assert dest.name == "first"
 
 
 # ---------- put_at ---------- #
@@ -314,6 +549,68 @@ ingest = ["text/html"]
     assert not staged.exists()
 
     # The record resolves its bytes through the store location.
+    resolved = containment.ensure_local_bytes(root, digest, "html")
+    assert resolved == expected
+
+
+def test_ingest_places_matched_origin_over_claimed_format(tmp_path):
+    """An origin claim beats a format claim (spec §12.1.1, v23): the capture sidecar's
+    `source_url` resolves to an origin overlay another location claims via
+    `ingest_origins` — the artifact lands there even though a DIFFERENT location claims
+    `text/html` by format."""
+    import yaml as _yaml
+
+    root = _corpus(tmp_path)
+    format_loc = tmp_path / "format-loc"
+    origin_loc = tmp_path / "origin-loc"
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "format-loc"
+kind = "store"
+path = "{format_loc}"
+ingest = ["text/html"]
+
+[[corpus.location]]
+name = "origin-loc"
+kind = "store"
+path = "{origin_loc}"
+ingest_origins = ["geofabrik.example"]
+""",
+    )
+    overlay_path = root / "schema" / "origin" / "web" / "geofabrik.example.yaml"
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    overlay_path.write_text(
+        _yaml.safe_dump(
+            {"applies_to": {"host_pattern": "geofabrik.example", "include_subdomains": True}},
+            sort_keys=False,
+        ),
+        "utf-8",
+    )
+    from corpus import schemas
+
+    schemas.cache_clear()
+
+    capture = root / "capture"
+    capture.mkdir()
+    staged = capture / "page.html"
+    staged.write_bytes(_HTML)
+    (capture / "page.html.capture.yaml").write_text(
+        "source_url: https://geofabrik.example/download/x\nfetched_at: 2026-06-29T00:00:00Z\n",
+        "utf-8",
+    )
+
+    assert ingest_cli._ingest_one(root, staged) == 0
+
+    digest = blake3.blake3(_HTML).hexdigest()
+    expected = origin_loc / paths.shard(digest) / f"{digest}.html"
+    unexpected = format_loc / paths.shard(digest) / f"{digest}.html"
+    assert expected.is_file()
+    assert expected.read_bytes() == _HTML
+    assert not unexpected.exists()
+    assert not paths.artifact_path(root, digest, "html").exists()
+
     resolved = containment.ensure_local_bytes(root, digest, "html")
     assert resolved == expected
 

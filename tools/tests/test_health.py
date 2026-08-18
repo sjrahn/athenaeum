@@ -8,13 +8,16 @@ signal surfaces the right records. No network.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import frontmatter
 
-from corpus import health, paths, records, segments
+from corpus import config as config_mod
+from corpus import hashing, health, locationindex, paths, records, segments
 from corpus._cli import dispatch
+from corpus._cli import location as location_cli
 
 A = "a0" * 32  # proxy, UNTITLED (no title candidate anywhere), missing artifact, legacy `status:`
 B = "b0" * 32  # rendered (stored content, no form), titled (frontmatter override), has its pdf
@@ -259,6 +262,136 @@ def test_dangling_origin_refs_cli_summary(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "dangling_origin_refs: 2" in out
+
+
+# ---------- shadowed copies (adoption dedup/reclaim signal, spec §12.1.1 v23) ---------- #
+
+
+def _promote_location(root: Path, name: str, relpath: str) -> int:
+    return location_cli.run(
+        argparse.Namespace(
+            action="promote",
+            name=name,
+            relpath=relpath,
+            all_matching=None,
+            source_urls=[],
+            corpus_root=str(root),
+        )
+    )
+
+
+def _adopt_location(root: Path, name: str, dest: str, relpath: str) -> int:
+    return location_cli.run(
+        argparse.Namespace(
+            action="adopt",
+            name=name,
+            dest=dest,
+            relpath=relpath,
+            reclaim=False,
+            corpus_root=str(root),
+        )
+    )
+
+
+def test_shadowed_copies_signal(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    shadowed_file = tree / "shadowed.json"
+    shadowed_file.write_bytes(b'{"case": "shadowed"}\n')
+    solo_file = tree / "solo.json"
+    solo_file.write_bytes(b'{"case": "attached only"}\n')
+
+    (root / "corpus.toml").write_text(
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+""",
+        "utf-8",
+    )
+    attached = config_mod.load_config(root).locations[0]
+    locationindex.attest_location(root, attached)
+
+    assert _promote_location(root, "loc", "shadowed.json") == 0
+    assert _promote_location(root, "loc", "solo.json") == 0
+
+    bulk = tmp_path / "bulk"
+    existing = (root / "corpus.toml").read_text("utf-8")
+    existing += f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+"""
+    (root / "corpus.toml").write_text(existing, "utf-8")
+
+    # Only `shadowed.json` gets adopted — `solo.json` stays attached-only.
+    assert _adopt_location(root, "loc", "bulk", "shadowed.json") == 0
+
+    rid_shadowed = hashing.hash_file(shadowed_file, also=())["blake3"]
+    rid_solo = hashing.hash_file(solo_file, also=())["blake3"]
+
+    refs = health.load_all_records(root)
+    items = health.shadowed_copies(refs, root)
+    by_id = {i["id"]: i for i in items}
+
+    assert rid_shadowed in by_id
+    assert rid_solo not in by_id  # attached-only, nothing shadowing it
+    entry = by_id[rid_shadowed]
+    assert entry["store_location"] == "bulk"
+    assert entry["attached_rows"] == [{"location": "loc", "relpath": "shadowed.json"}]
+
+
+def test_shadowed_copies_excludes_stale_attached_rows(tmp_path):
+    root = _corpus(tmp_path)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    f = tree / "a.json"
+    f.write_bytes(b'{"case": "will go stale after adoption"}\n')
+
+    (root / "corpus.toml").write_text(
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+""",
+        "utf-8",
+    )
+    attached = config_mod.load_config(root).locations[0]
+    locationindex.attest_location(root, attached)
+    assert _promote_location(root, "loc", "a.json") == 0
+
+    bulk = tmp_path / "bulk"
+    existing = (root / "corpus.toml").read_text("utf-8")
+    existing += f"""
+[[corpus.location]]
+name = "bulk"
+kind = "store"
+path = "{bulk}"
+"""
+    (root / "corpus.toml").write_text(existing, "utf-8")
+    assert _adopt_location(root, "loc", "bulk", "a.json") == 0
+
+    # Mutate the attached original after adoption without re-attesting: its row is
+    # now stale and must drop out of the signal (a stale row resolves nowhere).
+    f.write_bytes(b'{"case": "mutated post-adoption, not re-attested"}\n')
+
+    refs = health.load_all_records(root)
+    items = health.shadowed_copies(refs, root)
+    assert items == []
+
+
+def test_shadowed_copies_cli_summary(tmp_path, capsys):
+    root = _populate(tmp_path)
+    rc = dispatch(
+        ["health", "--summary", "--filter", "shadowed_copies", "--corpus-root", str(root)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "shadowed_copies: 0 record(s)" in out
 
 
 # ---------- CLI ---------- #

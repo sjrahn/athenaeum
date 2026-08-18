@@ -59,7 +59,17 @@ def _ingest_json(root: Path, data: bytes) -> str:
 
 def _move(root: Path, record: str, dest: str) -> int:
     return location_cli.run(
-        argparse.Namespace(action="move", record=record, dest=dest, corpus_root=str(root))
+        argparse.Namespace(
+            action="move", record=record, dest=dest, all_from=None, corpus_root=str(root)
+        )
+    )
+
+
+def _move_all_from(root: Path, source: str, dest: str) -> int:
+    return location_cli.run(
+        argparse.Namespace(
+            action="move", record=None, dest=dest, all_from=source, corpus_root=str(root)
+        )
     )
 
 
@@ -291,6 +301,165 @@ path = "{tree}"
 
     with pytest.raises(SystemExit, match="not a"):
         _move(root, rid, "att")
+
+
+# ---------- batch move (--all-from) ---------- #
+
+
+def test_move_all_from_corpus_migrates_every_standalone_copy(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    rid_a = _ingest_json(root, b'{"case": "batch a"}\n')
+    rid_b = _ingest_json(root, b'{"case": "batch b"}\n')
+    _store_loc(root, "bulk", bulk)
+
+    assert _move_all_from(root, "corpus", "bulk") == 0
+    out = capsys.readouterr().out
+    assert "moved" in out
+
+    assert not paths.artifact_path(root, rid_a, "json").exists()
+    assert not paths.artifact_path(root, rid_b, "json").exists()
+    assert (bulk / paths.shard(rid_a) / f"{rid_a}.json").is_file()
+    assert (bulk / paths.shard(rid_b) / f"{rid_b}.json").is_file()
+
+
+def test_move_all_from_skips_containment_only_and_attached_resident(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+
+    # A standalone co-located record — the one thing --all-from corpus should move.
+    rid_standalone = _ingest_json(root, b'{"case": "standalone"}\n')
+
+    # An attached-resident record: its bytes live in an operator-managed tree, never
+    # under the co-located artifacts/ tree, so --all-from corpus can't see it either.
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    attached_file = tree / "a.json"
+    attached_file.write_bytes(b'{"case": "attached resident"}\n')
+    _write_toml(
+        root,
+        f"""
+[[corpus.location]]
+name = "loc"
+kind = "attached"
+path = "{tree}"
+""",
+    )
+    attached = config_mod.load_config(root).locations[0]
+    locationindex.attest_location(root, attached)
+    assert (
+        location_cli.run(
+            argparse.Namespace(
+                action="promote",
+                name="loc",
+                relpath="a.json",
+                all_matching=None,
+                source_urls=[],
+                corpus_root=str(root),
+            )
+        )
+        == 0
+    )
+    rid_attached = hashing.hash_file(attached_file, also=())["blake3"]
+
+    # A containment-only member: no standalone file at all, so it can never appear
+    # under the co-located artifacts/ tree that --all-from walks.
+    z = tmp_path / "b.zip"
+    payload = b'{"case": "containment only"}\n'
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("note.json", payload)
+    capture = root / "capture"
+    capture.mkdir(exist_ok=True)
+    staged = capture / z.name
+    shutil.copy(z, staged)
+    assert ingest_cli._ingest_one(root, staged) == 0
+    cid = hashing.hash_file(z, also=())["blake3"]
+    post = records.load(paths.record_path(root, cid))
+    draft_cli.derive_record(post, root)
+    records.dump(post, paths.record_path(root, cid))
+    assert (
+        promote_cli.run(
+            argparse.Namespace(
+                uri=f"corpus://{cid}?path=note.json", json=False, corpus_root=str(root)
+            )
+        )
+        == 0
+    )
+    pid = blake3.blake3(payload).hexdigest()
+
+    _store_loc(root, "bulk", bulk)
+
+    assert _move_all_from(root, "corpus", "bulk") == 0
+
+    assert (bulk / paths.shard(rid_standalone) / f"{rid_standalone}.json").is_file()
+    # The containment-only member never had a standalone file to migrate.
+    assert not (bulk / paths.shard(pid) / f"{pid}.json").exists()
+    # The attached-resident record's bytes never entered the co-located tree either —
+    # its original is untouched and no copy landed at the destination.
+    assert attached_file.is_file()
+    assert not (bulk / paths.shard(rid_attached) / f"{rid_attached}.json").exists()
+
+
+def test_move_all_from_continues_past_per_record_failures(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    rid_ok = _ingest_json(root, b'{"case": "will succeed"}\n')
+    rid_bad = _ingest_json(root, b'{"case": "will fail"}\n')
+    _store_loc(root, "bulk", bulk)
+
+    # Pre-corrupt the destination for rid_bad so its move refuses.
+    bad_dest = bulk / paths.shard(rid_bad) / f"{rid_bad}.json"
+    bad_dest.parent.mkdir(parents=True)
+    bad_dest.write_bytes(b'{"case": "corrupted resident"}\n')
+
+    assert _move_all_from(root, "corpus", "bulk") == 1
+    err = capsys.readouterr().err
+    assert rid_bad in err
+
+    # The good record still moved despite the other's failure.
+    assert not paths.artifact_path(root, rid_ok, "json").exists()
+    assert (bulk / paths.shard(rid_ok) / f"{rid_ok}.json").is_file()
+    # The bad one's source is untouched — its corrupted destination is left as-is.
+    assert paths.artifact_path(root, rid_bad, "json").is_file()
+    assert bad_dest.read_bytes() == b'{"case": "corrupted resident"}\n'
+
+
+def test_move_all_from_unknown_source_is_actionable(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _store_loc(root, "bulk", bulk)
+
+    with pytest.raises(SystemExit, match="no location named"):
+        _move_all_from(root, "nowhere", "bulk")
+
+
+def test_move_all_from_attached_source_is_rejected(tmp_path):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _store_loc(root, "bulk", bulk)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    existing = (root / "corpus.toml").read_text("utf-8")
+    existing += f"""
+[[corpus.location]]
+name = "att"
+kind = "attached"
+path = "{tree}"
+"""
+    _write_toml(root, existing)
+
+    with pytest.raises(SystemExit, match="not a"):
+        _move_all_from(root, "att", "bulk")
+
+
+def test_move_all_from_empty_source_is_a_clean_noop(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    bulk = tmp_path / "bulk"
+    _store_loc(root, "bulk", bulk)
+
+    assert _move_all_from(root, "corpus", "bulk") == 0
+    out = capsys.readouterr().out
+    assert "no records found" in out
 
 
 # ---------- location list ---------- #

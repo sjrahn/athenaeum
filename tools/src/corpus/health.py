@@ -245,6 +245,71 @@ def missing_artifacts(
     return out[:limit]
 
 
+def _find_store_location_name(corpus_root: Path, record_id: str, ext: str) -> str | None:
+    """Which configured `kind = "store"` location currently holds a standalone copy
+    of `record_id`, or `None` — display-only companion to `placement.find_in_stores`
+    (same declaration-order walk, name instead of path)."""
+    from . import placement
+
+    for loc in placement.store_locations(corpus_root):
+        if placement.location_artifact_path(loc, record_id, ext).is_file():
+            return loc.name
+    return None
+
+
+def shadowed_copies(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
+) -> list[dict[str, Any]]:
+    """Records holding BOTH a store copy (co-located `artifacts/`, or any configured
+    store location) AND a **current** attached-location index row (spec §12.1.1's
+    "Adoption" paragraph, v23) — dedup/reclaim candidates. Adoption is
+    non-destructive by design: the store copy already serves every consumer
+    (resolution order shadows the attached row with no further mechanism), while the
+    attached row persists honestly — "invisible in use but surfacable" is this
+    signal's whole reason to exist, and the spec also notes the pair counts toward a
+    redundancy floor as two genuinely distinct copies, not one.
+
+    A stale attached row (size/mtime drift, a vanished file, or a location dropped
+    from `corpus.toml`) is excluded — `locationindex.current_rows_by_hash` already
+    screens those out, and a stale row resolves nowhere regardless of whether a
+    store copy also exists. Zero byte reads: an index join against each record's own
+    resolution (`store.is_local` / a store-location file-existence check), reusing
+    the staleness pins `attest` already computed."""
+    from . import locationindex
+    from . import mime as mime_mod
+    from .store import get_store
+
+    by_hash = locationindex.current_rows_by_hash(corpus_root)
+    if not by_hash:
+        return []
+
+    store = get_store(corpus_root)
+    out: list[dict[str, Any]] = []
+    for r in refs:
+        rows = by_hash.get(r.record_id)
+        if not rows:
+            continue
+        mime = records.media_type_for(r.post)
+        if not mime:
+            continue
+        ext = mime_mod.extension_for(mime)
+        if store.is_local(r.record_id, ext):
+            store_location = "corpus"
+        else:
+            store_location = _find_store_location_name(corpus_root, r.record_id, ext)
+            if store_location is None:
+                continue  # attached-only (or containment-only) — nothing shadowed
+        out.append(
+            {
+                "id": r.record_id,
+                "title": records.title_for(r.post, corpus_root),
+                "store_location": store_location,
+                "attached_rows": [{"location": loc, "relpath": rp} for loc, rp in rows],
+            }
+        )
+    return out[:limit]
+
+
 def validity_violations(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
 ) -> list[dict[str, Any]]:
@@ -591,6 +656,7 @@ SIGNAL_NAMES = (
     "normalization_pressure",
     "overlay_declarations",
     "prefix_duplicate_artifacts",
+    "shadowed_copies",
 )
 
 
@@ -741,4 +807,6 @@ def scan_all(
         report["prefix_duplicate_artifacts"] = prefix_duplicate_artifacts(
             refs, corpus_root, limit=limit
         )
+    if "shadowed_copies" in selected:
+        report["shadowed_copies"] = shadowed_copies(refs, corpus_root, limit=limit)
     return report

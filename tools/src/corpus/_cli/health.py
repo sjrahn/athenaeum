@@ -170,4 +170,11 @@ def _format_summary(report: dict[str, Any]) -> str:
                 f"  - {p['kind']}: {p['filename']} — {p['shorter'][:8]}… ⊑ {p['longer'][:8]}…"
             )
 
+    if "shadowed_copies" in report:
+        sc = report["shadowed_copies"]
+        lines.append(f"shadowed_copies: {len(sc)} record(s) — dedup/reclaim candidates")
+        for item in sc[:5]:
+            rows = ", ".join(f"{r['location']}/{r['relpath']}" for r in item["attached_rows"][:3])
+            lines.append(f"  - {item['id'][:8]}… at {item['store_location']} + {rows}")
+
     return "\n".join(lines) + "\n"

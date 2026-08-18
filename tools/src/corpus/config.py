@@ -39,6 +39,11 @@ File schema (all keys optional):
                                       # DEFAULT ingest destination (at most one
                                       # location may declare it) — mutually exclusive
                                       # with the list form above
+    ingest_origins = ["download.geofabrik.de"]   # store only, optional (v23): origin
+                                      # overlay ids claiming this location as ingest
+                                      # destination for artifacts whose minting origin
+                                      # matched one — beats `ingest` format claims;
+                                      # composes freely with `ingest`
 
 Env vars override the file (later wins):
 
@@ -74,18 +79,23 @@ class LocationConfig:
     tree the corpus writes — local path only this wave; a `remote =` key is rejected at
     load, ticket #204).
 
-    `ingest_types` / `ingest_default` are meaningful only on `kind == "store"` — the
-    placement policy (`corpus.placement`, v22): a non-empty `ingest_types` claims those
-    media types as this location's ingest destination; `ingest_default` (at most one
-    location corpus-wide) makes this the destination for everything no format list
-    claims. Both empty/False is the common case — a store location with no placement
-    role, resolved only, never a write destination."""
+    `ingest_types` / `ingest_default` / `ingest_origins` are meaningful only on
+    `kind == "store"` — the placement policy (`corpus.placement`, v22/v23): a non-empty
+    `ingest_types` claims those media types as this location's ingest destination;
+    `ingest_default` (at most one location corpus-wide) makes this the destination for
+    everything no format list claims; `ingest_origins` (v23) claims a list of origin
+    overlay ids (spec §7.2) — an artifact whose minting origin resolved to one of them
+    lands here, outranking a format claim. All empty/False is the common case — a store
+    location with no placement role, resolved only, never a write destination.
+    `ingest_origins` composes freely with `ingest_types`/`ingest_default` — a location
+    may declare either, both, or neither axis."""
 
     name: str
     kind: str
     path: Path
     ingest_types: tuple[str, ...] = ()
     ingest_default: bool = False
+    ingest_origins: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -222,6 +232,22 @@ def _resolve_ingest_key(name: str, entry: dict[str, Any]) -> tuple[tuple[str, ..
     )
 
 
+def _resolve_ingest_origins_key(name: str, entry: dict[str, Any]) -> tuple[str, ...]:
+    """Resolve a store location's optional `ingest_origins` key (spec §12.1.1, v23) to
+    a tuple of origin overlay ids. Absent → `()` (no origin claim). Present → must be a
+    non-empty list of non-empty strings — any other shape is an operator error. Composes
+    freely with `ingest` (a location may declare both, either, or neither key)."""
+    if "ingest_origins" not in entry:
+        return ()
+    value = entry["ingest_origins"]
+    if isinstance(value, list) and value and all(isinstance(v, str) and v.strip() for v in value):
+        return tuple(str(v).strip() for v in value)
+    raise ValueError(
+        f"corpus.toml [[corpus.location]] {name!r}: 'ingest_origins' must be a "
+        f"non-empty list of origin overlay id strings, got {value!r}."
+    )
+
+
 def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
     """Resolve `[[corpus.location]]` array-of-tables (spec §12.1.1, v21/v22). No
     env-var overrides — locations are deployment topology, not secrets or transport
@@ -268,6 +294,12 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 f"kind = \"store\" — an attached location is operator-managed and "
                 f"never an ingest destination."
             )
+        if kind == "attached" and "ingest_origins" in entry:
+            raise ValueError(
+                f"corpus.toml [[corpus.location]] {name!r}: 'ingest_origins' is only "
+                f"valid on kind = \"store\" — an attached location is operator-managed "
+                f"and never an ingest destination."
+            )
         raw_path = entry.get("path")
         if not raw_path:
             raise ValueError(
@@ -283,6 +315,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
         ingest_types, ingest_default = (
             _resolve_ingest_key(name, entry) if kind == "store" else ((), False)
         )
+        ingest_origins = _resolve_ingest_origins_key(name, entry) if kind == "store" else ()
         if ingest_default:
             if default_name is not None:
                 raise ValueError(
@@ -299,6 +332,7 @@ def _resolve_locations_section(raw: Any) -> tuple[LocationConfig, ...]:
                 path=path,
                 ingest_types=ingest_types,
                 ingest_default=ingest_default,
+                ingest_origins=ingest_origins,
             )
         )
     return tuple(out)

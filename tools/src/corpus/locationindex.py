@@ -26,6 +26,7 @@ without moving bytes").
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -225,6 +226,32 @@ def stale_rows(corpus_root: Path) -> list[tuple[str, str, str]]:
         if st.st_size != size or st.st_mtime_ns != mtime:
             out.append((loc_name, relpath, hash_))
     return out
+
+
+def current_rows_by_hash(corpus_root: Path) -> dict[str, list[tuple[str, str]]]:
+    """`{hash: [(location, relpath), ...]}` for every row whose staleness pins still
+    match (spec §12.1.1's adoption paragraph, v23: a health scan's join key for the
+    **shadowed-copies** signal — records holding both a store copy and a current
+    attached row). The current-row complement of `stale_rows`: a row whose location
+    is no longer configured, whose file has vanished, or whose `(size, mtime)` has
+    drifted since attest is excluded here exactly as it is included there."""
+    by_name = {loc.name: loc.path for loc in config_mod.load_config(corpus_root).locations}
+    out: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    with open_index(corpus_root) as conn:
+        cur = conn.execute("SELECT hash, location, relpath, size, mtime FROM locations")
+        rows = cur.fetchall()
+    for hash_, loc_name, relpath, size, mtime in rows:
+        base = by_name.get(loc_name)
+        if base is None:
+            continue
+        candidate = base / relpath
+        try:
+            st = candidate.stat()
+        except OSError:
+            continue
+        if st.st_size == size and st.st_mtime_ns == mtime:
+            out[hash_].append((loc_name, relpath))
+    return dict(out)
 
 
 def row_count(corpus_root: Path, location: str) -> int:

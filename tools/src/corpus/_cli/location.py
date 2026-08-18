@@ -13,10 +13,16 @@ Subcommands:
 - `promote NAME RELPATH` (or `--all-matching GLOB`) — mint a corpus record for one (or a
   batch of) already-attested location file(s), bytes staying in place (§12.1.1: "promotion
   mints records without moving bytes"). See `_promote_one` for the full contract.
-- `move RECORD DEST` — relocate a record's **standalone copy** between store locations,
-  the co-located `artifacts/` tree counting as one (`DEST` is a store location name, or
-  the literal `corpus`). Copy-verify-then-remove per §12.1.1's "Move semantics": see
-  `_move` for the full contract.
+- `move RECORD DEST` (or `--all-from SOURCE DEST`) — relocate a record's **standalone
+  copy** between store locations, the co-located `artifacts/` tree counting as one
+  (`DEST`/`SOURCE` are a store location name, or the literal `corpus`).
+  Copy-verify-then-remove per §12.1.1's "Move semantics": see `_move` for the
+  single-record contract, `_move_batch` for the batch form (v23).
+- `adopt NAME DEST [RELPATH]` — copy an attested attached-location file's bytes into a
+  store, **non-destructively**: the attached original and its location-index row stay
+  in place (shadowed by resolution order), and a `--reclaim` flag opts into removing
+  the original afterward. RELPATH absent = every current row of NAME. §12.1.1's
+  "Adoption" paragraph (v23): see `_adopt_one` for the full contract.
 """
 
 from __future__ import annotations
@@ -79,13 +85,48 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "move",
         help="Relocate a record's standalone copy between store locations (or `corpus`).",
     )
-    p_move.add_argument("record", help="Record id, hex prefix, or path to a record .md file.")
+    p_move.add_argument(
+        "record",
+        nargs="?",
+        help="Record id, hex prefix, or path to a record .md file (mutually exclusive "
+        "with --all-from).",
+    )
     p_move.add_argument(
         "dest",
         help="Destination: a store location name (corpus.toml [[corpus.location]] "
         "name=), or the literal `corpus` for the co-located artifacts/ tree.",
     )
+    p_move.add_argument(
+        "--all-from",
+        dest="all_from",
+        metavar="SOURCE",
+        help="Move every record whose standalone copy resides at SOURCE (a store "
+        "location name, or `corpus`) to DEST, instead of a single RECORD.",
+    )
     add_corpus_root_arg(p_move)
+
+    p_adopt = sub.add_parser(
+        "adopt",
+        help="Copy an attached location file's bytes into a store, non-destructively "
+        "(spec §12.1.1 adoption).",
+    )
+    p_adopt.add_argument("name", help="Attached location name (corpus.toml [[corpus.location]] name=).")
+    p_adopt.add_argument(
+        "dest",
+        help="Destination: a store location name (corpus.toml [[corpus.location]] "
+        "name=), or the literal `corpus` for the co-located artifacts/ tree.",
+    )
+    p_adopt.add_argument(
+        "relpath", nargs="?", help="Path relative to NAME's root; omitted = every "
+        "current row of NAME."
+    )
+    p_adopt.add_argument(
+        "--reclaim",
+        action="store_true",
+        help="Remove the attached original after the store copy verifies (never the "
+        "default; a read-only attached tree is reported, not fatal).",
+    )
+    add_corpus_root_arg(p_adopt)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -97,7 +138,16 @@ def run(args: argparse.Namespace) -> int:
     if args.action == "promote":
         return _promote(corpus_root, args.name, args.relpath, args.all_matching, args.source_urls)
     if args.action == "move":
+        all_from = getattr(args, "all_from", None)
+        if all_from:
+            if args.record:
+                sys.exit("corpus location move: give RECORD or --all-from SOURCE, not both.")
+            return _move_batch(corpus_root, all_from, args.dest)
+        if not args.record:
+            sys.exit("corpus location move: give RECORD or --all-from SOURCE.")
         return _move(corpus_root, args.record, args.dest)
+    if args.action == "adopt":
+        return _adopt(corpus_root, args.name, args.dest, args.relpath, args.reclaim)
     print(f"unknown action: {args.action}", file=sys.stderr)
     return 2
 
@@ -471,3 +521,226 @@ def _resolve_move_dest(
             f"store — move only targets `corpus` or a `kind = \"store\"` location."
         )
     return placement.location_artifact_path(loc, record_id, extension), dest_name
+
+
+def _move_batch(corpus_root: Path, source_name: str, dest_name: str) -> int:
+    """`corpus location move --all-from SOURCE DEST` (spec §12.1.1's batch-move
+    sentence, v23): every record whose standalone copy resides at SOURCE moves to
+    DEST — SOURCE's own content-addressed tree is walked directly
+    (`<shard>/<hash>.<ext>`, skipping `.part` temp files) rather than trusting any
+    index, mapping each file's stem back to an already-promoted record; a stem with
+    no matching record is silently not a record to move (the batch form only ever
+    moves records, spec §12.1.1). Each candidate is relocated via the single-record
+    `_move` path — its own refusals (dest holds different bytes, source fails to
+    verify, …) are caught here and reported per-record rather than aborting the
+    batch, in `promote --all-matching`'s mold.
+    """
+    if source_name == "corpus":
+        root = corpus_root / "artifacts"
+    else:
+        loc = _resolve_location(corpus_root, source_name)
+        if loc is None:
+            cfg = config_mod.load_config(corpus_root)
+            configured = ", ".join(sorted(loc2.name for loc2 in cfg.locations)) or "(none configured)"
+            sys.exit(
+                f"corpus location move: no location named {source_name!r}; configured: "
+                f"{configured} (or use `corpus` for the co-located tree)"
+            )
+        if loc.kind != "store":
+            sys.exit(
+                f"corpus location move: {source_name!r} is a {loc.kind!r} location, "
+                f"not a store — --all-from only sources `corpus` or a "
+                f"`kind = \"store\"` location (attached files never move, spec "
+                f"§12.1.1)."
+            )
+        root = loc.path
+
+    if not root.is_dir():
+        print(f"no records found at {source_name!r} ({root} does not exist)")
+        return 0
+
+    record_ids: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name.endswith(".part"):
+            continue
+        record_id = path.stem
+        if paths.record_path(corpus_root, record_id).is_file():
+            record_ids.append(record_id)
+
+    if not record_ids:
+        print(f"no records found at {source_name!r}")
+        return 0
+
+    exit_code = 0
+    for record_id in record_ids:
+        try:
+            rc = _move(corpus_root, record_id, dest_name)
+        except SystemExit as e:
+            print(f"error: {record_id}: {e.code}", file=sys.stderr)
+            exit_code = 1
+            continue
+        if rc != 0:
+            exit_code = 1
+    return exit_code
+
+
+# ---------- adopt ---------- #
+
+
+class LocationAdoptError(Exception):
+    """One file's adoption failed — caught per-file by `_adopt` so an all-rows batch
+    keeps going rather than aborting on the first bad file."""
+
+
+def _adopt(
+    corpus_root: Path, name: str, dest_name: str, relpath: str | None, reclaim: bool
+) -> int:
+    """`corpus location adopt NAME DEST [RELPATH]` (spec §12.1.1's "Adoption"
+    paragraph, v23): dispatch to `_adopt_one` for a single RELPATH, or every current
+    row of NAME's location index when RELPATH is omitted — per-file outcomes,
+    continuing past failures, exit 1 if any failed (`promote --all-matching`'s
+    mold)."""
+    location = _resolve_location(corpus_root, name)
+    if location is None:
+        cfg = config_mod.load_config(corpus_root)
+        configured = ", ".join(sorted(loc.name for loc in cfg.locations)) or "(none configured)"
+        sys.exit(f"corpus location adopt: no location named {name!r}; configured: {configured}")
+    if location.kind != "attached":
+        sys.exit(
+            f"corpus location adopt: {name!r} is a {location.kind!r} location, not "
+            f"attached — adoption transfers custody FROM an attached location (spec "
+            f"§12.1.1)."
+        )
+
+    if relpath:
+        relpaths = [relpath]
+    else:
+        with locationindex.open_index(corpus_root) as conn:
+            rows = conn.execute(
+                "SELECT relpath FROM locations WHERE location = ?", (name,)
+            ).fetchall()
+        relpaths = sorted(rp for (rp,) in rows)
+        if not relpaths:
+            print(f"no attested file under location {name!r}")
+            return 0
+
+    exit_code = 0
+    for rp in relpaths:
+        try:
+            outcome = _adopt_one(corpus_root, location, rp, dest_name, reclaim)
+        except LocationAdoptError as e:
+            print(f"error: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
+        print(outcome)
+    return exit_code
+
+
+def _adopt_one(
+    corpus_root: Path,
+    location: config_mod.LocationConfig,
+    relpath: str,
+    dest_name: str,
+    reclaim: bool,
+) -> str:
+    """Adopt one attested attached-location file into a store (spec §12.1.1's
+    "Adoption" paragraph, v23): the destination store gains a copy under `move`'s
+    copy-verify-then-rename contract (`placement.copy_verified` — a temp name, full
+    blake3 verified against the record id before the rename unveils it), and the
+    attached original stays exactly where it is, untouched — the location-index row
+    is never cleared, staying honestly in place as the health-surfacable shadowed
+    copy (spec's own phrase). A destination already holding verified identical bytes
+    is idempotent success.
+
+    Refused (raising `LocationAdoptError`, caught per-file by `_adopt`): no attested
+    row for RELPATH (attest first); a stale row — size/mtime drift since attest
+    (re-attest first, exactly as promotion refuses it); no promoted record for the
+    file's hash (adoption transfers custody of a record's bytes, it does not mint —
+    promote first); a destination already holding DIFFERENT bytes.
+
+    `--reclaim` removes the original only after the store copy verifies, and its
+    failure (a read-only attached tree, most commonly) is reported but never turns
+    an otherwise-successful adoption into a failure — spec's own ruling: "for a
+    read-only attached tree never possible at all" is a property of reclaim, not of
+    adoption.
+    """
+    from corpus import hashing, mime, records
+
+    abs_path = location.path / relpath
+
+    with locationindex.open_index(corpus_root) as conn:
+        row = conn.execute(
+            "SELECT hash, size, mtime FROM locations WHERE location = ? AND relpath = ?",
+            (location.name, relpath),
+        ).fetchone()
+    if row is None:
+        raise LocationAdoptError(
+            f"{relpath!r} has no attested row in location {location.name!r} — run "
+            f"`corpus location attest {location.name}` first."
+        )
+    indexed_hash, indexed_size, indexed_mtime = row
+
+    try:
+        st = abs_path.stat()
+    except OSError as e:
+        raise LocationAdoptError(
+            f"{relpath!r}: {e} — the attested file is unreadable; re-attest with "
+            f"`corpus location attest {location.name}` once it's back."
+        ) from e
+
+    if st.st_size != indexed_size or st.st_mtime_ns != indexed_mtime:
+        raise LocationAdoptError(
+            f"{relpath!r}: stale in the location index (size/mtime changed since "
+            f"attest) — run `corpus location attest {location.name}` to re-attest "
+            f"before adopting."
+        )
+
+    record_id = indexed_hash
+    record_file = paths.record_path(corpus_root, record_id)
+    if not record_file.is_file():
+        raise LocationAdoptError(
+            f"{relpath!r}: no promoted record for {record_id} — adoption transfers "
+            f"custody of a record's bytes, it does not mint one; run `corpus "
+            f"location promote {location.name} {relpath}` first."
+        )
+
+    post = records.load(record_file)
+    media_type = records.media_type_for(post)
+    extension = mime.extension_for(media_type)
+
+    dest, dest_display = _resolve_move_dest(corpus_root, dest_name, record_id, extension)
+
+    if dest.is_file():
+        dest_hash = hashing.hash_file(dest, also=())["blake3"]
+        if dest_hash != record_id:
+            raise LocationAdoptError(
+                f"{relpath!r}: destination {dest} already holds DIFFERENT bytes "
+                f"(hash {dest_hash}, expected {record_id}) — refusing, nothing touched."
+            )
+        outcome = (
+            f"adopted: {location.name}/{relpath} -> {dest_display} "
+            f"(already present, idempotent)"
+        )
+    else:
+        try:
+            placement.copy_verified(abs_path, dest, record_id)
+        except placement.MoveVerificationError as e:
+            raise LocationAdoptError(
+                f"{relpath!r}: copy failed to verify (expected {e.expected}, got "
+                f"{e.actual}) — temp removed, original untouched."
+            ) from e
+        outcome = f"adopted: {location.name}/{relpath} -> {dest_display}"
+
+    if reclaim:
+        try:
+            abs_path.unlink()
+            outcome += " (original reclaimed)"
+        except OSError as e:
+            print(
+                f"warning: {relpath!r}: adoption succeeded but --reclaim failed to "
+                f"remove the original ({e}) — left in place.",
+                file=sys.stderr,
+            )
+            outcome += " (reclaim failed: original left in place)"
+
+    return outcome
