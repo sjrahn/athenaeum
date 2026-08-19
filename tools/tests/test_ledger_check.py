@@ -46,14 +46,8 @@ def _record(corpus_root: Path, h: str, status: str | None = "normalized") -> Non
 def system(tmp_path: Path) -> Path:
     root = tmp_path
     (root / "athenaeum.yaml").write_text(
-        "org: https://example.test/org\n"
-        "corpora:\n"
-        "  corpus:\n"
-        "    visibility: public\n"
-        "  corpus-private:\n"
-        "    visibility: private\n"
-        "ledger:\n"
-        "  ledger:\n"
+        "name: testeum\n"
+        "visibility: public\n"
         "references:\n"
         "  wikipedia:\n"
         "    description: test mirror\n"
@@ -62,6 +56,13 @@ def system(tmp_path: Path) -> Path:
         "    snapshots:\n"
         "      '2026-06': { artifact: " + ("9" * 64) + " }\n"
     )
+    # The instance corpus (what the CLI path reads) holds every record; the
+    # two hub trees below serve the direct-join tests that exercise the
+    # multi-holder tenancy derivation at the library level.
+    inst = root / "corpus"
+    for h in (H_PUB, H_BOTH, H_PUB2, H_PRIV):
+        _record(inst, h)
+    _record(inst, H_NO_STATUS, status=None)
     pub = root / "corpora" / "corpus"
     priv = root / "corpora" / "corpus-private"
     for h in (H_PUB, H_BOTH, H_PUB2):
@@ -72,9 +73,6 @@ def system(tmp_path: Path) -> Path:
     ledger = root / "ledger"
     (ledger / "facts").mkdir(parents=True)
     (ledger / "interpretations").mkdir()
-    (ledger / "ledger.yaml").write_text(
-        "name: ledger\ncorpora: [corpus, corpus-private]\n"
-    )
     (ledger / "open-questions.md").write_text(OPENQ_SKELETON)
     return root
 
@@ -1375,6 +1373,10 @@ def test_ath_ledger_dispatch(system: Path, capsys: pytest.CaptureFixture[str]) -
     assert ath_main(["ledger", "check", "--root", str(system)]) == 1
 
 
-def test_ledger_yaml_must_name_registered_corpora(system: Path) -> None:
-    (system / "ledger" / "ledger.yaml").write_text("name: ledger\ncorpora: [nope]\n")
+def test_ledger_tree_must_carry_facts(system: Path) -> None:
+    """A ledger/ without facts/ is not a ledger tree — refused, not guessed
+    (the v26 instance layout replaced the ledger.yaml registry)."""
+    import shutil
+
+    shutil.rmtree(system / "ledger" / "facts")
     assert ledger_main(["check", "--root", str(system)]) == 2

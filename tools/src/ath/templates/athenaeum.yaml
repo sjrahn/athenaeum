@@ -1,0 +1,33 @@
+# athenaeum.yaml — the instance config (spec Part I §2.3). TRACKED.
+#
+# The instance is one private repository: this config, the corpus at corpus/,
+# the ledger at ledger/. The tooling discovers it by walking up from the
+# current directory ($ATHENAEUM_ROOT overrides).
+
+name: my-athenaeum         # optional display name
+
+# The tenancy floor: the fail-closed default for records whose origins declare
+# no `tenancy:` (spec/ledger.md §6.4). Leave private unless you know better.
+visibility: private
+
+# The issue tracker — the instance's backlog. Reads go through `ath issue`;
+# writes go through the forge's own CLI.
+#tracker:
+#  host: https://forge.example.com
+#  repo: my-org/my-athenaeum
+#  snapshot: corpus/runbooks/tickets.md   # where `ath issue sync` writes the
+#                                         # committed offline read
+
+# Reference datasets (spec/ledger.md §6.5) — locally-mirrored external
+# databases cited as `ref://{dataset}/{id}` evidence (bare = the `latest` tag;
+# `ref://{dataset}@{tag}/{id}` pins a snapshot). Each snapshot's mirror bytes
+# are a corpus artifact — a terminal-contract record addressed by blake3.
+# Register snapshots as they land, e.g.:
+#   wikipedia:
+#     description: English Wikipedia, ZIM mirrors
+#     adapter: zim              # optional — derives from the mirror record's
+#                               # mime overlay `ref_adapter` when omitted
+#     latest: "2026-06"
+#     snapshots:
+#       "2026-06": { artifact: <64-hex blake3 of the ZIM's bytes> }
+references: {}

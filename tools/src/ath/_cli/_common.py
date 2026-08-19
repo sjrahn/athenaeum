@@ -1,4 +1,4 @@
-"""Shared plumbing for the ath system verbs."""
+"""Shared plumbing for the ath instance verbs."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ def base_parser(prog: str, description: str | None) -> argparse.ArgumentParser:
         "--root",
         type=Path,
         default=None,
-        help=f"orchestrator repo root (default: walk up for {MANIFEST_NAME})",
+        help=f"instance root (default: walk up for {MANIFEST_NAME}; "
+             "$ATHENAEUM_ROOT overrides)",
     )
     return ap
 

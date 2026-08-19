@@ -1,9 +1,9 @@
 """`ath ledger` — the ledger's deterministic surface.
 
-Everything resolves through the manifest: the ledger member's path, the
-registered corpora (with declared visibility) the ledger interprets, and the
-reference datasets `ref://` citations may name. There is deliberately no bare
-`ledger` command.
+Everything resolves through the instance (spec Part I §2.2): the ledger at
+`ledger/`, the corpus at `corpus/` (the instance `visibility:` is the tenancy
+floor), and the reference datasets `ref://` citations may name. There is
+deliberately no bare `ledger` command.
 """
 
 from __future__ import annotations
@@ -15,9 +15,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-import yaml
-
-from ath.manifest import ManifestError, Member, Reference, find_root, load, load_references
+from ath.manifest import ManifestError, Reference, find_root, load_instance, load_references
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 
 _USAGE = """\
@@ -59,48 +57,36 @@ Commands:
   regen         rewrite the generated views (VOCAB.md, the open-questions
                 block; --coverage additionally sweeps corpora for coverage.md)
 
-All commands resolve the ledger, corpora, and reference datasets through the
-manifest (athenaeum.yaml, walked up from the current directory; --root to
-point elsewhere).
+All commands resolve the ledger, corpus, and reference datasets through the
+instance config (athenaeum.yaml, walked up from the current directory; --root
+to point elsewhere).
 """
 
 
 def _base_parser(prog: str, description: str) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog=prog, description=description)
     ap.add_argument("--root", type=Path, default=None,
-                    help="orchestrator repo root (default: walk up for athenaeum.yaml)")
+                    help="instance root (default: walk up for athenaeum.yaml; "
+                         "$ATHENAEUM_ROOT overrides)")
     return ap
 
 
 def _system(root: Path | None) -> tuple[Path, CorpusJoin, dict[str, Reference]]:
-    """(ledger root, corpus join, registered datasets by name) from the manifest."""
+    """(ledger root, corpus join, registered datasets by name) from the instance."""
     base = find_root(root)
-    members = load(base)
-    ledgers = [m for m in members if m.layer == "ledger"]
-    if not ledgers:
-        raise ManifestError("no ledger registered in the manifest")
-    ledger = ledgers[0]
-    if not (ledger.path / "ledger.yaml").is_file():
-        raise ManifestError(f"{ledger.path} has no ledger.yaml — run `ath sync`?")
-    manifest_corpora: dict[str, Member] = {m.name: m for m in members if m.layer == "corpora"}
-    declared = yaml.safe_load(
-        (ledger.path / "ledger.yaml").read_text(encoding="utf-8")
-    ) or {}
-    names = declared.get("corpora") or []
-    if not isinstance(names, list) or not names:
-        raise ManifestError("ledger.yaml corpora: must list the corpora this ledger "
-                            "interprets")
-    registered: list[RegisteredCorpus] = []
-    for name in names:
-        m = manifest_corpora.get(str(name))
-        if m is None:
-            raise ManifestError(f"ledger.yaml names corpus {name!r} which the manifest "
-                                "does not register")
-        registered.append(
-            RegisteredCorpus(name=m.name, root=m.path, private=m.visibility == "private")
+    instance = load_instance(base)
+    if not (instance.ledger_root / "facts").is_dir():
+        raise ManifestError(f"{instance.ledger_root} has no facts/ — not a ledger tree "
+                            "(spec/ledger.md §3)")
+    registered = [
+        RegisteredCorpus(
+            name="corpus",
+            root=instance.corpus_root,
+            private=instance.visibility == "private",
         )
+    ]
     datasets = {r.dataset: r for r in load_references(base)}
-    return ledger.path, CorpusJoin(registered), datasets
+    return instance.ledger_root, CorpusJoin(registered), datasets
 
 
 def _cmd_check(argv: Sequence[str]) -> int:

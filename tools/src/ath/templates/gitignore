@@ -1,0 +1,15 @@
+# Instance-root ignores. The layers carry their own .gitignore for their
+# untracked state (corpus/: artifacts/, capture/, cache/, queue/, export/,
+# corpus.toml).
+
+# Editor / OS scratch
+.DS_Store
+*.swp
+
+# Python bytecode (corpus-local capturers/drafters/shapers under the tool venv)
+__pycache__/
+*.pyc
+
+# Claude Code session runtime state (agents are tracked in .claude/agents/)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

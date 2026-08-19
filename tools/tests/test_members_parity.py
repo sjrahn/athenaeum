@@ -34,17 +34,20 @@ import pytest
 from corpus import records
 
 
-# Live-corpus locations resolve through the MANIFEST (athenaeum.yaml walked up
-# from this file), never a hardcoded layout — member `path:` overrides moved the
-# public corpus to the workspace root in the single-corpus consolidation, and
-# nothing but the manifest may know where members live (spec/athenaeum.md §2.3).
+# The live corpus resolves through the INSTANCE (athenaeum.yaml — $ATHENAEUM_ROOT,
+# else walked up from this file), never a hardcoded layout (spec Part I §2.2).
 def _manifest_corpus_roots() -> dict[str, Path]:
     try:
+        import os
+
         from ath import manifest
 
-        root = manifest.find_root(Path(__file__).resolve().parent)
-        return {m.name: m.path for m in manifest.load(root) if m.layer == "corpora"}
-    except Exception:  # no manifest above this checkout — tests self-skip
+        root = manifest.find_root(
+            None if os.environ.get(manifest.ROOT_ENV)
+            else Path(__file__).resolve().parent
+        )
+        return {"corpus": manifest.load_instance(root).corpus_root}
+    except Exception:  # no instance above this checkout — tests self-skip
         return {}
 
 

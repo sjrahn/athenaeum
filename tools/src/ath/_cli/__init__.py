@@ -1,11 +1,10 @@
-"""`ath` — the Athenaeum umbrella CLI.
+"""`ath` — the Athenaeum instance umbrella CLI.
 
-A thin, lazy dispatcher: system-level verbs (`sync`, `status`) plus the
-delegation shim (`ath corpus …` → the corpus CLI, verbatim). Mirrors the
-corpus dispatcher's lazy-import discipline so the base import path stays
-clean; there is deliberately no bare `ledger` command. (v15: the codex verbs
-left with the codex kit — the system's distribution carries no consumer
-tooling.)
+A thin, lazy dispatcher: instance verbs (`init`, `status`, `issue`) plus the
+layer surfaces (`ledger`, `ref`) and the delegation shim (`ath corpus …` →
+the corpus CLI, verbatim). Mirrors the corpus dispatcher's lazy-import
+discipline so the base import path stays clean; there is deliberately no bare
+`ledger` command, and the distribution carries no consumer tooling.
 """
 
 from __future__ import annotations
@@ -16,13 +15,15 @@ from collections.abc import Sequence
 _USAGE = """\
 usage: ath <command> [options...]
 
-Athenaeum system tooling — drive the members from the orchestrator repo.
+Athenaeum tooling — point at an instance and work inside it (spec Part I §2).
 
-System:
-  status        working-tree state of the orchestrator repo and every member
-  sync          clone missing members; fetch + report the rest (--pull to fast-forward)
-  issue ...     the system's backlog: list, show, sync (the in-repo offline snapshot).
-                Write verbs — create, close and above all COMMENT — are `fj`'s.
+Instance:
+  init [PATH]   scaffold a new instance: config, corpus + ledger skeletons,
+                persona brief, agent definitions
+  status        instance working-tree state and config summary
+  issue ...     the instance's backlog: list, show, sync (the in-repo offline
+                snapshot). Write verbs — create, close and above all COMMENT —
+                are the forge CLI's (`fj`).
 
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
@@ -33,8 +34,9 @@ Layers:
 Delegation:
   corpus ...    the corpus CLI, verbatim (equivalent to running `corpus ...`)
 
-The manifest (athenaeum.yaml) is located by walking up from the current
-directory; pass --root to a system verb to point elsewhere.
+The instance is located by walking up from the current directory for
+athenaeum.yaml ($ATHENAEUM_ROOT overrides); pass --root to a verb to point
+elsewhere.
 """
 
 
@@ -57,10 +59,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ath._cli.ref import run as ref_run
 
         return ref_run(rest)
-    if cmd == "sync":
-        from ath._cli.sync import run
+    if cmd == "init":
+        from ath._cli.init import run as init_run
 
-        return run(rest)
+        return init_run(rest)
     if cmd == "status":
         from ath._cli.status import run
 

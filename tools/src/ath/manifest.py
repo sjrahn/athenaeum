@@ -1,35 +1,37 @@
-"""`athenaeum.yaml` — the member manifest.
+"""`athenaeum.yaml` — the instance config (spec Part I §2.3, v26).
 
-The manifest at the orchestrator repo root is the single registry of the
-system's member repos (corpora and the ledger) and the runtime join the
-tooling reads. Members are keyed by name under a `corpora:` / `ledger:`
-mapping; paths and remotes derive by convention — `corpora/<name>`, `<name>`
-at the root for the ledger, and `{org}/{name}.git` — unless a member
-overrides `path:` / `remote:`. There is exactly one ledger per deployment
-(`spec/ledger.md` §1.2). Consumers of the system's product (codices, expert
-agents) are NOT members: the system holds no registry of them (spec
-athenaeum.md §5, v15).
+The config at the instance root is TRACKED instance state: the tenancy floor
+(`visibility:`), the issue tracker, and the reference-dataset registry. The
+layers are fixed directories of the instance — `corpus/` and `ledger/` — so
+the config registers no members; the pre-v26 member manifest (a `corpora:` /
+`ledger:` roster of separate repos) is retired, and a manifest still carrying
+those keys is refused with a migration pointer.
+
+Discovery is upward: `find_root` walks from the current directory to the
+nearest `athenaeum.yaml`; the `ATHENAEUM_ROOT` environment variable overrides.
+The distribution's own checkout location is irrelevant to operation — the
+tooling points at an instance and works inside it (spec Part I §2.2).
 
 Reference datasets (`spec/ledger.md` §6.5) register under `references:` —
-locally-mirrored external databases cited as `ref://` evidence. They are
-mirrors, not git members. *(v17)* A dataset registers **multiple snapshots**
-— a tag-keyed `snapshots:` map (tag → a `Snapshot`: the mirror's blake3
-`artifact`, plus *(v18, deprecated v21)* an optional deployment-local
-`path:` override), and an explicit `latest:` default naming one of those
-tags. *(v21)* `adapter:` — the format resolving native ids — is OPTIONAL:
-an explicit declaration still wins, but when absent it derives at
-resolution time from the latest snapshot's mirror record's mime overlay
-`ref_adapter` (`refdata.resolve_adapter_name`, spec/corpus.md §7.1). A
-snapshot's mirror bytes are a corpus artifact, distributed and
-integrity-checked through the corpus store.
+locally-mirrored external databases cited as `ref://` evidence. A dataset
+registers multiple snapshots — a tag-keyed `snapshots:` map (tag → a
+`Snapshot`: the mirror's blake3 `artifact`, plus a deprecated deployment-local
+`path:` override) and an explicit `latest:` default naming one of those tags.
+`adapter:` — the format resolving native ids — is OPTIONAL: an explicit
+declaration wins, but when absent it derives at resolution time from the
+latest snapshot's mirror record's mime overlay `ref_adapter`
+(`refdata.resolve_adapter_name`, spec/corpus.md §7.1). A snapshot's mirror
+bytes are a corpus artifact, distributed and integrity-checked through the
+corpus store (Part IV).
 
-The issue tracker registers under `tracker:` — the Forgejo repo whose issues
-carry the system's backlog, and the in-repo path of the snapshot `ath issue
-sync` writes. Host derives from `org:`, so no tooling hardcodes an instance.
+The issue tracker registers under `tracker:` — the forge repo whose issues
+carry the instance's backlog, the forge `host:`, and the in-repo path of the
+snapshot `ath issue sync` writes.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,40 +39,40 @@ from pathlib import Path
 import yaml
 
 MANIFEST_NAME = "athenaeum.yaml"
-# Deployment state beside the manifest by default; deployments SHOULD point it
-# into a member repo (e.g. corpus/runbooks/tickets.md) so the backlog's movement
-# stays committed — the orchestrator repo itself tracks no deployment state.
+ROOT_ENV = "ATHENAEUM_ROOT"
+# Deployment state beside the config by default; point it somewhere tracked
+# (e.g. corpus/runbooks/tickets.md) so the backlog's movement stays in history.
 _DEFAULT_SNAPSHOT = "tickets.md"
 
-# layer key → default parent directory ("" = the workspace root)
-_LAYER_DIRS = {"corpora": "corpora", "ledger": ""}
+_RETIRED_MEMBER_KEYS = ("corpora", "ledger")
 
 
 class ManifestError(RuntimeError):
-    """The manifest is missing or malformed."""
+    """The instance config is missing or malformed."""
 
 
 @dataclass(frozen=True)
-class Member:
-    name: str
-    layer: str  # "corpora" | "ledger"
-    path: Path  # absolute working-tree location
-    remote: str
-    description: str
-    # Declared tenancy — meaningful for corpora, where it drives derived
-    # sensitivity (spec/ledger.md §6.4). Default private: fail closed.
+class Instance:
+    """The instance the tooling operates in (spec Part I §2.2)."""
+
+    root: Path
+    name: str = ""
+    # The tenancy floor — the fail-closed default for records whose origins
+    # declare no `tenancy:` (spec/ledger.md §6.4). Default private.
     visibility: str = "private"
+
+    @property
+    def corpus_root(self) -> Path:
+        return self.root / "corpus"
+
+    @property
+    def ledger_root(self) -> Path:
+        return self.root / "ledger"
 
 
 @dataclass(frozen=True)
 class Tracker:
-    """The issue tracker holding the system's backlog.
-
-    One tracker for the whole system, on the orchestrator repo: tickets cross
-    members constantly (a corpus migration owes a ledger re-anchor), and
-    splitting them per member would re-create the isolation this vantage point
-    exists to avoid. The member a ticket touches is a label, not a repo.
-    """
+    """The issue tracker holding the instance's backlog."""
 
     base: str  # API root, e.g. https://host/api/v1
     owner: str
@@ -92,47 +94,51 @@ _ARTIFACT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One registered snapshot of a reference dataset (spec/athenaeum.md §2.3).
+    """One registered snapshot of a reference dataset (spec Part I §2.3).
 
     `artifact` is identity — the blake3 pin verification stamps (§13.2); it
-    never changes meaning. *(v18, DEPRECATED v21)* `path` is the interim
-    deployment-local materialization override: a mirror file read in place,
-    tried before the corpus store's routes (spec/ledger.md §6.5 "Resolution
-    is downward"). Superseded by an attached location over the mirrors
-    directory (spec/corpus.md §12.1.1) — read tolerantly until every
-    registered snapshot store-resolves. Presence isn't checked at load time
-    — the file may live on a mount that isn't up; that's a resolver/status
-    concern, not a manifest-parse one.
+    never changes meaning. `path` is the DEPRECATED deployment-local
+    materialization override: a mirror file read in place, tried before the
+    corpus store's routes — superseded by an attached location over the
+    mirrors directory (Part IV §3.2), read tolerantly until every registered
+    snapshot store-resolves. Presence isn't checked at load time — the file
+    may live on a mount that isn't up; that's a resolver/status concern.
     """
 
     artifact: str  # 64-hex blake3 — the pin verification stamps
-    path: str | None = None  # v18 interim materialization override
+    path: str | None = None  # deprecated in-place materialization override
 
 
 @dataclass(frozen=True)
 class Reference:
-    """A registered reference dataset — a local mirror, not a git member.
+    """A registered reference dataset — a local mirror, not a repo.
 
-    *(v17)* Multi-snapshot: `snapshots` maps tag → `Snapshot`,
-    `latest` names the default tag. `ref://{dataset}@{tag}/{id}` (spec/ledger.md
-    §6.5) pins a snapshot; bare `ref://{dataset}/{id}` tracks `latest`.
+    Multi-snapshot: `snapshots` maps tag → `Snapshot`, `latest` names the
+    default tag. `ref://{dataset}@{tag}/{id}` (spec/ledger.md §6.5) pins a
+    snapshot; bare `ref://{dataset}/{id}` tracks `latest`.
 
-    *(v21)* `adapter` is optional — an explicit declaration still wins (the
-    bootstrap and override path), but when absent the format adapter is
-    derived from the latest snapshot's mirror record's mime overlay
-    `ref_adapter` (spec/corpus.md §7.1, spec/athenaeum.md §2.3) via
-    `refdata.resolve_adapter_name`.
+    `adapter` is optional — an explicit declaration wins (the bootstrap and
+    override path), but when absent the format adapter is derived from the
+    latest snapshot's mirror record's mime overlay `ref_adapter`
+    (spec/corpus.md §7.1) via `refdata.resolve_adapter_name`.
     """
 
     dataset: str
     description: str
     latest: str  # the default snapshot tag — a key of snapshots
-    snapshots: dict[str, Snapshot]  # tag -> Snapshot (artifact hash + optional path)
+    snapshots: dict[str, Snapshot]  # tag -> Snapshot
     adapter: str | None = None  # explicit override; None derives from the mirror's mime overlay
 
 
 def find_root(start: Path | None = None) -> Path:
-    """Walk up from *start* (default: cwd) to the directory holding the manifest."""
+    """The instance root: $ATHENAEUM_ROOT when set, else walk up from *start*
+    (default: cwd) to the directory holding the config."""
+    env = os.environ.get(ROOT_ENV)
+    if env and start is None:
+        root = Path(env).resolve()
+        if not (root / MANIFEST_NAME).is_file():
+            raise ManifestError(f"{ROOT_ENV}={env} does not contain {MANIFEST_NAME}")
+        return root
     cur = (start or Path.cwd()).resolve()
     for candidate in (cur, *cur.parents):
         if (candidate / MANIFEST_NAME).is_file():
@@ -141,51 +147,34 @@ def find_root(start: Path | None = None) -> Path:
 
 
 def _read(root: Path) -> dict:
-    return yaml.safe_load((root / MANIFEST_NAME).read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load((root / MANIFEST_NAME).read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ManifestError(f"{root / MANIFEST_NAME}: expected a mapping")
+    retired = [k for k in _RETIRED_MEMBER_KEYS if k in data]
+    if retired:
+        raise ManifestError(
+            f"{root / MANIFEST_NAME} declares member repos ({', '.join(retired)}:) — "
+            "the pre-v26 workspace shape. v26 merges the members into one instance "
+            "repo (corpus/ + ledger/ directories) with a tracked config; see "
+            "spec/athenaeum.md §2 and spec/CHANGELOG.md v26 for the migration."
+        )
+    return data
 
 
-def load(root: Path) -> list[Member]:
-    """Parse the manifest at *root* into the member list, manifest order preserved."""
+def load_instance(root: Path) -> Instance:
+    """Parse the instance config at *root*."""
     data = _read(root)
-    org = str(data.get("org") or "").rstrip("/")
-    members: list[Member] = []
-    for layer, dirname in _LAYER_DIRS.items():
-        entries = data.get(layer) or {}
-        if not isinstance(entries, dict):
-            raise ManifestError(f"manifest {layer}: expected a name-keyed mapping")
-        if layer == "ledger" and len(entries) > 1:
-            raise ManifestError(
-                "manifest ledger: exactly one ledger per deployment (spec/ledger.md §1.2)"
-            )
-        for name, spec in entries.items():
-            spec = spec or {}
-            remote = str(spec.get("remote") or "")
-            if not remote:
-                if not org:
-                    raise ManifestError(f"{layer}/{name}: no remote and no org to derive one from")
-                remote = f"{org}/{name}.git"
-            default_path = f"{dirname}/{name}" if dirname else str(name)
-            visibility = str(spec.get("visibility") or "private")
-            if visibility not in ("public", "private"):
-                raise ManifestError(
-                    f"{layer}/{name}: visibility must be 'public' or 'private', got {visibility!r}"
-                )
-            members.append(
-                Member(
-                    name=str(name),
-                    layer=layer,
-                    path=(root / str(spec.get("path") or default_path)).resolve(),
-                    remote=remote,
-                    description=str(spec.get("description") or ""),
-                    visibility=visibility,
-                )
-            )
-    return members
+    visibility = str(data.get("visibility") or "private")
+    if visibility not in ("public", "private"):
+        raise ManifestError(
+            f"visibility must be 'public' or 'private', got {visibility!r}"
+        )
+    return Instance(root=root, name=str(data.get("name") or ""), visibility=visibility)
 
 
 def load_references(root: Path) -> list[Reference]:
-    """Parse the manifest's `references:` section — registered reference datasets
-    (`spec/ledger.md` §6.5, v17 multi-snapshot shape)."""
+    """Parse the config's `references:` section — registered reference datasets
+    (`spec/ledger.md` §6.5)."""
     entries = _read(root).get("references") or {}
     if not isinstance(entries, dict):
         raise ManifestError("manifest references: expected a dataset-keyed mapping")
@@ -194,13 +183,13 @@ def load_references(root: Path) -> list[Reference]:
         spec = spec or {}
         if "mirror" in spec or "snapshot" in spec:
             raise ManifestError(
-                f"references/{name}: 'mirror:'/'snapshot:' are retired — v17 registers "
+                f"references/{name}: 'mirror:'/'snapshot:' are retired — register "
                 "'adapter:', 'latest:', and a tag-keyed 'snapshots:' map "
                 "(spec/athenaeum.md §2.3)"
             )
-        # (v21) adapter: optional — a missing/empty declaration derives at
-        # resolution time from the mirror record's mime overlay ref_adapter
-        # (refdata.resolve_adapter_name); this is no longer a load-time error.
+        # adapter: optional — a missing/empty declaration derives at resolution
+        # time from the mirror record's mime overlay ref_adapter
+        # (refdata.resolve_adapter_name); not a load-time error.
         adapter = str(spec.get("adapter") or "") or None
         snapshots_raw = spec.get("snapshots") or {}
         if not isinstance(snapshots_raw, dict) or not snapshots_raw:
@@ -217,8 +206,8 @@ def load_references(root: Path) -> list[Reference]:
             if not _ARTIFACT_RE.match(artifact):
                 raise ManifestError(f"references/{name}/{tag}: artifact must be a 64-hex "
                                     f"lowercase blake3, got {artifact!r}")
-            # (v18) no existence check here — a declared path may live on a
-            # mount that isn't up; presence is a resolver/status concern.
+            # No existence check here — a declared path may live on a mount
+            # that isn't up; presence is a resolver/status concern.
             path = snap.get("path")
             snapshots[tag] = Snapshot(artifact=artifact, path=str(path) if path else None)
         latest = str(spec.get("latest") or "")
@@ -238,24 +227,26 @@ def load_references(root: Path) -> list[Reference]:
 
 
 def load_tracker(root: Path) -> Tracker:
-    """Parse the manifest's `tracker:` section.
+    """Parse the config's `tracker:` section.
 
-    The host derives from `org:` rather than being spelled again, so a fork or a
-    moved instance changes one line. `repo:` is `owner/name`.
+    `host:` names the forge instance (`https://host`); the legacy `org:` key
+    (`https://host/org`) is read as a fallback so a pre-v26 config's tracker
+    still resolves during migration. `repo:` is `owner/name`.
     """
     data = _read(root)
     spec = data.get("tracker") or {}
     if not isinstance(spec, dict):
         raise ManifestError("manifest tracker: expected a mapping")
-    org = str(data.get("org") or "").rstrip("/")
-    if not org:
-        raise ManifestError("manifest tracker: no org to derive the instance host from")
+    host_url = str(spec.get("host") or data.get("org") or "").rstrip("/")
+    if not host_url:
+        raise ManifestError("manifest tracker: no host to derive the forge API from")
     slug = str(spec.get("repo") or "")
     if slug.count("/") != 1:
         raise ManifestError(f"manifest tracker.repo: expected 'owner/name', got {slug!r}")
     owner, repo = slug.split("/")
-    # org is https://host/org — the API lives at the instance root, not under the org.
-    scheme, _, rest = org.partition("://")
+    # host may be https://host or (legacy org) https://host/org — the API
+    # lives at the instance root either way.
+    scheme, _, rest = host_url.partition("://")
     host = rest.split("/", 1)[0]
     return Tracker(
         base=f"{scheme}://{host}/api/v1",

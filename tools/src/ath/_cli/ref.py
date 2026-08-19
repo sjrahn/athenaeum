@@ -36,9 +36,9 @@ verbs:
             and print a manifest snapshot snippet, the registration helper for
             onboarding a new dataset/tag.
 
-Corpora roots for store-backed materialization are the manifest's own
-`corpora:` members (the same derivation `ath ledger`'s `_system` uses) — read
-here directly from `ath.manifest` rather than importing `ledger._cli`.
+The corpus root for store-backed materialization is the instance's (the same
+derivation `ath ledger`'s `_system` uses) — read here directly from
+`ath.manifest` rather than importing `ledger._cli`.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ath._cli._common import base_parser, resolve_root
-from ath.manifest import ManifestError, Reference, load, load_references
+from ath.manifest import ManifestError, Reference, load_instance, load_references
 from ledger.model import CORPUS_URI_RE, REF_URI_RE
 
 _USAGE = """\
@@ -82,9 +82,10 @@ the current directory; --root to point elsewhere).
 
 
 def _corpora_roots(root: Path) -> list[Path]:
-    """Every registered corpus's local root — the store-lookup fallback
-    `refdata.materialize` tries after a snapshot's declared `path:` override."""
-    return [m.path for m in load(root) if m.layer == "corpora"]
+    """The instance corpus root — the store-lookup fallback
+    `refdata.materialize` tries after a snapshot's declared `path:` override.
+    (A list for the refdata API's signature; the instance has one corpus.)"""
+    return [load_instance(root).corpus_root]
 
 
 def _materialization_state(

@@ -16,19 +16,23 @@ from corpus._cli import dispatch
 
 
 def _overlay_path() -> Path:
-    """The live claude-code-session overlay, resolved through the MANIFEST —
-    member locations are path-overridable (spec/athenaeum.md §2.3), so no test
-    may hardcode one. Falls back to a non-existent path when no member holds
-    the overlay; the fixture guards with `.is_file()` either way."""
+    """The live claude-code-session overlay, resolved through the INSTANCE
+    (spec Part I §2.2) — no test may hardcode a corpus location. Falls back to
+    a non-existent path when the instance's corpus doesn't hold the overlay;
+    the fixture guards with `.is_file()` either way."""
     try:
+        import os
+
         from ath import manifest
 
-        root = manifest.find_root(Path(__file__).resolve().parent)
-        for m in manifest.load(root):
-            if m.layer == "corpora":
-                p = m.path / "schema/origin/claude-code-session.yaml"
-                if p.is_file():
-                    return p
+        root = manifest.find_root(
+            None if os.environ.get(manifest.ROOT_ENV)
+            else Path(__file__).resolve().parent
+        )
+        p = (manifest.load_instance(root).corpus_root
+             / "schema/origin/claude-code-session.yaml")
+        if p.is_file():
+            return p
     except Exception:
         pass
     return Path("/nonexistent/claude-code-session.yaml")

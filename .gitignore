@@ -1,8 +1,18 @@
-# Member repos — independent git repos managed via athenaeum.yaml, never tracked here.
-# Anchored to the root: unanchored `ledger/` also swallowed tools/src/ledger (a whole
-# package silently untracked — found in the 2026-07-03 critical pass).
+# The instance — the deployment's own private repo (corpus/ + ledger/ +
+# athenaeum.yaml), conventionally checked out inside this workspace during
+# development. Never tracked here: this repo is the distribution — spec +
+# tooling only (spec Part I §2.1).
+/instance/
+
+# Retired pre-v26 member checkouts (kept as archives until removed).
 /corpus/
 /ledger/
+/corpus.pre-v26/
+/ledger.pre-v26/
+/athenaeum.yaml
+/athenaeum.yaml.pre-v26
+/tickets.md
+/athenaeum.code-workspace
 
 # macOS Finder metadata
 .DS_Store
@@ -15,9 +25,4 @@ tools/**/__pycache__/
 tools/**/*.egg-info/
 tools/.pytest_cache/
 tools/.ruff_cache/
-
-# Deployment state — the manifest and the default tracker snapshot live at the
-# workspace root but belong to the deployment, never to this repo (spec Part I §2.2 v16).
-/athenaeum.yaml
-/tickets.md
-/athenaeum.code-workspace
+/datasets-pending.md

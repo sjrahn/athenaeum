@@ -86,12 +86,6 @@ def root(tmp_path: Path) -> Path:
 
     manifest = f"""\
 org: https://x.test/athenaeum
-corpora:
-  corpus:
-    visibility: public
-    path: corpus
-ledger:
-  ledger: {{}}
 references:
   testwiki:
     description: test wiki mirror
@@ -201,12 +195,6 @@ def test_status_shows_derived_adapter_marker(
 
     manifest = f"""\
 org: https://x.test/athenaeum
-corpora:
-  corpus:
-    visibility: public
-    path: corpus
-ledger:
-  ledger: {{}}
 references:
   derivedwiki:
     description: adapter derived from mime overlay
@@ -230,8 +218,6 @@ def test_status_no_record_reports_unresolved_not_a_crash(
     row rather than raising."""
     manifest = f"""\
 org: https://x.test/athenaeum
-ledger:
-  ledger: {{}}
 references:
   ghostwiki:
     description: adapter cannot be derived, no record anywhere
@@ -253,8 +239,6 @@ def test_resolve_reports_derivation_failure_as_adapter_unavailable(
 ) -> None:
     manifest = f"""\
 org: https://x.test/athenaeum
-ledger:
-  ledger: {{}}
 references:
   ghostwiki:
     description: adapter cannot be derived, no record anywhere
@@ -441,8 +425,6 @@ def corrupt_root(tmp_path: Path) -> Path:
     bad.write_bytes(b"not a zim file, just garbage" * 100)
     manifest = f"""\
 org: https://x.test/athenaeum
-ledger:
-  ledger: {{}}
 references:
   corruptset:
     description: a truncated or corrupted mirror

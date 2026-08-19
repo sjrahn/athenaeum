@@ -1,4 +1,4 @@
-"""The ath umbrella: manifest loading, sync (clone/fetch), status, dispatch."""
+"""The ath umbrella: instance-config loading, init, status, dispatch."""
 
 from __future__ import annotations
 
@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from ath._cli import main
-from ath.manifest import ManifestError, Snapshot, find_root, load, load_references
+from ath.manifest import (
+    ManifestError,
+    Snapshot,
+    find_root,
+    load_instance,
+    load_references,
+)
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -16,56 +22,42 @@ def _git(cwd: Path, *args: str) -> None:
 
 
 @pytest.fixture()
-def system(tmp_path: Path) -> Path:
-    """A miniature system: two bare 'remotes' + an orchestrator root with a manifest."""
-    remotes = tmp_path / "remotes"
-    for name in ("corpus", "ledger"):
-        bare = remotes / f"{name}.git"
-        bare.mkdir(parents=True)
-        _git(bare, "init", "--bare", "--initial-branch=main", ".")
-        work = tmp_path / f"seed-{name}"
-        work.mkdir()
-        _git(work, "init", "--initial-branch=main", ".")
-        _git(work, "config", "user.email", "t@t")
-        _git(work, "config", "user.name", "t")
-        (work / "README.md").write_text(f"# {name}\n")
-        _git(work, "add", "-A")
-        _git(work, "commit", "-m", "seed")
-        _git(work, "remote", "add", "origin", str(bare))
-        _git(work, "push", "-q", "origin", "main")
-    root = tmp_path / "athenaeum"
-    root.mkdir()
+def instance(tmp_path: Path) -> Path:
+    """A miniature instance: config + corpus/ledger skeletons."""
+    root = tmp_path / "instance"
+    (root / "corpus" / "records").mkdir(parents=True)
+    (root / "corpus" / "schema").mkdir(parents=True)
+    (root / "ledger" / "facts").mkdir(parents=True)
     (root / "athenaeum.yaml").write_text(
-        f"org: {remotes.as_uri()}\n"
-        "corpora:\n"
-        "  corpus:\n"
-        "    description: test hub\n"
-        "ledger:\n"
-        "  ledger:\n"
-        "    description: test ledger\n"
+        "name: testeum\nvisibility: private\nreferences: {}\n"
     )
     return root
 
 
-def test_manifest_defaults(system: Path) -> None:
-    members = load(system)
-    assert [(m.name, m.layer) for m in members] == [
-        ("corpus", "corpora"),
-        ("ledger", "ledger"),
-    ]
-    corpus, ledger = members
-    assert corpus.path == system / "corpora" / "corpus"
-    assert corpus.remote.endswith("/remotes/corpus.git")
-    assert corpus.description == "test hub"
-    assert ledger.path == system / "ledger"  # the ledger sits at the workspace root
+def test_instance_defaults(instance: Path) -> None:
+    inst = load_instance(instance)
+    assert inst.name == "testeum"
+    assert inst.visibility == "private"
+    assert inst.corpus_root == instance / "corpus"
+    assert inst.ledger_root == instance / "ledger"
 
 
-def test_manifest_exactly_one_ledger(tmp_path: Path) -> None:
+def test_instance_visibility_validated(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text("visibility: sorta\n")
+    with pytest.raises(ManifestError, match="visibility"):
+        load_instance(tmp_path)
+
+
+def test_pre_v26_member_manifest_refused(tmp_path: Path) -> None:
+    """A member-shaped manifest (the pre-v26 workspace) errors with a
+    migration pointer rather than silently misreading."""
     (tmp_path / "athenaeum.yaml").write_text(
-        "org: https://x\nledger:\n  ledger:\n  ledger-two:\n"
+        "org: https://x\ncorpora:\n  corpus:\nledger:\n  ledger:\n"
     )
-    with pytest.raises(ManifestError, match="exactly one ledger"):
-        load(tmp_path)
+    with pytest.raises(ManifestError, match="v26"):
+        load_instance(tmp_path)
+    with pytest.raises(ManifestError, match="v26"):
+        load_references(tmp_path)
 
 
 _H1 = "1" * 64
@@ -73,13 +65,13 @@ _H2 = "2" * 64
 
 
 def _write_references(tmp_path: Path, body: str) -> None:
-    (tmp_path / "athenaeum.yaml").write_text(f"org: https://x\nreferences:\n{body}")
+    (tmp_path / "athenaeum.yaml").write_text(f"references:\n{body}")
 
 
 def test_manifest_references(tmp_path: Path) -> None:
-    """*(v17, spec/athenaeum.md §2.3)* multi-snapshot shape: adapter, latest,
-    a tag-keyed snapshots map of blake3 mirror-artifact hashes. *(v18)* an
-    optional per-snapshot `path:` materialization override."""
+    """Multi-snapshot shape (spec Part I §2.3): adapter, latest, a tag-keyed
+    snapshots map of blake3 mirror-artifact hashes; an optional per-snapshot
+    `path:` materialization override (deprecated, read tolerantly)."""
     _write_references(
         tmp_path,
         "  wikipedia:\n"
@@ -99,25 +91,25 @@ def test_manifest_references(tmp_path: Path) -> None:
         "2026-01": Snapshot(artifact=_H2),
     }
     assert ref.snapshots["2026-01"].path is None
-    (tmp_path / "athenaeum.yaml").write_text("org: https://x\nreferences: {}\n")
+    (tmp_path / "athenaeum.yaml").write_text("references: {}\n")
     assert load_references(tmp_path) == []
-    (tmp_path / "athenaeum.yaml").write_text("org: https://x\n")
+    (tmp_path / "athenaeum.yaml").write_text("name: x\n")
     assert load_references(tmp_path) == []
 
 
 def test_manifest_references_retired_shape_errors(tmp_path: Path) -> None:
-    """The pre-v17 `mirror:`/`snapshot:` keys are retired — the error names
-    the v17 shape rather than failing silently or cryptically."""
+    """The pre-multi-snapshot `mirror:`/`snapshot:` keys are retired — the
+    error names the current shape rather than failing cryptically."""
     _write_references(
         tmp_path,
         "  wikipedia:\n    mirror: /mirrors/wp.zim\n    snapshot: '2026-06'\n",
     )
-    with pytest.raises(ManifestError, match="v17"):
+    with pytest.raises(ManifestError, match="retired"):
         load_references(tmp_path)
 
 
 def test_manifest_references_missing_adapter_is_optional(tmp_path: Path) -> None:
-    """v21: `adapter:` is optional — derived at resolution time from the mirror
+    """`adapter:` is optional — derived at resolution time from the mirror
     record's mime overlay `ref_adapter` (refdata.resolve_adapter_name); loading
     just records the absence."""
     _write_references(
@@ -165,66 +157,53 @@ def test_manifest_references_bad_tag_charset(tmp_path: Path) -> None:
         load_references(tmp_path)
 
 
-def test_manifest_overrides_and_errors(tmp_path: Path) -> None:
-    root = tmp_path
-    (root / "athenaeum.yaml").write_text(
-        "corpora:\n  c1:\n    path: elsewhere/c1\n    remote: https://x/c1.git\n"
-    )
-    (m,) = load(root)
-    assert m.path == root / "elsewhere" / "c1"
-    assert m.remote == "https://x/c1.git"
-    (root / "athenaeum.yaml").write_text("corpora:\n  c1:\n")  # no remote, no org
-    with pytest.raises(ManifestError, match="no remote"):
-        load(root)
-
-
-def test_find_root_walks_up(system: Path) -> None:
-    deep = system / "corpora" / "somewhere" / "deep"
+def test_find_root_walks_up(instance: Path) -> None:
+    deep = instance / "corpus" / "somewhere" / "deep"
     deep.mkdir(parents=True)
-    assert find_root(deep) == system
+    assert find_root(deep) == instance
     with pytest.raises(ManifestError, match=r"no athenaeum\.yaml"):
-        find_root(system.parent)
+        find_root(instance.parent)
 
 
-def test_sync_clones_then_reports(system: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["sync", "--root", str(system)]) == 0
-    assert (system / "corpora" / "corpus" / ".git").exists()
-    assert (system / "ledger" / "README.md").read_text() == "# ledger\n"
+def test_find_root_env_override(instance: Path, monkeypatch: pytest.MonkeyPatch,
+                                tmp_path: Path) -> None:
+    monkeypatch.setenv("ATHENAEUM_ROOT", str(instance))
+    assert find_root() == instance
+    monkeypatch.setenv("ATHENAEUM_ROOT", str(tmp_path / "nowhere"))
+    with pytest.raises(ManifestError, match="ATHENAEUM_ROOT"):
+        find_root()
+
+
+def test_init_scaffolds_instance(tmp_path: Path,
+                                 capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "fresh"
+    assert main(["init", str(target), "--name", "fresh"]) == 0
+    inst = load_instance(target)
+    assert inst.name == "fresh"
+    assert (target / "corpus" / "records").is_dir()
+    assert (target / "corpus" / "runbooks").is_dir()
+    assert (target / "ledger" / "facts" / "SCHEMA.md").is_file()
+    assert (target / "ledger" / "open-questions.md").is_file()
+    assert (target / "CLAUDE.md").read_text().startswith("# fresh")
+    assert (target / ".claude" / "agents" / "normalizer.md").is_file()
+    assert (target / ".gitignore").is_file()
     capsys.readouterr()
-    assert main(["sync", "--root", str(system)]) == 0  # idempotent
+    # idempotent: re-run keeps existing files
+    assert main(["init", str(target)]) == 0
     out = capsys.readouterr().out
-    assert "corpus: ok (↑0 ↓0)" in out
+    assert "kept" in out and "created" not in out.split("instance ready")[0].split("kept")[0]
 
 
-def test_sync_pull_fast_forwards(system: Path) -> None:
-    assert main(["sync", "--root", str(system)]) == 0
-    # advance the remote from a second clone
-    other = system.parent / "other"
-    subprocess.run(
-        ["git", "clone", "-q", (system.parent / "remotes" / "corpus.git").as_uri(), str(other)],
-        check=True,
-    )
-    _git(other, "config", "user.email", "t@t")
-    _git(other, "config", "user.name", "t")
-    (other / "new.txt").write_text("x\n")
-    _git(other, "add", "-A")
-    _git(other, "commit", "-m", "advance")
-    _git(other, "push", "-q", "origin", "main")
-    assert main(["sync", "--root", str(system), "--pull"]) == 0
-    assert (system / "corpora" / "corpus" / "new.txt").exists()
-
-
-def test_status_missing_then_clean(system: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # the orchestrator root itself is not a git repo in this fixture → MISSING row
-    assert main(["status", "--root", str(system)]) == 1
+def test_status_reports_instance(instance: Path,
+                                 capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["status", "--root", str(instance)]) == 0
     out = capsys.readouterr().out
-    assert out.count("MISSING") == 3  # root + 2 members
-    _git(system, "init", "--initial-branch=main", ".")
-    assert main(["sync", "--root", str(system)]) == 0
-    capsys.readouterr()
-    assert main(["status", "--root", str(system)]) == 0
-    out = capsys.readouterr().out
-    assert "corpus" in out and "clean" in out
+    assert "corpus: ok" in out and "ledger: ok" in out
+    assert "visibility floor: private" in out
+    # a missing layer is a non-zero exit
+    (instance / "ledger" / "facts").rmdir()
+    assert main(["status", "--root", str(instance)]) == 1
+    assert "ledger: MISSING" in capsys.readouterr().out
 
 
 def test_unknown_command() -> None:

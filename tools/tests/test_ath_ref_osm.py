@@ -62,8 +62,6 @@ def root(tmp_path: Path) -> Path:
 
     manifest = f"""\
 org: https://x.test/athenaeum
-ledger:
-  ledger: {{}}
 references:
   osm-test:
     description: test osm mirror
@@ -133,7 +131,10 @@ def test_index_builds_and_reports_counts(root: Path, capsys: pytest.CaptureFixtu
     assert rc == 0
     out = capsys.readouterr().out
     assert out.strip() == "osm-test@t: indexed 4 element(s) (2 named)"
-    assert _sidecar_path(root / "mirror.osm.pbf").is_file()
+    # the instance always has a corpus root, so the sidecar lands at its
+    # canonical cache/refidx home even for a path:-materialized mirror
+    assert (root / "corpus" / "cache" / "refidx" / f"{_HASH_OSM}.sqlite").is_file()
+    assert not _sidecar_path(root / "mirror.osm.pbf").exists()
 
 
 def test_index_idempotent(root: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -240,12 +241,6 @@ def root_with_corpus(tmp_path: Path) -> tuple[Path, Path, str]:
 
     manifest = f"""\
 org: https://x.test/athenaeum
-corpora:
-  corpus:
-    visibility: public
-    path: corpus
-ledger:
-  ledger: {{}}
 references:
   osm-loc:
     description: osm mirror resolved through an attached location

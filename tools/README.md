@@ -6,7 +6,7 @@ shipping three libraries and two CLIs:
 | Package | Surface | Contract |
 |---|---|---|
 | `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → (demand-driven) normalize pipeline | [ATH Part II](../spec/corpus.md) |
-| `ath` | `ath <verb>` — system verbs against the member manifest (`status`, `sync`, `issue`, `corpus`, `ledger`) | [ATH Part I](../spec/athenaeum.md) |
+| `ath` | `ath <verb>` — instance verbs against the instance config (`init`, `status`, `issue`, `corpus`, `ledger`, `ref`) | [ATH Part I](../spec/athenaeum.md) |
 | `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH Part III](../spec/ledger.md) |
 
 Also bundled: the **universal** corpus schemas (`mime`, `origin`, `atom/**`,
@@ -28,7 +28,7 @@ uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with
 ```
 
 Consuming repos never vendor or path-depend on this package — the CLIs
-auto-discover the corpus root / member manifest by cwd.
+auto-discover the corpus root / instance config by cwd ($ATHENAEUM_ROOT overrides).
 
 ## Dev quickstart
 
@@ -47,18 +47,18 @@ uv run --no-sync ruff check src tests     # expect clean
 
 ```
 tools/
-├── pyproject.toml          # one distribution: packages src/{corpus,ath,ledger,codex}
+├── pyproject.toml          # one distribution: packages src/{corpus,ath,ledger,refdata}
 ├── README.md
 ├── src/
 │   ├── corpus/             # the corpus library + `corpus` CLI (+ schemas_default/)
-│   ├── ath/                # the umbrella CLI: manifest, status/sync, delegation shims
+│   ├── ath/                # the umbrella CLI: instance config, init/status, delegation shims
 │   └── ledger/             # model, check, verify, harvest, promote, views, coverage
 └── tests/
 ```
 
 ## Conformance authority
 
-The specification in [`../spec/`](../spec/) — one document, three parts, one
+The specification in [`../spec/`](../spec/) — one document, four parts, one
 version — is the contract. Where this implementation needs something the spec
-doesn't cover, the spec gets updated first (the workspace root `CLAUDE.md`
-states the same law).
+doesn't cover, the spec gets updated first (the repo root `CLAUDE.md` states
+the same law).

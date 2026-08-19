@@ -18,16 +18,10 @@ from ath.manifest import ManifestError, load_tracker
 
 MANIFEST = textwrap.dedent(
     """\
-    org: https://code.example.test/athenaeum
     tracker:
+      host: https://code.example.test
       repo: athenaeum/athenaeum
       snapshot: books/tickets.md
-    corpora:
-      corpus:
-        visibility: public
-    ledger:
-      ledger: {}
-    codices: {}
     """
 )
 
@@ -66,7 +60,7 @@ def test_snapshot_defaults_beside_the_manifest(tmp_path):
 @pytest.mark.parametrize(
     "manifest, fragment",
     [
-        ("tracker:\n  repo: o/r\n", "no org"),
+        ("tracker:\n  repo: o/r\n", "no host"),
         ("org: https://h.test/o\ntracker:\n  repo: justname\n", "owner/name"),
         ("org: https://h.test/o\ntracker: [nope]\n", "expected a mapping"),
     ],

@@ -33,19 +33,11 @@ def system(tmp_path: Path) -> Path:
     """Mirrors test_ledger_dedupe.py's `system` fixture — a full manifest
     `_system()` can resolve through."""
     root = tmp_path
-    (root / "athenaeum.yaml").write_text(
-        "org: https://example.test/org\n"
-        "corpora:\n"
-        "  corpus:\n"
-        "    visibility: public\n"
-        "ledger:\n"
-        "  ledger:\n"
-    )
-    (root / "corpora" / "corpus" / "records").mkdir(parents=True)
+    (root / "athenaeum.yaml").write_text("visibility: public\n")
+    (root / "corpus" / "records").mkdir(parents=True)
     ledger_dir = root / "ledger"
     (ledger_dir / "facts").mkdir(parents=True)
     (ledger_dir / "interpretations").mkdir()
-    (ledger_dir / "ledger.yaml").write_text("name: ledger\ncorpora: [corpus]\n")
     return root
 
 

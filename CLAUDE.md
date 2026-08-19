@@ -1,56 +1,49 @@
-# Athenaeum — orchestrator workspace
+# Athenaeum — the distribution (spec + tooling)
 
-Knowledge system: **corpus** (faithful bytes) → **ledger** (evidence-backed claims).
-Together they are the system's **end product**, consumed from outside — compilations,
-expert agents — under the consumption contract (spec Part III §12); the system holds no
-registry of consumers. This repo is the orchestrator: **the specification and the shared
-tooling, nothing else** — it is deployment-agnostic and publicly hostable. Everything
-instance-specific is deployment state: the member manifest (`athenaeum.yaml`, untracked —
-`athenaeum.yaml.example` is the template) and the member repos cloned at ignored paths
-(`corpus/`, `ledger/` at the root).
+This repository is the Athenaeum **distribution**: the specification and the
+shared tooling, deployment-agnostic and publicly hostable (spec Part I §2.1).
+It tracks **no instance state** — the system instantiated (corpus + ledger +
+config) is the **instance**, one private repo the tooling discovers by walking
+up from the working directory for `athenaeum.yaml` ($ATHENAEUM_ROOT
+overrides). Work in this repo is spec and tooling development; content work
+happens in an instance, under the instance's own `CLAUDE.md`.
 
-**The specification is law** — one spec, three parts, one version:
-`spec/athenaeum.md` (Part I, architecture), `spec/corpus.md` (Part II), `spec/ledger.md`
-(Part III). Code conforms to spec; when code needs something the spec doesn't cover, the
-spec changes first. External captures, deletions, and normative spec changes are
-owner-gated.
+**The specification is law** — one spec, four parts, one version:
+`spec/athenaeum.md` (Part I, architecture), `spec/corpus.md` (Part II),
+`spec/ledger.md` (Part III), `spec/custody.md` (Part IV). Amendment history:
+`spec/CHANGELOG.md`; the spec text carries current law only. Code conforms to
+spec; when code needs something the spec doesn't cover, the spec changes
+first — and an amendment lands complete: text + enforcement/guidance sweep +
+migration story, together (Part I §8). Normative spec changes are owner-gated.
 
-**Boot order for a working session**: this file, then the deployment's own notes —
-`corpus/runbooks/deployment.md` (members, backlog location, known-red baselines) and the
-runbooks beside it. Operational knowledge lives with the members (corpus `runbooks/`,
-ledger `docs/`), never in this repo.
+## Layout
 
-## Operating principles
+- `spec/` — the four parts + CHANGELOG.
+- `tools/` — the `athenaeum` Python distribution: the `ath` and `corpus` CLIs
+  (`uv tool install --editable tools/` puts them on PATH). Templates a new
+  instance is scaffolded from (`ath init`) live at `tools/src/ath/templates/`
+  — agent definitions included: edit them THERE; instances hold copies.
+- `scanner/` — the residence scanner (Bun/TypeScript): host-side manifest
+  publisher for attached locations (Part IV §5). Its manifest format is its
+  own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
 
-- **Deferral**: records are usable from ingest; normalization runs only under demand
-  (queue = demand, never backlog — corpus.md §8.5). Never propose pre-emptive forming
-  sweeps or standing drain loops. The ledger cites deferred surfaces at reduced strength
-  (ledger.md 1.8); citations are themselves the demand signal.
-- **Tenancy is derived, per record**: origin overlays declare `tenancy: public|private`
-  (fail closed private); publication filters on derived sensitivity, fail closed — the
-  consumption contract is the wall (ledger.md §6.4, §12). One corpus, one ledger —
-  privacy is never a repo partition.
-- **Thin operation**: no resident skill, no logbook. Memory = the spec + tracker + git
-  history + member runbooks.
-
-## Gates (run before reporting any content/tooling change done)
+## Gates (run before reporting any tooling change done)
 
     cd tools && uv run --no-sync python -m pytest -q     # NOT bare `uv run pytest`
     uv run --no-sync ruff check src tests
-    uv run --no-sync ath ledger check && uv run --no-sync ath ledger verify
-    corpus lint <id>                                     # per touched record
 
-Install once: `cd tools && uv sync` (editable; `corpus`/`ath` land on PATH via the venv).
-Known-red baselines are deployment state — check `corpus/runbooks/deployment.md` before
-treating a red gate as a regression.
+Live-instance tests (members-parity and kin) self-skip unless an instance is
+reachable — point `ATHENAEUM_ROOT` at one to include them, and check the
+instance's `corpus/runbooks/deployment.md` for known-red baselines before
+treating a red gate as a regression. A change that touches ledger/corpus
+behavior also owes the instance gates run against a real instance:
 
-## Surfaces
+    uv run --no-sync ath ledger check --root $ATHENAEUM_ROOT
+    uv run --no-sync ath ledger verify --root $ATHENAEUM_ROOT
 
-- `ath` — status/sync, `ath issue` (tracker read + snapshot sync; writes go through the
-  forge's own CLI), `ath ledger …` (check/verify/harvest/merge/…).
-- `corpus` — capture → ingest → (deferred) normalize; `inspect`/`diagnose`/`body`/`resolve`.
-- Dispatchable workers in `.claude/agents/`: `normalizer` (form passes), `ledger-scribe`
-  (interpretive authoring), `overlay-author` (new web hosts). They never run git; review
-  and commit their work here.
-- Backlog: the tracker registered in the manifest (`tracker:`); its committed snapshot
-  lives where `tracker.snapshot` points (regenerate with `ath issue sync`).
+## Backlog
+
+`athenaeum/athenaeum` on the deployment forge carries spec + tooling tickets
+(read via `ath issue --root <instance>` where the instance's tracker points
+here, or the forge UI; writes via `fj`). Instance content tickets live on the
+instance's own tracker — see its config.
