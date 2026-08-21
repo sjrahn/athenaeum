@@ -1,8 +1,8 @@
 # The instance — the deployment's own private repo (corpus/ + ledger/ +
-# athenaeum.yaml), conventionally checked out inside this workspace during
-# development. Never tracked here: this repo is the distribution — spec +
-# tooling only (spec Part I §2.1).
-/instance/
+# athenaeum.yaml), conventionally checked out (or symlinked) inside this
+# workspace during development. Never tracked here: this repo is the
+# distribution — spec + tooling only (spec Part I §2.1).
+/instance
 
 # Retired pre-v26 member checkouts (kept as archives until removed).
 /corpus/
