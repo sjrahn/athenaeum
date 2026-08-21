@@ -19,9 +19,9 @@ Exposes:
   annotation-zone blocks (context; `issue` is one namespace of it).
 - Accessors: `media_type_for`, `title_for`, `description_for`, `derived_editorial`,
   `artifact_block`, `iter_origin_blocks`, `iter_classify_blocks`, `iter_embed_blocks`,
-  `iter_context_blocks`, `iter_issue_blocks`, `primary_origin_uri`.
+  `iter_context_blocks`, `iter_issue_blocks`, `iter_sweep_blocks`, `primary_origin_uri`.
 - Mutators: `set_artifact_block`, `append_origin_block`,
-  `append_embed_block`, `append_context_block`, `append_issue_block`.
+  `append_embed_block`, `append_context_block`, `append_issue_block`, `append_sweep_block`.
 - Hash helpers: `format_hash(algo, hex_value)`, `record_hashes(post)`,
   `set_record_hashes(post, values)` (spec §4.2.1, §7.6, §7.9 — v20).
 - Stub creation: `stub_frontmatter(...)` returns the minimal frontmatter dict; the
@@ -1057,6 +1057,21 @@ def iter_issue_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
             }
 
 
+def iter_sweep_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
+    """Yield each `sweep`-namespace context block as `{id, subtype, fields}`.
+
+    The `sweep` namespace projection of `iter_context_blocks` (spec §4.3.3.6): `id` is
+    always `extraction`, `fields` carries `kind`, `detector`, and (when the band is not
+    the whole transport) `address`."""
+    for ctx in iter_context_blocks(post):
+        if (ctx.get("namespace") or "") == "sweep":
+            yield {
+                "id": ctx.get("id"),
+                "subtype": ctx.get("subtype"),
+                "fields": ctx.get("fields") or {},
+            }
+
+
 def iter_reference_blocks(post: frontmatter.Post) -> Iterator[dict[str, Any]]:
     """Yield each `reference`-namespace context block as `{id, subtype, fields}`.
 
@@ -1530,6 +1545,30 @@ def append_issue_block(
     if fields:
         block_fields.update(fields)
     append_context_block(post, namespace="issue", id=id, subtype=subtype, fields=block_fields)
+
+
+def append_sweep_block(
+    post: frontmatter.Post,
+    *,
+    kind: str,
+    detector: str,
+    address: str | None = None,
+    subtype: str | None = None,
+    fields: dict[str, Any] | None = None,
+) -> None:
+    """Append a `sweep`-namespace context block (spec §4.3.3.6 shape).
+
+    Convenience over `append_context_block(namespace="sweep", …)`: declares that `kind`
+    was carried to exhaustion by `detector` over `address` (absent = whole transport).
+    The id is always `extraction` — the namespace's one and only id."""
+    block_fields: dict[str, Any] = {"kind": kind, "detector": detector}
+    if address:
+        block_fields["address"] = address
+    if fields:
+        block_fields.update(fields)
+    append_context_block(
+        post, namespace="sweep", id="extraction", subtype=subtype, fields=block_fields
+    )
 
 
 # ---------- derived classifications view (spec §9.1) ---------- #

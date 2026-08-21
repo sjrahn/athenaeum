@@ -282,6 +282,19 @@ def _print_demands(demands: list[dict], *, show_satisfied: bool) -> None:
                 print(f"    blocked on {need.get('action', '?')}: {need.get('why', '')}")
 
 
+def _print_intent_trailer(fact: dict, schemas: dict[str, dict]) -> None:
+    """The type's declared `normalization_intent` (§4.4), when one exists —
+    the enqueue-with-intent seam (§6.3) is agent-side; this just makes the
+    intent readable at the demand surface, beside the fields it's owed for."""
+    schema = schemas.get(str(fact.get("type"))) or {}
+    intent = schema.get("normalization_intent")
+    if not intent:
+        return
+    print(f"\nnormalization_intent (schemas/{fact.get('type')}.yaml):")
+    for line in str(intent).strip("\n").splitlines():
+        print(f"  {line}")
+
+
 def _cmd_demands(argv: Sequence[str]) -> int:
     ap = _base_parser(
         "ath ledger demands",
@@ -326,6 +339,7 @@ def _cmd_demands(argv: Sequence[str]) -> int:
             print(f"ath ledger demands: {ns.draft}: {e}", file=sys.stderr)
             return 1
         _print_demands(_evaluate(fact), show_satisfied=ns.all)
+        _print_intent_trailer(fact, schemas)
         return 0
 
     if ns.fact_id:
@@ -334,6 +348,7 @@ def _cmd_demands(argv: Sequence[str]) -> int:
             print(f"ath ledger demands: unknown fact {ns.fact_id!r}", file=sys.stderr)
             return 1
         _print_demands(_evaluate(fact), show_satisfied=ns.all)
+        _print_intent_trailer(fact, schemas)
         return 0
 
     # no id: a ledger-wide summary — counts per rule, by state

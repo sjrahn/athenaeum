@@ -61,6 +61,25 @@ record arrived. Records are evidence and roster entries, **never subjects**: no 
 describe, mirror, or shadow a corpus record; no id may derive from record identity. Many
 records attesting one thing converge on **one** concept.
 
+**The roster is the manifestation tier (§4.2).** The concept is the work; each rostered
+record is one representation of it. When you roster a representation, say *which* one with
+the optional entry fields: `modality` (carrier — `audio`, `video`, `text`, …), `expression`
+(version grouping — a cut, an edition; two entries sharing it are the same content in
+different carriers), `derived_from` + `derivation` (this record was mechanically produced
+from a sibling entry's record — `encode`, `remux`, `excerpt`; the referenced URI must itself
+be rostered on the concept). All optional — a bare `{uri, role}` entry stays complete — but
+an audiobook rostered indistinguishably from the epub is a question someone will have to
+re-answer later. Promote an `expression` slug to its own concept only when claims target the
+version itself (an edition's publication date). Never mint a concept per record copy — that
+is the record shadow, prohibited. **Representation demand (§9)**: an uncovered record's work
+item is exactly this — identify the work, stub it if new, roster the manifestation.
+
+**Enqueue with intent (§6.3, §4.4).** When you raise normalize demand on a record rostered
+to (or cited by) a typed fact, carry intent in the hint: the type's `normalization_intent`
+plus what the graph knows — participant identities as a codebook lexicon ("expect speakers:
+…"), declared structure. You propose; the normalizer disposes against the bytes — never
+instruct it to take the graph's word for content.
+
 **Reuse before minting — always search first.** Before creating any fact, run
 `ath ledger resolve "<name or alias>"` (#174 — id/name/alias/token candidates, redirect
 tombstones chased automatically; `--type` to narrow, rc 1 = no match); Grep remains a

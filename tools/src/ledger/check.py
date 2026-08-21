@@ -372,6 +372,10 @@ def run_check(
         # mechanism itself ("snapshot records roster on the dataset's own
         # concept ... never per entry"). Warning here would fight the spec's
         # own design.
+        # the roster's own uri set — used below to check that a `derived_from`
+        # (§4.2) names a sibling entry actually rostered on this same concept
+        roster_uris = {str(e.get("uri")) for e in (o.get("artifacts") or [])
+                       if isinstance(e, dict)}
         for entry in o.get("artifacts") or []:
             if not isinstance(entry, dict):
                 rep.err(where, "roster entries must be objects")
@@ -402,6 +406,40 @@ def run_check(
             if role and declared_roles and str(role) not in declared_roles:
                 rep.err(where, f"roster role {role!r} not among the {o.get('type')!r} "
                                f"schema's roster_roles {declared_roles}")
+
+            # representation fields (§4.2, §13.1) — the manifestation tier.
+            # None of the four is required; a bare {uri, role} entry stays
+            # complete. `modality` and `derivation` are registered vocabulary
+            # (§8), validated the same shape-discipline `role` gets above —
+            # not (yet) checked against VOCAB.md's Retired list, mirroring
+            # `role`'s own current validation exactly (retired-vocabulary
+            # rejection today only runs for claim predicates/qualifiers).
+            modality = entry.get("modality")
+            if modality is not None and not (isinstance(modality, str) and modality):
+                rep.err(where, f"roster modality {modality!r} must be a non-empty string")
+            derivation = entry.get("derivation")
+            if derivation is not None and not (isinstance(derivation, str) and derivation):
+                rep.err(where, f"roster derivation {derivation!r} must be a non-empty string")
+            expression = entry.get("expression")
+            if expression is not None and not (
+                isinstance(expression, str) and SLUG_RE.match(expression)
+            ):
+                rep.err(where, f"roster expression {expression!r} is not a readable slug")
+            derived_from = entry.get("derived_from")
+            has_derived_from = "derived_from" in entry
+            has_derivation = "derivation" in entry
+            if has_derived_from != has_derivation:
+                rep.err(where, "roster derived_from and derivation must travel together "
+                               "(§4.2) — one names the sibling record, the other the "
+                               "mechanical relation to it")
+            if derived_from is not None:
+                dm = CORPUS_URI_RE.match(str(derived_from))
+                if not dm:
+                    rep.err(where, f"roster derived_from {derived_from!r} is not a "
+                                   "corpus:// full-hash URI")
+                elif str(derived_from) not in roster_uris:
+                    rep.err(where, f"roster derived_from {derived_from!r} is not itself "
+                                   "rostered on this concept (§4.2)")
 
         # the per-fact sources table: claim evidence cites a `source` key
         # (validated in the claims pass below) that resolves here to exactly
@@ -551,12 +589,15 @@ def run_check(
             rep.err(where, f"schema: {o.get('type')}.{pred} value {c.get('value')!r} "
                            f"not among declared values {values}")
         # value kinds (§4.5, §5.1): a field declaring `value:` types the claim's
-        # whole `value` as that kind's object shape. Absent = frontier, never
-        # an error (§4.4, §14); an undeclared kind is flagged structurally
-        # above, not repeated per claim.
+        # whole `value` as that kind's object shape — or, on a structured
+        # array, one object per element (ledger.md §4.5, §5.1). Absent =
+        # frontier, never an error (§4.4, §14); an undeclared kind is flagged
+        # structurally above, not repeated per claim.
         fkind = fspec.get("value")
         if isinstance(fkind, str) and fkind in kinds and c.get("value") is not None:
-            for issue in values_mod.validate_value(kinds[fkind], c["value"]):
+            validator = (values_mod.validate_array_value if isinstance(c["value"], list)
+                        else values_mod.validate_value)
+            for issue in validator(kinds[fkind], c["value"]):
                 rep.err(where, f"schema: {o.get('type')}.{pred} {issue}")
         obj = c.get("object")
         if fspec.get("participant") and obj is not None:

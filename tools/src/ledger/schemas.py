@@ -15,7 +15,7 @@ import yaml
 from ledger.model import SLUG_RE
 
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
-               "expectations"}
+               "expectations", "normalization_intent"}
 FIELD_KEYS = {"target", "description", "expected", "values", "participant",
               "timeboxed", "elements", "value"}
 ELEMENT_KEYS = {"target", "values", "description", "value"}
@@ -44,6 +44,9 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
         unknown = set(data) - SCHEMA_KEYS
         if unknown:
             errors.append(f"{where}: unknown keys {sorted(unknown)}")
+        intent = data.get("normalization_intent")
+        if intent is not None and not isinstance(intent, str):
+            errors.append(f"{where}: normalization_intent must be a string")
         fields = data.get("fields") or {}
         if not isinstance(fields, dict):
             errors.append(f"{where}: fields must be a mapping")
@@ -123,10 +126,17 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
         ):
             errors.append(f"{where}: participants must be a list of types (positional)")
         exp_ids: dict[str, int] = {}
+        # a `when` selector that fails the shape check below would crash
+        # `expectation_selects`'s `(edge_type, sel), = when.items()` at
+        # evaluation time — reported here AND dropped from the returned
+        # schema (the narrower drop: just the one malformed expectation,
+        # never the whole file, since every other entry may be sound).
+        bad_expectations: set[int] = set()
         for i, exp in enumerate(data.get("expectations") or []):
             ew = f"{where}: expectations[{i}]"
             if not isinstance(exp, dict):
-                errors.append(f"{ew} must be a mapping")
+                errors.append(f"{ew} must be a mapping — dropped")
+                bad_expectations.add(i)
                 continue
             bad = set(exp) - EXPECTATION_KEYS
             if bad:
@@ -149,7 +159,9 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
             if when is not None:
                 if not (isinstance(when, dict) and len(when) == 1
                         and all(isinstance(v, dict) for v in when.values())):
-                    errors.append(f"{ew} when must be {{edge-type: {{kind?, with?}}}}")
+                    errors.append(f"{ew} when must be {{edge-type: {{kind?, with?}}}} — "
+                                  "dropped")
+                    bad_expectations.add(i)
                 else:
                     sel = next(iter(when.values()))
                     bad = set(sel) - {"kind", "with"}
@@ -162,32 +174,60 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
                         errors.append(f"{ew} when kind must be a list of values")
                     if "with" in sel and not isinstance(sel["with"], str):
                         errors.append(f"{ew} when with must be a fact id")
+        if bad_expectations:
+            data = dict(data)
+            data["expectations"] = [e for i, e in enumerate(data.get("expectations") or [])
+                                    if i not in bad_expectations]
         out[f.stem] = data
     return out, errors
 
 
-def expectation_selects(exp: dict, fact: dict, edges: list[dict]) -> bool:
+def expectation_selects(exp: dict, fact: dict, edges: list[dict],
+                        facts_by_id: dict[str, dict] | None = None,
+                        lineage: dict[str, str] | None = None) -> bool:
     """Does this expectation's `when` select this fact? (§4.4)
 
     No `when` selects every fact of the type. A selector names an edge type;
-    the fact is selected when it participates in an edge of that type whose
-    `kind` claim (when `kind:` is given) takes a listed value and whose
-    participants (when `with:` is given) include the named id — a fact is
-    never selected by a `with:` naming itself.
+    the fact is selected when it carries the edge's `subject` and/or is
+    among its `participants` (ledger.md §4.3: a file is an edge by either),
+    the `kind` claim (when `kind:` is given) takes a listed value, and the
+    edge's subject/participants (when `with:` is given) include the named
+    id — a fact is never selected by a `with:` naming itself. `facts_by_id`
+    + `lineage` (`facts/LINEAGE.json`, §4.1), when given, resolve every
+    subject/participant through at most one lineage hop before matching, so
+    a merged id still selects; omitted, ids match as written (a malformed
+    `when` — caught structurally at load time by `load_schemas` — simply
+    never selects, rather than crashing on `when.items()`).
     """
     when = exp.get("when")
     if not when:
         return True
-    fid = str(fact.get("id"))
+    if not (isinstance(when, dict) and len(when) == 1):
+        return False
     (edge_type, sel), = when.items()
+    if not isinstance(sel, dict):
+        return False
+    fid = str(fact.get("id"))
     kinds = sel.get("kind")
     other = sel.get("with")
     if other is not None and fid == other:
         return False
+    if facts_by_id is not None:
+        from ledger.scope import make_resolver
+        resolve_id = make_resolver(facts_by_id, lineage or {})
+    else:
+        def resolve_id(ref: str) -> str | None:
+            return ref
     for edge in edges:
         if str(edge.get("type")) != edge_type:
             continue
-        parts = [str(p) for p in edge.get("participants") or []]
+        parts: set[str] = set()
+        subj = edge.get("subject")
+        if isinstance(subj, str) and (r := resolve_id(subj)):
+            parts.add(r)
+        for p in edge.get("participants") or []:
+            if isinstance(p, str) and (r := resolve_id(p)):
+                parts.add(r)
         if fid not in parts:
             continue
         if other is not None and other not in parts:

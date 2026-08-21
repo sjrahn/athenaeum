@@ -8,6 +8,7 @@ holds the key sets, vocabularies, and grammar regexes of `spec/ledger.md`
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 from pathlib import Path
@@ -69,7 +70,8 @@ CLAIM_KEYS = {
 # not per evidence entry).
 EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind", "element"}
 SOURCES_ENTRY_KEYS = {"record", "ref", "verified"}
-ROSTER_KEYS = {"uri", "role", "note", "provenance"}
+ROSTER_KEYS = {"uri", "role", "note", "provenance",
+               "modality", "expression", "derived_from", "derivation"}
 # A hypothesis's `proposes` draft claim (§7.2) predates the fact it targets, so
 # it has no sources table of its own to reference — its evidence stays in the
 # pre-reforge inline-`uri` shape until `ath ledger promote` lands it on the
@@ -246,8 +248,6 @@ def canonical_claim_state(claim: dict, sources: dict | None = None) -> str:
 
 Day = tuple[int, int, int]
 
-_DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-
 
 def _token_bounds(tok: str) -> tuple[Day, Day] | None:
     """One period token (YYYY[-MM[-DD]], optional time ignored) → (first, last) day."""
@@ -261,8 +261,15 @@ def _token_bounds(tok: str) -> tuple[Day, Day] | None:
     if not 1 <= mo <= 12:
         return None
     if m.group(3) is None:
-        return (y, mo, 1), (y, mo, _DAYS_IN_MONTH[mo - 1])
+        # `calendar.monthrange` range-checks the year internally and gives the true
+        # per-month/leap-year day count — a hardcoded table (28/29/30/31) got February
+        # wrong on every non-leap year.
+        _, last_day = calendar.monthrange(y, mo)
+        return (y, mo, 1), (y, mo, last_day)
     d = int(m.group(3))
+    _, last_day = calendar.monthrange(y, mo)
+    if not 1 <= d <= last_day:
+        return None
     return (y, mo, d), (y, mo, d)
 
 

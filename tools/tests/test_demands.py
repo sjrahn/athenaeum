@@ -23,7 +23,7 @@ from ledger.demands import (
     load_demand_rules,
     named_expectations,
 )
-from ledger.schemas import load_schemas
+from ledger.schemas import expectation_selects, load_schemas
 from tests.test_ledger_check import H_PUB, _check, _claim, _fact, _interp, _regen
 from tests.test_ledger_check import system as system  # re-exported pytest fixture
 
@@ -324,6 +324,30 @@ def test_when_related_edge_must_carry_exactly_one_type(tmp_path: Path) -> None:
     assert any("related.edge: must be {edge-type" in e for e in errors)
 
 
+def test_malformed_related_edge_selector_is_dropped_not_kept(tmp_path: Path) -> None:
+    """A rule whose `related.edge` selector fails the shape check must be
+    DROPPED, not merely reported-and-kept — kept, it would crash
+    `_edge_neighbors`'s `(etype, sel), = edge_sel.items()` the first time a
+    fact actually reaches evaluation (the bug this regression-tests: a
+    2-key edge selector unpacked into a 1-tuple target)."""
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: edge, edge: { met: {}, knew: {} } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    rules, errors = load_demand_rules(tmp_path)
+    assert "r" not in rules
+    assert any("related.edge: must be {edge-type" in e for e in errors)
+    # and even a hand-built condition with the same malformed shape (bypassing
+    # the loader entirely) must not crash evaluation — it simply never matches
+    fact = {"id": "x", "type": "person"}
+    edge = {"id": "e", "type": "met", "participants": ["x", "y"]}
+    assert not condition_matches(
+        {"related": {"via": "edge", "edge": {"met": {}, "knew": {}}}},
+        fact, [edge], {"x": fact},
+    )
+
+
 def test_when_related_where_parses_the_condition_grammar(tmp_path: Path) -> None:
     _write_rule(tmp_path, "r", (
         "id: r\ndescription: d\n"
@@ -531,6 +555,37 @@ def test_condition_edge_target_type() -> None:
         {"edge": {"employment": {"target_type": "organization"}}}, steven, [edge], facts_by_id)
     assert not condition_matches(
         {"edge": {"employment": {"target_type": "person"}}}, steven, [edge], facts_by_id)
+
+
+def test_condition_edge_matches_on_subject_not_only_participants() -> None:
+    """spec/ledger.md §4.3: "A file is an edge when it carries `subject`
+    and/or `participants`." `edge:` conditions used to read only
+    `participants`, so a rule keyed on edge participation quietly never
+    fired for the subject side — matching finding 12's exact repro."""
+    person_a = {"id": "person-a", "type": "person"}
+    edge = {"id": "e1", "type": "residence", "subject": "person-a",
+           "participants": ["place-b"]}
+    facts_by_id = {"person-a": person_a}
+    assert condition_matches({"edge": {"residence": {}}}, person_a, [edge], facts_by_id)
+    # `related: {via: edge}` already got this right — same fact, same answer
+    assert condition_matches(
+        {"related": {"via": "edge", "edge": {"residence": {}}}},
+        person_a, [edge], facts_by_id)
+
+
+def test_condition_edge_with_resolves_participants_through_lineage() -> None:
+    """The `edge:` condition's `with:` used to compare raw, unresolved
+    participant strings — a retired co-participant id never matched even
+    though `related: {via: edge}`'s equivalent selector already resolves
+    through lineage (§4.1). Mirrors
+    `test_related_via_edge_hop_resolves_participants_through_lineage`."""
+    steven = {"id": "steven", "type": "person"}
+    edge = {"id": "steven--kat", "type": "relationship",
+           "participants": ["steven", "kat-rahn"]}  # names the retired id
+    lineage = {"kat-rahn": "kat-rahn-jr"}
+    cond = {"edge": {"relationship": {"with": "kat-rahn-jr"}}}
+    assert not condition_matches(cond, steven, [edge], {}, lineage=None)
+    assert condition_matches(cond, steven, [edge], {}, lineage=lineage)
 
 
 def test_condition_all_of() -> None:
@@ -1085,6 +1140,37 @@ def test_expectation_selects_excludes_the_with_fact_itself() -> None:
         interps=[],
     )
     assert demands == []
+
+
+def test_expectation_selects_on_subject_not_only_participants() -> None:
+    """`schemas.expectation_selects` carried the identical participants-only
+    blind spot `_edge_matches` did (§4.3: a file is an edge by subject
+    and/or participants) — a named expectation keyed on an edge type never
+    fired for the subject side."""
+    schemas = {
+        "person": {
+            "type": "person", "fields": {"date_of_birth": {}},
+            "expectations": [{"when": {"residence": {}}, "expect": ["date_of_birth"]}],
+        }
+    }
+    person_a = {"id": "person-a", "type": "person"}
+    edge = {"id": "e1", "type": "residence", "subject": "person-a", "participants": ["place-b"]}
+    demands = evaluate_demands(
+        person_a, rules={}, schemas=schemas, kinds={}, facts_by_id={"person-a": person_a},
+        edges=[edge], interps=[],
+    )
+    assert any(d["field"] == "date_of_birth" for d in demands)
+
+
+def test_expectation_selects_malformed_when_never_crashes() -> None:
+    """A `when` that fails the shape check (dropped by `load_schemas`, per
+    the regression above) must not crash `expectation_selects` even when
+    handed to it directly — arity/isinstance-guarded, never
+    `(edge_type, sel), = when.items()` on a 2-key or non-dict `when`."""
+    fact = {"id": "x", "type": "person"}
+    assert expectation_selects({"when": {"a": {}, "b": {}}, "expect": ["f"]}, fact, []) is False
+    assert expectation_selects({"when": "not-a-dict", "expect": ["f"]}, fact, []) is False
+    assert expectation_selects({"when": {"a": "not-a-dict"}, "expect": ["f"]}, fact, []) is False
 
 
 def test_expected_true_field_emits_a_demand() -> None:
@@ -1728,6 +1814,51 @@ def test_cli_demands_draft_evaluates_a_not_yet_landed_fact(
     out = capsys.readouterr().out
     assert rc == 0
     assert "future-bob" in out and "hat_colour" in out
+
+
+# --------------------------------------------- normalization_intent trailer (v31)
+
+
+def test_cli_demands_prints_normalization_intent_trailer(system: Path, capsys) -> None:
+    """The type's declared `normalization_intent` (§4.4) surfaces at the
+    demand surface (§6.3's enqueue-with-intent seam is agent-side; this is
+    just making the intent readable where the fields it's owed for live)."""
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "person.yaml").write_text(
+        "type: person\ndescription: d\n"
+        "normalization_intent: |\n"
+        "  Transcriptions want per-track structural marks.\n"
+    )
+    _fact(system, "person", {"id": "bob", "type": "person", "name": "Bob"})
+    rc = ledger_main(["demands", "bob", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "normalization_intent (schemas/person.yaml):" in out
+    assert "Transcriptions want per-track structural marks." in out
+
+
+def test_cli_demands_omits_intent_trailer_when_undeclared(system: Path, capsys) -> None:
+    _fact(system, "person", {"id": "bob", "type": "person", "name": "Bob"})
+    rc = ledger_main(["demands", "bob", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "normalization_intent" not in out
+
+
+def test_cli_demands_draft_prints_normalization_intent_trailer(
+    system: Path, tmp_path: Path, capsys,
+) -> None:
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "person.yaml").write_text(
+        "type: person\ndescription: d\nnormalization_intent: intent prose\n"
+    )
+    draft = tmp_path / "draft.json"
+    draft.write_text(json.dumps({"id": "future-bob", "type": "person"}), encoding="utf-8")
+    rc = ledger_main(["demands", "--draft", str(draft), "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "normalization_intent (schemas/person.yaml):" in out
+    assert "intent prose" in out
 
 
 def test_cli_demands_no_arg_prints_ledger_wide_summary(system: Path, capsys) -> None:

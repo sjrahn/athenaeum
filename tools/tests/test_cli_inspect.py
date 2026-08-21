@@ -142,6 +142,7 @@ def test_inspect_full_card_on_formed_fixture(tmp_path, capsys):
     assert "sections:    1 section(s), 3 segment(s)" in out
     assert "axes:        turn=1-3 (3 segments)" in out
     assert "embeds:      none" in out
+    assert "sweeps:      none (sparse — spec §4.3.3.6)" in out
     # No `working_kind:` schema entry for application/json — honest, not silent.
     assert "mime pipeline: none registered for media_type 'application/json'" in out
     # The record-level unit ops (§6.2) — available because the origin overlay declares
@@ -451,6 +452,30 @@ def test_inspect_empty_sections_honesty(tmp_path, capsys):
     assert "sections:    0 section(s), 0 segment(s)" in out
     assert "axes:        none" in out
     assert "embeds:      none" in out
+    assert "sweeps:      none (sparse — spec §4.3.3.6)" in out
+
+
+def test_inspect_shows_swept_bands_per_kind(tmp_path, capsys):
+    """`corpus inspect`'s content-axes section surfaces the sweep declaration's per-`kind`
+    completeness readout (spec §4.3.3.6's last paragraph) — grouped, whole-transport bands
+    named honestly rather than left blank."""
+    root = _corpus(tmp_path)
+    rid = _stage(root, b"fake mp3 bytes", mime="audio/mpeg", name="a.mp3", with_origin=False)
+    rf = paths.record_path(root, rid)
+    post = records.load(rf)
+    records.append_sweep_block(
+        post,
+        kind="text/transcript",
+        detector="corpus.draft.mime/audio@0.1.0",
+        address="time_range=0-3600",
+    )
+    records.append_sweep_block(post, kind="structural", detector="corpus.draft.mime/audio@0.1.0")
+    records.dump(post, rf)
+
+    rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "sweeps:      structural (whole transport) · text/transcript (time_range=0-3600)" in out
 
 
 def test_inspect_no_artifact_block_honesty(tmp_path, capsys):

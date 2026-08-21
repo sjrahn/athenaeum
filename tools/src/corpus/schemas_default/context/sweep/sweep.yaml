@@ -1,0 +1,39 @@
+# Universal sweep-block fields — applied to the `sweep`-namespace context block
+# (<!--context sweep/extraction-->), spec §4.3.3.6. Unlike `issue`, the `sweep` namespace
+# declares exactly one id — `extraction` — ever, so there is no per-id overlay tier: this
+# file is the whole namespace declaration, loaded via the same
+# `context/<namespace>/<namespace>.yaml` universal rung `context/issue/issue.yaml` uses
+# (spec §3's schema chain) — which is also what makes the bare `sweep` namespace resolve
+# for the generic `context-namespace-unknown` lint check (`context/sweep/extraction.yaml`
+# alone would not: that check loads by namespace, not by namespace+id).
+#
+# See spec/corpus.md §4.3.3 (context block) and §4.3.3.6 (the sweep namespace).
+
+description: |
+  Universal fields the <!--context sweep/extraction--> block carries: that one extraction
+  class (`kind`) has been carried to exhaustion over a band of the record's address space
+  by a named pass (`detector`). The universal context fields — `address` (the band; absent
+  = whole transport) and `provenance` — come from the context-block machinery (§4.3.3.1),
+  not this overlay.
+
+applies_at: [record, segment]
+
+extended_fields:
+  kind:
+    type: string
+    required: true
+    description: |
+      The segment opener-id the sweep vouches for — the literal `structural` (the fifth
+      segment kind, the byte-mark, §4.3.2.3), a bare atom name (`text`, `image`, `audio`,
+      `video`), or a declared `atom/<atom>/<id>` overlay opener-id (`text/ocr`,
+      `text/transcript`). MUST resolve: `structural` and the four bare atoms always do;
+      anything else must resolve against a declared atom overlay (spec §3's schema chain
+      — the same resolution a segment's own opener-id gets).
+  detector:
+    type: string
+    required: true
+    description: |
+      Touch identifier of the pass that swept the band (e.g. `corpus.draft.video@1.0.0`,
+      `claude-opus-4-8[1m]`). Only the pass that processed the entire band may write one
+      — a sweep is a claim about work done, checkable against nothing but the pass that
+      did it (spec §4.3.3.6).

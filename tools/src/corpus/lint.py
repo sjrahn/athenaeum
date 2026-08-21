@@ -1107,6 +1107,214 @@ def _rule_context_shape(post, blocks, root) -> Iterator[Finding]:
                 )
 
 
+# ---------- annotation-zone (sweep) rules, spec §4.3.3.6 ---------- #
+
+_STRUCTURAL_KIND = "structural"
+
+
+def _sweep_kind_resolves(root, kind: str) -> bool:
+    """A sweep `kind` resolves the way a segment opener-id does (spec §3, §4.3.3.6): the
+    literal `structural` byte-mark kind (checked by the caller before this is reached), a
+    bare atom name (`text`/`image`/`audio`/`video` — an unoverlaid content kind), or a
+    declared `atom/<atom>/<id>` overlay opener-id (`text/ocr`)."""
+    if kind in _schemas.VALID_ATOMS:
+        return True
+    if "/" not in kind:
+        return False
+    atom, _, _ = kind.partition("/")
+    return _schemas.load_atomic_overlay(root, atom, kind) is not None
+
+
+def _rule_sweep_shape(post, blocks, root) -> Iterator[Finding]:
+    """Every sweep block (`<!--context sweep/extraction-->`, spec §4.3.3.6) carries a
+    `kind` that resolves — the literal `structural`, a bare atom, or a declared atom
+    overlay opener-id — and a `detector` touch identifier. Both are required overlay
+    fields; a sweep missing either is a violation, not a silent no-op."""
+    for idx, sweep in enumerate(_records.iter_sweep_blocks(post)):
+        fields = sweep.get("fields") or {}
+        kind = fields.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            yield Finding(
+                rule_id="sweep-kind-invalid",
+                severity="error",
+                message=f"sweep #{idx + 1} carries no `kind` (spec §4.3.3.6: required).",
+            )
+        elif kind.strip() != _STRUCTURAL_KIND and not _sweep_kind_resolves(root, kind.strip()):
+            yield Finding(
+                rule_id="sweep-kind-invalid",
+                severity="error",
+                message=(
+                    f"sweep #{idx + 1} `kind: {kind!r}` resolves to neither the literal "
+                    f"`structural` nor a declared atom overlay — declare it under "
+                    f"schema/atom/<atom>/ or fix the id (spec §4.3.3.6)."
+                ),
+            )
+        det = fields.get("detector")
+        if not isinstance(det, str) or not _TOUCH_RE.match(det):
+            yield Finding(
+                rule_id="sweep-detector-format",
+                severity="error",
+                message=(
+                    f"sweep #{idx + 1} `detector: {det!r}` is not a valid touch "
+                    f"identifier (spec §4.3.3.6)."
+                ),
+            )
+
+
+def _rule_sweep_address_grammar(post, blocks, root) -> Iterator[Finding]:
+    """A sweep block's `address:` (when present) parses in the record's mime address
+    scheme (spec §4.3.3.6: "`address` MUST parse in the record's scheme"). Reuses the
+    same two checks a stored segment address gets: any region-shaped value (`bbox=`,
+    `crop=`, ...) conforms to the region grammar (`address-region-invalid`'s), and every
+    param key the band chains is one the mime's `address_scheme` actually declares —
+    an undeclared axis names nothing, same reasoning as the `frame=` declared-ness check."""
+    artifact = _records.artifact_block(post) or {}
+    mime = (artifact.get("mime") or "").strip()
+    schema = _schemas.load_mime_schema(root, mime) if mime else None
+    declared_params = {
+        (p or {}).get("param") for p in (schema or {}).get("address_scheme") or []
+    }
+    for idx, sweep in enumerate(_records.iter_sweep_blocks(post)):
+        fields = sweep.get("fields") or {}
+        addr = fields.get("address")
+        if not addr or not isinstance(addr, str):
+            continue  # missing/malformed `address` — `context-anchor-format` covers the latter
+        for param, problem in _region_problems(addr):
+            yield Finding(
+                rule_id="sweep-address-invalid",
+                severity="error",
+                message=f"sweep #{idx + 1} address `{addr}`: {problem}",
+                address=addr,
+                fields={"param": param},
+            )
+        if schema is None:
+            continue
+        for part in addr.split("&"):
+            key = part.partition("=")[0].strip()
+            if key and key not in declared_params:
+                yield Finding(
+                    rule_id="sweep-address-invalid",
+                    severity="error",
+                    message=(
+                        f"sweep #{idx + 1} address `{addr}`: `{key}=` is not a declared "
+                        f"axis of `{mime}` (spec §7.1) — a sweep band naming an "
+                        f"undeclared axis names nothing."
+                    ),
+                    address=addr,
+                    fields={"param": key},
+                )
+
+
+def _sweep_range_params(schema: dict[str, Any] | None) -> set[str]:
+    """Param keys the mime schema declares `type: range` (e.g. `time_range`) — the axes
+    §4.3.3.6's overlap check can compare numerically."""
+    return {
+        (p or {}).get("param")
+        for p in (schema or {}).get("address_scheme") or []
+        if (p or {}).get("type") == "range"
+    }
+
+
+def _addr_params(addr: str) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for part in addr.split("&"):
+        key, sep, value = part.partition("=")
+        key = key.strip()
+        if key:
+            out[key] = value if sep else None
+    return out
+
+
+def _parse_numeric_range(value: str) -> tuple[float, float] | None:
+    """Parse a `<start>-<end>` (or bare `<n>`) range value as a numeric span — honest
+    only for a genuinely numeric axis (the `time_range=<s>-<e>` mold, spec §4.3.3.6).
+    Anything else (an A1 range, a non-numeric token) returns None so the caller falls
+    back to the conservative "not comparable" path rather than misreading a foreign
+    grammar under the same param name."""
+    raw = value.strip()
+    parts = raw.split("-")
+    try:
+        if len(parts) == 1:
+            v = float(parts[0])
+            return (v, v)
+        if len(parts) == 2:
+            return (float(parts[0]), float(parts[1]))
+    except ValueError:
+        return None
+    return None
+
+
+def _sweep_bands_overlap(
+    addr1: str | None, addr2: str | None, range_params: set[str]
+) -> bool:
+    """Whether two sweep bands of the SAME `kind` overlap (spec §4.3.3.6). A missing
+    address is the whole transport and overlaps every band of its kind. Where the two
+    bands share a schema-declared range axis, the check is numeric interval overlap on
+    that axis (any disjoint shared axis proves the bands don't overlap); where they
+    share a non-range axis, unequal values on it likewise prove no overlap (different
+    `stream_id=`, say). Absent any axis that disproves overlap, this is CONSERVATIVE —
+    it flags — because an unproven overlap is a worse failure mode than a false alarm on
+    two sweeps of the same kind that turn out to be genuinely disjoint (spec §4.3.3.6:
+    "a widened re-sweep replaces the band, never stacks on it")."""
+    if not addr1 or not addr2:
+        return True
+    p1 = _addr_params(addr1)
+    p2 = _addr_params(addr2)
+    shared = set(p1) & set(p2)
+    for key in shared - range_params:
+        if p1[key] != p2[key]:
+            return False
+    shared_range = shared & range_params
+    if not shared_range:
+        return True  # no comparable range axis between the two — conservative
+    for key in shared_range:
+        r1 = _parse_numeric_range(p1[key] or "")
+        r2 = _parse_numeric_range(p2[key] or "")
+        if r1 is None or r2 is None:
+            return True  # not cleanly numeric — conservative
+        if r1[1] < r2[0] or r2[1] < r1[0]:
+            return False  # this axis is disjoint: bands provably don't overlap
+    return True
+
+
+def _rule_sweep_band_overlap(post, blocks, root) -> Iterator[Finding]:
+    """No two sweep blocks of the same `kind` may claim overlapping bands (spec
+    §4.3.3.6: "two sweeps of the same `kind` MUST NOT overlap — a widened re-sweep
+    replaces the band, never stacks on it")."""
+    artifact = _records.artifact_block(post) or {}
+    mime = (artifact.get("mime") or "").strip()
+    schema = _schemas.load_mime_schema(root, mime) if mime else None
+    range_params = _sweep_range_params(schema)
+    by_kind: dict[str, list[tuple[int, str | None]]] = {}
+    for idx, sweep in enumerate(_records.iter_sweep_blocks(post)):
+        fields = sweep.get("fields") or {}
+        kind = fields.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            continue  # sweep-kind-invalid already covers this
+        addr = fields.get("address")
+        by_kind.setdefault(kind.strip(), []).append(
+            (idx, addr if isinstance(addr, str) else None)
+        )
+    for kind, entries in by_kind.items():
+        for i in range(len(entries)):
+            for j in range(i + 1, len(entries)):
+                idx1, addr1 = entries[i]
+                idx2, addr2 = entries[j]
+                if _sweep_bands_overlap(addr1, addr2, range_params):
+                    yield Finding(
+                        rule_id="sweep-band-overlap",
+                        severity="error",
+                        message=(
+                            f"sweep #{idx1 + 1} and sweep #{idx2 + 1} both vouch for "
+                            f"`kind: {kind}` over overlapping bands "
+                            f"({addr1 or 'whole transport'} / {addr2 or 'whole transport'}) "
+                            f"— a widened re-sweep replaces its band, never stacks "
+                            f"(spec §4.3.3.6)."
+                        ),
+                        fields={"kind": kind},
+                    )
+
+
 def _rule_classify_retired(post, blocks, root) -> Iterator[Finding]:
     """The classify block was removed in ATH-CORPUS 2.0: what content means is ledger
     knowledge (harvest rules / claims, `ledger.md` §10), never a record assertion. A
@@ -2169,6 +2377,9 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("container-carries-rendering", _rule_container_carries_rendering),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),
+    ("sweep-shape", _rule_sweep_shape),
+    ("sweep-address-invalid", _rule_sweep_address_grammar),
+    ("sweep-band-overlap", _rule_sweep_band_overlap),
     ("classify-block-retired", _rule_classify_retired),
     # normalizer-support parity (luklacloud intent)
     ("mime-extension-mismatch", _rule_mime_extension_mismatch),

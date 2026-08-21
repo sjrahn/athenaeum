@@ -2,7 +2,7 @@
 spec_id: ATH
 part: III
 title: "Athenaeum Specification — Part III: The Ledger"
-version: 30
+version: 31
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
@@ -126,13 +126,26 @@ A materialized real-world thing and the claims intrinsic to it:
   "period": "2026-07-08/2026-07-09",  // optional — the fact's own timebox (§5.2); mirrors an evidenced claim
   "artifacts": [                   // the roster — records that are artifacts OF this thing (optional)
     { "uri": "corpus://826482aa…", "role": "documents", "note": "Metal Archives band page" },
-    { "uri": "corpus://3fc0d1b2…", "role": "interview" }
+    { "uri": "corpus://3fc0d1b2…", "role": "interview" },
+    { "uri": "corpus://91ee40c7…", "role": "manifests",     // a representation of the thing itself —
+      "modality": "video", "expression": "full-recording" },//   which representation, the entry says
+    { "uri": "corpus://5a02c9d4…", "role": "manifests",
+      "modality": "audio", "expression": "broadcast-edit",
+      "derived_from": "corpus://91ee40c7…", "derivation": "excerpt" }
   ],
   "claims": [ /* Claim objects, §5 */ ]
 }
 ```
 
 **The artifact roster** is the concept→record arrow that replaced corpus-side record classification: the corpus never declares "this record is an instance of class X"; the concept declares "these records are artifacts of me" — many records, one node, nothing dangling. A `role` is registered vocabulary (§8) naming a real relationship to the thing (`documents`, `performance-of`, `tablature-of`, `interview`); a role that cannot be phrased *of/about the concept* is a bucket, not a relationship, and does not belong. Roster entries carry harvest (`auto`) or asserted provenance under the §10 semantics; rostered URIs must resolve (§13).
+
+**The roster is the manifestation tier.** Every record manifests *something* — a captured page manifests the page, an epub manifests the book, a recording manifests the episode — and the roster is where that reading lives: the concept is the **work**, and each rostered record is one **representation** of it. The relation is universal in principle and **materialized on demand** — a record with no roster entry stands as its own proxy (the deferral principle), and nothing gates on the link existing; what makes it exist is representation demand (§9). Four optional entry fields say *which* representation an entry is, so that two captures of the same thing are never mistaken for two things — nor mistaken for one capture:
+
+- **`modality`** — registered vocabulary (§8) naming the carrier (`audio`, `video`, `text`, `image`, `print-scan`, …). The signal that answers "the full recording is cited everywhere — does an audio edition even exist?" without opening a record.
+- **`expression`** — a slug grouping entries that carry the **same version** of the work: a cut, an edition, a translation, a broadcast edit. Two entries sharing an `expression` are interchangeable *content* in different carriers or encodings; two entries differing in it are different versions of one work. It starts as a plain descriptor; it is **promoted to a concept** only when claims target the version itself (an edition's publication date; a cut's runtime) — and it must be then, because evidence anchored in one edition's pagination is not evidence in another's.
+- **`derived_from`** + **`derivation`** — the entry's record was mechanically produced from a sibling entry's record (`derivation` from registered vocabulary: `encode`, `remux`, `excerpt`, …); the referenced URI MUST itself be rostered on the concept. This is where encode-vs-remux lives — item-grain sameness stated at the roster, never as a concept, because a copy tier 1:1 with records is precisely the record shadow §4 prohibits.
+
+All four validate like everything else (§13.1): vocabulary registered, `derived_from` rostered, and none of them required — a bare `{uri, role}` entry remains complete. Candidate `derived_from`/same-expression pairs are a natural product of the corpus's derived-hash machinery (corpus §7.9, §12.9.1) surfacing as **hypotheses** in the interpretation workspace (§7) — proposed mechanically, asserted by judgment, never auto-merged.
 
 **The timebox.** A concept MAY carry a top-level `period` — the fact's own timebox (§5.2): the calendar span of a bounded occurrence, the duration of an episode. It is a structural *summary* — what the schema's `period` expectation (§4.4), temporal invariants (§11), and timeline tooling read cheaply — while the *evidence* for that span rides a normal claim (for an `event`, the `occurs` claim). The two are bound by convention: the top-level value **mirrors** the evidenced timebox claim's `period`, so the summary never states a span the graph cannot back. Edges carry `period` the same way (§4.3); it stays optional on both, and its format is the §5.2 grammar.
 
@@ -163,6 +176,9 @@ A schema is the declared shape of a fact type — a concept type or an edge type
 ```yaml
 type: song
 description: A recorded or performed musical work.
+normalization_intent: |          # optional — prose that rides normalize demand (§6.3)
+  Transcriptions of performances want per-track structural marks; lyrics are
+  content, liner commentary is a separate span.
 fields:                          # the type's registered predicates
   appears_on: { target: album, expected: true }  # relational + owed: frontier when missing
   composed_by: { target: artist }  # relational — the claim object must be an `artist`
@@ -223,6 +239,7 @@ Semantics:
 - **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, a typed field's value failing to parse under its declared kind (`value:` naming a §4.5 kind — an undeclared kind is itself an error), a declared **element** value outside its `values` or an element `entity` resolving outside its `target` type(s), an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
 - **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). An entry MAY declare **`id:`** — a stable slug in the demand-rule namespace (unique across `demands/` rules and all named expectations, §13.1): the name its demands are blocked under (§14). Unnamed entries evaluate identically; their positional display ids (`expectation:{type}[{i}]`) are display-only — reordering a schema's list renumbers them, so nothing durable may reference one. Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Timeboxed fields.** A field may declare `timeboxed: true` — e.g. `residence: { target: place, timeboxed: true }` — meaning every claim under that predicate owes a `period`: an attested residence or employment episode without a timespan is half a fact, and `asof` alone records observation, never duration. Like owed fields, a missing timebox is *frontier* (a labeled chase on the work-list, §7.4), never an error — the gap says "find the start/end", which is exactly how new evidence that widens a period announces where it belongs.
+- **Intent, not authorship.** A schema MAY declare **`normalization_intent:`** — prose stating what evidence against this type's facts wants from a formed surface. It is guidance the demand side *carries*, never a contract the corpus side obeys: when the citation discipline raises normalize demand on a record rostered to (or cited by) a fact of the type, the enqueue hint SHOULD compose this intent with what the graph already knows — the concept's participant identities as a codebook lexicon, its declared structure — under the queue's proposes/disposes seam (corpus §8.5): the ledger proposes what the bytes probably hold; the normalizer disposes against the bytes, never on the ledger's word. This is the back-channel that keeps shape knowledge from being re-derived per record: identity is established once (harvest, §10), and intent flows down with the demand instead of accreting as per-source overlay prose.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
 
 ### 4.5 Value kinds — `schemas/values/{kind}.yaml`
@@ -372,7 +389,7 @@ One distinction, keyed per-mime: a record whose mime declares `citation_surface:
 
 **Evidence strength never keys to form state**: status assignment (§8) weighs source authority and independence — a claim meeting the confirmed bar on formless-record evidence is confirmed, and a record governed by a **terminal contract** (corpus §7.8) is a complete source whose derived surfaces are permanent, including a manifest record's attested member roster (first-class direct evidence for containment and existence facts).
 
-Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records. The demand signal keys to formless-**for-now** alone: enqueuing a terminal record raises nothing — no better surface is coming — and where a needed surface is a container *member*, the demand is a **`promote`** need (`corpus promote 'corpus://<container-id>?<member-address>'`; then form the promoted record) — never "normalize the container." Promoted members land **bodiless** until formed. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
+Prefer the **formed** surface where one exists or is declared: span-precise anchors (`turn=`) bind tighter and survive tooling upgrades better than derived-body offsets — so when citing more than incidentally into a formless record whose artifact has a natural markdown shape, **raise demand** with `corpus enqueue` (the queue is standing demand, `spec/corpus.md` §8.5); the ledger contributes by enqueuing, never by authoring records — and the enqueue SHOULD carry intent through the queue's `--hint` seam: the fact type's declared `normalization_intent` (§4.4) composed with what the graph knows (participant identities as a codebook lexicon, declared structure), proposed for the normalizer to dispose against the bytes. The demand signal keys to formless-**for-now** alone: enqueuing a terminal record raises nothing — no better surface is coming — and where a needed surface is a container *member*, the demand is a **`promote`** need (`corpus promote 'corpus://<container-id>?<member-address>'`; then form the promoted record) — never "normalize the container." Promoted members land **bodiless** until formed. When the source isn't captured, that is a `capture` need (§7); when the real world could settle it directly, an `observe` need.
 
 ### 6.4 Sensitivity — derived, not declared
 
@@ -454,7 +471,7 @@ A `correction` challenging an existing claim names it in **`challenges`** — th
 
 ## 8. Vocabulary
 
-Every predicate, qualifier key, concept type, edge type, roster role, value kind (§4.5), and demand rule (§14) in use is registered in the ledger's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
+Every predicate, qualifier key, concept type, edge type, roster role, roster `modality` and `derivation` term (§4.2), value kind (§4.5), and demand rule (§14) in use is registered in the ledger's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
 
 - Reuse before minting; a new term lands as a visible diff, never a silent addition.
 - Vocabulary grows organically — minted when real evidence needs it, never pre-built. The one sanctioned pre-built form is a **declared import**: an adopted domain bundle's vocabulary (§10, the domain-package seam) enters `VOCAB.md` marked as imported — adoption is itself the evidence of need.
@@ -464,6 +481,10 @@ Every predicate, qualifier key, concept type, edge type, roster role, value kind
 ## 9. Coverage
 
 The ledger carries the **coverage obligation for the corpus**: every in-scope record should be *represented* — cited as evidence by at least one fact or interpretation, or rostered by a concept (§4.2). `coverage.md` is the generated ledger (covered / backlog / out-of-scope with reasons). A represented-but-shallow topic becomes a coverage-gap assessment with `capture` needs — the ledger is *designed* to generate ingestion demand. Coverage is how the ledger proves the compendium thesis over the corpus: nothing captured goes unrepresented silently.
+
+**Representation demand.** The backlog is not a mood — each uncovered record carries the **prescribed work item** the manifestation reading gives it (§4.2): identify the thing this record manifests; materialize it if new (a stub suffices — §4.2); roster the record with its representation fields. That makes coverage **drainable** exactly as the corpus's normalization queue is (corpus §8.5): frontier, never a validation error; workable record-by-record; converging, because re-captures and mirrors roster onto concepts that already exist rather than minting anew (§10's convergence, manually applied). Where a harvest rule can do it deterministically, it already does — representation demand is the *residue* harvest cannot reach, which is precisely the interpretive work worth an authoring pass. The obligation's horizon is total — **eventually every in-scope record is rostered or cited** — while its schedule stays demand-and-capacity-driven: a mechanism with a direction, never a gate.
+
+Coverage also reads in the **other direction**: a concept's rostered manifestation that no claim has ever cited is visible per concept — the audio edition exists, the graph has only ever leaned on the video — so an authoring pass choosing evidence, and a reader auditing it, can see the representations the claims have not touched.
 
 (Presentation scope is a consumer concern, outside the system (§12). Coverage is not gated by sensitivity — private records are covered, privately.)
 
@@ -563,7 +584,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Epistemics** — the authentication bar for every `confirmed` claim, counting only verifiable-surface evidence (§5.4) — per element for array-valued claims, naming each element that fails; `element` bindings well-formed: integer, in range, on an array `value` only; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
 
-**Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution in the corpus); `ref://` citations name registered datasets — and, when pinned, registered snapshot tags: a pin whose tag is no longer registered is an error, a dangling pin — (§6.5); claim evidence citing a corpus hash registered as a mirror artifact warns — the content's citation surface is `ref://` (§6.5); every citation resolves to a **verifiable surface** and passes §13.2.
+**Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution in the corpus); `ref://` citations name registered datasets — and, when pinned, registered snapshot tags: a pin whose tag is no longer registered is an error, a dangling pin — (§6.5); claim evidence citing a corpus hash registered as a mirror artifact warns — the content's citation surface is `ref://` (§6.5); roster representation fields (§4.2) are well-formed — `modality`/`derivation` terms registered (§8), a `derived_from` URI rostered on the same concept; every citation resolves to a **verifiable surface** and passes §13.2.
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 

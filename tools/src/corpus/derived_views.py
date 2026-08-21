@@ -8,6 +8,7 @@ The views:
 - `classifications` (§9.1) — walks artifact + origin blocks (structural-derived only, 2.0).
 - `context` (§4.3.3) — walks context blocks across all annotation namespaces.
 - `issues` (§9.2) — the `issue`-namespace projection of `context`.
+- `sweeps` (§9.2's sibling projection) — the `sweep`-namespace projection of `context`.
 - `uris` (§9.3) — origin URIs + semantic_type:uri-tagged schema fields.
 - `timeline` (§9.4) — origin snapshots + semantic_type:timestamp-tagged fields.
 - `identifiers` (§9.5) — semantic_type:identifier-tagged fields + the record's id.
@@ -145,6 +146,39 @@ def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
         for k, v in (issue.get("fields") or {}).items():
             entry[k] = v
         out.append(entry)
+    return out
+
+
+def sweeps(post: frontmatter.Post) -> list[dict[str, Any]]:
+    """§9.2's sibling projection — derive `sweeps[]`: the `sweep`-namespace projection of
+    the context view (spec §4.3.3.6).
+
+    Returns a list of structured records `{id, kind, detector, address?}` — the same
+    shape §9.2's note describes for the sweep namespace inside the full `context` view.
+    """
+    out: list[dict[str, Any]] = []
+    for sweep in records.iter_sweep_blocks(post):
+        entry: dict[str, Any] = {"id": sweep.get("id")}
+        if sweep.get("subtype"):
+            entry["subtype"] = sweep["subtype"]
+        for k, v in (sweep.get("fields") or {}).items():
+            entry[k] = v
+        out.append(entry)
+    return out
+
+
+def swept_bands(post: frontmatter.Post) -> dict[str, list[str | None]]:
+    """A modest per-record completeness readout derived from sweeps (spec §4.3.3.6's
+    last paragraph): the swept bands per `kind`, `None` standing for a whole-transport
+    band (no `address:`). Reported on demand, never stored — the view-level projection
+    `corpus inspect` surfaces alongside the record's form/terminal state."""
+    out: dict[str, list[str | None]] = {}
+    for sweep in sweeps(post):
+        kind = str(sweep.get("kind") or "")
+        if not kind:
+            continue
+        addr = sweep.get("address")
+        out.setdefault(kind, []).append(str(addr) if addr else None)
     return out
 
 

@@ -1025,6 +1025,122 @@ def test_schema_conformance(system: Path) -> None:
     assert not any("s2" in e for e in rep.errors)
 
 
+# ------------------------------------- roster representation fields (§4.2, v31)
+
+
+def test_roster_representation_fields_fully_loaded_entry_is_clean(system: Path) -> None:
+    """A roster entry carrying all four representation fields — modality,
+    expression, derived_from + derivation — validates clean when derived_from
+    names a sibling entry actually rostered on the same concept."""
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests",
+             "modality": "video", "expression": "full-recording"},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests",
+             "modality": "audio", "expression": "broadcast-edit",
+             "derived_from": f"corpus://{H_PUB}", "derivation": "excerpt"},
+        ],
+    })
+    rep = _check(system)
+    assert rep.errors == []
+
+
+def test_roster_derived_from_and_derivation_must_travel_together(system: Path) -> None:
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests", "modality": "video"},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests", "modality": "audio",
+             "derived_from": f"corpus://{H_PUB}"},
+            {"uri": f"corpus://{H_BOTH}", "role": "manifests", "modality": "audio",
+             "derivation": "excerpt"},
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert msgs.count("must travel together") == 2
+
+
+def test_roster_derived_from_must_be_rostered_on_same_concept(system: Path) -> None:
+    """(§4.2: "the referenced URI MUST itself be rostered on the concept")
+    `H_NO_STATUS` resolves fine in the corpus — the error is specifically
+    that it isn't one of THIS concept's own roster entries."""
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests", "modality": "audio",
+             "derived_from": f"corpus://{H_NO_STATUS}", "derivation": "excerpt"},
+        ],
+    })
+    rep = _check(system)
+    assert any("is not itself rostered on this concept" in e for e in rep.errors)
+
+
+def test_roster_modality_derivation_expression_shape_errors(system: Path) -> None:
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests", "modality": ""},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests", "derivation": 3,
+             "derived_from": f"corpus://{H_PUB}"},
+            {"uri": f"corpus://{H_BOTH}", "role": "manifests", "expression": "Not A Slug!"},
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "roster modality '' must be a non-empty string" in msgs
+    assert "roster derivation 3 must be a non-empty string" in msgs
+    assert "roster expression 'Not A Slug!' is not a readable slug" in msgs
+
+
+def test_roster_representation_fields_admit_unknown_key_none(system: Path) -> None:
+    """The four new keys are admitted (§4.2) — an entry carrying all of them
+    plus the pre-existing keys draws no "unknown keys" error; a genuinely
+    unknown key still does."""
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests", "note": "n",
+             "modality": "video", "expression": "cut-a"},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests", "bogus": "x"},
+        ],
+    })
+    rep = _check(system)
+    msgs = "\n".join(rep.errors)
+    assert "roster entry unknown keys ['bogus']" in msgs
+    assert "['modality'" not in msgs and "'expression'" not in msgs
+
+
+def test_roster_three_manifestations_integration(system: Path) -> None:
+    """Integration fixture (v31): a concept with three rostered
+    manifestations — video full-recording; audio broadcast-edit derived_from
+    the video via derivation: excerpt; text transcript — validates clean. The
+    failing variant repoints the audio entry's derived_from at a
+    non-rostered URI."""
+    def _episode(derived_from: str) -> dict:
+        return {
+            "id": "ep1", "type": "episode", "name": "Episode 1",
+            "artifacts": [
+                {"uri": f"corpus://{H_PUB}", "role": "manifests",
+                 "modality": "video", "expression": "full-recording"},
+                {"uri": f"corpus://{H_PUB2}", "role": "manifests",
+                 "modality": "audio", "expression": "broadcast-edit",
+                 "derived_from": derived_from, "derivation": "excerpt"},
+                {"uri": f"corpus://{H_BOTH}", "role": "manifests",
+                 "modality": "text", "expression": "transcript"},
+            ],
+        }
+
+    _fact(system, "episode", _episode(f"corpus://{H_PUB}"))
+    rep = _check(system)
+    assert rep.errors == []
+
+    _fact(system, "episode", _episode(f"corpus://{H_NO_STATUS}"))
+    rep = _check(system)
+    assert any("is not itself rostered on this concept" in e for e in rep.errors)
+
+
 def test_schema_union_target(system: Path) -> None:
     """`target` may list admissible types (spec §4.4) — any listed type passes,
     anything else is mis-shape."""
@@ -1406,6 +1522,25 @@ def test_period_calculus() -> None:
     assert not intervals_overlap(a, c)
 
 
+def test_period_calculus_february_leap_and_non_leap() -> None:
+    # A hardcoded 29-day February table gets every non-leap year wrong and every leap year
+    # "right" only by coincidence.
+    assert period_interval("2021-02") == ((2021, 2, 1), (2021, 2, 28))  # non-leap
+    assert period_interval("2020-02") == ((2020, 2, 1), (2020, 2, 29))  # leap
+    assert period_interval("2000-02") == ((2000, 2, 1), (2000, 2, 29))  # leap (÷400)
+    assert period_interval("1900-02") == ((1900, 2, 1), (1900, 2, 28))  # non-leap (÷100, not ÷400)
+
+
+def test_period_calculus_out_of_range_day_token_is_unparseable() -> None:
+    # Day tokens were never range-checked against the actual month — day 29 in a non-leap
+    # February must be rejected (unparseable → None, never a fabricated interval), and day 31
+    # in a 30-day month likewise.
+    assert period_interval("2021-02-29") is None
+    assert period_interval("2021-04-31") is None
+    assert period_interval("2021-02-28") == ((2021, 2, 28), (2021, 2, 28))
+    assert period_interval("2020-02-29") == ((2020, 2, 29), (2020, 2, 29))
+
+
 # ----------------------------------------------------------------------- views
 
 
@@ -1431,6 +1566,28 @@ def test_views_regen_and_staleness(system: Path) -> None:
     rep = _check(system)
     assert any("VOCAB.md" in w and "stale" in w for w in rep.warnings)
     assert any("open-questions.md" in w for w in rep.warnings)  # stub frontier appeared
+
+
+def test_vocab_roster_modality_and_derivation_sections(system: Path) -> None:
+    """VOCAB.md gains modality/derivation sections with counts (§8, v31),
+    formatted like the pre-existing roster-roles section."""
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests",
+             "modality": "video", "expression": "full-recording"},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests",
+             "modality": "audio", "derived_from": f"corpus://{H_PUB}",
+             "derivation": "excerpt"},
+        ],
+    })
+    _regen(system)
+    vocab = (system / "ledger" / "facts" / "VOCAB.md").read_text()
+    assert "## Roster modality" in vocab
+    assert "## Roster derivation" in vocab
+    assert "| `video` | 1 |" in vocab
+    assert "| `audio` | 1 |" in vocab
+    assert "| `excerpt` | 1 |" in vocab
 
 
 def test_retired_vocabulary_is_rejected(system: Path) -> None:
@@ -1484,3 +1641,103 @@ def test_ledger_tree_must_carry_facts(system: Path) -> None:
 
     shutil.rmtree(system / "ledger" / "facts")
     assert ledger_main(["check", "--root", str(system)]) == 2
+
+
+# ------------------------------------------------- malformed expectations dropped
+
+
+def test_malformed_expectation_when_is_dropped_not_kept(tmp_path: Path) -> None:
+    """A schema expectation whose `when` fails the {edge-type: {...}} shape
+    check used to be reported AND kept — `expectation_selects`'s
+    `(edge_type, sel), = when.items()` then crashed the first time a fact
+    reached it (`GET /vocab`, `ath ledger regen`, demand evaluation). The
+    narrower drop: just the malformed entry, the rest of the schema (and any
+    sound sibling expectation) survives."""
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "thing.yaml").write_text(
+        "type: thing\ndescription: d\nfields: { x: {} }\n"
+        "expectations:\n"
+        "  - when: { met: {}, knew: {} }\n"  # 2 keys — malformed
+        "    expect: [x]\n"
+        "  - description: sound sibling\n"
+        "    expect: [x]\n"
+    )
+    schemas, errors = load_schemas(tmp_path)
+    assert any("when must be {edge-type" in e and "dropped" in e for e in errors)
+    kept = schemas["thing"]["expectations"]
+    assert len(kept) == 1
+    assert kept[0]["description"] == "sound sibling"
+
+
+def test_malformed_expectation_non_dict_when_dropped(tmp_path: Path) -> None:
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "thing.yaml").write_text(
+        "type: thing\ndescription: d\nfields: { x: {} }\n"
+        "expectations:\n"
+        "  - when: not-a-mapping\n    expect: [x]\n"
+    )
+    schemas, errors = load_schemas(tmp_path)
+    assert any("when must be {edge-type" in e for e in errors)
+    assert schemas["thing"]["expectations"] == []
+
+
+def test_malformed_expectation_entry_itself_not_a_mapping_dropped(tmp_path: Path) -> None:
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "thing.yaml").write_text(
+        "type: thing\ndescription: d\nfields: { x: {} }\n"
+        "expectations:\n  - just a string, not a mapping\n"
+    )
+    schemas, errors = load_schemas(tmp_path)
+    assert any("must be a mapping" in e and "dropped" in e for e in errors)
+    assert schemas["thing"]["expectations"] == []
+
+
+# ------------------------------------------------------- normalization_intent
+
+
+def test_normalization_intent_loads_as_plain_prose(tmp_path: Path) -> None:
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: d\n"
+        "normalization_intent: |\n"
+        "  Transcriptions want per-track structural marks.\n"
+        "fields: { length: {} }\n"
+    )
+    schemas, errors = load_schemas(tmp_path)
+    assert errors == []
+    assert schemas["song"]["normalization_intent"] == (
+        "Transcriptions want per-track structural marks.\n"
+    )
+
+
+def test_normalization_intent_not_flagged_unknown_key(tmp_path: Path) -> None:
+    """(§4.4) `normalization_intent` is a declared top-level key, not an
+    unknown one — a schema carrying only it (plus the required `type`)
+    reports no "unknown keys" error."""
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "song.yaml").write_text(
+        "type: song\nnormalization_intent: intent prose\n"
+    )
+    _, errors = load_schemas(tmp_path)
+    assert not any("unknown keys" in e for e in errors)
+
+
+def test_normalization_intent_must_be_a_string(tmp_path: Path) -> None:
+    from ledger.schemas import load_schemas
+
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "song.yaml").write_text(
+        "type: song\ndescription: d\nnormalization_intent: [not, a, string]\n"
+    )
+    _, errors = load_schemas(tmp_path)
+    assert any("normalization_intent must be a string" in e for e in errors)

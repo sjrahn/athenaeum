@@ -448,11 +448,24 @@ record's spans; your job is to make those spans faithful and addressable. If a r
 carries a legacy `<!--classify-->` block, leave it untouched (lint flags it for migration;
 the sweep owns its removal).
 
-## The annotations zone — one namespace, no prose
+## The annotations zone — two namespaces, no prose
 
-The annotations zone carries exactly one namespace now: `issue` — a real, directly-observable
-problem with the record that stays true after normalization. The `reference` and `relation`
-namespaces are gone outright (see *Framing*, above, for where their content actually lives).
+The annotations zone carries exactly two namespaces: `issue` — a real, directly-observable
+problem with the record that stays true after normalization — and `sweep` (spec §4.3.3.6) — a
+declaration that you carried one extraction class to exhaustion over a band. The `reference` and
+`relation` namespaces are gone outright (see *Framing*, above, for where their content actually
+lives).
+
+- **`sweep`** — `<!--context sweep/extraction-->` with `kind: <segment opener-id>` (e.g.
+  `text/ocr`), `detector: <your model id>`, and `address: <band>` (absent = whole transport).
+  Write one ONLY when you actually processed the **entire band** for that class — every frame,
+  every page. It flips the meaning of absence inside the band ("no `text/ocr` segment here" becomes
+  "no on-screen text exists here"), so a sweep you did not earn is a fabricated negative. It never
+  asserts rendering — markers inside a swept band still mean "the bytes are the representation."
+  A band you swept that turned up nothing still gets its sweep: the empty declaration is the
+  valuable one. Same-kind sweep bands never overlap — a widened re-sweep replaces the old block.
+  If you only spot-extracted (a few on-screen titles, one legible page), write NO sweep: sparse
+  is the default and it is honest.
 
 - **`issue`** — `<id[/subtype]> sev=blocking|warning|info res=open|fixed|wontfix|superseded
   detector=<your model id> [addr=…]` plus whatever structured, non-prose fields the id's overlay

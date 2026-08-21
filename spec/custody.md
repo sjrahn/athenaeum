@@ -2,7 +2,7 @@
 spec_id: ATH
 part: IV
 title: "Athenaeum Specification — Part IV: Custody"
-version: 30
+version: 31
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-08-19
@@ -64,9 +64,9 @@ kind   = "attached"            # operator-managed tree, files in place
 path   = "/mnt/slow/datasets"
 
 [[corpus.location]]
-name     = "ecba-steven"
+name     = "nas-media"
 kind     = "attached"
-path     = "/mnt/ecba/steven"
+path     = "/mnt/nas/media"
 manifest = true                # presented manifest: the host's own residence scanner
                                # maintains <path>/.athenaeum/; attest reads it instead
                                # of walking the tree (§5)

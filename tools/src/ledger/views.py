@@ -30,6 +30,8 @@ _SECTIONS = (
     ("predicates", "Claim predicates", "predicate"),
     ("qualifiers", "Qualifier keys", "qualifier"),
     ("roster-roles", "Roster roles", "role"),
+    ("roster-modality", "Roster modality", "modality"),
+    ("roster-derivation", "Roster derivation", "derivation"),
     ("value-kinds", "Value kinds", "kind"),
     ("demand-rules", "Demand rules", "rule"),
 )
@@ -58,8 +60,14 @@ def collect_vocab(facts: dict[Path, dict]) -> dict[str, Counter]:
         section = "edge-types" if is_edge(fact) else "types"
         c[section][str(fact.get("type", "?"))] += 1
         for entry in fact.get("artifacts") or []:
-            if isinstance(entry, dict) and entry.get("role"):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("role"):
                 c["roster-roles"][str(entry["role"])] += 1
+            if entry.get("modality"):
+                c["roster-modality"][str(entry["modality"])] += 1
+            if entry.get("derivation"):
+                c["roster-derivation"][str(entry["derivation"])] += 1
         for claim in fact.get("claims") or []:
             if not isinstance(claim, dict):
                 continue
@@ -104,7 +112,7 @@ def _demand_rule_usage(rules: dict[str, dict], named_exps: dict[str, tuple[str, 
             ):
                 c[rid] += 1
         for eid, (_ftype, exp) in named_exps.items():
-            if expectation_selects(exp, fact, edges):
+            if expectation_selects(exp, fact, edges, facts_by_id, lineage):
                 c[eid] += 1
     return c
 
@@ -121,7 +129,8 @@ def _parse_rows(block: str) -> list[list[str]]:
     for line in block.strip().splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) >= 2 and cells[0] and not set(cells[0]) <= set("-: ") and (
-            cells[0].strip("`") not in ("type", "predicate", "qualifier", "role", "kind", "term")
+            cells[0].strip("`") not in ("type", "predicate", "qualifier", "role", "kind",
+                                        "modality", "derivation", "rule", "term")
         ):
             rows.append([c.strip("`") for c in cells])
     return rows

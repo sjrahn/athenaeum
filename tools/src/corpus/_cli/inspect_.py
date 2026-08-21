@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import argparse
 
+from corpus import derived_views, paths, records, resolver, segments, shape
 from corpus import mime as _mime
-from corpus import paths, records, resolver, segments, shape
 from corpus._cli._common import add_corpus_root_arg, human_bytes, resolved_corpus_root
 
 
@@ -185,6 +185,16 @@ def _print_content_axes(post) -> None:
         print(f"embeds:      {len(embeds)} (container)")
     else:
         print("embeds:      none")
+
+    bands = derived_views.swept_bands(post)
+    if bands:
+        parts = [
+            f"{kind} ({', '.join(a or 'whole transport' for a in addrs)})"
+            for kind, addrs in sorted(bands.items())
+        ]
+        print(f"sweeps:      {' · '.join(parts)}")
+    else:
+        print("sweeps:      none (sparse — spec §4.3.3.6)")
     print()
 
 

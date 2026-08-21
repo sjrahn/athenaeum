@@ -342,6 +342,53 @@ def test_typed_field_missing_is_not_an_error(system: Path):
     assert not any("price" in e for e in rep.errors)
 
 
+def test_array_shaped_typed_value_validates_per_element(system: Path):
+    """spec/ledger.md §4.5, §5.1: "A typed claim value is the kind's object
+    shape (or, on a structured array, one object per element)." A field
+    declaring `value: money` types the WHOLE claim value as money's object
+    shape — unless the claim's own `value` is a JSON array, in which case
+    each element is validated against that shape individually (distinct
+    from the `elements:` sub-declaration shape covered above). One
+    conforming element among a mis-shaped one must not blanket-reject the
+    array, and the mis-shaped element's error must name its index."""
+    _kind_file(system, "money", _MONEY_KIND)
+    _schema(system, "receipt", (
+        "type: receipt\ndescription: a receipt\n"
+        "fields:\n  line_items: { value: money }\n"
+    ))
+    _fact(system, "r", {
+        "id": "r", "type": "receipt", "name": "R",
+        "claims": [_claim("r", "line-items", predicate="line_items", value=[
+            {"amount": "5.00", "currency": "USD"},
+            {"amount": 3.5, "currency": "usd"},
+        ])],
+    })
+    rep = _check(system)
+    line_item_errors = [e for e in rep.errors if "r:line-items" in e]
+    assert line_item_errors
+    assert not any("must be an object" in e for e in line_item_errors)
+    assert all("[1]" in e for e in line_item_errors)  # the bad element's index
+    assert any("decimal" in e for e in line_item_errors)
+    assert any("iso-4217" in e or "'usd'" in e for e in line_item_errors)
+
+
+def test_array_shaped_typed_value_all_conforming_is_no_error(system: Path):
+    _kind_file(system, "money", _MONEY_KIND)
+    _schema(system, "receipt", (
+        "type: receipt\ndescription: a receipt\n"
+        "fields:\n  line_items: { value: money }\n"
+    ))
+    _fact(system, "r", {
+        "id": "r", "type": "receipt", "name": "R",
+        "claims": [_claim("r", "line-items", predicate="line_items", value=[
+            {"amount": "5.00", "currency": "USD"},
+            {"amount": "3.50", "currency": "EUR"},
+        ])],
+    })
+    rep = _check(system)
+    assert not any("r:line-items" in e for e in rep.errors)
+
+
 def test_value_referencing_undeclared_kind_is_an_error(system: Path):
     _schema(system, "purchase", (
         "type: purchase\ndescription: a purchase\n"

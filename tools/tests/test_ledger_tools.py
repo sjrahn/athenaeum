@@ -10,7 +10,7 @@ import pytest
 
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 from ledger.coverage import render_coverage, represented_hashes
-from ledger.harvest import HarvestError, load_rules, run_harvest
+from ledger.harvest import HarvestError, load_rules, match, run_harvest
 from ledger.model import canonical_claim_state, derived_uri
 from ledger.promote import PromoteError, promote, stamp
 from ledger.verify import verify_ledger
@@ -135,6 +135,24 @@ def test_hash_only_rules_may_not_mint(tmp_path: Path) -> None:
     )
     with pytest.raises(HarvestError, match="interpolates no origin fact"):
         load_rules(tmp_path)
+
+
+def test_classify_when_invalid_regex_raises_harvest_error() -> None:
+    """`match`'s operator evaluation is the shared §10 implementation
+    (`ledger.scope.op_matches`) — its ValueError (an invalid `matches`
+    pattern isn't a ValueError subclass by itself, `re.error` is) must
+    surface here as this module's own `HarvestError`, never a bare
+    `re.error`/`ValueError` escaping harvest's boundary."""
+    with pytest.raises(HarvestError, match="not a valid regex"):
+        match({"origin.handle": {"matches": "["}}, {"origin.handle": "+14035551234"})
+
+
+def test_classify_when_redos_prone_pattern_raises_harvest_error() -> None:
+    """finding 9c at harvest's boundary: a catastrophic-backtracking-prone
+    pattern is refused at validation (wrapped into HarvestError), never
+    actually executed against fact data."""
+    with pytest.raises(HarvestError, match=r"catastrophic|nested"):
+        match({"origin.handle": {"matches": r"(\w+\s?)*"}}, {"origin.handle": "x"})
 
 
 def test_verify_quotes_and_anchors(system: Path) -> None:
@@ -711,6 +729,54 @@ def test_coverage_counts_claim_evidence_only(system: Path) -> None:
                     "evidence": [{"source": "s1", "kind": "direct"}]}],
     }))
     assert H1 in represented_hashes(system / "ledger")
+
+
+def test_coverage_backlog_representation_demand(system: Path) -> None:
+    """Each uncovered record's backlog line carries the prescribed work item
+    (§9) plus whatever mechanical identification the corpus already has."""
+    run_harvest(system / "ledger", _corpora(system))  # H1, H2 roster; H3 (group) stays bare
+    text = render_coverage(system / "ledger", _corpora(system))
+    assert "### Backlog — representation demand (§9)" in text
+    backlog = text.split("### Backlog — representation demand (§9)", 1)[1]
+    assert H3[:12] in backlog
+    assert H1[:12] not in backlog and H2[:12] not in backlog  # represented, not backlog
+    assert ("identify the work this record manifests; stub it if new (§4.2); "
+            "roster it with representation fields.") in backlog
+    assert "mime `text/html`" in backlog  # the mechanical fact this fixture's records carry
+
+
+def test_coverage_reverse_read_rostered_never_cited(system: Path) -> None:
+    """§9's reverse read: a concept's rostered manifestation that no claim
+    has ever cited is visible per concept — here, H1 is rostered on `mom`
+    but never appears in any `sources` table or interpretation."""
+    (system / "ledger" / "facts" / "person").mkdir()
+    (system / "ledger" / "facts" / "person" / "mom.json").write_text(json.dumps({
+        "id": "mom", "type": "person", "name": "Mom",
+        "artifacts": [{"uri": f"corpus://{H1}", "role": "documents", "modality": "text"}],
+    }))
+    text = render_coverage(system / "ledger", _corpora(system))
+    assert "## Rostered, never cited" in text
+    reverse = text.split("## Rostered, never cited", 1)[1]
+    assert "`mom`" in reverse
+    assert H1[:12] in reverse
+    assert "`documents/text`" in reverse
+
+
+def test_coverage_reverse_read_excludes_cited_manifestations(system: Path) -> None:
+    """A roster entry whose URI IS cited by claim evidence never lands in the
+    reverse-read section — only genuinely un-leaned-on entries do."""
+    (system / "ledger" / "facts" / "person").mkdir()
+    (system / "ledger" / "facts" / "person" / "mom.json").write_text(json.dumps({
+        "id": "mom", "type": "person", "name": "Mom",
+        "artifacts": [{"uri": f"corpus://{H1}", "role": "documents"}],
+        "sources": {"s1": {"record": H1}},
+        "claims": [{"id": "mom:greeting", "predicate": "greeting", "value": "x",
+                    "status": "provisional", "asof": "2023-03-01",
+                    "evidence": [{"source": "s1", "kind": "direct"}]}],
+    }))
+    text = render_coverage(system / "ledger", _corpora(system))
+    reverse = text.split("## Rostered, never cited", 1)[1]
+    assert "`mom`" not in reverse
 
 
 def test_quote_found_requires_document_order() -> None:

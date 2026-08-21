@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 30
+version: 31
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 30 (2026-08-21, owner ruling) opens the disclosure set and grows the rule grammar. **Tenancy becomes an instance-declared tier set** (Part III §6.4): `public` and `private` reserved, further tiers instance-owned, record tenancy a derived union, visibility computed per grant set — and the read surface (§5.1) serves a **plane per declared audience**, scoped disclosure as a projection. Demand conditions (Part III §14) gain **`id:`** (lineage-resolved identity, the perspective idiom) and **`related:`** (one-hop cross-fact conditions over the §12.1 traversal kinds). Prior version notes: the changelog.*
+*Version 31 (2026-08-21, owner ruling) lands the manifestation tier and the sweep declaration. **The roster is the manifestation tier** (Part III §4.2): the concept is the work, each rostered record one representation — entries gain `modality`, `expression`, `derived_from`/`derivation`; coverage (Part III §9) gains **representation demand** (each uncovered record's prescribed work item, drainable, total horizon on a demand-driven schedule); type schemas carry **`normalization_intent:`**, flowing down through the queue's hint seam under proposes/disposes; codebook positions become durable under the lineage discipline. **The sweep declaration** (Part II §4.3.3.6): the annotations zone's second namespace — an extraction class declared exhaustive over a band, fail-closed (sparse everywhere by default), earned by the pass that processed the whole band, meaningful when empty. Prior version notes: the changelog.*
