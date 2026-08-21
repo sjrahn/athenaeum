@@ -3,16 +3,7 @@
 # workspace during development. Never tracked here: this repo is the
 # distribution — spec + tooling only (spec Part I §2.1).
 /instance
-
-# Retired pre-v26 member checkouts (kept as archives until removed).
-/corpus/
-/ledger/
-/corpus.pre-v26/
-/ledger.pre-v26/
 /athenaeum.yaml
-/athenaeum.yaml.pre-v26
-/tickets.md
-/athenaeum.code-workspace
 
 # macOS Finder metadata
 .DS_Store
@@ -25,4 +16,3 @@ tools/**/__pycache__/
 tools/**/*.egg-info/
 tools/.pytest_cache/
 tools/.ruff_cache/
-/datasets-pending.md
