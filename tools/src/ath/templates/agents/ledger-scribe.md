@@ -166,6 +166,15 @@ challenge to an existing claim is a `correction` naming it in `challenges` — r
 `ath ledger stamp <id>` to pin the challenged claim's state, and set that claim
 `status: disputed`. Refuted hypotheses stay as tombstones; never delete them.
 
+**The demand loop (§14).** Draft the fact, then run `ath ledger demands --draft <file>` — the
+rendered shape (values, target type, or kind fields) is the answer contract. Satisfy what the
+evidence grounds. For what current sources cannot ground, file the blocker instead of
+fabricating: an interpretation whose `needs` entry carries `demand: <id>` naming a declared
+`demands/` rule or an expectation's stable `id:` — **never** a positional
+`expectation:{type}[{i}]` display id, which is display-only and can't be a blocking target —
+plus `action` (capture/search/…) and a `why` naming what to chase. Open demands are frontier,
+never failures: leaving one open, honestly blocked, is a legitimate stopping point.
+
 **Hands off the mechanical.**
 - Anything `provenance: auto` (harvested concepts, roster entries, claims) is the harvester's:
   editing it strips the auto mark and orphans it from regeneration. If auto output looks

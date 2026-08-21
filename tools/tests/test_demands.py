@@ -15,7 +15,15 @@ import json
 from pathlib import Path
 
 from ledger._cli import main as ledger_main
-from ledger.demands import condition_matches, evaluate_demands, load_demand_rules
+from ledger.demands import (
+    blockable_ids,
+    condition_matches,
+    evaluate_demands,
+    format_shape,
+    load_demand_rules,
+    named_expectations,
+)
+from ledger.schemas import load_schemas
 from tests.test_ledger_check import H_PUB, _check, _claim, _fact, _interp, _regen
 from tests.test_ledger_check import system as system  # re-exported pytest fixture
 
@@ -24,6 +32,12 @@ from tests.test_ledger_check import system as system  # re-exported pytest fixtu
 
 def _write_rule(root: Path, name: str, text: str) -> None:
     d = root / "demands"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{name}.yaml").write_text(text, encoding="utf-8")
+
+
+def _write_schema(root: Path, name: str, text: str) -> None:
+    d = root / "schemas"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{name}.yaml").write_text(text, encoding="utf-8")
 
@@ -99,6 +113,39 @@ def test_bad_rule_file_is_dropped_tolerantly(tmp_path: Path) -> None:
     assert "good" in rules
     assert "junk" not in rules
     assert any("invalid YAML" in e for e in errors)
+
+
+# ------------------------------------------------- schema expectation `id:` (§4.4, v29)
+
+
+def test_expectation_id_accepted_when_slug_shaped(tmp_path: Path) -> None:
+    _write_schema(tmp_path, "person", (
+        "type: person\ndescription: d\nfields:\n  date_of_birth: {}\n"
+        "expectations:\n  - id: person-dob\n    expect: [date_of_birth]\n"
+    ))
+    schemas, errors = load_schemas(tmp_path)
+    assert errors == []
+    assert schemas["person"]["expectations"][0]["id"] == "person-dob"
+
+
+def test_expectation_id_must_be_a_readable_slug(tmp_path: Path) -> None:
+    _write_schema(tmp_path, "person", (
+        "type: person\ndescription: d\nfields:\n  date_of_birth: {}\n"
+        "expectations:\n  - id: Not A Slug!\n    expect: [date_of_birth]\n"
+    ))
+    _, errors = load_schemas(tmp_path)
+    assert any("id 'Not A Slug!' is not a readable slug" in e for e in errors)
+
+
+def test_duplicate_expectation_id_within_one_schema_is_an_error(tmp_path: Path) -> None:
+    _write_schema(tmp_path, "person", (
+        "type: person\ndescription: d\nfields:\n  date_of_birth: {}\n  email: {}\n"
+        "expectations:\n"
+        "  - id: dup\n    expect: [date_of_birth]\n"
+        "  - id: dup\n    expect: [email]\n"
+    ))
+    _, errors = load_schemas(tmp_path)
+    assert any("id 'dup' duplicates expectations[0]" in e for e in errors)
 
 
 # ------------------------------------------------------ `when` grammar errors
@@ -408,7 +455,7 @@ def test_evaluate_demands_open_when_field_missing() -> None:
 def test_evaluate_demands_satisfied_when_claim_present() -> None:
     fact = {"id": "bob", "type": "person", "claims": [
         {"predicate": "wearing", "value": "hat"},
-        {"predicate": "hat_colour", "value": "red"},
+        {"predicate": "hat_colour", "value": "red", "id": "bob:colour"},
     ]}
     demands = evaluate_demands(
         fact, rules=_HAT_RULE, schemas={}, kinds={}, facts_by_id={"bob": fact}, edges=[],
@@ -416,7 +463,36 @@ def test_evaluate_demands_satisfied_when_claim_present() -> None:
     )
     assert len(demands) == 1
     assert demands[0]["state"] == "satisfied"
+    assert demands[0]["satisfied_by"] == "bob:colour"
     assert "need" not in demands[0]
+
+
+def test_evaluate_demands_satisfied_by_is_the_first_claim_under_the_predicate() -> None:
+    """Deterministic, not "whichever wins" — first by claim-list order."""
+    fact = {"id": "bob", "type": "person", "claims": [
+        {"predicate": "wearing", "value": "hat"},
+        {"predicate": "hat_colour", "value": "red", "id": "first"},
+        {"predicate": "hat_colour", "value": "blue", "id": "second"},
+    ]}
+    demands = evaluate_demands(
+        fact, rules=_HAT_RULE, schemas={}, kinds={}, facts_by_id={"bob": fact}, edges=[],
+        interps=[],
+    )
+    assert demands[0]["satisfied_by"] == "first"
+
+
+def test_evaluate_demands_satisfied_by_absent_for_the_reserved_period_field() -> None:
+    """`period` is the fact's own timebox, not a claim — nothing to point at."""
+    schemas = {"event": {"type": "event", "fields": {}}}
+    rules = {"r": {"id": "r", "description": "d", "when": {"type": "event"},
+                  "owes": [{"field": "period"}]}}
+    fact = {"id": "e1", "type": "event", "period": "2026"}
+    demands = evaluate_demands(
+        fact, rules=rules, schemas=schemas, kinds={}, facts_by_id={"e1": fact}, edges=[],
+        interps=[],
+    )
+    assert demands[0]["state"] == "satisfied"
+    assert "satisfied_by" not in demands[0]
 
 
 def test_evaluate_demands_blocked_via_open_interp_naming_the_rule() -> None:
@@ -587,6 +663,112 @@ def test_unmarked_field_owes_no_demand() -> None:
     ) == []
 
 
+# --------------------------------------------------------- named expectation ids (v29)
+
+
+def test_named_expectation_uses_its_id_as_the_rule() -> None:
+    """A named `id:` replaces the positional display id (§4.4) — the demand's
+    `rule` carries the stable name, not `expectation:{type}[{i}]`."""
+    schemas = {"person": {"type": "person", "fields": {"date_of_birth": {}},
+                         "expectations": [{"id": "person-dob", "description": "d",
+                                          "expect": ["date_of_birth"]}]}}
+    fact = {"id": "kat", "type": "person"}
+    demands = evaluate_demands(
+        fact, rules={}, schemas=schemas, kinds={}, facts_by_id={"kat": fact}, edges=[],
+        interps=[],
+    )
+    assert len(demands) == 1
+    assert demands[0]["rule"] == "person-dob"
+
+
+def test_named_expectation_blocks_via_its_own_id() -> None:
+    """The evaluator honors a needs entry naming a named expectation's `id:`
+    (§14) — the ruling's positive case."""
+    schemas = {"person": {"type": "person", "fields": {"date_of_birth": {}},
+                         "expectations": [{"id": "person-dob", "description": "d",
+                                          "expect": ["date_of_birth"]}]}}
+    fact = {"id": "kat", "type": "person"}
+    interp = {
+        "id": "gap", "status": "open", "about": ["kat"],
+        "needs": [{"action": "search", "demand": "person-dob", "why": "no source yet"}],
+    }
+    demands = evaluate_demands(
+        fact, rules={}, schemas=schemas, kinds={}, facts_by_id={"kat": fact}, edges=[],
+        interps=[interp],
+    )
+    assert demands[0]["state"] == "blocked"
+    assert demands[0]["need"]["interpretation"] == "gap"
+
+
+def test_positional_expectation_reference_never_blocks() -> None:
+    """The v28 seam this amendment closes: a needs entry naming the
+    *positional* display id no longer derives blocked (§14: "a positional
+    display id is never a blocking target") — it stays open until the field
+    is satisfied, however many needs entries claim to name it."""
+    schemas = {"person": {"type": "person", "fields": {"date_of_birth": {}},
+                         "expectations": [{"description": "d",
+                                          "expect": ["date_of_birth"]}]}}
+    fact = {"id": "kat", "type": "person"}
+    interp = {
+        "id": "gap", "status": "open", "about": ["kat"],
+        "needs": [{"action": "search", "demand": "expectation:person[0]",
+                  "why": "no source yet"}],
+    }
+    demands = evaluate_demands(
+        fact, rules={}, schemas=schemas, kinds={}, facts_by_id={"kat": fact}, edges=[],
+        interps=[interp],
+    )
+    assert demands[0]["rule"] == "expectation:person[0]"
+    assert demands[0]["state"] == "open"
+    assert "need" not in demands[0]
+
+
+def test_expected_true_field_reference_never_blocks() -> None:
+    """`expected:{type}.{field}` is likewise outside the blockable namespace
+    (§13.1: only declared rules and named expectations) — naming it in a
+    needs entry doesn't derive blocked either."""
+    schemas = {"song": {"type": "song",
+                        "fields": {"appears_on": {"target": "album", "expected": True}}}}
+    fact = {"id": "s1", "type": "song"}
+    interp = {
+        "id": "gap", "status": "open", "about": ["s1"],
+        "needs": [{"action": "search", "demand": "expected:song.appears_on", "why": "…"}],
+    }
+    demands = evaluate_demands(
+        fact, rules={}, schemas=schemas, kinds={}, facts_by_id={"s1": fact}, edges=[],
+        interps=[interp],
+    )
+    assert demands[0]["state"] == "open"
+
+
+def test_named_expectations_helper_collects_ids_across_schemas() -> None:
+    schemas = {
+        "person": {"type": "person", "expectations": [
+            {"id": "person-dob", "expect": ["date_of_birth"]},
+            {"expect": ["email"]},  # unnamed — not collected
+        ]},
+        "song": {"type": "song", "expectations": [
+            {"id": "song-album", "expect": ["appears_on"]},
+        ]},
+    }
+    named = named_expectations(schemas)
+    assert set(named) == {"person-dob", "song-album"}
+    assert named["person-dob"][0] == "person"
+    assert named["song-album"][0] == "song"
+
+
+def test_blockable_ids_is_declared_rules_plus_named_expectations_only() -> None:
+    rules = {"hat-colour": {"id": "hat-colour", "when": {"type": "person"},
+                            "owes": [{"field": "hat_colour"}]}}
+    schemas = {"person": {"type": "person", "expectations": [
+        {"id": "person-dob", "expect": ["date_of_birth"]},
+        {"expect": ["email"]},
+    ]}}
+    ids = blockable_ids(rules, schemas)
+    assert ids == {"hat-colour", "person-dob"}
+    assert "expectation:person[1]" not in ids
+
+
 # --------------------------------------------------------------- shape attachment
 
 
@@ -650,6 +832,40 @@ def test_shape_is_empty_for_an_undeclared_field() -> None:
     assert demands[0]["state"] == "satisfied"
 
 
+# --------------------------------------------------------------- format_shape
+
+
+def test_format_shape_values_vocab() -> None:
+    assert format_shape({"values": ["black", "brown", "grey"]}) == "one of: black, brown, grey"
+
+
+def test_format_shape_relational_target() -> None:
+    assert format_shape({"target": "organization"}) == "target: organization"
+
+
+def test_format_shape_relational_target_list() -> None:
+    assert format_shape({"target": ["organization", "system"]}) == "target: organization|system"
+
+
+def test_format_shape_value_kind() -> None:
+    money = {"kind": "money", "description": "d",
+            "shape": {"amount": {"constraint": "decimal"},
+                      "currency": {"constraint": "iso-4217"}},
+            "required": ["amount", "currency"]}
+    assert format_shape({"value": "money", "kind": money}) == (
+        "shape: money {amount: decimal, currency: iso-4217} required: amount, currency")
+
+
+def test_format_shape_unresolved_kind_reference_degrades_to_the_name() -> None:
+    """A `value:` kind name the caller couldn't resolve (not in the loaded
+    set) still renders something, rather than nothing."""
+    assert format_shape({"value": "money"}) == "shape: money"
+
+
+def test_format_shape_empty_is_omitted() -> None:
+    assert format_shape({}) == ""
+
+
 # ------------------------------------------------------------------ determinism
 
 
@@ -711,6 +927,73 @@ def test_check_needs_demand_naming_a_declared_rule_is_clean(system: Path) -> Non
     assert not any("undeclared demand rule" in e for e in rep.errors)
 
 
+def test_check_needs_demand_naming_a_named_expectation_is_clean(system: Path) -> None:
+    """A needs entry may name a schema expectation's `id:` (§4.4, §13.1) —
+    the demand-rule namespace, not just declared `demands/` rules."""
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  genre: {}\n"
+        "expectations:\n  - id: artist-genre\n    expect: [genre]\n"
+    ))
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "gap", "kind": "assessment", "about": ["x"], "statement": "s", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"], "status": "standing", "asof": "2026-07-02",
+        "needs": [{"action": "search", "demand": "artist-genre", "why": "…"}],
+    })
+    rep = _check(system)
+    assert not any("undeclared demand rule" in e for e in rep.errors)
+    assert not any("positional display id" in e for e in rep.errors)
+
+
+def test_check_positional_expectation_demand_gets_the_pointer_error(system: Path) -> None:
+    """A needs entry naming the positional display id gets a dedicated error
+    naming the one-line fix (§14), not the generic undeclared-rule message."""
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  genre: {}\n"
+        "expectations:\n  - expect: [genre]\n"
+    ))
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _interp(system, {
+        "id": "gap", "kind": "assessment", "about": ["x"], "statement": "s", "reasoning": "r",
+        "based_on": [f"corpus://{H_PUB}"], "status": "standing", "asof": "2026-07-02",
+        "needs": [{"action": "search", "demand": "expectation:artist[0]", "why": "…"}],
+    })
+    rep = _check(system)
+    assert not any("undeclared demand rule" in e for e in rep.errors)
+    msg = next(e for e in rep.errors if "positional display id" in e)
+    assert "expectation:artist[0]" in msg
+    assert "never a blocking target" in msg
+    assert "schemas/artist.yaml" in msg
+    assert "demands/<slug>.yaml" in msg
+
+
+def test_check_expectation_id_colliding_with_a_declared_rule_is_an_error(system: Path) -> None:
+    _rule(system, "hat-colour", (
+        "id: hat-colour\ndescription: d\nwhen: { type: artist }\nowes: [{ field: f }]\n"
+    ))
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  f: {}\n"
+        "expectations:\n  - id: hat-colour\n    expect: [f]\n"
+    ))
+    rep = _check(system)
+    assert any("collides with declared demand rule" in e and "hat-colour" in e
+              for e in rep.errors)
+
+
+def test_expectation_id_declared_in_two_schemas_is_an_error(system: Path) -> None:
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  f: {}\n"
+        "expectations:\n  - id: shared-id\n    expect: [f]\n"
+    ))
+    _write_schema(system / "ledger", "album", (
+        "type: album\ndescription: d\nfields:\n  g: {}\n"
+        "expectations:\n  - id: shared-id\n    expect: [g]\n"
+    ))
+    rep = _check(system)
+    assert any("declared in more than one schema" in e and "shared-id" in e
+              for e in rep.errors)
+
+
 def test_open_demands_contribute_nothing_to_check(system: Path) -> None:
     """Filing is never denied, and demand evaluation itself emits no
     errors/warnings (§13.1 "Demands") — an unmet demand is frontier, visible
@@ -765,6 +1048,26 @@ def test_regen_vocab_lists_demand_rule_with_match_count(system: Path) -> None:
     assert "| `hat-colour` | 1 | needs a colour |" in vocab
 
 
+def test_regen_vocab_demand_rules_section_lists_named_expectations(system: Path) -> None:
+    """A named expectation (§4.4) shares the "Demand rules" section with
+    declared rules (§13.1) — same matching-fact count semantics, definition
+    marked as a schema expectation rather than a hand-curated cell."""
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  genre: {}\n"
+        "expectations:\n"
+        "  - id: artist-genre\n    description: every artist owes a genre\n"
+        "    expect: [genre]\n"
+    ))
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _fact(system, "artist", {"id": "y", "type": "artist", "name": "Y",
+                             "claims": [_claim("y", "g", predicate="genre")]})
+    _regen(system)
+    vocab = (system / "ledger" / "facts" / "VOCAB.md").read_text()
+    assert "## Demand rules" in vocab
+    assert ("| `artist-genre` | 2 | every artist owes a genre "
+            "(schema expectation) |") in vocab
+
+
 # ====================================================================== CLI surface
 
 
@@ -800,10 +1103,60 @@ def test_cli_demands_hides_satisfied_unless_all(system: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert rc == 0
     assert "SATISFIED" not in out
+    assert out.strip() == "all 1 demands satisfied"  # footer, not silence
     rc = ledger_main(["demands", "bob", "--all", "--root", str(system)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "SATISFIED" in out
+    assert "← bob:colour" in out  # names the satisfying claim
+
+
+def test_cli_demands_no_demands_apply_footer(system: Path, capsys) -> None:
+    """No rule/expectation/expected-field fires for this fact at all — a
+    fully-satisfied evaluation and a no-demands-apply one must read
+    differently, and neither prints silently (both scribes hit that)."""
+    _fact(system, "person", {"id": "bob", "type": "person", "name": "Bob"})
+    rc = ledger_main(["demands", "bob", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.strip() == "no demands apply"
+
+
+def test_cli_demands_renders_the_shape(system: Path, capsys) -> None:
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "relationship.yaml").write_text(
+        "type: relationship\ndescription: a tie\n"
+        "fields:\n  kind: { values: [friend, sibling] }\n"
+    )
+    _rule(system, "kind-rule", (
+        "id: kind-rule\ndescription: d\nwhen: { type: relationship }\n"
+        "owes: [{ field: kind }]\n"
+    ))
+    _fact(system, "person", {"id": "a", "type": "person", "name": "A",
+                             "claims": [_claim("a", "email", predicate="email")]})
+    _fact(system, "person", {"id": "b", "type": "person", "name": "B",
+                             "claims": [_claim("b", "email", predicate="email")]})
+    _fact(system, "relationship", {"id": "a--b", "type": "relationship",
+                                   "participants": ["a", "b"]})
+    rc = ledger_main(["demands", "a--b", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "one of: friend, sibling" in out  # the shape, rendered — no YAML dump needed
+
+
+def test_cli_demands_omits_shape_line_when_nothing_declared(system: Path, capsys) -> None:
+    _rule(system, "hat-colour", (
+        "id: hat-colour\ndescription: d\n"
+        "when: { claim: { predicate: wearing } }\nowes: [{ field: hat_colour }]\n"
+    ))
+    _fact(system, "person", {
+        "id": "bob", "type": "person", "name": "Bob",
+        "claims": [_claim("bob", "wearing", predicate="wearing", value="hat")],
+    })
+    rc = ledger_main(["demands", "bob", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "shape:" not in out  # no declared shape — no "shape: none" noise
 
 
 def test_cli_demands_draft_evaluates_a_not_yet_landed_fact(

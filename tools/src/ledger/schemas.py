@@ -12,12 +12,14 @@ from pathlib import Path
 
 import yaml
 
+from ledger.model import SLUG_RE
+
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
                "expectations"}
 FIELD_KEYS = {"target", "description", "expected", "values", "participant",
               "timeboxed", "elements", "value"}
 ELEMENT_KEYS = {"target", "values", "description", "value"}
-EXPECTATION_KEYS = {"when", "expect", "description"}
+EXPECTATION_KEYS = {"when", "expect", "description", "id"}
 
 
 def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
@@ -120,6 +122,7 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
             isinstance(participants, list) and all(isinstance(p, str) for p in participants)
         ):
             errors.append(f"{where}: participants must be a list of types (positional)")
+        exp_ids: dict[str, int] = {}
         for i, exp in enumerate(data.get("expectations") or []):
             ew = f"{where}: expectations[{i}]"
             if not isinstance(exp, dict):
@@ -128,6 +131,16 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
             bad = set(exp) - EXPECTATION_KEYS
             if bad:
                 errors.append(f"{ew} unknown keys {sorted(bad)}")
+            exp_id = exp.get("id")
+            if exp_id is not None:
+                if not (isinstance(exp_id, str) and SLUG_RE.match(exp_id)):
+                    errors.append(f"{ew} id {exp_id!r} is not a readable slug")
+                elif exp_id in exp_ids:
+                    errors.append(f"{ew} id {exp_id!r} duplicates "
+                                  f"expectations[{exp_ids[exp_id]}] (§4.4: unique across "
+                                  "demands/ rules and all named expectations)")
+                else:
+                    exp_ids[exp_id] = i
             expect = exp.get("expect")
             if not (isinstance(expect, list) and expect
                     and all(isinstance(x, str) for x in expect)):

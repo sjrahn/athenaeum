@@ -965,9 +965,11 @@ def test_schema_union_target(system: Path) -> None:
 
 
 def test_frontier_aggregates_per_field(system: Path) -> None:
-    """An `expected: true` field most facts lack renders as ONE aggregated
-    worklist line, not a per-fact flood; an unmarked field is admissible
-    vocabulary and never frontier."""
+    """An `expected: true` field is the demand engine's job now (§14): every
+    gap lists once, under Demands, per fact — never duplicated on the
+    legacy Frontier section (that double-listing was the bug: ~430 lines,
+    every item twice). An unmarked field is admissible vocabulary and never
+    owed at all."""
     from ledger.views import render_worklist
     (system / "ledger" / "schemas").mkdir()
     (system / "ledger" / "schemas" / "song.yaml").write_text(
@@ -986,14 +988,13 @@ def test_frontier_aggregates_per_field(system: Path) -> None:
     from ledger.schemas import load_schemas
     schemas, _ = load_schemas(system / "ledger")
     block = render_worklist(system / "ledger", facts, {}, schemas)
-    assert "`song.appears_on` not yet attested on 7 facts" in block
-    frontier = block.split("### Frontier", 1)[1].split("### Demands", 1)[0]
-    assert frontier.count("appears_on") == 1  # one aggregated line, not seven
-    # the demands section (§14) lists the same gap per-fact instead — the
-    # interactive surface's job, distinct from the frontier's aggregation
+    # no stubs, no timebox gaps here — the frontier section doesn't even render
+    assert "### Frontier" not in block
+    # the demands section (§14) carries the gap, once per fact, with its shape
     demands_section = block.split("### Demands", 1)[1]
-    assert demands_section.count("owes `appears_on`") == 7  # one per fact, unaggregated
-    assert "covered_by" not in block  # admissible, not owed — no frontier
+    assert demands_section.count("owes `appears_on`") == 7  # one per fact, no duplicate
+    assert "[target: album]" in demands_section  # the relational shape, attached
+    assert "covered_by" not in block  # admissible, not owed — no demand at all
 
 
 def test_edge_schema_participants(system: Path) -> None:
@@ -1064,7 +1065,9 @@ def test_expectations_frontier(system: Path) -> None:
     """Conditional owed-ness (§4.4): an `expectations` entry owes its fields
     only on the facts its `when` selects — and never on the `with:` fact
     itself. The reserved name `period` owes the fact's own timebox, which
-    puts edges on the frontier too."""
+    puts edges on the Demands section too. The demand engine (§14) is the
+    sole source for expectation gaps now — they no longer double up on the
+    legacy Frontier section."""
     from ledger.model import load_json_dir
     from ledger.schemas import load_schemas
     from ledger.views import render_worklist
@@ -1100,13 +1103,17 @@ def test_expectations_frontier(system: Path) -> None:
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, _ = load_schemas(system / "ledger")
     block = render_worklist(system / "ledger", facts, {}, schemas)
-    assert ("`person.date_of_birth` — family birthdays are chase-worthy — "
-            "not yet attested: `kat`") in block
+    assert "### Frontier" not in block  # nothing else lands on the frontier here
+    demands_section = block.split("### Demands", 1)[1]
+    assert "- `kat`" in demands_section
+    assert ("owes `date_of_birth` (expectation:person[0]) — family birthdays are "
+            "chase-worthy") in demands_section
     # steven (named by with:) and stranger (not family) are never owed
-    assert "`steven`" not in block
-    assert "`stranger`" not in block
-    # the employment edge has no period → frontier via the reserved name
-    assert "`employment.period`" in block and "`steven--acme`" in block
+    assert "`steven`" not in demands_section
+    assert "`stranger`" not in demands_section
+    # the employment edge has no period → owed via the reserved name
+    assert "- `steven--acme`" in demands_section
+    assert "owes `period` (expectation:employment[0])" in demands_section
     # attesting the owed field clears the gap
     _fact(system, "person", {"id": "kat", "type": "person", "name": "Kat",
                              "claims": [_claim("kat", "dob", predicate="date_of_birth",
@@ -1175,7 +1182,7 @@ def test_concept_carries_own_period(system: Path) -> None:
     rep = _check(system)
     assert not any("unknown concept keys" in e for e in rep.errors)
     assert not any("odd period format" in w for w in rep.warnings)  # well-formed
-    # the top-level timebox satisfies the `expect: [period]` frontier line
+    # the top-level timebox satisfies the `expect: [period]` demand (§14)
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, _ = load_schemas(system / "ledger")
     assert "event.period" not in render_worklist(system / "ledger", facts, {}, schemas)

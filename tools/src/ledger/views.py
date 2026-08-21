@@ -88,12 +88,13 @@ def _kind_usage(kinds: dict[str, dict], schemas: dict[str, dict]) -> Counter:
     return c
 
 
-def _demand_rule_usage(rules: dict[str, dict], live: list[dict], edges: list[dict],
+def _demand_rule_usage(rules: dict[str, dict], named_exps: dict[str, tuple[str, dict]],
+                       live: list[dict], edges: list[dict],
                        facts_by_id: dict[str, dict]) -> Counter:
-    """Rule → count of facts the rule's `when` currently matches (§14),
-    regardless of demand state — every declared rule starts at 0, listed for
-    visibility even unused, mirroring `_kind_usage`."""
-    c: Counter = Counter({rid: 0 for rid in rules})
+    """Rule/named-expectation id → count of facts currently matched (§14),
+    regardless of demand state — every declared rule and named expectation
+    starts at 0, listed for visibility even unused, mirroring `_kind_usage`."""
+    c: Counter = Counter({rid: 0 for rid in rules} | {eid: 0 for eid in named_exps})
     for fact in live:
         for rid, rule in rules.items():
             when = rule.get("when")
@@ -101,6 +102,9 @@ def _demand_rule_usage(rules: dict[str, dict], live: list[dict], edges: list[dic
                 when, fact, edges, facts_by_id
             ):
                 c[rid] += 1
+        for eid, (_ftype, exp) in named_exps.items():
+            if expectation_selects(exp, fact, edges):
+                c[eid] += 1
     return c
 
 
@@ -176,16 +180,22 @@ def fresh_vocab(ledger_root: Path, facts: dict[Path, dict]) -> str:
     schemas, _ = load_schemas(ledger_root)
     kinds, _ = values_mod.load_kinds(ledger_root)
     rules, _ = demands_mod.load_demand_rules(ledger_root)
+    named_exps = demands_mod.named_expectations(schemas)
     counters = collect_vocab(facts)
     counters["value-kinds"] = _kind_usage(kinds, schemas)
     live = [f for f in facts.values() if not is_redirect(f)]
     edges = [f for f in live if is_edge(f)]
     facts_by_id = {str(f.get("id")): f for f in live}
-    counters["demand-rules"] = _demand_rule_usage(rules, live, edges, facts_by_id)
+    counters["demand-rules"] = _demand_rule_usage(rules, named_exps, live, edges, facts_by_id)
     kind_descriptions = {k: str(v.get("description") or "") for k, v in kinds.items()
                          if isinstance(v, dict)}
     rule_descriptions = {rid: str(r.get("description") or "") for rid, r in rules.items()
                          if isinstance(r, dict)}
+    # named expectations share the demand-rules section (§13.1) — marked in
+    # their definition cell since their `id:` lives in a schema, not demands/
+    for eid, (_ftype, exp) in named_exps.items():
+        desc = str(exp.get("description") or demands_mod.when_label(exp.get("when")))
+        rule_descriptions[eid] = f"{desc} (schema expectation)"
     return render_vocab(counters, parse_definitions(old), parse_retired(old),
                         kind_descriptions, rule_descriptions)
 
@@ -223,7 +233,6 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
         lines = ["*(no open interpretations)*"]
 
     frontier: list[str] = []
-    field_gaps: dict[tuple[str, str, str], list[str]] = {}
     timebox_gaps: dict[tuple[str, str], list[str]] = {}
     live = [f for f in facts.values() if not is_redirect(f)]
     edges = [f for f in live if is_edge(f)]
@@ -237,32 +246,15 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
         schema = schemas.get(str(fact.get("type")))
         if not schema:
             continue
-        carried = {str(c.get("predicate")) for c in claims if isinstance(c, dict)}
-
-        def met(name: str, fact: dict = fact, carried: set[str] = carried) -> bool:
-            # the reserved name `period` is the fact's own timebox (§4.4)
-            return bool(fact.get("period")) if name == "period" else name in carried
-
-        # only `expected: true` fields are owed unconditionally — unmarked fields
-        # register vocabulary and validate targets, their absence means nothing
-        owed = {name for name, spec in (schema.get("fields") or {}).items()
-                if isinstance(spec, dict) and spec.get("expected")}
-        for fieldname in sorted(owed):
-            if not met(fieldname):
-                field_gaps.setdefault(
-                    (str(fact.get("type")), fieldname, ""), []).append(str(fact.get("id")))
-        for exp in schema.get("expectations") or []:
-            if not isinstance(exp, dict) or not expectation_selects(exp, fact, edges):
-                continue
-            label = str(exp.get("description") or _when_label(exp.get("when")))
-            for fieldname in exp.get("expect") or []:
-                if not met(str(fieldname)):
-                    field_gaps.setdefault(
-                        (str(fact.get("type")), str(fieldname), label), [],
-                    ).append(str(fact.get("id")))
+        # `expected: true` fields and `expectations:` gaps are the demand
+        # engine's job (§14) — the Demands section below is their one
+        # source now, so they're not re-listed here (avoids double-listing
+        # every open item, once per section).
+        #
         # `timeboxed: true` fields owe every claim a `period` — an attested
-        # residence/employment episode without a timespan is half a fact; the
-        # gap is a chase (frontier), never an error (§4.4)
+        # residence/employment episode without a timespan is half a fact;
+        # the gap is a chase (frontier), never an error (§4.4). The demand
+        # engine doesn't emit this one, so it stays here.
         timeboxed = {name for name, spec in (schema.get("fields") or {}).items()
                      if isinstance(spec, dict) and spec.get("timeboxed")}
         for c in claims:
@@ -271,17 +263,6 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
                 timebox_gaps.setdefault(
                     (str(fact.get("type")), str(c.get("predicate"))), [],
                 ).append(str(c.get("id") or fact.get("id")))
-    # schema gaps aggregate per (type, field, expectation) — an owed field most
-    # facts lack is one worklist line with examples, never a flood
-    for (t, fieldname, label), fids in sorted(field_gaps.items()):
-        tag = f" — {label} —" if label else ""
-        if len(fids) <= 5:
-            frontier.append(f"- `{t}.{fieldname}`{tag} not yet attested: "
-                            + ", ".join(f"`{i}`" for i in fids))
-        else:
-            sample = ", ".join(f"`{i}`" for i in fids[:3])
-            frontier.append(f"- `{t}.{fieldname}`{tag} not yet attested on {len(fids)} "
-                            f"facts ({sample}, …)")
     for (t, fieldname), cids in sorted(timebox_gaps.items()):
         if len(cids) <= 5:
             frontier.append(f"- `{t}.{fieldname}` claims missing their timebox "
@@ -313,6 +294,9 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
                 need = d.get("need") or {}
                 line = (f"  - owes `{d['field']}` {rule_tag} — blocked on "
                         f"{need.get('action', '?')}: {need.get('why', '')}")
+            shape_label = demands_mod.format_shape(d.get("shape") or {})
+            if shape_label:
+                line += f" [{shape_label}]"
             by_fact.setdefault(d["fact"], []).append(line)
     if by_fact:
         demand_lines: list[str] = []
@@ -321,20 +305,6 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
             demand_lines.extend(by_fact[fid])
         lines += ["", "### Demands (§14)", "", *demand_lines]
     return "\n".join(lines)
-
-
-def _when_label(when: object) -> str:
-    """A compact rendering of an expectation's selector, for unlabeled gaps."""
-    if not isinstance(when, dict) or not when:
-        return "expected"
-    (etype, sel), = when.items()
-    bits = [str(etype)]
-    if isinstance(sel, dict):
-        if sel.get("kind"):
-            bits.append("kind " + "/".join(str(k) for k in sel["kind"]))
-        if sel.get("with"):
-            bits.append(f"with {sel['with']}")
-    return " ".join(bits)
 
 
 def fresh_openq(ledger_root: Path, facts: dict[Path, dict], interps: dict[Path, dict],

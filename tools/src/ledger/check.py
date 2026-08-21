@@ -65,6 +65,9 @@ if TYPE_CHECKING:
     from ath.manifest import Reference
 
 _RETIRED_QUALIFIERS_HINT = "time lives in `period`/`asof`, never ad-hoc qualifiers"
+# a schema expectation's positional display id (§4.4) — reordering a
+# schema's list renumbers it, so nothing durable may reference one (§14)
+_POSITIONAL_EXPECTATION_RE = re.compile(r"^expectation:([^\[]+)\[\d+\]$")
 
 
 @dataclass
@@ -114,6 +117,31 @@ def run_check(
     rep.errors.extend(inv_errors)
     demand_rules, demand_errors = demands_mod.load_demand_rules(ledger_root)
     rep.errors.extend(demand_errors)
+    blockable_demand_ids = demands_mod.blockable_ids(demand_rules, schemas)
+
+    # the demand-rule namespace (§13.1, §4.4): declared `demands/` rule ids
+    # and named schema expectation ids share one collision-free space —
+    # cross-schema duplicates aren't caught by `load_schemas` (schema-local
+    # only), so checked here across the whole set.
+    exp_id_locations: dict[str, list[tuple[str, int]]] = {}
+    for ftype, schema in schemas.items():
+        if not isinstance(schema, dict):
+            continue
+        for i, exp in enumerate(schema.get("expectations") or []):
+            if isinstance(exp, dict) and isinstance(exp.get("id"), str):
+                exp_id_locations.setdefault(exp["id"], []).append((ftype, i))
+    for exp_id, locs in exp_id_locations.items():
+        first_where = f"schemas/{locs[0][0]}.yaml"
+        if exp_id in demand_rules:
+            rep.err(first_where, f"expectation id {exp_id!r} collides with declared demand "
+                                 f"rule demands/{exp_id}.yaml — the demand-rule namespace is "
+                                 "collision-free (§13.1)")
+        other_types = {t for t, _i in locs if t != locs[0][0]}
+        if other_types:
+            where_list = ", ".join(f"schemas/{t}.yaml expectations[{i}]" for t, i in locs)
+            rep.err(first_where, f"expectation id {exp_id!r} declared in more than one "
+                                 f"schema ({where_list}) — the demand-rule namespace is "
+                                 "collision-free (§13.1)")
 
     # value kinds (§4.5, §13.1): a schema field/element `value:` naming an
     # undeclared kind is an error at the schema, independent of any claim
@@ -910,8 +938,16 @@ def run_check(
             if not n.get("why"):
                 rep.err(where, "need requires a why")
             demand = n.get("demand")
-            if demand is not None and str(demand) not in demand_rules:
-                rep.err(where, f"need names undeclared demand rule {demand!r} (§14)")
+            if demand is not None and str(demand) not in blockable_demand_ids:
+                demand_s = str(demand)
+                m = _POSITIONAL_EXPECTATION_RE.match(demand_s)
+                if m:
+                    rep.err(where, f"needs entry demand {demand_s!r} is a positional "
+                                   "display id — never a blocking target (§14); give the "
+                                   f"expectation a stable 'id:' in schemas/{m.group(1)}.yaml "
+                                   "or declare demands/<slug>.yaml")
+                else:
+                    rep.err(where, f"need names undeclared demand rule {demand!r} (§14)")
 
     # disputed ⇄ standing correction pairing
     for f, _o, c in all_claims:

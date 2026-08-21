@@ -249,12 +249,17 @@ def _cmd_index(argv: Sequence[str]) -> int:
 
 
 def _print_demands(demands: list[dict], *, show_satisfied: bool) -> None:
+    from ledger import demands as demands_mod
+
     if not demands:
-        print("no demands")
+        print("no demands apply")
         return
     by_state: dict[str, list[dict]] = {"open": [], "blocked": [], "satisfied": []}
     for d in demands:
         by_state.setdefault(str(d.get("state")), []).append(d)
+    if not show_satisfied and not by_state["open"] and not by_state["blocked"]:
+        print(f"all {len(demands)} demands satisfied")
+        return
     for state in ("open", "blocked", "satisfied"):
         if state == "satisfied" and not show_satisfied:
             continue
@@ -266,7 +271,12 @@ def _print_demands(demands: list[dict], *, show_satisfied: bool) -> None:
             line = f"  {d['fact']} owes {d['field']} ({d['rule']})"
             if d.get("why"):
                 line += f" — {d['why']}"
+            if state == "satisfied" and d.get("satisfied_by"):
+                line += f" ← {d['satisfied_by']}"
             print(line)
+            shape_label = demands_mod.format_shape(d.get("shape") or {})
+            if shape_label:
+                print(f"    {shape_label}")
             if state == "blocked" and d.get("need"):
                 need = d["need"]
                 print(f"    blocked on {need.get('action', '?')}: {need.get('why', '')}")

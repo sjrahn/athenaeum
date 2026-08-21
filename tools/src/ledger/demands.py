@@ -340,10 +340,10 @@ def condition_matches(cond: dict, fact: dict, edges: list[dict],
     return True
 
 
-def _when_label(when: object) -> str:
-    """A compact rendering of an expectation's selector, mirroring
-    `views._when_label` — kept local to avoid an import cycle (views imports
-    this module)."""
+def when_label(when: object) -> str:
+    """A compact rendering of an expectation's selector — the description
+    fallback for an unnamed/undescribed expectation, shared by evaluation
+    (below) and the VOCAB "Demand rules" listing (`views.fresh_vocab`)."""
     if not isinstance(when, dict) or not when:
         return "expected"
     (etype, sel), = when.items()
@@ -389,6 +389,72 @@ def _is_satisfied(fact: dict, field_name: str) -> bool:
     return field_name in carried
 
 
+def _satisfying_claim(fact: dict, field_name: str) -> str | None:
+    """The claim id satisfying an owed field — the first (claim-list order)
+    claim under *field_name*, deterministic display-time provenance. `None`
+    for the reserved `period` name (the fact's own timebox, not a claim) or
+    when no id is carried."""
+    if field_name == "period":
+        return None
+    for c in fact.get("claims") or []:
+        if isinstance(c, dict) and c.get("predicate") == field_name and c.get("id") is not None:
+            return str(c["id"])
+    return None
+
+
+def format_shape(shape: dict) -> str:
+    """A compact one-line rendering of an owed field's answer shape (§14),
+    for the interactive surface and the open-questions Demands section —
+    `""` when nothing is declared (callers omit the line entirely rather
+    than print "shape: none")."""
+    if not shape:
+        return ""
+    if "values" in shape:
+        return "one of: " + ", ".join(str(v) for v in shape["values"])
+    if "target" in shape:
+        target = shape["target"]
+        targets = target if isinstance(target, list) else [target]
+        return "target: " + "|".join(str(t) for t in targets)
+    if "value" in shape:
+        kind = shape.get("kind")
+        if not isinstance(kind, dict):
+            return f"shape: {shape['value']}"
+        fields = kind.get("shape") if isinstance(kind.get("shape"), dict) else {}
+        bits = []
+        for fname, entry in fields.items():
+            constraint = entry.get("constraint") if isinstance(entry, dict) else None
+            bits.append(f"{fname}: {constraint}" if constraint else str(fname))
+        required = kind.get("required") or []
+        req = f" required: {', '.join(str(r) for r in required)}" if required else ""
+        return f"shape: {kind.get('kind') or shape['value']} {{{', '.join(bits)}}}{req}"
+    return ""
+
+
+def named_expectations(schemas: dict[str, dict]) -> dict[str, tuple[str, dict]]:
+    """{expectation id: (fact type, expectation)} across every schema (§4.4)
+    — first-seen wins on a duplicate id (an authoring error `check` flags
+    separately, §13.1); this collapsed view is for usage/description display
+    (`views.fresh_vocab`) and the blockable-namespace helper below."""
+    out: dict[str, tuple[str, dict]] = {}
+    for ftype, schema in schemas.items():
+        if not isinstance(schema, dict):
+            continue
+        for exp in schema.get("expectations") or []:
+            if isinstance(exp, dict) and isinstance(exp.get("id"), str) \
+                    and exp["id"] not in out:
+                out[exp["id"]] = (ftype, exp)
+    return out
+
+
+def blockable_ids(rules: dict[str, dict], schemas: dict[str, dict]) -> set[str]:
+    """The full blockable-id namespace (§13.1, §14): declared `demands/` rule
+    ids plus named expectation ids — the only two kinds a needs entry's
+    `demand:` may reference. Positional expectation display ids
+    (`expectation:{type}[{i}]`) and unconditional `expected:{type}.{field}`
+    ids are display-only and never a blocking target."""
+    return set(rules) | set(named_expectations(schemas))
+
+
 def _blocking_need(fact_id: str, rule_id: str, interps: list[dict]) -> dict | None:
     """An open/standing interpretation `about`ing *fact_id* with a `needs`
     entry naming *rule_id* in `demand:` — the blocking need, plus its
@@ -420,24 +486,29 @@ def evaluate_demands(
     """Every demand *fact* currently carries (§14), deterministic.
 
     One engine over three sources — cross-type `demands/*.yaml` rules,
-    schema `expectations:` (§4.4, absorbed unchanged as sugar, rule id
+    schema `expectations:` (§4.4, absorbed unchanged as sugar; a named entry's
+    `id:` is its rule id, an unnamed entry keeps the positional display id
     `expectation:{type}[{i}]`), and unconditionally owed fields
     (`expected: true`, rule id `expected:{type}.{field}`) — so the §7.4
     work-list and the interactive surface (`ath ledger demands`) read off
     the same ground truth. Demands come back in every state, satisfied
-    included; callers filter for display.
+    included; callers filter for display. Blocked-state derivation only ever
+    fires for a rule id in the blockable namespace (§13.1: declared rules and
+    named expectations) — a positional or `expected:*` id can never be a
+    needs entry's blocking target, so it stays open until satisfied.
     """
     interp_list = list(interps.values()) if isinstance(interps, dict) else list(interps)
     fact_id = str(fact.get("id"))
     ftype = str(fact.get("type"))
     schema = schemas.get(ftype) if isinstance(schemas.get(ftype), dict) else {}
+    blockable = blockable_ids(rules, schemas)
     out: list[dict] = []
 
     def make(rule_id: str, field_name: str, why: str) -> None:
         if _is_satisfied(fact, field_name):
             state, need = "satisfied", None
         else:
-            need = _blocking_need(fact_id, rule_id, interp_list)
+            need = _blocking_need(fact_id, rule_id, interp_list) if rule_id in blockable else None
             state = "blocked" if need is not None else "open"
         d = {
             "rule": rule_id, "fact": fact_id, "field": field_name, "state": state,
@@ -445,6 +516,10 @@ def evaluate_demands(
         }
         if need is not None:
             d["need"] = need
+        if state == "satisfied":
+            satisfied_by = _satisfying_claim(fact, field_name)
+            if satisfied_by is not None:
+                d["satisfied_by"] = satisfied_by
         out.append(d)
 
     for rule_id, rule in sorted(rules.items()):
@@ -463,8 +538,9 @@ def evaluate_demands(
     for i, exp in enumerate(schema.get("expectations") or []):
         if not isinstance(exp, dict) or not expectation_selects(exp, fact, edges):
             continue
-        rule_id = f"expectation:{ftype}[{i}]"
-        why = str(exp.get("description") or _when_label(exp.get("when")))
+        exp_id = exp.get("id")
+        rule_id = str(exp_id) if isinstance(exp_id, str) else f"expectation:{ftype}[{i}]"
+        why = str(exp.get("description") or when_label(exp.get("when")))
         for field_name in exp.get("expect") or []:
             make(rule_id, str(field_name), why)
 
@@ -472,7 +548,7 @@ def evaluate_demands(
         fspec = (schema.get("fields") or {}).get(field_name)
         if isinstance(fspec, dict) and fspec.get("expected"):
             rule_id = f"expected:{ftype}.{field_name}"
-            why = str(fspec.get("description") or f"{ftype}.{field_name} is owed unconditionally")
+            why = str(fspec.get("description") or f"owed unconditionally ({ftype} schema)")
             make(rule_id, field_name, why)
 
     return out
