@@ -130,7 +130,6 @@ per-corpus concerns so they live here.
 │   │   └── web/          # http(s) sources, keyed by host (urn/file/s3 get their own subns)
 │   │       └── <host>.yaml   # Per-host: origin fields + optional `capture:` config
 │   └── context/          # THIS corpus's annotation overlays (issue/reference/relation ids)
-├── capturers/            # TRACKED — optional corpus-local capturer code (example.py)
 ├── artifacts/            # UNTRACKED — binary store
 ├── capture/              # UNTRACKED — capture staging
 ├── cache/                # UNTRACKED — resolver output cache
@@ -257,31 +256,6 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   base_url: "http://localhost:9000"
 """
 
-_EXAMPLE_CAPTURER_PY = '''\
-"""Corpus-local capturer template (CODE replacement tier).
-
-Drop a single-file module in this directory and decorate a function with
-`@register("<name>")`; a capture recipe's `capturer: <name>` then routes matching
-origins to it. The `athenaeum` package imports this directory ONLY when a recipe
-names a capturer it doesn't ship -- and it imports (executes) your code, so treat
-this as your corpus's own trusted code.
-
-Uncomment to use.
-"""
-
-# from corpus.capture import CaptureResult, register
-#
-#
-# @register("example")
-# def capture_example(url, *, corpus_root, capture_dir, opts, recipe):
-#     """Retrieve `url` however you like, write the bytes under `capture_dir`, and
-#     return a CaptureResult pointing at the file. Raise
-#     `corpus.capture.CaptureError` on failure. `recipe` is the matched recipe dict."""
-#     out = capture_dir / "example.bin"
-#     out.write_bytes(b"...")  # your custom retrieval here
-#     return CaptureResult(capture_path=out, used_video=False, issues=[])
-'''
-
 
 def scaffold(target: Path, *, force: bool = False) -> Path:
     """Create the minimal corpus seam at `target`.
@@ -322,22 +296,15 @@ def scaffold(target: Path, *, force: bool = False) -> Path:
     if not origin_yaml.exists() or force:
         origin_yaml.write_text(_UNIVERSAL_ORIGIN_YAML, encoding="utf-8")
 
-    # Pluggable-capture seam (both tracked, both optional): per-origin capture config
-    # lives under a `capture:` section on a per-host origin overlay. Origin overlays are
-    # namespaced by URI scheme family — web (http/https) sources live under
-    # `schema/origin/web/<host>.yaml` (matched by host); corpus-local capturer code lives
-    # under capturers/. Seeded with commented examples that are inert until edited.
+    # Pluggable-capture seam (tracked, optional): per-origin capture config lives under a
+    # `capture:` section on a per-host origin overlay. Origin overlays are namespaced by
+    # URI scheme family — web (http/https) sources live under `schema/origin/web/<host>.yaml`
+    # (matched by host). Seeded with a commented example that is inert until edited.
     web_dir = origin_dir / "web"
     web_dir.mkdir(parents=True, exist_ok=True)
     example_overlay = web_dir / "example.com.yaml"
     if not example_overlay.exists() or force:
         example_overlay.write_text(_EXAMPLE_ORIGIN_OVERLAY_YAML, encoding="utf-8")
-
-    capturers_dir = target / "capturers"
-    capturers_dir.mkdir(parents=True, exist_ok=True)
-    example_capturer = capturers_dir / "example.py"
-    if not example_capturer.exists() or force:
-        example_capturer.write_text(_EXAMPLE_CAPTURER_PY, encoding="utf-8")
 
     gi = target / ".gitignore"
     if not gi.exists() or force:

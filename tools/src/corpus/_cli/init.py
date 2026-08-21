@@ -29,7 +29,6 @@ def run(args: argparse.Namespace) -> int:
     print("  records/                          (empty)")
     print("  schema/origin/origin.yaml          (universal — corpus-local)")
     print("  schema/origin/web/example.com.yaml (per-host overlay + `capture:` template)")
-    print("  capturers/example.py              (corpus-local capturer template)")
     print("  .gitignore, README.md")
     print()
     print("Universal mime/atom/context-issue schemas resolve from the package.")

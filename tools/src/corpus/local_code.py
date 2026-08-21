@@ -1,6 +1,6 @@
 """Load a corpus's own local Python — `<corpus_root>/<subdir>/*.py` — so corpus-owned
-modules can register extensions into the package's registries (capturers under
-`capturers/`, drafters under `drafters/`, …).
+modules can register extensions into the package's registries (shapers under
+`shapers/` — the one corpus-local code tier, spec §12.4.3).
 
 Each file is imported **by path** (`importlib.util.spec_from_file_location`, not `sys.path`),
 so distinct corpora can't collide on a shared package name and test corpora stay isolated.

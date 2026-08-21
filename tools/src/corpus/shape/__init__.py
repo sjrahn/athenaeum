@@ -6,8 +6,8 @@ through `recordbuild` — the mechanical case where a declared form makes the sh
 (a conversation's envelopes from a producer's JSON), leaving the agent only the editorial work
 (title, description, per-asset descriptions). The `corpus.shape` REGISTRY is the successor of
 the 2.x draft `STRATEGY_REGISTRY`; corpus-local shapers load from `<root>/shapers/*.py` via the
-same `local_code` loader (the iMessage sub-drafter re-registers here), keyed by form or origin
-id so a corpus specializes the shaping of its own content without editing this package.
+`local_code` loader, keyed by form or origin id so a corpus specializes the shaping of its own
+content without editing this package.
 
 `shape_record` is the dispatch: it finds the record's declared form (its origin overlay's
 `form:` key), looks up the shaper, builds the content zone, and appends the

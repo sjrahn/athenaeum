@@ -380,29 +380,3 @@ def test_config_default_transport_invalid(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError):
         config.load_config(tmp_path)
-
-
-# ---------- corpus-local code capturers (Phase C) ---------- #
-
-
-def test_corpus_local_capturer_loaded_and_selected(tmp_path):
-    (tmp_path / "capturers").mkdir()
-    (tmp_path / "capturers" / "echo.py").write_text(
-        "from corpus.capture import CaptureResult, register\n\n\n"
-        "@register('echo')\n"
-        "def echo(url, *, corpus_root, capture_dir, opts, recipe):\n"
-        "    return CaptureResult(capture_path=capture_dir / 'x', used_video=False, issues=[])\n",
-        encoding="utf-8",
-    )
-    _corpus(tmp_path, e="applies_to: {host_pattern: example.com}\ncapture: {capturer: echo}\n")
-    try:
-        fn, recipe = capture.get_capturer(
-            tmp_path, "https://example.com", opts=capture.CaptureOptions()
-        )
-        assert fn is capture.REGISTRY["echo"] and recipe["capturer"] == "echo"
-    finally:
-        # leave the shared REGISTRY / load-guard clean for other tests
-        capture.REGISTRY.pop("echo", None)
-        from corpus import local_code
-
-        local_code._loaded.discard((str(tmp_path.resolve()), "capturers"))

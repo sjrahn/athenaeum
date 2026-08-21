@@ -71,7 +71,6 @@ from __future__ import annotations
 import base64
 import io
 import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -287,60 +286,6 @@ _BLOCK_PAGE_SIGNATURES: tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...]
 _DRAFTER_DETECTOR_ID = touches.script_identifier("draft.text/text_html")
 
 
-# ---------- corpus-local HTML sub-drafters (extension tier) ---------- #
-#
-# A corpus can specialize HTML drafting for its OWN content WITHOUT editing this package: a
-# module under `<corpus_root>/drafters/*.py` (loaded by `corpus.local_code` before draft —
-# see `_cli/draft.py`) calls `@register_html_subdrafter("<origin-id>")`, and `draft()` hands
-# off to it when the record's origin matches. The hook is GENERIC — this package knows nothing
-# about any specific corpus's formats (e.g. the Apple Messages drafter lives in the
-# corpus-private repo's `drafters/`, not here).
-#
-# A sub-drafter has the signature
-#     fn(soup: BeautifulSoup, *, text_algos: list[str]) -> (blocks, embeds, issues)
-# returning the content-zone blocks (Section/Segment), the embed dicts, and drafter issues —
-# the same trio the generic path produces. It may reuse this module's public
-# `compute_embed_metadata` and the shared path walk (`corpus.transforms.html.element_path`
-# / `path_root`, §6.1.1) so its `el=` addresses line up with the resolver.
-HtmlSubdrafter = Callable[..., tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]]]]
-_HTML_SUBDRAFTERS: dict[str, HtmlSubdrafter] = {}
-
-
-def register_html_subdrafter(origin_id: str) -> Callable[[HtmlSubdrafter], HtmlSubdrafter]:
-    """Register a corpus-local HTML sub-drafter for records whose origin id is `origin_id`
-    (a producer-declared `corpus-origin-schema`, or a stamped origin-block id). Last
-    registration wins, so a corpus re-loading its module re-registers cleanly."""
-
-    def decorator(fn: HtmlSubdrafter) -> HtmlSubdrafter:
-        _HTML_SUBDRAFTERS[origin_id] = fn
-        return fn
-
-    return decorator
-
-
-def get_html_subdrafter(origin_id: str) -> HtmlSubdrafter | None:
-    """The sub-drafter registered for `origin_id`, or None."""
-    return _HTML_SUBDRAFTERS.get(origin_id)
-
-
-def _html_subdrafter_for(
-    origin_schema: str | None, record_metadata: dict[str, Any] | None
-) -> HtmlSubdrafter | None:
-    """The registered sub-drafter for this record's origin, or None. Candidates are the
-    producer-declared `corpus-origin-schema` (read off the soup) plus every stamped
-    origin-block id on the stub — first match wins."""
-    candidates: list[str] = []
-    if origin_schema:
-        candidates.append(origin_schema)
-    for origin in (record_metadata or {}).get("_origins") or []:
-        if isinstance(origin, dict) and isinstance(origin.get("id"), str):
-            candidates.append(origin["id"])
-    for cid in candidates:
-        if (fn := _HTML_SUBDRAFTERS.get(cid)) is not None:
-            return fn
-    return None
-
-
 @register("text/text_html")
 def draft(
     html_path: Path,
@@ -410,77 +355,62 @@ def draft(
         issues.append(issue)
 
     blocks: list[Any]
-    subdrafter = _html_subdrafter_for(origin_schema, record_metadata)
-    if subdrafter is not None:
-        # A corpus-local HTML sub-drafter claims this record's origin: hand off the whole
-        # content zone to it (e.g. a per-message chat transcript) instead of the single
-        # wrapping segment the generic path leaves for the normalizer. It returns the same
-        # (blocks, embeds, issues) trio, built from the same path walk so addresses /
-        # transports still line up with the resolver. The `addressing:` stamp (§7.1)
-        # counts THIS parse — the tree the sub-drafter computed its paths against.
-        fields["addressing"] = {
-            "parser": EL_PARSER_ID,
-            "elements": total_element_count(soup),
-        }
-        blocks, embeds, sub_issues = subdrafter(soup, text_algos=text_algos)
-        issues.extend(sub_issues)
-    else:
-        cleaned_html, _root_selector, embeds, wrapper_addrs, total_elements = _clean_html(
-            soup, record_id=record_id
-        )
-        # The attested `addressing:` stamp (§7.1): the parser identity the paths were
-        # computed under, and the total element count of the tree they were computed ON —
-        # so a resolver whose own parse disagrees refuses loudly instead of walking paths
-        # through a different tree (§6.1.1).
-        fields["addressing"] = {"parser": EL_PARSER_ID, "elements": total_elements}
-        if cleaned_html:
-            if wrapper_addrs:
-                # The wrapping cleaned-HTML segment claims the body's element children —
-                # their subtrees ARE the document's content (§6.1.1: a subtree is one
-                # address). The normalizer later breaks this into precise per-element
-                # paths per the html schema's structural-recovery guidance.
-                blocks = [
-                    Segment(
-                        atom="text",
-                        address=(
-                            wrapper_addrs[0]
-                            if len(wrapper_addrs) == 1
-                            else list(wrapper_addrs)
-                        ),
-                        perceptual=text_fingerprints(cleaned_html, text_algos),
-                        body=cleaned_html,
-                    )
-                ]
-            else:
-                # Degenerate: the body carries visible content but ZERO element children
-                # (bare text nodes directly under <body>). Only elements are addressable
-                # (§6.1.1), so there is no honest address for a wrapping segment — emit
-                # none, flag it, and leave the content readable through the `body` op.
-                # (The pre-3.6 `unaddressable-content` issue and its guaranteed-broken
-                # `el=1` fallback retired with the whitelist, §12.28 — div-soup pages
-                # now address fine; this remnant case is text with no element at all.)
-                blocks = []
-                issues.append(
-                    {
-                        "id": "partial-content",
-                        "subtype": "elementless-body",
-                        "severity": "warning",
-                        "resolution": "open",
-                        "detector": _DRAFTER_DETECTOR_ID,
-                        "fields": {
-                            "description": (
-                                "The artifact's <body> carries visible content as bare "
-                                "text nodes with no element children, so no el= path "
-                                "exists to address it (§6.1.1 addresses elements). No "
-                                "wrapping segment is emitted; the content remains "
-                                "readable through the `body` derivation op."
-                            ),
-                            "remediation": "recapture_with_structural_markup",
-                        },
-                    }
+    cleaned_html, _root_selector, embeds, wrapper_addrs, total_elements = _clean_html(
+        soup, record_id=record_id
+    )
+    # The attested `addressing:` stamp (§7.1): the parser identity the paths were
+    # computed under, and the total element count of the tree they were computed ON —
+    # so a resolver whose own parse disagrees refuses loudly instead of walking paths
+    # through a different tree (§6.1.1).
+    fields["addressing"] = {"parser": EL_PARSER_ID, "elements": total_elements}
+    if cleaned_html:
+        if wrapper_addrs:
+            # The wrapping cleaned-HTML segment claims the body's element children —
+            # their subtrees ARE the document's content (§6.1.1: a subtree is one
+            # address). The normalizer later breaks this into precise per-element
+            # paths per the html schema's structural-recovery guidance.
+            blocks = [
+                Segment(
+                    atom="text",
+                    address=(
+                        wrapper_addrs[0]
+                        if len(wrapper_addrs) == 1
+                        else list(wrapper_addrs)
+                    ),
+                    perceptual=text_fingerprints(cleaned_html, text_algos),
+                    body=cleaned_html,
                 )
+            ]
         else:
+            # Degenerate: the body carries visible content but ZERO element children
+            # (bare text nodes directly under <body>). Only elements are addressable
+            # (§6.1.1), so there is no honest address for a wrapping segment — emit
+            # none, flag it, and leave the content readable through the `body` op.
+            # (The pre-3.6 `unaddressable-content` issue and its guaranteed-broken
+            # `el=1` fallback retired with the whitelist, §12.28 — div-soup pages
+            # now address fine; this remnant case is text with no element at all.)
             blocks = []
+            issues.append(
+                {
+                    "id": "partial-content",
+                    "subtype": "elementless-body",
+                    "severity": "warning",
+                    "resolution": "open",
+                    "detector": _DRAFTER_DETECTOR_ID,
+                    "fields": {
+                        "description": (
+                            "The artifact's <body> carries visible content as bare "
+                            "text nodes with no element children, so no el= path "
+                            "exists to address it (§6.1.1 addresses elements). No "
+                            "wrapping segment is emitted; the content remains "
+                            "readable through the `body` derivation op."
+                        ),
+                        "remediation": "recapture_with_structural_markup",
+                    },
+                }
+            )
+    else:
+        blocks = []
 
     # Canonical hash per the mime schema's `canonical_strategy.algo`
     # (`blake3-canonical-html` — drop <script>/<style>/<svg>, collapse

@@ -2,11 +2,11 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 26
+version: 27
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-19
+date_modified: 2026-08-20
 ---
 
 # Athenaeum Specification — Part II: The Corpus
@@ -1164,7 +1164,7 @@ This bare-id doctrine is scoped to the **scheme-family** directories above — `
 **Operational overlay sections.** Capture and transcription are retrieval concerns of an origin, so their per-host configuration lives on the origin overlay — one host-keyed file describes both *what* a source is and *how* to capture and process it. These sections are corpus-local (the package ships none) and read mechanically by the tooling; declaring them is how the tooling stays generic with **no hardcoded host knowledge**:
 
 - `capture:` — how to retrieve this origin (read at capture time). One overlay serves **both** capture modes: a live URL fetch and a from-save replay of a manual SingleFile save (§12.3.12) resolve the same recipe and run the same `interactions`, so a host's chrome strip and media-surfacing steps are authored once for both.
-  - `capturer` — the capturer name: `browser` (Playwright/HTML; the default), `video` (yt-dlp), or a corpus-local capturer. This is the **sole router** for video vs. browser — there is no built-in video-host list. (`corpus capture --video` / `--no-video` override it for a one-off URL.)
+  - `capturer` — the capturer name: `browser` (Playwright/HTML; the default) or `video` (yt-dlp). This is the **sole router** for video vs. browser — there is no built-in video-host list. (`corpus capture --video` / `--no-video` override it for a one-off URL.)
   - `transport` — `headless` | `headed` | `cdp` (browser capturer).
   - `fidelity` — `exact` | `balanced` | `lean` (browser capturer): the self-contained-snapshot completeness tier. `exact` is byte-faithful (presentation *is* content); `balanced` (the default) drops redundant font / image / media alternates inlined for self-containment; `lean` additionally prunes style rules with no matching element. The tiers affect only the snapshot **artifact** size — the record and its derived body are identical across tiers (the body derivation reads DOM text/tables, not fonts/CSS) — so fidelity is purely a per-origin retention/faithfulness choice. The resolved tier is stamped into a `corpus-fidelity` snapshot meta tag for provenance. Precedence: `corpus capture --fidelity` › per-host `capture.fidelity` › `origin/origin.yaml` › tooling default (`balanced`).
   - `url_rewrite` — `[{pattern, replacement}]` regex rules applied to the navigation target before fetch; the original URL stays the recorded origin and the rewritten form becomes an alias.
@@ -1336,7 +1336,7 @@ Idempotent re-capture is part of `ingest`. Concrete tooling is implementation-de
 
 An origin overlay's `capture.references` (§7.2) drives one mechanical, deterministic action (§8.2): for rules marked `capture: true` (or `corpus capture --with-references`), the **capture** side fetches the page's declared dependent links at depth 1 as their own records after the primary ingest. The declaration is purely a **capture** instruction: which outbound links are part of this capture. The links themselves are already in the faithful body, and whether one names a captured record is a read-time resolution (§9.9, §12.4.7); nothing is stored.
 
-A corpus may also specialize the **shaping** of its own content with corpus-local shaper code — `<corpus_root>/shapers/*.py`, loaded mechanically before the normalize pass (the analogue of the corpus-local capturer in §7.2). Such a shaper claims a record by its origin or form id (§7.2) and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
+A corpus may also specialize the **shaping** of its own content with corpus-local shaper code — `<corpus_root>/shapers/*.py`, loaded mechanically before the normalize pass. Such a shaper claims a record by its origin or form id (§7.2) and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent; the package ships none and knows nothing of any specific format. Implementation-defined — see §12.4.3.
 
 ### 8.2 The deterministic / LLM boundary
 
@@ -1604,15 +1604,13 @@ A capture takes a target — URL, filesystem path, manual upload — and produce
 
 #### 12.3.1 Fetch and capturer routing
 
-**Routing is overlay-driven — no hardcoded host knowledge.** The capturer is chosen by the origin overlay's `capture.capturer:` field (`browser` — Playwright/HTML, the default; `video` — yt-dlp; or a corpus-local capturer name); `corpus capture --video` / `--no-video` are one-off overrides. There is no built-in video-host list: a host that should go to yt-dlp declares `capturer: video` in its overlay, so an undeclared video URL captures as HTML unless `--video` is passed.
+**Routing is overlay-driven — no hardcoded host knowledge.** The capturer is chosen by the origin overlay's `capture.capturer:` field (`browser` — Playwright/HTML, the default; `video` — yt-dlp); `corpus capture --video` / `--no-video` are one-off overrides. There is no built-in video-host list: a host that should go to yt-dlp declares `capturer: video` in its overlay, so an undeclared video URL captures as HTML unless `--video` is passed.
 
 - **HTTP/HTTPS URL** — fetched with redirect-following enabled. The original requested URL and the final-after-redirect URL both land on the record's first origin block (`uri:` list).
 - **Filesystem path** — copied from staging, which is unlinked at ingest; the origin block is uri-less and carries `filename` + `source_modified` instead (§7.2).
 - **Manual upload** — the operator supplies the bytes and any origin URI.
 
 Inline media a transport merely *references* (images in an HTML page, etc.) are not separate records: ingest attests one members-block row per asset (deduped by `transport` byte-hash), and the body carries a placement or positioning segment (§4.3.1.4) — never a stored intra-corpus link. A raw archive is no exception: its roster IS its attestation, and a member becomes its own record only by deliberate promotion (§8.1). Hyperlinks to *other* resources are reconciled to intra-corpus references during cross-reference resolution (§12.4.7).
-
-**Corpus-local capturers.** A corpus can ship its own capturer code under `<corpus_root>/capturers/*.py`. `corpus.local_code.load_corpus_modules(corpus_root, subdir)` imports these by path (`importlib`, not `sys.path`), registering each module in `sys.modules` before exec, idempotently per `(root, subdir)`, with per-file failures logged and skipped. Trust boundary: this executes Python from the corpus root — the corpus owner's own code, which is the point of the tier — but a serving layer never captures, attests, or shapes, so merely fronting a corpus never runs it.
 
 #### 12.3.2 MIME detection
 
@@ -1808,7 +1806,7 @@ Formats that arrive later slot into existing strategies, not new machinery: 7z/r
 
 #### 12.4.3 Corpus-local shapers
 
-A corpus can specialize the shaping of its *own* content without editing the package — **corpus-local shapers**, same trust boundary and registration pattern as corpus-local capturers. `<corpus_root>/shapers/*.py` load via the same `local_code` loader (§12.3.1); a module claims records by origin or form id — a producer-declared `corpus-origin-schema` meta or a stamped origin-block id (§7.2) — and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent. A shaper constructs through `recordbuild` and reuses the public address/member helpers (`compute_embed_metadata`, `transforms.html.is_addressable`), so its addresses and member transports line up with the resolver by construction. The record envelope (origin fields) stays the generic path's; only the authored content zone is delegated. Format-specific shapers, atoms, and overlays for private content live in the corpus tree, never in the package.
+A corpus can specialize the shaping of its *own* content without editing the package — **corpus-local shapers**, the system's one corpus-local code tier. `<corpus_root>/shapers/*.py` load via the `local_code` loader — each file imported by path (`importlib`, not `sys.path`), registered in `sys.modules` before exec, idempotently per `(root, subdir)`, per-file failures logged and skipped. Trust boundary: this executes Python from the corpus root — the corpus owner's own code, which is the point of the tier — but a serving layer never attests, normalizes, or shapes, so merely fronting a corpus never runs it. A module claims records by origin or form id — a producer-declared `corpus-origin-schema` meta or a stamped origin-block id (§7.2) — and builds the authored content zone in place of (or ahead of) the generic mapping-driven shaper and the interpretive agent. A shaper constructs through `recordbuild` and reuses the public address/member helpers (`compute_embed_metadata`, `transforms.html.is_addressable`), so its addresses and member transports line up with the resolver by construction. The record envelope (origin fields) stays the generic path's; only the authored content zone is delegated. Format-specific shapers, atoms, and overlays for private content live in the corpus tree, never in the package.
 
 #### 12.4.4 Perceptual fingerprinting (opt-in)
 

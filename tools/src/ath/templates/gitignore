@@ -6,7 +6,7 @@
 .DS_Store
 *.swp
 
-# Python bytecode (corpus-local capturers/drafters/shapers under the tool venv)
+# Python bytecode (corpus-local shapers under the tool venv)
 __pycache__/
 *.pyc
 

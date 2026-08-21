@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
-from .. import hashing, local_code, mime, paths, records, touches
+from .. import hashing, mime, paths, records, touches
 from .. import urls as urlcanon
 
 log = logging.getLogger("corpus.capture")
@@ -263,10 +263,6 @@ def get_capturer(
         name = "browser"
 
     fn = REGISTRY.get(name)
-    if fn is None:
-        # corpus-local code capturers (`<corpus_root>/capturers/*.py`)
-        local_code.load_corpus_modules(corpus_root, "capturers")
-        fn = REGISTRY.get(name)
     if fn is None:
         raise CaptureError(
             f"unknown capturer {name!r} (registered: {sorted(REGISTRY)})"

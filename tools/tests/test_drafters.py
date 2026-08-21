@@ -991,82 +991,36 @@ def test_origin_meta_overlay_parses_producer_declared_metas():
     assert _origin_meta_overlay(BeautifulSoup("<html></html>", "html.parser")) == (None, {})
 
 
-def test_html_subdrafter_hook_dispatches(tmp_path, run_drafter):
-    """A registered HTML sub-drafter claims a record by origin id: `draft()` hands the whole
-    content zone to it instead of the generic single-wrapper path. This hook is GENERIC and
-    format-agnostic — a corpus's own specialized drafter (e.g. Apple Messages) lives in that
-    corpus's `drafters/`, never in this package."""
-    from corpus.draft import html as draft_html
-
-    calls: list[bool] = []
-
-    @draft_html.register_html_subdrafter("test-export")
-    def _sub(soup, *, text_algos):
-        calls.append(True)
-        block = segments.Section(
-            address="el=1", entry="claimed",
-            segments=[segments.Segment(atom="text", address="el=1", body="hi")],
-        )
-        embed = {"media_type": "image/png", "address": "el=2",
-                 "transport": "blake3:" + "0" * 64, "fields": {}}
-        return [block], [embed], []
-
-    try:
-        p = tmp_path / "x.html"
-        p.write_text("<html><body><p>generic body</p></body></html>", encoding="utf-8")
-        drafter = draft.get_drafter("text/text_html")
-
-        # Routes when a stamped origin-block id matches the registration.
-        result, blocks = run_drafter(
-            drafter, p, record_id="0" * 64, record_metadata={"_origins": [{"id": "test-export"}]}
-        )
-        assert calls == [True]
-        assert len(blocks) == 1 and isinstance(blocks[0], segments.Section)
-        assert blocks[0].entry == "claimed"
-        assert result["embeds"][0]["media_type"] == "image/png"
-
-        # No matching origin → the generic single wrapping text segment, sub-drafter untouched.
-        _, generic = run_drafter(
-            drafter, p, record_id="0" * 64, record_metadata={"_origins": []}
-        )
-        assert calls == [True]  # not called again
-        assert len(generic) == 1 and isinstance(generic[0], segments.Segment)
-        assert generic[0].overlay is None
-    finally:
-        draft_html._HTML_SUBDRAFTERS.pop("test-export", None)
-
-
-def test_local_code_loads_corpus_drafters(tmp_path):
-    """`load_corpus_modules` imports `<root>/drafters/*.py` by path so they self-register —
+def test_local_code_loads_corpus_shapers(tmp_path):
+    """`load_corpus_modules` imports `<root>/shapers/*.py` by path so they self-register —
     including a module that defines a `@dataclass` (which resolves its module via
     `sys.modules`, so the loader must register the module there before exec). Idempotent."""
-    from corpus import local_code
-    from corpus.draft import html as draft_html
+    from corpus import local_code, shape
 
-    d = tmp_path / "drafters"
+    d = tmp_path / "shapers"
     d.mkdir()
     (d / "mine.py").write_text(
         "from dataclasses import dataclass\n"
-        "from corpus.draft.html import register_html_subdrafter\n"
+        "from corpus.shape import register_shaper\n"
         "@dataclass\n"
         "class _M:\n"
         "    x: int = 0\n"
-        "@register_html_subdrafter('mine-export')\n"
-        "def draft_mine(soup, *, text_algos):\n"
-        "    return [], [], []\n",
+        "@register_shaper('mine-form')\n"
+        "def shape_mine(*args, **kwargs):\n"
+        "    return None\n",
         encoding="utf-8",
     )
     try:
-        assert draft_html.get_html_subdrafter("mine-export") is None
-        local_code.load_corpus_modules(tmp_path, "drafters")
-        fn = draft_html.get_html_subdrafter("mine-export")
-        assert fn is not None and fn.__name__ == "draft_mine"
+        assert shape.get_shaper("mine-form") is None
+        local_code.load_corpus_modules(tmp_path, "shapers")
+        fn = shape.get_shaper("mine-form")
+        assert fn is not None and fn.__name__ == "shape_mine"
         # A `_`-prefixed file is skipped; absent dir / None root are no-ops.
-        local_code.load_corpus_modules(tmp_path, "drafters")  # idempotent — no re-import/error
-        local_code.load_corpus_modules(None, "drafters")
+        local_code.load_corpus_modules(tmp_path, "shapers")  # idempotent — no re-import/error
+        local_code.load_corpus_modules(None, "shapers")
     finally:
-        draft_html._HTML_SUBDRAFTERS.pop("mine-export", None)
-        local_code._loaded.discard((str(tmp_path.resolve()), "drafters"))
+        shape.REGISTRY.pop("mine-form", None)
+        local_code._loaded.discard((str(tmp_path.resolve()), "shapers"))
 
 
 def test_html_resolver_materializes_octet_stream_labeled_image():

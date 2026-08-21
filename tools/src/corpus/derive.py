@@ -25,7 +25,7 @@ from typing import Any
 
 import frontmatter
 
-from corpus import containment, local_code, mime, recordbuild, records, schemas
+from corpus import containment, mime, recordbuild, records, schemas
 from corpus import draft as draft_pkg
 from corpus.draft import DrafterResult
 
@@ -353,8 +353,6 @@ def resolve_drafter(corpus_root: Path, media_type: str):
     # 3.0 pipeline-key aliasing: back-fill the legacy `mode`/`draft.*` view from the documented
     # `disposition`/`derive.*` keys, so a schema declaring either form dispatches identically.
     mt_schema = schemas.normalize_pipeline_keys(mt_schema)
-    # Import the corpus's own local drafter modules so they self-register before dispatch.
-    local_code.load_corpus_modules(corpus_root, "drafters")
     strategy = str((mt_schema.get("draft") or {}).get("strategy") or "").strip()
     if strategy:
         drafter = draft_pkg.get_strategy_drafter(strategy)

@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 26
+version: 27
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-19
+date_modified: 2026-08-20
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -159,7 +159,7 @@ At architecture altitude: the **corpus** is a content-addressed archive of artif
 Everything in that paragraph — the record grammar, schema system, lifecycle, functional-URI grammar, derived views, queue contract — is specified normatively by **Part II** (`spec/corpus.md`). This part adds only the system-level constraints:
 
 - **One corpus, tenancy per origin.** All captured artifacts land in the one corpus, and a record's tenancy derives from its origins — each origin overlay declares `tenancy: public | private` once, at the source grain (a web host's overlay declares public; an export producer's declares private), members inherit through container lineage, and silence falls closed to the instance's `visibility:` floor (Part III §6.4). The tenancy question is answered when a source is onboarded, never per capture. A second corpus is deliberately unsupported: the plural machinery the pre-v26 topology carried served no deployment, and structure is grown when a real need arrives, never ahead of one (Part III §8's organic-growth rule, applied to the architecture itself).
-- **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private drafter, a vendor schema) lives in the corpus tree, loaded through the tooling's corpus-local extension seams. The distribution carries no tenant- or vendor-specific knowledge.
+- **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private shaper, a vendor schema) lives in the corpus tree, loaded through the tooling's corpus-local extension seam (Part II §12.4.3). The distribution carries no tenant- or vendor-specific knowledge.
 - **The corpus carries no resident persona of its own.** The instance's one persona (§6.2) drives content work through the corpus's own gates; host- and source-specific operational knowledge lives in `corpus/runbooks/`.
 
 ## 4. The ledger layer
