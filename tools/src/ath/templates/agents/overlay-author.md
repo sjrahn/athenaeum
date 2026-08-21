@@ -39,7 +39,7 @@ never strips chrome; every strip decision is yours, made per host, at capture ti
 
 ## Required reading, at dispatch time (never from memory)
 
-1. The capture-operations runbook in the corpus repo (`<corpus root>/runbooks/capture-operations.md`)
+1. The capture-operations runbook in the corpus layer (`<corpus root>/runbooks/capture-operations.md`)
    — §6 (the overlay-authoring primer + hard-won cross-host patterns) fully; skim the rest,
    especially §1 (CDP hosts) and §5.
 2. `spec/corpus.md` §7.2 — the `capture:` grammar (`interactions:` primitives: scroll /

@@ -10,7 +10,7 @@ shipping three libraries and two CLIs:
 | `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH Part III](../spec/ledger.md) |
 
 Also bundled: the **universal** corpus schemas (`mime`, `origin`, `atom/**`,
-`context/issue/**`). Each corpus repo supplies only its own records and its
+`context/issue/**`). Each instance supplies only its own records and its
 own corpus-local schema extensions; the ledger carries no tooling of its own.
 
 Consumers of the system's product use this distribution **as a library**

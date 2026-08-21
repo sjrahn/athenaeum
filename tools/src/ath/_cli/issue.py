@@ -15,8 +15,8 @@ thing, and the tracker would start disagreeing with itself.
 tailnet hiccup or a headless run without credentials boots blind to the whole backlog. The
 snapshot keeps the contract honest: the tracker is authoritative, the snapshot
 (`tickets.md` beside the manifest by default; `tracker.snapshot` in the manifest — point it
-into a member repo to keep the trace committed) is the offline read and the git-history
-trace of how the backlog moved.
+under a tracked path, e.g. `corpus/runbooks/`, to keep the trace committed) is the offline
+read and the git-history trace of how the backlog moved.
 """
 
 from __future__ import annotations
