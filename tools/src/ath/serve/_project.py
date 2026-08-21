@@ -68,8 +68,7 @@ def _roster_tiers(
         return frozenset()
     tiers: set[str] = set()
     for c in held:
-        tiers |= tenancy_mod.record_tiers(
-            c.root, h, default=("private" if c.private else "public"), declared=declared)
+        tiers |= tenancy_mod.record_tiers(c.root, h, default=c.floor, declared=declared)
     return frozenset(tiers)
 
 

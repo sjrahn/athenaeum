@@ -181,6 +181,24 @@ def test_date_span_from_separator_lines(tmp_path):
     assert span == ("2020-01-01T00:00:00+00:00", "2022-03-03T00:00:00+00:00")
 
 
+def test_date_span_mixed_naive_and_aware_separator_dates_does_not_raise():
+    # `_SEP_DATE_FORMATS` has both a tz-aware and a naive spelling; a real mailbox can mix
+    # them across its first/last envelope lines (e.g. a Gmail export). Comparing an aware
+    # datetime against a naive one raises TypeError from bare `sorted()` — date_span must
+    # not propagate that, and must still order chronologically (naive treated as UTC).
+    aware_first = b"From foo@bar.com Wed Jan 01 00:00:00 +0000 2020"  # matches the %z format
+    naive_last = b"From foo@bar.com Fri Mar 03 00:00:00 2022"  # matches the no-%z format
+    span = mboxfile.date_span(aware_first, naive_last)
+    assert span == ("2020-01-01T00:00:00+00:00", "2022-03-03T00:00:00")
+
+    # Same pair, reversed input order: the naive one is chronologically earlier here, so the
+    # UTC-normalized sort key must actually reorder them, not just avoid crashing.
+    naive_first = b"From foo@bar.com Wed Jan 01 00:00:00 2019"
+    aware_last = b"From foo@bar.com Fri Mar 03 00:00:00 +0000 2022"
+    span2 = mboxfile.date_span(naive_first, aware_last)
+    assert span2 == ("2019-01-01T00:00:00", "2022-03-03T00:00:00+00:00")
+
+
 def test_message_spec_parser():
     assert mbox_manifest.parse_message_spec("5,12,90-95") == [5, 12, 90, 91, 92, 93, 94, 95]
     assert mbox_manifest.parse_message_spec("3, 1 ,2,1") == [1, 2, 3]

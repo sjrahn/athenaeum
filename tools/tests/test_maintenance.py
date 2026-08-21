@@ -285,6 +285,36 @@ def test_plan_removal_reports_paths_and_size(tmp_path):
     assert plan.referrers == []
 
 
+def test_find_artifact_ignores_part_temp_in_colocated_tree(tmp_path):
+    # Regression: the co-located `artifacts/` scan matched ANY file whose stem was the
+    # record id — including a `placement.put_at` `.part` temp left behind by an interrupted
+    # write — while the store-location scan already excluded `.part`. A record with no
+    # committed artifact but a stray `.part` temp must resolve as "no artifact", not the
+    # temp file, in BOTH trees alike.
+    root = _corpus(tmp_path)
+    shard_dir = root / "artifacts" / paths.shard(ID_A)
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{ID_A}.html.part").write_bytes(b"partial")
+
+    apath, size, loc = maintenance._find_artifact(root, ID_A)
+    assert apath is None
+    assert size == 0
+    assert loc is None
+
+
+def test_find_artifact_still_finds_the_real_artifact_alongside_a_stray_part(tmp_path):
+    root = _corpus(tmp_path)
+    _record(root, ID_A, body=b"x" * 500)
+    shard_dir = root / "artifacts" / paths.shard(ID_A)
+    (shard_dir / f"{ID_A}.html.part").write_bytes(b"partial")
+
+    apath, size, loc = maintenance._find_artifact(root, ID_A)
+    assert apath is not None
+    assert apath.name == f"{ID_A}.html"
+    assert size == 500
+    assert loc is None
+
+
 def test_remove_dry_run_keeps_files(tmp_path):
     root = _corpus(tmp_path)
     _record(root, ID_A)

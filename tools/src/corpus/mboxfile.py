@@ -29,7 +29,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
@@ -394,7 +394,12 @@ def date_span(first_sep: bytes | None, last_sep: bytes | None) -> tuple[str, str
     b = _parse_sep_date(last_sep)
     if a is None or b is None:
         return None
-    lo, hi = sorted((a, b))
+    # `_SEP_DATE_FORMATS` mixes a tz-aware and a naive spelling — one mailbox's first/last
+    # separator can parse to one of each (e.g. a Gmail export with an offset on some envelope
+    # lines and none on others), and comparing an aware/naive pair raises TypeError. Order by
+    # a UTC-normalized key (naive treated as already-UTC) but return the ORIGINAL parsed
+    # values, unconverted, so the reported span still reflects what was actually on the line.
+    lo, hi = sorted((a, b), key=lambda dt: dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC))
     return lo.isoformat(), hi.isoformat()
 
 

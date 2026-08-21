@@ -92,8 +92,74 @@ def _validate_spec(spec: dict) -> tuple[dict, list[str], int | None, str]:
 
 # ------------------------------------------------------------------ the match predicate (§10)
 
+# A `matches` pattern beyond this length is refused outright rather than
+# compiled — a cheap, generous cap ahead of the structural check below.
+_MAX_MATCH_PATTERN_LEN = 512
 
-def _op_matches(op: str, arg: object, values: list[str]) -> bool:
+
+def _nested_repeat(items, *, under_repeat: bool = False) -> bool:
+    """Structural walk of a parsed regex AST (`re._parser.parse(...).data`):
+    True the moment a quantified repeat's own subpattern — reached only
+    through grouping/alternation, never through another repeat — itself
+    carries a repeat (the `(\\w+\\s?)*` catastrophic-backtracking signature).
+    Purely syntactic and conservative: it can refuse a pattern that would in
+    fact terminate quickly, never the reverse."""
+    for op, av in items:
+        name = str(op)
+        if name in ("MAX_REPEAT", "MIN_REPEAT"):
+            if under_repeat:
+                return True
+            if _nested_repeat(av[2], under_repeat=True):
+                return True
+        elif name == "SUBPATTERN":
+            if _nested_repeat(av[3], under_repeat=under_repeat):
+                return True
+        elif name == "BRANCH":
+            if any(_nested_repeat(branch, under_repeat=under_repeat) for branch in av[1]):
+                return True
+    return False
+
+
+def compile_matches(pattern: str) -> re.Pattern[str]:
+    """Compile a `matches` operator's regex (§10) — the one place every
+    operator-grammar caller (scope, the demand engine, harvest's
+    classify_when) validates and compiles it, so a bad or dangerous pattern
+    is always the same error, never re-caught differently per caller.
+
+    Raises ValueError — never lets a bare `re.error` (not a ValueError
+    subclass) or a catastrophically-backtracking match escape: the length
+    cap and the nested-quantified-repeat check both run ahead of
+    `re.compile`, so a `(\\w+\\s?)*`-shaped pattern is refused outright
+    rather than executed against caller data.
+    """
+    if len(pattern) > _MAX_MATCH_PATTERN_LEN:
+        raise ValueError(f"'matches' pattern exceeds {_MAX_MATCH_PATTERN_LEN} characters")
+    import re._parser as sre_parse
+
+    try:
+        parsed = sre_parse.parse(pattern)
+    except re.error:
+        parsed = None  # let re.compile below raise the better-worded error
+    if parsed is not None and _nested_repeat(parsed.data):
+        raise ValueError(
+            "'matches' pattern contains a nested quantified repeat (e.g. `(a+)+`) — "
+            "catastrophic-backtracking-prone, refused"
+        )
+    try:
+        return re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"'matches' pattern is not a valid regex — {e}") from e
+
+
+def op_matches(op: str, arg: object, values: list[str]) -> bool:
+    """The §10 operator grammar's single implementation — shared by scope
+    evaluation, the demand engine, and harvest's classify_when (`spec/
+    ledger.md` §10, §14). Each caller adapts errors to its own boundary
+    convention (scope lets ValueError propagate to its `evaluate_scope`
+    caller; the demand engine's evaluation never raises, §13.1 — malformed
+    is the loader's job; harvest wraps into `HarvestError`) rather than
+    reimplementing the operators. Raises ValueError on an unknown operator
+    or a `matches` pattern `compile_matches` refuses."""
     if op == "exists":
         return bool(values) is bool(arg)
     if not values:
@@ -106,7 +172,7 @@ def _op_matches(op: str, arg: object, values: list[str]) -> bool:
     if op == "glob":
         return any(fnmatch.fnmatchcase(v, str(arg)) for v in values)
     if op == "matches":
-        rx = re.compile(str(arg))
+        rx = compile_matches(str(arg))
         return any(rx.search(v) for v in values)
     raise ValueError(f"unknown operator {op!r}")
 
@@ -154,7 +220,7 @@ def _match_predicate(predicate: dict, fact: dict) -> bool:
         for op, arg in spec.items():
             if op not in _OPS:
                 raise ValueError(f"unknown operator {op!r} on {key!r}")
-            if not _op_matches(op, arg, values):
+            if not op_matches(op, arg, values):
                 return False
     return True
 

@@ -26,9 +26,31 @@ _SEGMENT_OPENER_RE = re.compile(r"(?m)^<!--segment ")
 
 @dataclass(frozen=True)
 class RegisteredCorpus:
+    """A corpus registered into a `CorpusJoin`, with its tenancy floor.
+
+    `floor` is the instance visibility tier (`athenaeum.yaml` `visibility:`)
+    — `"public"`, `"private"`, or a declared tier (spec/athenaeum.md §2.3) —
+    the fail-closed `default` every `record_tiers` call site passes for a
+    record whose origins declare no tenancy of their own (§6.4). `private`
+    is the pre-v30 binary compatibility field: when a caller passes only
+    `private=`, `floor` derives from it (`"private"` iff `private`); when a
+    caller passes `floor=` explicitly, it is authoritative and `private`
+    derives from IT instead (`floor == "private"`) — so a floor of `"family"`
+    or any other declared tier correctly reads as `private=False` (closed to
+    the public plane, but not the binary-private floor) rather than silently
+    collapsing to public.
+    """
+
     name: str
     root: Path
     private: bool
+    floor: str = ""
+
+    def __post_init__(self) -> None:
+        if self.floor:
+            object.__setattr__(self, "private", self.floor == "private")
+        else:
+            object.__setattr__(self, "floor", "private" if self.private else "public")
 
     @property
     def available(self) -> bool:
@@ -101,8 +123,7 @@ class CorpusJoin:
             from ledger.tenancy import record_tenancy
 
             self._tenancy_private[hash_] = not any(
-                record_tenancy(c.root, hash_,
-                               default=("private" if c.private else "public")) == "public"
+                record_tenancy(c.root, hash_, default=c.floor) == "public"
                 for c in held
             )
         return self._tenancy_private[hash_]

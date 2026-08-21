@@ -111,13 +111,12 @@ extended_fields:
 _README_TEMPLATE = """\
 # {name}
 
-A corpus repository — content-addressed records under `records/`, origin overlays
-under `schema/origin/`, annotation overlays under `schema/context/<namespace>/`.
-Universal `mime` / `atom` / `context/issue` schemas resolve from the
-[`athenaeum`][] package's bundled defaults; `origin` and `context` are
-per-corpus concerns so they live here.
-
-[`athenaeum`]: ../athenaeum/tools
+The corpus layer of an Athenaeum instance (spec/corpus.md, Part II) — content-addressed
+records under `records/`, origin overlays under `schema/origin/`, annotation overlays under
+`schema/context/<namespace>/`. Universal `mime` / `atom` / `context/issue` schemas resolve
+from the Athenaeum distribution's bundled defaults (the `ath`/`corpus` CLIs, installed from
+the distribution with `uv tool install --editable tools/`, find this instance by walking up
+for `athenaeum.yaml`); `origin` and `context` are per-corpus concerns so they live here.
 
 ## Layout
 
@@ -146,7 +145,7 @@ corpus lint <hash>      # conformance check
 corpus diagnose <hash>  # snapshot + quick-lint one-pager
 ```
 
-See the `athenaeum` package README for the full surface.
+See the Athenaeum distribution's spec/ and README for the full surface.
 """
 
 _EXAMPLE_ORIGIN_OVERLAY_YAML = """\

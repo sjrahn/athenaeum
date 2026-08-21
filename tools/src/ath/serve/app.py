@@ -80,12 +80,46 @@ def _git_commit(root: Path) -> str | None:
     return res.stdout.strip() or None
 
 
+def _schema_overlay_signature(corpus_root: Path) -> tuple[int, int]:
+    """A cheap (file count, max mtime_ns) signature over the corpus-local
+    schema overlay tree (`<corpus_root>/schema/`) — a per-request-batch
+    staleness check, not a filesystem watch. `corpus.schemas`' loaders
+    (`load_origin_overlay_by_id` among them) are `@lru_cache`d for the
+    process lifetime (its own docstring: "a normal CLI run never mutates
+    schemas post-load"), an assumption the long-running server breaks: an
+    operator editing `tenancy: public` to `tenancy: private` on a live
+    server must see the revocation take effect on the very next request, not
+    at the next restart. Any change to the tree — a rewritten file's mtime,
+    or an added/removed file's count — moves this signature, so `get_ctx`
+    below clears the cache whenever it does."""
+    schema_dir = corpus_root / "schema"
+    if not schema_dir.is_dir():
+        return (0, 0)
+    count = 0
+    latest = 0
+    for p in schema_dir.rglob("*"):
+        if p.is_file():
+            count += 1
+            try:
+                latest = max(latest, p.stat().st_mtime_ns)
+            except OSError:
+                continue
+    return (count, latest)
+
+
 def get_ctx(request: Request) -> Ctx:
     root: Path = request.app.state.root
     instance = load_instance(root)
+    sig = _schema_overlay_signature(instance.corpus_root)
+    if request.app.state.schema_sig != sig:
+        from corpus import schemas as corpus_schemas_mod
+
+        corpus_schemas_mod.cache_clear()
+        request.app.state.schema_sig = sig
     registered = [
         RegisteredCorpus(name="corpus", root=instance.corpus_root,
-                          private=instance.visibility == "private")
+                          private=instance.visibility == "private",
+                          floor=instance.visibility)
     ]
     join = CorpusJoin(registered)
     datasets = {r.dataset: r for r in load_references(root)}
@@ -250,6 +284,23 @@ def list_facts(
     return {"facts": page, "next": next_cursor}
 
 
+def _fact_by_id(ledger_root: Path, fact_id: str) -> dict | None:
+    """The live fact file whose own `id` is `fact_id`, shape-checked, or
+    None — the same load+validate `get_fact`'s primary path applies,
+    factored out so the lineage-redirect branch can apply it to the
+    successor BEFORE emitting the 307 (finding 6)."""
+    fact_path = _find_fact_path(ledger_root, fact_id)
+    if fact_path is None:
+        return None
+    try:
+        fact = json.loads(fact_path.read_bytes())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(fact, dict) or is_redirect(fact) or fact.get("id") != fact_id:
+        return None
+    return fact
+
+
 @router.get("/facts/{fact_id}")
 def get_fact(
     fact_id: str, request: Request, response: Response,
@@ -257,8 +308,29 @@ def get_fact(
     grants: frozenset[str] = Depends(get_grants),
 ):
     lineage, _ = load_lineage(ctx.ledger_root)
-    if fact_id in lineage:
-        return RedirectResponse(url=f"/facts/{lineage[fact_id]}", status_code=307)
+    target_id = lineage.get(fact_id)
+    if target_id is not None:
+        # The disclosure check applies to the SUCCESSOR before the redirect
+        # is ever emitted — a 307 naming an invisible fact is itself the
+        # leak, and a 307-vs-404 split distinguishes "retired" from "never
+        # existed" exactly the way `require_owner` forbids for existence
+        # generally (§5.1). Same fail-closed answer either way: 404.
+        target_fact = _fact_by_id(ctx.ledger_root, target_id)
+        if target_fact is None or (plane != "owner" and not fact_is_visible(
+                target_fact, ctx.join, ctx.datasets, grants,
+                declared=ctx.instance.declared_tiers)):
+            raise HTTPException(404, "not found")
+        # The redirect path gets the same ETag/Vary handling the normal path
+        # does (previously applied nowhere on this branch) — a downstream
+        # cache must not conflate a redirect served to one plane with
+        # another's, any more than it may for a fact body.
+        etag = _etag(ctx.instance_commit, plane, f"redirect:{fact_id}:{target_id}".encode())
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Vary": "Authorization"})
+        redirect = RedirectResponse(url=f"/facts/{target_id}", status_code=307)
+        redirect.headers["ETag"] = etag
+        redirect.headers["Vary"] = "Authorization"
+        return redirect
 
     fact_path = _find_fact_path(ctx.ledger_root, fact_id)
     if fact_path is None:
@@ -334,6 +406,11 @@ def get_scope(
         result = evaluate_scope(ctx.ledger_root, parsed)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    except NotImplementedError as e:
+        # `evidence: "resolved"` is admitted by spec shape (`_validate_spec`)
+        # but not yet implemented by `evaluate_scope` (§12) — a documented,
+        # not-yet-built feature is 501, never a 500.
+        raise HTTPException(501, str(e)) from e
 
     if plane == "owner":
         return result
@@ -349,16 +426,47 @@ def get_scope(
     # raw output down to visible fact ids — the narrower bug this fixes: a
     # record hash outside `grants` riding a visible fact's evidence list was
     # previously served whole.
+    all_members = result.get("members", [])
     kept_facts: dict[str, dict] = {}
     kept_members = []
-    for m in result.get("members", []):
+    for m in all_members:
         path = m.get("path")
         fact = _load_fact_at(ctx.ledger_root, path) if isinstance(path, str) else None
         if fact is not None and fact_is_visible(fact, ctx.join, ctx.datasets, grants,
                                                 declared=declared):
             fid = str(m.get("id"))
             kept_facts[fid] = fact
-            kept_members.append(m)
+            # `depth` counts hops through the UNFILTERED graph — an
+            # invisible intermediary on the shortest path would still shape
+            # a visible descendant's depth, revealing that something is
+            # there even though it never surfaces as a member (finding 5).
+            # Recomputing depth over the visible subgraph would mean
+            # re-running the traversal — the exact reimplementation this
+            # codebase already flags as tech debt for the operator grammar
+            # (§10, "Beyond the finding cap"). Omitting it is the simplest
+            # spec-honest option: every other plane-filtered route already
+            # drops fields it can't answer safely rather than answer them
+            # wrong (`/facts/{id}` strips claims/sources/roster outright).
+            kept_members.append({k: v for k, v in m.items() if k != "depth"})
+
+    # A seed id that resolves to a fact invisible to `grants` must be
+    # indistinguishable from one that never existed (§5.1: "existence itself
+    # can be the leak") — merge it into `unknown_seeds` too. Replicates
+    # `scope.make_resolver`'s single lineage hop rather than re-deriving the
+    # resolved id from the (already-filtered) member set, so a raw id that
+    # resolves through a retired/redirected id can't slip through.
+    seed = parsed.get("seed") if isinstance(parsed, dict) else None
+    unknown_seeds = set(result.get("unknown_seeds") or ())
+    if isinstance(seed, dict) and isinstance(seed.get("ids"), list):
+        member_ids = {str(m.get("id")) for m in all_members}
+        lineage, _ = load_lineage(ctx.ledger_root)
+        for raw in seed["ids"]:
+            if not isinstance(raw, str) or raw in unknown_seeds:
+                continue
+            resolved = raw if raw in member_ids else lineage.get(raw)
+            if resolved is not None and resolved not in kept_facts:
+                unknown_seeds.add(raw)
+    result["unknown_seeds"] = sorted(unknown_seeds)
     result["members"] = kept_members
     if "evidence" in result:
         result["evidence"] = {
@@ -399,11 +507,53 @@ def get_schema(type_: str, ctx: Ctx = Depends(get_ctx)) -> dict:
 
 # --------------------------------------------------------------------- /vocab
 
+_DEMAND_RULES_START = "<!-- vocab:demand-rules:start -->"
+_DEMAND_RULES_END = "<!-- vocab:demand-rules:end -->"
+
+
+def _strip_demand_rules_section(markdown: str) -> str:
+    """Strip the "Demand rules" section from a non-owner `/vocab` response.
+
+    `views.fresh_vocab` builds this section straight from the demand rule
+    definitions (ids + `description:`) — not from `facts`, so pre-filtering
+    the fact dict passed in (below) can't touch it. Rule ids/descriptions
+    are owner-only on every other route (`/facts/{id}/demands` gates on
+    `require_owner`); `/vocab` must not become the one place that leaks them
+    to the public/audience plane."""
+    heading_start = markdown.find("\n## Demand rules\n")
+    end_marker = markdown.find(_DEMAND_RULES_END)
+    if heading_start == -1 or end_marker == -1:
+        return markdown
+    end = end_marker + len(_DEMAND_RULES_END)
+    if markdown[end:end + 1] == "\n":
+        end += 1
+    return markdown[:heading_start] + markdown[end:]
+
 
 @router.get("/vocab")
-def get_vocab(ctx: Ctx = Depends(get_ctx)) -> dict:
+def get_vocab(
+    ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
+) -> dict:
     facts, _ = load_json_dir(ctx.ledger_root, "facts/*/*.json")
-    return {"generated": True, "markdown": views_mod.fresh_vocab(ctx.ledger_root, facts)}
+    owner = plane == "owner"
+    if not owner:
+        # A non-owner plane must never learn the type/predicate/qualifier/
+        # role vocabulary of a fact it cannot read — existence itself can be
+        # the leak (finding 4, spec/ledger.md §6.4/§12). The counts and rows
+        # `views.collect_vocab` derives from `facts` are filtered here, at
+        # the same fact-visibility gate `/facts` and `/scope` apply, rather
+        # than inside `views` (which has no plane concept of its own — it
+        # only ever sees the fact dict it's handed).
+        declared = ctx.instance.declared_tiers
+        facts = {
+            path: fact for path, fact in facts.items()
+            if fact_is_visible(fact, ctx.join, ctx.datasets, grants, declared=declared)
+        }
+    markdown = views_mod.fresh_vocab(ctx.ledger_root, facts)
+    if not owner:
+        markdown = _strip_demand_rules_section(markdown)
+    return {"generated": True, "markdown": markdown}
 
 
 # ------------------------------------------------------------------- /records
@@ -459,17 +609,39 @@ def resolve_corpus(
     try:
         out_path = corpus_resolver.resolve(uri, ctx.corpus_root, regenerate=False)
     except NotImplementedError as e:
+        # Generic details only (finding 7): the pre-fix message echoed the
+        # caller's own raw `uri` (query string included) back into the
+        # response body — a reflection, not a disclosure of anything new,
+        # but still worth denying the habit on an unauthenticated route.
         raise HTTPException(
-            501, f"{e} — not cleanly resolvable over the read surface; try "
-                 f"`corpus resolve {uri!r}` on the instance host"
+            501, "not cleanly resolvable over the read surface — try "
+                 "`corpus resolve` on the instance host"
         ) from e
     except ValueError as e:
-        raise HTTPException(422, str(e)) from e
+        raise HTTPException(422, "not resolvable") from e
     except (FileNotFoundError, ArtifactMissing) as e:
-        raise HTTPException(404, str(e)) from e
+        # Generic detail only: the resolver's own message embeds the
+        # absolute instance-root filesystem path (finding 7) — never
+        # servable to a plane that hasn't even cleared the visibility gate
+        # above.
+        raise HTTPException(404, "not found") from e
 
     media_type = mimetypes.guess_type(str(out_path))[0] or "application/octet-stream"
-    return FileResponse(out_path, media_type=media_type)
+    return FileResponse(
+        out_path, media_type=media_type,
+        headers={
+            # The corpus captures untrusted third-party pages by design —
+            # `text/html`/`image/svg+xml` bytes served inline, same-origin
+            # with the API, would let a captured page's script read every
+            # owner-plane route with the credentials of whatever frontend
+            # the operator points at this port (finding 7, §5.1). `nosniff`
+            # stops content-type sniffing from upgrading a mislabeled body
+            # into something executable; `attachment` stops it from
+            # rendering/running same-origin at all.
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f'attachment; filename="{hash_}"',
+        },
+    )
 
 
 @router.get("/resolve/ref/{dataset}/{id_path:path}")
@@ -540,9 +712,11 @@ def get_demands(fact_id: str, ctx: Ctx = Depends(get_ctx)) -> list[dict]:
     edges = [f for f in live if is_edge(f)]
     facts_by_id = {str(f.get("id")): f for f in live}
     interps, _ = load_json_dir(ctx.ledger_root, "interpretations/*.json")
+    lineage, _ = load_lineage(ctx.ledger_root)
     return demands_mod.evaluate_demands(
         fact, rules=rules, schemas=schemas, kinds=kinds,
         facts_by_id=facts_by_id, edges=edges, interps=list(interps.values()),
+        lineage=lineage,
     )
 
 
@@ -563,6 +737,26 @@ def get_open_questions(ctx: Ctx = Depends(get_ctx)) -> dict:
     schemas, _ = load_schemas(ctx.ledger_root)
     markdown = views_mod.render_worklist(ctx.ledger_root, facts, interps, schemas)
     return {"generated": True, "markdown": markdown}
+
+
+async def _cache_headers_middleware(request: Request, call_next):
+    """Response middleware, not a per-route header (finding 8): every route
+    on this surface varies by the `Authorization` bearer — a plane-blind
+    reverse proxy or CDN in front of the port (§5.1 anticipates exactly this
+    deployment posture) must never key a cached response on anything less,
+    so every response gets `Vary: Authorization`, not only `/facts/{id}`
+    (previously the one route that set it). Owner- and audience-plane
+    responses additionally forbid caching outright — a shared cache serving
+    an owner-plane `/facts` listing (private fact ids) to the next anonymous
+    request under a token-blind key is the finding's own scenario. The
+    public plane's responses may stay cacheable (no override): a cache
+    serving one public-plane response to another public caller discloses
+    nothing beyond what `{public}` already grants."""
+    response = await call_next(request)
+    response.headers["Vary"] = "Authorization"
+    if get_plane(request) != "public":
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 # ----------------------------------------------------------------- app factory
@@ -607,5 +801,7 @@ def create_app(
     app.state.root = instance_root
     app.state.owner_token = owner_token
     app.state.audience_tokens = audience_tokens
+    app.state.schema_sig = None
     app.include_router(router)
+    app.middleware("http")(_cache_headers_middleware)
     return app

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -785,7 +786,10 @@ def _resolve_stream_identity(
         return cache_p.resolve()
 
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = cache_p.with_name(f"{cache_p.name}.tmp")
+    # Pid-suffixed (matches `paths.atomic_write_text`) so two concurrent workers resolving
+    # the same stream never share a scratch file — the `finally` below must only ever remove
+    # THIS worker's own temp, never a sibling worker's in-flight one.
+    tmp = cache_p.with_name(f"{cache_p.name}.tmp.{os.getpid()}")
     try:
         with tmp.open("wb") as out:
             for chunk in mux.mux_stream(artifact_binary, stream_id, workdir=cache_p.parent):
@@ -1040,9 +1044,14 @@ def _rechain_member(
             member_path = furi.cache_path(corpus_root, furi.urihash(staging_key), member_ext)
             if not member_path.is_file():
                 member_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = member_path.with_name(f"{member_path.name}.tmp")
-                tmp.write_bytes(data)
-                tmp.replace(member_path)
+                # Pid-suffixed: `member_path` is a pure function of `staging_key`, so two
+                # concurrent workers extracting the same member must not share one temp.
+                tmp = member_path.with_name(f"{member_path.name}.tmp.{os.getpid()}")
+                try:
+                    tmp.write_bytes(data)
+                    tmp.replace(member_path)
+                finally:
+                    tmp.unlink(missing_ok=True)
             working = _init_member_working_value(new_kind, member_path)
             if new_kind == "pdf":
                 pdf_doc = working
@@ -1157,23 +1166,33 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
 
 
 def _write_to_cache(working: Any, kind: str, cache_p: Path) -> None:
-    if kind == "image":
-        # Convert palette images so saving to PNG is lossless.
-        if working.mode == "P":
-            working = working.convert("RGBA")
-        working.save(cache_p, format="PNG")
-    elif kind in ("text", "json"):
-        cache_p.write_text(working, encoding="utf-8")
-    elif kind in ("audio", "video", "media"):
-        # `working` is a Path to ffmpeg's temp output (extract_audio, or a muxing-contract
-        # op — `time_range=`/`format=`/`scenes=`'s Path-valued results, §6.2); move it into
-        # the cache.
-        shutil.move(str(working), cache_p)
-    elif kind == "bytes":
-        # `working` is the raw member bytes; cache verbatim.
-        cache_p.write_bytes(working)
-    else:
-        raise NotImplementedError(f"no cache writer for kind {kind!r}")
+    # Stage into a pid-suffixed sibling temp and atomically `os.replace` into place — a
+    # crash or Ctrl-C mid-write must never leave a partial file at `cache_p` (the next
+    # resolve's `cache_p.is_file()` cache-hit check trusts it unconditionally, §finding 13),
+    # and the pid suffix (matching `paths.atomic_write_text`'s convention) keeps two
+    # concurrent `corpus drain` workers resolving the same URI from sharing one scratch file.
+    tmp = cache_p.with_name(f"{cache_p.name}.tmp.{os.getpid()}")
+    try:
+        if kind == "image":
+            # Convert palette images so saving to PNG is lossless.
+            if working.mode == "P":
+                working = working.convert("RGBA")
+            working.save(tmp, format="PNG")
+        elif kind in ("text", "json"):
+            tmp.write_text(working, encoding="utf-8")
+        elif kind in ("audio", "video", "media"):
+            # `working` is a Path to ffmpeg's temp output (extract_audio, or a muxing-contract
+            # op — `time_range=`/`format=`/`scenes=`'s Path-valued results, §6.2); move it into
+            # the cache's staging temp (same filesystem, so this is itself a cheap rename).
+            shutil.move(str(working), tmp)
+        elif kind == "bytes":
+            # `working` is the raw member bytes; cache verbatim.
+            tmp.write_bytes(working)
+        else:
+            raise NotImplementedError(f"no cache writer for kind {kind!r}")
+        os.replace(tmp, cache_p)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 #: Extensions the built-in `mimetypes` table doesn't reliably map on every platform —

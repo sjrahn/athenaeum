@@ -202,3 +202,31 @@ def test_xls_draft_and_lint(tmp_path):
     # The Empty sheet contributes an info format-loss issue.
     issues = list(records.iter_issue_blocks(post))
     assert any(i["fields"].get("address") == "sheet=Empty" for i in issues)
+
+
+def test_xls_cell_value_time_only_cell_does_not_raise():
+    """A time-only cell (no date component, e.g. a clock-time or duration column) must
+    render as a bare `time`, not raise. `xldate_as_tuple` zeroes the date part for these
+    (`(0, 0, 0, H, M, S)`), and `datetime(0, 0, 0, ...)` is invalid — the fix special-cases
+    an all-zero date part to a `datetime.time` instead."""
+    import datetime as dt
+
+    import pytest
+
+    pytest.importorskip("xlrd")
+    from corpus.draft import xls as xls_mod
+
+    class _FakeBook:
+        datemode = 0
+
+    class _FakeCell:
+        ctype = 3  # xlrd.XL_CELL_DATE
+        value = 0.5  # 12:00:00, no date component
+
+    class _FakeSheet:
+        book = _FakeBook()
+
+        def cell(self, row, col):
+            return _FakeCell()
+
+    assert xls_mod._cell_value(_FakeSheet(), 0, 0) == dt.time(12, 0, 0)

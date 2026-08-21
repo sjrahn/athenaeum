@@ -369,6 +369,19 @@ def _analyze_contained(
     return stranded, surviving
 
 
+def _artifact_file_in_shard(shard_dir: Path, record_id: str) -> Path | None:
+    """The artifact file for `record_id` in `shard_dir` (a `artifacts/<shard>/` or store
+    location's `<shard>/` directory), or None. `.part` (`placement.put_at`'s temp suffix
+    for an interrupted write) is never the artifact — the one rule, checked once, that both
+    `_find_artifact` call sites below share regardless of which tree they're scanning."""
+    if not shard_dir.is_dir():
+        return None
+    for f in sorted(shard_dir.iterdir()):
+        if f.is_file() and f.suffix != ".part" and f.name.split(".", 1)[0] == record_id:
+            return f
+    return None
+
+
 def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int, str | None]:
     """Return the content-addressed artifact path + size for `record_id`, or
     `(None, 0, None)`. Co-located `artifacts/` wins; failing that, *(22)* every
@@ -377,27 +390,23 @@ def _find_artifact(corpus_root: Path, record_id: str) -> tuple[Path | None, int,
     tree), so a caller can tell an absolute store-location path apart from a
     corpus-root-relative one without re-deriving it."""
     shard_dir = corpus_root / "artifacts" / paths.shard(record_id)
-    if shard_dir.is_dir():
-        for f in sorted(shard_dir.iterdir()):
-            if f.is_file() and f.name.split(".", 1)[0] == record_id:
-                try:
-                    return f, f.stat().st_size, None
-                except OSError:
-                    return f, 0, None
+    f = _artifact_file_in_shard(shard_dir, record_id)
+    if f is not None:
+        try:
+            return f, f.stat().st_size, None
+        except OSError:
+            return f, 0, None
+
     from . import placement
 
     for loc in placement.store_locations(corpus_root):
         loc_shard_dir = loc.path / paths.shard(record_id)
-        if not loc_shard_dir.is_dir():
-            continue
-        for f in sorted(loc_shard_dir.iterdir()):
-            # `.part` is `placement.put_at`'s temp suffix — an interrupted write, not
-            # the artifact.
-            if f.is_file() and f.name.split(".", 1)[0] == record_id and f.suffix != ".part":
-                try:
-                    return f, f.stat().st_size, loc.name
-                except OSError:
-                    return f, 0, loc.name
+        f = _artifact_file_in_shard(loc_shard_dir, record_id)
+        if f is not None:
+            try:
+                return f, f.stat().st_size, loc.name
+            except OSError:
+                return f, 0, loc.name
     return None, 0, None
 
 

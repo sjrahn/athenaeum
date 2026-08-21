@@ -169,8 +169,15 @@ def _cell_value(sheet, row: int, col: int) -> Any:
         return bool(cell.value)
     if cell.ctype == xlrd.XL_CELL_DATE:
         from datetime import date, datetime
+        from datetime import time as dt_time
 
         tup = xlrd.xldate_as_tuple(cell.value, sheet.book.datemode)
+        if tup[:3] == (0, 0, 0):
+            # Time-only cell (e.g. a duration or a clock-time column): xlrd's date part
+            # comes back zeroed, and `datetime(0, 0, 0, ...)` raises (year/month/day must be
+            # >= 1) — render as a bare `time` instead of forcing a fake date onto it.
+            # `_fmt_cell` already isoformat()s `time` values as HH:MM:SS.
+            return dt_time(*tup[3:])
         return date(*tup[:3]) if tup[3:] == (0, 0, 0) else datetime(*tup)
     if cell.ctype == xlrd.XL_CELL_ERROR:
         return f"#ERROR ({xlrd.error_text_from_code.get(cell.value, cell.value)})"

@@ -48,7 +48,12 @@ if TYPE_CHECKING:
     from ledger.corpora import CorpusJoin
 
 _CORPUS_URI_HASH_RE = re.compile(r"^corpus://([0-9a-f]{64})")
-_MAX_LINEAGE_HOPS = 8  # containers nest shallowly; a cycle or runaway stops cold
+# A DEPTH bound (recursion levels), not a node-count budget — containers nest
+# shallowly, so a genuine chain this deep is already a cycle or a runaway. A
+# node-count budget shared across sibling branches would exhaust on a wide
+# but shallow fan-out and fail OPEN (see the _seen revisit note below); a
+# depth bound can't, since fan-out width never advances it.
+_MAX_LINEAGE_HOPS = 8
 
 # `declared=None` means "no instance tier declarations reachable" — the
 # pre-tier binary every undeclared caller (and every existing test) rides.
@@ -71,6 +76,7 @@ def record_tiers(
     default: str = "private",
     declared: frozenset[str] | None = None,
     _seen: set[str] | None = None,
+    _depth: int = 0,
 ) -> frozenset[str]:
     """The set of tiers the record at `hash_` in `corpus_root` carries (§6.4).
 
@@ -90,10 +96,40 @@ def record_tiers(
     recursion carries the same `default` and `declared`: a member chain that
     never meets a declaration lands on the floor, exactly like a standalone
     undeclared record.
+
+    `_seen` is shared mutable cycle-detection state across the WHOLE
+    recursion tree (every sibling branch of a diamond lineage sees the same
+    set) — a revisited hash contributes `frozenset()`, empty, never
+    `{default}`: the visit that first added it to `_seen` already unioned in
+    its contribution, and a second origin naming the same ancestor must not
+    inject the floor into the union a second time (a record whose entire
+    lineage is private must not publish as public merely because two of its
+    origins converge on one shared container). `_depth` is per-branch — it
+    only grows along one chain, never across siblings — so a wide fan-out
+    exhausting `_seen` can't happen; only a genuinely deep chain trips
+    `_MAX_LINEAGE_HOPS`, and it too fails CLOSED (`frozenset()`, contributing
+    nothing — never `{default}`, which the caller may have set to a
+    permissive floor).
+
+    That emptiness has to survive being unioned back into a CALLER's own
+    `tiers`, too — a lone `frozenset()` from a cut-short branch must not read
+    as "this lineage parent declares nothing, fall to the floor" the way a
+    genuinely undeclared leaf does, or the diamond leak just reappears one
+    level up (the second origin's own record falls to `default` instead of
+    the ancestor it couldn't re-chase). So the bottom-of-function fallback
+    below only fires when there was no `corpus://` lineage to chase AT ALL —
+    when every reachable lineage parent came back cut-short instead, this
+    record propagates `frozenset()` upward exactly like a cut-short parent
+    would, on the same reasoning: its real tenancy is either already
+    accounted for by a sibling branch of this same evaluation, or genuinely
+    unknown past the depth bound — never assumed to be the (possibly more
+    permissive) floor.
     """
     seen = _seen if _seen is not None else set()
-    if hash_ in seen or len(seen) > _MAX_LINEAGE_HOPS:
-        return frozenset({default})
+    if hash_ in seen:
+        return frozenset()
+    if _depth > _MAX_LINEAGE_HOPS:
+        return frozenset()
     seen.add(hash_)
 
     from corpus import paths, records  # heavy import, deferred
@@ -131,9 +167,18 @@ def record_tiers(
 
     for parent in lineage_parents:
         tiers |= record_tiers(corpus_root, parent, default=default, declared=declared,
-                               _seen=seen)
+                               _seen=seen, _depth=_depth + 1)
 
-    return frozenset(tiers) if tiers else frozenset({default})
+    if tiers:
+        return frozenset(tiers)
+    if lineage_parents:
+        # Every reachable lineage parent was cut short (revisited, or past
+        # the depth bound) — propagate the emptiness rather than falling to
+        # `default` here (see the docstring): a sibling branch of this same
+        # evaluation already has the shared ancestor's real tiers, or the
+        # chain is genuinely too deep to trust either way.
+        return frozenset()
+    return frozenset({default})
 
 
 def record_tenancy(
@@ -173,8 +218,7 @@ def _held_tiers(
     dangle to flag, not this module's."""
     tiers: set[str] = set()
     for c in join.holders(hash_):
-        tiers |= record_tiers(c.root, hash_, default=("private" if c.private else "public"),
-                              declared=declared)
+        tiers |= record_tiers(c.root, hash_, default=c.floor, declared=declared)
     return frozenset(tiers)
 
 

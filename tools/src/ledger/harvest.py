@@ -20,7 +20,6 @@ is refused at load.
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +29,7 @@ import yaml
 
 from ledger.corpora import RegisteredCorpus
 from ledger.model import ensure_source
+from ledger.scope import op_matches
 
 RULE_KEYS = {"id", "description", "match", "mint"}
 MINT_KEYS = {"concept", "roster", "claims"}
@@ -132,27 +132,15 @@ def _fact_values(facts: dict, name: str) -> list[str]:
     return [str(v)]
 
 
-def _op_matches(op: str, arg, values: list[str]) -> bool:
-    if op == "exists":
-        return bool(values) is bool(arg)
-    if not values:
-        return False
-    if op == "equals":
-        return any(v == str(arg) for v in values)
-    if op == "in":
-        options = [str(a) for a in (arg if isinstance(arg, list) else [arg])]
-        return any(v in options for v in values)
-    if op == "glob":
-        return any(fnmatch.fnmatchcase(v, str(arg)) for v in values)
-    if op == "matches":
-        rx = re.compile(str(arg))
-        return any(rx.search(v) for v in values)
-    raise HarvestError(f"unknown operator {op!r}")
-
-
 def match(predicate: dict, facts: dict) -> bool:
     """The classify_when grammar: fact→{op: arg} tests joined by AND;
-    all_of/any_of/none_of group sub-predicates; missing fact is false."""
+    all_of/any_of/none_of group sub-predicates; missing fact is false.
+
+    Operator evaluation itself is `scope.op_matches` — the one §10
+    implementation shared with scope evaluation and the demand engine
+    (§10, "Beyond the finding cap") — with its ValueError (unknown operator,
+    or a `matches` pattern `compile_matches` refuses) wrapped into this
+    module's own `HarvestError` at this boundary."""
     for key, spec in (predicate or {}).items():
         if key in _GROUPS:
             subs = spec if isinstance(spec, list) else [spec]
@@ -168,7 +156,11 @@ def match(predicate: dict, facts: dict) -> bool:
         for op, arg in spec.items():
             if op not in _OPS:
                 raise HarvestError(f"unknown operator {op!r} on {key!r}")
-            if not _op_matches(op, arg, values):
+            try:
+                matched = op_matches(op, arg, values)
+            except ValueError as e:
+                raise HarvestError(f"{key!r}: {e}") from e
+            if not matched:
                 return False
     return True
 

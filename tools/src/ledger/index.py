@@ -54,6 +54,15 @@ def slugify(s: object) -> str:
 
 
 def build_index(ledger_root: Path) -> dict:
+    # the staleness stamp is taken BEFORE the read pass below, never after —
+    # a write racing this build must make the cache look stale, never
+    # artificially fresh. Stamping after the read (the previous bug) bakes
+    # in whatever a concurrent writer changed mid-read, and the next
+    # `is_fresh` check then compares the *post*-write tree against a stamp
+    # that already reflects it: forever "fresh", even though the read that
+    # produced this very index missed (or half-saw) the write. Fail-stale,
+    # never fail-fresh.
+    n_files, max_mtime = _stat_pass(ledger_root)
     facts, fact_errors = load_json_dir(ledger_root, "facts/*/*.json")
     interps, interp_errors = load_json_dir(ledger_root, "interpretations/*.json")
     lineage, lineage_errors = load_lineage(ledger_root)
@@ -147,7 +156,6 @@ def build_index(ledger_root: Path) -> dict:
             if m:
                 cite(m.group(1), based_on=iid)
 
-    n_files, max_mtime = _stat_pass(ledger_root)
     return {
         "version": INDEX_VERSION,
         "stamp": {"files": n_files, "max_mtime": max_mtime},

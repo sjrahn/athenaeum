@@ -104,6 +104,24 @@ def test_match_matches_regex(songs: Path) -> None:
     assert _members(result) == {"song-b"}
 
 
+def test_match_matches_invalid_regex_raises_value_error(songs: Path) -> None:
+    """finding 9a: `re.error`/`re.PatternError` is NOT a `ValueError`
+    subclass — the operator grammar must convert it, so every caller that
+    catches `ValueError` (the read surface's /scope handler among them)
+    actually catches this."""
+    with pytest.raises(ValueError, match="not a valid regex"):
+        evaluate_scope(songs, {"seed": {"match": {"name": {"matches": "["}}}, "follow": []})
+
+
+def test_match_matches_redos_prone_pattern_is_refused_never_executed(songs: Path) -> None:
+    """finding 9c: a catastrophic-backtracking-prone `matches` pattern
+    (the `(\\w+\\s?)*` signature) must be REJECTED at validation — this test
+    only asserts the ValueError; it must never actually run the match."""
+    with pytest.raises(ValueError, match=r"catastrophic|nested"):
+        evaluate_scope(songs, {
+            "seed": {"match": {"name": {"matches": r"(\w+\s?)*"}}}, "follow": []})
+
+
 def test_match_exists(songs: Path) -> None:
     present = evaluate_scope(songs, {
         "seed": {"match": {"claim.length": {"exists": True}}}, "follow": []})

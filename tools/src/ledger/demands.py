@@ -18,8 +18,6 @@ caller.
 
 from __future__ import annotations
 
-import fnmatch
-import re
 from pathlib import Path
 
 import yaml
@@ -27,9 +25,11 @@ import yaml
 from ledger.schemas import expectation_selects
 from ledger.scope import (
     build_edges_touching,
+    compile_matches,
     entity_neighbors,
     make_resolver,
     object_neighbors,
+    op_matches,
     wikilink_neighbors,
 )
 
@@ -57,8 +57,12 @@ def load_demand_rules(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
 
     Tolerant of a bad file (dropped, error string emitted) but strict about
     what's kept — `demands/*.yaml`, rule id == filename stem. A rule with no
-    `when` or a malformed `owes` is dropped; other shape errors are reported
-    but the rule is still kept (mirrors `load_schemas`/`load_kinds`).
+    `when`, or a `when` that fails the §14 condition grammar's shape check
+    (a malformed `related.edge` selector chief among them — it would crash
+    `condition_matches`/`_edge_neighbors` at evaluation rather than simply
+    never matching), is dropped; other shape errors (unknown top-level keys,
+    a malformed `owes`) are reported but the rule is still kept (mirrors
+    `load_schemas`/`load_kinds`).
     """
     out: dict[str, dict] = {}
     errors: list[str] = []
@@ -83,8 +87,11 @@ def load_demand_rules(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
             errors.append(f"{where}: unknown keys {sorted(unknown)}")
         if "when" not in data:
             errors.append(f"{where}: when is required")
-        else:
-            errors.extend(_validate_condition(data.get("when"), f"{where}: when"))
+            continue  # nothing to evaluate — dropped, not kept malformed
+        when_errors = _validate_condition(data.get("when"), f"{where}: when")
+        errors.extend(when_errors)
+        if when_errors:
+            continue  # a shape-invalid when would crash evaluation — dropped
         owes = data.get("owes")
         if not (isinstance(owes, list) and owes):
             errors.append(f"{where}: owes must be a non-empty list of "
@@ -122,9 +129,9 @@ def _validate_op(op: object, where: str) -> list[str]:
         return [f"{where}: {k!r} operator requires a string"]
     if k == "matches":
         try:
-            re.compile(str(arg))
-        except re.error as e:
-            return [f"{where}: 'matches' pattern is not a valid regex — {e}"]
+            compile_matches(str(arg))
+        except ValueError as e:
+            return [f"{where}: {e}"]
     return []
 
 
@@ -250,31 +257,26 @@ def _validate_condition(cond: object, where: str, *, allow_related: bool = True)
 # ------------------------------------------------------------------ evaluation
 
 
-def _op_matches(op: str, arg: object, values: list[str]) -> bool:
-    if op == "exists":
-        return bool(values) is bool(arg)
-    if not values:
-        return False
-    if op == "equals":
-        return any(v == str(arg) for v in values)
-    if op == "in":
-        options = [str(a) for a in (arg if isinstance(arg, list) else [arg])]
-        return any(v in options for v in values)
-    if op == "glob":
-        return any(fnmatch.fnmatchcase(v, str(arg)) for v in values)
-    if op == "matches":
-        rx = re.compile(str(arg))
-        return any(rx.search(v) for v in values)
-    return False
-
-
 def _op_test(op: object, values: list[str]) -> bool:
+    """The shared §10 operator grammar (`scope.op_matches`), adapted to this
+    module's boundary: evaluation never raises (§13.1 "Demands" — rule
+    well-formedness is checked at load time, never here), so an unknown
+    operator or a `matches` pattern the loader let through unvalidated
+    (e.g. a hand-built condition in a test, bypassing `load_demand_rules`)
+    is simply a non-match rather than a propagated ValueError."""
     if isinstance(op, dict):
         if len(op) != 1:
             return False
         (k, arg), = op.items()
-        return k in _OPS and _op_matches(k, arg, values)
-    return _op_matches("equals", op, values)  # a bare scalar is exact equals
+        if k not in _OPS:
+            return False
+        op_name, operand = k, arg
+    else:
+        op_name, operand = "equals", op  # a bare scalar is exact equals
+    try:
+        return op_matches(op_name, operand, values)
+    except ValueError:
+        return False
 
 
 def _values_of(v: object) -> list[str]:
@@ -345,11 +347,18 @@ def _roster_matches(spec: dict, fact: dict) -> bool:
 
 
 def _edge_matches(spec: dict, fact: dict, edges: list[dict],
-                  facts_by_id: dict[str, dict]) -> bool:
+                  facts_by_id: dict[str, dict],
+                  lineage: dict[str, str] | None = None) -> bool:
     """The §4.4 `when` selector, generalized with `target_type`: the fact
-    participates in an edge of the named type, restricted by `kind` claim
-    values, a co-participant `with`, or a co-participant's type. Never
-    selected by `with:` naming itself."""
+    carries the edge's `subject` and/or is among its `participants` (§4.3:
+    a file is an edge by either), restricted by `kind` claim values, a
+    co-participant `with`, or a co-participant's type. Subject/participants
+    resolve through *lineage* (§4.1, at most one hop — the same bare
+    lineage-map lookup `_id_matches`'s `_resolve_operand` uses, not
+    `make_resolver`'s liveness check: this selector's participants needn't
+    be known to the caller's `facts_by_id`, only canonicalized) before
+    matching, so a merged id still selects. Never selected by `with:`
+    naming itself."""
     if len(spec) != 1:
         return False
     (etype, sel), = spec.items()
@@ -363,10 +372,17 @@ def _edge_matches(spec: dict, fact: dict, edges: list[dict],
     target_type = sel.get("target_type")
     target_types = (target_type if isinstance(target_type, list)
                      else [target_type] if target_type else None)
+    lineage = lineage or {}
     for edge in edges:
         if str(edge.get("type")) != str(etype):
             continue
-        parts = [str(p) for p in edge.get("participants") or []]
+        parts: set[str] = set()
+        subj = edge.get("subject")
+        if isinstance(subj, str):
+            parts.add(_resolve_operand(subj, lineage))
+        for p in edge.get("participants") or []:
+            if isinstance(p, str):
+                parts.add(_resolve_operand(p, lineage))
         if fid not in parts:
             continue
         if other is not None and other not in parts:
@@ -377,7 +393,7 @@ def _edge_matches(spec: dict, fact: dict, edges: list[dict],
             if not got & set(kinds):
                 continue
         if target_types is not None:
-            others = [p for p in parts if p != fid]
+            others = parts - {fid}
             if not any(str((facts_by_id.get(p) or {}).get("type")) in target_types
                        for p in others):
                 continue
@@ -396,7 +412,15 @@ def _edge_neighbors(edge_sel: dict | None, fid: str, edges: list[dict],
     candidates = [edges_by_id[eid] for eid in edges_touching.get(fid, []) if eid in edges_by_id]
     if edge_sel is None:
         return candidates
+    # the same arity/isinstance guard `_edge_matches` carries above — a
+    # malformed selector (already caught structurally by
+    # `_validate_edge_selector` at load time) never crashes evaluation, it
+    # simply selects nothing.
+    if not (isinstance(edge_sel, dict) and len(edge_sel) == 1):
+        return []
     (etype, sel), = edge_sel.items()
+    if not isinstance(sel, dict):
+        return []
     kinds = sel.get("kind")
     other = sel.get("with")
     if other is not None and fid == other:
@@ -499,7 +523,7 @@ def condition_matches(cond: dict, fact: dict, edges: list[dict],
         elif key == "roster":
             ok = isinstance(spec, dict) and _roster_matches(spec, fact)
         elif key == "edge":
-            ok = isinstance(spec, dict) and _edge_matches(spec, fact, edges, facts_by_id)
+            ok = isinstance(spec, dict) and _edge_matches(spec, fact, edges, facts_by_id, lineage)
         elif key == "id":
             ok = _id_matches(spec, fact, lineage)
         elif key == "related":
@@ -714,7 +738,9 @@ def evaluate_demands(
             make(rule_id, field_name, why)
 
     for i, exp in enumerate(schema.get("expectations") or []):
-        if not isinstance(exp, dict) or not expectation_selects(exp, fact, edges):
+        if not isinstance(exp, dict) or not expectation_selects(
+            exp, fact, edges, facts_by_id, lineage,
+        ):
             continue
         exp_id = exp.get("id")
         rule_id = str(exp_id) if isinstance(exp_id, str) else f"expectation:{ftype}[{i}]"

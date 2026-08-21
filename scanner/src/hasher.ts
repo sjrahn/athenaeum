@@ -93,9 +93,19 @@ async function runVersionCheck(path: string): Promise<boolean> {
 
 async function runB3sum(path: string, abspath: string): Promise<string> {
   const proc = Bun.spawn([path, "--no-names", abspath], { stdout: "pipe", stderr: "pipe", env: process.env });
-  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  // stdout and stderr must both be drained concurrently with `exited`, in the same
+  // Promise.all: b3sum writes to a pipe with a bounded OS buffer, so any invocation that
+  // emits more than that on stderr (a warning per unreadable file, a verbose build) blocks
+  // on write until something reads it. Waiting on `exited` first — or reading stderr only
+  // after checking the exit code — leaves that read until after the process is already
+  // stuck, deadlocking the pool worker forever. Draining unconditionally (success path
+  // included) also releases the stderr stream/fd promptly instead of leaving it for GC.
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
   if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
     throw new Error(`b3sum exited ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
   }
   const digest = stdout.trim().toLowerCase();

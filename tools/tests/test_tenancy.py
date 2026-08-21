@@ -6,6 +6,7 @@ behavior every existing caller still rides."""
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 import frontmatter
@@ -133,6 +134,80 @@ def test_record_tiers_subtype_ladder_most_specific_wins(corpus_root: Path) -> No
     base, exactly as the pre-tier scalar derivation's ladder did."""
     assert tenancy.record_tiers(corpus_root, H_LADDER, declared=_DECLARED) == \
         frozenset({"private"})
+
+
+def test_record_tiers_diamond_lineage_does_not_leak_public(corpus_root: Path) -> None:
+    """finding 2: a private container P held by two promoted members (C1,
+    C2), both cited by X — `record_tiers(X)` must land on `{"private"}`, not
+    leak `{"private", "public"}` from the second origin's revisit of P
+    (`_seen` shared across sibling branches must contribute `frozenset()` on
+    a revisit, never re-inject `default`)."""
+    p = "9" * 64
+    c1 = "a1" + "0" * 62
+    c2 = "a2" + "0" * 62
+    x = "a3" + "0" * 62
+    _overlay(corpus_root, ["p-host"], "private")
+    _mk(corpus_root, p, origins=[
+        {"uri": "https://p-host/x", "snapshot": "2026-01-01T00:00:00Z", "schema_id": "p-host"},
+    ])
+    _mk(corpus_root, c1, origins=[
+        {"uri": f"corpus://{p}?path=a.txt", "snapshot": "2026-01-01T00:00:00Z",
+         "schema_id": None},
+    ], touch="corpus.promote@0.1.0")
+    _mk(corpus_root, c2, origins=[
+        {"uri": f"corpus://{p}?path=b.txt", "snapshot": "2026-01-01T00:00:00Z",
+         "schema_id": None},
+    ], touch="corpus.promote@0.1.0")
+    _mk(corpus_root, x, origins=[
+        {"uri": f"corpus://{c1}", "snapshot": "2026-01-01T00:00:00Z", "schema_id": None},
+        {"uri": f"corpus://{c2}", "snapshot": "2026-01-01T00:00:00Z", "schema_id": None},
+    ])
+
+    assert tenancy.record_tiers(corpus_root, x, default="public", declared=_DECLARED) == \
+        frozenset({"private"})
+    assert tenancy.record_tenancy(corpus_root, x, default="public") == "private"
+
+
+def test_record_tiers_deep_chain_fails_closed_not_open(corpus_root: Path) -> None:
+    """finding 2: `_MAX_LINEAGE_HOPS` is a depth bound — a chain deeper than
+    it must fail CLOSED (contribute nothing, never `default`) rather than
+    fall back to a possibly-permissive default once the budget runs out."""
+    chain = [f"b{i:02d}" + "0" * 61 for i in range(12)]  # deeper than _MAX_LINEAGE_HOPS
+    _mk(corpus_root, chain[-1], origins=[
+        {"uri": "https://unknown-host/x", "snapshot": "2026-01-01T00:00:00Z",
+         "schema_id": None},
+    ])
+    for h, parent in pairwise(chain):
+        _mk(corpus_root, h, origins=[
+            {"uri": f"corpus://{parent}", "snapshot": "2026-01-01T00:00:00Z",
+             "schema_id": None},
+        ])
+
+    assert tenancy.record_tiers(corpus_root, chain[0], default="public") == frozenset()
+    assert tenancy.record_tenancy(corpus_root, chain[0], default="public") == "private"
+
+
+def test_record_tiers_wide_shallow_fanout_is_not_a_depth_violation(corpus_root: Path) -> None:
+    """finding 2: `_MAX_LINEAGE_HOPS` must be a per-branch DEPTH bound, not a
+    node-count budget shared across the whole traversal. 20 DISTINCT
+    one-hop children, each declaring its own tenancy directly (no further
+    lineage to chase) — under the old node-count check, `len(seen)` would
+    exceed `_MAX_LINEAGE_HOPS` partway through and the later siblings would
+    wrongly fall back to `default` instead of their real declaration."""
+    _overlay(corpus_root, ["leaf-host"], "family")
+    children = [f"d{i:02d}" + "0" * 61 for i in range(20)]
+    for h in children:
+        _mk(corpus_root, h, origins=[
+            {"uri": f"https://leaf-host/{h}", "snapshot": "2026-01-01T00:00:00Z",
+             "schema_id": "leaf-host"},
+        ])
+    wide = "c1" + "0" * 62
+    _mk(corpus_root, wide, origins=[
+        {"uri": f"corpus://{h}", "snapshot": "2026-01-01T00:00:00Z", "schema_id": None}
+        for h in children
+    ])
+    assert tenancy.record_tiers(corpus_root, wide, default="public", declared=_DECLARED) == \
+        frozenset({"family"})
 
 
 def test_record_tenancy_wrapper_byte_identical(corpus_root: Path) -> None:

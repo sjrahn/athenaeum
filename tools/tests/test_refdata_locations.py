@@ -91,6 +91,25 @@ def test_materialize_prefers_artifacts_store_over_location_route(tmp_path: Path)
     assert materialize(ref, "t", corpora_roots=(root,)) == store_file
 
 
+def test_materialize_ignores_a_part_temp_in_the_colocated_store(tmp_path: Path) -> None:
+    """`_corpus_store_path` must apply the same `.part`-exclusion rule
+    `_store_location_path` already carries (and `corpus.maintenance`'s
+    `_artifact_file_in_shard` applies to its own two call sites): a
+    `placement.put_at` interrupted-write temp is never servable bytes, even
+    when it's the only file glob-matching the shard (finding 8)."""
+    root = _corpus(tmp_path)
+    digest = "a" * 64
+    shard = root / "artifacts" / digest[:2]
+    shard.mkdir(parents=True)
+    (shard / f"{digest}.bin.part").write_bytes(b"still downloading")
+    ref = _ref("t", digest)
+    assert materialize(ref, "t", corpora_roots=(root,)) is None
+
+    finished = shard / f"{digest}.bin"
+    finished.write_bytes(b"complete bytes")
+    assert materialize(ref, "t", corpora_roots=(root,)) == finished
+
+
 def test_materialize_unresolved_hash_is_a_miss(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
     _attach(root, tmp_path / "data", b"attached mirror bytes")

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from ath.serve import SPEC_VERSION, create_app
 from corpus import paths as corpus_paths
 from corpus import records as corpus_records
+from corpus.store import LocalArtifactStore
 
 H_PUB = "a" * 64       # public origin overlay
 H_PUB2 = "d" * 64      # a second public record, cited but not evidenced
@@ -325,6 +326,27 @@ def test_owner_only_200_with_owner_token(instance: Path, path: str) -> None:
     assert r.status_code == 200
 
 
+def test_facts_demands_threads_lineage(instance: Path) -> None:
+    """`/facts/{id}/demands` must pass `lineage=` into `evaluate_demands`
+    like the other three call sites (`ledger/views.py`, `ledger/_cli`, and
+    the CLI's own use) — this route was the one that omitted it. A rule
+    keyed on `id: {equals: RETIRED_ID}` only selects FACT_PUBLIC (the living
+    survivor `facts/LINEAGE.json` merges RETIRED_ID into) when the lineage
+    map is actually consulted."""
+    demands_dir = instance / "ledger" / "demands"
+    demands_dir.mkdir(parents=True, exist_ok=True)
+    (demands_dir / "retired-owes.yaml").write_text(
+        "id: retired-owes\ndescription: d\n"
+        f"when: {{ id: {{ equals: {RETIRED_ID} }} }}\n"
+        "owes: [{ field: colour }]\n",
+        encoding="utf-8",
+    )
+    client = _client(instance)
+    r = client.get(f"/facts/{FACT_PUBLIC}/demands", headers=_owner_headers())
+    assert r.status_code == 200
+    assert "retired-owes" in {d["rule"] for d in r.json()}
+
+
 def test_worklist_owner_only(instance: Path) -> None:
     client = _client(instance)
     assert client.get("/worklist", params={"ref": FACT_PUBLIC}).status_code == 404
@@ -370,6 +392,42 @@ def test_lineage_redirect(instance: Path) -> None:
     r = client.get(f"/facts/{RETIRED_ID}", follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == f"/facts/{FACT_PUBLIC}"
+
+
+def test_lineage_redirect_to_invisible_successor_404s(instance: Path) -> None:
+    """finding 6: the disclosure check applies to the redirect TARGET before
+    the 307 is emitted — a retired id pointing at a private successor must
+    404 exactly like a retired id that never existed, never leak the
+    successor's name via `Location`, and never distinguish "retired" from
+    "never existed" via a 307-vs-404 split."""
+    lineage_path = instance / "ledger" / "facts" / "LINEAGE.json"
+    lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+    lineage["retired-to-private"] = FACT_PRIVATE
+    lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
+
+    client = _client(instance)
+    r = client.get("/facts/retired-to-private", follow_redirects=False)
+    assert r.status_code == 404
+    assert FACT_PRIVATE not in r.text
+
+    r_owner = client.get("/facts/retired-to-private", headers=_owner_headers(),
+                         follow_redirects=False)
+    assert r_owner.status_code == 307
+    assert r_owner.headers["location"] == f"/facts/{FACT_PRIVATE}"
+
+
+def test_lineage_redirect_carries_etag_and_vary(instance: Path) -> None:
+    """finding 6: the redirect path gets the same ETag/304 handling the
+    normal path does — previously applied nowhere on this branch."""
+    client = _client(instance)
+    r = client.get(f"/facts/{RETIRED_ID}", follow_redirects=False)
+    assert r.status_code == 307
+    etag = r.headers.get("etag")
+    assert etag
+    assert r.headers.get("vary") == "Authorization"
+    r2 = client.get(f"/facts/{RETIRED_ID}", headers={"If-None-Match": etag},
+                    follow_redirects=False)
+    assert r2.status_code == 304
 
 
 def test_etag_and_304(instance: Path) -> None:
@@ -435,6 +493,38 @@ def test_scope_malformed_spec_422(instance: Path) -> None:
     assert r.status_code == 422
 
 
+def test_scope_invalid_matches_regex_422_not_500(instance: Path) -> None:
+    """finding 9a: an invalid `matches` regex is `re.PatternError`, not a
+    `ValueError` subclass — the handler used to only catch `ValueError`, so
+    this 500'd."""
+    client = _client(instance)
+    spec = json.dumps({"seed": {"match": {"name": {"matches": "["}}}})
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 422
+
+
+def test_scope_redos_prone_regex_is_refused_422_never_executed(instance: Path) -> None:
+    """finding 9c: a catastrophic-backtracking-prone `matches` pattern must
+    be REJECTED at validation, never actually run against fact data — this
+    test only asserts the 422; it must never spend time matching."""
+    client = _client(instance)
+    spec = json.dumps({"seed": {"match": {"name": {"matches": r"(\w+\s?)*"}}}})
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 422
+    assert "catastrophic" in r.json()["detail"] or "nested" in r.json()["detail"]
+
+
+def test_scope_evidence_resolved_is_501_not_500(instance: Path) -> None:
+    """finding 9b: `evidence: "resolved"` is admitted by spec shape
+    (`_validate_spec`'s EVIDENCE_MODES) but not yet implemented by
+    `evaluate_scope`, which raises NotImplementedError — a documented,
+    not-yet-built feature is 501, never an unhandled 500."""
+    client = _client(instance)
+    spec = json.dumps({"seed": {"type": "thing"}, "evidence": "resolved"})
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 501
+
+
 def test_scope_evidence_filters_private_claims_within_public_fact(instance: Path) -> None:
     """A whole-fact filter is not enough: FACT_MIXED is a PUBLIC fact (it
     survives fact_is_public) that still carries a private-backed claim
@@ -476,6 +566,44 @@ def test_scope_roster_filters_private_entries_within_public_fact(instance: Path)
     assert f"corpus://{H_PRIV}" in owner_roster
 
 
+def test_scope_unknown_seeds_hides_invisible_resolved_ids(instance: Path) -> None:
+    """finding 5: a seed id that resolves to an invisible fact must be
+    indistinguishable from one that never existed — both land in
+    `unknown_seeds` on the public plane, neither appears in `members`."""
+    client = _client(instance)
+    spec = json.dumps({"seed": {"ids": [FACT_PRIVATE, "no-such-fact"]}})
+
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["members"] == []
+    assert set(body["unknown_seeds"]) == {FACT_PRIVATE, "no-such-fact"}
+
+    r_owner = client.get("/scope", params={"spec": spec}, headers=_owner_headers())
+    owner_body = r_owner.json()
+    assert {m["id"] for m in owner_body["members"]} == {FACT_PRIVATE}
+    assert owner_body["unknown_seeds"] == ["no-such-fact"]
+
+
+def test_scope_depth_omitted_on_non_owner_planes(instance: Path) -> None:
+    """finding 5: `depth` counts hops through the UNFILTERED graph, which
+    could reveal an invisible intermediary even for a fact that IS visible —
+    omitted entirely for non-owner planes rather than answered wrong."""
+    client = _client(instance)
+    spec = json.dumps({"seed": {"type": "thing"}})
+
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 200
+    members = r.json()["members"]
+    assert members  # FACT_PUBLIC and FACT_MIXED are both visible
+    assert all("depth" not in m for m in members)
+
+    r_owner = client.get("/scope", params={"spec": spec}, headers=_owner_headers())
+    owner_members = r_owner.json()["members"]
+    assert owner_members
+    assert all("depth" in m for m in owner_members)
+
+
 # ----------------------------------------------------------------- /schemas
 
 
@@ -499,6 +627,145 @@ def test_vocab_generated_shape(instance: Path) -> None:
     body = r.json()
     assert body["generated"] is True
     assert "thing" in body["markdown"]
+
+
+def test_vocab_hides_private_only_vocabulary_from_public(instance: Path) -> None:
+    """finding 4: `/vocab` had no plane gate at all — a type/predicate used
+    only by a private fact must not surface in the public-plane markdown,
+    even as aggregate vocabulary (existence itself can be the leak)."""
+    _write_fact(instance / "ledger", "secret-dx", {
+        "id": "secret-dx", "type": "medical-condition", "name": "Secret",
+        "sources": {"s1": {"record": H_PRIV}},
+        "claims": [{
+            "id": "secret-dx:diagnosis", "predicate": "diagnosis", "value": "confidential",
+            "status": "confirmed", "asof": "2026-01",
+            "evidence": [{"source": "s1", "kind": "authoritative"}],
+        }],
+    })
+    client = _client(instance)
+
+    r = client.get("/vocab")
+    md = r.json()["markdown"]
+    assert "medical-condition" not in md
+    assert "diagnosis" not in md
+
+    r_owner = client.get("/vocab", headers=_owner_headers())
+    owner_md = r_owner.json()["markdown"]
+    assert "medical-condition" in owner_md
+    assert "diagnosis" in owner_md
+
+
+def test_vocab_demand_rules_are_owner_only(instance: Path) -> None:
+    """finding 4: demand rule ids/descriptions are owner-only on every other
+    route (`/facts/{id}/demands` gates on `require_owner`) — `/vocab` must
+    not become the exception."""
+    (instance / "ledger" / "demands").mkdir(parents=True, exist_ok=True)
+    (instance / "ledger" / "demands" / "secret-rule.yaml").write_text(
+        "id: secret-rule\ndescription: a secret demand rule\n"
+        "when:\n  claim: { predicate: colour }\nowes:\n  - field: something\n",
+        encoding="utf-8",
+    )
+    client = _client(instance)
+
+    r = client.get("/vocab")
+    md = r.json()["markdown"]
+    assert "secret-rule" not in md
+    assert "## Demand rules" not in md
+
+    r_owner = client.get("/vocab", headers=_owner_headers())
+    owner_md = r_owner.json()["markdown"]
+    assert "secret-rule" in owner_md
+    assert "## Demand rules" in owner_md
+
+
+def test_vocab_reflects_live_tenancy_edit_without_restart(instance: Path) -> None:
+    """finding 3: `corpus.schemas`' `@lru_cache`d overlay loaders must not
+    outlive an origin overlay edit on the long-running server — a
+    `tenancy: public` -> `tenancy: private` rewrite takes effect on the very
+    next request, same process, no restart."""
+    client = _client(instance)
+
+    r = client.get(f"/records/{H_PUB}")
+    assert r.status_code == 200
+
+    overlay_path = instance / "corpus" / "schema" / "origin" / "openhost.yaml"
+    overlay_path.write_text("tenancy: private\n", encoding="utf-8")
+
+    r2 = client.get(f"/records/{H_PUB}")
+    assert r2.status_code == 404
+
+
+def test_resolve_corpus_headers_and_generic_errors(instance: Path) -> None:
+    """finding 7: corpus bytes served through `/resolve/corpus` must not be
+    servable inline/same-origin (captured third-party HTML/SVG could then
+    script the API with the operator's own owner-plane credentials), and a
+    resolver failure must not echo the instance's absolute filesystem path
+    or the caller's raw query string back into the response."""
+    h = "9" * 64
+    src = instance / "plain.txt"
+    src.write_text("hello world", encoding="utf-8")
+    LocalArtifactStore(instance / "corpus").put(h, "txt", src)
+    post = frontmatter.Post(
+        content="body text",
+        **corpus_records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0"),
+    )
+    corpus_records.set_artifact_block(post, mime="text/plain", fields={})
+    corpus_records.append_origin_block(
+        post, uri="https://openhost.example/y", snapshot="2026-01-01T00:00:00Z",
+        schema_id="openhost",
+    )
+    corpus_records.dump(post, corpus_paths.record_path(instance / "corpus", h))
+
+    client = _client(instance)
+    r = client.get(f"/resolve/corpus/{h}")
+    assert r.status_code == 200
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" in r.headers["content-disposition"]
+    assert h in r.headers["content-disposition"]
+
+    # H_PUB's record exists and is visible, but no artifact bytes were ever
+    # stored for it (the base fixture never calls LocalArtifactStore.put) —
+    # the resolver's own ArtifactMissing message embeds the absolute
+    # instance-root path; the route must answer generically instead.
+    r2 = client.get(f"/resolve/corpus/{H_PUB}")
+    assert r2.status_code == 404
+    assert r2.json()["detail"] == "not found"
+    assert str(instance) not in r2.text
+
+
+@pytest.mark.parametrize("path", [
+    "/instance", "/facts", f"/facts/{FACT_PUBLIC}", "/schemas", "/vocab",
+    f"/records/{H_PUB}",
+])
+def test_vary_authorization_on_every_route(instance: Path, path: str) -> None:
+    """finding 8: `Vary: Authorization` previously appeared on exactly one
+    route (`/facts/{id}`) — a plane-blind cache in front of the surface must
+    never key a cached response on anything less, on ANY route."""
+    client = _client(instance)
+    assert client.get(path).headers.get("vary") == "Authorization"
+
+
+def test_owner_plane_forbids_caching_public_plane_may_cache(instance: Path) -> None:
+    """finding 8: owner/audience-plane responses forbid caching outright —
+    the scenario a plane-blind shared cache would otherwise create (an
+    owner-plane `/facts` listing, private ids included, served back to the
+    next anonymous caller). The public plane's own responses need no such
+    override."""
+    client = _client(instance)
+    r_owner = client.get("/facts", headers=_owner_headers())
+    assert "no-store" in r_owner.headers.get("cache-control", "")
+
+    r_pub = client.get("/facts")
+    assert r_pub.headers.get("vary") == "Authorization"
+
+
+def test_headers_present_even_on_404(instance: Path) -> None:
+    """finding 8: the header middleware wraps every response, error paths
+    included — a 404 must not be the one place caching guidance is silent."""
+    client = _client(instance)
+    r = client.get("/facts/no-such-fact")
+    assert r.status_code == 404
+    assert r.headers.get("vary") == "Authorization"
 
 
 # ---------------------------------------------------------------- OpenAPI
@@ -813,3 +1080,86 @@ def test_etag_differs_across_planes(tenant_instance: Path) -> None:
     r_own = client.get(f"/facts/{FAM_FACT_MIXED}", headers=_owner_headers())
     etags = {r_pub.headers["etag"], r_fam.headers["etag"], r_own.headers["etag"]}
     assert len(etags) == 3
+
+
+# ======================================================= non-binary floor
+#
+# Finding 1 (headline): an instance whose `visibility:` NAMES a declared
+# non-public tier (legal per `ath/manifest.py`'s `_load_tenancy`/
+# `load_instance`) — as opposed to the binary `private`/`public` every other
+# fixture in this file exercises. `RegisteredCorpus` used to carry only a
+# `private: bool`, collapsing any non-"private" floor (including "family"
+# here) to `private=False` — giving every consumer a `public` default for a
+# record whose origins declare no tenancy, even though the instance's own
+# floor is "family", not "public".
+
+FLOOR_H_UNDECLARED = "7" * 64  # no origin overlay at all — falls to the instance floor
+FLOOR_FACT = "floor-thing"
+FLOOR_FAMILY_TOKEN = "s3cr3t-floor-family-token"
+
+
+@pytest.fixture()
+def family_floor_instance(tmp_path: Path) -> Path:
+    root = tmp_path
+    (root / "athenaeum.yaml").write_text(
+        "name: floortest\nvisibility: family\n"
+        "tenancy:\n  tiers: [family]\n  audiences:\n    family: [family]\n",
+        encoding="utf-8",
+    )
+
+    corpus_root = root / "corpus"
+    (corpus_root / "schema" / "origin").mkdir(parents=True)
+    _mk_record(corpus_root, FLOOR_H_UNDECLARED, public=False)  # no origin overlay
+
+    ledger_root = root / "ledger"
+    (ledger_root / "facts" / "thing").mkdir(parents=True)
+    (ledger_root / "interpretations").mkdir()
+    (ledger_root / "open-questions.md").write_text(OPENQ_SKELETON, encoding="utf-8")
+    (ledger_root / "schemas").mkdir()
+    (ledger_root / "schemas" / "thing.yaml").write_text(
+        "type: thing\ndescription: a test concept\nfields:\n"
+        "  colour: { description: colour }\n", encoding="utf-8",
+    )
+
+    _write_fact(ledger_root, FLOOR_FACT, {
+        "id": FLOOR_FACT, "type": "thing", "name": "Floor Thing",
+        "sources": {"s1": {"record": FLOOR_H_UNDECLARED}},
+        "claims": [{
+            "id": f"{FLOOR_FACT}:colour", "predicate": "colour", "value": "grey",
+            "status": "confirmed", "asof": "2026-01",
+            "evidence": [{"source": "s1", "kind": "authoritative"}],
+        }],
+    })
+    return root
+
+
+def _floor_client(root: Path) -> TestClient:
+    app = create_app(root, OWNER_TOKEN, audience_tokens={"family": FLOOR_FAMILY_TOKEN})
+    return TestClient(app)
+
+
+def test_undeclared_tenancy_falls_to_the_instance_tier_floor_not_public(
+    family_floor_instance: Path,
+) -> None:
+    """finding 1: a record whose origins declare no tenancy falls to the
+    INSTANCE's floor (here "family"), not "public" — `/facts`, `/facts/{id}`,
+    and `/records/{hash}` must all agree, on every plane."""
+    client = _floor_client(family_floor_instance)
+    family_headers = {"Authorization": f"Bearer {FLOOR_FAMILY_TOKEN}"}
+
+    assert client.get(f"/facts/{FLOOR_FACT}").status_code == 404
+    assert client.get(f"/records/{FLOOR_H_UNDECLARED}").status_code == 404
+    r = client.get("/facts")
+    assert FLOOR_FACT not in {row["id"] for row in r.json()["facts"]}
+
+    r_fam = client.get(f"/facts/{FLOOR_FACT}", headers=family_headers)
+    assert r_fam.status_code == 200
+    r_fam_rec = client.get(f"/records/{FLOOR_H_UNDECLARED}", headers=family_headers)
+    assert r_fam_rec.status_code == 200
+    r_fam_list = client.get("/facts", headers=family_headers)
+    assert FLOOR_FACT in {row["id"] for row in r_fam_list.json()["facts"]}
+
+    r_owner = client.get(f"/facts/{FLOOR_FACT}", headers=_owner_headers())
+    assert r_owner.status_code == 200
+    r_owner_rec = client.get(f"/records/{FLOOR_H_UNDECLARED}", headers=_owner_headers())
+    assert r_owner_rec.status_code == 200

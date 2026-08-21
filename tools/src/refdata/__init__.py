@@ -206,7 +206,10 @@ def _corpus_store_path(corpus_root: Path, artifact_hash: str) -> Path | None:
     if not shard_dir.is_dir():
         return None
     for p in sorted(shard_dir.glob(f"{artifact_hash}.*")):
-        if p.is_file():
+        # `.part` is `placement.put_at`'s temp suffix for an interrupted write — never
+        # servable bytes (the same rule `_store_location_path` below already applies, and
+        # `corpus.maintenance._artifact_file_in_shard` applies to its own two call sites).
+        if p.is_file() and p.suffix != ".part":
             return p
     return None
 

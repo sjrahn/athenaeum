@@ -196,10 +196,11 @@ class CaptureResult:
 class Capturer(Protocol):
     """A capture handler for a single URL.
 
-    Packaged defaults are `browser` (Playwright) and `video` (yt-dlp); a corpus
-    can register its own with `@register("<name>")` and route origins to it (the
-    routing lives in `get_capturer`). `recipe` is the resolved per-origin capture
-    recipe (a later phase) or None.
+    Packaged defaults are `browser` (Playwright) and `video` (yt-dlp), each self-registering
+    via `@register("<name>")` at import time (routing lives in `get_capturer`). `shapers/` is
+    the sole corpus-local code tier (spec §12.4.3) — a corpus routes a host to one of these
+    two through the origin overlay's `capture.capturer:` field rather than registering a
+    third. `recipe` is the resolved per-origin capture recipe (a later phase) or None.
     """
 
     def __call__(
@@ -243,9 +244,9 @@ def get_capturer(
          per host via `capture_recipe_for_url`).
       3. Default: `browser`.
 
-    The chosen name resolves against `REGISTRY` (packaged `browser`/`video` plus
-    any corpus-local `capturers/*.py`). The resolved recipe rides along so the
-    capturer can apply its declared config (transport / interactions / ytdlp / …).
+    The chosen name resolves against `REGISTRY` (the packaged `browser`/`video` pair — no
+    corpus-local capturer tier). The resolved recipe rides along so the capturer can apply
+    its declared config (transport / interactions / ytdlp / …).
     """
     from .recipes import capture_recipe_for_url
 

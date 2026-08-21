@@ -4,9 +4,11 @@ Produces a faithful first-pass body from a captured artifact (spec §8.1). The
 LLM-driven `normalize` step lives elsewhere — the drafter writes only what it can
 extract deterministically from the bytes.
 
-Drafters are dispatched by mime-schema id (e.g. `application/application_pdf`).
-The registry lets corpus repos add their own drafters for custom mime schemas
-without editing this package.
+Drafters are dispatched by mime-schema id (e.g. `application/application_pdf`), or by a
+draft-strategy name a mime schema declares (`STRATEGY_REGISTRY` below) so one general
+drafter can serve many self-contained types. `shapers/` is the sole corpus-local code
+tier (spec §12.4.3, `corpus/local_code.py`) — a custom mime schema tunes an existing
+drafter via its `draft.strategy:` config rather than registering a new one.
 
 Interface (per spec §7.1 / §7.4):
 

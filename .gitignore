@@ -16,3 +16,6 @@ tools/**/__pycache__/
 tools/**/*.egg-info/
 tools/.pytest_cache/
 tools/.ruff_cache/
+
+# second copies of the law never enter the tree
+Universal knowledge backend system.zip

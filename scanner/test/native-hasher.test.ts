@@ -17,6 +17,7 @@ afterAll(cleanupAll);
 const FIXTURES = join(import.meta.dir, "fixtures");
 const GOOD = join(FIXTURES, "fake-b3sum-good.ts");
 const CORRUPT = join(FIXTURES, "fake-b3sum-corrupt.ts");
+const CHATTY = join(FIXTURES, "fake-b3sum-chatty.ts");
 
 // ── discoverNativeHasher / resolveB3sumArg (hasher.ts, cli.ts) ───────────────────────────
 
@@ -40,6 +41,18 @@ test("resolveB3sumArg resolves an executable path and hard-errors on a nonexiste
   expect(await resolveB3sumArg(GOOD)).toBe(GOOD);
   await expect(resolveB3sumArg("/does/not/exist/b3sum")).rejects.toThrow();
 });
+
+test("a b3sum that floods stderr never deadlocks (stderr is drained concurrently with stdout/exited)", async () => {
+  // Regression for the deadlock: a b3sum that writes well over a pipe's OS buffer to stderr
+  // must not hang runB3sum — verification itself calls hashFile, so discovery exercises the
+  // fix, and a follow-up hashFile call proves it isn't a one-shot fluke.
+  const hasher = await discoverNativeHasher(CHATTY, quietLog);
+  expect(hasher).not.toBeNull();
+
+  const root = await tmpTree();
+  const path = await put(root, "a.txt", "x".repeat(64));
+  expect(await hasher!.hashFile(path)).toBe(await b3("x".repeat(64)));
+}, 10_000);
 
 // ── threshold routing (scanner.ts) ────────────────────────────────────────────────────────
 

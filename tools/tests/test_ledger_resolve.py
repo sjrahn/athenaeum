@@ -244,6 +244,65 @@ def test_unchanged_tree_loads_from_cache(ledger: Path, monkeypatch: pytest.Monke
     assert calls == []  # cache hit — build_index never called again
 
 
+def test_build_index_stamps_before_the_read_pass(
+    ledger: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finding 7: the staleness stamp must be taken BEFORE the read pass, not
+    after — a write racing the read must make the cache look stale, never
+    artificially fresh (fail-stale, never fail-fresh). Verified by call
+    order: `_stat_pass` runs before the first `load_json_dir` call."""
+    _fact(ledger, "part", {"id": "a", "type": "part", "name": "A"})
+
+    import ledger.index as index_mod
+    calls: list[str] = []
+    real_stat_pass = index_mod._stat_pass
+    real_load_json_dir = index_mod.load_json_dir
+
+    def tracking_stat_pass(root: Path) -> tuple[int, float]:
+        calls.append("stat_pass")
+        return real_stat_pass(root)
+
+    def tracking_load_json_dir(root: Path, pattern: str):
+        calls.append(f"load:{pattern}")
+        return real_load_json_dir(root, pattern)
+
+    monkeypatch.setattr(index_mod, "_stat_pass", tracking_stat_pass)
+    monkeypatch.setattr(index_mod, "load_json_dir", tracking_load_json_dir)
+    index_mod.build_index(ledger)
+    assert calls[0] == "stat_pass"
+    assert calls.index("stat_pass") < calls.index("load:facts/*/*.json")
+
+
+def test_build_index_cache_looks_stale_after_a_write_racing_the_read(
+    ledger: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavioral counterpart of the ordering test above: a write landing
+    between the stamp and the read (simulated here between the facts read
+    and the interpretations read) must NOT be silently baked into a
+    still-"fresh" stamp — `is_fresh` must report stale afterward, even
+    though `entries` itself (built from the pre-write facts snapshot)
+    doesn't carry the new fact."""
+    _fact(ledger, "part", {"id": "a", "type": "part", "name": "A"})
+
+    import ledger.index as index_mod
+    real_load_json_dir = index_mod.load_json_dir
+
+    def racing_load_json_dir(root: Path, pattern: str):
+        if pattern == "interpretations/*.json":
+            # a concurrent writer lands a new fact after facts/*/*.json was
+            # already read, before this build finishes
+            _fact(ledger, "part", {"id": "b", "type": "part", "name": "B"})
+        return real_load_json_dir(root, pattern)
+
+    monkeypatch.setattr(index_mod, "load_json_dir", racing_load_json_dir)
+    idx = index_mod.build_index(ledger)
+    assert "b" not in idx["entries"]  # the read pass genuinely missed it
+    index_mod.write_cache(ledger, idx)
+
+    monkeypatch.undo()  # is_fresh's own stat pass must see the real tree
+    assert not is_fresh(ledger)
+
+
 def test_unwritable_cache_degrades_gracefully(ledger: Path) -> None:
     _fact(ledger, "part", {"id": "bcm", "type": "part", "name": "Body Control Module"})
     cache_dir = ledger / ".cache"
