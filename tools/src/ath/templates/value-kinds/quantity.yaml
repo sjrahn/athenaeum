@@ -1,0 +1,10 @@
+# Adoptable import template (spec/ledger.md §4.5) — copy into
+# <instance>/ledger/schemas/values/ to adopt; adoption is a visible diff.
+kind: quantity
+description: A measured amount of some unit.
+shape:
+  amount: { constraint: decimal }          # a decimal string — never a JSON float
+  # Ships as a plain string — tighten this to `{ constraint: enum, values: […] }`
+  # naming your own unit vocabulary once you know what you're measuring.
+  unit:   { constraint: string }
+required: [amount, unit]

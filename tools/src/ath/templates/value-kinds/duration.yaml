@@ -1,0 +1,8 @@
+# Adoptable import template (spec/ledger.md §4.5) — copy into
+# <instance>/ledger/schemas/values/ to adopt; adoption is a visible diff.
+kind: duration
+description: A span of time, as a magnitude and a unit.
+shape:
+  amount: { constraint: decimal }          # a decimal string — never a JSON float
+  unit:   { constraint: enum, values: [s, min, h, d] }
+required: [amount, unit]

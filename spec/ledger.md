@@ -2,7 +2,7 @@
 spec_id: ATH
 part: III
 title: "Athenaeum Specification — Part III: The Ledger"
-version: 27
+version: 28
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
@@ -74,7 +74,9 @@ ledger/
 │   ├── VOCAB.md               # GENERATED — vocabulary registry (§8)
 │   └── {type}/{slug}.json
 ├── schemas/
-│   └── {type}.yaml            # concept schemas — declared, validating type shapes (§4.4)
+│   ├── {type}.yaml            # concept schemas — declared, validating type shapes (§4.4)
+│   └── values/
+│       └── {kind}.yaml        # value kinds — declared typed-value shapes (§4.5)
 ├── interpretations/
 │   ├── SCHEMA.md
 │   └── {slug}.json
@@ -82,6 +84,8 @@ ledger/
 │   └── {slug}.yaml            # mechanical minting rules over the corpus (§10)
 ├── invariants/
 │   └── {slug}.yaml            # declared constraints over the fact graph (§11)
+├── demands/
+│   └── {slug}.yaml            # completeness rules — what asserted content owes (§14)
 ├── open-questions.md          # work-list: generated block + curated items (§7.4)
 ├── coverage.md                # GENERATED corpus→ledger coverage ledger (§9)
 └── docs/                      # process docs — never world knowledge
@@ -163,6 +167,7 @@ fields:                          # the type's registered predicates
   appears_on: { target: album, expected: true }  # relational + owed: frontier when missing
   composed_by: { target: artist }  # relational — the claim object must be an `artist`
   length: {}                     # attribute — value shape per SCHEMA.md conventions
+  released: { value: instant }   # typed attribute — value validated under a declared kind (§4.5)
 roster_roles: [tablature-of, performance-of, interview]
 ```
 
@@ -180,7 +185,7 @@ fields:
   interaction: {}
 ```
 
-A field whose value is a **structured array** — a roster of objects, one checkable element each (§5.1) — may declare **`elements:`**, a mapping of element-key to a declaration reusing the per-field grammar above (`values` for an enumerated vocabulary, `target` for a typed fact reference). It validates the objects *inside* the array the way `values`/`target` validate a scalar field:
+A field whose value is a **structured array** — a roster of objects, one checkable element each (§5.1) — may declare **`elements:`**, a mapping of element-key to a declaration reusing the per-field grammar above (`values` for an enumerated vocabulary, `target` for a typed fact reference, `value` for a declared kind — §4.5). It validates the objects *inside* the array the way `values`/`target` validate a scalar field:
 
 ```yaml
 type: event
@@ -214,10 +219,39 @@ expectations:
 
 Semantics:
 
-- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, a declared **element** value outside its `values` or an element `entity` resolving outside its `target` type(s), an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
+- **Validating, never generative.** A schema is data the checker reads (like invariants, §11), not code that produces anything. Only mis-shape is an error: a relational field whose object resolves outside its declared `target` (one type, or a list of admissible types — `{ target: [system, component] }` — for relations the graph legitimately makes to several), a field value outside its declared `values`, a typed field's value failing to parse under its declared kind (`value:` naming a §4.5 kind — an undeclared kind is itself an error), a declared **element** value outside its `values` or an element `entity` resolving outside its `target` type(s), an object on a `participant: true` field that is not one of the edge's participants, an edge whose participants diverge from the declared `participants` (count or positional type), an unregistered roster role.
 - **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Timeboxed fields.** A field may declare `timeboxed: true` — e.g. `residence: { target: place, timeboxed: true }` — meaning every claim under that predicate owes a `period`: an attested residence or employment episode without a timespan is half a fact, and `asof` alone records observation, never duration. Like owed fields, a missing timebox is *frontier* (a labeled chase on the work-list, §7.4), never an error — the gap says "find the start/end", which is exactly how new evidence that widens a period announces where it belongs.
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
+
+### 4.5 Value kinds — `schemas/values/{kind}.yaml`
+
+A **value kind** is a declared typed-value shape: what a field's claim `value` must parse as when the field references it (`{ value: money }`, §4.4). Kinds are the ledger's answer to typed quantities — money that sums, instants that order, coordinates that are coordinates — **without a global type ontology**: a kind is **instance-declared data**, like schemas and invariants, composed from a small **closed primitive-constraint vocabulary** the distribution's checker interprets. The closed part sits where it is mechanical (parsing a decimal, recognizing an ISO-4217 code), never where it is ontological; kinds themselves grow organically per instance and register in `VOCAB.md` (§8) like every other vocabulary.
+
+```yaml
+kind: money
+description: An amount of a currency.
+shape:
+  amount:   { constraint: decimal }        # a decimal string — never a JSON float
+  currency: { constraint: iso-4217 }
+required: [amount, currency]
+```
+
+```yaml
+kind: body-weight                          # instance-minted — organic, like any vocabulary
+description: A measured body weight.
+shape:
+  amount: { constraint: decimal }
+  unit:   { constraint: enum, values: [kg, lb] }
+required: [amount, unit]
+```
+
+- **The primitive-constraint vocabulary is closed** — grown by amendment, like the corpus's semantic types, never minted per instance: `string`, `number`, `integer`, `boolean`, `decimal` (a decimal string, preserving precision JSON numbers cannot), `enum` (+ `values:`), `pattern` (+ `pattern:`), `range` (+ `min:`/`max:`, on numbers), `iso-instant`, `iso-date`, `iana-zone`, `iso-4217`, `latitude`, `longitude`. This is the `period`-grammar class of closedness — mechanical world-structure the validator must be code for — not the predicate class.
+- **A typed claim value is the kind's object shape** (or, on a structured array, one object per element): `required` fields present, every present field parsing under its constraint, undeclared fields inadmissible. Mis-shape is a §13.1 error, exactly as a `values` violation is; a **missing** typed field stays frontier under the ordinary owed-ness rules (§4.4, §14). The human gloss, where wanted, rides `qualifiers` — never mixed into the typed object.
+- **No conversion, no operations.** Values are stored as attested; unit vocabularies are plain `enum` constraints the instance owns. Deterministic conversion or arithmetic, where ever wanted, is consumer- or tooling-side work over the validated shapes — never silent mutation of asserted values. A `coordinate` kind buys a validated shape; nearness and containment stay unspecified (Part I §9).
+- **Kinds register and retire like vocabulary** (§8): reuse before minting, visible diffs, retired kinds error in use. A kind's shape change is contract change — validation emits the migration worklist of nonconforming claims (the §11 amended-invariant shape), and so does first declaring `value:` on a field with existing prose claims: typing an existing field is deliberate and measured, never a silent break.
+- **Shipped kinds are imports, never law.** The distribution carries common kind declarations (`money`, `quantity`, `instant`, `duration`, `coordinate`) as templates an instance **adopts** — the declared-import seam (§10): adoption is a visible diff and is itself the evidence of need. Nothing forces an instance to hold a kind it doesn't use; nothing stops it refining its own.
+- **Kinds are data, not code.** The checker interprets declarations; it never loads instance code. An algorithmic-validity seam (check digits and the like) is designed but deferred until a declared kind needs one (Part I §9).
 
 ## 5. Claims
 
@@ -242,6 +276,7 @@ Field semantics:
 
 - **`value` + `object` together is legitimate**: on a relational claim, `object` is the machine edge and `value` a human gloss. One claim's worth of content per claim — if a `value` hides several independently-checkable assertions of different confidence, split it.
 - **Structured values over prose blobs**: list-shaped knowledge (form cues, ingredients, steps, spec tables) takes array/object values, one checkable element each. Evidence binds to a single element via `element` where a source attests part of the array (§6.1) — the array stays one claim precisely because partial backing is expressible.
+- **Typed values parse.** Under a field declaring `value:` (§4.4), the claim's `value` is the referenced kind's object shape (§4.5) — or, on a structured array, one such object per declared element. The gloss rides `qualifiers`, never the typed object.
 - **`reasoning`** carries inference rationale — never smuggled into an evidence `note`.
 - Wikilinks (`[[slug]]`) in string values are permitted and validated against fact ids.
 - Never store a relation *and* its inverse; symmetric relations are stored once. Which side stores a directed relation is a ledger convention, documented per type (`facts/SCHEMA.md`).
@@ -387,7 +422,8 @@ Structured, evidence-linked **pre-assertion** items, physically beside the facts
   "needs": [
     { "action": "capture", "why": "…" },                       // enqueue | search | capture | observe | promote
     { "action": "enqueue", "record": "corpus://…", "why": "…" },
-    { "action": "promote", "record": "corpus://…?path=…", "why": "…" }
+    { "action": "promote", "record": "corpus://…?path=…", "why": "…" },
+    { "action": "search", "demand": "hat-colour", "why": "…" } // a blocked demand names its rule (§14)
   ],
   "status": "open",                // §7.3
   "resolution": null,
@@ -411,11 +447,11 @@ A `correction` challenging an existing claim names it in **`challenges`** — th
 
 ### 7.4 Generated work-lists
 
-`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and schema-conformance frontier — owed fields, unmet expectations, and missing timeboxes (§4.2, §4.4); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
+`open-questions.md` carries a generated block over every `open`/`standing` interpretation and its `needs`, plus the stub-concept and completeness frontier — owed fields, unmet expectations, missing timeboxes, and open/blocked demands, all fed by the one demand engine (§4.2, §4.4, §14); hand-curated items live outside the marked block. Edit the interpretation files, never the generated block. One interpretation per checkable statement.
 
 ## 8. Vocabulary
 
-Every predicate, qualifier key, concept type, edge type, and roster role in use is registered in the ledger's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
+Every predicate, qualifier key, concept type, edge type, roster role, value kind (§4.5), and demand rule (§14) in use is registered in the ledger's **`VOCAB.md`** — generated with counts and one-line definitions, never hand-maintained:
 
 - Reuse before minting; a new term lands as a visible diff, never a silent addition.
 - Vocabulary grows organically — minted when real evidence needs it, never pre-built. The one sanctioned pre-built form is a **declared import**: an adopted domain bundle's vocabulary (§10, the domain-package seam) enters `VOCAB.md` marked as imported — adoption is itself the evidence of need.
@@ -457,7 +493,7 @@ Semantics:
 
 ## 11. Invariants
 
-Declared constraints over the fact graph — the **coherence** half of ledger integrity (evidence verification, §13.2, is the **grounding** half). An invariant is data, not code: `invariants/{slug}.yaml`:
+Declared constraints over the fact graph — the **coherence** third of ledger integrity (evidence verification, §13.2, is the **grounding** third; demands, §14, the **completeness** third). An invariant is data, not code: `invariants/{slug}.yaml`:
 
 ```yaml
 id: residence-no-overlap
@@ -496,9 +532,19 @@ ledger://{id}:{short}            → a specific claim
 
 - **Read knowledge here; never re-author it.** Facts, claims, and interpretations are citable; **generated views are not** — and no consumer's derived prose is a citation target for anything. A consumer that hand-authors facts into its own output has left the contract: knowledge lives in the ledger, authored once. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following the lineage map (§4.1) so references survive merges and renames.
 - **Render the epistemic state honestly.** A consumer surfacing claims carries their ladder position with them — a `provisional` claim MUST NOT present like a `confirmed` one, and interpretive content (standing corrections, open questions) presents as interpretive. The ladder survives into presentation; that is the honesty the ledger bought.
-- **Publication filters on sensitivity, fail closed.** What a published deliverable may *contain* is governed by derived sensitivity (§6.4) — a filter over content, never a URI form. A consumer publishing beyond the owner MUST NOT emit private-backed claim content, the ids of fully-private fact files, or evidence bytes and derived assets that resolve only privately; private-backed content is excluded or explicitly stubbed, never leaked. This is the system's publication wall. *(Non-normative: the reference implementation is the codex kit's public-profile leak check, maintained with the codex estate.)*
+- **Publication filters on sensitivity, fail closed.** What a published deliverable may *contain* is governed by derived sensitivity (§6.4) — a filter over content, never a URI form. A consumer publishing beyond the owner MUST NOT emit private-backed claim content, the ids of fully-private fact files, or evidence bytes and derived assets that resolve only privately; private-backed content is excluded or explicitly stubbed, never leaked. This is the system's publication wall. A publishing consumer SHOULD read exclusively through the read surface's **public plane** (Part I §5.1) — the wall pre-applied in system code, so the obligation is discharged by construction; a consumer with raw instance access bears the obligation unchanged. *(Non-normative: the codex kit's public-profile leak check remains a consumer-side reference for raw-access consumers.)*
 - **Pin the tuple when freezing.** A consumer freezing a deliverable SHOULD record its reproducibility tuple — the instance commit, the touch identity of every record cited or resolved (§13.2), and every `ref://` citation's stamped snapshot binding — tag + mirror-artifact blake3 (§6.5, §13.2) — so ledger or corpus movement beneath a frozen build is a *detected transition* (`ath ledger worklist` names the dependents), never silent rot discovered by readers.
 - **Evidence resolution materializes; it never originates.** A consumer's own `corpus://`/`ref://` reads happen only to render citations the ledger already asserts (footnotes, embeds, rasters) — never as a second, independent evidence path.
+
+### 12.1 Scope selection and traversal
+
+Compilations are compiled from **scoped** facts; the scope's semantics are specified once, here, and exposed as one library call and as the read surface's query parameters — never re-implemented per consumer. A **scope evaluation** is deterministic: seed, traverse, close.
+
+- **Seed** — the starting set: explicit fact ids; every fact of a type; or the facts matched by a deterministic predicate over fact fields and claim predicates/values, in the operator grammar the ledger already speaks (§10: `equals` / `in` / `glob` / `matches` / `exists`; `all_of` / `any_of` / `none_of`; exact-by-default, missing-is-false).
+- **Traverse** — which reference kinds to follow, to what depth: relational claim `object`s, `{"entity": …}` references inside claim values, wikilinks in string values, roster `uri`s, and edge participation (an edge joins the scope when a participant is in it, and its participants are then reachable). Every hop resolves through the lineage map (§4.1) before it counts — a scope never sees a retired id.
+- **Close** — the evaluation is a visited-set closure: cycle-safe, order-deterministic (ids sorted at each frontier), reproducible for a given instance commit. **Evidence chasing** is a scope parameter, not a traversal kind: `none` (facts only), `references` (evidence entries carried as URIs), or `resolved` (each citation materialized through the corpus resolver or `ref://` adapter — read-time resolution under the contract above, never an evidence path).
+
+Sensitivity is orthogonal: a scope evaluation computes membership; what a consumer may *emit* from it stays governed by the publication filter — on the public plane, the projection applies after scoping, fail closed.
 
 ## 13. Validation
 
@@ -519,6 +565,10 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
 **Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; declared **element** values stay within their `values` and element `entity`s resolve within their `target` type(s); `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields, unmet expectations, and missing timeboxes alike — land on the work-list as frontier, never as stub errors.
+
+**Value kinds** — kind declarations (§4.5) are well-formed: every `constraint:` names a primitive the distribution knows, `required` names declared shape fields, no `value:` references an undeclared or retired kind. Typed claim values parse under their kind's declared shape, each present field checked by its constraint; a field newly typed over nonconforming existing claims, or a kind whose shape changed under standing claims, emits the migration worklist. A **missing** typed field is frontier, never an error.
+
+**Demands** — demand rules (§14) are well-formed: the `when` condition parses under the operator grammar, every owed `field` is declarable vocabulary, a `needs` entry's `demand:` names a declared rule. Demand evaluation itself emits **no errors and no warnings** — open and blocked demands are frontier, reported on the work-list only. Filing is never denied.
 
 **Invariants** — every declared invariant (§11) holds; violations name the claims; an amended invariant emits its migration worklist.
 
@@ -545,6 +595,31 @@ A claim whose evidence fails verification is flagged at the severity of its stat
 A corpus record's identity is the blake3 of its bytes (`spec/corpus.md` §2), so a source re-captured with more content lands as a **new** record — a Claude Code session that grew by a few turns (`corpus session capture`, `spec/corpus.md` §12.8) is the motivating case. Citations must follow the content without a human re-checking each one, and without a synthetic stable id papering over the change. **`ath ledger supersede <old> <new>`** does this, gated by **content continuity** (`corpus continuity`, `spec/corpus.md` §12.8): for every ledger citation of `<old>` — fact `sources` entries (judged per referencing evidence entry, anchor by anchor) and roster `artifacts[].uri`s — it re-points the citation to `<new>` (anchors verbatim) **only** where the addressed content is preserved in `<new>` (byte-identical, or contained as a prefix the new capture extends). When every entry riding a sources key is preserved, the key's `record` is rewritten in place; when only some are, the entry **splits** — preserved evidence entries move to a fresh sources key for `<new>`, diverged ones stay behind on `<old>` (the same-target uniqueness rule is satisfied: old and new are distinct records). A citation whose content **diverged** (a compacted or rewritten source) is left untouched and reported for re-anchoring — no quote is silently moved onto content it was never checked against, so no separate "dirty" flag is required: a genuine break stays visibly on the old id, which `check` (§13.1, dangling citation) and `verify` (§13.2, broken anchor/quote) already surface. `--retire` then reclaims the old record's bytes (`corpus rm`), refused while any diverged citation still references it. This is the corpus-citation analogue of the concept-level lineage row (§4.1): lineage followed forward, one content-address to the next, only where the evidence still holds. *(Since the v26 merge, the citation re-point and the record retire land in one commit — the atomicity the two-repo topology could not give it.)*
 
 ---
+
+## 14. Demands — the completeness rule layer
+
+Ledger integrity's third third (§11): **grounding** is verified (§13.2), **coherence** is declared (§11), and **completeness** is declared here — rules stating what asserted content *owes*. A demand rule is **data, not code**, evaluated deterministically; the schema declares, the tooling evaluates, the authoring pass judges and satisfies. One rule set, two read modes: **batch** — the §7.4 work-list frontier — and **interactive** — the authoring-time demand surface, the scribe's autocomplete: assert, ask what the assertion now owes, chase.
+
+Schema `expectations:` (§4.4) are the type-local form of the same layer, absorbed unchanged as sugar over the general grammar; cross-type rules land beside the invariants they mirror: `demands/{slug}.yaml`:
+
+```yaml
+id: hat-colour
+description: An asserted hat owes its colour, from the closed vocabulary.
+when:                              # condition over one fact — the §10 operator grammar
+  claim: { predicate: wearing, value: { in: [hat, cap, beanie] } }
+owes:
+  - field: hat_colour              # answer shape rides from the field's own declaration
+```
+
+- **Conditions are fact-local**: the fact's `type`, its claims (predicate + value/object match), its roster, and its edge participation (`edge: { {edge-type}: {kind?, with?, target_type?} }` — the §4.4 `when` selector, generalized), composed with `all_of`/`any_of`/`none_of`. Cross-fact conditions are a **named extension point**, deliberately deferred: the grammar is layered so they land later as an amendment to this section, never a redesign — the rule-engine trajectory is intentional, and growth is grammar, not invention.
+- **What a demand carries.** The owed field — and, riding along from that field's own declaration (§4.4, §4.5), its answer shape: a value kind, a closed `values:` vocabulary, or a relational `target` type. The demand surface returns demands **with their shapes attached**, so an authoring pass fills a constrained slot rather than free text. (Value-level completeness needs no rule at all: a `money` kind's `required` fields make the currency demand structural — rules cover the conditional cases.)
+- **Filing is never denied.** A fact with unmet demands is a legitimate, visible state — the interpretations precedent applied to completeness. A demand is **open** (owed, unmet — frontier, never a validation error), **satisfied** (the demanded claim exists, having cleared the ordinary evidence discipline — demands direct attention and never lower the bar), or **blocked**.
+- **Blocked is productive.** A demand unsatisfiable with current sources is declared so — an interpretation whose `needs` entry names the demand (`demand: {rule-id}` beside `action`/`why`, §7.2) — and that declaration *is* ingestion pressure: "no source attests the birth year" files the `capture`/`search` need naming what to chase. Demand-pull pointed at acquisition: the system asks the world for better sources, and an unsatisfiable demand is a good outcome, not a failure. Blocked state is **derived, never stored**: a demand is blocked while an open interpretation names it; capture lands, the ordinary worklist flags the interpretation, satisfaction re-derives.
+- **Anti-churn is mechanical.** Open demands are frontier — `check` output is untouched. The surface returns them grouped per fact, deduplicated per rule firing, blocked state visible. A blocked demand leaves the hot set and does not re-fire while its interpretation stands; it resurfaces when the world changes — new evidence on the fact, or the rule amended (which, like an amended invariant, emits its migration worklist).
+- **Honest retraction is the hallucination mitigation.** An authoring pass that cannot ground an answer declares the blocker instead of fabricating one; the constrained answer shape and the ordinary §13.2 gate do the rest. The system *wants* the feelers out — demands exist to provoke them; blocked is how an honest feeler retracts.
+- **Grown organically**, like invariants: declare a demand rule when a real completeness class appears; a new rule lands as a visible diff, and its first evaluation is the review surface. Rules and their vocabulary register (§8).
+
+The surfaces: **`ath ledger demands <fact-id>`** (and evaluation against a draft fact file, for mid-authoring use), the read surface's owner-plane demand endpoint, and the §7.4 work-list — all the same deterministic evaluation.
 
 ## Appendix A: Worked example (non-normative)
 

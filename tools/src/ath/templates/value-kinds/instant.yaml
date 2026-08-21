@@ -1,0 +1,9 @@
+# Adoptable import template (spec/ledger.md §4.5) — copy into
+# <instance>/ledger/schemas/values/ to adopt; adoption is a visible diff.
+kind: instant
+description: A point in time, zoned and at a stated precision.
+shape:
+  at:        { constraint: iso-instant }
+  zone:      { constraint: iana-zone }
+  precision: { constraint: enum, values: [second, minute, hour, day] }
+required: [at, precision]

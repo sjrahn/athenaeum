@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ledger import demands as demands_mod
 from ledger import invariants as invariants_mod
+from ledger import tenancy as tenancy_mod
+from ledger import values as values_mod
 from ledger import views
 from ledger.corpora import CorpusJoin
 from ledger.model import (
@@ -105,8 +108,33 @@ def run_check(
 
     schemas, schema_errors = load_schemas(ledger_root)
     rep.errors.extend(schema_errors)
+    kinds, kind_errors = values_mod.load_kinds(ledger_root)
+    rep.errors.extend(kind_errors)
     invs, inv_errors = invariants_mod.load_invariants(ledger_root)
     rep.errors.extend(inv_errors)
+    demand_rules, demand_errors = demands_mod.load_demand_rules(ledger_root)
+    rep.errors.extend(demand_errors)
+
+    # value kinds (§4.5, §13.1): a schema field/element `value:` naming an
+    # undeclared kind is an error at the schema, independent of any claim
+    # actually using the field — checked structurally here rather than only
+    # on use, the same way a dangling `value:` should surface immediately.
+    for tname, schema in schemas.items():
+        swhere = f"schemas/{tname}.yaml"
+        for fname, fspec in (schema.get("fields") or {}).items():
+            if not isinstance(fspec, dict):
+                continue
+            fkind = fspec.get("value")
+            if isinstance(fkind, str) and fkind not in kinds:
+                rep.err(swhere, f"field {fname!r} value {fkind!r} names an undeclared "
+                                f"value kind (§4.5)")
+            for ekey, edecl in (fspec.get("elements") or {}).items():
+                if not isinstance(edecl, dict):
+                    continue
+                ekind = edecl.get("value")
+                if isinstance(ekind, str) and ekind not in kinds:
+                    rep.err(swhere, f"field {fname!r} element {ekey!r} value {ekind!r} "
+                                    "names an undeclared value kind (§4.5)")
 
     # -------------------------------------------------- resolution availability
     resolve_live = not no_corpus and join.complete
@@ -442,6 +470,14 @@ def run_check(
                 and str(c.get("value")) not in values:
             rep.err(where, f"schema: {o.get('type')}.{pred} value {c.get('value')!r} "
                            f"not among declared values {values}")
+        # value kinds (§4.5, §5.1): a field declaring `value:` types the claim's
+        # whole `value` as that kind's object shape. Absent = frontier, never
+        # an error (§4.4, §14); an undeclared kind is flagged structurally
+        # above, not repeated per claim.
+        fkind = fspec.get("value")
+        if isinstance(fkind, str) and fkind in kinds and c.get("value") is not None:
+            for issue in values_mod.validate_value(kinds[fkind], c["value"]):
+                rep.err(where, f"schema: {o.get('type')}.{pred} {issue}")
         obj = c.get("object")
         if fspec.get("participant") and obj is not None:
             parts = [str(p) for p in o.get("participants") or []]
@@ -498,6 +534,11 @@ def run_check(
                                 rep.err(where, f"schema: {o.get('type')}.{pred} element "
                                                f"{ekey!r} {ev!r} is a {got!r}, declared "
                                                f"target {etarget!r}")
+                    ekind = edecl.get("value")
+                    if isinstance(ekind, str) and ekind in kinds:
+                        for issue in values_mod.validate_value(kinds[ekind], ev):
+                            rep.err(where, f"schema: {o.get('type')}.{pred} element "
+                                           f"{ekey!r} {issue}")
 
         fact_sources = o.get("sources") if isinstance(o.get("sources"), dict) else {}
         evs = c.get("evidence") or []
@@ -516,7 +557,6 @@ def run_check(
         # (countable, kind, independent-source id, element) so the bar can
         # evaluate whole-claim or per-element *(19, §5.4)*.
         ev_infos: list[tuple[bool, object, tuple[str, str] | None, int | None]] = []
-        priv = c.get("sensitivity") == "private"
         for e in evs:
             if not isinstance(e, dict):
                 rep.err(where, "evidence entries must be objects")
@@ -571,8 +611,6 @@ def run_check(
                         src_id = ("record", h)
                         if resolve_live and join.deferred_surface(h) is True:
                             entry_countable = False
-                        if resolve_live and join.resolves(h) and join.is_private(h):
-                            priv = True
                 elif isinstance(entry, dict) and "ref" in entry:
                     srm = SOURCE_REF_RE.match(str(entry["ref"]))
                     if srm:
@@ -588,6 +626,14 @@ def run_check(
                                        f"{entry['ref']} with anchor {anchor!r} — ref:// "
                                        "citations carry no span parameters (§6.5)")
             ev_infos.append((entry_countable, kind, src_id, el))
+
+        # derived sensitivity (§6.4) — the one shared computation
+        # (`ledger.tenancy`, reused unchanged by the read surface, spec Part I
+        # §5.1) rather than reimplemented here. Skipped (asserted-only) when
+        # the corpus join isn't live, matching every other resolution-gated
+        # check above.
+        priv = (tenancy_mod.claim_private_backed(c, fact_sources, join, datasets)
+                if resolve_live else c.get("sensitivity") == "private")
 
         def _bar(infos: list[tuple[bool, object, tuple[str, str] | None, int | None]],
                  ) -> tuple[bool, set[tuple[str, str]]]:
@@ -630,7 +676,6 @@ def run_check(
                                        "authoritative artifact or ≥2 independent sources)")
         if priv:
             private_claims += 1
-        c["_private"] = priv  # consumed by the file-level pass below, then dropped
 
     # sources entries no evidence references — a warning, never an error
     # (the table may legitimately hold a source ahead of the claim that uses it)
@@ -646,28 +691,21 @@ def run_check(
                 rep.warn(rel(f), f"sources entry {skey!r} is not referenced by any "
                                  "evidence")
 
-    # file-level derived sensitivity (§6.4)
+    # file-level derived sensitivity (§6.4) — `ledger.tenancy.fact_is_private`
+    # recomputes each claim's privacy afresh (cheap: one pass, no corpus I/O
+    # beyond `join`'s own per-hash cache) rather than the per-claim `_private`
+    # stash this loop used to thread through; same shared function the read
+    # surface's public projection calls.
     if resolve_live:
         for _f, o in facts.items():
             if is_redirect(o):
                 continue
-            carried = []
-            for c in o.get("claims") or []:
-                if isinstance(c, dict):
-                    carried.append(bool(c.pop("_private", False)))
-            for entry in o.get("artifacts") or []:
-                if isinstance(entry, dict):
-                    m = CORPUS_URI_RE.match(str(entry.get("uri", "")))
-                    carried.append(bool(m and join.is_private(m.group(1))))
-            if o.get("sensitivity") == "private" or (carried and all(carried)):
+            if tenancy_mod.fact_is_private(o, join, datasets):
                 private_files += 1
         rep.counts["private_claims"] = private_claims
         rep.counts["private_files"] = private_files
         rep.note(f"sensitivity: {private_claims} private-backed claims, "
                  f"{private_files} private fact files (derived, §6.4)")
-    else:
-        for _, _o, c in all_claims:
-            c.pop("_private", None)
 
     # --------------------------------------------------------- interpretations
     standing_challenges: dict[str, str] = {}  # claim id -> interp id
@@ -871,6 +909,9 @@ def run_check(
                                    "corpus://<hash>?path=…)")
             if not n.get("why"):
                 rep.err(where, "need requires a why")
+            demand = n.get("demand")
+            if demand is not None and str(demand) not in demand_rules:
+                rep.err(where, f"need names undeclared demand rule {demand!r} (§14)")
 
     # disputed ⇄ standing correction pairing
     for f, _o, c in all_claims:

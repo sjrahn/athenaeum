@@ -76,5 +76,5 @@ def test_render_worklist_directly_includes_promote_need(system: Path) -> None:
     ])
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     interps, _ = load_json_dir(system / "ledger", "interpretations/*.json")
-    block = render_worklist(facts, interps, {})
+    block = render_worklist(system / "ledger", facts, interps, {})
     assert "(promote)" in block

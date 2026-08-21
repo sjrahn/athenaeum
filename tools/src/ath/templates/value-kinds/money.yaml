@@ -1,0 +1,8 @@
+# Adoptable import template (spec/ledger.md §4.5) — copy into
+# <instance>/ledger/schemas/values/ to adopt; adoption is a visible diff.
+kind: money
+description: An amount of a currency.
+shape:
+  amount:   { constraint: decimal }        # a decimal string — never a JSON float
+  currency: { constraint: iso-4217 }
+required: [amount, currency]

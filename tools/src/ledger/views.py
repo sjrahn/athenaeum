@@ -13,8 +13,10 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+from ledger import demands as demands_mod
+from ledger import values as values_mod
 from ledger.model import CORPUS_REF_RE, is_edge, is_redirect
-from ledger.schemas import expectation_selects
+from ledger.schemas import expectation_selects, load_schemas
 
 VOCAB_PATH = "facts/VOCAB.md"
 OPENQ_PATH = "open-questions.md"
@@ -28,17 +30,22 @@ _SECTIONS = (
     ("predicates", "Claim predicates", "predicate"),
     ("qualifiers", "Qualifier keys", "qualifier"),
     ("roster-roles", "Roster roles", "role"),
+    ("value-kinds", "Value kinds", "kind"),
+    ("demand-rules", "Demand rules", "rule"),
 )
 
 _HEADER = """\
 # Vocabulary registry — GENERATED
 
-Every concept type, edge type, claim predicate, qualifier key, and roster
-role in use, with counts (`spec/ledger.md` §8). Rows and counts are computed
-by `ath ledger regen`; the **definition column** and the **Retired** section
-are this file's only hand-curated content and are preserved across
-regenerations. Reuse before minting — a new term lands here as a visible
-diff. Using a retired term is a validation error.
+Every concept type, edge type, claim predicate, qualifier key, roster role,
+value kind (§4.5), and demand rule (§14) in use, with counts (`spec/ledger.md`
+§8). Rows and counts are computed by `ath ledger regen`; the **definition
+column** and the **Retired** section are this file's only hand-curated
+content and are preserved across regenerations — except **Value kinds** and
+**Demand rules**, whose description columns are the kind's/rule's own
+declared `description:` (§4.5, §14), never hand-curated here. Reuse before
+minting — a new term lands here as a visible diff. Using a retired term is a
+validation error.
 """
 
 
@@ -62,6 +69,41 @@ def collect_vocab(facts: dict[Path, dict]) -> dict[str, Counter]:
     return c
 
 
+def _kind_usage(kinds: dict[str, dict], schemas: dict[str, dict]) -> Counter:
+    """Value kind usage counts (§4.5): every declared kind starts at 0 —
+    listed for adoption visibility even unused — incremented once per schema
+    field or element `value:` reference."""
+    c: Counter = Counter({k: 0 for k in kinds})
+    for schema in schemas.values():
+        if not isinstance(schema, dict):
+            continue
+        for fspec in (schema.get("fields") or {}).values():
+            if not isinstance(fspec, dict):
+                continue
+            if isinstance(fspec.get("value"), str):
+                c[fspec["value"]] += 1
+            for edecl in (fspec.get("elements") or {}).values():
+                if isinstance(edecl, dict) and isinstance(edecl.get("value"), str):
+                    c[edecl["value"]] += 1
+    return c
+
+
+def _demand_rule_usage(rules: dict[str, dict], live: list[dict], edges: list[dict],
+                       facts_by_id: dict[str, dict]) -> Counter:
+    """Rule → count of facts the rule's `when` currently matches (§14),
+    regardless of demand state — every declared rule starts at 0, listed for
+    visibility even unused, mirroring `_kind_usage`."""
+    c: Counter = Counter({rid: 0 for rid in rules})
+    for fact in live:
+        for rid, rule in rules.items():
+            when = rule.get("when")
+            if isinstance(when, dict) and demands_mod.condition_matches(
+                when, fact, edges, facts_by_id
+            ):
+                c[rid] += 1
+    return c
+
+
 def _block(text: str, section: str) -> str | None:
     start, end = (m.format(section) for m in _SECTION_MARKS)
     if start in text and end in text:
@@ -74,7 +116,7 @@ def _parse_rows(block: str) -> list[list[str]]:
     for line in block.strip().splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) >= 2 and cells[0] and not set(cells[0]) <= set("-: ") and (
-            cells[0].strip("`") not in ("type", "predicate", "qualifier", "role", "term")
+            cells[0].strip("`") not in ("type", "predicate", "qualifier", "role", "kind", "term")
         ):
             rows.append([c.strip("`") for c in cells])
     return rows
@@ -98,13 +140,23 @@ def parse_retired(vocab_text: str) -> list[list[str]]:
 
 
 def render_vocab(counters: dict[str, Counter], defs: dict[str, dict[str, str]],
-                 retired: list[list[str]]) -> str:
+                 retired: list[list[str]],
+                 kind_descriptions: dict[str, str] | None = None,
+                 rule_descriptions: dict[str, str] | None = None) -> str:
     parts = [_HEADER]
     for section, heading, label in _SECTIONS:
         start, end = (m.format(section) for m in _SECTION_MARKS)
         lines = [f"| {label} | count | definition |", "|---|---:|---|"]
         for term, n in sorted(counters.get(section, Counter()).items()):
-            d = defs.get(section, {}).get(term, "")
+            # value kinds and demand rules carry their own `description:`
+            # (§4.5, §14) — authoritative, never a hand-curated VOCAB.md cell
+            # like every other section's.
+            if section == "value-kinds":
+                d = (kind_descriptions or {}).get(term, "")
+            elif section == "demand-rules":
+                d = (rule_descriptions or {}).get(term, "")
+            else:
+                d = defs.get(section, {}).get(term, "")
             lines.append(f"| `{term}` | {n} | {d} |")
         table = "\n".join(lines)
         parts.append(f"\n## {heading}\n\n{start}\n{table}\n{end}\n")
@@ -121,7 +173,21 @@ def fresh_vocab(ledger_root: Path, facts: dict[Path, dict]) -> str:
     """The regenerated VOCAB.md text (definitions/retired preserved from disk)."""
     path = ledger_root / VOCAB_PATH
     old = path.read_text(encoding="utf-8") if path.is_file() else ""
-    return render_vocab(collect_vocab(facts), parse_definitions(old), parse_retired(old))
+    schemas, _ = load_schemas(ledger_root)
+    kinds, _ = values_mod.load_kinds(ledger_root)
+    rules, _ = demands_mod.load_demand_rules(ledger_root)
+    counters = collect_vocab(facts)
+    counters["value-kinds"] = _kind_usage(kinds, schemas)
+    live = [f for f in facts.values() if not is_redirect(f)]
+    edges = [f for f in live if is_edge(f)]
+    facts_by_id = {str(f.get("id")): f for f in live}
+    counters["demand-rules"] = _demand_rule_usage(rules, live, edges, facts_by_id)
+    kind_descriptions = {k: str(v.get("description") or "") for k, v in kinds.items()
+                         if isinstance(v, dict)}
+    rule_descriptions = {rid: str(r.get("description") or "") for rid, r in rules.items()
+                         if isinstance(r, dict)}
+    return render_vocab(counters, parse_definitions(old), parse_retired(old),
+                        kind_descriptions, rule_descriptions)
 
 
 def retired_terms(ledger_root: Path) -> set[str]:
@@ -134,9 +200,12 @@ def retired_terms(ledger_root: Path) -> set[str]:
 # ---------------------------------------------------------------- open questions
 
 
-def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
+def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Path, dict],
                     schemas: dict[str, dict]) -> str:
-    """The generated open-questions block: live interpretations + the frontier."""
+    """The generated open-questions block: live interpretations, the schema-
+    conformance frontier, and open/blocked demands (§7.4, §14) — all fed by
+    the one demand engine so this block and the interactive surface
+    (`ath ledger demands`) never disagree."""
     lines: list[str] = []
     order = {"hypothesis": 0, "correction": 1, "assessment": 2}
     live = [o for o in interps.values() if o.get("status") in ("open", "standing")]
@@ -223,6 +292,34 @@ def render_worklist(facts: dict[Path, dict], interps: dict[Path, dict],
                             f"(`period`) on {len(cids)} claims ({sample}, …)")
     if frontier:
         lines += ["", "### Frontier (stubs + schema conformance)", "", *frontier]
+
+    rules, _ = demands_mod.load_demand_rules(ledger_root)
+    kinds, _ = values_mod.load_kinds(ledger_root)
+    facts_by_id = {str(f.get("id")): f for f in live}
+    interp_list = list(interps.values())
+    by_fact: dict[str, list[str]] = {}
+    for fact in sorted(live, key=lambda f: str(f.get("id", ""))):
+        for d in demands_mod.evaluate_demands(
+            fact, rules=rules, schemas=schemas, kinds=kinds,
+            facts_by_id=facts_by_id, edges=edges, interps=interp_list,
+        ):
+            if d["state"] == "satisfied":
+                continue
+            rule_tag = f"({d['rule']})"
+            if d["state"] == "open":
+                why = f" — {d['why']}" if d["why"] else ""
+                line = f"  - owes `{d['field']}` {rule_tag}{why}"
+            else:  # blocked
+                need = d.get("need") or {}
+                line = (f"  - owes `{d['field']}` {rule_tag} — blocked on "
+                        f"{need.get('action', '?')}: {need.get('why', '')}")
+            by_fact.setdefault(d["fact"], []).append(line)
+    if by_fact:
+        demand_lines: list[str] = []
+        for fid in sorted(by_fact):
+            demand_lines.append(f"- `{fid}`")
+            demand_lines.extend(by_fact[fid])
+        lines += ["", "### Demands (§14)", "", *demand_lines]
     return "\n".join(lines)
 
 
@@ -250,7 +347,7 @@ def fresh_openq(ledger_root: Path, facts: dict[Path, dict], interps: dict[Path, 
     start, end = OPENQ_MARKS
     if start not in text or end not in text:
         return None
-    block = render_worklist(facts, interps, schemas)
+    block = render_worklist(ledger_root, facts, interps, schemas)
     pre, rest = text.split(start, 1)
     _, post = rest.split(end, 1)
     return f"{pre}{start}\n{block}\n{end}{post}"

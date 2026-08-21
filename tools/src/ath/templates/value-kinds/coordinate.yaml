@@ -1,0 +1,9 @@
+# Adoptable import template (spec/ledger.md §4.5) — copy into
+# <instance>/ledger/schemas/values/ to adopt; adoption is a visible diff.
+kind: coordinate
+description: A geographic point.
+shape:
+  lat: { constraint: latitude }
+  lon: { constraint: longitude }
+  alt: { constraint: number }
+required: [lat, lon]

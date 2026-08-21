@@ -31,6 +31,11 @@ Commands:
                 token candidates against the derived index; rc 1 on no match
   index         ensure/rebuild the derived resolution index (.cache/,
                 uncommitted); --rebuild forces, --stats prints counts
+  demands [ID]  the completeness rule layer (§14): a fact's demands with
+                state visible (OPEN/BLOCKED/SATISFIED — satisfied hidden
+                unless --all); --draft PATH evaluates a fact file not yet
+                landed in the tree; no ID prints a ledger-wide per-rule
+                summary. Never errors on open demands (rc 0 regardless).
   dedupe        coalescence proposer (#177) — candidate duplicate concepts/
                 edges, near-duplicate predicates, dead schema surface;
                 READ-ONLY, proposes only, never merges/writes; --json,
@@ -240,6 +245,98 @@ def _cmd_index(argv: Sequence[str]) -> int:
         print(f"entries: {len(idx['entries'])}  names: {len(idx['names'])}  "
               f"citations: {len(idx['citations'])}  skipped: {len(idx['skipped'])}")
         print(f"stamp: {idx['stamp']}")
+    return 0
+
+
+def _print_demands(demands: list[dict], *, show_satisfied: bool) -> None:
+    if not demands:
+        print("no demands")
+        return
+    by_state: dict[str, list[dict]] = {"open": [], "blocked": [], "satisfied": []}
+    for d in demands:
+        by_state.setdefault(str(d.get("state")), []).append(d)
+    for state in ("open", "blocked", "satisfied"):
+        if state == "satisfied" and not show_satisfied:
+            continue
+        items = by_state.get(state, [])
+        if not items:
+            continue
+        print(f"{state.upper()} ({len(items)}):")
+        for d in items:
+            line = f"  {d['fact']} owes {d['field']} ({d['rule']})"
+            if d.get("why"):
+                line += f" — {d['why']}"
+            print(line)
+            if state == "blocked" and d.get("need"):
+                need = d["need"]
+                print(f"    blocked on {need.get('action', '?')}: {need.get('why', '')}")
+
+
+def _cmd_demands(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger demands",
+        "The completeness rule layer (§14): a fact's demands, or a ledger-wide summary.",
+    )
+    ap.add_argument("fact_id", nargs="?", default=None,
+                    help="fact id to evaluate (omit for a ledger-wide per-rule summary)")
+    ap.add_argument("--draft", metavar="PATH", default=None,
+                    help="evaluate a draft fact JSON file not yet landed in the tree")
+    ap.add_argument("--all", action="store_true", help="also show satisfied demands")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger import demands as demands_mod
+    from ledger import values as values_mod
+    from ledger.model import is_edge, is_redirect, load_json_dir
+    from ledger.schemas import load_schemas
+
+    facts, _ = load_json_dir(ledger_root, "facts/*/*.json")
+    interps, _ = load_json_dir(ledger_root, "interpretations/*.json")
+    schemas, _ = load_schemas(ledger_root)
+    kinds, _ = values_mod.load_kinds(ledger_root)
+    rules, rule_errors = demands_mod.load_demand_rules(ledger_root)
+    for e in rule_errors:
+        print(f"WARN  {e}", file=sys.stderr)
+
+    live = [f for f in facts.values() if not is_redirect(f)]
+    edges = [f for f in live if is_edge(f)]
+    facts_by_id = {str(f.get("id")): f for f in live}
+    interp_list = list(interps.values())
+
+    def _evaluate(fact: dict) -> list[dict]:
+        return demands_mod.evaluate_demands(
+            fact, rules=rules, schemas=schemas, kinds=kinds,
+            facts_by_id=facts_by_id, edges=edges, interps=interp_list,
+        )
+
+    if ns.draft:
+        try:
+            fact = json.loads(Path(ns.draft).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"ath ledger demands: {ns.draft}: {e}", file=sys.stderr)
+            return 1
+        _print_demands(_evaluate(fact), show_satisfied=ns.all)
+        return 0
+
+    if ns.fact_id:
+        fact = facts_by_id.get(ns.fact_id)
+        if fact is None:
+            print(f"ath ledger demands: unknown fact {ns.fact_id!r}", file=sys.stderr)
+            return 1
+        _print_demands(_evaluate(fact), show_satisfied=ns.all)
+        return 0
+
+    # no id: a ledger-wide summary — counts per rule, by state
+    counts: dict[str, dict[str, int]] = {}
+    for fact in live:
+        for d in _evaluate(fact):
+            bucket = counts.setdefault(str(d["rule"]), {"open": 0, "blocked": 0, "satisfied": 0})
+            bucket[str(d["state"])] += 1
+    if not counts:
+        print("no demands")
+        return 0
+    for rule_id in sorted(counts):
+        b = counts[rule_id]
+        print(f"{rule_id}\topen={b['open']}\tblocked={b['blocked']}\tsatisfied={b['satisfied']}")
     return 0
 
 
@@ -573,6 +670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "verify": _cmd_verify,
         "resolve": _cmd_resolve,
         "index": _cmd_index,
+        "demands": _cmd_demands,
         "dedupe": _cmd_dedupe,
         "harvest": _cmd_harvest,
         "promote": _cmd_promote,

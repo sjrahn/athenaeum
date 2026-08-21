@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 27
+version: 28
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -150,7 +150,7 @@ corpus ──▶ (nothing above it)          (the foundation references nothing 
 tooling ──config──▶ instance           (operational, not a data reference)
 ```
 
-The corpus never references the ledger; nothing in the system references a consumer. The ledger cites the corpus freely — privacy is derived claim sensitivity computed from record tenancy (Part III §6.4), and it becomes a wall at publication under the consumption contract, never before. A consumer's own `corpus://`/`ref://` reads happen only when materializing what the ledger already asserted into presentable form — never a second, independent evidence path. Generated views — the ledger's and any consumer's alike — are never citation targets. These directions are validated, not just conventional.
+The corpus never references the ledger; nothing in the system references a consumer. The ledger cites the corpus freely — privacy is derived claim sensitivity computed from record tenancy (Part III §6.4), and it becomes a wall at publication under the consumption contract, never before. A consumer's own `corpus://`/`ref://` reads happen only when materializing what the ledger already asserted into presentable form — never a second, independent evidence path. Generated views — the ledger's and any consumer's alike — are never citation targets. These directions are validated, not just conventional. The read surface (§5.1) changes none of them: it transports the same consumer reads over HTTP — the public plane with the publication filter pre-applied, the owner plane for the owner's own frontends.
 
 ## 3. The corpus layer
 
@@ -176,6 +176,15 @@ The system ends at its product: the corpus + ledger join, read through the contr
 
 *(Non-normative.)* The reference consumer is the **codex kit** — the compilation tooling and its contract (ATH-CODEX), maintained with the codex estate outside this system. The kit consumes the system through its public contracts and the `athenaeum` distribution as a library — the same read surfaces any third-party consumer gets.
 
+### 5.1 The read surface
+
+The distribution ships the product's one network doorway: **`ath serve`** — a **read-only HTTP surface** over an instance, serving the corpus + ledger join through the same contracts library consumers get. It is the same read surface over a different transport — the same URIs, semantics, and filters — never a second authority and never an independent evidence path. What is normative is the **contract, not the framework**: the resource model, the scope-selection grammar (Part III §12.1), the plane semantics below, and the versioned OpenAPI document the tooling emits — stamped with the specification version, so a breaking surface change is by definition a normative amendment. The web framework underneath is implementation detail this specification never names.
+
+- **Two planes.** The **public plane** — the default — serves the **public projection**: every response filtered on derived sensitivity (Part III §6.4), fail closed, computed in-system. Private-backed claim content, the ids of fully-private fact files, and evidence that resolves only privately are never emitted; interpretations — pre-assertion content — are never served on this plane. A publishing consumer that reads only the public plane discharges the consumption contract's publication filter **by construction** (Part III §12): the wall enforced once, in governed and validated code, instead of once per consumer. The **owner plane** — enabled only explicitly, gated by a per-deployment token — serves the full instance, for the owner's own trusted frontends and authoring harnesses.
+- **Read-only is normative.** No mutating verb exists on either plane. Writes remain the authoring machinery's — agent passes, the capture queue, the `ath ledger` verbs — each behind its own gates. The surface is a doorway into the product, never a path around the system.
+- **The trust boundary is the port — stated honestly.** The wall binds consumers whose *only* access is the surface; filesystem access to the instance bypasses it entirely. The surface moves the publication wall from consumer code into system code; it does not protect against local access. The operational boundary is: who can reach the instance root vs. who can reach the port.
+- **Deployment posture is the operator's.** The surface binds localhost by default. TLS, reverse proxies, internet exposure, and rate limiting are deployment decisions, deliberately outside this specification — it governs what the surface says, never where the operator points it.
+
 ## 6. Pipeline and agents
 
 ### 6.1 The deterministic / LLM boundary
@@ -190,6 +199,8 @@ The system ends at its product: the corpus + ledger join, read through the contr
 | Ledger harvest (mechanical concept/claim minting from corpus facts, origin-keyed) | Deterministic |
 | Ledger fact authoring and interpretation | LLM agent pass |
 | Ledger validation (check, evidence verification, promote mechanics) | Deterministic |
+| Demand evaluation (Part III §14) and scope evaluation (Part III §12.1) | Deterministic |
+| The read surface (`ath serve`, §5.1) | Deterministic |
 | Instance status (`ath`) | Deterministic |
 
 If the operation could produce different valid outputs depending on judgment, it is agent-driven; if the output is a function of the input, it is scripted. This enables independent re-processing at every stage.
@@ -207,13 +218,13 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 One distribution — **`athenaeum`** (Python, `tools/` in the distribution repo) — ships the system's CLIs:
 
 - **`corpus`** — the corpus pipeline and query surface: capture / ingest / attest / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, and the custody verbs (Part IV: location, locate, gc).
-- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot; writes go through the forge's own CLI), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
+- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot; writes go through the forge's own CLI), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
 
 Tooling agnosticism is normative: no instance ids or paths in code; instance-local extensions load through declared seams; a third party brings their own instance and agents to the same distribution. Consumers use the distribution **as a library** — the resolver, the ledger read surface, the instance join — through the same public contracts.
 
 The **residence scanner** (`scanner/` in the distribution repo) is the one non-Python tool: a host-side manifest publisher for attached locations on remote machines (Part IV). Its manifest format is its own versioned cross-language contract, deliberately outside this spec.
 
-Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they are rebuildable consumers of the contracts above, produced when the system's form calls for them, never load-bearing.
+**Presentation layers** (browsers, viewers, compilations) are deliberately unspecified: rebuildable consumers of the contracts above, produced when the system's form calls for them, never load-bearing. The **read surface** (§5.1) is not one of them — it is product, not presentation: the specified doorway those consumers read through.
 
 ## 8. Change management
 
@@ -225,8 +236,8 @@ Serving layers (read APIs, browsers, viewers) are deliberately unspecified: they
 
 ## 9. Out of scope
 
-Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a network serving protocol; a second corpus per instance; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5); a standalone external `ledger://` network resolver; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
+Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a second corpus per instance; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5); cross-instance federation and any resolver spanning instances; full-text search on the read surface (`/facts` selection is deterministic matching, never search); write verbs on the read surface; scoped per-audience disclosure grants (the read surface's planes are two: public and owner — §5.1); instance-shipped value-kind validator code (kinds are data, Part III §4.5; an algorithmic-validity seam is designed but deferred until a declared kind needs one); SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
 
-*Version 26 (2026-08-19, owner ruling) is the topology inversion. The orchestrator-repo-as-workspace model retires: the distribution (spec + tooling) points at the **instance** — one private repository merging the former corpus and ledger member repos with both histories preserved, behind a sensitivity- and verification-invariance gate. The member manifest becomes the tracked instance config (the reference-dataset registry gains history); `ledger.yaml` and the member-sync machinery dissolve; multi-corpus plumbing is removed as unexercised. Part IV (custody) is extracted from Part II's grown location/store/scanner material; amendment archaeology moves to `CHANGELOG.md`. Prior version notes: the changelog.*
+*Version 28 (2026-08-20, owner ruling) opens the product boundary's doorway and types its values. The **read surface** (§5.1) lands: `ath serve`, read-only, two planes, the public projection as the default — the publication wall moves into system code. The ledger gains **value kinds** (instance-declared typed values over a closed primitive-constraint vocabulary, Part III §4.5), the **scope grammar** (Part III §12.1), and **demands** — the completeness rule layer (Part III §14). Prior version notes: the changelog.*

@@ -985,9 +985,14 @@ def test_frontier_aggregates_per_field(system: Path) -> None:
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     from ledger.schemas import load_schemas
     schemas, _ = load_schemas(system / "ledger")
-    block = render_worklist(facts, {}, schemas)
+    block = render_worklist(system / "ledger", facts, {}, schemas)
     assert "`song.appears_on` not yet attested on 7 facts" in block
-    assert block.count("appears_on") == 1  # one line, not seven
+    frontier = block.split("### Frontier", 1)[1].split("### Demands", 1)[0]
+    assert frontier.count("appears_on") == 1  # one aggregated line, not seven
+    # the demands section (§14) lists the same gap per-fact instead — the
+    # interactive surface's job, distinct from the frontier's aggregation
+    demands_section = block.split("### Demands", 1)[1]
+    assert demands_section.count("owes `appears_on`") == 7  # one per fact, unaggregated
     assert "covered_by" not in block  # admissible, not owed — no frontier
 
 
@@ -1094,7 +1099,7 @@ def test_expectations_frontier(system: Path) -> None:
     })
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, _ = load_schemas(system / "ledger")
-    block = render_worklist(facts, {}, schemas)
+    block = render_worklist(system / "ledger", facts, {}, schemas)
     assert ("`person.date_of_birth` — family birthdays are chase-worthy — "
             "not yet attested: `kat`") in block
     # steven (named by with:) and stranger (not family) are never owed
@@ -1107,7 +1112,7 @@ def test_expectations_frontier(system: Path) -> None:
                              "claims": [_claim("kat", "dob", predicate="date_of_birth",
                                                value="1990-01-01")]})
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
-    block = render_worklist(facts, {}, schemas)
+    block = render_worklist(system / "ledger", facts, {}, schemas)
     assert "date_of_birth" not in block
 
 
@@ -1133,7 +1138,7 @@ def test_timeboxed_fields_frontier(system: Path) -> None:
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, errs = load_schemas(system / "ledger")
     assert not errs
-    block = render_worklist(facts, {}, schemas)
+    block = render_worklist(system / "ledger", facts, {}, schemas)
     assert ("`person.residence` claims missing their timebox (`period`): "
             "`kat:res-a`") in block
     assert "kat:res-b" not in block       # a period satisfies the timebox
@@ -1173,7 +1178,7 @@ def test_concept_carries_own_period(system: Path) -> None:
     # the top-level timebox satisfies the `expect: [period]` frontier line
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, _ = load_schemas(system / "ledger")
-    assert "event.period" not in render_worklist(facts, {}, schemas)
+    assert "event.period" not in render_worklist(system / "ledger", facts, {}, schemas)
 
     # an odd top-level period format warns, exactly like a claim period
     _fact(system, "event", {

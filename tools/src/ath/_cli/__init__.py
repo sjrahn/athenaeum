@@ -24,6 +24,9 @@ Instance:
   issue ...     the instance's backlog: list, show, sync (the in-repo offline
                 snapshot). Write verbs — create, close and above all COMMENT —
                 are the forge CLI's (`fj`).
+  serve ...     the read surface (spec Part I §5.1): a read-only HTTP surface
+                over the instance, public plane by default, owner plane
+                token-gated (--owner / --owner-token). Needs the serve extra.
 
 Layers:
   ledger ...    the ledger's deterministic surface: check, verify, harvest,
@@ -69,6 +72,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(rest)
     if cmd == "issue":
         from ath._cli.issue import run
+
+        return run(rest)
+    if cmd == "serve":
+        from ath._cli.serve import run
 
         return run(rest)
     print(f"ath: unknown command {cmd!r}", file=sys.stderr)

@@ -90,7 +90,9 @@ HYPOTHESIS_STATUSES = {"open", "promoted", "refuted"}
 STANDING_STATUSES = {"standing", "retired"}
 CONFIDENCES = {"speculative", "plausible", "likely"}
 NEED_ACTIONS = {"enqueue", "search", "capture", "observe", "promote"}
-NEED_KEYS = {"action", "record", "why"}
+# `demand:` names a demand rule (§14) this need blocks — a blocked demand's
+# state is derived from this, never stored on the demand itself.
+NEED_KEYS = {"action", "record", "why", "demand"}
 CHALLENGE_KEYS = {"claim", "state"}
 STATE_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 

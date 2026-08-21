@@ -18,7 +18,15 @@ nothing, and the fail-closed default carries the answer.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ledger.model import FULL_HASH_RE, SOURCE_REF_RE
+
+if TYPE_CHECKING:
+    from ath.manifest import Reference
+    from ledger.corpora import CorpusJoin
 
 _CORPUS_URI_HASH_RE = re.compile(r"^corpus://([0-9a-f]{64})")
 _MAX_LINEAGE_HOPS = 8  # containers nest shallowly; a cycle or runaway stops cold
@@ -91,3 +99,97 @@ def record_tenancy(
     if declared:  # every declaration reached said private — an answer, not the floor
         return "private"
     return default
+
+
+# --------------------------------------------------------------- claim/fact §6.4
+#
+# Shared by `ledger.check` (the validation counts) and the read surface
+# (`ath.serve`, spec Part I §5.1) — the ONE place a claim's/fact's derived
+# sensitivity computes, so a consumer's publication filter and `ath ledger
+# check`'s note never disagree. Tolerant throughout: a malformed sources
+# entry or an unresolvable citation contributes nothing (dangling citations
+# are `check`'s to flag, not this module's) — never raises on ordinary
+# ledger data.
+
+
+def evidence_entry_private(
+    entry: object, join: CorpusJoin, datasets: Mapping[str, Reference],
+) -> bool:
+    """True iff one fact `sources` entry (`{record: <hash>}` or `{ref: …}`)
+    resolves privately (§6.4). A `ref://` entry's sensitivity is the tenancy
+    of the resolved snapshot's mirror-artifact record — the same lookup a
+    bare `corpus://` citation gets, keyed through the dataset registry
+    instead of a direct hash. An unresolved citation (unregistered dataset,
+    dangling snapshot tag, a hash that resolves nowhere) answers False here —
+    it contributes nothing to privacy, exactly as an unresolved `record`
+    citation always has; `check` flags the dangle itself, elsewhere."""
+    if not isinstance(entry, dict):
+        return False
+    record = entry.get("record")
+    if record is not None:
+        h = str(record)
+        return bool(FULL_HASH_RE.match(h) and join.resolves(h) and join.is_private(h))
+    ref = entry.get("ref")
+    if ref is not None:
+        m = SOURCE_REF_RE.match(str(ref))
+        if not m:
+            return False
+        dataset, tag, _id = m.group(1), m.group(2), m.group(3)
+        reference = datasets.get(dataset)
+        if reference is None:
+            return False
+        resolved_tag = tag if tag is not None else reference.latest
+        snapshot = reference.snapshots.get(resolved_tag)
+        if snapshot is None:
+            return False
+        h = snapshot.artifact
+        return bool(join.resolves(h) and join.is_private(h))
+    return False
+
+
+def claim_private_backed(
+    claim: dict, sources: Mapping[str, object], join: CorpusJoin,
+    datasets: Mapping[str, Reference],
+) -> bool:
+    """A claim is private-backed iff it asserts `sensitivity: private` or any
+    of its evidence resolves privately (§6.4, "A claim is private-backed iff
+    any of its evidence is private, or it asserts sensitivity: private")."""
+    if not isinstance(claim, dict):
+        return False
+    if claim.get("sensitivity") == "private":
+        return True
+    for e in claim.get("evidence") or []:
+        if not isinstance(e, dict):
+            continue
+        skey = e.get("source")
+        if not isinstance(skey, str):
+            continue
+        entry = sources.get(skey) if isinstance(sources, Mapping) else None
+        if entry is not None and evidence_entry_private(entry, join, datasets):
+            return True
+    return False
+
+
+def fact_is_private(
+    fact: dict, join: CorpusJoin, datasets: Mapping[str, Reference],
+) -> bool:
+    """A fact file is private iff every claim and roster entry it carries is
+    private-backed, or it asserts `sensitivity: private` (§6.4) — existence
+    itself can be the leak. A fact with no claims and no roster (a bare stub)
+    carries nothing to derive privacy FROM, so it is never private by this
+    rule alone (mirrors `carried and all(carried)`: an empty `carried` is
+    falsy)."""
+    if not isinstance(fact, dict):
+        return False
+    if fact.get("sensitivity") == "private":
+        return True
+    sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
+    carried: list[bool] = []
+    for c in fact.get("claims") or []:
+        if isinstance(c, dict):
+            carried.append(claim_private_backed(c, sources, join, datasets))
+    for entry in fact.get("artifacts") or []:
+        if isinstance(entry, dict):
+            m = _CORPUS_URI_HASH_RE.match(str(entry.get("uri", "")))
+            carried.append(bool(m and join.is_private(m.group(1))))
+    return bool(carried) and all(carried)

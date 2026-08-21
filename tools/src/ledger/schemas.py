@@ -15,8 +15,8 @@ import yaml
 SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
                "expectations"}
 FIELD_KEYS = {"target", "description", "expected", "values", "participant",
-              "timeboxed", "elements"}
-ELEMENT_KEYS = {"target", "values", "description"}
+              "timeboxed", "elements", "value"}
+ELEMENT_KEYS = {"target", "values", "description", "value"}
 EXPECTATION_KEYS = {"when", "expect", "description"}
 
 
@@ -74,6 +74,10 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
                 errors.append(f"{where}: field {fname!r} participant must be a bool")
             if not isinstance(fspec.get("timeboxed", False), bool):
                 errors.append(f"{where}: field {fname!r} timeboxed must be a bool")
+            value = fspec.get("value")
+            if value is not None and not isinstance(value, str):
+                errors.append(f"{where}: field {fname!r} value must be a string "
+                              "(a §4.5 kind reference)")
             elements = fspec.get("elements")
             if elements is not None:
                 if not isinstance(elements, dict):
@@ -102,6 +106,10 @@ def load_schemas(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
                             and all(isinstance(v, str) for v in evalues)
                         ):
                             errors.append(f"{ew} values must be a list of strings")
+                        evalue = edecl.get("value")
+                        if evalue is not None and not isinstance(evalue, str):
+                            errors.append(f"{ew} value must be a string "
+                                          "(a §4.5 kind reference)")
         roles = data.get("roster_roles")
         if roles is not None and not (
             isinstance(roles, list) and all(isinstance(r, str) for r in roles)
