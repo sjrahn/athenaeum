@@ -161,7 +161,7 @@ def test_instance_shape(instance: Path) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "testeum"
-    assert body["spec_version"] == 28
+    assert body["spec_version"] == 30
     assert body["plane"] == "public"
     assert "instance_commit" in body
 
@@ -510,7 +510,7 @@ def test_openapi_stamped_with_spec_version(instance: Path) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["info"]["title"] == "Athenaeum read surface"
-    assert data["info"]["version"] == str(SPEC_VERSION) == "28"
+    assert data["info"]["version"] == str(SPEC_VERSION) == "30"
 
 
 def test_openapi_is_read_only(instance: Path) -> None:
@@ -522,3 +522,294 @@ def test_openapi_is_read_only(instance: Path) -> None:
     for path, item in data["paths"].items():
         methods = set(item) & http_methods
         assert methods == {"get"}, f"{path} declares non-GET method(s): {methods - {'get'}}"
+
+
+def test_binary_instance_no_audiences_unaffected(instance: Path) -> None:
+    """A binary instance (no `tenancy:` block), `create_app` called exactly
+    as pre-v30 — positional owner_token only, no audience_tokens — reads
+    identically: public plane by default, owner plane on the owner token,
+    unknown bearer stays public (§5.1: "the planes are the grant sets" —
+    the binary instance's only grant sets are public and everything)."""
+    app = create_app(instance, OWNER_TOKEN)
+    client = TestClient(app)
+    assert client.get("/instance").json()["plane"] == "public"
+    assert client.get("/instance", headers=_owner_headers()).json()["plane"] == "owner"
+    assert client.get("/instance", headers=_wrong_headers()).json()["plane"] == "public"
+
+
+def test_create_app_undeclared_audience_raises(instance: Path) -> None:
+    with pytest.raises(ValueError, match="undeclared"):
+        create_app(instance, OWNER_TOKEN, audience_tokens={"family": "tok"})
+
+
+# =============================================================== audience planes
+#
+# "The planes are the grant sets" (spec/athenaeum.md §5.1): a second instance
+# fixture declaring one audience (`family`) beside the reserved public/private
+# tiers, with a family-tier record + claim beside public and private ones —
+# the tenancy tests the binary `instance` fixture above cannot exercise.
+
+FAM_H_PUB = "e" * 64    # public origin overlay
+FAM_H_PRIV = "f" * 64   # no origin declares — falls to the instance's private floor
+FAM_H_FAM = "c" * 64    # family-tier origin overlay
+
+FAM_FACT_PUBLIC = "fam-public-thing"
+FAM_FACT_PRIVATE = "fam-private-thing"
+FAM_FACT_FAMILY = "fam-family-thing"   # fully family-tier: sole claim backed by FAM_H_FAM
+FAM_FACT_MIXED = "fam-mixed-thing"     # a public claim beside a family-tier claim
+
+FAMILY_TOKEN = "s3cr3t-family-token"
+
+
+def _mk_tiered_record(corpus_root: Path, h: str, *, tier: str | None) -> None:
+    """A record whose origin overlay declares `tenancy: {tier}` (registered
+    at `schema/origin/{tier}host.yaml`, mirroring `_mk_record`'s "openhost").
+    `tier=None` means no origin declares — falls to the instance's
+    `visibility:` floor, same as `_mk_record(..., public=False)`."""
+    post = frontmatter.Post(
+        content="body text",
+        **corpus_records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0"),
+    )
+    corpus_records.set_artifact_block(post, mime="text/plain", fields={})
+    if tier is not None:
+        corpus_records.append_origin_block(
+            post, uri=f"https://{tier}host.example/x", snapshot="2026-01-01T00:00:00Z",
+            schema_id=f"{tier}host",
+        )
+    corpus_records.dump(post, corpus_paths.record_path(corpus_root, h))
+
+
+@pytest.fixture()
+def tenant_instance(tmp_path: Path) -> Path:
+    root = tmp_path
+    (root / "athenaeum.yaml").write_text(
+        "name: tenanteum\nvisibility: private\n"
+        "tenancy:\n  tiers: [family]\n  audiences:\n    family: [family]\n",
+        encoding="utf-8",
+    )
+
+    corpus_root = root / "corpus"
+    (corpus_root / "schema" / "origin").mkdir(parents=True)
+    (corpus_root / "schema" / "origin" / "openhost.yaml").write_text(
+        "tenancy: public\n", encoding="utf-8"
+    )
+    (corpus_root / "schema" / "origin" / "familyhost.yaml").write_text(
+        "tenancy: family\n", encoding="utf-8"
+    )
+    _mk_record(corpus_root, FAM_H_PUB, public=True)
+    _mk_record(corpus_root, FAM_H_PRIV, public=False)
+    _mk_tiered_record(corpus_root, FAM_H_FAM, tier="family")
+
+    ledger_root = root / "ledger"
+    (ledger_root / "facts" / "thing").mkdir(parents=True)
+    (ledger_root / "interpretations").mkdir()
+    (ledger_root / "open-questions.md").write_text(OPENQ_SKELETON, encoding="utf-8")
+    (ledger_root / "schemas").mkdir()
+    (ledger_root / "schemas" / "thing.yaml").write_text(
+        "type: thing\ndescription: a test concept\nfields:\n"
+        "  colour: { description: colour }\n  kin: { description: family-only }\n",
+        encoding="utf-8",
+    )
+
+    _write_fact(ledger_root, FAM_FACT_PUBLIC, {
+        "id": FAM_FACT_PUBLIC, "type": "thing", "name": "Family Public Thing",
+        "sources": {"s1": {"record": FAM_H_PUB}},
+        "claims": [{
+            "id": f"{FAM_FACT_PUBLIC}:colour", "predicate": "colour", "value": "red",
+            "status": "confirmed", "asof": "2026-01",
+            "evidence": [{"source": "s1", "kind": "authoritative"}],
+        }],
+    })
+
+    _write_fact(ledger_root, FAM_FACT_PRIVATE, {
+        "id": FAM_FACT_PRIVATE, "type": "thing", "name": "Family Private Thing",
+        "sources": {"s1": {"record": FAM_H_PRIV}},
+        "claims": [{
+            "id": f"{FAM_FACT_PRIVATE}:colour", "predicate": "colour", "value": "blue",
+            "status": "confirmed", "asof": "2026-01",
+            "evidence": [{"source": "s1", "kind": "authoritative"}],
+        }],
+    })
+
+    _write_fact(ledger_root, FAM_FACT_FAMILY, {
+        "id": FAM_FACT_FAMILY, "type": "thing", "name": "Family Only Thing",
+        "sources": {"s1": {"record": FAM_H_FAM}},
+        "artifacts": [{"uri": f"corpus://{FAM_H_FAM}", "role": "documents"}],
+        "claims": [{
+            "id": f"{FAM_FACT_FAMILY}:kin", "predicate": "kin", "value": "aunt",
+            "status": "confirmed", "asof": "2026-01",
+            "evidence": [{"source": "s1", "kind": "authoritative"}],
+        }],
+    })
+
+    _write_fact(ledger_root, FAM_FACT_MIXED, {
+        "id": FAM_FACT_MIXED, "type": "thing", "name": "Family Mixed Thing",
+        "sources": {"s1": {"record": FAM_H_PUB}, "s2": {"record": FAM_H_FAM}},
+        "artifacts": [
+            {"uri": f"corpus://{FAM_H_PUB}", "role": "documents"},
+            {"uri": f"corpus://{FAM_H_FAM}", "role": "documents"},
+        ],
+        "claims": [
+            {
+                "id": f"{FAM_FACT_MIXED}:colour", "predicate": "colour", "value": "green",
+                "status": "confirmed", "asof": "2026-01",
+                "evidence": [{"source": "s1", "kind": "authoritative"}],
+            },
+            {
+                "id": f"{FAM_FACT_MIXED}:kin", "predicate": "kin", "value": "cousin",
+                "status": "confirmed", "asof": "2026-01",
+                "evidence": [{"source": "s2", "kind": "authoritative"}],
+            },
+        ],
+    })
+
+    return root
+
+
+def _tenant_client(
+    root: Path, *, owner_token: str | None = OWNER_TOKEN,
+    audience_tokens: dict[str, str] | None = None,
+) -> TestClient:
+    tokens = audience_tokens if audience_tokens is not None else {"family": FAMILY_TOKEN}
+    app = create_app(root, owner_token, audience_tokens=tokens)
+    return TestClient(app)
+
+
+def _family_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {FAMILY_TOKEN}"}
+
+
+def test_create_app_undeclared_audience_lists_declared(tenant_instance: Path) -> None:
+    with pytest.raises(ValueError) as exc:
+        create_app(tenant_instance, OWNER_TOKEN, audience_tokens={"accountant": "tok"})
+    assert "accountant" in str(exc.value)
+    assert "family" in str(exc.value)
+
+
+def test_instance_plane_names_audience(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    assert client.get("/instance", headers=_family_headers()).json()["plane"] == "family"
+
+
+def test_unknown_token_is_public_plane(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    r = client.get("/instance", headers={"Authorization": "Bearer totally-unknown"})
+    assert r.json()["plane"] == "public"
+
+
+def test_family_claim_visible_on_family_plane_not_public(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+
+    r = client.get(f"/facts/{FAM_FACT_MIXED}")
+    assert r.status_code == 200
+    assert {c["id"] for c in r.json()["claims"]} == {f"{FAM_FACT_MIXED}:colour"}
+
+    r = client.get(f"/facts/{FAM_FACT_MIXED}", headers=_family_headers())
+    assert r.status_code == 200
+    assert {c["id"] for c in r.json()["claims"]} == {
+        f"{FAM_FACT_MIXED}:colour", f"{FAM_FACT_MIXED}:kin",
+    }
+
+    r = client.get(f"/facts/{FAM_FACT_MIXED}", headers=_owner_headers())
+    assert {c["id"] for c in r.json()["claims"]} == {
+        f"{FAM_FACT_MIXED}:colour", f"{FAM_FACT_MIXED}:kin",
+    }
+
+
+def test_family_only_fact_absent_from_public_list_present_on_family(
+    tenant_instance: Path,
+) -> None:
+    client = _tenant_client(tenant_instance)
+
+    r = client.get("/facts")
+    assert FAM_FACT_FAMILY not in {row["id"] for row in r.json()["facts"]}
+    assert client.get(f"/facts/{FAM_FACT_FAMILY}").status_code == 404
+
+    r = client.get("/facts", headers=_family_headers())
+    assert FAM_FACT_FAMILY in {row["id"] for row in r.json()["facts"]}
+    r = client.get(f"/facts/{FAM_FACT_FAMILY}", headers=_family_headers())
+    assert r.status_code == 200
+    assert r.json()["id"] == FAM_FACT_FAMILY
+
+
+def test_private_fact_absent_on_every_audience_plane(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    assert client.get(f"/facts/{FAM_FACT_PRIVATE}").status_code == 404
+    assert client.get(f"/facts/{FAM_FACT_PRIVATE}", headers=_family_headers()).status_code == 404
+    r = client.get(f"/facts/{FAM_FACT_PRIVATE}", headers=_owner_headers())
+    assert r.status_code == 200
+    assert r.json()["id"] == FAM_FACT_PRIVATE
+
+
+def test_records_family_tier_visible_on_family_plane_only(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    assert client.get(f"/records/{FAM_H_FAM}").status_code == 404
+    r = client.get(f"/records/{FAM_H_FAM}", headers=_family_headers())
+    assert r.status_code == 200
+    assert r.json()["hash"] == FAM_H_FAM
+    r = client.get(f"/records/{FAM_H_FAM}", headers=_owner_headers())
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("path", [
+    "/interpretations",
+    f"/facts/{FAM_FACT_PUBLIC}/demands",
+    "/coverage",
+    "/open-questions",
+])
+def test_owner_only_404_with_audience_token(tenant_instance: Path, path: str) -> None:
+    client = _tenant_client(tenant_instance)
+    assert client.get(path, headers=_family_headers()).status_code == 404
+
+
+def test_worklist_404_with_audience_token(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    r = client.get("/worklist", params={"ref": FAM_FACT_PUBLIC}, headers=_family_headers())
+    assert r.status_code == 404
+
+
+def test_scope_family_evidence_filters_across_planes(tenant_instance: Path) -> None:
+    """Same leak shape as `test_scope_evidence_filters_private_claims_within_public_fact`,
+    generalized to a grant set: FAM_FACT_MIXED is visible on both the public
+    and family planes, but the family-tier claim's evidence must surface only
+    on the family plane."""
+    client = _tenant_client(tenant_instance)
+    spec = json.dumps({"seed": {"type": "thing"}, "evidence": "references"})
+
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 200
+    uris = r.json()["evidence"][FAM_FACT_MIXED]
+    assert any(FAM_H_PUB in u for u in uris)
+    assert not any(FAM_H_FAM in u for u in uris)
+    assert FAM_H_FAM not in r.text
+
+    r_fam = client.get("/scope", params={"spec": spec}, headers=_family_headers())
+    fam_uris = r_fam.json()["evidence"][FAM_FACT_MIXED]
+    assert any(FAM_H_PUB in u for u in fam_uris)
+    assert any(FAM_H_FAM in u for u in fam_uris)
+
+
+def test_scope_family_roster_filters_across_planes(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    spec = json.dumps({"seed": {"type": "thing"}, "follow": ["roster"]})
+
+    r = client.get("/scope", params={"spec": spec})
+    assert r.status_code == 200
+    roster = r.json()["roster"][FAM_FACT_MIXED]
+    assert f"corpus://{FAM_H_PUB}" in roster
+    assert f"corpus://{FAM_H_FAM}" not in roster
+    assert FAM_H_FAM not in r.text
+
+    r_fam = client.get("/scope", params={"spec": spec}, headers=_family_headers())
+    fam_roster = r_fam.json()["roster"][FAM_FACT_MIXED]
+    assert f"corpus://{FAM_H_PUB}" in fam_roster
+    assert f"corpus://{FAM_H_FAM}" in fam_roster
+
+
+def test_etag_differs_across_planes(tenant_instance: Path) -> None:
+    client = _tenant_client(tenant_instance)
+    r_pub = client.get(f"/facts/{FAM_FACT_MIXED}")
+    r_fam = client.get(f"/facts/{FAM_FACT_MIXED}", headers=_family_headers())
+    r_own = client.get(f"/facts/{FAM_FACT_MIXED}", headers=_owner_headers())
+    etags = {r_pub.headers["etag"], r_fam.headers["etag"], r_own.headers["etag"]}
+    assert len(etags) == 3

@@ -26,10 +26,12 @@ live in `ledger/docs/`.
   pre-emptive forming sweeps or standing drain loops. The ledger cites
   deferred surfaces at reduced strength (ledger.md §6.3); citations are
   themselves the demand signal.
-- **Tenancy is derived, per record**: origin overlays declare
-  `tenancy: public|private` (fail closed to this instance's `visibility:`
-  floor); publication filters on derived sensitivity, fail closed — the
-  consumption contract is the wall (ledger.md §6.4, §12).
+- **Tenancy is derived, per record**: origin overlays declare `tenancy: {tier}`
+  — a tier from this instance's declared set (`public`/`private` reserved,
+  plus whatever `tenancy.tiers` in `athenaeum.yaml` adds), fail closed to the
+  `visibility:` floor (itself `public`, `private`, or a declared tier);
+  publication filters on derived sensitivity per audience grant, fail closed —
+  the consumption contract is the wall (ledger.md §6.4, §12).
 - **Thin operation**: no resident skill, no logbook. Memory = the spec +
   tracker + git history + the runbooks here.
 

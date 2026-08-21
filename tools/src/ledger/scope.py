@@ -207,6 +207,73 @@ def _claim_wikilinks(fact: dict):
 
 
 # ------------------------------------------------------------------ traversal
+#
+# Per-kind neighbor helpers, factored out so a caller wanting a single hop
+# along one kind (the demand grammar's `related:`, `spec/ledger.md` §14) can
+# reuse exactly the traversal a scope evaluation performs, rather than
+# reimplementing it.
+
+
+def make_resolver(live_facts: dict[str, dict], lineage: dict[str, str]):
+    """A fact reference resolver — at most one lineage-map hop → live id, or
+    None (§4.1) — closed over *live_facts*/*lineage*, shared by scope
+    evaluation and the demand engine's `related:`/`id:` conditions (§14)."""
+    def resolve_id(ref: str) -> str | None:
+        if ref in live_facts:
+            return ref
+        target = lineage.get(ref)
+        return target if target in live_facts else None
+    return resolve_id
+
+
+def object_neighbors(fact: dict, resolve_id) -> set[str]:
+    return {r for oid in _claim_objects(fact) if (r := resolve_id(oid))}
+
+
+def entity_neighbors(fact: dict, resolve_id) -> set[str]:
+    return {r for eid in _claim_entity_refs(fact) if (r := resolve_id(eid))}
+
+
+def wikilink_neighbors(fact: dict, resolve_id) -> set[str]:
+    return {r for wid in _claim_wikilinks(fact) if (r := resolve_id(wid))}
+
+
+def participant_neighbors(
+    fid: str, fact: dict, resolve_id, edges_touching: dict[str, list[str]],
+) -> set[str]:
+    """Edge-participation neighbors (§12.1): edges touching *fid* … and,
+    when *fact* is itself an edge, its subject + participants."""
+    out: set[str] = set()
+    out.update(edges_touching.get(fid, []))
+    if is_edge(fact):
+        subj = fact.get("subject")
+        if isinstance(subj, str) and (r := resolve_id(subj)):
+            out.add(r)
+        for p in fact.get("participants") or []:
+            if isinstance(p, str) and (r := resolve_id(p)):
+                out.add(r)
+    return out
+
+
+def build_edges_touching(edges: list[dict], resolve_id) -> dict[str, list[str]]:
+    """Reverse index: concept id -> ids of edges touching it as subject or
+    participant, lineage-resolved. Shared by scope evaluation and the demand
+    engine's `related: {via: edge}` neighbor set (§14). *edges* is the
+    already-filtered edge-fact list, the shape every caller already has on
+    hand."""
+    edges_touching: dict[str, list[str]] = {}
+    for fact in edges:
+        fid = str(fact.get("id"))
+        touched: set[str] = set()
+        subj = fact.get("subject")
+        if isinstance(subj, str) and (r := resolve_id(subj)):
+            touched.add(r)
+        for p in fact.get("participants") or []:
+            if isinstance(p, str) and (r := resolve_id(p)):
+                touched.add(r)
+        for t in touched:
+            edges_touching.setdefault(t, []).append(fid)
+    return edges_touching
 
 
 def _neighbors(
@@ -214,22 +281,13 @@ def _neighbors(
 ) -> set[str]:
     out: set[str] = set()
     if "object" in follow:
-        out.update(r for oid in _claim_objects(fact) if (r := resolve_id(oid)))
+        out.update(object_neighbors(fact, resolve_id))
     if "entity" in follow:
-        out.update(r for eid in _claim_entity_refs(fact) if (r := resolve_id(eid)))
+        out.update(entity_neighbors(fact, resolve_id))
     if "wikilink" in follow:
-        out.update(r for wid in _claim_wikilinks(fact) if (r := resolve_id(wid)))
+        out.update(wikilink_neighbors(fact, resolve_id))
     if "participants" in follow:
-        # an edge joins the scope when it touches an in-scope concept …
-        out.update(edges_touching.get(fid, []))
-        # … and an in-scope edge makes its subject + participants reachable
-        if is_edge(fact):
-            subj = fact.get("subject")
-            if isinstance(subj, str) and (r := resolve_id(subj)):
-                out.add(r)
-            for p in fact.get("participants") or []:
-                if isinstance(p, str) and (r := resolve_id(p)):
-                    out.add(r)
+        out.update(participant_neighbors(fid, fact, resolve_id, edges_touching))
     out.discard(fid)
     return out
 
@@ -259,30 +317,9 @@ def evaluate_scope(ledger_root: Path, spec: dict) -> dict:
         fact_paths[fid] = path
 
     lineage, _ = load_lineage(ledger_root)
-
-    def resolve_id(ref: str) -> str | None:
-        """A fact reference through at most one lineage-map hop → live id, or None (§4.1)."""
-        if ref in live_facts:
-            return ref
-        if ref in lineage:
-            target = lineage[ref]
-            return target if target in live_facts else None
-        return None
-
-    # reverse index: concept id -> edges that touch it as subject/participant
-    edges_touching: dict[str, list[str]] = {}
-    for fid, fact in live_facts.items():
-        if not is_edge(fact):
-            continue
-        touched: set[str] = set()
-        subj = fact.get("subject")
-        if isinstance(subj, str) and (r := resolve_id(subj)):
-            touched.add(r)
-        for p in fact.get("participants") or []:
-            if isinstance(p, str) and (r := resolve_id(p)):
-                touched.add(r)
-        for t in touched:
-            edges_touching.setdefault(t, []).append(fid)
+    resolve_id = make_resolver(live_facts, lineage)
+    edges_touching = build_edges_touching(
+        [f for f in live_facts.values() if is_edge(f)], resolve_id)
 
     # ---------------------------------------------------------------- seed
     unknown_seeds: list[str] = []

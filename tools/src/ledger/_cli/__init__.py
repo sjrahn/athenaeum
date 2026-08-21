@@ -296,7 +296,7 @@ def _cmd_demands(argv: Sequence[str]) -> int:
     ledger_root, _, _ = _system(ns.root)
     from ledger import demands as demands_mod
     from ledger import values as values_mod
-    from ledger.model import is_edge, is_redirect, load_json_dir
+    from ledger.model import is_edge, is_redirect, load_json_dir, load_lineage
     from ledger.schemas import load_schemas
 
     facts, _ = load_json_dir(ledger_root, "facts/*/*.json")
@@ -304,6 +304,7 @@ def _cmd_demands(argv: Sequence[str]) -> int:
     schemas, _ = load_schemas(ledger_root)
     kinds, _ = values_mod.load_kinds(ledger_root)
     rules, rule_errors = demands_mod.load_demand_rules(ledger_root)
+    lineage, _ = load_lineage(ledger_root)
     for e in rule_errors:
         print(f"WARN  {e}", file=sys.stderr)
 
@@ -315,7 +316,7 @@ def _cmd_demands(argv: Sequence[str]) -> int:
     def _evaluate(fact: dict) -> list[dict]:
         return demands_mod.evaluate_demands(
             fact, rules=rules, schemas=schemas, kinds=kinds,
-            facts_by_id=facts_by_id, edges=edges, interps=interp_list,
+            facts_by_id=facts_by_id, edges=edges, interps=interp_list, lineage=lineage,
         )
 
     if ns.draft:

@@ -240,6 +240,144 @@ def test_when_unknown_condition_key_is_an_error(tmp_path: Path) -> None:
     assert any("unknown condition key" in e for e in errors)
 
 
+# ------------------------------------------------------ `id:` grammar (v30, §14)
+
+
+def test_when_id_unknown_operator_is_an_error(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { id: { bogus: x } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("unknown operator 'bogus'" in e for e in errors)
+
+
+def test_when_id_in_operator_requires_a_list(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { id: { in: x } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("'in' operator requires a list" in e for e in errors)
+
+
+def test_when_id_bare_scalar_is_legitimate(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { id: steven-rahn }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert errors == []
+
+
+# ------------------------------------------------- `related:` grammar (v30, §14)
+
+
+def test_when_related_requires_via(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { related: {} }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.via: must be one of" in e for e in errors)
+
+
+def test_when_related_via_must_be_a_known_kind(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { related: { via: bogus } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.via: must be one of" in e for e in errors)
+
+
+def test_when_related_unknown_key_is_an_error(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { related: { via: object, bogus: 1 } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related: unknown keys ['bogus']" in e for e in errors)
+
+
+def test_when_related_edge_only_admissible_under_via_edge(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: object, edge: { relationship: {} } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.edge: only admissible under via: edge" in e for e in errors)
+
+
+def test_when_related_edge_selector_reuses_the_edge_condition_grammar(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: edge, edge: { relationship: { bogus: 1 } } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.edge.relationship: unknown keys ['bogus']" in e for e in errors)
+
+
+def test_when_related_edge_must_carry_exactly_one_type(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: edge, edge: { a: {}, b: {} } } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.edge: must be {edge-type" in e for e in errors)
+
+
+def test_when_related_where_parses_the_condition_grammar(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: object, where: { bogus: 1 } } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.where: unknown condition key" in e for e in errors)
+
+
+def test_when_related_where_cannot_nest_related(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: object, "
+        "where: { related: { via: entity } } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    msg = next(e for e in errors if "related.where.related" in e)
+    assert "not allowed inside a where" in msg
+    assert "one hop is deliberate" in msg
+
+
+def test_when_related_where_cannot_nest_related_inside_a_group(tmp_path: Path) -> None:
+    """The ban holds at any depth inside `where` — not just the top level."""
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: object, "
+        "where: { all_of: [{ type: person }, { related: { via: entity } }] } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("not allowed inside a where" in e for e in errors)
+
+
+def test_when_related_exists_must_be_a_bool(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: object, exists: yes-please } }\nowes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.exists: must be a bool" in e for e in errors)
+
+
+def test_when_related_well_formed_is_clean(tmp_path: Path) -> None:
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\n"
+        "when: { related: { via: edge, edge: { relationship: { kind: [sibling] } }, "
+        "where: { type: person }, exists: true } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert errors == []
+
+
 # ============================================================= condition grammar
 
 
@@ -426,6 +564,314 @@ def test_condition_missing_is_false() -> None:
     fact = {"id": "x", "type": "person"}
     assert not condition_matches({"claim": {"predicate": "nope"}}, fact, [], {})
     assert not condition_matches({}, fact, [], {})
+
+
+# ============================================================ `id:` condition (v30)
+
+
+def test_condition_id_equals() -> None:
+    fact = {"id": "steven-rahn", "type": "person"}
+    assert condition_matches({"id": {"equals": "steven-rahn"}}, fact, [], {})
+    assert not condition_matches({"id": {"equals": "kat-rahn"}}, fact, [], {})
+
+
+def test_condition_id_bare_scalar_is_implicit_equals() -> None:
+    fact = {"id": "steven-rahn", "type": "person"}
+    assert condition_matches({"id": "steven-rahn"}, fact, [], {})
+    assert not condition_matches({"id": "kat-rahn"}, fact, [], {})
+
+
+def test_condition_id_in() -> None:
+    fact = {"id": "kat-rahn", "type": "person"}
+    assert condition_matches({"id": {"in": ["steven-rahn", "kat-rahn"]}}, fact, [], {})
+    assert not condition_matches({"id": {"in": ["steven-rahn"]}}, fact, [], {})
+
+
+def test_condition_id_glob() -> None:
+    fact = {"id": "steven-rahn", "type": "person"}
+    assert condition_matches({"id": {"glob": "steven-*"}}, fact, [], {})
+    assert not condition_matches({"id": {"glob": "kat-*"}}, fact, [], {})
+
+
+def test_condition_id_matches_regex() -> None:
+    fact = {"id": "steven-rahn", "type": "person"}
+    assert condition_matches({"id": {"matches": "^steven-"}}, fact, [], {})
+    assert not condition_matches({"id": {"matches": "^kat-"}}, fact, [], {})
+
+
+def test_condition_id_equals_operand_resolves_through_lineage() -> None:
+    """A rule naming a retired id still matches the living successor it
+    merged into (§4.1, §14)."""
+    fact = {"id": "steven-rahn-jr", "type": "person"}  # the survivor
+    lineage = {"steve-rahn": "steven-rahn-jr"}
+    assert condition_matches({"id": {"equals": "steve-rahn"}}, fact, [], {}, lineage=lineage)
+    # without the lineage map on hand, the retired id no longer names the fact
+    assert not condition_matches({"id": {"equals": "steve-rahn"}}, fact, [], {})
+
+
+def test_condition_id_in_operand_resolves_through_lineage() -> None:
+    fact = {"id": "steven-rahn-jr", "type": "person"}
+    lineage = {"steve-rahn": "steven-rahn-jr"}
+    assert condition_matches(
+        {"id": {"in": ["kat-rahn", "steve-rahn"]}}, fact, [], {}, lineage=lineage)
+    assert not condition_matches({"id": {"in": ["kat-rahn", "steve-rahn"]}}, fact, [], {})
+
+
+def test_condition_id_glob_matches_living_id_no_resolution() -> None:
+    """`glob`/`matches` test the living id as written — the operand is never
+    resolved through lineage, unlike `equals`/`in` (§14)."""
+    fact = {"id": "steven-rahn-jr", "type": "person"}
+    lineage = {"steve-rahn": "steven-rahn-jr"}
+    assert not condition_matches(
+        {"id": {"glob": "steve-rahn"}}, fact, [], {}, lineage=lineage)
+    assert condition_matches(
+        {"id": {"glob": "steven-rahn-*"}}, fact, [], {}, lineage=lineage)
+
+
+def test_condition_id_matches_regex_no_resolution() -> None:
+    fact = {"id": "steven-rahn-jr", "type": "person"}
+    lineage = {"steve-rahn": "steven-rahn-jr"}
+    assert not condition_matches(
+        {"id": {"matches": "^steve-rahn$"}}, fact, [], {}, lineage=lineage)
+
+
+def test_id_perspective_idiom_none_of_excludes_the_hosting_fact() -> None:
+    """The #205 specimen shape: a rule owing something of whoever *hosts* an
+    appointment excludes the graph's visiting subject with `none_of:
+    [{id: {equals: …}}]` (§14) — data, visible in the rule, honest about
+    whom it exempts."""
+    cond = {
+        "all_of": [
+            {"claim": {"predicate": "appointment"}},
+            {"none_of": [{"id": {"equals": "steven-rahn"}}]},
+        ],
+    }
+    host = {"id": "dr-smith", "type": "person",
+           "claims": [{"predicate": "appointment", "value": "2026-09-01"}]}
+    visitor = {"id": "steven-rahn", "type": "person",
+              "claims": [{"predicate": "appointment", "value": "2026-09-01"}]}
+    assert condition_matches(cond, host, [], {})
+    assert not condition_matches(cond, visitor, [], {})
+
+
+# ======================================================= `related:` condition (v30)
+
+
+def test_related_via_object_exists_true_default() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    assert condition_matches({"related": {"via": "object"}}, steven, [], facts_by_id)
+
+
+def test_related_via_object_where_matches_neighbor() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    assert condition_matches(
+        {"related": {"via": "object", "where": {"type": "organization"}}}, steven, [],
+        facts_by_id)
+    assert not condition_matches(
+        {"related": {"via": "object", "where": {"type": "person"}}}, steven, [], facts_by_id)
+
+
+def test_related_where_nests_ordinary_condition_keys() -> None:
+    """`where` is the same condition grammar — several keys compose as an
+    implicit `all_of`, same as any top-level `when`."""
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization",
+           "claims": [{"predicate": "industry", "value": "tech"}]}
+    facts_by_id = {"steven": steven, "acme": acme}
+    cond = {"related": {"via": "object", "where": {
+        "type": "organization", "claim": {"predicate": "industry", "value": "tech"},
+    }}}
+    assert condition_matches(cond, steven, [], facts_by_id)
+    cond_wrong = {"related": {"via": "object", "where": {
+        "type": "organization", "claim": {"predicate": "industry", "value": "finance"},
+    }}}
+    assert not condition_matches(cond_wrong, steven, [], facts_by_id)
+
+
+def test_related_via_entity() -> None:
+    event = {"id": "concert", "type": "event",
+            "claims": [{"predicate": "attendance",
+                       "value": [{"entity": "steven"}, {"entity": "kat"}]}]}
+    steven = {"id": "steven", "type": "person"}
+    kat = {"id": "kat", "type": "person",
+          "claims": [{"predicate": "role", "value": "organizer"}]}
+    facts_by_id = {"concert": event, "steven": steven, "kat": kat}
+    cond = {"related": {"via": "entity",
+                        "where": {"claim": {"predicate": "role", "value": "organizer"}}}}
+    assert condition_matches(cond, event, [], facts_by_id)
+    cond_none = {"related": {"via": "entity",
+                            "where": {"claim": {"predicate": "role", "value": "headliner"}}}}
+    assert not condition_matches(cond_none, event, [], facts_by_id)
+
+
+def test_related_via_wikilink() -> None:
+    a = {"id": "a", "type": "person",
+        "claims": [{"predicate": "note", "value": "friends with [[b]]"}]}
+    b = {"id": "b", "type": "person",
+        "claims": [{"predicate": "role", "value": "friend"}]}
+    facts_by_id = {"a": a, "b": b}
+    cond = {"related": {"via": "wikilink",
+                        "where": {"claim": {"predicate": "role", "value": "friend"}}}}
+    assert condition_matches(cond, a, [], facts_by_id)
+
+
+def test_related_via_roster_is_malformed(tmp_path: Path) -> None:
+    """The artifact roster targets corpus records, never facts (§4.2) — a
+    roster `via` could never hold, so it is malformed, not vacuous (§14)."""
+    _write_rule(tmp_path, "r", (
+        "id: r\ndescription: d\nwhen: { related: { via: roster } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    _, errors = load_demand_rules(tmp_path)
+    assert any("related.via: must be one of" in e for e in errors)
+
+
+def test_related_via_edge_basic() -> None:
+    steven = {"id": "steven", "type": "person"}
+    kat = {"id": "kat", "type": "person"}
+    edge = {"id": "steven--kat", "type": "relationship", "participants": ["steven", "kat"],
+           "claims": [{"predicate": "kind", "value": "sibling"}]}
+    facts_by_id = {"steven": steven, "kat": kat}
+    cond = {"related": {"via": "edge",
+                        "where": {"claim": {"predicate": "kind", "value": "sibling"}}}}
+    assert condition_matches(cond, steven, [edge], facts_by_id)
+
+
+def test_related_via_edge_where_evaluates_the_edge_fact_itself() -> None:
+    """The neighbor `where` tests under `via: edge` is the edge fact, not a
+    co-participant (§14)."""
+    steven = {"id": "steven", "type": "person"}
+    kat = {"id": "kat", "type": "person"}
+    edge = {"id": "steven--kat", "type": "relationship", "participants": ["steven", "kat"]}
+    facts_by_id = {"steven": steven, "kat": kat}
+    assert condition_matches(
+        {"related": {"via": "edge", "where": {"type": "relationship"}}}, steven, [edge],
+        facts_by_id)
+    assert not condition_matches(
+        {"related": {"via": "edge", "where": {"type": "person"}}}, steven, [edge], facts_by_id)
+
+
+def test_related_via_edge_narrowed_by_selector() -> None:
+    steven = {"id": "steven", "type": "person"}
+    kat = {"id": "kat", "type": "person"}
+    acme = {"id": "acme", "type": "organization"}
+    sibling = {"id": "steven--kat", "type": "relationship",
+              "participants": ["steven", "kat"],
+              "claims": [{"predicate": "kind", "value": "sibling"}]}
+    employment = {"id": "steven--acme", "type": "employment", "participants": ["steven", "acme"]}
+    facts_by_id = {"steven": steven, "kat": kat, "acme": acme}
+    edges = [sibling, employment]
+    assert condition_matches(
+        {"related": {"via": "edge", "edge": {"relationship": {"kind": ["sibling"]}}}},
+        steven, edges, facts_by_id)
+    assert not condition_matches(
+        {"related": {"via": "edge", "edge": {"relationship": {"kind": ["father-of"]}}}},
+        steven, edges, facts_by_id)
+    # target_type narrows to the employment edge's organization co-participant
+    assert condition_matches(
+        {"related": {"via": "edge",
+                    "edge": {"employment": {"target_type": "organization"}}}},
+        steven, edges, facts_by_id)
+
+
+def test_related_via_edge_never_selected_by_with_naming_itself() -> None:
+    steven = {"id": "steven", "type": "person"}
+    kat = {"id": "kat", "type": "person"}
+    edge = {"id": "steven--kat", "type": "relationship", "participants": ["steven", "kat"]}
+    facts_by_id = {"steven": steven, "kat": kat}
+    assert not condition_matches(
+        {"related": {"via": "edge", "edge": {"relationship": {"with": "steven"}}}},
+        steven, [edge], facts_by_id)
+
+
+def test_related_via_edge_hop_resolves_participants_through_lineage() -> None:
+    steven = {"id": "steven", "type": "person"}
+    kat_jr = {"id": "kat-rahn-jr", "type": "person"}  # the survivor
+    edge = {"id": "steven--kat", "type": "relationship",
+           "participants": ["steven", "kat-rahn"]}  # names the retired id
+    facts_by_id = {"steven": steven, "kat-rahn-jr": kat_jr}
+    lineage = {"kat-rahn": "kat-rahn-jr"}
+    cond = {"related": {"via": "edge", "edge": {"relationship": {"with": "kat-rahn-jr"}}}}
+    assert condition_matches(cond, steven, [edge], facts_by_id, lineage=lineage)
+    assert not condition_matches(cond, steven, [edge], facts_by_id)
+
+
+def test_related_exists_true_without_where_any_neighbor_suffices() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    assert condition_matches({"related": {"via": "object"}}, steven, [], facts_by_id)
+
+
+def test_related_exists_false_without_where_holds_only_absent_neighbors() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    assert not condition_matches(
+        {"related": {"via": "object", "exists": False}}, steven, [], facts_by_id)
+    lonely = {"id": "lonely", "type": "person"}
+    assert condition_matches(
+        {"related": {"via": "object", "exists": False}}, lonely, [], {"lonely": lonely})
+
+
+def test_related_no_neighbors_fails_exists_true_and_passes_exists_false() -> None:
+    """Missing-is-false throughout: a fact with no neighbors along `via`
+    fails `exists: true` and passes `exists: false` (§14)."""
+    lonely = {"id": "lonely", "type": "person"}
+    facts_by_id = {"lonely": lonely}
+    assert not condition_matches({"related": {"via": "object"}}, lonely, [], facts_by_id)
+    assert condition_matches(
+        {"related": {"via": "object", "exists": False}}, lonely, [], facts_by_id)
+
+
+def test_related_exists_false_holds_when_no_neighbor_matches_where() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    assert condition_matches(
+        {"related": {"via": "object", "where": {"type": "person"}, "exists": False}},
+        steven, [], facts_by_id)
+
+
+def test_related_via_object_hop_resolves_through_lineage() -> None:
+    """A claim `object` naming a since-merged id still reaches the living
+    successor (§4.1, §12.1, §14)."""
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "old-acme"}]}
+    acme = {"id": "acme-inc", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme-inc": acme}
+    lineage = {"old-acme": "acme-inc"}
+    cond = {"related": {"via": "object", "where": {"type": "organization"}}}
+    assert condition_matches(cond, steven, [], facts_by_id, lineage=lineage)
+    assert not condition_matches(cond, steven, [], facts_by_id)  # no lineage — dangling
+
+
+def test_related_unresolvable_reference_contributes_no_neighbor() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "ghost-corp"}]}
+    facts_by_id = {"steven": steven}
+    assert not condition_matches({"related": {"via": "object"}}, steven, [], facts_by_id)
+
+
+def test_related_is_deterministic() -> None:
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"},
+                       {"predicate": "member_of", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    cond = {"related": {"via": "object", "where": {"type": "organization"}}}
+    assert condition_matches(cond, steven, [], facts_by_id) is True
+    assert condition_matches(cond, steven, [], facts_by_id) is True
 
 
 # ================================================================ evaluate_demands
@@ -887,6 +1333,54 @@ def test_evaluate_demands_is_deterministic() -> None:
     assert [d["rule"] for d in d1] == ["a-rule", "b-rule"]  # sorted, not authoring order
 
 
+# --------------------------------------------------- `id:`/`related:` in a real rule
+
+
+def test_evaluate_demands_when_uses_id_condition_with_lineage() -> None:
+    """The `evaluate_demands` `when` match threads *lineage* through to
+    `id:` conditions, not just the standalone `condition_matches` entry
+    point (§14)."""
+    rule = {"r": {"id": "r", "description": "d", "when": {"id": {"equals": "old-id"}},
+                 "owes": [{"field": "f"}]}}
+    fact = {"id": "new-id", "type": "person"}
+    demands = evaluate_demands(
+        fact, rules=rule, schemas={}, kinds={}, facts_by_id={"new-id": fact}, edges=[],
+        interps=[], lineage={"old-id": "new-id"},
+    )
+    assert len(demands) == 1
+    assert demands[0]["state"] == "open"
+    # without the lineage map, the retired id no longer selects the fact
+    assert evaluate_demands(
+        fact, rules=rule, schemas={}, kinds={}, facts_by_id={"new-id": fact}, edges=[],
+        interps=[],
+    ) == []
+
+
+def test_evaluate_demands_when_uses_related_condition() -> None:
+    rule = {
+        "r": {"id": "r", "description": "d",
+             "when": {"related": {"via": "object", "where": {"type": "organization"}}},
+             "owes": [{"field": "job_title"}]},
+    }
+    steven = {"id": "steven", "type": "person",
+             "claims": [{"predicate": "employed_by", "object": "acme"}]}
+    acme = {"id": "acme", "type": "organization"}
+    facts_by_id = {"steven": steven, "acme": acme}
+    demands = evaluate_demands(
+        steven, rules=rule, schemas={}, kinds={}, facts_by_id=facts_by_id, edges=[],
+        interps=[],
+    )
+    assert len(demands) == 1
+    assert demands[0]["field"] == "job_title"
+    assert demands[0]["state"] == "open"
+    # a person with no employer neighbor owes nothing under this rule
+    lonely = {"id": "lonely", "type": "person"}
+    assert evaluate_demands(
+        lonely, rules=rule, schemas={}, kinds={}, facts_by_id={"lonely": lonely}, edges=[],
+        interps=[],
+    ) == []
+
+
 # =================================================================== check integration
 
 
@@ -1066,6 +1560,65 @@ def test_regen_vocab_demand_rules_section_lists_named_expectations(system: Path)
     assert "## Demand rules" in vocab
     assert ("| `artist-genre` | 2 | every artist owes a genre "
             "(schema expectation) |") in vocab
+
+
+# ---------------------------------------------- `id:`/`related:` check integration (v30)
+
+
+def test_check_related_bad_via_is_an_error(system: Path) -> None:
+    _rule(system, "bad", (
+        "id: bad\ndescription: d\nwhen: { related: { via: bogus } }\nowes: [{ field: f }]\n"
+    ))
+    rep = _check(system)
+    assert any("related.via: must be one of" in e for e in rep.errors)
+
+
+def test_check_related_edge_only_under_via_edge_is_an_error(system: Path) -> None:
+    _rule(system, "bad", (
+        "id: bad\ndescription: d\n"
+        "when: { related: { via: object, edge: { relationship: {} } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    rep = _check(system)
+    assert any("related.edge: only admissible under via: edge" in e for e in rep.errors)
+
+
+def test_check_related_nested_related_in_where_is_an_error(system: Path) -> None:
+    _rule(system, "bad", (
+        "id: bad\ndescription: d\n"
+        "when: { related: { via: object, where: { related: { via: entity } } } }\n"
+        "owes: [{ field: f }]\n"
+    ))
+    rep = _check(system)
+    assert any("not allowed inside a where" in e for e in rep.errors)
+
+
+def test_check_id_condition_bad_operator_is_an_error(system: Path) -> None:
+    _rule(system, "bad", (
+        "id: bad\ndescription: d\nwhen: { id: { bogus: x } }\nowes: [{ field: f }]\n"
+    ))
+    rep = _check(system)
+    assert any("unknown operator 'bogus'" in e for e in rep.errors)
+
+
+def test_check_well_formed_id_and_related_rules_are_clean(system: Path) -> None:
+    _rule(system, "hosts-appointment", (
+        "id: hosts-appointment\ndescription: d\n"
+        "when: { all_of: [{ claim: { predicate: appointment } }, "
+        "{ none_of: [{ id: { equals: steven-rahn } }] }] }\n"
+        "owes: [{ field: location }]\n"
+    ))
+    _rule(system, "employed", (
+        "id: employed\ndescription: d\n"
+        "when: { related: { via: object, where: { type: organization } } }\n"
+        "owes: [{ field: job_title }]\n"
+    ))
+    _fact(system, "person", {
+        "id": "dr-smith", "type": "person", "name": "Dr Smith",
+        "claims": [_claim("dr-smith", "appt", predicate="appointment", value="2026-09-01")],
+    })
+    rep = _check(system)
+    assert not any("hosts-appointment" in e or "employed" in e for e in rep.errors)
 
 
 # ====================================================================== CLI surface

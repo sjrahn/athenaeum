@@ -17,6 +17,7 @@ import hmac
 import json
 import mimetypes
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +27,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from ath.manifest import Instance, Reference, load_instance, load_references
 from ath.serve._project import (
-    claim_is_public,
-    fact_is_public,
+    claim_is_visible,
+    fact_is_visible,
     project_fact,
-    public_evidence_uris,
-    public_roster_uris,
+    visible_evidence_uris,
+    visible_roster_uris,
 )
 from ledger import demands as demands_mod
 from ledger import tenancy as tenancy_mod
@@ -45,7 +46,9 @@ from ledger.scope import evaluate_scope
 
 # Bumped with the specification version — the OpenAPI document is stamped
 # with it (Part I §5.1).
-SPEC_VERSION = 28
+SPEC_VERSION = 30
+
+_PUBLIC_GRANTS = frozenset({"public"})
 
 router = APIRouter()
 
@@ -94,24 +97,47 @@ def get_ctx(request: Request) -> Ctx:
 
 
 def get_plane(request: Request) -> str:
-    """`"owner"` iff an owner token is configured AND the request's bearer
-    matches it (constant-time compare); `"public"` otherwise — including
-    when no token is configured at all (§5.1: the owner plane is "enabled
-    only explicitly")."""
-    owner_token: str | None = request.app.state.owner_token
-    if not owner_token:
-        return "public"
+    """The bearer token's plane (§5.1: "the planes are the grant sets"):
+    `"owner"` iff an owner token is configured AND the request's bearer
+    matches it; an audience name iff the bearer matches that audience's
+    configured token; `"public"` otherwise — no token, an unrecognized
+    token, or no owner/audience tokens configured at all (the owner plane is
+    "enabled only explicitly", and an unmatched bearer is the fail-closed
+    default). Every comparison is constant-time (`hmac.compare_digest`)."""
     auth = request.headers.get("authorization", "")
-    if auth.startswith("Bearer "):
-        candidate = auth[len("Bearer "):]
-        if hmac.compare_digest(candidate, owner_token):
-            return "owner"
+    if not auth.startswith("Bearer "):
+        return "public"
+    candidate = auth[len("Bearer "):]
+    owner_token: str | None = request.app.state.owner_token
+    if owner_token and hmac.compare_digest(candidate, owner_token):
+        return "owner"
+    audience_tokens: dict[str, str] = request.app.state.audience_tokens
+    for name, token in audience_tokens.items():
+        if hmac.compare_digest(candidate, token):
+            return name
     return "public"
+
+
+def get_grants(
+    plane: str = Depends(get_plane), ctx: Ctx = Depends(get_ctx),
+) -> frozenset[str]:
+    """The grant set the resolved plane reads with (§athenaeum.md §5.1,
+    §ledger.md §6.4): `{"public"}` for the public plane, an audience's
+    granted tiers plus `public` (`Instance.grants_for`) for an audience
+    plane, or the empty set for the owner plane — unused there, since
+    `project_fact`/callers bypass grant filtering entirely on `owner=True`."""
+    if plane == "owner":
+        return frozenset()
+    if plane == "public":
+        return _PUBLIC_GRANTS
+    return ctx.instance.grants_for(plane)
 
 
 def require_owner(plane: str = Depends(get_plane)) -> None:
     """Gate an owner-only route. 404, never 401/403 — existence itself must
-    not leak (§5.1)."""
+    not leak (§5.1). Interpretations and the other owner-only surfaces stay
+    owner-plane-only regardless of an audience token's grants — pre-assertion
+    content is never served to any audience, however wide its grants."""
     if plane != "owner":
         raise HTTPException(status_code=404, detail="not found")
 
@@ -139,14 +165,29 @@ def _load_fact_at(ledger_root: Path, relpath: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
-def _has_public_predicate(fact: dict, predicate: str, *, owner: bool, ctx: Ctx) -> bool:
+def _has_visible_predicate(
+    fact: dict, predicate: str, *, owner: bool, grants: frozenset[str],
+    declared: frozenset[str] | None, ctx: Ctx,
+) -> bool:
     sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
     for c in fact.get("claims") or []:
         if not isinstance(c, dict) or c.get("predicate") != predicate:
             continue
-        if owner or claim_is_public(c, sources, ctx.join, ctx.datasets):
+        if owner or claim_is_visible(c, sources, ctx.join, ctx.datasets, grants,
+                                     declared=declared):
             return True
     return False
+
+
+def _record_visible(ctx: Ctx, hash_: str, grants: frozenset[str]) -> bool:
+    """A corpus record's derived tier set intersects `grants` (§6.4) — the
+    grant-set generalization of the pre-v30 `record_tenancy(...) == "public"`
+    check every `/records`, `/resolve/corpus`, `/resolve/ref` gate used."""
+    tiers = tenancy_mod.record_tiers(
+        ctx.corpus_root, hash_, default=ctx.instance.visibility,
+        declared=ctx.instance.declared_tiers,
+    )
+    return bool(tiers & grants)
 
 
 # ----------------------------------------------------------------- /instance
@@ -173,9 +214,11 @@ def list_facts(
     limit: int = 100,
     ctx: Ctx = Depends(get_ctx),
     plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
 ) -> dict:
     limit = max(1, min(limit, 500))
     owner = plane == "owner"
+    declared = ctx.instance.declared_tiers
     facts, _ = load_json_dir(ctx.ledger_root, "facts/*/*.json")
     rows: list[dict] = []
     for path, fact in facts.items():
@@ -186,11 +229,12 @@ def list_facts(
             continue
         if type_ is not None and fact.get("type") != type_:
             continue
-        if predicate is not None and not _has_public_predicate(
-            fact, predicate, owner=owner, ctx=ctx
+        if predicate is not None and not _has_visible_predicate(
+            fact, predicate, owner=owner, grants=grants, declared=declared, ctx=ctx
         ):
             continue
-        if not owner and not fact_is_public(fact, ctx.join, ctx.datasets):
+        if not owner and not fact_is_visible(fact, ctx.join, ctx.datasets, grants,
+                                             declared=declared):
             continue
         rows.append({
             "id": fid,
@@ -210,6 +254,7 @@ def list_facts(
 def get_fact(
     fact_id: str, request: Request, response: Response,
     ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
 ):
     lineage, _ = load_lineage(ctx.ledger_root)
     if fact_id in lineage:
@@ -226,7 +271,8 @@ def get_fact(
     if not isinstance(fact, dict) or is_redirect(fact) or fact.get("id") != fact_id:
         raise HTTPException(404, "not found")
 
-    projected = project_fact(fact, ctx.join, ctx.datasets, owner=(plane == "owner"))
+    projected = project_fact(fact, ctx.join, ctx.datasets, owner=(plane == "owner"),
+                             grants=grants, declared=ctx.instance.declared_tiers)
     if projected is None:
         raise HTTPException(404, "not found")
 
@@ -241,6 +287,7 @@ def get_fact(
 @router.get("/facts/{fact_id}/claims/{short}")
 def get_claim(
     fact_id: str, short: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
 ):
     fact_path = _find_fact_path(ctx.ledger_root, fact_id)
     if fact_path is None:
@@ -261,10 +308,12 @@ def get_claim(
         raise HTTPException(404, "not found")
 
     if plane != "owner":
-        if not fact_is_public(fact, ctx.join, ctx.datasets):
+        declared = ctx.instance.declared_tiers
+        if not fact_is_visible(fact, ctx.join, ctx.datasets, grants, declared=declared):
             raise HTTPException(404, "not found")
         sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
-        if not claim_is_public(claim, sources, ctx.join, ctx.datasets):
+        if not claim_is_visible(claim, sources, ctx.join, ctx.datasets, grants,
+                                declared=declared):
             raise HTTPException(404, "not found")
     return claim
 
@@ -273,7 +322,10 @@ def get_claim(
 
 
 @router.get("/scope")
-def get_scope(spec: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane)) -> dict:
+def get_scope(
+    spec: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
+) -> dict:
     try:
         parsed = json.loads(spec)
     except json.JSONDecodeError as e:
@@ -286,32 +338,37 @@ def get_scope(spec: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_p
     if plane == "owner":
         return result
 
-    # A whole-fact filter alone is not enough here: a PUBLIC fact can still
-    # carry private-backed claims, and evaluate_scope's evidence/roster maps
-    # are built from every claim/roster entry unconditionally. Recompute both
-    # maps from the same per-claim/per-source public projection `/facts/{id}`
-    # applies (`public_evidence_uris`/`public_roster_uris`) rather than merely
-    # filtering evaluate_scope's raw output down to public fact ids — the
-    # narrower bug this fixes: a private record hash riding a public fact's
-    # evidence list was previously served whole.
+    declared = ctx.instance.declared_tiers
+
+    # A whole-fact filter alone is not enough here: a fact visible to
+    # `grants` can still carry claims invisible to it, and evaluate_scope's
+    # evidence/roster maps are built from every claim/roster entry
+    # unconditionally. Recompute both maps from the same per-claim/per-source
+    # projection `/facts/{id}` applies (`visible_evidence_uris`/
+    # `visible_roster_uris`) rather than merely filtering evaluate_scope's
+    # raw output down to visible fact ids — the narrower bug this fixes: a
+    # record hash outside `grants` riding a visible fact's evidence list was
+    # previously served whole.
     kept_facts: dict[str, dict] = {}
     kept_members = []
     for m in result.get("members", []):
         path = m.get("path")
         fact = _load_fact_at(ctx.ledger_root, path) if isinstance(path, str) else None
-        if fact is not None and fact_is_public(fact, ctx.join, ctx.datasets):
+        if fact is not None and fact_is_visible(fact, ctx.join, ctx.datasets, grants,
+                                                declared=declared):
             fid = str(m.get("id"))
             kept_facts[fid] = fact
             kept_members.append(m)
     result["members"] = kept_members
     if "evidence" in result:
         result["evidence"] = {
-            fid: public_evidence_uris(fact, ctx.join, ctx.datasets)
+            fid: visible_evidence_uris(fact, ctx.join, ctx.datasets, grants, declared=declared)
             for fid, fact in kept_facts.items()
         }
     if "roster" in result:
         result["roster"] = {
-            fid: public_roster_uris(fact, ctx.join) for fid, fact in kept_facts.items()
+            fid: visible_roster_uris(fact, ctx.join, grants, declared=declared)
+            for fid, fact in kept_facts.items()
         }
     return result
 
@@ -353,18 +410,17 @@ def get_vocab(ctx: Ctx = Depends(get_ctx)) -> dict:
 
 
 @router.get("/records/{hash_}")
-def get_record(hash_: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane)) -> dict:
+def get_record(
+    hash_: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
+) -> dict:
     if not FULL_HASH_RE.match(hash_):
         raise HTTPException(422, "not a 64-hex blake3 hash")
     record_path = CorpusJoin.record_path(ctx.corpus_root, hash_)
     if not record_path.is_file():
         raise HTTPException(404, "not found")
-    if plane != "owner":
-        tenancy = tenancy_mod.record_tenancy(
-            ctx.corpus_root, hash_, default=ctx.instance.visibility
-        )
-        if tenancy != "public":
-            raise HTTPException(404, "not found")
+    if plane != "owner" and not _record_visible(ctx, hash_, grants):
+        raise HTTPException(404, "not found")
 
     from corpus import records as corpus_records
 
@@ -387,15 +443,12 @@ def get_record(hash_: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get
 @router.get("/resolve/corpus/{hash_}")
 def resolve_corpus(
     hash_: str, request: Request, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
 ):
     if not FULL_HASH_RE.match(hash_):
         raise HTTPException(422, "not a 64-hex blake3 hash")
-    if plane != "owner":
-        tenancy = tenancy_mod.record_tenancy(
-            ctx.corpus_root, hash_, default=ctx.instance.visibility
-        )
-        if tenancy != "public":
-            raise HTTPException(404, "not found")
+    if plane != "owner" and not _record_visible(ctx, hash_, grants):
+        raise HTTPException(404, "not found")
 
     query = request.url.query
     uri = f"corpus://{hash_}" + (f"?{query}" if query else "")
@@ -423,6 +476,7 @@ def resolve_corpus(
 def resolve_ref(
     dataset: str, id_path: str, tag: str | None = None,
     ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
+    grants: frozenset[str] = Depends(get_grants),
 ):
     reference = ctx.datasets.get(dataset)
     if reference is None:
@@ -432,12 +486,8 @@ def resolve_ref(
     if snapshot is None:
         raise HTTPException(404, f"unknown snapshot tag {resolved_tag!r}")
 
-    if plane != "owner":
-        tenancy = tenancy_mod.record_tenancy(
-            ctx.corpus_root, snapshot.artifact, default=ctx.instance.visibility
-        )
-        if tenancy != "public":
-            raise HTTPException(404, "not found")
+    if plane != "owner" and not _record_visible(ctx, snapshot.artifact, grants):
+        raise HTTPException(404, "not found")
 
     from refdata import resolve as refdata_resolve
     from refdata.errors import RefdataError
@@ -518,22 +568,44 @@ def get_open_questions(ctx: Ctx = Depends(get_ctx)) -> dict:
 # ----------------------------------------------------------------- app factory
 
 
-def create_app(instance_root: Path, owner_token: str | None) -> FastAPI:
+def create_app(
+    instance_root: Path, owner_token: str | None, *,
+    audience_tokens: Mapping[str, str] | None = None,
+) -> FastAPI:
     """Build the read surface for the instance at *instance_root*.
 
     *owner_token*, when given, gates the owner plane (`Authorization: Bearer
     <token>`); `None` means the owner plane is not enabled at all — every
     request, bearer or not, reads as public (§5.1).
+
+    *audience_tokens* maps a declared audience name (`athenaeum.yaml`
+    `tenancy.audiences`, spec/athenaeum.md §2.3) to its bearer token — each
+    name gates its own audience plane, serving the projection for that
+    audience's grant set (`Instance.grants_for`, spec/ledger.md §6.4). A name
+    not declared on the instance raises `ValueError`.
     """
+    instance = load_instance(instance_root)
+    audience_tokens = dict(audience_tokens or {})
+    unknown = sorted(set(audience_tokens) - set(instance.audiences))
+    if unknown:
+        declared = sorted(instance.audiences) or ["(none declared)"]
+        raise ValueError(
+            f"audience token(s) name undeclared audience(s) {unknown} — "
+            f"declared audiences: {declared}"
+        )
     app = FastAPI(
         title="Athenaeum read surface",
         version=str(SPEC_VERSION),
         description="A read-only HTTP surface over an Athenaeum instance's "
-                     "corpus + ledger join (spec/athenaeum.md §5.1). Two "
-                     "planes: public (default, sensitivity-filtered, fail "
-                     "closed) and owner (bearer-token gated).",
+                     "corpus + ledger join (spec/athenaeum.md §5.1). The "
+                     "planes are the grant sets: public (default, "
+                     "sensitivity-filtered to {public}, fail closed), one "
+                     "audience plane per declared audience (bearer-token "
+                     "gated, filtered to that audience's granted tiers plus "
+                     "public), and owner (bearer-token gated, unfiltered).",
     )
     app.state.root = instance_root
     app.state.owner_token = owner_token
+    app.state.audience_tokens = audience_tokens
     app.include_router(router)
     return app

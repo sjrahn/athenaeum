@@ -27,13 +27,22 @@ corpus store (Part IV).
 The issue tracker registers under `tracker:` — the forge repo whose issues
 carry the instance's backlog, the forge `host:`, and the in-repo path of the
 snapshot `ath issue sync` writes.
+
+Tenancy (`spec/ledger.md` §6.4) registers under `tenancy:` — the instance's
+declared tier set beside the reserved `public`/`private`, and named
+`audiences:` (grant sets the read surface serves, `spec/athenaeum.md` §2.3).
+Absent the block, an instance carries the `public | private` binary,
+byte-identically to every pre-tier instance. `visibility:` generalizes
+alongside it: the tier silence falls to — `public`, `private`, or a declared
+tier.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -45,6 +54,17 @@ ROOT_ENV = "ATHENAEUM_ROOT"
 _DEFAULT_SNAPSHOT = "tickets.md"
 
 _RETIRED_MEMBER_KEYS = ("corpora", "ledger")
+
+# Duplicated from `ledger.model.SLUG_RE` — manifest.py must not import from
+# ledger (the layers are read-only downstream of the config, never the other
+# way). Tier and audience names live in this same readable-slug shape.
+_SLUG_RE = re.compile(r"^[a-z0-9]+(--?[a-z0-9]+)*$")
+
+# The two tenancy tiers every instance carries regardless of declaration —
+# `public` (the publishable tier, spec/ledger.md §6.4) and `private` (the
+# floor, the owner's alone, never grantable). An instance's declared `tiers:`
+# may name no others.
+RESERVED_TIERS = ("public", "private")
 
 
 class ManifestError(RuntimeError):
@@ -58,8 +78,16 @@ class Instance:
     root: Path
     name: str = ""
     # The tenancy floor — the fail-closed default for records whose origins
-    # declare no `tenancy:` (spec/ledger.md §6.4). Default private.
+    # declare no `tenancy:` (spec/ledger.md §6.4). Names `public`, `private`,
+    # or a declared tier. Default private.
     visibility: str = "private"
+    # The instance's declared tiers beside the reserved public/private
+    # (spec/athenaeum.md §2.3, spec/ledger.md §6.4). Empty = the binary.
+    tiers: tuple[str, ...] = ()
+    # Named grant sets the read surface serves: audience name -> declared
+    # tiers granted (never `private`; `public` is implicit in every audience
+    # and not stored here — see `grants_for`).
+    audiences: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def corpus_root(self) -> Path:
@@ -68,6 +96,19 @@ class Instance:
     @property
     def ledger_root(self) -> Path:
         return self.root / "ledger"
+
+    @property
+    def declared_tiers(self) -> frozenset[str]:
+        """Every tier this instance recognizes: the reserved pair plus its
+        own declared `tiers:` (spec/ledger.md §6.4)."""
+        return frozenset(RESERVED_TIERS) | frozenset(self.tiers)
+
+    def grants_for(self, audience: str) -> frozenset[str]:
+        """The effective grant set for a named audience: its declared grants
+        plus the `public` tier every audience carries implicitly
+        (spec/athenaeum.md §2.3). An unknown audience name grants only
+        `public`."""
+        return frozenset(self.audiences.get(audience, ())) | {"public"}
 
 
 @dataclass(frozen=True)
@@ -161,15 +202,92 @@ def _read(root: Path) -> dict:
     return data
 
 
+def _load_tenancy(data: dict) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Parse the config's optional `tenancy:` block (spec/athenaeum.md §2.3):
+    `tiers:` (a list of slugs beside the reserved public/private) and
+    `audiences:` (name -> granted tiers, never `private`, `public` implicit).
+    Absent block -> ((), {}) — the pre-tier binary, byte-identical."""
+    tenancy = data.get("tenancy")
+    if tenancy is None:
+        return (), {}
+    if not isinstance(tenancy, dict):
+        raise ManifestError("manifest tenancy: expected a mapping")
+    unknown = set(tenancy) - {"tiers", "audiences"}
+    if unknown:
+        raise ManifestError(f"manifest tenancy: unknown keys {sorted(unknown)}")
+
+    tiers_raw = tenancy.get("tiers") or []
+    if not isinstance(tiers_raw, list):
+        raise ManifestError("manifest tenancy.tiers: expected a list of tier slugs")
+    tiers: list[str] = []
+    for t in tiers_raw:
+        t = str(t)
+        if not _SLUG_RE.match(t):
+            raise ManifestError(f"manifest tenancy.tiers: {t!r} is not a slug")
+        if t in RESERVED_TIERS:
+            raise ManifestError(
+                f"manifest tenancy.tiers: {t!r} collides with the reserved "
+                f"{'/'.join(RESERVED_TIERS)} tier — declare a different name"
+            )
+        if t in tiers:
+            raise ManifestError(f"manifest tenancy.tiers: duplicate tier {t!r}")
+        tiers.append(t)
+    declared = frozenset(RESERVED_TIERS) | frozenset(tiers)
+
+    audiences_raw = tenancy.get("audiences") or {}
+    if not isinstance(audiences_raw, dict):
+        raise ManifestError("manifest tenancy.audiences: expected a name-keyed mapping")
+    audiences: dict[str, tuple[str, ...]] = {}
+    for name, grants in audiences_raw.items():
+        name = str(name)
+        if not _SLUG_RE.match(name):
+            raise ManifestError(f"manifest tenancy.audiences: {name!r} is not a slug")
+        # Plane names double as token-resolution results on the read surface
+        # (Part I §5.1): an audience literally named `owner` or `public` would
+        # shadow those planes — `private` is barred for symmetry with tiers.
+        if name in ("public", "private", "owner"):
+            raise ManifestError(
+                f"manifest tenancy.audiences: {name!r} is reserved — "
+                "plane names are never audience names (Part I §5.1)"
+            )
+        if name in audiences:
+            raise ManifestError(f"manifest tenancy.audiences: duplicate audience {name!r}")
+        grants = grants or []
+        if not isinstance(grants, list):
+            raise ManifestError(
+                f"manifest tenancy.audiences.{name}: expected a list of tiers"
+            )
+        granted: list[str] = []
+        for g in grants:
+            g = str(g)
+            if g == "private":
+                raise ManifestError(
+                    f"audience {name!r} granted 'private' — the floor is the owner's "
+                    "alone, never grantable (Part III §6.4)"
+                )
+            if g not in declared:
+                raise ManifestError(
+                    f"manifest tenancy.audiences.{name}: {g!r} is not a declared tier "
+                    "— declare it under tenancy.tiers, or grant 'public'"
+                )
+            granted.append(g)
+        audiences[name] = tuple(granted)
+    return tuple(tiers), audiences
+
+
 def load_instance(root: Path) -> Instance:
     """Parse the instance config at *root*."""
     data = _read(root)
+    tiers, audiences = _load_tenancy(data)
+    declared = frozenset(RESERVED_TIERS) | frozenset(tiers)
     visibility = str(data.get("visibility") or "private")
-    if visibility not in ("public", "private"):
+    if visibility not in declared:
         raise ManifestError(
-            f"visibility must be 'public' or 'private', got {visibility!r}"
+            f"visibility must be 'public', 'private', or a declared tier, got "
+            f"{visibility!r}"
         )
-    return Instance(root=root, name=str(data.get("name") or ""), visibility=visibility)
+    return Instance(root=root, name=str(data.get("name") or ""), visibility=visibility,
+                    tiers=tiers, audiences=audiences)
 
 
 def load_references(root: Path) -> list[Reference]:

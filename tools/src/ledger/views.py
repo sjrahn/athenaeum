@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ledger import demands as demands_mod
 from ledger import values as values_mod
-from ledger.model import CORPUS_REF_RE, is_edge, is_redirect
+from ledger.model import CORPUS_REF_RE, is_edge, is_redirect, load_lineage
 from ledger.schemas import expectation_selects, load_schemas
 
 VOCAB_PATH = "facts/VOCAB.md"
@@ -90,7 +90,8 @@ def _kind_usage(kinds: dict[str, dict], schemas: dict[str, dict]) -> Counter:
 
 def _demand_rule_usage(rules: dict[str, dict], named_exps: dict[str, tuple[str, dict]],
                        live: list[dict], edges: list[dict],
-                       facts_by_id: dict[str, dict]) -> Counter:
+                       facts_by_id: dict[str, dict],
+                       lineage: dict[str, str] | None = None) -> Counter:
     """Rule/named-expectation id → count of facts currently matched (§14),
     regardless of demand state — every declared rule and named expectation
     starts at 0, listed for visibility even unused, mirroring `_kind_usage`."""
@@ -99,7 +100,7 @@ def _demand_rule_usage(rules: dict[str, dict], named_exps: dict[str, tuple[str, 
         for rid, rule in rules.items():
             when = rule.get("when")
             if isinstance(when, dict) and demands_mod.condition_matches(
-                when, fact, edges, facts_by_id
+                when, fact, edges, facts_by_id, lineage=lineage
             ):
                 c[rid] += 1
         for eid, (_ftype, exp) in named_exps.items():
@@ -186,7 +187,8 @@ def fresh_vocab(ledger_root: Path, facts: dict[Path, dict]) -> str:
     live = [f for f in facts.values() if not is_redirect(f)]
     edges = [f for f in live if is_edge(f)]
     facts_by_id = {str(f.get("id")): f for f in live}
-    counters["demand-rules"] = _demand_rule_usage(rules, named_exps, live, edges, facts_by_id)
+    counters["demand-rules"] = _demand_rule_usage(rules, named_exps, live, edges, facts_by_id,
+                                                  load_lineage(ledger_root)[0])
     kind_descriptions = {k: str(v.get("description") or "") for k, v in kinds.items()
                          if isinstance(v, dict)}
     rule_descriptions = {rid: str(r.get("description") or "") for rid, r in rules.items()
@@ -277,12 +279,14 @@ def render_worklist(ledger_root: Path, facts: dict[Path, dict], interps: dict[Pa
     rules, _ = demands_mod.load_demand_rules(ledger_root)
     kinds, _ = values_mod.load_kinds(ledger_root)
     facts_by_id = {str(f.get("id")): f for f in live}
+    lineage = load_lineage(ledger_root)[0]
     interp_list = list(interps.values())
     by_fact: dict[str, list[str]] = {}
     for fact in sorted(live, key=lambda f: str(f.get("id", ""))):
         for d in demands_mod.evaluate_demands(
             fact, rules=rules, schemas=schemas, kinds=kinds,
             facts_by_id=facts_by_id, edges=edges, interps=interp_list,
+            lineage=lineage,
         ):
             if d["state"] == "satisfied":
                 continue

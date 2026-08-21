@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ath.manifest import MANIFEST_NAME, Instance, ManifestError, load_instance
 from ledger import demands as demands_mod
 from ledger import invariants as invariants_mod
 from ledger import tenancy as tenancy_mod
@@ -89,6 +90,24 @@ class Report:
     @property
     def ok(self) -> bool:
         return not self.errors
+
+
+def _load_instance_tolerant(ledger_root: Path, rep: Report) -> Instance | None:
+    """The instance config sibling to `ledger_root` (spec/athenaeum.md §2.3)
+    — None when no `athenaeum.yaml` is present at all (a bare ledger tree, as
+    plenty of this module's own unit tests construct, or a `--no-corpus` dry
+    run with nothing to join). A config that IS present but fails to parse —
+    a tenancy tier/audience declaration error among others (§13.1
+    Sensitivity) — surfaces here as a check error rather than crashing `ath
+    ledger check`."""
+    root = ledger_root.parent
+    if not (root / MANIFEST_NAME).is_file():
+        return None
+    try:
+        return load_instance(root)
+    except ManifestError as e:
+        rep.err(MANIFEST_NAME, str(e))
+        return None
 
 
 def run_check(
@@ -173,6 +192,39 @@ def run_check(
         rep.warn("corpus join", f"registered corpora missing on disk "
                  f"({', '.join(join.missing)}) — resolution, binding-staleness, and "
                  "sensitivity checks NOT run; this check result certifies structure only")
+
+    # ------------------------------------------------------- tenancy declarations
+    # (§13.1 Sensitivity) — the instance config's tier/audience declarations,
+    # loaded tolerantly (a bare ledger tree, or a config that fails to parse,
+    # surfaces here rather than crashing `ath ledger check`); `visibility:`
+    # naming a declared tier is enforced by `load_instance` itself, so a
+    # config that loads at all already satisfies that obligation.
+    instance = _load_instance_tolerant(ledger_root, rep)
+    declared_tiers = instance.declared_tiers if instance is not None else frozenset(
+        {"public", "private"})
+    if resolve_live and instance is not None:
+        from corpus.schemas import load_origin_overlays
+
+        reported_overlay_tenancy: set[tuple[Path, str]] = set()
+        for c in join.corpora:
+            if not c.available:
+                continue
+            try:
+                overlays = load_origin_overlays(c.root)
+            except Exception:  # a malformed overlay file is corpus lint's to catch
+                continue
+            for oid, oschema in overlays:
+                tenancy = oschema.get("tenancy") if isinstance(oschema, dict) else None
+                if not isinstance(tenancy, str) or tenancy in declared_tiers:
+                    continue
+                key = (c.root, oid)
+                if key in reported_overlay_tenancy:
+                    continue
+                reported_overlay_tenancy.add(key)
+                rep.err(f"{c.name} origin/{oid}",
+                        f"origin overlay {oid!r} declares tenancy {tenancy!r} — not a "
+                        "declared tier; declare it under tenancy.tiers in "
+                        "athenaeum.yaml or fix the overlay (§6.4)")
 
     # ---------------------------------------------------------------- indexes
     ids: dict[str, Path] = {}
@@ -660,7 +712,8 @@ def run_check(
         # §5.1) rather than reimplemented here. Skipped (asserted-only) when
         # the corpus join isn't live, matching every other resolution-gated
         # check above.
-        priv = (tenancy_mod.claim_private_backed(c, fact_sources, join, datasets)
+        priv = (tenancy_mod.claim_private_backed(c, fact_sources, join, datasets,
+                                                  declared=declared_tiers)
                 if resolve_live else c.get("sensitivity") == "private")
 
         def _bar(infos: list[tuple[bool, object, tuple[str, str] | None, int | None]],
@@ -728,7 +781,7 @@ def run_check(
         for _f, o in facts.items():
             if is_redirect(o):
                 continue
-            if tenancy_mod.fact_is_private(o, join, datasets):
+            if tenancy_mod.fact_is_private(o, join, datasets, declared=declared_tiers):
                 private_files += 1
         rep.counts["private_claims"] = private_claims
         rep.counts["private_files"] = private_files

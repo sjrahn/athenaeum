@@ -2,7 +2,7 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 29
+version: 30
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -1100,7 +1100,7 @@ A subtype's overlay MAY be a **file of its own** — `schema/origin/<id>/<subtyp
 - `applies_to.include_subdomains` (bool, default false).
 - `applies_to.scheme` (string, optional) or `applies_to.schemes` (list[string], optional) — URI scheme(s) the overlay matches, compared case-insensitively against an origin URI's scheme. This is how a **non-web scheme family** (e.g. `imessage:`, a future `urn:` / `s3:`) binds, since such URIs have no meaningful host. An overlay may declare host pattern(s), scheme(s), or both.
 - `applies_to.cues` (optional) — non-host cues for the matcher.
-- `tenancy` (optional) — `public | private`: the source-grain tenancy declaration the ledger's sensitivity derivation reads (`ledger.md` §6.4). Deployment metadata the corpus itself never consumes; silence falls closed to the instance's `visibility:` floor.
+- `tenancy` (optional) — a tier from the instance's declared set (`public | private` reserved; further tiers instance-declared, `athenaeum.md` §2.3): the source-grain tenancy declaration the ledger's sensitivity derivation reads (`ledger.md` §6.4). Deployment metadata the corpus itself never consumes; silence falls closed to the instance's `visibility:` floor.
 - `normalization.guidance` (string) — markdown prose tactics.
 - `extended_fields` (optional) — fields beyond the universal `uri:` / `snapshot:`. A capturer's enrichment sidecar populates these — e.g. a yt-dlp capture's `ytdlp_<key>` fields (title, description, uploader, engagement counts, `ytdlp_comments`), declared by the artifact's mime schema `sidecar` section (§7.1) and merged onto the origin block at ingest (sidecar lift, §8.1). A declaration may carry `role: title` / `role: description`, marking the field as an editorial candidate for the record's derived title/description (§4.2.3) — `ytdlp_title` role-marked `title` is the canonical case: every video record derives an honest display title from its sidecar lift, no pass required.
 - `derived_hashes` (optional) — recipe ids (§7.9) this producer's records add to the effective set, the third layer of the additive union (default ∪ mime ∪ origin; §7.9). Producer knowledge on the producer's grain: a host- or export-specific canonicalization (`eml-stripped@2.1`-shaped) rides here exactly as strip declarations do (§12.3.13), never on the mime schema.

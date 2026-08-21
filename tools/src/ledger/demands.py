@@ -25,13 +25,26 @@ from pathlib import Path
 import yaml
 
 from ledger.schemas import expectation_selects
+from ledger.scope import (
+    build_edges_touching,
+    entity_neighbors,
+    make_resolver,
+    object_neighbors,
+    wikilink_neighbors,
+)
 
 RULE_KEYS = {"id", "description", "when", "owes"}
 OWE_KEYS = {"field", "description"}
-CONDITION_KEYS = {"type", "claim", "roster", "edge", "all_of", "any_of", "none_of"}
+CONDITION_KEYS = {"type", "claim", "roster", "edge", "id", "related",
+                  "all_of", "any_of", "none_of"}
 CLAIM_COND_KEYS = {"predicate", "value", "object"}
 ROSTER_COND_KEYS = {"role", "exists"}
 EDGE_SEL_KEYS = {"kind", "with", "target_type"}
+RELATED_KEYS = {"via", "edge", "where", "exists"}
+# The fact-reaching §12.1 traversal kinds. `roster` is deliberately absent:
+# roster rows target corpus records, never facts (§4.2) — a roster `via`
+# could never hold, so it is malformed, not vacuous (§14).
+VIA_KINDS = {"object", "entity", "wikilink", "edge"}
 _OPS = {"equals", "in", "glob", "matches", "exists"}
 _GROUPS = {"all_of", "any_of", "none_of"}
 
@@ -115,8 +128,67 @@ def _validate_op(op: object, where: str) -> list[str]:
     return []
 
 
-def _validate_condition(cond: object, where: str) -> list[str]:
-    """One `when` (sub-)condition against the §14 grammar."""
+def _validate_edge_selector(spec: object, where: str) -> list[str]:
+    """The §4.4 `{edge-type: {kind?, with?, target_type?}}` selector shape —
+    shared by the `edge:` condition and `related.edge` (§14)."""
+    if not (isinstance(spec, dict) and len(spec) == 1):
+        return [f"{where}: must be {{edge-type: {{...}}}}"]
+    (etype, sel), = spec.items()
+    errors: list[str] = []
+    if not isinstance(etype, str):
+        errors.append(f"{where}: edge-type name must be a string")
+    if not isinstance(sel, dict):
+        errors.append(f"{where}.{etype}: selector must be a mapping")
+        return errors
+    bad = set(sel) - EDGE_SEL_KEYS
+    if bad:
+        errors.append(f"{where}.{etype}: unknown keys {sorted(bad)}")
+    kinds = sel.get("kind")
+    if kinds is not None and not (
+        isinstance(kinds, list) and all(isinstance(k, str) for k in kinds)
+    ):
+        errors.append(f"{where}.{etype}.kind: must be a list of strings")
+    if "with" in sel and not isinstance(sel["with"], str):
+        errors.append(f"{where}.{etype}.with: must be a fact id")
+    tt = sel.get("target_type")
+    if tt is not None and not (
+        isinstance(tt, str)
+        or (isinstance(tt, list) and all(isinstance(t, str) for t in tt))
+    ):
+        errors.append(f"{where}.{etype}.target_type: must be a type or a "
+                      "list of types")
+    return errors
+
+
+def _validate_related(spec: object, where: str) -> list[str]:
+    """`related: {via, edge?, where?, exists?}` (§14) — one hop, deliberate:
+    `where` parses under this same grammar but MUST NOT itself carry
+    `related:` (checked by the caller via `allow_related=False`)."""
+    if not isinstance(spec, dict):
+        return [f"{where}: must be a mapping"]
+    errors: list[str] = []
+    bad = set(spec) - RELATED_KEYS
+    if bad:
+        errors.append(f"{where}: unknown keys {sorted(bad)}")
+    via = spec.get("via")
+    if via not in VIA_KINDS:
+        errors.append(f"{where}.via: must be one of {sorted(VIA_KINDS)}")
+    if "edge" in spec:
+        if via != "edge":
+            errors.append(f"{where}.edge: only admissible under via: edge")
+        else:
+            errors.extend(_validate_edge_selector(spec["edge"], f"{where}.edge"))
+    if "where" in spec:
+        errors.extend(_validate_condition(spec["where"], f"{where}.where", allow_related=False))
+    if "exists" in spec and not isinstance(spec["exists"], bool):
+        errors.append(f"{where}.exists: must be a bool")
+    return errors
+
+
+def _validate_condition(cond: object, where: str, *, allow_related: bool = True) -> list[str]:
+    """One `when` (sub-)condition against the §14 grammar. *allow_related*
+    is False while validating a `related.where` — one hop is deliberate, so
+    `related:` may not nest inside a `where`."""
     if not isinstance(cond, dict) or not cond:
         return [f"{where}: condition must be a non-empty mapping"]
     errors: list[str] = []
@@ -124,12 +196,16 @@ def _validate_condition(cond: object, where: str) -> list[str]:
     if bad:
         errors.append(f"{where}: unknown condition key(s) {sorted(bad)}")
     for key, spec in cond.items():
-        if key in _GROUPS:
+        if key == "related" and not allow_related:
+            errors.append(f"{where}.related: not allowed inside a where — "
+                          "one hop is deliberate (§14)")
+        elif key in _GROUPS:
             if not (isinstance(spec, list) and spec):
                 errors.append(f"{where}.{key}: must be a non-empty list of conditions")
                 continue
             for i, sub in enumerate(spec):
-                errors.extend(_validate_condition(sub, f"{where}.{key}[{i}]"))
+                errors.extend(_validate_condition(sub, f"{where}.{key}[{i}]",
+                                                  allow_related=allow_related))
         elif key == "type":
             ok = isinstance(spec, str) or (
                 isinstance(spec, dict) and set(spec) == {"in"}
@@ -162,32 +238,11 @@ def _validate_condition(cond: object, where: str) -> list[str]:
             if "exists" in spec and not isinstance(spec["exists"], bool):
                 errors.append(f"{where}.roster.exists: must be a bool")
         elif key == "edge":
-            if not (isinstance(spec, dict) and len(spec) == 1):
-                errors.append(f"{where}.edge: must be {{edge-type: {{...}}}}")
-                continue
-            (etype, sel), = spec.items()
-            if not isinstance(etype, str):
-                errors.append(f"{where}.edge: edge-type name must be a string")
-            if not isinstance(sel, dict):
-                errors.append(f"{where}.edge.{etype}: selector must be a mapping")
-                continue
-            bad = set(sel) - EDGE_SEL_KEYS
-            if bad:
-                errors.append(f"{where}.edge.{etype}: unknown keys {sorted(bad)}")
-            kinds = sel.get("kind")
-            if kinds is not None and not (
-                isinstance(kinds, list) and all(isinstance(k, str) for k in kinds)
-            ):
-                errors.append(f"{where}.edge.{etype}.kind: must be a list of strings")
-            if "with" in sel and not isinstance(sel["with"], str):
-                errors.append(f"{where}.edge.{etype}.with: must be a fact id")
-            tt = sel.get("target_type")
-            if tt is not None and not (
-                isinstance(tt, str)
-                or (isinstance(tt, list) and all(isinstance(t, str) for t in tt))
-            ):
-                errors.append(f"{where}.edge.{etype}.target_type: must be a type or a "
-                              "list of types")
+            errors.extend(_validate_edge_selector(spec, f"{where}.edge"))
+        elif key == "id":
+            errors.extend(_validate_op(spec, f"{where}.id"))
+        elif key == "related":
+            errors.extend(_validate_related(spec, f"{where}.related"))
         # an unknown key is already flagged above; nothing further to validate
     return errors
 
@@ -228,6 +283,27 @@ def _values_of(v: object) -> list[str]:
     if isinstance(v, list):
         return [str(x) for x in v]
     return [str(v)]
+
+
+def _resolve_operand(v: object, lineage: dict[str, str]) -> object:
+    """One `id:` operand through at most one lineage-map hop (§4.1) — a rule
+    naming a retired id still matches the living successor it merged into."""
+    return lineage.get(str(v), v)
+
+
+def _id_matches(spec: object, fact: dict, lineage: dict[str, str]) -> bool:
+    """`id:` condition (§14): the operator grammar over the fact's own
+    (living) id. `equals`/`in` operands resolve through the lineage map
+    before comparison; `glob`/`matches` match the living id as written."""
+    if isinstance(spec, dict) and len(spec) == 1:
+        (k, arg), = spec.items()
+        if k == "equals":
+            spec = {k: _resolve_operand(arg, lineage)}
+        elif k == "in" and isinstance(arg, list):
+            spec = {k: [_resolve_operand(a, lineage) for a in arg]}
+    elif not isinstance(spec, dict):
+        spec = _resolve_operand(spec, lineage)  # bare scalar — implicit equals
+    return _op_test(spec, [str(fact.get("id"))])
 
 
 def _type_matches(spec: object, fact: dict) -> bool:
@@ -309,22 +385,113 @@ def _edge_matches(spec: dict, fact: dict, edges: list[dict],
     return False
 
 
+def _edge_neighbors(edge_sel: dict | None, fid: str, edges: list[dict],
+                    facts_by_id: dict[str, dict], resolve_id,
+                    edges_touching: dict[str, list[str]]) -> list[dict]:
+    """`related: {via: edge}` neighbors (§14): the edges *fid* participates
+    in, narrowed by the optional §4.4 selector — the neighbor IS the edge
+    fact itself (unlike the other `via` kinds, whose neighbors are the
+    referenced facts)."""
+    edges_by_id = {str(e.get("id")): e for e in edges}
+    candidates = [edges_by_id[eid] for eid in edges_touching.get(fid, []) if eid in edges_by_id]
+    if edge_sel is None:
+        return candidates
+    (etype, sel), = edge_sel.items()
+    kinds = sel.get("kind")
+    other = sel.get("with")
+    if other is not None and fid == other:
+        return []
+    target_type = sel.get("target_type")
+    target_types = (target_type if isinstance(target_type, list)
+                     else [target_type] if target_type else None)
+    out: list[dict] = []
+    for edge in candidates:
+        if str(edge.get("type")) != str(etype):
+            continue
+        parts: set[str] = set()
+        subj = edge.get("subject")
+        if isinstance(subj, str) and (r := resolve_id(subj)):
+            parts.add(r)
+        for p in edge.get("participants") or []:
+            if isinstance(p, str) and (r := resolve_id(p)):
+                parts.add(r)
+        if other is not None and other not in parts:
+            continue
+        if kinds is not None:
+            got = {str(c.get("value")) for c in edge.get("claims") or []
+                   if isinstance(c, dict) and c.get("predicate") == "kind"}
+            if not got & set(kinds):
+                continue
+        if target_types is not None:
+            others = parts - {fid}
+            if not any(str((facts_by_id.get(p) or {}).get("type")) in target_types
+                       for p in others):
+                continue
+        out.append(edge)
+    return out
+
+
+def _neighbor_facts(spec: dict, fact: dict, edges: list[dict],
+                    facts_by_id: dict[str, dict], lineage: dict[str, str]) -> list[dict]:
+    """The one-hop neighbor set for a `related:` condition (§14, §12.1):
+    lineage-resolved, deduplicated, deterministic — exactly what a scope
+    evaluation's traverse step would take for *via*."""
+    via = spec.get("via")
+    fid = str(fact.get("id"))
+    resolve_id = make_resolver(facts_by_id, lineage)
+    if via == "edge":
+        edges_touching = build_edges_touching(edges, resolve_id)
+        neighbors = _edge_neighbors(spec.get("edge"), fid, edges, facts_by_id, resolve_id,
+                                    edges_touching)
+        return sorted(neighbors, key=lambda e: str(e.get("id")))
+    if via == "object":
+        ids = object_neighbors(fact, resolve_id)
+    elif via == "entity":
+        ids = entity_neighbors(fact, resolve_id)
+    elif via == "wikilink":
+        ids = wikilink_neighbors(fact, resolve_id)
+    else:  # a malformed via caught at load time — no neighbors
+        ids = set()
+    ids.discard(fid)
+    return [facts_by_id[i] for i in sorted(ids) if i in facts_by_id]
+
+
+def _related_matches(spec: dict, fact: dict, edges: list[dict], facts_by_id: dict[str, dict],
+                     lineage: dict[str, str]) -> bool:
+    """`related:` condition (§14): one hop, lineage-resolved. `exists: true`
+    (default) holds iff some neighbor matches `where` (or any neighbor
+    exists, when `where` is omitted); `exists: false` holds iff none does."""
+    neighbors = _neighbor_facts(spec, fact, edges, facts_by_id, lineage)
+    where = spec.get("where")
+    if where is None:
+        matched = bool(neighbors)
+    else:
+        matched = any(condition_matches(where, n, edges, facts_by_id, lineage=lineage)
+                      for n in neighbors)
+    return matched == bool(spec.get("exists", True))
+
+
 def condition_matches(cond: dict, fact: dict, edges: list[dict],
-                      facts_by_id: dict[str, dict]) -> bool:
+                      facts_by_id: dict[str, dict], *,
+                      lineage: dict[str, str] | None = None) -> bool:
     """Does this `when` (sub-)condition select *fact*? Several keys at the
-    top level are an implicit `all_of`; missing-is-false throughout."""
+    top level are an implicit `all_of`; missing-is-false throughout.
+    *lineage* — the `facts/LINEAGE.json` map (§4.1) — resolves `id:`
+    operands and `related:` neighbor hops; callers with no lineage on hand
+    may omit it (no rows resolve, correct for a lineage-free ledger)."""
     if not isinstance(cond, dict) or not cond:
         return False
+    lineage = lineage or {}
     for key, spec in cond.items():
         if key == "all_of":
             ok = isinstance(spec, list) and bool(spec) and all(
-                condition_matches(s, fact, edges, facts_by_id) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
         elif key == "any_of":
             ok = isinstance(spec, list) and any(
-                condition_matches(s, fact, edges, facts_by_id) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
         elif key == "none_of":
             ok = isinstance(spec, list) and not any(
-                condition_matches(s, fact, edges, facts_by_id) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
         elif key == "type":
             ok = _type_matches(spec, fact)
         elif key == "claim":
@@ -333,6 +500,11 @@ def condition_matches(cond: dict, fact: dict, edges: list[dict],
             ok = isinstance(spec, dict) and _roster_matches(spec, fact)
         elif key == "edge":
             ok = isinstance(spec, dict) and _edge_matches(spec, fact, edges, facts_by_id)
+        elif key == "id":
+            ok = _id_matches(spec, fact, lineage)
+        elif key == "related":
+            ok = isinstance(spec, dict) and _related_matches(spec, fact, edges, facts_by_id,
+                                                              lineage)
         else:
             ok = False  # unknown key — well-formedness is caught at load time
         if not ok:
@@ -482,6 +654,7 @@ def evaluate_demands(
     facts_by_id: dict[str, dict],
     edges: list[dict],
     interps: list[dict] | dict[object, dict],
+    lineage: dict[str, str] | None = None,
 ) -> list[dict]:
     """Every demand *fact* currently carries (§14), deterministic.
 
@@ -496,6 +669,9 @@ def evaluate_demands(
     fires for a rule id in the blockable namespace (§13.1: declared rules and
     named expectations) — a positional or `expected:*` id can never be a
     needs entry's blocking target, so it stays open until satisfied.
+
+    *lineage* — `facts/LINEAGE.json` (§4.1) — feeds a rule `when`'s `id:` and
+    `related:` conditions (§14); callers with none on hand may omit it.
     """
     interp_list = list(interps.values()) if isinstance(interps, dict) else list(interps)
     fact_id = str(fact.get("id"))
@@ -524,7 +700,9 @@ def evaluate_demands(
 
     for rule_id, rule in sorted(rules.items()):
         when = rule.get("when")
-        if not isinstance(when, dict) or not condition_matches(when, fact, edges, facts_by_id):
+        if not isinstance(when, dict) or not condition_matches(
+            when, fact, edges, facts_by_id, lineage=lineage,
+        ):
             continue
         for owe in rule.get("owes") or []:
             if not isinstance(owe, dict):

@@ -48,6 +48,110 @@ def test_instance_visibility_validated(tmp_path: Path) -> None:
         load_instance(tmp_path)
 
 
+def test_instance_tenancy_absent_is_the_binary(instance: Path) -> None:
+    """No `tenancy:` block: tiers/audiences empty, `declared_tiers` is exactly
+    the reserved pair, an unknown audience name grants only `public` — the
+    pre-tier instance, byte-identically (spec/ledger.md §6.4)."""
+    inst = load_instance(instance)
+    assert inst.tiers == ()
+    assert inst.audiences == {}
+    assert inst.declared_tiers == frozenset({"public", "private"})
+    assert inst.grants_for("family") == frozenset({"public"})
+
+
+def test_instance_tenancy_happy_path(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(
+        "visibility: family\n"
+        "tenancy:\n"
+        "  tiers: [family, accountant]\n"
+        "  audiences:\n"
+        "    family: [family]\n"
+        "    finances: [accountant]\n"
+    )
+    inst = load_instance(tmp_path)
+    assert inst.tiers == ("family", "accountant")
+    assert inst.visibility == "family"
+    assert inst.declared_tiers == frozenset({"public", "private", "family", "accountant"})
+    assert inst.audiences == {"family": ("family",), "finances": ("accountant",)}
+    assert inst.grants_for("family") == frozenset({"public", "family"})
+    assert inst.grants_for("finances") == frozenset({"public", "accountant"})
+
+
+def test_instance_tenancy_tier_collides_with_reserved(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text("tenancy:\n  tiers: [public]\n")
+    with pytest.raises(ManifestError, match="reserved"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_duplicate_tier(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text("tenancy:\n  tiers: [family, family]\n")
+    with pytest.raises(ManifestError, match="duplicate tier"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_bad_tier_slug(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text("tenancy:\n  tiers: [Not_A_Slug]\n")
+    with pytest.raises(ManifestError, match="not a slug"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_duplicate_audience(tmp_path: Path) -> None:
+    """A YAML mapping can't repeat a key verbatim, but a bare `1` and a
+    quoted `'1'` are distinct YAML keys that both stringify to `"1"` —
+    exercising the post-stringification duplicate guard."""
+    (tmp_path / "athenaeum.yaml").write_text(
+        "tenancy:\n  tiers: [family]\n  audiences:\n    1: [family]\n    '1': [family]\n"
+    )
+    with pytest.raises(ManifestError, match="duplicate audience"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_audience_cannot_grant_private(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(
+        "tenancy:\n  tiers: [family]\n  audiences:\n    family: [private]\n"
+    )
+    with pytest.raises(ManifestError, match="never grantable"):
+        load_instance(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["public", "private", "owner"])
+def test_instance_tenancy_audience_name_reserved(tmp_path: Path, name: str) -> None:
+    """An audience named after a plane would shadow it at token resolution
+    on the read surface (Part I §5.1) — `owner` especially: its token would
+    pass the owner gate carrying only tier grants."""
+    (tmp_path / "athenaeum.yaml").write_text(
+        f"tenancy:\n  tiers: [family]\n  audiences:\n    {name}: [family]\n"
+    )
+    with pytest.raises(ManifestError, match="reserved"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_audience_undeclared_tier(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text(
+        "tenancy:\n  audiences:\n    family: [family]\n"
+    )
+    with pytest.raises(ManifestError, match="not a declared tier"):
+        load_instance(tmp_path)
+
+
+def test_instance_tenancy_unknown_key(tmp_path: Path) -> None:
+    (tmp_path / "athenaeum.yaml").write_text("tenancy:\n  bogus: 1\n")
+    with pytest.raises(ManifestError, match="unknown keys"):
+        load_instance(tmp_path)
+
+
+def test_instance_visibility_names_a_declared_tier(tmp_path: Path) -> None:
+    """`visibility:` generalizes past the binary: any declared tier is
+    admissible, an undeclared name is still refused (spec/ledger.md §6.4)."""
+    (tmp_path / "athenaeum.yaml").write_text(
+        "visibility: family\ntenancy:\n  tiers: [family]\n"
+    )
+    assert load_instance(tmp_path).visibility == "family"
+    (tmp_path / "athenaeum.yaml").write_text("visibility: nope\n")
+    with pytest.raises(ManifestError, match="declared tier"):
+        load_instance(tmp_path)
+
+
 def test_pre_v26_member_manifest_refused(tmp_path: Path) -> None:
     """A member-shaped manifest (the pre-v26 workspace) errors with a
     migration pointer rather than silently misreading."""

@@ -7,8 +7,19 @@
 name: my-athenaeum         # optional display name
 
 # The tenancy floor: the fail-closed default for records whose origins declare
-# no `tenancy:` (spec/ledger.md §6.4). Leave private unless you know better.
+# no `tenancy:` (spec/ledger.md §6.4). Names `public`, `private`, or a tier
+# declared below. Leave private unless you know better.
 visibility: private
+
+# Extra tenancy tiers beside the reserved `public`/`private` (spec/athenaeum.md
+# §2.3, spec/ledger.md §6.4), and the named audiences the read surface serves.
+# Absent block: the public|private binary — pre-tier behavior, byte-identical.
+#tenancy:
+#  tiers: [family, accountant]   # named tiers an origin overlay may declare
+#                                # tenancy: under, or an audience may be granted
+#  audiences:                   # audience name -> tiers granted. `public` is
+#    family: [family]           # implicit in every audience; `private` is the
+#    finances: [accountant]     # owner's alone, never grantable.
 
 # The issue tracker — the instance's backlog. Reads go through `ath issue`;
 # writes go through the forge's own CLI.

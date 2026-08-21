@@ -570,6 +570,98 @@ def test_sensitivity_rekeys_to_record_tenancy(system: Path) -> None:
     assert rep.counts["private_claims"] == 2
 
 
+# --------------------------------------------------------- tenancy tiers (v30)
+
+
+def test_binary_instance_no_new_errors(system: Path) -> None:
+    """The plain `system` fixture (no `tenancy:` block) — v30's additions
+    produce no new errors for a binary instance (spec/ledger.md §6.4)."""
+    rep = _check(system)
+    assert rep.errors == []
+
+
+def test_tenancy_declaration_error_surfaces_as_check_error(system: Path) -> None:
+    """A malformed `tenancy:` block — here a declared tier colliding with the
+    reserved pair — is a manifest.py `ManifestError` at load time; `ledger
+    check` surfaces it as a check error rather than crashing (§13.1
+    Sensitivity)."""
+    (system / "athenaeum.yaml").write_text(
+        "name: testeum\nvisibility: public\ntenancy:\n  tiers: [public]\n"
+    )
+    rep = _check(system)
+    assert any("reserved" in e for e in rep.errors)
+
+
+def test_visibility_floor_undeclared_tier_is_a_check_error(system: Path) -> None:
+    (system / "athenaeum.yaml").write_text("name: testeum\nvisibility: family\n")
+    rep = _check(system)
+    assert any("declared tier" in e for e in rep.errors)
+
+
+def test_origin_overlay_undeclared_tenancy_is_a_check_error(system: Path) -> None:
+    """Every origin overlay declaring `tenancy:` must name a declared tier —
+    an instance that never adds `family` to `tenancy.tiers` gets a check
+    error naming the offending overlay, not a silently-ignored declaration."""
+    overlay_dir = system / "corpora" / "corpus" / "schema" / "origin"
+    overlay_dir.mkdir(parents=True)
+    (overlay_dir / "familyhost.yaml").write_text("tenancy: family\n", encoding="utf-8")
+    rep = _check(system)
+    assert any("familyhost" in e and "not a declared tier" in e for e in rep.errors)
+
+
+def test_origin_overlay_declared_tenancy_is_not_an_error(system: Path) -> None:
+    """Once `family` joins `tenancy.tiers`, the same overlay declaration is
+    clean."""
+    overlay_dir = system / "corpora" / "corpus" / "schema" / "origin"
+    overlay_dir.mkdir(parents=True)
+    (overlay_dir / "familyhost.yaml").write_text("tenancy: family\n", encoding="utf-8")
+    (system / "athenaeum.yaml").write_text(
+        "name: testeum\nvisibility: public\ntenancy:\n  tiers: [family]\n"
+    )
+    rep = _check(system)
+    assert not any("not a declared tier" in e for e in rep.errors)
+
+
+def test_declared_tier_makes_derivation_tier_aware(system: Path) -> None:
+    """Before `family` is declared, an origin's `tenancy: family` is
+    fail-closed-ignored (§6.4): the record's tiers stay empty and it falls to
+    the corpus's default (public, in this fixture) — NOT private-backed.
+    Once `family` joins `tenancy.tiers`, the declaration is recognized: the
+    record's tiers become exactly {family}, which the {public}-keyed
+    private_claims/private_files counters see as private (not visible to
+    {public})."""
+    import frontmatter
+
+    from corpus import paths, records
+
+    pub = system / "corpora" / "corpus"
+    (pub / "schema" / "origin").mkdir(parents=True)
+    (pub / "schema" / "origin" / "familyhost.yaml").write_text(
+        "tenancy: family\n", encoding="utf-8")
+
+    h = "9" * 64
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=h, touch_id="corpus.ingest@0.1.0"))
+    records.set_artifact_block(post, mime="text/plain", fields={})
+    records.append_origin_block(post, uri="https://familyhost/x",
+                                snapshot="2026-01-01T00:00:00Z", schema_id="familyhost")
+    records.dump(post, paths.record_path(pub, h))
+
+    _fact(system, "artist", {
+        "id": "fam", "type": "artist", "name": "Fam",
+        "claims": [_claim("fam", "a", evidence=[{"_record": h, "kind": "direct"}])],
+    })
+
+    rep = _check(system)
+    assert rep.counts["private_claims"] == 0
+
+    (system / "athenaeum.yaml").write_text(
+        "name: testeum\nvisibility: public\ntenancy:\n  tiers: [family]\n"
+    )
+    rep2 = _check(system)
+    assert rep2.counts["private_claims"] == 1
+
+
 def test_asserted_sensitivity_is_upward_only(system: Path) -> None:
     _fact(system, "person", {
         "id": "p", "type": "person", "name": "P", "sensitivity": "public",

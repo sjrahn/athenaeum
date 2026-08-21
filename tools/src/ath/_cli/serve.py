@@ -20,7 +20,13 @@ _USAGE_EXTRA = (
     "a file; --owner generates a fresh one and prints it once to stderr "
     "(save it — it is not written anywhere and cannot be recovered). Neither "
     "flag: the owner plane is not enabled at all — every request reads as "
-    "public (§5.1)."
+    "public (§5.1).\n"
+    "\nAudience planes: --audience-token NAME=FILE reads a pre-generated "
+    "token from a file for the declared audience NAME (repeatable, one per "
+    "audience); --audience NAME generates a fresh one for NAME and prints it "
+    "once to stderr (repeatable). NAME must name an audience declared in the "
+    "instance's tenancy.audiences (§athenaeum.md §2.3) — an audience token "
+    "for an undeclared name is refused."
 )
 
 
@@ -35,6 +41,18 @@ def run(argv: Sequence[str]) -> int:
     ap.add_argument(
         "--owner", action="store_true",
         help="generate a random owner-plane token and print it once to stderr",
+    )
+    ap.add_argument(
+        "--audience-token", action="append", default=[], metavar="NAME=FILE",
+        help="file containing an audience-plane bearer token for the declared "
+             "audience NAME (repeatable, one per audience)",
+    )
+    ap.add_argument(
+        "--audience", action="append", default=[], metavar="NAME",
+        help="generate a random audience-plane token for the declared "
+             "audience NAME and print it once to stderr (repeatable, one per "
+             "audience; save it — it is not written anywhere and cannot be "
+             "recovered)",
     )
     ns = ap.parse_args(list(argv))
 
@@ -59,6 +77,38 @@ def run(argv: Sequence[str]) -> int:
         print(f"ath serve: owner-plane token (printed once, save it): {owner_token}",
               file=sys.stderr)
 
+    audience_tokens: dict[str, str] = {}
+    for spec in ns.audience_token:
+        name, sep, file_ = spec.partition("=")
+        if not sep or not name or not file_:
+            print(f"ath serve: --audience-token expects NAME=FILE, got {spec!r}",
+                  file=sys.stderr)
+            return 2
+        if name in audience_tokens:
+            print(f"ath serve: audience {name!r} given more than once across "
+                  "--audience-token/--audience", file=sys.stderr)
+            return 2
+        token_path = Path(file_)
+        try:
+            token = token_path.read_text(encoding="utf-8").strip()
+        except OSError as e:
+            print(f"ath serve: {token_path}: {e}", file=sys.stderr)
+            return 2
+        if not token:
+            print(f"ath serve: {token_path} is empty — no token for audience {name!r}",
+                  file=sys.stderr)
+            return 2
+        audience_tokens[name] = token
+    for name in ns.audience:
+        if name in audience_tokens:
+            print(f"ath serve: audience {name!r} given more than once across "
+                  "--audience-token/--audience", file=sys.stderr)
+            return 2
+        token = secrets.token_urlsafe(32)
+        print(f"ath serve: audience {name!r} plane token (printed once, save it): {token}",
+              file=sys.stderr)
+        audience_tokens[name] = token
+
     try:
         from ath.serve import create_app
     except ImportError as e:
@@ -68,7 +118,11 @@ def run(argv: Sequence[str]) -> int:
         return 2
 
     root = resolve_root(ns.root)
-    app = create_app(root, owner_token)
+    try:
+        app = create_app(root, owner_token, audience_tokens=audience_tokens or None)
+    except ValueError as e:
+        print(f"ath serve: {e}", file=sys.stderr)
+        return 2
 
     import uvicorn
 
