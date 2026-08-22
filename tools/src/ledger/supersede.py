@@ -136,13 +136,16 @@ def supersede(
         # sources-table citations (claim evidence, §13.3 sources-table amendment):
         # judged per referencing evidence entry's `anchor`, since one sources
         # entry may be shared by several evidence entries with different
-        # anchors. Then the generic string walk, unchanged, for the citation
-        # forms that stayed flat (roster `artifacts[].uri`) — it never matches
-        # inside `sources`, whose values are bare hashes, not `corpus://` strings.
+        # anchors. The roster (`artifacts[].uri` / `derived_from`) rewrites
+        # unconditionally — identity assignment, not a quote, so the continuity
+        # gate does not apply (`_rewrite_roster`). Then the generic string walk
+        # for whatever else stayed flat, still continuity-gated, and excluding
+        # `artifacts` (already handled) so nothing is judged twice.
         changed_a, rewrites_a, divs_a = _rewrite_sources(fact, old, new, cont, rel)
         changed_b, rewrites_b, divs_b = _rewrite_tree(fact, old, new, cont, rel)
-        changed = changed_a or changed_b
-        result.rewrites.extend(rewrites_a + rewrites_b)
+        changed_c, rewrites_c = _rewrite_roster(fact, old, new, rel)
+        changed = changed_a or changed_b or changed_c
+        result.rewrites.extend(rewrites_a + rewrites_b + rewrites_c)
         result.divergences.extend(divs_a + divs_b)
         if changed:
             fact_file.write_text(
@@ -242,10 +245,50 @@ def _rewrite_sources(fact: dict, old: str, new: str, cont, fact_rel: str):
     return changed, rewrites, divs
 
 
+def _rewrite_roster(fact: dict, old: str, new: str, fact_rel: str):
+    """Rewrite `artifacts[].uri` / `artifacts[].derived_from` unconditionally, old → new.
+
+    A roster entry is IDENTITY ASSIGNMENT — "this concept's artifact IS this record" — not a
+    quote of content at an address (spec §4.2's roster, distinct from claim evidence, §6.2).
+    There is no span to diverge and nothing to check against continuity: a re-capture is the
+    exact case supersede exists for, and the roster's whole job is to track the record's
+    current identity through one. Gating it on continuity made supersede refuse EVERY roster
+    reference on every re-mint — a roster row's citation is `(whole record)` by construction,
+    and whole-record continuity is the strict, rarely-satisfied case (`IDENTICAL`/`CONTAINED`
+    of the FULL bytes), not the common one.
+
+    `derived_from` travels with `uri` for the same reason `check.py` requires it to always
+    equal some other roster entry's `uri` in this fact: if entry Y's `uri` moves and a sibling
+    entry X's `derived_from` still names Y's old uri, the roster's own internal consistency
+    invariant breaks. Returns `(changed, rewrites)`, mutating `fact` in place."""
+    rewrites: list[Rewrite] = []
+    changed = False
+    for entry in fact.get("artifacts") or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("uri", "derived_from"):
+            value = entry.get(key)
+            if not isinstance(value, str):
+                continue
+            m = CORPUS_URI_RE.match(value)
+            if not m or m.group(1) != old:
+                continue
+            tail = m.group(2) or ""
+            new_value = f"corpus://{new}{tail}"
+            entry[key] = new_value
+            rewrites.append(Rewrite(fact=fact_rel, old_uri=value, new_uri=new_value))
+            changed = True
+    return changed, rewrites
+
+
 def _rewrite_tree(obj, old: str, new: str, cont, fact_rel: str):
     """Walk a fact's JSON, rewriting any standalone `corpus://<old>…` citation string whose
     addressed content is preserved in `new`. Returns `(changed, rewrites, divergences)` and
-    mutates `obj` in place. A citation whose content diverged is left untouched + reported."""
+    mutates `obj` in place. A citation whose content diverged is left untouched + reported.
+
+    Skips `artifacts` entirely — the roster is identity assignment, not a quote, and
+    `_rewrite_roster` (above) already owns it unconditionally; walking it here too would judge
+    the same strings against continuity a second time, wrongly."""
     rewrites: list[Rewrite] = []
     divs: list[Divergence] = []
     changed = False
@@ -254,6 +297,8 @@ def _rewrite_tree(obj, old: str, new: str, cont, fact_rel: str):
         nonlocal changed
         if isinstance(node, dict):
             for k, v in node.items():
+                if k == "artifacts":
+                    continue
                 node[k] = walk(v)
             return node
         if isinstance(node, list):

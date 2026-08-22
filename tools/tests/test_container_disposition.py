@@ -103,3 +103,22 @@ def test_the_flip_does_not_make_a_rendered_container_an_error(tmp_path):
     post = _post("video/mp4", rendering=True)
     assert _findings(post, root, "terminal-stored-rendering") == []
     assert len(_findings(post, root, "container-carries-rendering")) == 1
+
+
+def test_a_reseated_container_with_only_placements_and_marks_is_clean(tmp_path):
+    """The shape §12.30's reseat migration leaves behind on a cleaned container: a body-empty
+    `image` marker for a region of the container's own transport (a `frame=` self-slice,
+    §4.3.2.4 Scope — legitimate, untouched by the migration) and a placement for each promoted
+    member. Neither is a rendering. `has_stored_rendering` counts the marker as "a content
+    atom present" regardless of body, which used to fire this rule with a self-contradicting
+    "carries 0 stored rendering segment(s)" — the gate and the reported count must agree."""
+    root = _make_corpus(tmp_path)
+    post = _post("video/mp4")
+    post.content = segments.emit(
+        [
+            segments.Segment(atom="image", address="frame=00:00:01"),
+            segments.Segment(atom="placement", address="stream_id=0"),
+            segments.Segment(atom="placement", address="stream_id=1"),
+        ]
+    )
+    assert _findings(post, root, "container-carries-rendering") == []

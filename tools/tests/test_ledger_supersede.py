@@ -210,6 +210,157 @@ def test_supersede_splits_shared_source_on_mixed_verdicts(tmp_path):
     assert paths.record_path(priv, old).is_file()
 
 
+def test_supersede_rewrites_a_diverged_roster_row_unconditionally(tmp_path):
+    """A roster row (`artifacts[].uri`) is IDENTITY ASSIGNMENT, not a quote — there is no span
+    to diverge, so it rewrites old → new regardless of what `corpus.continuity` says about the
+    whole-record pair. This is the exact scenario a real re-capture migration hit: EVERY roster
+    row reported "DIVERGED … (whole record)" under the (former) continuity gate, because a
+    re-mint's full bytes essentially never satisfy IDENTICAL/CONTAINED — a roster row citing
+    a rewritten capture is the common case, not the exception."""
+    priv, ledger, join = _system(tmp_path)
+    projects = tmp_path / "projects"
+    old = _session_record(priv, projects, "s", BASE)
+    rewritten = [
+        {"type": "user", "sessionId": "s", "timestamp": "2026-07-02T00:00:00.000Z", "x": 9},
+        {"type": "assistant", "sessionId": "s", "timestamp": "2026-07-02T00:00:01.000Z"},
+    ]
+    new = _session_record(priv, projects, "s", rewritten)
+
+    fp = ledger / "facts" / "place" / "x.json"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        json.dumps(
+            {
+                "id": "x",
+                "type": "place",
+                "name": "X",
+                "artifacts": [{"uri": f"corpus://{old}", "role": "primary"}],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    res = supersede(ledger, old, new, join, retire=True)
+
+    assert res.ok
+    assert len(res.rewrites) == 1
+    assert res.rewrites[0].old_uri == f"corpus://{old}"
+    assert res.rewrites[0].new_uri == f"corpus://{new}"
+    assert res.divergences == []  # a roster row is never reported diverged
+    fact = json.loads(fp.read_text())
+    assert fact["artifacts"][0]["uri"] == f"corpus://{new}"
+    assert res.retired  # nothing diverged, so retirement proceeds
+    assert not paths.record_path(priv, old).is_file()
+
+
+def test_supersede_rewrites_derived_from_alongside_its_uri(tmp_path):
+    """`derived_from` on one roster entry must always equal some OTHER entry's `uri` in the
+    same fact (`ledger.check`'s invariant) — so when that other entry's `uri` moves, every
+    `derived_from` naming it has to move with it, in the same unconditional pass."""
+    priv, ledger, join = _system(tmp_path)
+    projects = tmp_path / "projects"
+    old = _session_record(priv, projects, "s", BASE)
+    grown = [*BASE, {"type": "user", "sessionId": "s", "timestamp": "2026-07-01T00:10:00.000Z"}]
+    new = _session_record(priv, projects, "s", grown)
+
+    fp = ledger / "facts" / "place" / "x.json"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        json.dumps(
+            {
+                "id": "x",
+                "type": "place",
+                "name": "X",
+                "artifacts": [
+                    {"uri": f"corpus://{old}", "role": "primary"},
+                    {
+                        "uri": "corpus://" + "1" * 64,
+                        "role": "derived",
+                        "derived_from": f"corpus://{old}",
+                        "derivation": "thumbnail@0.1.0",
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    res = supersede(ledger, old, new, join, retire=False)
+
+    fact = json.loads(fp.read_text())
+    assert fact["artifacts"][0]["uri"] == f"corpus://{new}"
+    assert fact["artifacts"][1]["derived_from"] == f"corpus://{new}"
+    assert fact["artifacts"][1]["uri"] == "corpus://" + "1" * 64  # unrelated entry, untouched
+    assert len(res.rewrites) == 2
+
+
+def test_supersede_roster_row_unconditional_but_quote_citation_still_gated(tmp_path):
+    """The two citation kinds in ONE fact, judged independently in one pass: the roster row
+    rewrites regardless of continuity, while a claim's quote-bearing evidence citation of a
+    member the new capture never carried still diverges and is left on `old`, reported."""
+    priv, ledger, join = _system(tmp_path)
+    projects = tmp_path / "projects"
+    old = _session_record(priv, projects, "s", BASE)
+    rewritten = [
+        {"type": "user", "sessionId": "s", "timestamp": "2026-07-02T00:00:00.000Z", "x": 9},
+        {"type": "assistant", "sessionId": "s", "timestamp": "2026-07-02T00:00:01.000Z"},
+    ]
+    new = _session_record(priv, projects, "s", rewritten)
+
+    fp = ledger / "facts" / "place" / "x.json"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        json.dumps(
+            {
+                "id": "x",
+                "type": "place",
+                "name": "X",
+                "artifacts": [{"uri": f"corpus://{old}", "role": "primary"}],
+                "sources": {"s1": {"record": old}},
+                "claims": [
+                    {
+                        "id": "x:c",
+                        "predicate": "p",
+                        "value": "v",
+                        "status": "provisional",
+                        "evidence": [
+                            {
+                                "source": "s1",
+                                "anchor": "path=s.jsonl",
+                                "quote": "q",
+                                "kind": "direct",
+                            }
+                        ],
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    res = supersede(ledger, old, new, join, retire=True)
+
+    fact = json.loads(fp.read_text())
+    # the roster row moved unconditionally
+    assert fact["artifacts"][0]["uri"] == f"corpus://{new}"
+    # the quote citation stayed on `old` — its content diverged
+    assert fact["sources"]["s1"]["record"] == old
+    assert fact["claims"][0]["evidence"][0]["source"] == "s1"
+    assert any(r.old_uri == f"corpus://{old}" and r.new_uri == f"corpus://{new}"
+               for r in res.rewrites)
+    assert len(res.divergences) == 1
+    assert res.divergences[0].address == "path=s.jsonl"
+    # a diverged (quote) citation still refuses retirement, even though the roster moved
+    assert not res.retired
+    assert paths.record_path(priv, old).is_file()
+
+
 def test_supersede_errors_when_new_unresolved(tmp_path):
     priv, ledger, join = _system(tmp_path)
     projects = tmp_path / "projects"

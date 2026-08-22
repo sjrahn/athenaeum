@@ -658,12 +658,21 @@ def _rule_container_carries_rendering(post, blocks, root) -> Iterator[Finding]:
     silence reads as conformance. So this names it as owed work.
 
     The population that forced it: 102 public `video/mp4` containers holding ~17,500 rendering
-    segments, because transcription ran against the container instead of its audio stream."""
+    segments, because transcription ran against the container instead of its audio stream.
+
+    **Gated on an actual RENDERING, not on `has_stored_rendering`'s broader "any content
+    atom."** A body-empty `image`/`video` marker for a region of the container's own transport
+    (a `frame=` self-slice, §4.3.2.4 Scope) is a legitimate positioning marker, not a claim
+    about a member's bytes — it is exactly what §12.30's reseat migration leaves behind on a
+    cleaned container. Gating on `has_stored_rendering` fired here regardless, and the finding
+    then reported its own count from the non-empty-body subset — "carries 0 stored rendering
+    segment(s)" on a container that renders nothing at all. The gate and the count are now the
+    same set."""
     if _schemas.resolved_disposition_for_record(root, post) != "manifest":
         return
-    if not _records.has_stored_rendering(post):
-        return
     segs = [s for s in _segments.leaf_segments(blocks) if (s.body or "").strip()]
+    if not segs:
+        return
     yield Finding(
         rule_id="container-carries-rendering",
         severity="warning",

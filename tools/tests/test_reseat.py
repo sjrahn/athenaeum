@@ -471,6 +471,7 @@ def _legacy_container_record(
     audio_streams: int = 1,
     include_audio: bool = True,
     include_transcript: bool = True,
+    include_ocr: bool = False,
 ):
     root = _media_corpus(tmp_path)
     src = _mp4_container_bytes(tmp_path)
@@ -485,11 +486,12 @@ def _legacy_container_record(
 
     with containment.open_member_stream(artifact_path, "video/mp4", "stream_id=0") as fp:
         video_raw = fp.read()
+    video_hex = blake3.blake3(video_raw).hexdigest()
     records.append_member(
         post,
         media_type="video/mp4",
         address="stream_id=0",
-        transport=f"blake3:{blake3.blake3(video_raw).hexdigest()}",
+        transport=f"blake3:{video_hex}",
         fields={"bytes": len(video_raw)},
     )
 
@@ -518,27 +520,40 @@ def _legacy_container_record(
 
     blocks: list[Any] = []
     if include_transcript:
+        section_segments = [
+            segments.Segment(atom="image", address="frame=00:00:01"),
+            segments.Segment(
+                atom="text",
+                overlay="text/transcript",
+                address="time_range=00:00-00:01",
+                body="Hello there and welcome to the stream everyone",
+                extra={"speaker": 0},
+            ),
+            segments.Segment(
+                atom="text",
+                overlay="text/transcript",
+                address="time_range=00:01-00:02",
+                body="This is the second utterance of the recording",
+                extra={"speaker": 0},
+            ),
+        ]
+        if include_ocr:
+            # The shape a real record showed: an on-screen-text reading interleaved into the
+            # SAME `form: transcript` section as the audio's own utterances — the section's
+            # form belongs to the transcript, not to every kind that happens to sit inside it.
+            section_segments.append(
+                segments.Segment(
+                    atom="text",
+                    overlay="text/ocr",
+                    address="frame=00:00:01",
+                    body="ON SCREEN TEXT HERE",
+                )
+            )
         blocks.append(
             segments.Section(
                 form="transcript",
                 extra={"speakers": ["Speaker 1 diarization:1"]},
-                segments=[
-                    segments.Segment(atom="image", address="frame=00:00:01"),
-                    segments.Segment(
-                        atom="text",
-                        overlay="text/transcript",
-                        address="time_range=00:00-00:01",
-                        body="Hello there and welcome to the stream everyone",
-                        extra={"speaker": 0},
-                    ),
-                    segments.Segment(
-                        atom="text",
-                        overlay="text/transcript",
-                        address="time_range=00:01-00:02",
-                        body="This is the second utterance of the recording",
-                        extra={"speaker": 0},
-                    ),
-                ],
+                segments=section_segments,
             )
         )
     post.content = segments.emit(blocks)
@@ -549,10 +564,17 @@ def _legacy_container_record(
             detector="whisper-test@1",
             address="time_range=00:00-00:02",
         )
+        if include_ocr:
+            records.append_sweep_block(
+                post,
+                kind="text/ocr",
+                detector="ocr-test@1",
+                address="frame=00:00:01",
+            )
 
     rf = paths.record_path(root, cid)
     records.dump(post, rf)
-    return root, rf, audio_hex
+    return root, rf, audio_hex, video_hex
 
 
 @_needs_ffmpeg
@@ -561,7 +583,7 @@ def test_legacy_container_transcript_is_destined_for_the_audio_leaf_not_skipped(
     shape, even though `corpus lint`'s `container-carries-rendering` already names it. The
     default-member resolution the container's own `time_range=` addressing relies on (§6.2)
     picks the one audio stream member, and the dry run reports a real move, not a skip."""
-    root, rf, audio_hex = _legacy_container_record(tmp_path)
+    root, rf, audio_hex, _video_hex = _legacy_container_record(tmp_path)
     report = reseat.reseat_record(rf, root)
     assert report.hold is None, report.hold
     assert report.skipped is None
@@ -573,7 +595,7 @@ def test_legacy_container_transcript_is_destined_for_the_audio_leaf_not_skipped(
 
 @_needs_ffmpeg
 def test_legacy_container_transcript_apply_moves_transcript_form_and_sweep_to_the_leaf(tmp_path):
-    root, rf, audio_hex = _legacy_container_record(tmp_path)
+    root, rf, audio_hex, _video_hex = _legacy_container_record(tmp_path)
     report = reseat.reseat_record(rf, root)
     assert report.changed, report.hold
 
@@ -614,8 +636,48 @@ def test_legacy_container_transcript_apply_moves_transcript_form_and_sweep_to_th
 
 
 @_needs_ffmpeg
+def test_ocr_sharing_the_transcript_section_seats_bare_not_wrapped_in_transcript_form(tmp_path):
+    """Regression: a container that ALSO carries a `text/ocr` reading inside the same
+    `form: transcript` section as the audio's utterances (a real shape — the video track's
+    on-screen text interleaved beside the audio's speech) must not stamp `form: transcript`
+    on the video leaf. A section's form belongs to the kind it was written to describe, not
+    to every kind that happens to share its span — the audio leaf keeps the form (its own),
+    the video leaf gets its ocr reading bare, exactly like the ordinary (non-legacy)
+    association has always produced a leaf's rendering."""
+    root, rf, audio_hex, video_hex = _legacy_container_record(tmp_path, include_ocr=True)
+    report = reseat.reseat_record(rf, root)
+    assert report.changed, report.hold
+    rf.write_text(report.new_text, encoding="utf-8")
+
+    leaves_by_hex = {leaf.record_id: leaf for leaf in report.leaves}
+
+    video_post = records.loads(leaves_by_hex[video_hex].new_text)
+    (ocr_seg,) = segments.iter_blocks(video_post.content)
+    assert isinstance(ocr_seg, segments.Segment), "the video leaf must NOT gain a Section"
+    assert ocr_seg.overlay == "text/ocr"
+    assert ocr_seg.address == "frame=00:00:01"
+    assert ocr_seg.body.strip() == "ON SCREEN TEXT HERE"
+
+    audio_post = records.loads(leaves_by_hex[audio_hex].new_text)
+    (audio_section,) = segments.iter_blocks(audio_post.content)
+    assert audio_section.form == "transcript"
+    assert audio_section.extra["speakers"] == ["Speaker 1 diarization:1"]
+    assert [s.overlay for s in audio_section.segments] == ["text/transcript", "text/transcript"]
+
+    # The ocr sweep travels to the video leaf, the transcript sweep to the audio leaf — each
+    # by its own kind, never cross-wired.
+    (video_sweep,) = records.iter_sweep_blocks(video_post)
+    assert video_sweep["fields"]["kind"] == "text/ocr"
+    (audio_sweep,) = records.iter_sweep_blocks(audio_post)
+    assert audio_sweep["fields"]["kind"] == "text/transcript"
+
+    container_post = records.load(rf)
+    assert list(records.iter_sweep_blocks(container_post)) == []
+
+
+@_needs_ffmpeg
 def test_two_candidate_audio_streams_holds_no_writes(tmp_path):
-    root, rf, _audio_hex = _legacy_container_record(tmp_path, audio_streams=2)
+    root, rf, _audio_hex, _video_hex = _legacy_container_record(tmp_path, audio_streams=2)
     before = rf.read_text(encoding="utf-8")
     report = reseat.reseat_record(rf, root)
     assert report.changed is False
@@ -625,7 +687,7 @@ def test_two_candidate_audio_streams_holds_no_writes(tmp_path):
 
 @_needs_ffmpeg
 def test_zero_candidate_audio_streams_holds(tmp_path):
-    root, rf, _audio_hex = _legacy_container_record(tmp_path, include_audio=False)
+    root, rf, _audio_hex, _video_hex = _legacy_container_record(tmp_path, include_audio=False)
     report = reseat.reseat_record(rf, root)
     assert report.changed is False
     assert "no audio stream member" in (report.hold or "")
@@ -635,7 +697,7 @@ def test_zero_candidate_audio_streams_holds(tmp_path):
 def test_a_manifest_container_with_nothing_to_move_still_skips(tmp_path):
     """The old genuinely-nothing-to-do case, unaffected: a manifest container carrying no
     legacy rendering is untouched exactly as before, `disposition: manifest` notwithstanding."""
-    root, rf, _audio_hex = _legacy_container_record(tmp_path, include_transcript=False)
+    root, rf, _audio_hex, _video_hex = _legacy_container_record(tmp_path, include_transcript=False)
     report = reseat.reseat_record(rf, root)
     assert report.changed is False
     assert report.skipped == "no member is marked or rendered on this record"

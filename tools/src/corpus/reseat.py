@@ -522,6 +522,18 @@ _LEGACY_KIND_STREAM_PREFIX: dict[str, str] = {
     "text/ocr": "video/",
 }
 
+#: Segment kind → the form id that kind's OWN rendering is shaped by, when one exists. Only
+#: `text/transcript` has one (`form/transcript`'s `speakers:` codebook). This is deliberately
+#: NOT "whatever form the enclosing section happens to declare": the legacy shape interleaves
+#: an `image` frame marker and even a `text/ocr` reading inside the SAME `form: transcript`
+#: section as the transcript utterances (both share the container's one span), and a section's
+#: form belongs to the kind it was written to describe, not to every kind that happens to sit
+#: inside it. A kind with no entry here always seats bare on its leaf — the same shape the
+#: ordinary (non-legacy) association has always produced.
+_LEGACY_KIND_FORM: dict[str, str] = {
+    "text/transcript": "transcript",
+}
+
 
 def _legacy_container_segments(
     blocks: list[Any], member_map: dict[str, dict[str, Any]]
@@ -968,29 +980,44 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
                 return report
             leaf_post, outcome, declared = seated
 
-            # The form span this kind's rendering owned travels WITH it — envelope fields (a
-            # diarization codebook) are mechanically derivable only from the segments that just
-            # moved, so a form the container no longer carries content for is a claim the
-            # container can no longer make (§4.3.2.1). Only when every doomed segment of this
-            # kind shares ONE container section: split across two is not one mechanical move.
-            containers = {id(c): c for c, _s in kind_entries if c is not None}
-            if len(containers) > 1:
-                report.hold = (
-                    f"`{kind}` renderings addressed on the container's own timeline span "
-                    f"{len(containers)} different form sections — moving the form span whole "
-                    f"is not one mechanical move"
-                )
-                return report
-            target_section = next(iter(containers.values()), None)
+            # The form span this kind's OWN rendering was shaped by travels WITH it — envelope
+            # fields (a diarization codebook) are mechanically derivable only from the segments
+            # that just moved, so a form the container no longer carries content for is a claim
+            # the container can no longer make (§4.3.2.1). Only `text/transcript` has one
+            # (`_LEGACY_KIND_FORM`); every other kind seats bare, exactly like the ordinary
+            # (non-legacy) association always has, `wrap` unset. And "shares a section" is not
+            # "owns its form": the legacy shape interleaves an `image` marker (and can interleave
+            # a `text/ocr` reading) inside the SAME `form: transcript` section as the transcript
+            # utterances — a section's form belongs to the kind it was written to describe, so
+            # only a section that actually DECLARES this kind's governing form is eligible; a
+            # section merely hosting this kind's segments under someone else's form contributes
+            # nothing to carry. Only when every doomed segment of this kind shares ONE such
+            # section: split across two is not one mechanical move.
+            governing_form = _LEGACY_KIND_FORM.get(kind)
+            target_section: segments.Section | None = None
             wrap_fn = None
-            if target_section is not None and target_section.form is not None:
+            if governing_form is not None:
+                owning_sections = {
+                    id(c): c for c, _s in kind_entries if c is not None and c.form == governing_form
+                }
+                if len(owning_sections) > 1:
+                    report.hold = (
+                        f"`{kind}` renderings addressed on the container's own timeline span "
+                        f"{len(owning_sections)} different `form: {governing_form}` sections — "
+                        f"moving the form span whole is not one mechanical move"
+                    )
+                    return report
+                target_section = next(iter(owning_sections.values()), None)
+                if target_section is not None:
 
-                def wrap_fn(
-                    moved_segs: list[segments.Segment], _s: Any = target_section
-                ) -> list[Any]:
-                    return [
-                        segments.Section(form=_s.form, segments=moved_segs, extra=dict(_s.extra))
-                    ]
+                    def wrap_fn(
+                        moved_segs: list[segments.Segment], _s: Any = target_section
+                    ) -> list[Any]:
+                        return [
+                            segments.Section(
+                                form=_s.form, segments=moved_segs, extra=dict(_s.extra)
+                            )
+                        ]
 
             moved_all = [
                 _verbatim_segment(seg) for _c, seg in kind_entries if (seg.body or "").strip()
