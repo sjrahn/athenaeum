@@ -1,0 +1,109 @@
+# Exemplar library manifest for testdata/instance (see testdata/README.md).
+#
+# Each entry is a real artifact copied out of a private source instance, one per
+# interesting mime/shape, for spec + tooling regression testing. `note` is
+# neutral/technical only — no personal filenames, subjects, names, or content
+# descriptions (this file is tracked in a publicly-hostable repo).
+#
+# Most entries are `direct`: the blake3 names a record whose bytes are
+# reachable in the source instance (co-located artifacts/ tree) and are copied
+# in as-is. A few small images exist in the source corpus only as *promoted
+# container members* (an embedded <img> inside a captured HTML page) with no
+# standalone bytes of their own — spec's containment model resolves them
+# on-demand from their container, never materializing a separate copy. For
+# those, `source: promoted` names the container (also copied in) and the
+# member address `corpus promote` needs to re-mint the same (content-addressed,
+# so byte-identical) leaf record inside testdata/instance.
+
+- blake3: 426bf4ac98134e0c565db54a12716af3387f40488bce7328a0f62ac7b0994d97
+  mime: video/mp4
+  shape: multi-track-media
+  note: multi-track ISOBMFF, h264+aac
+  source: direct
+
+- blake3: 6737c2fe3f762b856a614d940b20b581354d539d545a0bf7d77ae4ac1d291e55
+  mime: application/mbox
+  shape: mbox
+  note: mbox, 358 messages, google-takeout/gmail export slice
+  source: direct
+
+- blake3: 070eb9ff378f80e8a4af499bf7f48bd24dc7a646f788b0d5049f131cc0be6bad
+  mime: application/zip
+  shape: zip-multi-member
+  note: multi-member zip, imessage-export bundle (2 html members)
+  source: direct
+
+- blake3: 7741d83b88f5f90ce8cf67d9510569e94b90a831483e1a12f8bba5e489e9fa50
+  mime: application/zip
+  shape: zip-single-member-envelope
+  note: single-member zip envelope, imessage-export bundle
+  source: direct
+
+- blake3: 86bef047b496dfbab372a41ed67e3235f9354ab0ea9aab362fafdc72768b6b77
+  mime: application/pdf
+  shape: pdf
+  note: single-page PDF, print-to-PDF
+  source: direct
+
+- blake3: b264b1b78b5b7a0c7a969cf0d473ee3b9c1ce25901cfa9d854bda96da8c820d2
+  mime: text/html
+  shape: html
+  note: HTML, imessage-export transcript page, 14 elements
+  source: direct
+
+- blake3: 6c91b6098d635ac29572e2d881711320529152dbc0c85f60ce0feb7989f92ee8
+  mime: image/png
+  shape: image-png
+  note: inline image, promoted from a captured HTML page's embed manifest
+  source: promoted
+  via:
+    container: bc6676a6b1a5993d5f142663229b2229a6900729db3c4bc999001b28454367d1
+    address: el=3
+
+- blake3: d1d86a1386fa49269a5b8b10edafa53d346b06ba6c985aff050facd33ab8a0ab
+  mime: image/jpeg
+  shape: image-jpeg
+  note: inline image, promoted from a captured HTML page's embed manifest
+  source: promoted
+  via:
+    container: 53efe52639a5e2ef7794acd5c0893731e3fafcc4b56e7117f6a38493bcb0edf9
+    address: el=1.9.2.33.1.1.4.1.2.1.2.3.1.2.4.2.1.2.1.2.2.2.2.2.2.1.1.1.1.1.1.1.1
+
+- blake3: 81b9df57c982d8c39c8bf3338312d19252253b5d86b8833b2d336bb4d89d7584
+  mime: image/gif
+  shape: image-gif
+  note: inline image, promoted from a captured HTML page's embed manifest
+  source: promoted
+  via:
+    container: 5ad99d879d274f16cd89c82f75f2d8a256f60a04b792ee91279de4163bdc0148
+    address: el=1
+
+- blake3: da44e941694f926ccf010aec4bcd7de0b715360157642d79c639692a1d35dc86
+  mime: image/svg+xml
+  shape: image-svg
+  note: inline image, promoted from a captured HTML page's embed manifest
+  source: promoted
+  via:
+    container: 72960558f5623c6dd44132bc82c8b206a448d1f315078991fae22e6ea1ac2312
+    address: el=2.1.2.2.1
+
+- blake3: ca4a2aaef7d7f5d7790f94a3ba27d487b28eccf2eee334a06dc70b454776948d
+  mime: image/webp
+  shape: image-webp
+  note: inline image, promoted from a captured HTML page's embed manifest
+  source: promoted
+  via:
+    container: 91548d684bd8d91e9436523cb28b1b21756f0a076eac64a3381f5fde9afb2b9c
+    address: el=2.2.1.3.1.2.1.1.1.1.2.7.1.2.1.1.1.2
+
+- blake3: de06e95ea6ad0da6d7b00d88b9896dc9d52d4aefb20597d5c42b6579b02547d5
+  mime: text/vcard
+  shape: vcard
+  note: vCard collection, iCloud contacts export, 150 cards
+  source: direct
+
+- blake3: ff5cc5f8ed2b52ff40f70a9fa124b6a4e61ecbd5c4a9dad80abc619c9be8aad7
+  mime: application/json
+  shape: json
+  note: JSON object, single top-level array field
+  source: direct

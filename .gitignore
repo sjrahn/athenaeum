@@ -19,3 +19,7 @@ tools/.ruff_cache/
 
 # second copies of the law never enter the tree
 Universal knowledge backend system.zip
+
+# scratch test instance (testdata/) — seeded from a private source instance by
+# testdata/seed.py; holds real (if tiny) private artifact bytes, never tracked
+/testdata/instance/
