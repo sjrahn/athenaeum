@@ -369,12 +369,26 @@ def _mint_leaf(
     containment_uri: str,
     origin_fields: dict[str, Any],
     basename: str | None,
+    member_address: str = "",
 ) -> frontmatter.Post:
     """A fresh promoted record for the member — `corpus promote`'s stub, built from bytes we
     already hold. The `id` is the verified blake3; the first origin is the containment lineage
     as history (§8.1), which is also what supplies a normalize pass its parent context."""
     media_type = mime.sniff_head(raw[:512], basename)
     if media_type == "unknown" and declared_media_type:
+        media_type = declared_media_type
+    # *(3.12)* A track member is a single-track ISOBMFF container, genuinely ambiguous between
+    # `video/mp4` and `audio/mp4` — both share one `ftyp` brand, so magic alone always answers
+    # `video/mp4`. A `stream_id=` address carries no filename for the ordinary suffix
+    # refinement to work with, but the roster row recorded the track's real kind from the
+    # container's own handler box at attestation — `corpus promote`'s own mint applies the
+    # identical narrow refinement (`_cli/promote.py`), never overruling a sniff that found
+    # something else.
+    if (
+        member_address.startswith("stream_id=")
+        and media_type == "video/mp4"
+        and declared_media_type in ("audio/mp4", "video/mp4")
+    ):
         media_type = declared_media_type
     schema = schemas.load_mime_schema(corpus_root, media_type) or {}
     # No origin overlay layer (spec §7.9's third layer): the leaf's origin is containment
@@ -473,6 +487,264 @@ def _moved_segment(seg: segments.Segment, address: str) -> segments.Segment:
     )
 
 
+def _verbatim_segment(seg: segments.Segment) -> segments.Segment:
+    """A parent-side rendering as it stands on the member's own record when the address is
+    the member's own timeline, unchanged: same atom, same overlay, same body, same address
+    (§7.1 — a promoted media-stream leaf resolves every timeline op in the same timeline its
+    container reports, so `time_range=` needs no re-homing, unlike the `el=` crop suffix
+    `_moved_segment` re-bases)."""
+    return segments.Segment(
+        atom=seg.atom,
+        address=seg.address,
+        perceptual=seg.perceptual,
+        body=seg.body,
+        extra=dict(seg.extra),
+        overlay=seg.overlay,
+    )
+
+
+# ---------- the legacy container-composition rendering (pre-#131) ---------- #
+#
+# A manifest-disposition media container whose own body carries a rendering of ONE stream
+# member's bytes, addressed on the CONTAINER's own composition axis (`time_range=…`) rather
+# than the member's address — because default-member resolution (§6.2) makes the `stream_id=`
+# prefix omittable when the container holds exactly one member of the needed kind. The
+# ordinary member-address match above never sees this population: there is no member address
+# on the segment for it to match. `container-carries-rendering` (lint.py) already names it;
+# its two gating facts are reused here rather than re-derived — `disposition: manifest` and a
+# stored rendering in the content zone.
+
+#: Segment kind → the member media-type prefix that kind is a rendering OF. The audio-track
+#: record owns the transcript, the video-track record owns on-screen text (§65) — the same
+#: pairing default-member resolution uses to pick a bare `time_range=`/`frame=` op's target.
+_LEGACY_KIND_STREAM_PREFIX: dict[str, str] = {
+    "text/transcript": "audio/",
+    "text/ocr": "video/",
+}
+
+
+def _legacy_container_segments(
+    blocks: list[Any], member_map: dict[str, dict[str, Any]]
+) -> list[tuple[segments.Section | None, segments.Segment]]:
+    """Content-atom segments of a legacy kind whose address does not stand at, or chain from,
+    any member's address — the population the ordinary match (`affected`, above) never
+    collects, precisely because there is no member address on the segment."""
+    out: list[tuple[segments.Section | None, segments.Segment]] = []
+    for blk in blocks:
+        container = blk if isinstance(blk, segments.Section) else None
+        for seg in blk.segments if isinstance(blk, segments.Section) else [blk]:
+            if not isinstance(seg, segments.Segment) or not seg.is_content:
+                continue
+            kind = seg.overlay or seg.atom
+            if kind not in _LEGACY_KIND_STREAM_PREFIX:
+                continue
+            addrs = _addr_list(seg.address)
+            if not addrs or any(_base_and_suffix(a)[0] in member_map for a in addrs):
+                continue  # a real member address — the ordinary path already owns this one
+            out.append((container, seg))
+    return out
+
+
+def _stream_candidates(post: frontmatter.Post, prefix: str) -> list[dict[str, Any]]:
+    """Member rows whose `media_type` starts with `prefix` (`audio/`, `video/`), deduped by
+    transport — the population default-member resolution (§6.2) picks from when exactly one
+    exists. Two or more is the ambiguity §6.2 refuses to guess through; reseat holds on it the
+    same way."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in records.iter_members(post):
+        media_type = str(row.get("media_type") or "")
+        if not media_type.startswith(prefix):
+            continue
+        hexval = _transport_hex(row)
+        if hexval in seen:
+            continue
+        seen.add(hexval)
+        out.append(row)
+    return out
+
+
+# ---------- seating a member onto its leaf (shared by every association path) ---------- #
+
+
+def _seat_source_member(
+    report: RecordReseat,
+    corpus_root: Path,
+    source: _MemberSource,
+    rid: str,
+    hexval: str,
+    base: str,
+    row: dict[str, Any],
+) -> tuple[frontmatter.Post, str, str] | None:
+    """Stream `base`'s bytes, blake3-verify against `hexval`, then load the member's existing
+    record or mint a fresh stub. This is the load-bearing check shared by every association
+    path: a promoted `id` that is not the member's true blake3 is unrecoverable (§8.1).
+    Returns `(leaf_post, outcome, declared_media_type)` — `outcome` is "rendered" (an existing
+    leaf) or "minted" (a fresh stub) — or `None` with `report.hold` set on refusal."""
+    declared = str(row.get("media_type") or "")
+    try:
+        raw = source.bytes_for(base)
+    except ReseatHold as exc:
+        report.hold = str(exc)
+        return None
+    except (ArtifactMissing, ValueError, OSError) as exc:
+        report.hold = f"member at `{base}` could not be materialized: {exc}"
+        return None
+    computed = blake3.blake3(raw).hexdigest()
+    if computed != hexval:
+        report.hold = (
+            f"member at `{base}` streams to blake3 {computed[:12]}… but the roster declares "
+            f"{hexval[:12]}… — the declaration is stale or the bytes differ; refusing to "
+            f"mint a record with a wrong id"
+        )
+        return None
+
+    leaf_file = paths.record_path(corpus_root, hexval)
+    if leaf_file.is_file():
+        return records.load(leaf_file), "rendered", declared
+
+    meta = source.source_metadata(base)
+    origin_fields: dict[str, Any] = {}
+    if meta.get("filename"):
+        origin_fields["filename"] = meta["filename"]
+    if meta.get("source_modified"):
+        origin_fields["source_modified"] = meta["source_modified"]
+    basename = containment.member_sniff_name(base, meta.get("filename"))
+    leaf_post = _mint_leaf(
+        corpus_root,
+        hexval,
+        raw,
+        declared,
+        f"corpus://{rid}?{base}",
+        origin_fields,
+        basename,
+        member_address=base,
+    )
+    return leaf_post, "minted", declared
+
+
+def _seat_leaf(
+    report: RecordReseat,
+    corpus_root: Path,
+    hexval: str,
+    leaf_file: Path,
+    declared: str,
+    outcome: str,
+    leaf_post: frontmatter.Post,
+    moved_all: list[segments.Segment],
+    positions: list[str],
+    *,
+    wrap: Any = None,
+) -> bool:
+    """Dedupe `moved_all` by the leaf's own identity — (opener-id, address) — then seat it onto
+    `leaf_post`: minted-empty, placed-only, already-rendered (the dedup win), or written fresh
+    behind a lint-clean gate. `wrap`, when given, turns the deduped segment list into the
+    block(s) actually emitted (a form span carrying its envelope fields, for a rendering whose
+    form travels with it) — bare segments otherwise, as an ordinary member rendering always
+    was. Appends to `report.leaves`/`report.counts` and returns True on success; sets
+    `report.hold` and returns False on any refusal. Shared by the ordinary member-address match
+    and the container-composition inference below — once a member and its moved segments are
+    known, seating onto the leaf is one job regardless of how the segments were found."""
+    moved: list[segments.Segment] = []
+    by_identity: dict[tuple[str, str | None], segments.Segment] = {}
+    for cand in moved_all:
+        addr = cand.address if isinstance(cand.address, str) else None
+        key = (cand.overlay or cand.atom, addr)
+        prior = by_identity.get(key)
+        if prior is None:
+            by_identity[key] = cand
+            moved.append(cand)
+            continue
+        if prior.body.strip() == cand.body.strip():
+            report.counts["duplicate renderings collapsed"] += 1
+            continue
+        report.hold = (
+            f"member `{hexval[:12]}…` is transcribed twice in this record at one leaf "
+            f"identity ({key[0]} @ {key[1] or 'whole transport'}) with DIFFERENT bodies — "
+            f"two readings of one set of bytes is a judgment, not a merge"
+        )
+        return False
+
+    leaf_relpath = str(leaf_file.relative_to(corpus_root))
+
+    if not moved:
+        report.leaves.append(
+            LeafWrite(
+                record_id=hexval,
+                relpath=leaf_relpath,
+                outcome="minted" if outcome == "minted" else "placed-only",
+                media_type=declared,
+                new_text=records.dumps(leaf_post) if outcome == "minted" else None,
+                positions=positions,
+            )
+        )
+        report.counts["members promoted" if outcome == "minted" else "members placed"] += 1
+        return True
+
+    wanted = segments.emit(wrap(moved) if wrap else moved).rstrip("\n")
+    existing = (leaf_post.content or "").strip()
+    if existing:
+        if existing == wanted:
+            # Two renderings of one member agree. This is the dedup win landing: the second
+            # was work already done.
+            report.leaves.append(
+                LeafWrite(
+                    record_id=hexval,
+                    relpath=leaf_relpath,
+                    outcome="already-rendered",
+                    media_type=declared,
+                    address=moved[0].address,
+                    segments_moved=len(moved),
+                    positions=positions,
+                )
+            )
+            report.counts["renderings already on the leaf"] += len(moved)
+            return True
+        report.hold = (
+            f"member `{hexval[:12]}…` already carries a DIFFERENT rendering on its own "
+            f"record ({leaf_relpath}) — two readings of one set of bytes is a judgment, "
+            f"not a merge"
+        )
+        return False
+
+    leaf_post.content = wanted
+    # A freshly minted leaf already carries this pass as `touch[0]` (the stub's own
+    # identifier) — appending it again would read as two passes where there was one.
+    if outcome != "minted":
+        touches.record_touch(leaf_post, touches.script_identifier(TOUCH_ID))
+    # The leaf is a record this pass is responsible for, so it passes the same gate a
+    # record must pass to be committed. Cheap here (one small record), and it is the only
+    # thing standing between a mechanical re-address and a fleet of records nobody linted —
+    # the #61 lesson: run the cheap check before the correct-looking answer.
+    leaf_errors = [
+        f.rule_id
+        for f in lint.lint(leaf_post, segments.iter_blocks(leaf_post.content or ""), corpus_root)
+        if f.severity == "error"
+    ]
+    if leaf_errors:
+        report.hold = (
+            f"the member's own record would not lint clean "
+            f"({', '.join(sorted(set(leaf_errors)))})"
+        )
+        return False
+    report.leaves.append(
+        LeafWrite(
+            record_id=hexval,
+            relpath=leaf_relpath,
+            outcome=outcome,
+            media_type=declared,
+            new_text=records.dumps(leaf_post),
+            address=moved[0].address,
+            segments_moved=len(moved),
+            positions=positions,
+        )
+    )
+    report.counts["renderings re-seated"] += len(moved)
+    if outcome == "minted":
+        report.counts["members promoted"] += 1
+    return True
+
+
 # ---------- the sweep ---------- #
 
 
@@ -532,7 +804,15 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
             # marker.
             affected.append((container, seg, hits))
 
-    if not affected:
+    # The legacy pre-#131 population `affected` never sees: a manifest-disposition container's
+    # own body rendering a stream member's bytes on the CONTAINER's own composition axis
+    # (`time_range=…`), rather than the member's address — the same population
+    # `container-carries-rendering` (lint.py) already names, reusing its two gating facts.
+    legacy: list[tuple[segments.Section | None, segments.Segment]] = []
+    if schemas.resolved_disposition_for_record(corpus_root, post) == "manifest":
+        legacy = _legacy_container_segments(blocks, member_map)
+
+    if not affected and not legacy:
         report.skipped = "no member is marked or rendered on this record"
         return report
 
@@ -560,65 +840,20 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
             order.append(hexval)
         per_member[hexval].append((container, seg, addrs))
 
-    leaf_posts: dict[str, frontmatter.Post] = {}
     for hexval in order:
         entries = per_member[hexval]
         base = _base_and_suffix(entries[0][2][0])[0]
         row = member_map[base]
         leaf_file = paths.record_path(corpus_root, hexval)
-        declared = str(row.get("media_type") or "")
 
-        # The bytes, verified. This is the load-bearing check: a promoted id MUST equal the
-        # member's true blake3 (§8.1), and the roster is where the claim comes from.
-        try:
-            raw = source.bytes_for(base)
-        except ReseatHold as exc:
-            report.hold = str(exc)
+        seated = _seat_source_member(report, corpus_root, source, rid, hexval, base, row)
+        if seated is None:
             return report
-        except (ArtifactMissing, ValueError, OSError) as exc:
-            report.hold = f"member at `{base}` could not be materialized: {exc}"
-            return report
-        computed = blake3.blake3(raw).hexdigest()
-        if computed != hexval:
-            report.hold = (
-                f"member at `{base}` streams to blake3 {computed[:12]}… but the roster declares "
-                f"{hexval[:12]}… — the declaration is stale or the bytes differ; refusing to "
-                f"mint a record with a wrong id"
-            )
-            return report
-
-        if leaf_file.is_file():
-            leaf_post = records.load(leaf_file)
-            outcome = "rendered"
-        else:
-            meta = source.source_metadata(base)
-            origin_fields: dict[str, Any] = {}
-            if meta.get("filename"):
-                origin_fields["filename"] = meta["filename"]
-            if meta.get("source_modified"):
-                origin_fields["source_modified"] = meta["source_modified"]
-            basename = containment.member_sniff_name(base, meta.get("filename"))
-            leaf_post = _mint_leaf(
-                corpus_root,
-                hexval,
-                raw,
-                declared,
-                f"corpus://{rid}?{base}",
-                origin_fields,
-                basename,
-            )
-            outcome = "minted"
+        leaf_post, outcome, declared = seated
 
         # The renderings to move: only segments that actually carry one. A bare marker moves
         # nothing — its whole content was the position, and the placement now holds that.
         #
-        # Then DEDUPE by the leaf's own identity, (opener-id, address). This is not tidiness:
-        # a member deduped across two positions in one page is routinely transcribed twice
-        # there (`el=7` and `el=145` of the same GIF), and both renderings re-address to the
-        # same leaf identity — so emitting both would put a `segment-address-duplicate` on a
-        # record this pass just minted. Where the two agree, one is the answer and the other was
-        # the redundant work the amendment measures. Where they disagree, it is the same
-        # judgment as two parents disagreeing, and it is held.
         # A BARE `text` body at a non-text member's address is refused, and this is the single
         # most consequential refusal in the verb. §4.3.2.2 admits plain prose as a lossless
         # rendering — for text. Pixels do not render as plain prose: the overlay is how a
@@ -665,109 +900,143 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
         except ReseatHold as exc:
             report.hold = str(exc)
             return report
-        moved: list[segments.Segment] = []
-        by_identity: dict[tuple[str, str | None], segments.Segment] = {}
-        for cand in moved_all:
-            addr = cand.address if isinstance(cand.address, str) else None
-            key = (cand.overlay or cand.atom, addr)
-            prior = by_identity.get(key)
-            if prior is None:
-                by_identity[key] = cand
-                moved.append(cand)
-                continue
-            if prior.body.strip() == cand.body.strip():
-                report.counts["duplicate renderings collapsed"] += 1
-                continue
-            report.hold = (
-                f"member `{hexval[:12]}…` is transcribed twice in this record at one leaf "
-                f"identity ({key[0]} @ {key[1] or 'whole transport'}) with DIFFERENT bodies — "
-                f"two readings of one set of bytes is a judgment, not a merge"
-            )
-            return report
 
         positions = sorted({_base_and_suffix(a)[0] for _c, _s, aa in entries for a in aa})
-        leaf_relpath = str(leaf_file.relative_to(corpus_root))
-
-        if not moved:
-            report.leaves.append(
-                LeafWrite(
-                    record_id=hexval,
-                    relpath=leaf_relpath,
-                    outcome="minted" if outcome == "minted" else "placed-only",
-                    media_type=declared,
-                    new_text=records.dumps(leaf_post) if outcome == "minted" else None,
-                    positions=positions,
-                )
-            )
-            if outcome == "minted":
-                leaf_posts[hexval] = leaf_post
-            report.counts["members promoted" if outcome == "minted" else "members placed"] += 1
-            continue
-
-        wanted = segments.emit(moved).rstrip("\n")
-        existing = (leaf_post.content or "").strip()
-        if existing:
-            if existing == wanted:
-                # Two parents rendered one member and agree. This is the dedup win landing:
-                # the second parent's transcription was work already done.
-                report.leaves.append(
-                    LeafWrite(
-                        record_id=hexval,
-                        relpath=leaf_relpath,
-                        outcome="already-rendered",
-                        media_type=declared,
-                        address=moved[0].address,
-                        segments_moved=len(moved),
-                        positions=positions,
-                    )
-                )
-                report.counts["renderings already on the leaf"] += len(moved)
-                continue
-            report.hold = (
-                f"member `{hexval[:12]}…` already carries a DIFFERENT rendering on its own "
-                f"record ({leaf_relpath}) — two readings of one set of bytes is a judgment, "
-                f"not a merge"
-            )
+        if not _seat_leaf(
+            report,
+            corpus_root,
+            hexval,
+            leaf_file,
+            declared,
+            outcome,
+            leaf_post,
+            moved_all,
+            positions,
+        ):
             return report
 
-        leaf_post.content = wanted
-        # A freshly minted leaf already carries this pass as `touch[0]` (the stub's own
-        # identifier) — appending it again would read as two passes where there was one.
-        if outcome != "minted":
-            touches.record_touch(leaf_post, touches.script_identifier(TOUCH_ID))
-        # The leaf is a record this pass is responsible for, so it passes the same gate a
-        # record must pass to be committed. Cheap here (one small record), and it is the only
-        # thing standing between a mechanical re-address and a fleet of 14,446 records nobody
-        # linted — the #61 lesson: run the cheap check before the correct-looking answer.
-        leaf_errors = [
-            f.rule_id
-            for f in lint.lint(
-                leaf_post, segments.iter_blocks(leaf_post.content or ""), corpus_root
-            )
-            if f.severity == "error"
-        ]
-        if leaf_errors:
-            report.hold = (
-                f"the member's own record would not lint clean "
-                f"({', '.join(sorted(set(leaf_errors)))})"
-            )
-            return report
-        leaf_posts[hexval] = leaf_post
-        report.leaves.append(
-            LeafWrite(
-                record_id=hexval,
-                relpath=leaf_relpath,
-                outcome=outcome,
-                media_type=declared,
-                new_text=records.dumps(leaf_post),
-                address=moved[0].address,
-                segments_moved=len(moved),
-                positions=positions,
-            )
-        )
-        report.counts["renderings re-seated"] += len(moved)
-        if outcome == "minted":
-            report.counts["members promoted"] += 1
+    # ---- the legacy container-composition association ---- #
+    #
+    # Ambiguity is a hold, never a skip: zero or two-or-more candidate stream members of the
+    # matching kind, a hash disagreement (`_seat_source_member`), or a leaf already carrying a
+    # conflicting rendering (`_seat_leaf`) — each holds with a reason, the same refusal
+    # discipline `container-carries-rendering` names but cannot itself act on.
+    legacy_doomed: dict[int, list[str]] = {}
+    legacy_hexvals: set[str] = set()
+    sections_to_bare: set[int] = set()
+    if legacy:
+        legacy_by_kind: dict[str, list[tuple[segments.Section | None, segments.Segment]]] = {}
+        for container, seg in legacy:
+            legacy_by_kind.setdefault(seg.overlay or seg.atom, []).append((container, seg))
+
+        for kind, kind_entries in legacy_by_kind.items():
+            prefix = _LEGACY_KIND_STREAM_PREFIX[kind]
+            stream_word = prefix.rstrip("/")
+            candidates = _stream_candidates(post, prefix)
+            if not candidates:
+                report.hold = (
+                    f"container carries {len(kind_entries)} `{kind}` segment(s) addressed on "
+                    f"its own timeline but the roster names no {stream_word} stream member to "
+                    f"seat them on — promote one first, or this rendering has nowhere faithful "
+                    f"to go"
+                )
+                return report
+            if len(candidates) > 1:
+                report.hold = (
+                    f"container carries {len(kind_entries)} `{kind}` segment(s) addressed on "
+                    f"its own timeline and the roster names {len(candidates)} {stream_word} "
+                    f"stream members — which one they render is a judgment, not a migration"
+                )
+                return report
+            row = candidates[0]
+            base_addrs = _addr_list(row.get("address"))
+            if not base_addrs:
+                report.hold = f"the {stream_word} stream member carries no roster address"
+                return report
+            base = base_addrs[0]
+            hexval = _transport_hex(row)
+            if not hexval:
+                report.hold = (
+                    f"the {stream_word} stream member carries no blake3 transport — cannot "
+                    f"promote it"
+                )
+                return report
+            leaf_file = paths.record_path(corpus_root, hexval)
+
+            seated = _seat_source_member(report, corpus_root, source, rid, hexval, base, row)
+            if seated is None:
+                return report
+            leaf_post, outcome, declared = seated
+
+            # The form span this kind's rendering owned travels WITH it — envelope fields (a
+            # diarization codebook) are mechanically derivable only from the segments that just
+            # moved, so a form the container no longer carries content for is a claim the
+            # container can no longer make (§4.3.2.1). Only when every doomed segment of this
+            # kind shares ONE container section: split across two is not one mechanical move.
+            containers = {id(c): c for c, _s in kind_entries if c is not None}
+            if len(containers) > 1:
+                report.hold = (
+                    f"`{kind}` renderings addressed on the container's own timeline span "
+                    f"{len(containers)} different form sections — moving the form span whole "
+                    f"is not one mechanical move"
+                )
+                return report
+            target_section = next(iter(containers.values()), None)
+            wrap_fn = None
+            if target_section is not None and target_section.form is not None:
+
+                def wrap_fn(
+                    moved_segs: list[segments.Segment], _s: Any = target_section
+                ) -> list[Any]:
+                    return [
+                        segments.Section(form=_s.form, segments=moved_segs, extra=dict(_s.extra))
+                    ]
+
+            moved_all = [
+                _verbatim_segment(seg) for _c, seg in kind_entries if (seg.body or "").strip()
+            ]
+            if not _seat_leaf(
+                report,
+                corpus_root,
+                hexval,
+                leaf_file,
+                declared,
+                outcome,
+                leaf_post,
+                moved_all,
+                [base],
+                wrap=wrap_fn,
+            ):
+                return report
+
+            legacy_hexvals.add(hexval)
+            for _c, seg in kind_entries:
+                legacy_doomed[id(seg)] = [base]
+            if wrap_fn is not None:
+                sections_to_bare.add(id(target_section))
+
+            # A sweep vouching for this kind's extraction (§4.3.3.6) is a claim about the
+            # container's OWN content zone; once the rendering moves, so does the claim — the
+            # band's `address:` is on the same timeline the segments were, so it carries over
+            # unchanged. The just-appended leaf write is amended in place (rather than risking
+            # a "no write" outcome silently dropping the sweep) so the declaration never lands
+            # nowhere.
+            moved_sweeps = [
+                ctx
+                for ctx in (post.metadata.get("_contexts") or [])
+                if ctx.get("namespace") == "sweep" and (ctx.get("fields") or {}).get("kind") == kind
+            ]
+            if moved_sweeps:
+                post.metadata["_contexts"] = [
+                    ctx
+                    for ctx in (post.metadata.get("_contexts") or [])
+                    if ctx not in moved_sweeps
+                ]
+                leaf_post.metadata.setdefault("_contexts", []).extend(
+                    dict(ctx) for ctx in moved_sweeps
+                )
+                report.leaves[-1].new_text = records.dumps(leaf_post)
+                report.counts["sweep declarations re-seated"] += len(moved_sweeps)
 
     # ---- the parent rewrite ---- #
     #
@@ -775,22 +1044,23 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
     # section (§4.3.2.1's before-only rule), so the record is that run followed by its sections
     # in order. `seen` spans the whole record, so a member marked at `el=3` and transcribed at
     # `el=3&bbox=…` in two different blocks yields ONE placement, at the first position.
-    doomed = {id(seg) for _c, seg, _a in affected}
-    placed_positions = {_base_and_suffix(a)[0] for _c, _s, aa in affected for a in aa}
+    doomed: dict[int, list[str]] = {
+        id(seg): [_base_and_suffix(a)[0] for a in aa] for _c, seg, aa in affected
+    }
+    doomed.update(legacy_doomed)
     seen: set[str] = set()
     written: list[str] = []
     new_blocks: list[Any] = list(
-        _rewrite(
-            [b for b in blocks if isinstance(b, segments.Segment)],
-            doomed,
-            placed_positions,
-            seen,
-            written,
-        )
+        _rewrite([b for b in blocks if isinstance(b, segments.Segment)], doomed, seen, written)
     )
     for blk in blocks:
         if isinstance(blk, segments.Section):
-            blk.segments = _rewrite(blk.segments, doomed, placed_positions, seen, written)
+            blk.segments = _rewrite(blk.segments, doomed, seen, written)
+            if id(blk) in sections_to_bare:
+                # The form no longer has content to govern here — it moved (above) to the leaf
+                # that now genuinely carries it.
+                blk.form = None
+                blk.extra = {}
             new_blocks.append(blk)
     blocks = new_blocks
     report.counts["placements written"] += len(written)
@@ -840,7 +1110,8 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
         )
         return report
     confirmed = {leaf.record_id for leaf in report.leaves}
-    if confirmed != set(order):
+    expected = set(order) | legacy_hexvals
+    if confirmed != expected:
         report.hold = "internal: a placed member has no leaf write — refusing a dangling placement"
         return report
 
@@ -851,26 +1122,29 @@ def reseat_record(record_file: Path, corpus_root: Path) -> RecordReseat:
 
 def _rewrite(
     segs: list[segments.Segment],
-    doomed: set[int],
-    positions: set[str],
+    doomed: dict[int, list[str]],
     seen: set[str],
     written: list[str],
 ) -> list[segments.Segment]:
     """Replace each run of doomed segments with one placement per member position, at the
     position of its first occurrence — so the parent's reading order is exactly preserved, a
     member marked at two positions keeps both, and a member marked *and* transcribed at one
-    position collapses to one. `seen` is the caller's, shared across the whole record; an
-    already-present placement counts as seen, so re-running is inert."""
+    position collapses to one. `doomed` maps a doomed segment's `id()` to the position(s) its
+    placement belongs at — ordinarily derived from the segment's own address, but for the
+    legacy container-composition association (above) the position is the associated member's
+    address, which the segment's own (`time_range=…`) address never names. `seen` is the
+    caller's, shared across the whole record; an already-present placement counts as seen, so
+    re-running is inert."""
     out: list[segments.Segment] = []
     for seg in segs:
-        if id(seg) not in doomed:
+        target_positions = doomed.get(id(seg))
+        if target_positions is None:
             if seg.is_placement:
                 seen.update(_addr_list(seg.address))
             out.append(seg)
             continue
-        for addr in _addr_list(seg.address):
-            base = _base_and_suffix(addr)[0]
-            if base in positions and base not in seen:
+        for base in target_positions:
+            if base not in seen:
                 seen.add(base)
                 written.append(base)
                 out.append(segments.Segment(atom="placement", address=base))

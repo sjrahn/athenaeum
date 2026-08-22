@@ -11,12 +11,15 @@ and must never be migrated onto the image as if it were a transcription of the p
 from __future__ import annotations
 
 import base64
+import shutil
+import subprocess
+from typing import Any
 
 import blake3
 import frontmatter
 import pytest
 
-from corpus import hashing, paths, records, reseat, schemas, segments
+from corpus import containment, hashing, paths, records, reseat, schemas, segments
 from corpus.store import LocalArtifactStore
 
 _PNG = base64.b64decode(
@@ -424,3 +427,215 @@ def test_a_multi_region_segment_naming_both_positions_of_one_member_reseats(tmp_
     # the legitimate multi-region case and re-seats cleanly to one leaf.
     assert report.changed, report.hold
     assert report.counts["placements written"] == 2
+
+
+# ---------- the legacy pre-#131 container-composition rendering ---------- #
+#
+# A manifest-disposition media container whose own body carries whisper `text/transcript`
+# segments addressed on the container's own timeline (`time_range=…`) — not the audio
+# member's address — interleaved with `image` frame markers, inside a `form/transcript`
+# section carrying a `speakers:` codebook, plus a trailing sweep declaration. Real bytes, real
+# streams: the blake3 verification is exercised rather than stubbed, exactly like the ordinary
+# fixtures above.
+
+_needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+
+
+def _media_corpus(tmp_path):
+    root = tmp_path / "m"
+    (root / "records").mkdir(parents=True)
+    (root / "schema").mkdir(parents=True)
+    schemas.cache_clear()
+    return root
+
+
+def _mp4_container_bytes(tmp_path, name: str = "clip"):
+    """A 2s h264+aac mp4 — two streams, real enough for containment's own extraction."""
+    src = tmp_path / f"{name}.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=15",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+            "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return src
+
+
+def _legacy_container_record(
+    tmp_path,
+    *,
+    audio_streams: int = 1,
+    include_audio: bool = True,
+    include_transcript: bool = True,
+):
+    root = _media_corpus(tmp_path)
+    src = _mp4_container_bytes(tmp_path)
+    cid = hashing.hash_file(src)["blake3"]
+    LocalArtifactStore(root).put(cid, "mp4", src)
+    artifact_path = paths.artifact_path(root, cid, "mp4")
+
+    post = frontmatter.Post("")
+    post.metadata.update({"id": cid, "transport": f"sha256:{'0' * 64}"})
+    records.set_artifact_block(post, mime="video/mp4", fields={})
+    records.append_origin_block(post, uri="file:///clip.mp4", snapshot="2026-01-01T00:00:00Z")
+
+    with containment.open_member_stream(artifact_path, "video/mp4", "stream_id=0") as fp:
+        video_raw = fp.read()
+    records.append_member(
+        post,
+        media_type="video/mp4",
+        address="stream_id=0",
+        transport=f"blake3:{blake3.blake3(video_raw).hexdigest()}",
+        fields={"bytes": len(video_raw)},
+    )
+
+    audio_hex: str | None = None
+    if include_audio:
+        for i in range(audio_streams):
+            addr = f"stream_id={i + 1}"
+            if i == 0:
+                with containment.open_member_stream(artifact_path, "video/mp4", addr) as fp:
+                    audio_raw = fp.read()
+                hexval = blake3.blake3(audio_raw).hexdigest()
+                audio_hex = hexval
+                nbytes = len(audio_raw)
+            else:
+                # A second candidate audio stream — the ambiguity holds before any bytes are
+                # streamed, so fabricated bytes are fine here.
+                hexval = "f" * 64
+                nbytes = 1000
+            records.append_member(
+                post,
+                media_type="audio/mp4",
+                address=addr,
+                transport=f"blake3:{hexval}",
+                fields={"bytes": nbytes},
+            )
+
+    blocks: list[Any] = []
+    if include_transcript:
+        blocks.append(
+            segments.Section(
+                form="transcript",
+                extra={"speakers": ["Speaker 1 diarization:1"]},
+                segments=[
+                    segments.Segment(atom="image", address="frame=00:00:01"),
+                    segments.Segment(
+                        atom="text",
+                        overlay="text/transcript",
+                        address="time_range=00:00-00:01",
+                        body="Hello there and welcome to the stream everyone",
+                        extra={"speaker": 0},
+                    ),
+                    segments.Segment(
+                        atom="text",
+                        overlay="text/transcript",
+                        address="time_range=00:01-00:02",
+                        body="This is the second utterance of the recording",
+                        extra={"speaker": 0},
+                    ),
+                ],
+            )
+        )
+    post.content = segments.emit(blocks)
+    if include_transcript:
+        records.append_sweep_block(
+            post,
+            kind="text/transcript",
+            detector="whisper-test@1",
+            address="time_range=00:00-00:02",
+        )
+
+    rf = paths.record_path(root, cid)
+    records.dump(post, rf)
+    return root, rf, audio_hex
+
+
+@_needs_ffmpeg
+def test_legacy_container_transcript_is_destined_for_the_audio_leaf_not_skipped(tmp_path):
+    """The bug: reseat used to report `skipped: "no member is marked or rendered..."` for this
+    shape, even though `corpus lint`'s `container-carries-rendering` already names it. The
+    default-member resolution the container's own `time_range=` addressing relies on (§6.2)
+    picks the one audio stream member, and the dry run reports a real move, not a skip."""
+    root, rf, audio_hex = _legacy_container_record(tmp_path)
+    report = reseat.reseat_record(rf, root)
+    assert report.hold is None, report.hold
+    assert report.skipped is None
+    assert report.changed is True
+    (leaf,) = report.leaves
+    assert leaf.record_id == audio_hex
+    assert leaf.outcome == "minted"
+
+
+@_needs_ffmpeg
+def test_legacy_container_transcript_apply_moves_transcript_form_and_sweep_to_the_leaf(tmp_path):
+    root, rf, audio_hex = _legacy_container_record(tmp_path)
+    report = reseat.reseat_record(rf, root)
+    assert report.changed, report.hold
+
+    rf.write_text(report.new_text, encoding="utf-8")
+    for leaf in report.leaves:
+        p = root / leaf.relpath
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(leaf.new_text or "", encoding="utf-8")
+
+    # The leaf: the transcript's own form/section, its speakers codebook, both utterances at
+    # their ORIGINAL time_range addresses (the leaf shares the container's timeline, §7.1), and
+    # the sweep that vouched for their extraction.
+    leaf_post = records.load(paths.record_path(root, audio_hex))
+    assert records.media_type_for(leaf_post) == "audio/mp4"
+    (section,) = segments.iter_blocks(leaf_post.content)
+    assert section.form == "transcript"
+    assert section.extra["speakers"] == ["Speaker 1 diarization:1"]
+    assert [s.address for s in section.segments] == [
+        "time_range=00:00-00:01",
+        "time_range=00:01-00:02",
+    ]
+    assert section.segments[0].body.strip() == "Hello there and welcome to the stream everyone"
+    assert section.segments[0].extra.get("speaker") == 0
+    (sweep,) = records.iter_sweep_blocks(leaf_post)
+    assert sweep["fields"]["kind"] == "text/transcript"
+    assert sweep["fields"]["address"] == "time_range=00:00-00:02"
+    assert sweep["fields"]["detector"] == "whisper-test@1"
+
+    # The container: the image frame marker stays, the transcript collapses to ONE placement
+    # at the audio member's own address, the form is dropped (nothing left for it to govern),
+    # and its sweep declaration is gone — it moved with the rendering it vouched for.
+    container_post = records.load(rf)
+    (container_section,) = segments.iter_blocks(container_post.content)
+    assert container_section.form is None
+    assert [s.atom for s in container_section.segments] == ["image", "placement"]
+    assert container_section.segments[1].address == "stream_id=1"
+    assert list(records.iter_sweep_blocks(container_post)) == []
+
+
+@_needs_ffmpeg
+def test_two_candidate_audio_streams_holds_no_writes(tmp_path):
+    root, rf, _audio_hex = _legacy_container_record(tmp_path, audio_streams=2)
+    before = rf.read_text(encoding="utf-8")
+    report = reseat.reseat_record(rf, root)
+    assert report.changed is False
+    assert "2 audio stream members" in (report.hold or "")
+    assert rf.read_text(encoding="utf-8") == before
+
+
+@_needs_ffmpeg
+def test_zero_candidate_audio_streams_holds(tmp_path):
+    root, rf, _audio_hex = _legacy_container_record(tmp_path, include_audio=False)
+    report = reseat.reseat_record(rf, root)
+    assert report.changed is False
+    assert "no audio stream member" in (report.hold or "")
+
+
+@_needs_ffmpeg
+def test_a_manifest_container_with_nothing_to_move_still_skips(tmp_path):
+    """The old genuinely-nothing-to-do case, unaffected: a manifest container carrying no
+    legacy rendering is untouched exactly as before, `disposition: manifest` notwithstanding."""
+    root, rf, _audio_hex = _legacy_container_record(tmp_path, include_transcript=False)
+    report = reseat.reseat_record(rf, root)
+    assert report.changed is False
+    assert report.skipped == "no member is marked or rendered on this record"
