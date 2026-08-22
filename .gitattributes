@@ -1,0 +1,2 @@
+# fixture bytes are identity-pinned (blake3 in exemplars.yaml) — never convert line endings
+testdata/synthetic/* -text
