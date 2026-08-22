@@ -74,7 +74,7 @@ def draft(
 
     fields = _artifact_fields(msg)
     text = _trim_quoted_history(_message_text(msg))
-    embeds = _part_embeds(msg)
+    embeds = _part_embeds(raw, msg)
 
     if text:
         text_algos = algos_for_atom("text", fingerprint)
@@ -283,16 +283,16 @@ def _cut(lines: list[str], i: int) -> str:
 # ---------- non-body parts → embeds ---------- #
 
 
-def _part_embeds(msg) -> list[dict[str, Any]]:
+def _part_embeds(raw: bytes, msg) -> list[dict[str, Any]]:
     """One embed per addressable part the body did NOT consume — attachments, inline images,
     nested messages. Addressed `part=<N>` over the shared enumeration; `transport` is blake3 of
     the CTE-decoded payload (the promotable member identity)."""
     skip = emlfile.body_skip_ids(msg)
     embeds: list[dict[str, Any]] = []
-    for ordinal, part in enumerate(emlfile.addressable_parts(msg), start=1):
+    parts_and_bytes = emlfile.parts_with_decoded_bytes(raw, msg)
+    for ordinal, (part, decoded) in enumerate(parts_and_bytes, start=1):
         if id(part) in skip:
             continue
-        decoded = emlfile.part_decoded_bytes(part)
         media_type, part_fields = emlfile.part_facts(part, decoded)
         embeds.append(
             {

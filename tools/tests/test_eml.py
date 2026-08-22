@@ -119,6 +119,156 @@ def test_addressable_parts_and_body_skip():
     assert {i for i, p in enumerate(parts, 1) if id(p) in skip} == {1, 2}
 
 
+# ---------- nested message/rfc822 identity: verbatim slice, no re-serialization engine ------- #
+#
+# spec §2 (v32), the payload-identity principle: unwrapping must be a pure function of the
+# container bytes, no engine in the identity path. A nested message/rfc822 part's CTE is
+# 7bit/8bit/binary (RFC 2046 forbids base64/QP on it), so its CTE-decoded payload is the
+# verbatim embedded bytes — sliced straight out of the container, never re-serialized.
+
+
+def _multipart(boundary: bytes, headers: bytes, parts: list[bytes], eol: bytes = b"\r\n") -> bytes:
+    """A minimal multipart/mixed raw message: `headers` is the top-level header block (no
+    trailing blank line), `parts` are already-complete part bytes (own headers + blank line +
+    body) joined by `--boundary` delimiter lines with the given line ending."""
+    body = eol.join([b"--" + boundary] + [p + eol + b"--" + boundary for p in parts])
+    return (
+        headers + eol
+        + b'Content-Type: multipart/mixed; boundary="' + boundary + b'"' + eol
+        + eol
+        + body + b"--" + eol
+    )
+
+
+# A subject line long enough that policy.SMTP's folding algorithm re-wraps it on
+# re-serialization — the exact drift the old `sub.as_bytes(policy=...)` path was exposed to.
+_LONG_SUBJECT = (
+    b"Subject: A very long subject line that certainly exceeds the standard "
+    b"seventy eight character wrap limit here"
+)
+
+
+def test_nested_message_identity_is_verbatim_not_reserialized():
+    """The old code path (`sub.as_bytes(policy=policy.SMTP)`) would refold this header
+    differently than it sits in the container — proving the fix bites, not just passes."""
+    inner_payload = (
+        _LONG_SUBJECT + b"\r\nX-Custom: value\r\n\r\ninner body line one\r\ninner body line two"
+    )
+    raw = _multipart(
+        b"BND1",
+        b"From: a@x\r\nTo: b@x\r\nSubject: outer",
+        [
+            b"Content-Type: text/plain\r\n\r\nhello body",
+            b"Content-Type: message/rfc822\r\n\r\n" + inner_payload,
+        ],
+    )
+    msg = emlfile.parse(raw)
+    parts = emlfile.addressable_parts(msg)
+    assert [p.get_content_type() for p in parts] == ["text/plain", "message/rfc822"]
+
+    # (a) resolve_part returns the verbatim embedded bytes.
+    got = emlfile.resolve_part(raw, 2)
+    assert got == inner_payload
+
+    # (b) the old re-serialization path would have differed — the test bites.
+    nested = parts[1]
+    old_way = nested.get_content().as_bytes(policy=policy.SMTP)
+    assert old_way != inner_payload
+
+    # (c) round-trip: blake3 of resolve_part output is stable and equals blake3 of the bytes
+    # originally embedded.
+    h1 = _b3(emlfile.resolve_part(raw, 2))
+    h2 = _b3(emlfile.resolve_part(raw, 2))
+    assert h1 == h2 == _b3(inner_payload)
+
+    # part_decoded_bytes refuses to guess without a raw_span (no re-serialization fallback).
+    with pytest.raises(ValueError):
+        emlfile.part_decoded_bytes(nested)
+
+
+def test_nested_message_identity_lf_only():
+    """Bare-LF messages (no CR) locate the header/body split and the boundary delimiters
+    correctly — the split logic isn't CRLF-only."""
+    inner_payload = b"Subject: lf only inner\n\ninner body\nsecond line"
+    raw = _multipart(
+        b"BND2",
+        b"From: a@x\nSubject: outer",
+        [
+            b"Content-Type: text/plain\n\nhello",
+            b"Content-Type: message/rfc822\n\n" + inner_payload,
+        ],
+        eol=b"\n",
+    )
+    got = emlfile.resolve_part(raw, 2)
+    assert got == inner_payload
+    assert _b3(got) == _b3(inner_payload)
+
+
+def test_nested_message_identity_through_nested_multipart():
+    """A message/rfc822 part nested two multipart levels deep is still located correctly —
+    the span walker recurses through multipart containers, not just the top level."""
+    inner_payload = b"Subject: doubly nested\r\n\r\ndeep body line"
+    outer_boundary, inner_boundary = b"OUTER-B", b"INNER-B"
+    inner_multipart = (
+        b'Content-Type: multipart/mixed; boundary="' + inner_boundary + b'"\r\n'
+        b"\r\n"
+        b"--" + inner_boundary + b"\r\n"
+        b"Content-Type: application/pdf\r\n\r\nPDFDATA\r\n"
+        b"--" + inner_boundary + b"\r\n"
+        b"Content-Type: message/rfc822\r\n\r\n" + inner_payload + b"\r\n"
+        b"--" + inner_boundary + b"--"
+    )
+    raw = (
+        b"From: a@x\r\nSubject: outer\r\n"
+        b'Content-Type: multipart/mixed; boundary="' + outer_boundary + b'"\r\n'
+        b"\r\n"
+        b"--" + outer_boundary + b"\r\n"
+        b"Content-Type: text/plain\r\n\r\nleaf one\r\n"
+        b"--" + outer_boundary + b"\r\n"
+        + inner_multipart + b"\r\n"
+        b"--" + outer_boundary + b"--\r\n"
+    )
+    msg = emlfile.parse(raw)
+    parts = emlfile.addressable_parts(msg)
+    assert [p.get_content_type() for p in parts] == [
+        "text/plain",
+        "application/pdf",
+        "message/rfc822",
+    ]
+    assert emlfile.resolve_part(raw, 2) == b"PDFDATA"
+    assert emlfile.resolve_part(raw, 3) == inner_payload
+
+
+def test_nested_message_identity_missing_terminal_boundary():
+    """RFC 2046 tolerance: no closing `--boundary--` line at all — the last part's span runs
+    to end-of-message, matching stdlib's own tolerant parse (`CloseBoundaryNotFoundDefect`)."""
+    inner_payload = b"Subject: unterminated\r\n\r\nno closing boundary follows this"
+    boundary = b"BND3"
+    raw = (
+        b"From: a@x\r\nSubject: outer\r\n"
+        b'Content-Type: multipart/mixed; boundary="' + boundary + b'"\r\n'
+        b"\r\n"
+        b"--" + boundary + b"\r\n"
+        b"Content-Type: text/plain\r\n\r\nhello\r\n"
+        b"--" + boundary + b"\r\n"
+        b"Content-Type: message/rfc822\r\n\r\n"
+        + inner_payload
+    )
+    msg = emlfile.parse(raw)
+    assert msg.defects or any(p.defects for p in msg.walk())  # stdlib flags it too
+    assert emlfile.resolve_part(raw, 2) == inner_payload
+
+
+def test_non_message_parts_still_cte_decoded():
+    """Non-message parts are unchanged by the fix: base64 decodes exactly as before, and
+    `part_decoded_bytes` needs no raw_span for them."""
+    root_msg = emlfile.parse(_rich_eml())
+    parts = emlfile.addressable_parts(root_msg)
+    pdf_part = parts[3]
+    assert pdf_part.get_content_type() == "application/pdf"
+    assert emlfile.part_decoded_bytes(pdf_part) == _PDF
+
+
 # ---------- headers → artifact block ---------- #
 
 
