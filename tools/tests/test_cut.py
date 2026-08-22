@@ -348,16 +348,18 @@ def test_a_timeline_op_on_a_leaf_redirects_through_the_container(tmp_path):
     """An elementary stream carries no container timing, so a second of "leaf time" is not a
     second of the timeline the leaf's stored addresses were measured in."""
     root = _corpus(tmp_path)
+    _container(root)
     post = records.load(_leaf(root))
-    got = resolver._stream_timeline_redirect(_parsed(f"corpus://{_LID}?frame=30"), post)
+    got = resolver._member_route_redirect(root, _parsed(f"corpus://{_LID}?frame=30"), post)
     assert got == f"corpus://{_CID}?stream_id=0&frame=30"
 
 
 def test_the_redirect_carries_a_whole_chain(tmp_path):
     root = _corpus(tmp_path)
+    _container(root)
     post = records.load(_leaf(root))
-    got = resolver._stream_timeline_redirect(
-        _parsed(f"corpus://{_LID}?time_range=10-20&format=mp4"), post
+    got = resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_LID}?time_range=10-20&format=mp4"), post
     )
     assert got == f"corpus://{_CID}?stream_id=0&time_range=10-20&format=mp4"
 
@@ -369,9 +371,10 @@ def test_format_redirects_through_the_container(tmp_path):
     themselves a playable single-track container, so this redirected nowhere; that
     changed with the payload-identity principle.)"""
     root = _corpus(tmp_path)
+    _container(root)
     post = records.load(_leaf(root))
-    assert resolver._stream_timeline_redirect(
-        _parsed(f"corpus://{_LID}?format=mp4"), post
+    assert resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_LID}?format=mp4"), post
     ) == f"corpus://{_CID}?stream_id=0&format=mp4"
 
 
@@ -383,25 +386,41 @@ def test_transcribe_redirects_through_the_container(tmp_path):
     bytes reaching the adapter — never a lossy `extract_audio` derivative (module note,
     `corpus.transforms.audio`)."""
     root = _corpus(tmp_path)
+    _container(root)
     post = records.load(_leaf(root))
-    assert resolver._stream_timeline_redirect(
-        _parsed(f"corpus://{_LID}?transcribe"), post
+    assert resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_LID}?transcribe"), post
     ) == f"corpus://{_CID}?stream_id=0&transcribe"
 
 
 def test_an_explicit_stream_id_is_never_second_guessed(tmp_path):
     root = _corpus(tmp_path)
+    _container(root)
     post = records.load(_leaf(root))
-    assert resolver._stream_timeline_redirect(
-        _parsed(f"corpus://{_LID}?stream_id=0&frame=1"), post
+    assert resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_LID}?stream_id=0&frame=1"), post
     ) is None
 
 
 def test_a_container_does_not_redirect_its_own_timeline_ops(tmp_path):
     root = _corpus(tmp_path)
     post = records.load(_container(root))
-    assert resolver._stream_timeline_redirect(
-        _parsed(f"corpus://{_CID}?frame=30"), post
+    assert resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_CID}?frame=30"), post
+    ) is None
+
+
+def test_no_redirect_when_the_container_record_is_missing(tmp_path):
+    """A promoted record's origin `uri:` is HISTORY (§12.9's byte-lookup independence
+    rule) — the container it names at promotion time may since have been removed
+    (`corpus rm`) while the same bytes remain resolvable through a different surviving
+    container via the member index. Redirecting into a dead container would break that
+    fallback, so the redirect stands down and lets ordinary resolution (which consults the
+    member index, not lineage) find the live route instead."""
+    root = _corpus(tmp_path)
+    post = records.load(_leaf(root))  # no _container(root) call — the container is absent
+    assert resolver._member_route_redirect(
+        root, _parsed(f"corpus://{_LID}?frame=30"), post
     ) is None
 
 

@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 32
+version: 33
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 32 (2026-08-21, owner ruling) lands the payload-identity principle. **Identity keys on the fully-unwrapped payload; wrappers are residence forms** (Part II §2): a member's identity bytes are the raw elementary stream / decompressed content, extracted by the corpus's own engine-free table reader — no engine in the identity path, so the id cannot drift across tool versions. `corpus://<leaf> ≡ corpus://<container>?<address>` becomes a verifiable identity equation; a leaf resolves through its container (one route, one cache entry, base form disclosed); playable renderings are derived version-labeled surfaces; the `framing:` stamp retires; single-track media containers become ordinary one-row manifests; compressed single-member envelopes collapse to payload identity at ingest. Store-wrapping (compressed/encrypted at rest) is the named follow-on direction. Prior version notes: the changelog.*
+*Version 33 (2026-08-22, owner ruling) generalizes the v32 route rules to the full breadth of the payload-identity principle they rest on (Part II §6.2): **route unification** holds for every member axis — a promoted member leaf (`stream_id=`, `msg=`, `part=`, `path=`, `card=`, `entry=`, `item=`) resolves through its container, one route, one cache entry, base form disclosed — and **member re-chaining** holds for every member axis, so a further transform after any member address re-enters the working-kind table (`?msg=N&part=M` reaches an attachment through the mbox). No new doctrine, no migration: member-leaf ids already conformed. Prior version notes: the changelog.*

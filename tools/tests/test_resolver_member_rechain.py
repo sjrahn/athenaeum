@@ -192,14 +192,16 @@ def test_image_member_alone_stays_raw_bytes_never_reencoded(tmp_path):
     """A bare (terminal) `path=` on an image member must NOT promote to a full image pipeline
     object — that would silently re-encode the member's bytes (e.g. JPEG -> PNG), which
     `resolve` was never asked to do. `transforms/zip.py`'s documented contract (raw bytes,
-    verbatim) holds for a terminal `path=` regardless of the member's real mime."""
+    verbatim) holds for a terminal `path=` regardless of the member's real mime — the cache
+    extension carries the member's own sniffed type (the extension-asymmetry fix, §6.2), but
+    the BYTES are untouched, never re-encoded through an image pipeline."""
     root = _corpus(tmp_path)
     png_bytes = b"\x89PNG\r\n\x1a\n" + b"FAKEPNGDATA" * 4
     rid = _stage_record(
         root, _zip_with({"photo.png": png_bytes}), mime="application/zip", name="photos.zip"
     )
     out = resolver.resolve(f"corpus://{rid}?path=photo.png", root)
-    assert out.suffix == ".bin"
+    assert out.suffix == ".png"  # sniffed extension, not the generic bytes-kind `.bin`
     assert out.read_bytes() == png_bytes  # byte-identical — never PNG-re-encoded
 
 

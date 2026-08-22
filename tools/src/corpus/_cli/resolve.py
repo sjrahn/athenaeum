@@ -78,14 +78,15 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _base_form(corpus_root, uri: str) -> str | None:
-    """`corpus://<container>?stream_id=<n>` for a bare `corpus://<leaf>` uri, or None.
+    """`corpus://<container>?<axis>=<n>` for a bare `corpus://<leaf>` uri, or None.
 
-    Only for a BARE leaf reference — a URI that already names `stream_id=` or any other
-    op is already explicit about what it's resolving, and the base form would just repeat
-    it back. Tolerant of a leaf whose lineage can't be read (a record the resolve call
-    itself already succeeded against) — the disclosure is a courtesy, never load-bearing."""
-    from corpus import cut as cut_mod
-    from corpus import paths, records
+    Only for a BARE leaf reference — a URI that already names `stream_id=`/`msg=`/… or any
+    other op is already explicit about what it's resolving, and the base form would just
+    repeat it back. Tolerant of a leaf whose lineage can't be read (a record the resolve
+    call itself already succeeded against) — the disclosure is a courtesy, never
+    load-bearing. `resolver.member_lineage` covers every member axis alike (§6.2 "Route
+    unification", v33), not just `stream_id=`."""
+    from corpus import paths, records, resolver
 
     try:
         parsed = furi.parse(uri)
@@ -97,8 +98,8 @@ def _base_form(corpus_root, uri: str) -> str | None:
         post = records.load(paths.record_path(corpus_root, parsed.hash))
     except (FileNotFoundError, OSError):
         return None
-    lineage = cut_mod.stream_lineage(post)
+    lineage = resolver.member_lineage(post)
     if lineage is None:
         return None
-    container_id, stream_address = lineage
-    return f"corpus://{container_id}?{stream_address}"
+    container_id, axis, value = lineage
+    return furi.canonical(furi.ParsedURI(hash=container_id, params=((axis, value),)))

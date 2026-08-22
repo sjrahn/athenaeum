@@ -37,7 +37,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from PIL import Image
 
-from . import containment, paths, records, transforms, ziparchive
+from . import containment, paths, records, transforms
 from . import functional_uri as furi
 from . import mime as mime_mod
 from .store import ArtifactStore, get_store
@@ -92,6 +92,21 @@ _ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
 # The HTML el= LIVE element-scoping op (§6.2, §12.11 `el=`) — the htmlel working-kind resolver
 # path only, never the persisted-segment `address: el=N` read (`transforms.html.ENGINE_VERSION`).
 _HTML_EL_OP_PARAMS: frozenset[str] = frozenset({"el"})
+
+# Every member-extraction axis whose registry handler yields opaque `bytes` and so may
+# itself chain further (§6.2 "Member re-chaining", v33: generalized from `path=`-only to
+# every axis alike) — `_rechain_member` re-detects the extracted bytes' real mime and, when
+# a further param follows, re-enters `_working_kind_for` so the chain continues in the
+# member's OWN pipeline. Deliberately excludes `stream_id=`: a media-stream member's further
+# ops (`frame=`/`time_range=`/`format=`/`transcribe`) read the CONTAINER's timeline through
+# route unification (`_member_route_redirect`, below) — a different mechanism, because a
+# stream payload's own bytes carry no timebase to re-detect a mime from in the first place.
+# `entry=`/`item=` (ICS/HEIF) carry no registered transform yet (§12.11's "formats that
+# arrive later") — harmless to list now: `_resolve_handler` simply finds no handler for them
+# until a schema declares one, exactly as for any other unimplemented axis.
+_MEMBER_RECHAIN_PARAMS: frozenset[str] = frozenset(
+    {"path", "msg", "part", "card", "entry", "item"}
+)
 
 # The turn= unit op and its att= companion (§6.2) — the form-mapping unit-array resolution
 # (`shape.units.ENGINE_VERSION`). RECORD-LEVEL (resolved by `_resolve_turn`, which recognizes
@@ -214,19 +229,20 @@ def resolve(
             corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
         )
 
-    # Route unification (§6.2, v32): a promoted STREAM LEAF's ops that need a TIMELINE or a
-    # PLAYABLE surface redirect through the container. The leaf's own bytes are the raw
-    # payload (§2) — no timescale, no duration, no self-framing of any kind — so a second of
-    # "leaf time" is not a second of the timeline the leaf's stored addresses were computed
-    # in, and ffmpeg cannot even parse the bytes directly for `format=`/`transcribe`. The
-    # container holds the real timeline AND the shared one, so the op runs there with
-    # `stream_id=` composed in — the two URIs name the same bytes by the identity equation
-    # (`corpus://<leaf> ≡ corpus://<container>?stream_id=<n>`), so this is one resolution,
-    # one cache entry, not a workaround. Without this, an address stored on a leaf resolves
-    # against a timebase nobody measured it in.
-    redirected = _stream_timeline_redirect(parsed, artifact_record)
+    # Route unification (§6.2; v32 shipped `stream_id=` only, v33 generalizes to every
+    # member axis): a promoted MEMBER LEAF's resolve — every op, including the bare identity
+    # op — runs through its container instead. `corpus://<leaf>?<ops>` and
+    # `corpus://<container>?<axis>=<n>&<ops>` name the same bytes by the identity equation
+    # (§2) — the container is the one canonical route, so this is one resolution, one cache
+    # entry, not a workaround. For a media-stream leaf this is also where the timeline
+    # lives: the leaf's own bytes are the raw payload (§2) — no timescale, no duration, no
+    # self-framing of any kind — so a second of "leaf time" is not a second of the timeline
+    # the leaf's stored addresses were measured in, and ffmpeg cannot even parse the bytes
+    # directly for `format=`/`transcribe`. Without this, an address stored on a leaf
+    # resolves against a timebase nobody measured it in.
+    redirected = _member_route_redirect(corpus_root, parsed, artifact_record)
     if redirected is not None:
-        log.debug("stream-leaf timeline redirect: %s -> %s", canonical_uri, redirected)
+        log.debug("member-leaf route redirect: %s -> %s", canonical_uri, redirected)
         return resolve(
             redirected, corpus_root, regenerate=regenerate, store=store, transcriber=transcriber
         )
@@ -448,12 +464,13 @@ def resolve(
             log.debug("apply %s=%r (%s -> %s)", key, value, current_kind, handler.output_kind)
             working = handler.func(working, value, ctx)
             current_kind = handler.output_kind
-            # Member re-chaining (§6.2, defects 3+4): `path=` on a kept-whole archive
-            # (zip/tar) always yields the registry's opaque `bytes` — re-detect the member's
-            # real mime and re-enter the working-kind table so the chain can continue past it
-            # (a PDF member takes `page=`/`text` same as a top-level artifact; a JSON/text
-            # member decodes to plain text; an unrecognized member stays `bytes`, unchanged).
-            if key == "path" and current_kind == "bytes":
+            # Member re-chaining (§6.2, "Member re-chaining", v33: generalized from `path=`
+            # only to every member axis, `_MEMBER_RECHAIN_PARAMS`): a member-extraction op
+            # always yields the registry's opaque `bytes` — re-detect the member's real mime
+            # and re-enter the working-kind table so the chain can continue past it (a PDF
+            # member takes `page=`/`text` same as a top-level artifact; a JSON/text member
+            # decodes to plain text; an unrecognized member stays `bytes`, unchanged).
+            if key in _MEMBER_RECHAIN_PARAMS and current_kind == "bytes":
                 working, current_kind, pdf_doc, chain_mime = _rechain_member(
                     corpus_root, parsed, param_idx, working, ctx, pdf_doc
                 )
@@ -489,15 +506,24 @@ def resolve(
             terminal_mime = _media_mime_for_ext(terminal_ext)
             cache_p = furi.cache_path(corpus_root, urihash_value, terminal_ext)
         elif cache_p is None:
-            # A `memberchain`-deferred URI (§6.2, defects 3+4): the member's real final kind
-            # was unknowable until `_rechain_member` ran, but it always lands on an ordinary
-            # KIND_TO_EXTENSION-registered kind (image/text/json/bytes, or video/audio/media —
-            # already handled above) — assign the cache path now that it's known.
-            if current_kind not in KIND_TO_EXTENSION:
+            # A `memberchain`-deferred URI (§6.2 "Member re-chaining"): the member's real
+            # final kind was unknowable until `_rechain_member` ran, but it always lands on
+            # an ordinary KIND_TO_EXTENSION-registered kind (image/text/json/bytes, or
+            # video/audio/media — already handled above) — assign the cache path now that
+            # it's known. A terminal opaque `bytes` member carries its OWN sniffed mime
+            # (`terminal_mime`, set by `_rechain_member`) — the extension-asymmetry fix: a
+            # member-route terminal result gets the member's real extension (`.eml`, `.pdf`,
+            # …) rather than the generic `bytes` kind's `.bin`, falling straight out of the
+            # sniff `_rechain_member` already does for the textual-decode check.
+            if current_kind == "bytes" and terminal_mime is not None:
+                cache_ext = mime_mod.extension_for(terminal_mime)
+            elif current_kind in KIND_TO_EXTENSION:
+                cache_ext = KIND_TO_EXTENSION[current_kind]
+            else:
                 raise NotImplementedError(
                     f"final output kind {current_kind!r} has no cache extension registered"
                 )
-            cache_p = furi.cache_path(corpus_root, urihash_value, KIND_TO_EXTENSION[current_kind])
+            cache_p = furi.cache_path(corpus_root, urihash_value, cache_ext)
     finally:
         # pypdfium2's PdfDocument is reference-counted; close explicitly.
         if pdf_doc is not None:
@@ -527,59 +553,94 @@ def resolve(
 # ---------- record-level derivation ops (§6.2) ---------- #
 
 
-#: Ops whose meaning depends on a TIMELINE the leaf's own bytes cannot supply. `stream_id`/`cut`
-#: are addressing/mode config and ride along.
-_TIMELINE_OP_PARAMS: frozenset[str] = frozenset({"frame", "time", "time_range", "scenes"})
-
-#: `_TIMELINE_OP_PARAMS` plus the two ops that ALSO need the container, for a different
-#: reason (v32, §2): a promoted leaf's own bytes are the raw payload — deliberately not
-#: playable, with no timescale/duration and no self-framing of any kind (no ADTS, no
-#: length-prefixed Opus, no Annex-B). `format=` (an encoding change) and `transcribe` both
-#: need PLAYABLE input, which the leaf cannot supply on its own; the container can, and
-#: it's the same container these bytes came from (route unification, §6.2).
-#:
-#: *(Pre-v32 history, why these two were excluded then.)* Before v32 a promoted leaf's
-#: bytes WERE self-sufficient: `format=` addressed no timeline so a leaf's own playable
-#: rendering stayed a leaf operation, and ADTS/the Opus pinned framing were self-framing
-#: at fixed per-packet durations, so an audio leaf's transcription needed no container
-#: either — redirecting would have been actively worse, forcing a route through
-#: `extract_audio`'s lossy re-encode. The payload-identity principle removed the leaf's
-#: own playability entirely, which is what makes reaching for the container correct now
-#: rather than merely tolerable: `corpus.transforms.audio.transcribe` isolates the
-#: addressed stream via `corpus.mux` (a lossless remux, not `extract_audio`'s re-encode)
-#: before handing it to the transcriber, so transcription still runs on the SAME payload
-#: bytes the leaf's own id names — no lossy derivative anywhere in the chain.
-_LEAF_CONTAINER_REDIRECT_PARAMS: frozenset[str] = _TIMELINE_OP_PARAMS | {"format", "transcribe"}
+#: Every member axis a promoted leaf's containment lineage may pair a container with (§6.2
+#: "Route unification" / "Member re-chaining", v33: generalized from `stream_id=`-only to
+#: every axis the corpus knows). `entry=`/`item=` (ICS/HEIF) have no registered transform
+#: yet (§12.11) — harmless to list: nothing ever mints an origin `uri:` on those axes until
+#: a schema declares them, so `_member_lineage` simply never matches on them today.
+_MEMBER_AXES: frozenset[str] = frozenset(
+    {"stream_id", "msg", "part", "path", "card", "entry", "item"}
+)
 
 
-def _stream_timeline_redirect(parsed: Any, artifact_record: Any) -> str | None:
-    """The container URI a timeline/playable-surface op on a stream leaf should run
-    against, or None.
+def _member_lineage(post: Any) -> tuple[str, str, str] | None:
+    """A promoted member leaf's `(container_id, axis, value)` from its LATEST
+    containment-lineage origin block (§6.2, §8.1), or None.
 
-    Returns None — meaning "resolve normally" — unless ALL of: the URI carries an op that
-    needs the container (`_LEAF_CONTAINER_REDIRECT_PARAMS`), the record has a
-    containment-lineage origin naming exactly one container stream, and the URI does not
-    already select a stream (a leaf that names `stream_id=` itself is asking for
-    something else entirely, and guessing at it would be worse than failing).
-
-    The rewritten URI is `corpus://<container>?stream_id=<N>&<the original params>` — the
-    canonical order §6.2 pins (select → cut → convert → size) with the selection supplied from
-    lineage instead of by the caller.
+    Origin blocks are append-only, ordered by capture time (spec §5.2) — the record's LAST
+    block is its LIVE lineage (the `dangling_origin_refs` rule, `health.py`: "a record's
+    origin blocks are ordered by capture time... the LAST block... is its live lineage");
+    reading an earlier one would route a resolve through a superseded container. Generalizes
+    `cut.stream_lineage`'s `stream_id`-only shape (kept as-is there — video cutting only
+    ever cares about that one axis) to every member axis alike (`_MEMBER_AXES`), for route
+    unification and for the CLI's base-form disclosure (`_cli/resolve.py`) both.
     """
-    from corpus import cut as cut_mod
+    origins = list(records.iter_origin_blocks(post))
+    if not origins:
+        return None
+    fields = origins[-1].get("fields") or {}
+    uri = fields.get("uri")
+    uris = uri if isinstance(uri, list) else ([uri] if uri else [])
+    for raw in uris:
+        candidate = str(raw or "").strip()
+        if not candidate.startswith(f"{furi.SCHEME}://"):
+            continue
+        try:
+            parsed = furi.parse(candidate)
+        except ValueError:
+            continue
+        if len(parsed.params) != 1:
+            continue
+        axis, value = parsed.params[0]
+        if axis in _MEMBER_AXES and value:
+            return parsed.hash, axis, value
+    return None
 
-    if not parsed.params or not any(
-        k in _LEAF_CONTAINER_REDIRECT_PARAMS for k, _ in parsed.params
-    ):
-        return None
-    if any(k == "stream_id" for k, _ in parsed.params):
-        return None
-    lineage = cut_mod.stream_lineage(artifact_record)
+
+def member_lineage(post: Any) -> tuple[str, str, str] | None:
+    """Public alias of `_member_lineage` — exposed so a read-only caller (`_cli/resolve.py`'s
+    base-form disclosure) can reach it without importing the private name."""
+    return _member_lineage(post)
+
+
+def _member_route_redirect(
+    corpus_root: Path, parsed: furi.ParsedURI, artifact_record: Any
+) -> str | None:
+    """The container URI a promoted member leaf's resolve should run against instead, or
+    None.
+
+    Route unification (§6.2): `corpus://<leaf>?<ops>` and
+    `corpus://<container>?<axis>=<n>&<ops>` name the same bytes (the identity equation, §2)
+    and must be ONE resolution — so every op on a member leaf, including the bare identity
+    op, redirects through its container. Returns None — meaning "resolve normally" — unless
+    the record has a member-lineage origin (`_member_lineage`) AND the URI does not already
+    carry a member-axis param itself (a leaf naming `stream_id=`/`msg=`/… is already
+    addressing container-relative content, not asking to be reduced to it — guessing at
+    which would be worse than failing, and it also stops the redirect from firing a second
+    time on its own recursive call) AND the named container is actually reachable.
+
+    That last check matters: a promoted record's origin `uri:` is HISTORY (§12.9's
+    byte-lookup independence rule) — the container it names at promotion time may since have
+    been removed (`corpus rm`) while the SAME bytes remain resolvable through a different
+    surviving container, via the member index (`containment.ensure_local_bytes`'s own
+    fallback route, untouched by lineage). Redirecting into a dead container would break
+    exactly that fallback; returning None here lets ordinary resolution run instead, which
+    finds the live route the member index still has.
+
+    The rewritten URI is `corpus://<container>?<axis>=<n>&<the original params>` — the
+    canonical order §6.2 pins (select → cut → convert → size) with the selection supplied
+    from lineage instead of by the caller.
+    """
+    lineage = _member_lineage(artifact_record)
     if lineage is None:
         return None
-    container_id, stream_address = lineage
-    tail = "&".join(k if v is None else f"{k}={v}" for k, v in parsed.params)
-    return f"corpus://{container_id}?{stream_address}&{tail}"
+    if any(k in _MEMBER_AXES for k, _ in parsed.params):
+        return None
+    container_id, axis, value = lineage
+    if not paths.record_path(corpus_root, container_id).is_file():
+        return None
+    redirected = furi.ParsedURI(hash=container_id, params=((axis, value), *parsed.params))
+    return furi.canonical(redirected)
 
 
 def _resolve_scene(
@@ -1003,24 +1064,27 @@ def _rechain_member(
     ctx: transforms.RenderContext,
     pdf_doc: pdfium.PdfDocument | None,
 ) -> tuple[Any, str, pdfium.PdfDocument | None, str | None]:
-    """Re-detect a `path=`-extracted member's real mime (§6.2) and, when a further transform
-    param follows in the chain, re-enter the working-kind table (`_working_kind_for`) so
-    resolution continues in the member's OWN pipeline — a PDF member takes `page=`/`text` just
-    like a top-level artifact would (defect 4). A TERMINAL `path=` (nothing follows) never
-    promotes to a full pipeline object: that would risk a silent, unrequested re-encode of a
-    member `resolve` never asked to transform (an image member re-saved as PNG, losing its
-    original bytes identity) — a zip/tar member is documented to serve raw bytes verbatim
-    (`transforms/zip.py`/`transforms/tar.py`) except for the one case defect 3 flags: an
-    already-textual member (JSON/text) prints its decoded text rather than a `.bin` path.
-    Malformed/unrecognized members are never fatal here — they degrade to the original opaque
-    `bytes`, exactly as before this fix.
+    """Re-detect a container-member's real mime (§6.2 "Member re-chaining", v33:
+    generalized from `path=`-only to every axis in `_MEMBER_RECHAIN_PARAMS`) and, when a
+    further transform param follows in the chain, re-enter the working-kind table
+    (`_working_kind_for`) so resolution continues in the member's OWN pipeline — a PDF
+    member takes `page=`/`text` just like a top-level artifact would (`?msg=23&part=3`
+    reaches an attachment through an mbox this way). A TERMINAL member address (nothing
+    follows) never promotes to a full pipeline object: that would risk a silent,
+    unrequested re-encode of a member `resolve` never asked to transform (an image member
+    re-saved as PNG, losing its original bytes identity) — a member is documented to serve
+    raw bytes verbatim (`transforms/zip.py`, `transforms/mbox.py`, …) except that an
+    already-textual member (JSON/text) prints its decoded text rather than an opaque path.
+    Malformed/unrecognized members are never fatal here — they degrade to the original
+    opaque `bytes`, exactly as before this fix.
 
     Returns `(working, kind, pdf_doc, mime_override)`. `mime_override` is the member's own
-    sniffed mime for the resolver's cache sidecar — set only in the terminal-decode case
-    (where the member's own mime IS the final result's mime); the full-pipeline case leaves it
-    None so a later op in the chain (or the default `KIND_TO_MIME` table) determines it
-    normally, exactly as for a top-level artifact.
+    sniffed mime for the resolver's cache sidecar and (for the terminal `bytes` case) cache
+    extension — set whenever `_rechain_member` actually sniffed the bytes; the full-pipeline
+    case leaves it None so a later op in the chain determines the sidecar mime normally,
+    exactly as for a top-level artifact.
     """
+    key = parsed.params[param_idx][0]
     ref = str(parsed.params[param_idx][1] or "")
     has_more = any(k not in _NOOP_PARAMS for k, _ in parsed.params[param_idx + 1 :])
     sniffed_mime = mime_mod.sniff_head(data, ref or None)
@@ -1029,20 +1093,22 @@ def _rechain_member(
         new_kind = _working_kind_for(corpus_root, sniffed_mime)
         if new_kind is not None:
             member_ext = mime_mod.extension_for(sniffed_mime)
-            # Cached under the prefix-canonical URI up to and including THIS `path=` step, so
-            # a repeat resolve of a different follow-on op over the same member (`path=x.pdf
-            # &page=2` after `path=x.pdf&page=1`) never re-extracts from the container, and a
-            # distinct member/position never collides (mirrors `containment._member_cache_path`
-            # one level below the promoted-record axis).
+            # Cached under the prefix-canonical URI up to and including THIS member-axis
+            # step, so a repeat resolve of a different follow-on op over the same member
+            # (`path=x.pdf&page=2` after `path=x.pdf&page=1`) never re-extracts from the
+            # container, and a distinct member/position never collides (mirrors
+            # `containment._member_cache_path` one level below the promoted-record axis).
             partial_uri = furi.canonical(
                 furi.ParsedURI(hash=parsed.hash, params=parsed.params[: param_idx + 1])
             )
-            # The extraction engine folds into THIS key too, exactly as it does into the
-            # addressable outer key in `resolve()`: without it an `archive-path@1` bump
+            # THIS axis's own extraction engine folds into the key, exactly as it does into
+            # the addressable outer key in `resolve()` (`engine_version_for_param` — the
+            # same per-param pin `resolve()`'s cache key uses): without it a version bump
             # would leave this staging file behind to serve pre-bump member bytes into a
             # re-chained continuation (a zip-embedded PDF's `page=`) — stale bytes reached
             # through a fresh outer key, which is the one failure the pin exists to prevent.
-            staging_key = f"{partial_uri}|engine={ziparchive.ENGINE_VERSION}"
+            engine = engine_version_for_param(key)
+            staging_key = f"{partial_uri}|engine={engine}" if engine else partial_uri
             member_path = furi.cache_path(corpus_root, furi.urihash(staging_key), member_ext)
             if not member_path.is_file():
                 member_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1067,7 +1133,12 @@ def _rechain_member(
     text_kind = _member_text_kind(sniffed_mime)
     if text_kind is not None:
         return data.decode("utf-8", errors="replace"), text_kind, pdf_doc, sniffed_mime
-    return data, "bytes", pdf_doc, None
+    # Opaque terminal bytes: still carry the sniff (never re-encoded — `data` is untouched)
+    # so the resolver's cache extension/sidecar mime reflect the member's real type
+    # (`.eml`, a promoted mbox message; `.pdf`, an un-chained archive member) instead of the
+    # generic `bytes` kind's `.bin` — the "cache-extension asymmetry" fix, falling straight
+    # out of the sniff already computed above for the textual-decode check.
+    return data, "bytes", pdf_doc, sniffed_mime
 
 
 # ---------- internals ---------- #
@@ -1146,17 +1217,18 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     for key, _ in parsed.params:
         if key in _NOOP_PARAMS:
             continue
-        # `path=` on a kept-whole archive (zip/tar) always yields opaque `bytes` from the
-        # registry's point of view (transforms/zip.py, transforms/tar.py) — but the member it
-        # extracts may itself chain further (a PDF member's `page=`/`text`, defect 4), and
-        # that depends on the member's own bytes/filename, unknowable from the param chain
-        # alone. Defer, like `htmlel`/`video`/`audio`/`media` (`_rechain_member` in `resolve()`
-        # does the real work at resolve time).
-        if key == "path" and current in ("zip", "tar"):
-            return "memberchain"
         handler, _promote = _resolve_handler(current, key)
         if handler is None:
             raise ValueError(f"transform {key!r} not applicable to working kind {current!r}")
+        # A member-extraction axis (`_MEMBER_RECHAIN_PARAMS` — `path=`/`msg=`/`part=`/
+        # `card=`/`entry=`/`item=`, §6.2 "Member re-chaining", v33: generalized from
+        # `path=`-only) always yields opaque `bytes` from the registry's point of view — but
+        # the member it extracts may itself chain further (a PDF member's `page=`/`text`),
+        # and that depends on the member's own bytes/filename, unknowable from the param
+        # chain alone. Defer, like `htmlel`/`video`/`audio`/`media` (`_rechain_member` in
+        # `resolve()` does the real work at resolve time).
+        if key in _MEMBER_RECHAIN_PARAMS and handler.output_kind == "bytes":
+            return "memberchain"
         current = handler.output_kind
     # A terminal `pdfpage` renders to an image (see resolve()).
     if current == "pdfpage":
