@@ -26,6 +26,10 @@ migration story, together (Part I §8). Normative spec changes are owner-gated.
 - `scanner/` — the residence scanner (Bun/TypeScript): host-side manifest
   publisher for attached locations (Part IV §5). Its manifest format is its
   own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
+- `testdata/` — exemplar-mime regression library: a tracked manifest +
+  seeder, and a gitignored scratch instance (`testdata/instance/`, real
+  private artifact bytes — never tracked) safe for write-side probes and
+  migration rehearsals. See `testdata/README.md`.
 
 ## Gates (run before reporting any tooling change done)
 
