@@ -1,0 +1,34 @@
+Message-ID: <synthetic-message-0001@athenaeum.example>
+MIME-Version: 1.0
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+From: sender@athenaeum.example
+To: recipient@athenaeum.example
+Subject: Synthetic exemplar message
+Content-Type: multipart/mixed; boundary="OUTER-BOUNDARY-SYNTH-0001"
+
+--OUTER-BOUNDARY-SYNTH-0001
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+
+This is the reply-text body of a synthetic exemplar email message. It carries no private content: every byte here was generated for spec and tooling regression testing (see testdata/README.md). The message also carries a nested message/rfc822 sub-message and a small PNG attachment, to exercise the eml drafter's members block.
+--OUTER-BOUNDARY-SYNTH-0001
+Content-Type: message/rfc822
+
+Message-ID: <synthetic-nested-0001@athenaeum.example>
+MIME-Version: 1.0
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+From: nested-sender@athenaeum.example
+To: nested-recipient@athenaeum.example
+Subject: Nested synthetic sub-message
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+
+This is the body of a small, complete nested message, embedded verbatim as a message/rfc822 part of the outer synthetic exemplar. It exists to exercise the nested-message identity path: its bytes are sliced directly out of the container, never re-serialized.
+--OUTER-BOUNDARY-SYNTH-0001
+Content-Type: image/png; name="pixel.png"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="pixel.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEUlEQVR42mPYsuUEHDEQxwEAjSEj
+AaVSXOIAAAAASUVORK5CYII=
+--OUTER-BOUNDARY-SYNTH-0001--

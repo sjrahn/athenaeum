@@ -1,16 +1,42 @@
 # testdata/ — exemplar test instance
 
-A scratch Athenaeum instance seeded with one real artifact per interesting
+A scratch Athenaeum instance seeded with one artifact per interesting
 mime/shape (multi-track media, mbox, zip envelopes, PDF, HTML, images,
-vCard, JSON — see `exemplars.yaml` for the full list and per-shape notes),
-pulled from a private source instance, for spec + tooling regression
-testing against real byte shapes instead of synthetic fixtures.
+vCard, JSON, single-track audio, message/rfc822 — see `exemplars.yaml` for
+the full list and per-shape notes) for spec + tooling regression testing
+against real byte shapes. Most come from a private source instance; a few
+shapes have no real-artifact counterpart small enough to check in and are
+generated instead (see "The synthetic tier" below).
 
 Tracked here: this README, `exemplars.yaml` (the manifest — blake3 + mime +
-shape + a neutral technical note, no personal content), and `seed.py` (the
-seeder). **`instance/` is never tracked** — it holds real (if mostly tiny)
-private artifact bytes and is gitignored at the repo root
-(`/testdata/instance/`).
+shape + a neutral technical note, no personal content), `seed.py` (the
+seeder), and `synthetic/` (see below). **`instance/` is never tracked** — it
+holds real (if mostly tiny) private artifact bytes and is gitignored at the
+repo root (`/testdata/instance/`).
+
+### The synthetic tier
+
+A few shapes (single-track audio/mp4, message/rfc822 with attachments,
+image/heic) had no suitably-small real artifact in the source instance to
+pull an exemplar from. For those, `testdata/synthetic/` holds *generated*
+fixtures with no private content — `gen.py` produces them (ffmpeg for the
+audio, hand-assembled stdlib `email` bytes for the message, `heif-enc` for
+the still image) — whose bytes are committed directly to this public repo,
+manifest entries pointing at them with `source: synthetic` and a `file:`
+path. The committed bytes, not a fresh run of `gen.py`, are what the
+manifest's blake3 pins: an encoder's output drifts across tool versions even
+for identical input (see spec/CHANGELOG.md's v32 entry, born from exactly
+this problem for real media), so pinning a freshly-generated hash would make
+the manifest non-reproducible from one machine or ffmpeg/libheif version to
+the next. `gen.py` exists to regenerate or extend the set later, documenting
+provenance (which encoder, which invocation) — it is not run as part of
+`seed.py`.
+
+`synthetic-image.heic` is generated and committed but has **no manifest
+entry**: `corpus ingest` currently has no mime schema/drafter for
+image/heic (spec/corpus.md specs it as its own manifest shape —
+`item=<id>` image items — not yet implemented; see `exemplars.yaml`'s
+comment on the shape). The bytes are ready for whenever that lands.
 
 ## Reseeding
 

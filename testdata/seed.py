@@ -12,6 +12,11 @@ first (also idempotent, and not itself a manifest entry), then `corpus
 promote corpus://<container>?<address>` re-mints the same content-addressed
 leaf record inside the test instance.
 
+A `source: synthetic` entry names a `file:` (relative to testdata/) whose
+bytes are committed straight into this repo under testdata/synthetic/ — no
+source instance involved. It's staged and ingested exactly like a `direct`
+entry, just with the bytes coming from testdata/ instead of `--from`.
+
 Plain stdlib only — no PyYAML, no `corpus`-package imports. Talks to the
 `corpus` CLI as a subprocess, exactly as a human operator would.
 
@@ -166,11 +171,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.source:
-        sys.exit("no source instance given: pass --from or set ATHENAEUM_ROOT")
-    source_root = Path(args.source).resolve()
-    if not (source_root / "corpus" / "records").is_dir():
-        sys.exit(f"not a corpus instance root: {source_root}")
+    entries = parse_manifest(MANIFEST_PATH)
+
+    needs_source = any(e.get("source") != "synthetic" for e in entries)
+    source_root: Path | None = None
+    if needs_source:
+        if not args.source:
+            sys.exit("no source instance given: pass --from or set ATHENAEUM_ROOT")
+        source_root = Path(args.source).resolve()
+        if not (source_root / "corpus" / "records").is_dir():
+            sys.exit(f"not a corpus instance root: {source_root}")
+    elif args.source:
+        source_root = Path(args.source).resolve()
 
     if not (INSTANCE_ROOT / "athenaeum.yaml").is_file():
         sys.exit(
@@ -181,7 +193,6 @@ def main() -> int:
 
     corpus_bin = find_tool("corpus")
 
-    entries = parse_manifest(MANIFEST_PATH)
     print(f"{len(entries)} manifest entries, source={source_root}\n")
 
     ingested = skipped = errors = 0
@@ -198,6 +209,20 @@ def main() -> int:
             continue
 
         print(f"seeding: {label}")
+
+        if entry.get("source") == "synthetic":
+            src = HERE / entry["file"]
+            if not src.is_file():
+                print(f"  ERROR: {src} not found — did you run testdata/synthetic/gen.py?")
+                errors += 1
+                continue
+            stage_and_ingest(src, instance_corpus, corpus_bin)
+            if not record_exists(instance_corpus, blake3):
+                print(f"  ERROR: ingest did not produce {blake3} — mismatched bytes?")
+                errors += 1
+                continue
+            ingested += 1
+            continue
 
         if entry.get("source") == "promoted":
             via = entry["via"]
