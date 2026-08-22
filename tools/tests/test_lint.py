@@ -12,7 +12,7 @@ from pathlib import Path
 
 import frontmatter
 
-from corpus import lint, records, segments
+from corpus import lint, paths, records, segments
 
 
 def _make_corpus(tmp_path: Path) -> Path:
@@ -910,6 +910,68 @@ def test_embed_unreferenced_fires_with_ordinal_and_media_type(tmp_path):
     assert findings[0].severity == "warning"
     assert "embed 2" in findings[0].message
     assert "image/png" in findings[0].message
+
+
+def _unrelated_segment() -> segments.Segment:
+    """A content-zone segment that keeps the record out of the manifest (no-segments)
+    exemption, without referencing the member under test."""
+    return segments.Segment(atom="text", address="el=999", body="unrelated content")
+
+
+def test_embed_unreferenced_silent_when_the_member_is_already_promoted(tmp_path):
+    """A member that already has its own promoted record (§8.1, §12.9's member index) is not
+    dangling, even though nothing on this record references it: a placement is only owed to a
+    member that was actually SEATED with a rendering (§12.30's reseat never fabricates one for
+    a member that received none), so a stub-promoted, unrendered member legitimately has no
+    reference here yet — that is normalization pressure (§8.5), not an orphan."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    hexval = "a" * 64
+    _embed(post, "stream_id=0")
+    post.metadata["_embeds"][0]["transport"] = f"blake3:{hexval}"
+    leaf = paths.record_path(root, hexval)
+    leaf.parent.mkdir(parents=True, exist_ok=True)
+    leaf.write_text("---\nid: " + hexval + "\n---\n", encoding="utf-8")
+    findings = [
+        f for f in lint.lint(post, [_unrelated_segment()], root)
+        if f.rule_id == "embed-unreferenced"
+    ]
+    assert findings == []
+
+
+def test_embed_unreferenced_still_fires_for_a_genuinely_unpromoted_member(tmp_path):
+    """The rule's whole point, unweakened: a member with no reference AND no promoted record
+    of its own is still an orphan nobody has done anything with."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    hexval = "b" * 64
+    _embed(post, "stream_id=0")
+    post.metadata["_embeds"][0]["transport"] = f"blake3:{hexval}"
+    assert not paths.record_path(root, hexval).is_file()
+    findings = [
+        f for f in lint.lint(post, [_unrelated_segment()], root)
+        if f.rule_id == "embed-unreferenced"
+    ]
+    assert len(findings) == 1
+    assert findings[0].severity == "warning"
+
+
+def test_embed_unreferenced_promoted_member_check_degrades_without_root(tmp_path):
+    """Without a corpus root the member-index lookup has nothing to check against — the rule
+    falls back to its original unconditional warning rather than silently clearing (this rule
+    ran root-free before the check existed; a missing root should never narrow it to nothing).
+    Calls the rule function directly rather than through `lint.lint` — other registered rules
+    are not root-tolerant and are not what this test is about."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    hexval = "c" * 64
+    _embed(post, "stream_id=0")
+    post.metadata["_embeds"][0]["transport"] = f"blake3:{hexval}"
+    leaf = paths.record_path(root, hexval)
+    leaf.parent.mkdir(parents=True, exist_ok=True)
+    leaf.write_text("---\nid: " + hexval + "\n---\n", encoding="utf-8")
+    findings = list(lint._rule_embed_unreferenced(post, [_unrelated_segment()], None))
+    assert len(findings) == 1
 
 
 def test_embed_missing_target_image_segment_without_embed_errors(tmp_path):

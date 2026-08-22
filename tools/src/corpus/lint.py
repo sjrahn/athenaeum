@@ -1483,7 +1483,18 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
     Also skipped for a **message/rfc822** record: its `part=<N>` embeds are the email's MIME
     members (attachments, inline images, nested messages) declared for promotion, not
     body-flow assets a mechanical draft can position — the normalizer links an inline image
-    into the body when it belongs there (spec §12.11)."""
+    into the body when it belongs there (spec §12.11).
+
+    Also skipped for a member that already has its OWN promoted record (§8.1, §12.9's member
+    index — same `address → transport → record path` lookup `placed-member-not-promoted`
+    uses, below). "Unreferenced" exists to catch a member nobody has done anything with; a
+    member that has been promoted and simply received no rendering yet (§12.30's reseat, for
+    one — a placement is only owed to a member that was actually SEATED, never fabricated for
+    one that wasn't) has plainly been acted on. Cheap for the same reason
+    `placed-member-not-promoted` is: existence is a `stat`, no record loaded. Degrades to the
+    unconditional warning when `root` is unavailable — this rule ran root-free before the
+    member-index check existed, and a missing root should widen what it catches, never
+    silently narrow it to nothing."""
     if _records.media_type_for(post) == "message/rfc822":
         return
     has_segment = any(
@@ -1510,19 +1521,26 @@ def _rule_embed_unreferenced(post, blocks, root) -> Iterator[Finding]:
     # transcription leaves behind once it has superseded the marker (§7.8 `embed_rendered`).
     chained = {a.split("&", 1)[0] for a in referenced if "&" in a}
     referenced |= chained
+    members = _member_address_transports(post) if root is not None else {}
     for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
         addrs = _addresses(eb.get("address"))
-        if addrs and not any(a in referenced for a in addrs):
-            yield Finding(
-                rule_id="embed-unreferenced",
-                severity="warning",
-                message=(
-                    f"embed {i} (`{eb.get('media_type')}` at `{','.join(addrs)}`) is not "
-                    f"referenced by any segment."
-                ),
-                address=",".join(addrs),
-                fields={"media_type": eb.get("media_type")},
-            )
+        if not addrs or any(a in referenced for a in addrs):
+            continue
+        if root is not None and any(
+            (hexval := members.get(a)) and _paths.record_path(root, hexval).is_file()
+            for a in addrs
+        ):
+            continue
+        yield Finding(
+            rule_id="embed-unreferenced",
+            severity="warning",
+            message=(
+                f"embed {i} (`{eb.get('media_type')}` at `{','.join(addrs)}`) is not "
+                f"referenced by any segment."
+            ),
+            address=",".join(addrs),
+            fields={"media_type": eb.get("media_type")},
+        )
 
 
 def _member_address_transports(post) -> dict[str, str]:
