@@ -55,6 +55,25 @@ def _promoted_member_record(root: Path, h: str, container_h: str) -> None:
     )
 
 
+def _reattributed_member_record(root: Path, h: str, container_h: str) -> None:
+    """A record whose FIRST origin block is a now-retired container's lineage,
+    later re-attributed to a live web origin (a v32 envelope collapse: the
+    container is removed, the payload lives on standalone) — a fresh origin
+    block APPENDED after the containment one, per §5.2's append-only history.
+    The live lineage is the LATEST block, the web one."""
+    p = root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"---\nid: {h}\ntitle: ''\nstatus: normalized\n"
+        "touch:\n- corpus.ingest@0.1.0\n---\n\n"
+        "<!--artifact text/plain\n-->\n\n"
+        f"<!--origin container-lineage\nuri: 'corpus://{container_h}?stream_id=1'\n-->\n\n"
+        "<!--origin web\nuri: 'https://example.com/reattributed'\n"
+        "snapshot: '2026-08-01T00:00:00Z'\n-->\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture()
 def system(tmp_path: Path) -> Path:
     root = tmp_path
@@ -771,6 +790,25 @@ def test_coverage_backlog_member_leaf_labeled_not_host(system: Path) -> None:
     assert H4[:12] in backlog
     assert f"member of `{H1[:12]}…`" in backlog
     assert "host `" not in backlog
+
+
+def test_coverage_backlog_prefers_latest_origin_over_containment_lineage(
+    system: Path,
+) -> None:
+    """Origin blocks are append-only history (spec/corpus.md §5.2) — after a
+    v32 envelope collapse, a promoted member's container may be gone while a
+    LATER origin block records its real (live) source, e.g. a web host. The
+    frontier label must read the LATEST block, not the first — matching the
+    same latest-block-decides principle `dangling_origin_refs` uses — so a
+    now-standalone record reads "host `example.com`", never a stale "member
+    of" pointing at containment history."""
+    _reattributed_member_record(system / "corpora" / "corpus-private", H4, H1)
+    run_harvest(system / "ledger", _corpora(system))
+    text = render_coverage(system / "ledger", _corpora(system))
+    backlog = text.split("### Backlog — representation demand (§9)", 1)[1]
+    assert H4[:12] in backlog
+    assert "host `example.com`" in backlog
+    assert f"member of `{H1[:12]}…`" not in backlog
 
 
 def test_coverage_reverse_read_rostered_never_cited(system: Path) -> None:

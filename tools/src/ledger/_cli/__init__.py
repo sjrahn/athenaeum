@@ -558,9 +558,16 @@ def _cmd_supersede(argv: Sequence[str]) -> int:
                          "citation still references it")
     ns = ap.parse_args(list(argv))
     ledger_root, join, _ = _system(ns.root)
-    from ledger.supersede import supersede
+    from ledger.supersede import SupersedeError, resolve_hash_arg, supersede
 
-    res = supersede(ledger_root, ns.old, ns.new, join, retire=ns.retire)
+    try:
+        old = resolve_hash_arg(join, ns.old)
+        new = resolve_hash_arg(join, ns.new)
+    except SupersedeError as e:
+        print(f"ath ledger supersede: {e}", file=sys.stderr)
+        return 2
+
+    res = supersede(ledger_root, old, new, join, retire=ns.retire)
     if not res.ok:
         print(f"ath ledger supersede: {res.note}", file=sys.stderr)
         return 2

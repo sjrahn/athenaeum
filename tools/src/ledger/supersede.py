@@ -68,6 +68,48 @@ class SupersedeError(RuntimeError):
     """The supersession could not proceed (records unresolvable, or in different corpora)."""
 
 
+def resolve_hash_arg(join: CorpusJoin, arg: str) -> str:
+    """Expand `arg` — a full 64-char hash or a hex prefix — to a full hash, the
+    same short-hash convenience every corpus verb accepts (`corpus.paths.
+    resolve_record`'s `MIN_HASH_PREFIX`/collision-list machinery), generalized
+    across every corpus this ledger's `join` registers rather than one corpus
+    root. A full hash passes through unresolved — it need not exist yet (`new`
+    for a fresh capture in flight); only a prefix is actually looked up.
+    Raises `SupersedeError` on a malformed argument, too-short a prefix, no
+    match, or a genuine collision (several DISTINCT hashes share the prefix —
+    the same hash present in more than one corpus, the same-bytes rule, is
+    not a collision)."""
+    from corpus.paths import MIN_HASH_PREFIX, shard
+    from ledger.model import FULL_HASH_RE
+
+    lowered = arg.lower()
+    if FULL_HASH_RE.match(lowered):
+        return lowered
+    if not lowered or not all(c in "0123456789abcdef" for c in lowered):
+        raise SupersedeError(f"{arg!r} is neither a full hash nor a hex prefix")
+    if len(lowered) < MIN_HASH_PREFIX:
+        raise SupersedeError(
+            f"hash prefix too short: {arg!r} ({len(lowered)} chars; need >={MIN_HASH_PREFIX})"
+        )
+    matches: set[str] = set()
+    for corpus in join.corpora:
+        if not corpus.available:
+            continue
+        shard_dir = corpus.root / "records" / shard(lowered)
+        if not shard_dir.is_dir():
+            continue
+        matches.update(p.stem for p in shard_dir.glob(f"{lowered}*.md"))
+    if not matches:
+        raise SupersedeError(f"{arg!r} resolves in no registered corpus")
+    if len(matches) > 1:
+        collisions = "\n  ".join(sorted(matches))
+        raise SupersedeError(
+            f"prefix {arg!r} matches {len(matches)} records:\n  {collisions}\n"
+            "Use a longer prefix or the full hash."
+        )
+    return matches.pop()
+
+
 def _address_of(tail: str) -> str:
     """The continuity address a citation tail refers to — a `path=<member>` when the tail
     carries one, else `""` (a bare citation of the whole record). Accepts either a full

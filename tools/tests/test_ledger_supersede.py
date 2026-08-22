@@ -15,11 +15,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from corpus import ccsession, hashing, paths
 from corpus._cli import dispatch
+from ledger._cli import main as ledger_main
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 from ledger.model import CORPUS_URI_RE
-from ledger.supersede import supersede
+from ledger.supersede import SupersedeError, resolve_hash_arg, supersede
 
 
 def _session_record(priv: Path, projects: Path, sid: str, lines) -> str:
@@ -368,3 +371,74 @@ def test_supersede_errors_when_new_unresolved(tmp_path):
     res = supersede(ledger, old, "f" * 64, join)
     assert not res.ok
     assert "resolves in no registered corpus" in res.note
+
+
+def _bare_record(priv: Path, h: str) -> None:
+    """A minimal record file, just enough to exist at its shard path — full
+    session/capture machinery isn't needed to exercise prefix resolution."""
+    p = priv / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"---\nid: {h}\ntitle: ''\nstatus: normalized\n---\n\n"
+                 "<!--artifact text/plain\n-->\n", encoding="utf-8")
+
+
+def test_resolve_hash_arg_expands_unambiguous_prefix(tmp_path):
+    """`ath ledger supersede` accepts a short hash prefix, same as every corpus
+    verb (`corpus.paths.resolve_record`'s MIN_HASH_PREFIX convenience) —
+    supersede's own CLI entry used to require the full 64-char hash."""
+    priv, _ledger, join = _system(tmp_path)
+    h = "a" * 64
+    _bare_record(priv, h)
+    assert resolve_hash_arg(join, h[:12]) == h
+
+
+def test_resolve_hash_arg_ambiguous_prefix_lists_collisions(tmp_path):
+    priv, _ledger, join = _system(tmp_path)
+    h1 = "abcd" + "1" * 60
+    h2 = "abcd" + "2" * 60
+    _bare_record(priv, h1)
+    _bare_record(priv, h2)
+    with pytest.raises(SupersedeError) as exc_info:
+        resolve_hash_arg(join, "abcd")
+    assert h1 in str(exc_info.value) and h2 in str(exc_info.value)
+
+
+def test_resolve_hash_arg_full_hash_passes_through_unchanged(tmp_path):
+    """A full 64-char hash is returned as-is, whether or not it resolves yet
+    (e.g. `new`, a fresh capture not necessarily indexed by prefix lookup) —
+    `supersede()` itself is what validates existence."""
+    _priv, _ledger, join = _system(tmp_path)
+    h = "c" * 64
+    assert resolve_hash_arg(join, h) == h
+
+
+def test_resolve_hash_arg_no_match(tmp_path):
+    _priv, _ledger, join = _system(tmp_path)
+    with pytest.raises(SupersedeError, match="resolves in no registered corpus"):
+        resolve_hash_arg(join, "deadbeef")
+
+
+def test_resolve_hash_arg_prefix_too_short(tmp_path):
+    _priv, _ledger, join = _system(tmp_path)
+    with pytest.raises(SupersedeError, match="too short"):
+        resolve_hash_arg(join, "ab")
+
+
+def test_cli_supersede_accepts_hash_prefixes(tmp_path: Path) -> None:
+    """`ath ledger supersede` end to end with 12-char prefixes for both
+    arguments — the CLI entry, not just the resolver helper, must expand
+    them before handing off to `supersede()` (which used to require the
+    full 64-char hash and errored "resolves in no registered corpus")."""
+    root = tmp_path
+    (root / "athenaeum.yaml").write_text("name: t\nvisibility: public\n")
+    corpus_root = root / "corpus"
+    old = "1" * 64
+    new = "2" * 64
+    for h in (old, new):
+        p = corpus_root / "records" / h[:2] / f"{h}.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"---\nid: {h}\ntitle: ''\nstatus: normalized\n---\n\n"
+                     "<!--artifact text/plain\n-->\n", encoding="utf-8")
+    (root / "ledger" / "facts").mkdir(parents=True)
+    rc = ledger_main(["supersede", old[:12], new[:12], "--root", str(root)])
+    assert rc == 0

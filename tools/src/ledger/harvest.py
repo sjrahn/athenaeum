@@ -93,7 +93,14 @@ def record_facts(post) -> dict[str, object]:
     mime = records.media_type_for(post)
     if mime:
         facts["mime"] = mime
-    origin = next(records.iter_origin_blocks(post), None)
+    # Origin blocks are append-only history (spec/corpus.md §5.2) — only the
+    # LATEST block is a record's live lineage (the same principle
+    # `corpus.health.dangling_origin_refs` keys severity on): a container
+    # member re-attributed to a standalone web origin after a v32 envelope
+    # collapse must fact-base off that live origin, not its stale
+    # containment history.
+    origins = list(records.iter_origin_blocks(post))
+    origin = origins[-1] if origins else None
     if origin:
         # block shape: {id: <overlay id>, subtype: …, fields: {uri, snapshot, …}}
         if origin.get("id"):
