@@ -138,11 +138,33 @@ def _backlog_line(h: str, facts: dict) -> str:
             "fields.")
 
 
+def _drop_dangling_lineage_host(corpus_root: Path, facts: dict) -> dict:
+    """A promoted member's `origin.host` is a containment lineage hash
+    (`_backlog_line`'s "member of `<hash>…`" case) — but origin blocks are
+    append-only HISTORY (spec/corpus.md §5.2): the container it names may
+    since be gone (`corpus rm`, or a v32 envelope collapse), exactly the
+    case `corpus.health.dangling_origin_refs` already flags. Grouping or
+    labeling by a hash with no record file materializes a phantom row for a
+    record that doesn't exist, so a dangling lineage host is dropped from
+    `facts` here — `_group_key` falls through to `origin.id`/`mime`, and
+    `_backlog_line` prints no "member of" claim it can't back up. Returns
+    `facts` unchanged when the host resolves (or isn't a lineage hash)."""
+    from corpus.paths import record_path
+
+    host = facts.get("origin.host")
+    if not (isinstance(host, str) and FULL_HASH_RE.match(host)):
+        return facts
+    if record_path(corpus_root, host).is_file():
+        return facts
+    return {k: v for k, v in facts.items() if k != "origin.host"}
+
+
 def render_coverage(ledger_root: Path, corpora: list[RegisteredCorpus]) -> str:
     from corpus import records
     from ledger.harvest import record_facts
 
     covered = represented_hashes(ledger_root)
+    dangling_lineage = 0
     parts = [
         "# Coverage — GENERATED\n\n"
         "The corpus→ledger representation ledger (`spec/ledger.md` §9): a record is\n"
@@ -165,6 +187,10 @@ def render_coverage(ledger_root: Path, corpora: list[RegisteredCorpus]) -> str:
             except Exception:
                 continue
             facts = record_facts(post)
+            deduped = _drop_dangling_lineage_host(corpus.root, facts)
+            if deduped is not facts:
+                dangling_lineage += 1
+                facts = deduped
             group = _group_key(facts)
             total[group] += 1
             n_total += 1
@@ -183,6 +209,13 @@ def render_coverage(ledger_root: Path, corpora: list[RegisteredCorpus]) -> str:
             parts.append("\n### Backlog — representation demand (§9)\n\n")
             for h, facts in sorted(backlog):
                 parts.append(_backlog_line(h, facts) + "\n")
+
+    if dangling_lineage:
+        parts.append(
+            f"\n**Note:** {dangling_lineage} record(s) carry containment lineage into a "
+            "nonexistent record — see `corpus health`'s `dangling_origin_refs` for the "
+            "list.\n"
+        )
 
     parts.append(
         "\n## Rostered, never cited\n\n"

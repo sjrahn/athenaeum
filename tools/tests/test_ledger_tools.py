@@ -811,6 +811,27 @@ def test_coverage_backlog_prefers_latest_origin_over_containment_lineage(
     assert f"member of `{H1[:12]}…`" not in backlog
 
 
+def test_coverage_no_phantom_row_for_dangling_containment_lineage(system: Path) -> None:
+    """A promoted member's ONLY origin block names a container that no
+    longer has a record file — the container was `corpus rm`'d, or a v32
+    envelope collapse retired it. Coverage must not materialize that dead
+    hash as its own covered-table row/group key or a "member of" backlog
+    claim (a phantom row for a record with no record file); it groups by
+    whatever else the origin carries (`origin.id`) instead, and the
+    dangling lineage is surfaced once as a summary note pointing at
+    `corpus health`'s `dangling_origin_refs`."""
+    H_DEAD_CONTAINER = "5" * 64  # never written as a record — dangling lineage target
+    _promoted_member_record(system / "corpora" / "corpus-private", H4, H_DEAD_CONTAINER)
+    run_harvest(system / "ledger", _corpora(system))
+    text = render_coverage(system / "ledger", _corpora(system))
+    assert H_DEAD_CONTAINER not in text  # no phantom row/group keyed by the dead hash
+    backlog = text.split("### Backlog — representation demand (§9)", 1)[1]
+    assert H4[:12] in backlog
+    assert "member of `" not in backlog
+    assert ("1 record(s) carry containment lineage into a nonexistent record" in text
+            and "dangling_origin_refs" in text)
+
+
 def test_coverage_reverse_read_rostered_never_cited(system: Path) -> None:
     """§9's reverse read: a concept's rostered manifestation that no claim
     has ever cited is visible per concept — here, H1 is rostered on `mom`
