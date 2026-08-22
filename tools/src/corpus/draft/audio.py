@@ -110,7 +110,14 @@ def draft(
             log.info("transcription unavailable: %s", exc)
             issues.append(_unavailable_issue("warning", str(exc)))
         except Exception as exc:  # ffmpeg/resolve failure — still produce a record
-            log.warning("transcript resolution failed: %s", exc)
+            # Tolerated like every other branch here (the record still drafts, with an
+            # issue recording it): a v32 media-stream leaf routing `?transcribe` through
+            # its container is a known route limitation (§6.2), not an operator-actionable
+            # failure, so this stays below the default WARNING floor (Python's logging
+            # "handler of last resort" prints WARNING+ straight to stderr when the CLI
+            # hasn't configured a handler — `corpus reattest` doesn't) rather than reading
+            # as a crash on an otherwise-clean pass.
+            log.debug("transcript resolution failed: %s", exc)
             issues.append(_unavailable_issue("warning", f"transcript resolution failed: {exc}"))
         else:
             if transcript.strip():
@@ -231,7 +238,12 @@ def _probe_audio(audio_path: Path) -> dict[str, Any]:
         log.info("ffprobe not on PATH — skipping audio metadata")
         return empty
     if proc.returncode != 0:
-        log.warning("ffprobe failed (%s) — skipping audio metadata", proc.stderr.strip())
+        # Tolerated (module docstring: "missing or failing ffprobe yields no metadata, not
+        # a crash") — expected for a v32 leaf's raw payload bytes (no container to probe).
+        # DEBUG, not WARNING: the latter hits Python's stderr "handler of last resort"
+        # whenever the CLI hasn't configured logging (`corpus reattest` doesn't), dumping
+        # ffprobe's raw stderr (e.g. "moov atom not found") onto an otherwise-clean pass.
+        log.debug("ffprobe failed (%s) — skipping audio metadata", proc.stderr.strip())
         return empty
     try:
         data = json.loads(proc.stdout)

@@ -11,6 +11,7 @@ variant additionally on `libx265`.
 from __future__ import annotations
 
 import argparse
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -393,6 +394,49 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
         resolved = containment.ensure_local_bytes(root, expected_pid, "h264")
         digest = blake3.blake3(resolved.read_bytes()).hexdigest()
         assert digest == expected_pid
+
+
+@needs_ffmpeg
+def test_reattest_of_a_promoted_audio_leaf_logs_no_probe_or_transcribe_noise(
+    h264_aac_clip, caplog
+):
+    """A promoted audio-track leaf's own bytes are the raw AAC payload (§2, v32). Its own
+    `?transcribe` redirects through its container (§6.2 route unification) where the
+    container's working kind is `video`, which `transcribe` isn't registered for — an
+    expected, non-fatal outcome the drafter already tolerates (an issue, not a raise), not
+    an operator-actionable failure. This used to log at WARNING, which Python's stderr
+    "handler of last resort" prints straight to the console whenever the CLI hasn't
+    configured logging (`corpus reattest` doesn't) — this asserts the resolver's internal
+    working-kind error text is gone from the default log floor, alongside the sibling
+    `_probe_audio` ffprobe-failure path (same fix, same tolerated-noise rationale, not
+    independently exercisable here since this fixture's raw AAC payload happens to still
+    probe cleanly)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = _corpus(Path(td))
+        rid = _ingest(root, h264_aac_clip)
+        post = records.load(paths.record_path(root, rid))
+        audio_embed = next(
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "audio/aac"
+        )
+        stream_id = str(audio_embed["address"]).removeprefix("stream_id=")
+        uri = f"corpus://{rid}?stream_id={stream_id}"
+        assert _promote(root, uri) == 0
+        leaf_id = str(audio_embed["transport"]).removeprefix("blake3:")
+        leaf_rf = paths.record_path(root, leaf_id)
+
+        with caplog.at_level(logging.DEBUG):
+            reattest_cli.reattest_record(leaf_rf, root)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings == [], f"unexpected WARNING+ noise: {[r.getMessage() for r in warnings]}"
+        # The tolerated condition still happens (behavior unchanged) — just quietly, at DEBUG.
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(
+            "transcript resolution failed" in m and "not applicable to working kind" in m
+            for m in messages
+        )
 
 
 @needs_ffmpeg

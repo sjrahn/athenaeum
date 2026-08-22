@@ -184,7 +184,11 @@ def _probe_video(video_path: Path) -> dict[str, Any]:
         log.info("ffprobe not on PATH — skipping video metadata")
         return empty
     if proc.returncode != 0:
-        log.warning("ffprobe failed (%s) — skipping video metadata", proc.stderr.strip())
+        # Tolerated (module docstring: "missing or failing ffprobe yields no metadata, not
+        # a crash"). DEBUG, not WARNING: the latter hits Python's stderr "handler of last
+        # resort" whenever the CLI hasn't configured logging (`corpus reattest` doesn't),
+        # dumping ffprobe's raw stderr onto an otherwise-clean pass.
+        log.debug("ffprobe failed (%s) — skipping video metadata", proc.stderr.strip())
         return empty
     try:
         data = json.loads(proc.stdout)

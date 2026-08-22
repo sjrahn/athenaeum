@@ -49,6 +49,7 @@ def reattest_record(
     fingerprint_cli: bool | None = None,
     messages: list[int] | None = None,
     dry_run: bool = False,
+    hash_mismatches: list[str] | None = None,
 ) -> str:
     """Re-derive the attested layer of the record at `record_file`, **in memory**; return
     the serialized record (NOT written). Strips + re-derives the attested layer while
@@ -58,7 +59,10 @@ def reattest_record(
     `--messages`). Idempotent: when the attested facts AND the resolved hash values re-derive
     identically the original text is returned unchanged — no touch appended, no rewrite.
     `dry_run` skips the index write (a query cache, but "writing nothing" means nothing).
-    Raises `DeriveError` / `ArtifactMissing`.
+    `hash_mismatches`, when given, collects the `hash:` tag of any stored byte-stable value
+    that disagreed with its recomputation (preserved, never rewritten — the caller's cue to
+    say so alongside a `changed:` line that happens to cover this same record for an
+    unrelated reason). Raises `DeriveError` / `ArtifactMissing`.
 
     A pre-3.4 record converts here: its per-asset blocks are deleted and the members block
     replaces them, so the `description`s they carried are **dropped** (§4.3.1.4, §12.26).
@@ -78,7 +82,7 @@ def reattest_record(
     )
     record_id = str(post.metadata.get("id") or "")
     if record_id:
-        _refresh_hashes(post, corpus_root, record_id, dry_run=dry_run)
+        _refresh_hashes(post, corpus_root, record_id, dry_run=dry_run, mismatches=hash_mismatches)
     after = records.dumps(post)
     if after == before:
         return before  # attested layer + resolved hashes unchanged — the pass records nothing
@@ -87,7 +91,12 @@ def reattest_record(
 
 
 def _refresh_hashes(
-    post, corpus_root: Path, record_id: str, *, dry_run: bool = False
+    post,
+    corpus_root: Path,
+    record_id: str,
+    *,
+    dry_run: bool = False,
+    mismatches: list[str] | None = None,
 ) -> None:
     """The reattest-time hash-index refresh point (spec §12.9.1, §2): recompute the record's
     resolved derived-hash recipe union (§7.9) over its artifact and upsert every value into the
@@ -103,7 +112,10 @@ def _refresh_hashes(
 
     Best-effort like the rest of re-attest: unresolvable bytes (`ArtifactMissing`) skip the
     refresh entirely, and an index write failure is reported and swallowed rather than failing
-    the pass — the index is deployment state, never authoritative."""
+    the pass — the index is deployment state, never authoritative. `mismatches`, when given,
+    gets the tag of each preserved-not-rewritten value appended — the caller's cue to mark the
+    record's `changed:` line, since the record's OTHER attested fields commonly do rewrite in
+    the same pass (two true facts about the same record, not a contradiction)."""
     from corpus import containment, hashindex, hashing, schemas
     from corpus import mime as mime_mod
     from corpus.store import ArtifactMissing
@@ -141,9 +153,13 @@ def _refresh_hashes(
             print(
                 f"  MISMATCH {record_id[:12]}…: stored hash {v.tag}:{prior[:12]}… != "
                 f"recomputed {v.tag}:{v.hex[:12]}… — the bytes or the record changed; "
-                f"NOT rewritten (a byte-stable hash can never legitimately drift, spec §2)",
+                f"stored hash NOT rewritten (a byte-stable hash can never legitimately "
+                f"drift, spec §2) — other attested fields on this record still re-derive "
+                f"and rewrite normally",
                 file=sys.stderr,
             )
+            if mismatches is not None:
+                mismatches.append(v.tag)
     if to_fill:
         records.set_record_hashes(post, to_fill)
 
@@ -253,7 +269,7 @@ def run(args: argparse.Namespace) -> int:
         candidates = sorted(records.iter_record_paths(corpus_root))
 
     fp = getattr(args, "fingerprint", None)
-    changed = unchanged = failed = 0
+    changed = unchanged = failed = preserved = 0
 
     for rf in candidates:
         post = records.load(rf)
@@ -265,9 +281,11 @@ def run(args: argparse.Namespace) -> int:
             continue
 
         rid = str(post.metadata.get("id") or "")[:12]
+        hash_mismatches: list[str] = []
         try:
             new_text = reattest_record(
-                rf, corpus_root, fingerprint_cli=fp, messages=ordinals, dry_run=args.dry_run
+                rf, corpus_root, fingerprint_cli=fp, messages=ordinals, dry_run=args.dry_run,
+                hash_mismatches=hash_mismatches,
             )
         except mbox_manifest.MessageHashConflict as exc:
             sys.exit(str(exc))  # stale declaration — a hard error (§12.11), never papered over
@@ -278,6 +296,9 @@ def run(args: argparse.Namespace) -> int:
             failed += 1
             continue
 
+        if hash_mismatches:
+            preserved += 1
+
         if new_text == rf.read_text(encoding="utf-8"):
             unchanged += 1
             continue
@@ -285,10 +306,17 @@ def run(args: argparse.Namespace) -> int:
         if not args.dry_run:
             rf.write_text(new_text, encoding="utf-8")
         verb = "would change" if args.dry_run else "changed"
+        if hash_mismatches:
+            # Coheres with the MISMATCH line `_refresh_hashes` already printed for this
+            # record: the stored hash was preserved (never rewritten), while the rest of
+            # the attested layer legitimately did — this line is what actually changed.
+            verb += " (hash mismatch preserved)"
         print(f"  {verb}: {rf.relative_to(corpus_root)}")
 
     verb = "would re-attest" if args.dry_run else "re-attested"
     summary = f"{verb} {changed + unchanged} record(s); {changed} changed, {unchanged} unchanged"
+    if preserved:
+        summary += f", {preserved} with preserved hash mismatch"
     if failed:
         summary += f", {failed} failed"
     print(summary)

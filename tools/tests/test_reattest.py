@@ -276,3 +276,88 @@ def test_reattest_cli_dry_run_writes_nothing(tmp_path):
     assert rc == 0
     after = {p: p.read_text() for p in records.iter_record_paths(root)}
     assert before == after  # dry run mutated nothing
+
+
+def test_reattest_cli_not_resolvable_skip_emits_no_probe_or_transcribe_noise(tmp_path, capsys):
+    """A genuinely unresolvable member (no standalone file, no container route) skips
+    cleanly — `ArtifactMissing` short-circuits before any drafter runs (`derive.
+    build_content_zone` resolves bytes first), so there is nothing here for an ffprobe or
+    transcribe attempt to have run *for this record*. Asserted anyway, directly: the clean
+    `skip … not resolvable` line carries no probe/transcribe error text alongside it."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    # Remove the standalone artifact bytes entirely — no container route exists either
+    # (this record was never promoted), so containment has nowhere left to look.
+    LocalArtifactStore(root).local_path(rid, "zip").unlink()
+
+    class _Args:
+        target = None
+        mime = None
+        host = None
+        state = "any"
+        dry_run = False
+        fingerprint = None
+        corpus_root = str(root)
+
+    capsys.readouterr()
+    rc = reattest_cli.run(_Args())
+    assert rc == 0
+    out, err = capsys.readouterr()
+
+    assert f"skip {rid[:12]}" in err
+    assert "not resolvable" in err
+    for noisy in ("ffprobe", "moov atom", "transcript resolution failed"):
+        assert noisy not in out
+        assert noisy not in err
+    assert "re-attested 0 record(s); 0 changed, 0 unchanged, 1 failed" in out
+
+
+def test_reattest_cli_coheres_hash_mismatch_with_the_changed_line(tmp_path, capsys):
+    """A stored byte-stable hash that disagrees with its recomputation is NEVER rewritten
+    (spec §2) — but the SAME record commonly changes for an unrelated, legitimate reason in
+    the same pass (here: dropping a retired per-asset description, §12.26). The CLI output
+    for that record used to read as a contradiction (`MISMATCH … NOT rewritten` immediately
+    followed by `changed: records/…`); it should now cohere — the `changed:` line names the
+    mismatch, and the summary counts it."""
+    root = _make_corpus(tmp_path)
+    rid = _ingest_zip(root)
+    rf = paths.record_path(root, rid)
+
+    # First pass: fills the byte-stable `hash:` entry (`sha256`, part of the default
+    # recipe set) alongside the embeds.
+    rf.write_text(reattest_cli.reattest_record(rf, root), encoding="utf-8")
+    post = records.load(rf)
+    assert "sha256" in records.record_hashes(post)
+
+    # Tamper the stored hash so the next reattest finds a genuine mismatch, AND revert the
+    # roster to the legacy per-asset form (`test_reattest_drops_retired_member_descriptions`'
+    # pattern) so this same pass also has an unrelated, legitimate reason to rewrite the
+    # record's attested layer.
+    bogus = "0" * 64
+    post.metadata["hash"] = f"sha256:{bogus}"
+    post.metadata["_members_block"] = False
+    post.metadata["_embeds"][0]["fields"]["description"] = "the first member, described"
+    records.dump(post, rf)
+
+    class _Args:
+        target = None
+        mime = None
+        host = None
+        state = "any"
+        dry_run = False
+        fingerprint = None
+        corpus_root = str(root)
+
+    capsys.readouterr()  # discard any prior capture
+    rc = reattest_cli.run(_Args())
+    assert rc == 0
+    out, err = capsys.readouterr()
+
+    assert f"MISMATCH {rid[:12]}" in err
+    assert "stored hash NOT rewritten" in err
+    assert "changed (hash mismatch preserved):" in out
+    assert "1 with preserved hash mismatch" in out
+
+    # The stored (bogus) hash really is preserved, never silently rewritten.
+    after = records.load(rf)
+    assert records.record_hashes(after)["sha256"] == bogus
