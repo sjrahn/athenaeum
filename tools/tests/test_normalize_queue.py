@@ -559,3 +559,83 @@ def test_drain_json_omits_hint_when_absent(tmp_path, capsys):
     assert dispatch(["drain", "--json", "--corpus-root", str(root)]) == 0
     obj = json.loads(capsys.readouterr().out.strip())
     assert "hint" not in obj
+
+
+# ---------- orphaned entries (record file gone; detection + reap) ---------- #
+
+
+def test_orphans_detects_entries_without_records(tmp_path):
+    root = _corpus(tmp_path)
+    _put(root, RID)                    # RID has a record
+    queue.enqueue(root, RID)
+    queue.enqueue(root, RID2)          # RID2 never had one
+    got = queue.orphans(root)
+    assert [e["id"] for e in got] == [RID2]
+
+
+def test_orphans_empty_when_all_records_exist(tmp_path):
+    root = _corpus(tmp_path)
+    _put(root, RID)
+    queue.enqueue(root, RID)
+    queue.drain(root)
+    assert queue.orphans(root) == []
+
+
+def test_reap_orphans_settles_claimed_entry_as_failed(tmp_path):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID2)
+    queue.drain(root)                  # claimed, record missing
+    assert queue.reap_orphans(root, by="test") == [RID2]
+    st = queue.state(root, RID2)
+    assert st["state"] == "idle"
+    assert st["result"]["outcome"] == "failed"
+    assert "record missing" in st["result"]["reason"]
+
+
+def test_reap_orphans_settles_requested_entry_as_failed(tmp_path):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID2)          # requested, record missing
+    assert queue.reap_orphans(root) == [RID2]
+    st = queue.state(root, RID2)
+    assert st["state"] == "idle"
+    assert st["result"]["outcome"] == "failed"
+
+
+def test_reap_orphans_leaves_live_entries_alone(tmp_path):
+    root = _corpus(tmp_path)
+    _put(root, RID)
+    queue.enqueue(root, RID)
+    queue.enqueue(root, RID2)
+    assert queue.reap_orphans(root) == [RID2]
+    assert queue.state(root, RID)["state"] == "requested"
+
+
+def test_queue_listing_marks_orphans(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    _put(root, RID)
+    queue.enqueue(root, RID)
+    queue.enqueue(root, RID2)
+    assert dispatch(["queue", "--corpus-root", str(root)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert any(RID2[:12] in ln and "ORPHAN" in ln for ln in lines)
+    assert not any(RID[:12] in ln and "ORPHAN" in ln for ln in lines)
+
+
+def test_queue_listing_json_flags_orphans(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    _put(root, RID)
+    queue.enqueue(root, RID)
+    queue.enqueue(root, RID2)
+    assert dispatch(["queue", "--json", "--corpus-root", str(root)]) == 0
+    by_id = {e["id"]: e for e in json.loads(capsys.readouterr().out)}
+    assert by_id[RID2].get("orphan") is True
+    assert "orphan" not in by_id[RID]
+
+
+def test_queue_reap_orphans_cli(tmp_path, capsys):
+    root = _corpus(tmp_path)
+    queue.enqueue(root, RID2)
+    assert dispatch(["queue", "--reap-orphans", "--corpus-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "reaped 1 orphaned entry" in out and RID2[:12] in out
+    assert queue.state(root, RID2)["result"]["outcome"] == "failed"

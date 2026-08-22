@@ -1741,3 +1741,45 @@ def test_normalization_intent_must_be_a_string(tmp_path: Path) -> None:
     )
     _, errors = load_schemas(tmp_path)
     assert any("normalization_intent must be a string" in e for e in errors)
+
+
+def test_retired_roster_modality_and_derivation_are_rejected(system: Path) -> None:
+    """§13.1/§8: registration-by-use makes a NEW roster term only a VOCAB diff; the
+    checkable violation is a RETIRED one — same rejection predicates/qualifiers get."""
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [
+            {"uri": f"corpus://{H_PUB}", "role": "manifests", "modality": "wax-cylinder"},
+            {"uri": f"corpus://{H_PUB2}", "role": "manifests",
+             "derived_from": f"corpus://{H_PUB}", "derivation": "seance"},
+        ],
+    })
+    _regen(system)
+    vocab_path = system / "ledger" / "facts" / "VOCAB.md"
+    text = vocab_path.read_text().replace(
+        "| term | kind | reason |\n|---|---|---|",
+        "| term | kind | reason |\n|---|---|---|\n"
+        "| `wax-cylinder` | roster modality | obsolete medium |\n"
+        "| `seance` | roster derivation | not mechanical |",
+    )
+    vocab_path.write_text(text)
+    rep = _check(system)
+    assert any("retired vocabulary roster modality 'wax-cylinder'" in e for e in rep.errors)
+    assert any("retired vocabulary roster derivation 'seance'" in e for e in rep.errors)
+
+
+def test_retired_roster_role_is_rejected(system: Path) -> None:
+    _fact(system, "episode", {
+        "id": "ep1", "type": "episode", "name": "Episode 1",
+        "artifacts": [{"uri": f"corpus://{H_PUB}", "role": "manifests"}],
+    })
+    _regen(system)
+    vocab_path = system / "ledger" / "facts" / "VOCAB.md"
+    text = vocab_path.read_text().replace(
+        "| term | kind | reason |\n|---|---|---|",
+        "| term | kind | reason |\n|---|---|---|\n"
+        "| `manifests` | roster role | renamed |",
+    )
+    vocab_path.write_text(text)
+    rep = _check(system)
+    assert any("retired vocabulary roster role 'manifests'" in e for e in rep.errors)

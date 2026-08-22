@@ -514,12 +514,18 @@ def _emit_segment(seg: Segment) -> str:
 
 _AXIS_SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 
+# `time_range=` timecodes (`MM:SS` or `H:MM:SS`, `draft/_transcript.seconds_to_timecode`'s
+# form — always whole seconds when STORED, but a cited anchor may spell fractional
+# seconds). Parsed numerically throughout so `9:59` compares before `10:00` — never
+# lexicographically.
+_TIMECODE_RE = re.compile(r"^(?:(\d+):)?(\d+):(\d{2}(?:\.\d+)?)$")
+
 # Address params `ledger.verify.scoped_text` always treats as `unchecked` — never
-# resolved to body text, even when a value happens to be integer-range shaped
-# (`time_range=0-30`); an anchor on one of these always falls back to the whole record.
-# Mirrored here (not imported — this package stays free of a ledger-ward dependency) so
-# `--anchor` never claims to scope a param verify itself would never scope.
-_UNCHECKED_AXES = frozenset({"time_range", "frame", "bbox", "path", "region", "rotate"})
+# resolved to body text. Mirrored here (not imported — this package stays free of a
+# ledger-ward dependency) so `--anchor` never claims to scope a param verify itself would
+# never scope. `time_range=` is NOT in this set: it scopes span-precisely against stored
+# transcript segments, exactly like the integer axes below.
+_UNCHECKED_AXES = frozenset({"frame", "bbox", "path", "region", "rotate"})
 
 
 def parse_axis_span(value: str) -> tuple[int, int] | None:
@@ -533,13 +539,41 @@ def parse_axis_span(value: str) -> tuple[int, int] | None:
     return lo, hi
 
 
-def address_axis_spans(address: str | list[str] | None) -> list[tuple[str, int, int]]:
-    """A segment's `address` → `[(axis, lo, hi)]` for every integer-span param it
-    carries. A compound address (`el=5&bbox=0,0,10,10`) registers only the int-span,
-    checkable parts. This is the same address grammar `ledger.verify.scoped_text` scopes
-    an evidence anchor against — an axis this finds is exactly an axis
-    `corpus body --anchor <axis>=<N>` can target."""
-    out: list[tuple[str, int, int]] = []
+def parse_timecode(value: str) -> float | None:
+    """`MM:SS` / `H:MM:SS` (optionally fractional seconds) → total seconds; `None` if
+    `value` isn't shaped that way."""
+    m = _TIMECODE_RE.match(value.strip())
+    if not m:
+        return None
+    hours = int(m.group(1)) if m.group(1) else 0
+    minutes = int(m.group(2))
+    seconds = float(m.group(3))
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def parse_time_range(value: str) -> tuple[float, float] | None:
+    """A `time_range=` value — one timecode, or a `LO-HI` range (timecodes never contain
+    `-`, so splitting on it is unambiguous) — → `(lo, hi)` in seconds, low-to-high
+    regardless of citation order. `None` if either side doesn't parse as a timecode."""
+    parts = value.strip().split("-")
+    if len(parts) == 1:
+        t = parse_timecode(parts[0])
+        return (t, t) if t is not None else None
+    if len(parts) == 2:
+        lo, hi = parse_timecode(parts[0]), parse_timecode(parts[1])
+        if lo is None or hi is None:
+            return None
+        return (lo, hi) if lo <= hi else (hi, lo)
+    return None
+
+
+def address_axis_spans(address: str | list[str] | None) -> list[tuple[str, float, float]]:
+    """A segment's `address` → `[(axis, lo, hi)]` for every span-checkable param it
+    carries — the integer axes as `int`s, `time_range=` as fractional seconds. A compound
+    address (`el=5&bbox=0,0,10,10`) registers only the checkable parts. This is the same
+    address grammar `ledger.verify.scoped_text` scopes an evidence anchor against — an
+    axis this finds is exactly an axis `corpus body --anchor <axis>=<N>` can target."""
+    out: list[tuple[str, float, float]] = []
     if address is None:
         return out
     addrs = address if isinstance(address, list) else [address]
@@ -551,7 +585,7 @@ def address_axis_spans(address: str | list[str] | None) -> list[tuple[str, int, 
             axis = axis.strip()
             if axis in _UNCHECKED_AXES:
                 continue
-            span = parse_axis_span(value)
+            span = parse_time_range(value) if axis == "time_range" else parse_axis_span(value)
             if span is not None:
                 out.append((axis, *span))
     return out

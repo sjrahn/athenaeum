@@ -24,9 +24,15 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="With --prune, the grace window in days (default %(default)s; 0 = prune all now).",
     )
     parser.add_argument(
+        "--reap-orphans",
+        action="store_true",
+        help="Settle entries whose record file no longer exists (retired capture, aborted "
+        "ingest) as failed results, instead of listing. The listing marks these ORPHAN.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit JSON — the entries array, or with --prune the {results, temp} removed.",
+        help="Emit JSON — the entries array, or with --prune/--reap-orphans what was removed.",
     )
     add_corpus_root_arg(parser)
     attach_workflow_note(parser, "normalize-loop")
@@ -36,6 +42,8 @@ def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     if args.prune:
         return _run_prune(root, args.older_than, args.json)
+    if args.reap_orphans:
+        return _run_reap_orphans(root, args.json)
     return _run_list(root, args.json)
 
 
@@ -48,9 +56,24 @@ def _run_prune(root, older_than: float, as_json: bool) -> int:
     return 0
 
 
+def _run_reap_orphans(root, as_json: bool) -> int:
+    reaped = _queue.reap_orphans(root, by="corpus queue --reap-orphans")
+    if as_json:
+        print(json.dumps({"reaped": reaped}, ensure_ascii=False, indent=2))
+    else:
+        print(f"reaped {len(reaped)} orphaned entr{'y' if len(reaped) == 1 else 'ies'}")
+        for rid in reaped:
+            print(f"  {rid[:12]}  → failed (record missing)")
+    return 0
+
+
 def _run_list(root, as_json: bool) -> int:
     entries = _queue.entries(root)
+    orphan_ids = {e["id"] for e in _queue.orphans(root)}
     if as_json:
+        for e in entries:
+            if e["id"] in orphan_ids:
+                e["orphan"] = True
         print(json.dumps(entries, ensure_ascii=False, indent=2))
         return 0
     if not entries:
@@ -60,6 +83,8 @@ def _run_list(root, as_json: bool) -> int:
         who = e.get("claimed_by") or e.get("requested_by") or ""
         when = e.get("claimed_at") or e.get("requested_at") or ""
         line = f"{e['state']:>9}  {e['id'][:12]}  {when}  {who}".rstrip()
+        if e["id"] in orphan_ids:
+            line += "  ORPHAN (record missing — `--reap-orphans` settles it)"
         hint = e.get("hint")
         if hint:
             line += f"  hint: {_truncate_hint(hint)}"

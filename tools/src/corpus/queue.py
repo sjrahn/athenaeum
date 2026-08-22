@@ -38,8 +38,10 @@ __all__ = [
     "enqueue",
     "entries",
     "fail",
+    "orphans",
     "prune",
     "queue_dir",
+    "reap_orphans",
     "requeue",
     "state",
 ]
@@ -299,6 +301,51 @@ def entries(root: Path) -> list[dict]:
     for p in sorted(qd.glob("*.req")):
         out.append({"state": "requested", "id": p.name[: -len(".req")], **(_read_json(p) or {})})
     return out
+
+
+def orphans(root: Path) -> list[dict]:
+    """Non-idle entries whose record file no longer exists under `records/`.
+
+    A request or claim names a record by id; when that record is gone (retired capture,
+    aborted ingest), the entry can never settle — `finalize` gates on the record. These
+    are hygiene defects, not demand: `drain` still hands them to a loop session that then
+    has nothing to act on. Detection only — removal is `reap_orphans`, invoked explicitly.
+    """
+    from corpus import paths
+
+    return [e for e in entries(root) if not paths.record_path(root, e["id"]).exists()]
+
+
+def reap_orphans(root: Path, by: str | None = None) -> list[str]:
+    """Settle every orphaned entry as a failed result (`record missing`), so awaiters
+    unblock and the dangling marker stops shadowing the queue. Best-effort per entry: an
+    entry that settles or gains its record between detection and reap is skipped. Returns
+    the ids reaped."""
+    reaped: list[str] = []
+    for e in orphans(root):
+        rid = e["id"]
+        if e["state"] == "claimed":
+            try:
+                fail(root, rid, reason="record missing (reaped orphan)", by=by)
+            except QueueError:
+                continue  # settled concurrently — no longer ours to reap
+        else:  # requested — retract the request, settle a failed result for any awaiter
+            try:
+                os.remove(_req(root, rid))
+            except OSError:
+                continue  # claimed or settled concurrently
+            _write_json(
+                _result(root, rid),
+                {
+                    "id": rid,
+                    "outcome": "failed",
+                    "reason": "record missing (reaped orphan)",
+                    "finished_at": _now(),
+                    "by": by,
+                },
+            )
+        reaped.append(rid)
+    return reaped
 
 
 # ---------- prune / gc ---------- #

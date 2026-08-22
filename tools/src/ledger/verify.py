@@ -9,12 +9,21 @@ instead of silently rotting.
 
 Verification reads record *markdown* first — segment bodies are the faithful
 text — so most of it works without artifact bytes. *(1.5)* An anchor the
-stored markdown can't scope (a derivation-op axis: `?path=`, `time_range=`,
-`row=`/`col=`, `prop=`, …) is now additionally resolved through the corpus
-resolver itself (`corpus.resolver.resolve`, the same path `corpus resolve`
-uses) before falling back to `unverifiable` — the honestly-unverifiable
-residue narrows to ops the verifying environment genuinely can't run
-(artifact bytes absent, an optional extra missing, a non-textual result).
+stored markdown can't scope (a derivation-op axis: `?path=`, `row=`/`col=`,
+`prop=`, …) is now additionally resolved through the corpus resolver itself
+(`corpus.resolver.resolve`, the same path `corpus resolve` uses) before
+falling back to `unverifiable` — the honestly-unverifiable residue narrows to
+ops the verifying environment genuinely can't run (artifact bytes absent, an
+optional extra missing, a non-textual result).
+
+`time_range=` scopes directly against stored transcript segments, exactly
+like the integer axes below — numerically (`9:59` < `10:00`, never
+lexicographically), and a cited range spans every segment it overlaps. A
+record whose transcript isn't stored (a promoted media leaf, derived-only)
+carries no `time_range` spans to scope against, so its citations still fall
+through to the resolver path above — which can only mux a media clip there,
+not text, so that gap surfaces as its own honest, actionable note rather than
+`unverifiable`'s generic "not textual" reason.
 
 *(v17, §6.5/§13.2.3)* `ref://` citations resolve against the manifest's
 registered datasets — a bare citation tracks `latest`, a pinned citation
@@ -75,14 +84,15 @@ if TYPE_CHECKING:
     from ath.manifest import Reference
 
 _SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
-_UNCHECKED_PARAMS = {"time_range", "frame", "bbox", "path", "region", "rotate"}
+_UNCHECKED_PARAMS = {"frame", "bbox", "path", "region", "rotate"}
 
 
 @dataclass
 class RecordContent:
     """The addressable text of one record, parsed once."""
 
-    spans: dict[str, list[tuple[int, int, str]]]  # axis -> [(lo, hi, text)]
+    spans: dict[str, list[tuple[float, float, str]]]  # axis -> [(lo, hi, text)]
+    # (int for the integer axes; `time_range` stores fractional seconds)
     full_text: str
     touch: str  # the latest touch identity ("" when the record carries none)
     # (3.6, corpus §6.1.1) `el=` child-index paths, when the RECORD is stamped with
@@ -140,14 +150,18 @@ _quote_found = _textnorm.quote_found
 
 def _parse_axis_values(
     addr: str | list[str], *, el_stamped: bool = False
-) -> tuple[list[tuple[str, int, int]], list[object]]:
-    """Address strings → `(integer spans, el paths)`. An address may carry several
-    params (`el=5&bbox=0,0,2272,1234`); every int-span param registers its axis.
+) -> tuple[list[tuple[str, float, float]], list[object]]:
+    """Address strings → `(spans, el paths)`. An address may carry several params
+    (`el=5&bbox=0,0,2272,1234`); every span-checkable param registers its axis —
+    integer axes as ints, `time_range=` as fractional seconds (`corpus.segments.
+    parse_time_range` — numeric, never lexicographic: `9:59` < `10:00`).
 
     On a record stamped with `addressing:` the `el` axis is a §6.1.1 child-index path
     and is returned separately — parsed, not regex-matched, so a malformed value is
     simply not registered rather than being mistaken for an integer span."""
-    out: list[tuple[str, int, int]] = []
+    from corpus.segments import parse_time_range
+
+    out: list[tuple[str, float, float]] = []
     paths: list[object] = []
     addrs = addr if isinstance(addr, list) else [addr]
     for a in addrs:
@@ -159,6 +173,11 @@ def _parse_axis_values(
             if axis == "el" and el_stamped:
                 with contextlib.suppress(ValueError):
                     paths.append(furi.parse_el_path(value))
+                continue
+            if axis == "time_range":
+                span = parse_time_range(value)
+                if span is not None:
+                    out.append((axis, *span))
                 continue
             m = _SPAN_RE.match(value)
             if m:
@@ -304,15 +323,23 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
             if not hit:
                 return None, "bad-anchor"
             return "\n".join(hit), "ok"
-        m = _SPAN_RE.match((value or "").strip())
-        if not m:
-            return None, "unchecked"
-        lo = int(m.group(1))
-        hi = int(m.group(2)) if m.group(2) else lo
+        if key == "time_range":
+            from corpus.segments import parse_time_range
+
+            span = parse_time_range((value or "").strip())
+            if span is None:
+                return None, "unchecked"
+            lo, hi = span
+        else:
+            m = _SPAN_RE.match((value or "").strip())
+            if not m:
+                return None, "unchecked"
+            lo = int(m.group(1))
+            hi = int(m.group(2)) if m.group(2) else lo
         rows = content.spans.get(key)
         if not rows:
             # the record has no segments on this axis — page-cited PDFs whose
-            # drafts aren't paginated, etc.
+            # drafts aren't paginated, an UNSTORED transcript on a media leaf, etc.
             return None, "unchecked"
         hit = [text for (slo, shi, text) in rows if slo <= hi and lo <= shi]
         if not hit:
@@ -386,8 +413,19 @@ def _derived_resolution(
         cache[uri] = result
         return result
     if out_path.suffix not in (".txt", ".json"):
-        result = (False, "", f"derived surface is not textual "
-                             f"({out_path.suffix or 'no extension'})", {})
+        if any(k == "time_range" for k, _ in params):
+            # A `time_range=` anchor reaches this path only when the record carries no
+            # stored transcript segments to scope against directly (`scoped_text`
+            # resolves those without ever calling the resolver). With no `?transcribe`
+            # op in the URI, `time_range=` on audio/video mux a media CLIP (§6.2
+            # ffmpeg), never text — so "not textual" here always means the transcript
+            # itself was never drafted onto the record, not a resolver limitation.
+            reason = ("the transcript must be stored on the record before a "
+                       "time_range anchor can be cited")
+        else:
+            reason = (f"derived surface is not textual "
+                      f"({out_path.suffix or 'no extension'})")
+        result = (False, "", reason, {})
         cache[uri] = result
         return result
     try:

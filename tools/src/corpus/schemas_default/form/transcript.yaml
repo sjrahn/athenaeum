@@ -47,6 +47,10 @@ normalization:
     it. Verbatim speech only — no paraphrase, no grammar cleanup; disclose unclear spans
     as [inaudible] rather than guessing.
 
+    `speaker:` is a 0-based codebook index (§4.3.2.1's codebook check rejects anything
+    else). A diarization source that labels 1-based (whisper's "[Speaker N]") must be
+    re-pointed N→N-1 when forming — do not carry the engine's label through unchanged.
+
     Do not write `title:` or `description:` on the section header: the universal
     section-header fields retired in 3.5, and a form marks no editorial candidate
     (§4.2.3). `speakers`, above, is this span's only header field, and it is a

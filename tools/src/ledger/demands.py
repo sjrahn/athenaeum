@@ -642,6 +642,64 @@ def named_expectations(schemas: dict[str, dict]) -> dict[str, tuple[str, dict]]:
     return out
 
 
+def schema_expectation_satisfaction(
+    schemas: dict[str, dict],
+    facts_by_id: dict[str, dict],
+    *,
+    rules: dict[str, dict],
+    kinds: dict[str, dict],
+    edges: list[dict],
+    interps: list[dict],
+    lineage: dict[str, str] | None = None,
+) -> dict[str, dict]:
+    """Per-type satisfaction summary over each schema's own `expectations:`
+    (§4.4) — how many expectation-owed fields the live population satisfies,
+    and how many concepts of the type any expectation ever selected.
+
+    Exists because a minted schema whose expectations are all satisfied
+    produces no visible feedback anywhere: `evaluate_demands` rows in the
+    satisfied state are filtered out of every display (the §7.4 frontier
+    only shows open/blocked). That silence is indistinguishable from a
+    schema whose `expectations:` selects nothing at all in the population —
+    a typo'd `when:`, a field name that never matches — so this rolls up
+    the total/satisfied/concepts-bound counts a caller can render as one
+    line per type, with the zero-concepts-bound case visibly distinct from
+    the all-satisfied one (`regen`'s feedback line, below)."""
+    own_ids: dict[str, set[str]] = {}
+    for ftype, schema in schemas.items():
+        if not isinstance(schema, dict) or not schema.get("expectations"):
+            continue
+        ids: set[str] = set()
+        for i, exp in enumerate(schema["expectations"]):
+            exp_id = exp.get("id") if isinstance(exp, dict) else None
+            ids.add(exp_id if isinstance(exp_id, str) else f"expectation:{ftype}[{i}]")
+        own_ids[ftype] = ids
+
+    totals = {t: 0 for t in own_ids}
+    satisfied = {t: 0 for t in own_ids}
+    bound: dict[str, set[str]] = {t: set() for t in own_ids}
+    for fact in facts_by_id.values():
+        ftype = str(fact.get("type"))
+        ids = own_ids.get(ftype)
+        if not ids:
+            continue
+        for d in evaluate_demands(
+            fact, rules=rules, schemas=schemas, kinds=kinds, facts_by_id=facts_by_id,
+            edges=edges, interps=interps, lineage=lineage,
+        ):
+            if d["rule"] not in ids:
+                continue
+            totals[ftype] += 1
+            bound[ftype].add(d["fact"])
+            if d["state"] == "satisfied":
+                satisfied[ftype] += 1
+
+    return {
+        t: {"total": totals[t], "satisfied": satisfied[t], "concepts": len(bound[t])}
+        for t in own_ids
+    }
+
+
 def blockable_ids(rules: dict[str, dict], schemas: dict[str, dict]) -> set[str]:
     """The full blockable-id namespace (§13.1, §14): declared `demands/` rule
     ids plus named expectation ids — the only two kinds a needs entry's

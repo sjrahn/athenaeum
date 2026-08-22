@@ -386,6 +386,9 @@ def run_check(
             role = entry.get("role")
             if not role or not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", str(role)):
                 rep.err(where, f"roster role {role!r} missing or not slug-shaped")
+            elif str(role) in retired:
+                rep.err(where, f"retired vocabulary roster role {role!r} "
+                               "(see facts/VOCAB.md Retired)")
             if entry.get("provenance") not in (None, "auto"):
                 rep.err(where, f"roster provenance must be 'auto' when present "
                                f"(got {entry.get('provenance')!r})")
@@ -410,16 +413,22 @@ def run_check(
             # representation fields (§4.2, §13.1) — the manifestation tier.
             # None of the four is required; a bare {uri, role} entry stays
             # complete. `modality` and `derivation` are registered vocabulary
-            # (§8), validated the same shape-discipline `role` gets above —
-            # not (yet) checked against VOCAB.md's Retired list, mirroring
-            # `role`'s own current validation exactly (retired-vocabulary
-            # rejection today only runs for claim predicates/qualifiers).
+            # (§8): registration-by-use means a NEW term is only ever a VOCAB
+            # diff, never an error — the checkable violation is a RETIRED term,
+            # rejected here exactly as claim predicates/qualifiers (and `role`
+            # above) are.
             modality = entry.get("modality")
             if modality is not None and not (isinstance(modality, str) and modality):
                 rep.err(where, f"roster modality {modality!r} must be a non-empty string")
+            elif modality is not None and modality in retired:
+                rep.err(where, f"retired vocabulary roster modality {modality!r} "
+                               "(see facts/VOCAB.md Retired)")
             derivation = entry.get("derivation")
             if derivation is not None and not (isinstance(derivation, str) and derivation):
                 rep.err(where, f"roster derivation {derivation!r} must be a non-empty string")
+            elif derivation is not None and derivation in retired:
+                rep.err(where, f"retired vocabulary roster derivation {derivation!r} "
+                               "(see facts/VOCAB.md Retired)")
             expression = entry.get("expression")
             if expression is not None and not (
                 isinstance(expression, str) and SLUG_RE.match(expression)

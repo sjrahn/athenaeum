@@ -22,6 +22,7 @@ from ledger.demands import (
     format_shape,
     load_demand_rules,
     named_expectations,
+    schema_expectation_satisfaction,
 )
 from ledger.schemas import expectation_selects, load_schemas
 from tests.test_ledger_check import H_PUB, _check, _claim, _fact, _interp, _regen
@@ -1301,6 +1302,40 @@ def test_blockable_ids_is_declared_rules_plus_named_expectations_only() -> None:
     assert "expectation:person[1]" not in ids
 
 
+# ------------------------------------- schema expectation satisfaction (regen feedback, v32)
+
+
+def test_schema_expectation_satisfaction_counts_across_the_type() -> None:
+    """Two `song` concepts, one fully satisfying the schema's one expectation
+    and one not — the roll-up totals both expectation-owed rows and the
+    distinct concepts an expectation ever selected (regen's feedback line)."""
+    schemas = {"song": {"type": "song", "expectations": [
+        {"id": "song-album", "expect": ["appears_on"]},
+    ]}}
+    facts_by_id = {
+        "s1": {"id": "s1", "type": "song",
+               "claims": [{"id": "s1:appears_on", "predicate": "appears_on", "value": "x"}]},
+        "s2": {"id": "s2", "type": "song", "claims": []},
+    }
+    summary = schema_expectation_satisfaction(
+        schemas, facts_by_id, rules={}, kinds={}, edges=[], interps=[],
+    )
+    assert summary["song"] == {"total": 2, "satisfied": 1, "concepts": 2}
+
+
+def test_schema_expectation_satisfaction_zero_when_type_absent() -> None:
+    """A schema declaring `expectations:` with no concept of its type in the
+    population binds zero — distinct from an all-satisfied roll-up, which
+    also has `total == satisfied` but `concepts > 0`."""
+    schemas = {"widget": {"type": "widget", "expectations": [
+        {"id": "widget-color", "expect": ["color"]},
+    ]}}
+    summary = schema_expectation_satisfaction(
+        schemas, {}, rules={}, kinds={}, edges=[], interps=[],
+    )
+    assert summary["widget"] == {"total": 0, "satisfied": 0, "concepts": 0}
+
+
 # --------------------------------------------------------------- shape attachment
 
 
@@ -1880,3 +1915,44 @@ def test_cli_demands_no_arg_prints_ledger_wide_summary(system: Path, capsys) -> 
 def test_cli_demands_unknown_fact_id_is_a_usage_error(system: Path, capsys) -> None:
     rc = ledger_main(["demands", "no-such-fact", "--root", str(system)])
     assert rc == 1
+
+
+# ------------------------------- `ath ledger regen` expectation-satisfaction feedback (v32)
+
+
+def test_cli_regen_prints_satisfaction_line_when_population_fully_satisfies(
+    system: Path, capsys,
+) -> None:
+    """The live-instance finding: minting a schema whose expectations the
+    population already satisfies produces silence everywhere else (the
+    §7.4 frontier only ever lists open/blocked demands) — `regen` now
+    surfaces it directly."""
+    _write_schema(system / "ledger", "artist", (
+        "type: artist\ndescription: d\nfields:\n  genre: {}\n"
+        "expectations:\n  - id: artist-genre\n    expect: [genre]\n"
+    ))
+    _fact(system, "artist", {
+        "id": "x", "type": "artist", "name": "X",
+        "claims": [_claim("x", "genre", predicate="genre", value="jazz")],
+    })
+    rc = ledger_main(["regen", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "artist: 1/1 expectations satisfied (1 concept)" in out
+
+
+def test_cli_regen_prints_zero_concepts_bound_distinctly_from_satisfied(
+    system: Path, capsys,
+) -> None:
+    """A schema whose `expectations:` matches no concept in the population
+    (here: no `widget` concept exists at all) must not read like the
+    all-satisfied case above — a bare "0/0" would look identical to it."""
+    _write_schema(system / "ledger", "widget", (
+        "type: widget\ndescription: d\nfields:\n  color: {}\n"
+        "expectations:\n  - id: widget-color\n    expect: [color]\n"
+    ))
+    rc = ledger_main(["regen", "--root", str(system)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "widget: expectations bind 0 concepts" in out
+    assert "widget: 0/0" not in out

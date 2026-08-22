@@ -31,9 +31,10 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--anchor",
         metavar="AXIS=N",
         default=None,
-        help="Render only the segment(s) at this integer-span axis (e.g. --anchor turn=4, "
-             "--anchor el=12, --anchor prop=5, or a range --anchor page=2-3) — the same "
-             "scoping `ath ledger verify` applies to an evidence anchor. Axes are discovered "
+        help="Render only the segment(s) at this axis (e.g. --anchor turn=4, "
+             "--anchor el=12, --anchor prop=5, an integer range --anchor page=2-3, or a "
+             "timecode range --anchor time_range=24:52-25:00) — the same scoping "
+             "`ath ledger verify` applies to an evidence anchor. Axes are discovered "
              "from the record itself; an unknown axis or out-of-range N errors naming what "
              "the record actually carries.",
     )
@@ -72,6 +73,16 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_bound(axis: str, value: float) -> str:
+    """A span bound for display: `time_range=`'s seconds render as `MM:SS`/`H:MM:SS` (the
+    address form itself), any other axis as a bare integer."""
+    if axis == "time_range":
+        from corpus.draft._transcript import seconds_to_timecode
+
+        return seconds_to_timecode(value)
+    return str(int(value))
+
+
 def _run_anchor(post, anchor: str) -> int:
     from corpus import segments
 
@@ -79,12 +90,20 @@ def _run_anchor(post, anchor: str) -> int:
     axis = axis.strip()
     if not sep or not axis:
         sys.exit(f"--anchor must be AXIS=N (e.g. --anchor turn=4); got {anchor!r}")
-    span = segments.parse_axis_span(value)
-    if span is None:
-        sys.exit(
-            f"--anchor value must be an integer or an integer range (e.g. turn=4 or "
-            f"turn=4-6); got {anchor!r}"
-        )
+    if axis == "time_range":
+        span = segments.parse_time_range(value)
+        if span is None:
+            sys.exit(
+                f"--anchor time_range value must be a timecode or a timecode range "
+                f"(e.g. time_range=24:52 or time_range=24:52-25:00); got {anchor!r}"
+            )
+    else:
+        span = segments.parse_axis_span(value)
+        if span is None:
+            sys.exit(
+                f"--anchor value must be an integer or an integer range (e.g. turn=4 or "
+                f"turn=4-6); got {anchor!r}"
+            )
     lo, hi = span
 
     stored = post.content or ""
@@ -109,7 +128,7 @@ def _run_anchor(post, anchor: str) -> int:
                 "record carries no integer-addressable segment axes — nothing to anchor into"
             )
         known = ", ".join(
-            f"{a}={min(r[0] for r in rows)}-{max(r[1] for r in rows)}"
+            f"{a}={_fmt_bound(a, min(r[0] for r in rows))}-{_fmt_bound(a, max(r[1] for r in rows))}"
             for a, rows in sorted(by_axis.items())
         )
         sys.exit(f"unknown anchor axis {axis!r} for this record; it addresses: {known}")
@@ -121,7 +140,7 @@ def _run_anchor(post, anchor: str) -> int:
         hi_all = max(r[1] for r in rows)
         sys.exit(
             f"{axis}={value} matches no segment; this record's `{axis}` axis spans "
-            f"{lo_all}-{hi_all}"
+            f"{_fmt_bound(axis, lo_all)}-{_fmt_bound(axis, hi_all)}"
         )
 
     out = "\n".join(segments.render_segment(seg) for seg in hits)

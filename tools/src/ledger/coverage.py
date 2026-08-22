@@ -123,7 +123,13 @@ def _backlog_line(h: str, facts: dict) -> str:
     bits = [f"`{h[:12]}…`"]
     host = facts.get("origin.host")
     if host:
-        bits.append(f"host `{host}`")
+        # A promoted member's origin `uri:` is `corpus://<container>?…`
+        # (spec/corpus.md §1.2, "the container-vs-leaf judgment") — its
+        # netloc is the container's blake3, not a web host.
+        if FULL_HASH_RE.match(str(host)):
+            bits.append(f"member of `{str(host)[:12]}…`")
+        else:
+            bits.append(f"host `{host}`")
     mime = facts.get("mime")
     if mime:
         bits.append(f"mime `{mime}`")

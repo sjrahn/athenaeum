@@ -228,8 +228,10 @@ def test_anchor_requires_a_stored_content_zone(tmp_path):
 
 
 def test_anchor_no_integer_addressable_axes_at_all(tmp_path):
-    """A record whose only segment carries a non-integer-span address (`time_range=`)
-    has nothing `--anchor` can target."""
+    """A record whose only segment carries a `bbox=` address (an unchecked axis,
+    `segments._UNCHECKED_AXES` — the resolver's own `?path=`/`region=`/etc. derivation
+    ops, never a body-address axis) has nothing `--anchor` can target. `time_range=` is
+    NOT one of these any more — it scopes span-precisely, `test_time_range_anchor.py`."""
     root = _scaffold(tmp_path)
     h = "5" * 64
     post = frontmatter.Post(
@@ -237,7 +239,7 @@ def test_anchor_no_integer_addressable_axes_at_all(tmp_path):
     )
     records.set_artifact_block(post, mime="text/plain", fields={})
     records.append_origin_block(post, snapshot="2026-01-01T00:00:00Z")
-    seg = segments.Segment(atom="text", address="time_range=0-30", body="transcript chunk")
+    seg = segments.Segment(atom="text", address="bbox=0,0,10,10", body="a region marker")
     post.content = segments.emit([seg])
     records.dump(post, paths.record_path(root, h))
     with pytest.raises(SystemExit) as exc:

@@ -148,7 +148,42 @@ def _cmd_regen(argv: Sequence[str]) -> int:
             render_coverage(ledger_root, join.corpora), encoding="utf-8"
         )
         print(f"wrote {COVERAGE_PATH}")
+    _print_expectation_satisfaction(ledger_root, facts, interps, schemas)
     return 0
+
+
+def _print_expectation_satisfaction(
+    ledger_root: Path, facts: dict[Path, dict], interps: dict[Path, dict],
+    schemas: dict[str, dict],
+) -> None:
+    """One line per schema declaring `expectations:` (§4.4): how much of the
+    live population satisfies them. A newly-minted schema whose population
+    already satisfies every expectation is otherwise silent everywhere — the
+    §7.4 frontier only ever shows open/blocked demands — so an operator
+    can't tell "bound and satisfied" from "matches nothing" without this."""
+    from ledger import demands as demands_mod
+    from ledger import values as values_mod
+    from ledger.model import is_edge, is_redirect, load_lineage
+
+    live = [f for f in facts.values() if not is_redirect(f)]
+    edges = [f for f in live if is_edge(f)]
+    facts_by_id = {str(f.get("id")): f for f in live}
+    rules, _ = demands_mod.load_demand_rules(ledger_root)
+    kinds, _ = values_mod.load_kinds(ledger_root)
+    lineage, _ = load_lineage(ledger_root)
+    summary = demands_mod.schema_expectation_satisfaction(
+        schemas, facts_by_id, rules=rules, kinds=kinds, edges=edges,
+        interps=list(interps.values()), lineage=lineage,
+    )
+    for ftype in sorted(summary):
+        row = summary[ftype]
+        if row["total"] == 0:
+            print(f"{ftype}: expectations bind 0 concepts — schema matches nothing "
+                  "in the live population")
+        else:
+            plural = "" if row["concepts"] == 1 else "s"
+            print(f"{ftype}: {row['satisfied']}/{row['total']} expectations satisfied "
+                  f"({row['concepts']} concept{plural})")
 
 
 def _cmd_verify(argv: Sequence[str]) -> int:

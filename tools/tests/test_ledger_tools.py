@@ -19,6 +19,7 @@ from ledger.worklist import worklist
 H1 = "1" * 64
 H2 = "2" * 64
 H3 = "3" * 64
+H4 = "4" * 64
 
 
 def _imessage_record(root: Path, h: str, handle, period: str) -> None:
@@ -36,6 +37,20 @@ def _imessage_record(root: Path, h: str, handle, period: str) -> None:
         f"period: {period}\n{handle_yaml}-->\n\n"
         "<!--segment text/message\naddress: el=1\nsender: Me\n-->\n"
         "hello from the fixture\n<!--/segment-->\n",
+        encoding="utf-8",
+    )
+
+
+def _promoted_member_record(root: Path, h: str, container_h: str) -> None:
+    """A promoted member's origin `uri:` is `corpus://<container>?…`
+    (spec/corpus.md §1.2) — its lineage origin, not a captured web URL."""
+    p = root / "records" / h[:2] / f"{h}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"---\nid: {h}\ntitle: ''\nstatus: normalized\n"
+        "touch:\n- corpus.ingest@0.1.0\n---\n\n"
+        "<!--artifact text/plain\n-->\n\n"
+        f"<!--origin container-lineage\nuri: 'corpus://{container_h}?stream_id=1'\n-->\n",
         encoding="utf-8",
     )
 
@@ -743,6 +758,19 @@ def test_coverage_backlog_representation_demand(system: Path) -> None:
     assert ("identify the work this record manifests; stub it if new (§4.2); "
             "roster it with representation fields.") in backlog
     assert "mime `text/html`" in backlog  # the mechanical fact this fixture's records carry
+
+
+def test_coverage_backlog_member_leaf_labeled_not_host(system: Path) -> None:
+    """A promoted member's origin `uri:` is `corpus://<container>?…` — its
+    netloc is the container's blake3, not a web host. The backlog line must
+    read "member of `<hash>…`", never "host `<hash>`"."""
+    _promoted_member_record(system / "corpora" / "corpus-private", H4, H1)
+    run_harvest(system / "ledger", _corpora(system))
+    text = render_coverage(system / "ledger", _corpora(system))
+    backlog = text.split("### Backlog — representation demand (§9)", 1)[1]
+    assert H4[:12] in backlog
+    assert f"member of `{H1[:12]}…`" in backlog
+    assert "host `" not in backlog
 
 
 def test_coverage_reverse_read_rostered_never_cited(system: Path) -> None:
