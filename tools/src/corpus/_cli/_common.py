@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from corpus import paths
@@ -52,8 +53,6 @@ def parse_current_period(raw: str | None) -> tuple[int, int]:
     current UTC year-month when absent. Shared by every schedule-driven splitter
     (`mbox-split`, `period-split`, spec §12.3.14) that needs a deterministic "what counts
     as the open month" boundary for testing, rather than always reading the real clock."""
-    from datetime import UTC, datetime
-
     if not raw:
         now = datetime.now(UTC)
         return now.year, now.month
@@ -62,6 +61,19 @@ def parse_current_period(raw: str | None) -> tuple[int, int]:
         return int(year_s), int(month_s)
     except ValueError:
         sys.exit(f"--current-period: expected YYYY-MM, got {raw!r}")
+
+
+def bucket_year_month(dt: datetime) -> tuple[int, int]:
+    """The period-bucketing UTC boundary rule (spec §12.3.14, v34 owner ruling): an
+    AWARE `dt` (carries an offset — an RFC 5322 `Date:` header, an offset-bearing ISO
+    timestamp) converts to UTC before its `(year, month)` is read; a NAIVE `dt` (no
+    offset anywhere in the bytes — an EXIF-style local time) buckets at face value,
+    because inventing an offset would fabricate a fact the bytes do not carry. Shared by
+    every schedule-driven splitter (`mbox-split`, `period-split`) so the rule is applied
+    identically on both the mbox Date-header axis and the sidecar date axis."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(UTC)
+    return dt.year, dt.month
 
 
 # The functional-URI transform grammar (spec §6.2), shown in `corpus resolve`/`preview`

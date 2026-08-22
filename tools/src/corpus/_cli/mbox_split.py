@@ -25,6 +25,12 @@ era, the schedule's top-level `grain` applies) — so ONE export can split 2005-
 YEAR (re-encountering already-promoted year records) and 2026+ by MONTH, in one
 container. With NO schedule declared, behavior is EXACTLY the pre-schedule year-grain split
 (undated rides the residue) — existing corpora are unaffected.
+
+**The UTC boundary (spec §12.3.14, v34 owner ruling).** Every bucket boundary — a
+member's own period AND the open/closed comparison against `--current-period` /
+`--current-year` — is a UTC calendar boundary. A Date: header carrying an offset
+converts to UTC before its year/month is read; a naive header (no offset in the bytes)
+buckets at face value. There is no per-source timezone knob.
 """
 
 from __future__ import annotations
@@ -41,7 +47,12 @@ from typing import Any
 import yaml
 
 from corpus import hashing, mboxfile, schemas
-from corpus._cli._common import add_corpus_root_arg, parse_current_period, resolved_corpus_root
+from corpus._cli._common import (
+    add_corpus_root_arg,
+    bucket_year_month,
+    parse_current_period,
+    resolved_corpus_root,
+)
 
 # The pre-schedule (no partition declared) behavior, expressed as a schedule: pure
 # year grain, no historical eras, undated rides the current residue.
@@ -56,7 +67,10 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="YYYY",
         help="the year treated as open for YEAR-grain buckets (default: the current UTC "
-        "year); years strictly before it are closed and go to the container.",
+        "year); years strictly before it are closed and go to the container. Every "
+        "member's own year is read at the UTC boundary too (spec §12.3.14) — an "
+        "offset-bearing Date: header converts to UTC first; a naive one buckets at face "
+        "value.",
     )
     parser.add_argument(
         "--current-period",
@@ -64,7 +78,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
         metavar="YYYY-MM",
         help="the month treated as open for MONTH-grain buckets (default: the current "
         "UTC year-month); months strictly before it are closed and go to the container. "
-        "Only meaningful when a partition schedule (spec §12.3.14) resolves month grain.",
+        "Only meaningful when a partition schedule (spec §12.3.14) resolves month grain. "
+        "Every member's own month is read at the UTC boundary too — an offset-bearing "
+        "Date: header converts to UTC first; a naive one buckets at face value.",
     )
     parser.add_argument(
         "--origin",
@@ -90,14 +106,18 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 
 def _member_date_parts(date_header: str | None) -> tuple[int, int] | None:
-    """Return `(year, month)` parsed from a Date: header, or None if unparseable."""
+    """Return `(year, month)` parsed from a Date: header, or None if unparseable — per
+    the UTC boundary rule (spec §12.3.14, v34 owner ruling): an offset-bearing header
+    converts to UTC before its year/month is read; `parsedate_to_datetime` returns a
+    NAIVE datetime for a `-0000`-style header (no offset in the bytes), which buckets at
+    face value rather than an invented UTC."""
     if not date_header:
         return None
     try:
         dt = parsedate_to_datetime(date_header)
     except (TypeError, ValueError):
         return None
-    return dt.year, dt.month
+    return bucket_year_month(dt)
 
 
 def _source_modified_iso(src: Path) -> str | None:

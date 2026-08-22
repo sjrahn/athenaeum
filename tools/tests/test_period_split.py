@@ -211,6 +211,27 @@ def test_sidecar_axis_dotted_path_nested(tmp_path):
     assert (root / "capture" / "export-2025-11.zip").is_file()
 
 
+def test_sidecar_axis_utc_boundary_offset_vs_naive(tmp_path):
+    """The v34 UTC boundary rule (spec §12.3.14): an offset-bearing sidecar date
+    converts to UTC before bucketing — here crossing BACK a month from its face value —
+    while a naive sidecar date (no offset in the bytes) buckets at face value."""
+    root = _corpus(tmp_path, _MONTH_STANDING)
+    src = tmp_path / "export"
+    src.mkdir()
+    # Face value: Feb 1, 02:00+06:00. UTC: Jan 31, 20:00 -> previous month.
+    _mk_member(src, "offset.HEIC", "2026-02-01T00:00:00", "2026-02-01T02:00:00+06:00")
+    # No offset in the bytes: buckets at face value, Feb.
+    _mk_member(src, "naive.HEIC", "2026-02-01T00:00:00", "2026-02-01T02:00:00")
+
+    assert _run(root, src, current_period="2026-03") == 0
+
+    capture = root / "capture"
+    with zipfile.ZipFile(capture / "export-2026-01.zip") as z:
+        assert z.namelist() == ["offset.HEIC", "offset.HEIC.json"]
+    with zipfile.ZipFile(capture / "export-2026-02.zip") as z:
+        assert z.namelist() == ["naive.HEIC", "naive.HEIC.json"]
+
+
 # ---------- zip-source equivalence ---------- #
 
 

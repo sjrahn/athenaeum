@@ -247,6 +247,50 @@ def test_mixed_era_split_year_history_and_month_current_in_one_container(tmp_pat
     assert fields["years_end"] == "2025"
 
 
+# ---------- the UTC boundary rule (v34, spec §12.3.14) ---------- #
+
+
+def test_boundary_offset_dates_bucket_by_utc_not_face_value(tmp_path):
+    """A message dated in the FIRST hours of a month at a positive offset crosses BACK
+    to the previous month in UTC; one dated in the LAST hours at a negative offset
+    crosses FORWARD to the next month — the v34 UTC boundary rule (spec §12.3.14), not
+    face-value reading of the Date: header's local calendar date. An unparseable Date:
+    still falls through to undated, unaffected by the rule."""
+    root = _corpus(tmp_path)
+    _origin_overlay(
+        root,
+        "mailstream",
+        "description: mailstream\npartition:\n  grain: month\n  undated: standing\n",
+    )
+    source = _mbox(
+        tmp_path,
+        "full.mbox",
+        # Face value: Feb 1, 02:00. UTC (-6h): Jan 31, 20:00 -> previous month.
+        _msg("early-plus6", "Sun, 01 Feb 2026 02:00:00 +0600"),
+        # Face value: Jun 30, 20:00. UTC (+8h): Jul 1, 04:00 -> next month.
+        _msg("late-minus8", "Tue, 30 Jun 2026 20:00:00 -0800"),
+        _msg("garbage-date", "not a date at all"),
+    )
+    assert (
+        _run_split(
+            root, source, origin="mailstream", current_year=2026, current_period="2026-08"
+        )
+        == 0
+    )
+
+    container = root / "capture" / "full-periods-2026-01-2026-07.zip"
+    assert container.is_file()
+    with zipfile.ZipFile(container) as z:
+        assert z.namelist() == ["2026-01.mbox", "2026-07.mbox"]
+
+    fields = _sidecar(container)["origin_fields"]
+    assert fields["periods"] == {"2026-01": 1, "2026-07": 1}
+
+    undated_bundle = root / "capture" / "full-undated.mbox"
+    assert undated_bundle.is_file()
+    assert mboxfile.scan(undated_bundle, None).count == 1
+
+
 def test_undated_standing_bucket_emitted_and_excluded_from_residue(tmp_path):
     root = _corpus(tmp_path)
     _origin_overlay(

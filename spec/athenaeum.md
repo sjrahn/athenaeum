@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 33
+version: 34
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 33 (2026-08-22, owner ruling) generalizes the v32 route rules to the full breadth of the payload-identity principle they rest on (Part II §6.2): **route unification** holds for every member axis — a promoted member leaf (`stream_id=`, `msg=`, `part=`, `path=`, `card=`, `entry=`, `item=`) resolves through its container, one route, one cache entry, base form disclosed — and **member re-chaining** holds for every member axis, so a further transform after any member address re-enters the working-kind table (`?msg=N&part=M` reaches an attachment through the mbox). No new doctrine, no migration: member-leaf ids already conformed. Prior version notes: the changelog.*
+*Version 34 (2026-08-22, owner ruling) pins the temporal-stratification boundary (Part II §12.3.14): period boundaries are **UTC calendar boundaries** for every producer and grain — no per-source timezone knob; offset-bearing date-axis values convert to UTC before bucketing, naive values bucket at face value (an offset the bytes don't carry is never invented), and a period closes at the first export after its UTC end, since membership keys on each member's own date. Prior version notes: the changelog.*

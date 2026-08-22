@@ -30,6 +30,15 @@ entry is the member's OWN mtime (never "now", never the source's mtime) — cros
 byte-stability of these zips depends entirely on the producer PRESERVING bytes and mtimes
 across export runs, which is exactly what the §12.3.14 measurement is required to
 establish before a schedule is declared at all.
+
+**The UTC boundary (spec §12.3.14, v34 owner ruling).** Every bucket boundary — a
+member's own period AND the open/closed comparison against `--current-period` — is a
+UTC calendar boundary. On the `sidecar:` date axis, an offset-bearing ISO value converts
+to UTC before its year/month is read; a naive value (no offset in the bytes) buckets at
+face value. There is no per-source timezone knob. The `mtime` axis is unaffected by this
+change: a directory source's mtime is already read as UTC, and a zip source's
+`ZipInfo.date_time` is naive by format (no offset ever present) — both already bucket
+correctly under the rule as written.
 """
 
 from __future__ import annotations
@@ -44,7 +53,12 @@ from typing import Any
 
 import yaml
 
-from corpus._cli._common import add_corpus_root_arg, parse_current_period, resolved_corpus_root
+from corpus._cli._common import (
+    add_corpus_root_arg,
+    bucket_year_month,
+    parse_current_period,
+    resolved_corpus_root,
+)
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
@@ -78,7 +92,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
         metavar="YYYY-MM",
         help="the month treated as open (default: the current UTC year-month); months "
         "(or, under a year-grain era, years) strictly before it are closed and each "
-        "become their own zip.",
+        "become their own zip. Every member's own period is read at the UTC boundary "
+        "too (spec §12.3.14) — on the sidecar axis, an offset-bearing ISO value "
+        "converts to UTC first; a naive one buckets at face value.",
     )
     add_corpus_root_arg(parser)
 
@@ -185,7 +201,10 @@ def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] |
     """Read a date value at `dotted_path` from sidecar JSON `data` and return its
     `(year, month)` — tolerant throughout: malformed JSON, a missing/non-object
     intermediate segment, a non-string or unparseable value all read as "no date"
-    (undated), never an error that would abort the whole split."""
+    (undated), never an error that would abort the whole split. Per the UTC boundary
+    rule (spec §12.3.14, v34 owner ruling): an offset-bearing ISO value converts to UTC
+    before its year/month is read; a naive value (no offset in the bytes) buckets at
+    face value rather than an invented UTC."""
     try:
         doc = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -201,7 +220,7 @@ def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] |
         dt = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return dt.year, dt.month
+    return bucket_year_month(dt)
 
 
 def _resolve_date(
