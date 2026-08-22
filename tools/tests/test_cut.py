@@ -362,14 +362,31 @@ def test_the_redirect_carries_a_whole_chain(tmp_path):
     assert got == f"corpus://{_CID}?stream_id=0&time_range=10-20&format=mp4"
 
 
-def test_a_non_timeline_op_does_not_redirect(tmp_path):
-    """`format=` addresses no timeline — a leaf's own playable rendering stays a leaf
-    operation."""
+def test_format_redirects_through_the_container(tmp_path):
+    """*(v32)* `format=` addresses no timeline, but it DOES need playable input — a
+    payload leaf's own bytes are not playable (§2), so `format=` now redirects through
+    the container too, same as the timeline ops. (Pre-v32 a promoted leaf's bytes were
+    themselves a playable single-track container, so this redirected nowhere; that
+    changed with the payload-identity principle.)"""
     root = _corpus(tmp_path)
     post = records.load(_leaf(root))
     assert resolver._stream_timeline_redirect(
         _parsed(f"corpus://{_LID}?format=mp4"), post
-    ) is None
+    ) == f"corpus://{_CID}?stream_id=0&format=mp4"
+
+
+def test_transcribe_redirects_through_the_container(tmp_path):
+    """*(v32)* `transcribe` needs playable input too — an audio payload leaf's own bytes
+    carry no self-framing at all (no ADTS, no length-prefixed Opus), so it redirects the
+    same way. `corpus.transforms.audio.transcribe` isolates the addressed stream via
+    `corpus.mux` before handing it to the transcriber, so this is still the leaf's OWN
+    bytes reaching the adapter — never a lossy `extract_audio` derivative (module note,
+    `corpus.transforms.audio`)."""
+    root = _corpus(tmp_path)
+    post = records.load(_leaf(root))
+    assert resolver._stream_timeline_redirect(
+        _parsed(f"corpus://{_LID}?transcribe"), post
+    ) == f"corpus://{_CID}?stream_id=0&transcribe"
 
 
 def test_an_explicit_stream_id_is_never_second_guessed(tmp_path):

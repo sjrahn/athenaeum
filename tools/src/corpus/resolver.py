@@ -214,13 +214,16 @@ def resolve(
             corpus_root, canonical_uri, parsed.hash, artifact_record, regenerate=regenerate
         )
 
-    # Timeline ops on a promoted STREAM LEAF redirect through the container (§6.2's
-    # lineage-chained resolution, §1.2's inheritance-through-lineage). An elementary stream
-    # carries no container timing of its own — ffmpeg imputes a frame rate and reports no
-    # duration — so a second of "leaf time" is not a second of the timeline the leaf's stored
-    # addresses were computed in. The container holds the real timeline AND the shared one, so
-    # the op runs there with `stream_id=` composed in. Without this, an address stored on a
-    # leaf resolves against a timebase nobody measured it in.
+    # Route unification (§6.2, v32): a promoted STREAM LEAF's ops that need a TIMELINE or a
+    # PLAYABLE surface redirect through the container. The leaf's own bytes are the raw
+    # payload (§2) — no timescale, no duration, no self-framing of any kind — so a second of
+    # "leaf time" is not a second of the timeline the leaf's stored addresses were computed
+    # in, and ffmpeg cannot even parse the bytes directly for `format=`/`transcribe`. The
+    # container holds the real timeline AND the shared one, so the op runs there with
+    # `stream_id=` composed in — the two URIs name the same bytes by the identity equation
+    # (`corpus://<leaf> ≡ corpus://<container>?stream_id=<n>`), so this is one resolution,
+    # one cache entry, not a workaround. Without this, an address stored on a leaf resolves
+    # against a timebase nobody measured it in.
     redirected = _stream_timeline_redirect(parsed, artifact_record)
     if redirected is not None:
         log.debug("stream-leaf timeline redirect: %s -> %s", canonical_uri, redirected)
@@ -255,13 +258,13 @@ def resolve(
     if parsed.is_bare:
         return artifact_binary.resolve()
 
-    # `stream_id=<n>` ALONE (§12.20 item 4): the bare/terminal identity case. Composed with an
-    # engine op (`time_range=`/`format=`/`scenes=`) `stream_id=` stays pure addressing config
-    # (handled below via `_NOOP_PARAMS` + `ctx["stream_ids"]`, feeding the phase-1 ffmpeg `-map`
-    # path) — but alone, it must resolve to the track's PINNED IDENTITY bytes
-    # (`corpus.mux.mux_stream`), never fall through to the raw container the generic
-    # no-op branch below would otherwise return. Pure byte-work: no ffmpeg engine version folds
-    # into the cache key (§12.20 item 1).
+    # `stream_id=<n>` ALONE (§2): the bare/terminal identity case. Composed with an engine op
+    # (`time_range=`/`format=`/`scenes=`) `stream_id=` stays pure addressing config (handled
+    # below via `_NOOP_PARAMS` + `ctx["stream_ids"]`, feeding ffmpeg's `-map` path for a
+    # DERIVED rendering) — but alone, it must resolve to the track's PAYLOAD-IDENTITY bytes
+    # (`corpus.streams.extract_stream`), never fall through to the raw container the generic
+    # no-op branch below would otherwise return. Pure byte-work: no ffmpeg engine version, no
+    # engine at all, folds into the cache key.
     if parsed.params and all(k == "stream_id" for k, _ in parsed.params):
         return _resolve_stream_identity(
             corpus_root, canonical_uri, parsed.hash, artifact_binary,
@@ -526,29 +529,37 @@ def resolve(
 
 #: Ops whose meaning depends on a TIMELINE the leaf's own bytes cannot supply. `stream_id`/`cut`
 #: are addressing/mode config and ride along.
-#:
-#: Two deliberate absences, both load-bearing:
-#:
-#: `format=` — an encoding change addresses no timeline, so a leaf's own playable rendering
-#: stays a leaf operation.
-#:
-#: `transcribe` — an AUDIO elementary stream is not in the same position as a video one. ADTS
-#: and the Opus pinned framing are self-framing at exact, fixed per-packet durations derived
-#: from the sampling rate, so an audio leaf's timeline is well-defined from its own bytes;
-#: Annex-B video carries no timing whatsoever. Redirecting would also be actively worse: the
-#: container has no `(video, transcribe)` transform, so the chain would have to route through
-#: `extract_audio`, which RE-ENCODES to mp3 — transcribing a lossy derivative of the member
-#: instead of the member's own pinned identity bytes. Work on the member's bytes when they are
-#: self-sufficient; reach for the container only when they are not.
 _TIMELINE_OP_PARAMS: frozenset[str] = frozenset({"frame", "time", "time_range", "scenes"})
+
+#: `_TIMELINE_OP_PARAMS` plus the two ops that ALSO need the container, for a different
+#: reason (v32, §2): a promoted leaf's own bytes are the raw payload — deliberately not
+#: playable, with no timescale/duration and no self-framing of any kind (no ADTS, no
+#: length-prefixed Opus, no Annex-B). `format=` (an encoding change) and `transcribe` both
+#: need PLAYABLE input, which the leaf cannot supply on its own; the container can, and
+#: it's the same container these bytes came from (route unification, §6.2).
+#:
+#: *(Pre-v32 history, why these two were excluded then.)* Before v32 a promoted leaf's
+#: bytes WERE self-sufficient: `format=` addressed no timeline so a leaf's own playable
+#: rendering stayed a leaf operation, and ADTS/the Opus pinned framing were self-framing
+#: at fixed per-packet durations, so an audio leaf's transcription needed no container
+#: either — redirecting would have been actively worse, forcing a route through
+#: `extract_audio`'s lossy re-encode. The payload-identity principle removed the leaf's
+#: own playability entirely, which is what makes reaching for the container correct now
+#: rather than merely tolerable: `corpus.transforms.audio.transcribe` isolates the
+#: addressed stream via `corpus.mux` (a lossless remux, not `extract_audio`'s re-encode)
+#: before handing it to the transcriber, so transcription still runs on the SAME payload
+#: bytes the leaf's own id names — no lossy derivative anywhere in the chain.
+_LEAF_CONTAINER_REDIRECT_PARAMS: frozenset[str] = _TIMELINE_OP_PARAMS | {"format", "transcribe"}
 
 
 def _stream_timeline_redirect(parsed: Any, artifact_record: Any) -> str | None:
-    """The container URI a timeline op on a stream leaf should run against, or None.
+    """The container URI a timeline/playable-surface op on a stream leaf should run
+    against, or None.
 
-    Returns None — meaning "resolve normally" — unless ALL of: the URI carries a timeline op,
-    the record has a containment-lineage origin naming exactly one container stream, and the
-    URI does not already select a stream (a leaf that names `stream_id=` itself is asking for
+    Returns None — meaning "resolve normally" — unless ALL of: the URI carries an op that
+    needs the container (`_LEAF_CONTAINER_REDIRECT_PARAMS`), the record has a
+    containment-lineage origin naming exactly one container stream, and the URI does not
+    already select a stream (a leaf that names `stream_id=` itself is asking for
     something else entirely, and guessing at it would be worse than failing).
 
     The rewritten URI is `corpus://<container>?stream_id=<N>&<the original params>` — the
@@ -557,7 +568,9 @@ def _stream_timeline_redirect(parsed: Any, artifact_record: Any) -> str | None:
     """
     from corpus import cut as cut_mod
 
-    if not parsed.params or not any(k in _TIMELINE_OP_PARAMS for k, _ in parsed.params):
+    if not parsed.params or not any(
+        k in _LEAF_CONTAINER_REDIRECT_PARAMS for k, _ in parsed.params
+    ):
         return None
     if any(k == "stream_id" for k, _ in parsed.params):
         return None
@@ -724,18 +737,6 @@ def _resolve_members(
     return cache_p.resolve()
 
 
-# Pinned per-codec elementary form's cache extension (spec §12.20.1 / §12.20 item 4) — the
-# same four the promoted-track embed's filename hint uses (`draft/_trackmanifest.py`), except
-# AAC: `.adts` here names the byte format directly (the resolver cache has no promote-time
-# MIME-sniff concern to serve).
-_STREAM_IDENTITY_EXTENSIONS: dict[str, str] = {
-    "h264": "h264",
-    "hevc": "h265",
-    "aac": "adts",
-    "opus": "opus",
-}
-
-
 def _resolve_stream_identity(
     corpus_root: Path,
     canonical_uri: str,
@@ -745,18 +746,19 @@ def _resolve_stream_identity(
     *,
     regenerate: bool,
 ) -> Path:
-    """Materialize the bare `stream_id=<n>` identity op (§12.20 item 4): the track's pinned
-    extraction bytes via `corpus.mux.mux_stream` — never the raw container, and never
-    an ffmpeg engine version folded into the cache key (this is pure byte-work, §12.20 item 1;
-    contrast the engine-versioned muxing-contract ops that COMPOSE `stream_id=` via `-map`,
-    §6.2). Single-track only: a comma-list or repeated `stream_id=` has no meaning for pure
-    identity extraction (you cannot concatenate two different codecs' elementary bytes) — that
-    combination is only valid alongside a muxing-contract op.
+    """Materialize the bare `stream_id=<n>` identity op (spec §2, v32): the track's
+    payload-identity bytes via `corpus.streams.extract_stream` — never the raw container,
+    and never an ffmpeg engine version folded into the cache key (this is pure byte-work,
+    engine-free; contrast the engine-versioned muxing-contract ops that COMPOSE
+    `stream_id=` via `-map`, §6.2). Single-track only: a comma-list or repeated
+    `stream_id=` has no meaning for pure identity extraction (you cannot concatenate two
+    different codecs' payload bytes) — that combination is only valid alongside a
+    muxing-contract op.
 
-    The extension is cheap to predict ahead of the cache check (unlike the muxing contract's
-    deferred-extension kinds, §12.20 item 1's engine path): `probe_streams` reads only the
-    small `moov` subtree, never sample data."""
-    from . import mux, streams
+    The extension is cheap to predict ahead of the cache check (unlike the muxing
+    contract's deferred-extension kinds): `probe_streams` reads only the small `moov`
+    subtree, never sample data."""
+    from . import streams
 
     values = [v for _, v in params if v]
     if len(values) != 1 or "," in values[-1]:
@@ -773,12 +775,12 @@ def _resolve_stream_identity(
     track = next((t for t in tracks if t.index == stream_id), None)
     if track is None:
         raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s))")
-    ext = _STREAM_IDENTITY_EXTENSIONS.get(track.codec)
-    if ext is None:
+    if track.media_type is None:
         raise NotImplementedError(
-            f"stream_id={stream_id}: identity extraction not implemented for codec "
+            f"stream_id={stream_id}: payload extraction not implemented for codec "
             f"{track.codec!r}"
         )
+    ext = mime_mod.extension_for(track.media_type)
 
     urihash_value = furi.urihash(canonical_uri)
     cache_p = furi.cache_path(corpus_root, urihash_value, ext)
@@ -792,7 +794,7 @@ def _resolve_stream_identity(
     tmp = cache_p.with_name(f"{cache_p.name}.tmp.{os.getpid()}")
     try:
         with tmp.open("wb") as out:
-            for chunk in mux.mux_stream(artifact_binary, stream_id, workdir=cache_p.parent):
+            for chunk in streams.extract_stream(artifact_binary, stream_id):
                 out.write(chunk)
         tmp.replace(cache_p)
     finally:

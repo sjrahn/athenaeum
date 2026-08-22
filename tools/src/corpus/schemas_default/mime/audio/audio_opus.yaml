@@ -1,12 +1,20 @@
 description: |
-  A promoted media-container audio track's pinned `corpus-opus-framing@1` elementary stream
-  (spec §12.20.1): no conventional self-framing elementary form exists for Opus, so this is a
-  corpus-defined pinned framing — the `dOps` box payload verbatim, then a big-endian `u32`
-  length prefix + raw packet bytes per sample, in decode order — a deterministic, engine-free
-  extraction produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal
-  schema: this type exists so a promoted track record flows through ingest/lint/resolve like
-  any other artifact; the track itself carries no further mime-declared structure (it is a
-  formless leaf — the transcript rides the audio atom's derivation ops, `?transcribe`, §1.2).
+  A promoted media-stream leaf's raw Opus payload (spec §2, v32, the payload-identity
+  principle): each sample's raw Opus packet, concatenated verbatim in decode order,
+  exactly as the container's `stsz`/`stsc`/`stco` tables lay them out — NO framing of any
+  kind (not even a length prefix; a decoder needs the container's own sample table to
+  find packet boundaries). A deterministic, engine-free extraction produced by
+  `corpus.streams.extract_stream`, never a standalone capture. Deliberately not a
+  playable file on its own: the pre-skip, sample rate and channel mapping live in the
+  container's own tables (the `dOps` box), which is why every op needing playable input
+  (`?transcribe`) resolves through the container instead (route unification, §6.2)
+  rather than against this leaf's bytes directly.
+
+  `corpus://<this-leaf> ≡ corpus://<container>?stream_id=<n>` is an identity equation
+  (§2) — both name the same payload bytes. Minimal schema: this type exists so a promoted
+  track record flows through ingest/lint/resolve like any other artifact; the track
+  itself carries no further mime-declared structure (it is a formless leaf — the
+  transcript rides the audio atom's derivation ops, `?transcribe`, §1.2).
 applies_to:
   content_types:
   - audio/opus

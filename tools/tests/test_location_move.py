@@ -246,6 +246,11 @@ def test_move_refuses_containment_only_record(tmp_path):
     payload = b'{"case": "containment only"}\n'
     with zipfile.ZipFile(z, "w") as zf:
         zf.writestr("note.json", payload)
+        # A second member keeps this a genuine multi-member zip-manifest — a ONE-file
+        # zip now collapses at ingest (spec §2, v32: the payload-identity principle),
+        # which would mint `note.json` directly as a standalone record rather than
+        # leaving it the containment-only member this test needs.
+        zf.writestr("README.txt", b"one note\n")
 
     capture = root / "capture"
     capture.mkdir()
@@ -368,6 +373,11 @@ path = "{tree}"
     payload = b'{"case": "containment only"}\n'
     with zipfile.ZipFile(z, "w") as zf:
         zf.writestr("note.json", payload)
+        # A second member keeps this a genuine multi-member zip-manifest — a ONE-file
+        # zip now collapses at ingest (spec §2, v32: the payload-identity principle),
+        # which would mint `note.json` directly as a standalone record rather than
+        # leaving it the containment-only member this test needs.
+        zf.writestr("README.txt", b"one note\n")
     capture = root / "capture"
     capture.mkdir(exist_ok=True)
     staged = capture / z.name

@@ -427,6 +427,11 @@ def test_nested_mbox_in_zip_promote_and_resolve(tmp_path):
     z = tmp_path / "bundle.zip"
     with zipfile.ZipFile(z, "w") as zf:
         zf.writestr("Takeout/Mail/mail.mbox", mbox_bytes)
+        # A second, unrelated member keeps this a genuine multi-member zip-manifest —
+        # a ONE-file zip now collapses at ingest (spec §2, v32: the payload-identity
+        # principle), which would mint the mbox directly and skip the containment hop
+        # this test means to exercise.
+        zf.writestr("Takeout/Mail/README.txt", b"exported by takeout\n")
 
     # Ingest + draft the zip so the mbox is an indexed member.
     zid = _ingest(root, z)

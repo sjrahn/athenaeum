@@ -1,11 +1,11 @@
-"""Deterministic ISOBMFF elementary-stream extraction (spec §12.20.1, `corpus.streams`).
+"""Deterministic ISOBMFF payload extraction (spec §2, `corpus.streams`).
 
-Real ffmpeg-produced fixtures exercise the sample-table parsing and per-codec
-reframing end to end (h264+aac, h264+opus, and a bonus hevc+aac clip since libx265 is
-available); a couple of hand-built minimal box trees exercise the two "never guess"
-refusal paths (`stsd entry_count > 1`, non-ISOBMFF containers) without needing ffmpeg
-at all. ffmpeg is used here to *generate* and *round-trip-decode* fixtures only — never
-inside `corpus.streams` itself.
+Real ffmpeg-produced fixtures exercise the sample-table parsing and payload extraction
+end to end (h264+aac, h264+opus, and a bonus hevc+aac clip since libx265 is available); a
+couple of hand-built minimal box trees exercise the two "never guess" refusal paths
+(`stsd entry_count > 1`, non-ISOBMFF containers) without needing ffmpeg at all. ffmpeg is
+used here to *generate* and *round-trip-decode* fixtures only — never inside
+`corpus.streams` itself.
 """
 
 from __future__ import annotations
@@ -94,11 +94,11 @@ def test_probe_streams_h264_aac(h264_aac_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "h264"
-    # 3.12: the promoted member is a single-track CONTAINER, so its MIME is the
-    # container type for the kind — never the elementary-stream type the codec names.
-    assert video.media_type == "video/mp4"
+    # v32 (§2): the promoted member is the raw codec payload, so its MIME is the
+    # CODEC-derived leaf type — never the container's.
+    assert video.media_type == "video/h264"
     assert audio.codec == "aac"
-    assert audio.media_type == "audio/mp4"
+    assert audio.media_type == "audio/aac"
     # index is 0-based track order — the two indices are distinct and both valid.
     assert {video.index, audio.index} == {0, 1}
 
@@ -110,9 +110,9 @@ def test_probe_streams_h264_opus(h264_opus_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "h264"
-    assert video.media_type == "video/mp4"
+    assert video.media_type == "video/h264"
     assert audio.codec == "opus"
-    assert audio.media_type == "audio/mp4"
+    assert audio.media_type == "audio/opus"
 
 
 @needs_libx265
@@ -121,20 +121,19 @@ def test_probe_streams_hevc_aac(hevc_aac_clip):
     video = _by_kind(infos, "video")
     audio = _by_kind(infos, "audio")
     assert video.codec == "hevc"
-    assert video.media_type == "video/mp4"
+    assert video.media_type == "video/hevc"
     assert audio.codec == "aac"
-    assert audio.media_type == "audio/mp4"
+    assert audio.media_type == "audio/aac"
 
 
 # ---------- sample_count: the engine-free oracle ---------- #
 #
-# 3.12 moved member production out of this module (`corpus.mux` owns the muxer) and left
-# it the job of CHECKING that producer — see tests/test_mux.py for the identity path
-# itself. What used to live here was a battery pinning the elementary forms: Annex-B
-# start codes, synthesized ADTS sync words, the corpus-defined Opus framing. Those forms
-# no longer name any promoted record, and the function that built ADTS headers is the
-# very one that could not encode `audioObjectType=29`. What this module still owes is a
-# sample count that is right and that ffmpeg had no hand in.
+# Under v32 this module owns BOTH halves: it produces the identity bytes (`extract_stream`)
+# AND independently checks a DERIVED rendering's sample count against the source (used by
+# `corpus.mux` — see tests/test_mux.py for that path). What used to live here, between 3.12
+# and v31, was a battery checking a MUXED producer it did not itself run; before 3.12 it was
+# a battery pinning per-codec elementary forms (Annex-B start codes, synthesized ADTS sync
+# words, a corpus-defined Opus framing) that no longer name any promoted record.
 
 
 @needs_ffmpeg
@@ -177,10 +176,82 @@ def test_sample_count_bad_id_raises(h264_aac_clip):
 
 
 @needs_ffmpeg
-def test_this_module_no_longer_produces_member_bytes(h264_aac_clip):
-    """The supersession, pinned. `extract_stream` produced elementary-stream bytes and is
-    gone at 3.12; anything still calling it is calling for a form no record carries."""
-    assert not hasattr(streams, "extract_stream")
+def test_this_module_produces_member_bytes_again(h264_aac_clip):
+    """The supersession, pinned the other way at v32. `extract_stream` was retired at
+    3.12 (elementary forms) and reinstated at v32 with a different job: the payload
+    itself, engine-free, is now the identity path (§2) — `corpus.mux` produces derived
+    renderings, never identity bytes."""
+    assert hasattr(streams, "extract_stream")
+    assert hasattr(streams, "payload_blake3")
+
+
+# ---------- extract_stream / payload_blake3: the identity path (spec §2, v32) ---------- #
+
+
+@needs_ffmpeg
+def test_extract_stream_is_deterministic(h264_aac_clip):
+    """Extracting the same track twice yields byte-identical output — the identity
+    equation's own foundation: re-derivation is a pure function of the container bytes."""
+    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
+    first = b"".join(streams.extract_stream(h264_aac_clip, video.index))
+    second = b"".join(streams.extract_stream(h264_aac_clip, video.index))
+    assert first == second
+    assert len(first) > 0
+
+
+@needs_ffmpeg
+def test_extract_stream_distinguishes_the_two_tracks(h264_aac_clip):
+    """The degenerate-input trap, for payload bytes: two tracks whose extraction came
+    back identical would satisfy everything else in this file while proving nothing."""
+    infos = streams.probe_streams(h264_aac_clip)
+    video = b"".join(streams.extract_stream(h264_aac_clip, _by_kind(infos, "video").index))
+    audio = b"".join(streams.extract_stream(h264_aac_clip, _by_kind(infos, "audio").index))
+    assert video and audio
+    assert video != audio
+
+
+@needs_ffmpeg
+def test_payload_blake3_equals_hashing_the_streamed_bytes(h264_aac_clip):
+    """`payload_blake3` is not a second implementation that happens to agree — it hashes
+    the SAME `extract_stream` iterator this file's other tests read directly."""
+    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
+    expected = _hash_chunks(streams.extract_stream(h264_aac_clip, video.index))
+    assert streams.payload_blake3(h264_aac_clip, video.index) == expected
+
+
+@needs_ffmpeg
+def test_extract_stream_length_matches_sample_size_sum(h264_aac_clip):
+    """Every byte the sample table declares comes out, and nothing else — the payload has
+    no header/framing of its own to inflate or shrink the count (§2)."""
+    video = _by_kind(streams.probe_streams(h264_aac_clip), "video")
+    total = sum(len(c) for c in streams.extract_stream(h264_aac_clip, video.index))
+    assert total == sum(streams.sample_sizes(h264_aac_clip, video.index))
+
+
+@needs_ffmpeg
+def test_extract_stream_bad_id_raises(h264_aac_clip):
+    with pytest.raises(ValueError, match="no such track"):
+        list(streams.extract_stream(h264_aac_clip, 99))
+
+
+@needs_ffmpeg
+def test_extract_stream_works_with_no_ffmpeg_on_path(monkeypatch, h264_aac_clip):
+    """The identity path has no engine in it, period — proven by making ffmpeg
+    unreachable (both the executable search AND a bare `subprocess.run` call) and
+    confirming extraction still produces the exact same bytes as a normal run."""
+    import subprocess as subprocess_mod
+
+    baseline = streams.payload_blake3(h264_aac_clip, 0)
+
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+    def _no_subprocess(*args, **kwargs):
+        raise AssertionError("corpus.streams must never shell out")
+
+    monkeypatch.setattr(subprocess_mod, "run", _no_subprocess)
+    monkeypatch.setattr(subprocess_mod, "Popen", _no_subprocess)
+
+    assert streams.payload_blake3(h264_aac_clip, 0) == baseline
 
 
 # ---------- synthetic box tree: stsd entry_count > 1 refusal ---------- #

@@ -144,57 +144,61 @@ def continuity(corpus_root: Path, a_id: str, b_id: str) -> Continuity:
 def _media_continuity(
     corpus_root: Path, post_a, a_id: str, post_b, b_id: str
 ) -> list[MemberStatus] | None:
-    """*(3.12)* Continuity between two ISOBMFF media records, by **sample sequence**.
+    """Continuity between two media records, by **sample sequence** (spec §12.8, v32).
 
     Returns None when this is not a media pair — the caller then falls back to whole-artifact
     identity as before.
 
     **Why byte containment is the wrong question here.** A record's identity is its artifact's
-    blake3, so a track re-framed under a changed pinned form (3.12: elementary stream → a
-    single-track container of the same family) has a different id *by construction*. Comparing
-    ids reports DIVERGED for a supersession that is in fact exact, which is worse than no gate:
-    a check that is always red gets ignored. §12.37 names continuity-gated supersession as the
-    net for exactly this case, and until now it could not be one.
+    blake3, so a track re-framed under a changed pinned form (pre-v32: elementary stream ↔ a
+    single-track container; v32: either of those ↔ the raw payload) has a different id *by
+    construction*. Comparing ids reports DIVERGED for a supersession that is in fact exact,
+    which is worse than no gate: a check that is always red gets ignored. Under the v32 regime
+    itself a re-derivation of the same track is id-stable BY construction (§2), so this
+    comparison rarely arises there — where it earns its keep is **across framings**: a
+    pre-v32 leaf (muxed single-track bytes) against its v32 payload successor, the migration's
+    own exactness proof (old muxed leaf → new payload leaf verifies as byte-different,
+    sample-identical).
 
-    **The invariant underneath the envelope is the sample sequence.** Re-enveloping moves every
-    sample's file offset and changes none of their sizes, so `streams.sample_sizes` — engine-free,
-    sample-tables only — is preserved exactly across a reframe and broken by a re-encode, a
-    dropped or reordered sample, or a differently-framed payload. `CONTAINED` keeps its usual
-    meaning: A's sequence is a prefix of B's, the append-only growth case.
+    **The invariant underneath the envelope is the sample sequence.** Re-enveloping (or
+    un-enveloping) moves every sample's file offset and changes none of their sizes, so
+    `streams.sample_sizes` — engine-free, sample-tables only — is preserved exactly across a
+    reframe and broken by a re-encode, a dropped or reordered sample, or a differently-framed
+    payload. `CONTAINED` keeps its usual meaning: A's sequence is a prefix of B's, the
+    append-only growth case.
+
+    **Where the sample table lives** differs by side: a container (or a pre-v32 muxed leaf)
+    carries its own; a v32 payload leaf carries none (§2 — a bare payload has no tables of
+    its own), so its sequence is read from ITS OWN CONTAINER's tables, reached through the
+    leaf's containment lineage (`_track_sources`).
 
     **Which tracks to compare** is decided by lineage, never by position, because a leaf's own
     track 0 may be its container's track 1 and comparing them by index would silently check the
-    wrong pair:
+    wrong pair (`_pair_track_sources`):
 
+    - A and B are SIBLING leaves of the same container track (same container id, same
+      `stream_id=`) — the v32 migration's own case: two framings of one track, neither a
+      promotion of the other.
     - B carries containment lineage into A (`corpus://<a_id>?stream_id=N`) — B is a promotion of
-      A's track N, so compare A's track N against B's only track. This is the post-sweep check
-      #133 wants and the retroactive proof the 3.12 pilot never got.
+      A's track N, so compare A's track N against B's only track.
     - Otherwise both are compared track-for-track by index, which is sound when neither is a
       member of the other (two captures of the same recording, or two framings of one leaf).
       A track-count mismatch is reported rather than paired off.
     """
-    ext_a = mime.extension_for(records.media_type_for(post_a))
-    ext_b = mime.extension_for(records.media_type_for(post_b))
-    try:
-        path_a = ensure_local_bytes(corpus_root, a_id, ext_a)
-        path_b = ensure_local_bytes(corpus_root, b_id, ext_b)
-        tracks_a = streams.probe_streams(path_a)
-        tracks_b = streams.probe_streams(path_b)
-    except (ArtifactMissing, ValueError, NotImplementedError, OSError, RuntimeError) as e:
-        log.debug("continuity: not a readable media pair (%s / %s): %s", a_id[:12], b_id[:12], e)
-        return None
-    if not tracks_a or not tracks_b:
+    sources_a = _track_sources(corpus_root, post_a, a_id)
+    sources_b = _track_sources(corpus_root, post_b, b_id)
+    if not sources_a or not sources_b:
         return None
 
-    pairs = _track_pairs(post_b, a_id, tracks_a, tracks_b)
+    pairs = _pair_track_sources(post_a, a_id, post_b, b_id, sources_a, sources_b)
     out: list[MemberStatus] = []
-    for address, idx_a, idx_b in pairs:
-        if idx_b is None:
+    for address, src_a, src_b in pairs:
+        if src_b is None:
             out.append(MemberStatus(address, ABSENT))
             continue
         try:
-            seq_a = streams.sample_sizes(path_a, idx_a)
-            seq_b = streams.sample_sizes(path_b, idx_b)
+            seq_a = streams.sample_sizes(src_a[1], src_a[2])
+            seq_b = streams.sample_sizes(src_b[1], src_b[2])
         except (ValueError, NotImplementedError, OSError) as e:
             # Unreadable is never "preserved" — continuity is not claimed for what we could
             # not check, exactly as the byte path treats a resolution failure.
@@ -210,32 +214,104 @@ def _media_continuity(
     return out or None
 
 
-def _track_pairs(
-    post_b, a_id: str, tracks_a: list, tracks_b: list
-) -> list[tuple[str, int, int | None]]:
-    """`(address, a_track_index, b_track_index)` for each of A's tracks — lineage first."""
-    for uri in records.iter_origin_uris(post_b):
-        if not uri.startswith(f"corpus://{a_id}?"):
+# One entry per track a record represents: `(record-local index, tables_path,
+# tables_track_index)` — `tables_path`/`tables_track_index` name where the SAMPLE TABLE
+# actually lives, which for a v32 payload leaf is not the leaf's own bytes at all.
+_TrackSource = tuple[int, Path, int]
+
+
+def _leaf_lineage(post, record_id: str) -> tuple[str, int] | None:
+    """`(container_id, stream_index)` from `post`'s own containment-lineage origin
+    (`corpus://<container>?stream_id=<n>`), or None when it carries no such origin."""
+    for uri in records.iter_origin_uris(post):
+        if not str(uri).startswith("corpus://"):
             continue
-        _, _, query = uri.partition("?")
+        base, _, query = str(uri).partition("?")
+        container_id = base[len("corpus://") :]
+        if not container_id or container_id == record_id:
+            continue
         for part in query.split("&"):
             if part.startswith("stream_id="):
                 try:
                     n = int(part[len("stream_id=") :])
                 except ValueError:
                     continue
-                # B is A's track n, promoted. B holds exactly one track, so its own index is
-                # whatever that single track calls itself — read it rather than assuming 0.
-                if len(tracks_b) == 1 and any(t.index == n for t in tracks_a):
-                    return [(f"stream_id={n}", n, tracks_b[0].index)]
-    return [
-        (
-            f"stream_id={t.index}",
-            t.index,
-            next((u.index for u in tracks_b if u.index == t.index), None),
-        )
-        for t in tracks_a
-    ]
+                return container_id, n
+    return None
+
+
+def _track_sources(corpus_root: Path, post, record_id: str) -> list[_TrackSource] | None:
+    """Every track `post` represents, as `_TrackSource` entries. A record with its own
+    sample tables (a container, or a pre-v32 muxed leaf) contributes one entry per track,
+    read from its own bytes. A v32 payload leaf (no tables of its own, §2) contributes its
+    single track, read from its CONTAINER's tables via containment lineage. None when
+    neither route resolves — not a media record, or its bytes/container aren't reachable."""
+    media_type = records.media_type_for(post)
+    ext = mime.extension_for(media_type)
+    try:
+        own_path = ensure_local_bytes(corpus_root, record_id, ext)
+    except (ArtifactMissing, OSError):
+        own_path = None
+    if own_path is not None:
+        try:
+            tracks = streams.probe_streams(own_path)
+        except (ValueError, NotImplementedError, OSError):
+            tracks = None
+        if tracks:
+            return [(t.index, own_path, t.index) for t in tracks]
+
+    lineage = _leaf_lineage(post, record_id)
+    if lineage is None:
+        return None
+    container_id, n = lineage
+    try:
+        container_post = records.load(paths.record_path(corpus_root, container_id))
+        container_ext = mime.extension_for(records.media_type_for(container_post))
+        container_path = ensure_local_bytes(corpus_root, container_id, container_ext)
+    except (ArtifactMissing, OSError, FileNotFoundError):
+        return None
+    return [(0, container_path, n)]
+
+
+def _pair_track_sources(
+    post_a,
+    a_id: str,
+    post_b,
+    b_id: str,
+    sources_a: list[_TrackSource],
+    sources_b: list[_TrackSource],
+) -> list[tuple[str, _TrackSource, _TrackSource | None]]:
+    """`(address, a_source, b_source | None)` for each of A's tracks — lineage first."""
+    lineage_a = _leaf_lineage(post_a, a_id)
+    lineage_b = _leaf_lineage(post_b, b_id)
+    # Sibling leaves of the SAME container track — the v32 migration's own exactness proof
+    # (old muxed leaf, new payload leaf: neither a promotion of the other, both promotions
+    # of the same address on the same container).
+    if (
+        lineage_a is not None
+        and lineage_a == lineage_b
+        and len(sources_a) == 1
+        and len(sources_b) == 1
+    ):
+        return [(f"stream_id={lineage_a[1]}", sources_a[0], sources_b[0])]
+    # B is a promotion straight off A (A itself the container, or a pre-v32 muxed leaf with
+    # its own lineage into a further container — either way A's own tables name the track).
+    for uri in records.iter_origin_uris(post_b):
+        if not str(uri).startswith(f"corpus://{a_id}?"):
+            continue
+        _, _, query = str(uri).partition("?")
+        for part in query.split("&"):
+            if part.startswith("stream_id="):
+                try:
+                    n = int(part[len("stream_id=") :])
+                except ValueError:
+                    continue
+                match = next((s for s in sources_a if s[0] == n), None)
+                if match is not None and len(sources_b) == 1:
+                    return [(f"stream_id={n}", match, sources_b[0])]
+    # Fallback: index-for-index across both records' own tracks.
+    by_index_b = {s[0]: s for s in sources_b}
+    return [(f"stream_id={s[0]}", s, by_index_b.get(s[0])) for s in sources_a]
 
 
 def _prefix_status(

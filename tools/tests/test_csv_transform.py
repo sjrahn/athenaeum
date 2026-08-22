@@ -252,7 +252,10 @@ def test_row_resolves_through_promoted_zip_member_streaming(tmp_path):
     exactly the promoted-member contract `test_containment.py` exercises for `path=`."""
     root = _corpus(tmp_path)
     payload = _SIMPLE
-    z = _zip(tmp_path / "export.zip", {"trips.csv": payload})
+    # A second member keeps this a genuine multi-member zip-manifest — a ONE-file zip
+    # now collapses at ingest (spec §2, v32: the payload-identity principle), which
+    # would mint `trips.csv` directly rather than leaving it a promotable member.
+    z = _zip(tmp_path / "export.zip", {"trips.csv": payload, "README.txt": b"uber export\n"})
     cid = _ingest_and_draft(root, z)
 
     assert _promote(root, f"corpus://{cid}?path=trips.csv") == 0

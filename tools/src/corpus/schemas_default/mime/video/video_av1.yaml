@@ -1,29 +1,26 @@
 description: |
-  A promoted media-stream leaf's raw HEVC payload (spec §2, v32, the payload-identity
-  principle): the hvcC config record's parameter-set NALs (VPS/SPS/PPS) followed by every
-  sample's NAL units, in decode order, exactly as the container's `stsz`/`stsc`/`stco`
-  tables lay them out — NO reframing (no Annex-B start codes synthesized). A
-  deterministic, engine-free extraction produced by `corpus.streams.extract_stream`,
-  never a standalone capture. Minimal schema: this type exists so a promoted track
-  record flows through ingest/lint/resolve like any other artifact; the track itself
-  carries no further mime-declared structure (it is a formless leaf — frame work rides
-  the video atom's derivation ops, §1.2).
+  A promoted media-stream leaf's raw AV1 payload (spec §2, v32, the payload-identity
+  principle): every sample's OBU (Open Bitstream Unit) bytes, concatenated verbatim in
+  decode order, exactly as the container's `stsz`/`stsc`/`stco` tables lay them out — NO
+  reframing; the `av1C` config record itself is not parsed or copied into the leaf, since
+  payload extraction needs no config record at all. A deterministic, engine-free
+  extraction produced by `corpus.streams.extract_stream`, never a standalone capture.
+  Minimal schema: this type exists so a promoted track record flows through
+  ingest/lint/resolve like any other artifact; the track itself carries no further
+  mime-declared structure (it is a formless leaf — frame work rides the video atom's
+  derivation ops, §1.2).
 
   A bare payload carries no container timing of its own — no timescale, no duration — so
   `frame=` / `time_range=` / `scenes=` on the leaf's own hash resolve through **route
   unification** (§6.2, v32): the resolver treats `corpus://<leaf>?<ops>` and
   `corpus://<container>?stream_id=<n>&<ops>` as the same resolution (they name the same
   bytes by the §2 identity equation), running timeline ops against the container's real
-  tables. HEVC was the worse case of the two, measurably (the pre-route-unification
-  pilot, when a bare Annex-B stream was resolved directly): of 8 rostered containers
-  surveyed, **all four hevc leaves fell back to ffmpeg's flat 25 fps default** — even one
-  with a clean CFR 30 fps source — where h264 was honored whenever its SPS carried VUI
-  timing. Divergence was a clean real_fps/25 factor on three and a non-invertible drift
-  on the fourth (a variable-frame-rate screen recording). See `video_h264.yaml` for the
-  full survey.
+  tables. See `video_h264.yaml` for the measured case (a bare elementary stream reports
+  no usable duration or frame rate, and seeking against it silently fails) — the same
+  reasoning applies here; AV1 has no per-codec survey of its own yet.
 applies_to:
   content_types:
-  - video/hevc
+  - video/av1
 # (3.3, §7.1) A formless leaf (above) is exactly a disposition: work format with no
 # faithful markdown shape — the terminal-contract default follows. An origin overlay's
 # own `form:` (§7.2), or a per-record asserted section, overrides either way: a stamped

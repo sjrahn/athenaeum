@@ -28,16 +28,18 @@ mimetypes.add_type("message/rfc822", ".eml")
 # `text/x-vcard`; pin it to the RFC 6350 canonical so ingest + the zip member index agree.
 mimetypes.add_type("text/vcard", ".vcf")
 mimetypes.add_type("text/vcard", ".vcard")
-# The four pinned track-extraction elementary forms a promoted media-container track carries
-# (spec §12.20.1) — a bare Annex-B (h264/hevc) or opus-framing stream has no reliable magic
-# byte signature of its own (opus's framing is a corpus invention with none at all; h264 and
-# hevc Annex-B share the same start-code prefix, §12.20.1), so `corpus promote`'s streamed-head
-# sniff (`sniff_head`) leans on the extension its embed's declared `filename` supplies — the
-# same disambiguation a zip member already uses (`_ZIP_EXT_REFINEMENTS`). ADTS AAC additionally
-# gets a real magic-byte signature below (our fixed ADTS encoding is fully deterministic).
+# The codec-derived leaf mimes a promoted media-stream track carries (spec §2, v32): the
+# raw codec payload, concatenated sample bytes with NO reframing of any kind — no ADTS
+# header, no Annex-B start codes, no corpus-invented framing. A bare payload of any of
+# these has no reliable magic-byte signature of its own (that is exactly what "not
+# reframed" means), so `corpus promote`'s leaf mime comes from the container's own codec
+# probe (`corpus.streams.probe_streams`), never from sniffing the payload bytes — these
+# extension registrations exist only for `mime.extension_for`'s cache-file naming and for
+# a standalone file dropped in under one of these extensions.
 mimetypes.add_type("video/h264", ".h264")
 mimetypes.add_type("video/hevc", ".h265")
-mimetypes.add_type("audio/aac", ".adts")
+mimetypes.add_type("video/av1", ".av1")
+mimetypes.add_type("audio/aac", ".aac")
 mimetypes.add_type("audio/opus", ".opus")
 
 # Magic-byte signatures: (offset, prefix_bytes, mime).
@@ -84,11 +86,11 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"ID3", "audio/mpeg"),
     (0, b"\xff\xfb", "audio/mpeg"),
     # ADTS AAC sync word + fixed header (12-bit sync `1111 1111 1111`, ID=0/MPEG-4, layer=00,
-    # protection_absent=1/no-CRC) — `\xff\xf1` exactly. This is the promoted-track pinned form
-    # (spec §12.20.1, `corpus.streams._adts_header`, which always emits ID=0 no-CRC), so the
-    # signature is fully deterministic for OUR bytes; it also happens to be the standard ADTS
-    # "MPEG-4, no CRC" prefix, so an ordinary dropped-in `.aac` file gets recognized too. Distinct
-    # from the MP3 signature above (`\xff\xfb` has layer bits that ADTS never sets).
+    # protection_absent=1/no-CRC) — `\xff\xf1` exactly, the standard ADTS "MPEG-4, no CRC"
+    # prefix. A promoted media-stream leaf's own bytes (v32, §2) never carry this — the raw
+    # payload is deliberately NOT ADTS-framed — so this signature exists solely to recognize an
+    # ordinary standalone `.aac` file dropped into the corpus, unrelated to track promotion.
+    # Distinct from the MP3 signature above (`\xff\xfb` has layer bits that ADTS never sets).
     (0, b"\xff\xf1", "audio/aac"),
     # Uncompressed tar (POSIX ustar / GNU): the `ustar` magic sits at offset 257 (inside the
     # first member header). A gzip-wrapped tar (`.tgz`) hides this behind gzip magic and is
@@ -278,13 +280,17 @@ def _refine_gzip(path: Path) -> str:
     """A gzip stream whose decompressed head is a tar (`ustar` magic at offset 257) is a
     `.tgz` → `application/x-tar` (one schema/drafter/transform serves plain and gzipped tar;
     `tarfile` auto-detects the compression). A gzip wrapping anything else stays the generic
-    `application/gzip`. Peeks only the leading decompressed bytes, never the whole stream."""
+    `application/gzip`. Peeks only the leading decompressed bytes, never the whole stream.
+    A corrupt/truncated deflate stream raises `zlib.error` (not an `OSError` subclass,
+    unlike `gzip.BadGzipFile`) — caught alongside the others so a malformed gzip-magic'd
+    file still detects (as the generic type) rather than raising out of detection itself."""
     import gzip
+    import zlib
 
     try:
         with gzip.open(path, "rb") as gz:
             inner = gz.read(_SNIFF_BYTES)
-    except (OSError, EOFError, gzip.BadGzipFile):
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error):
         return "application/gzip"
     if inner[257:262] == b"ustar":
         return "application/x-tar"
@@ -444,10 +450,11 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         # extension than ingest's source-suffix fallback wrote to disk.
         "application/x-openzim": "zim",
         "application/x-osm+pbf": "pbf",
-        # Promoted media-container tracks (spec §12.20.1) — the pinned elementary forms.
+        # Promoted media-stream leaves (spec §2, v32) — codec-derived raw-payload mimes.
         "video/h264": "h264",
         "video/hevc": "h265",
-        "audio/aac": "adts",
+        "video/av1": "av1",
+        "audio/aac": "aac",
         "audio/opus": "opus",
     }
     if mime in canonical:

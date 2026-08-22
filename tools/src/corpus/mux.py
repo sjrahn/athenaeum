@@ -1,36 +1,46 @@
-"""Single-track container muxing — the pinned identity path (spec §12.20 item 1, 3.12).
+"""Single-track container muxing — the DERIVED playable-surface path (spec §6.2, v32).
 
-A promoted media-container track's identity bytes are **the source container rewritten
-with exactly one track**: `mp4(video+audio)` -> `mp4(video)` + `m4a(audio)`. Sample
-payloads are copied verbatim in decode order and never re-encoded; what this module does
-is put an envelope back around them, so the member is a file a player accepts and — the
-part the superseded elementary form could not do — one that carries its own timescale,
-duration and sample tables.
+A promoted media-stream leaf's identity bytes are its raw payload (`corpus.streams`,
+§2) — deliberately not playable, since parameter sets and timing live in the container's
+tables rather than the payload. What this module produces instead is a **rendering**:
+the source container rewritten with exactly one track (`mp4(video+audio)` ->
+`mp4(video)` + `m4a(audio)`), sample payloads copied verbatim in decode order and never
+re-encoded, so the result is a file a player accepts and one that carries its own
+timescale, duration and sample tables. This is version-labeled ephemeral cache output
+(§6.2's muxing contract), never a record's identity — `corpus.resolver` derives it on
+demand for an op that needs playable input (`transcribe`, a cut, a frame render) and
+caches it, the same way any other engine-versioned op is cached.
 
-**Why an engine lives here at all.** Until 3.12 the rule was that no muxer may sit in the
-identity path, on the reasoning that engine output cannot be deterministic. That rule was
-measured and found to refuse records rather than guarantee bytes: AAC at
-`audioObjectType=29` has no ADTS encoding (2-bit object-type field, AOT<=4), so 84 of 102
-public containers had a permanently unpromotable audio track. The replacement is not
-trust — it is a pinned invocation plus an attested producer plus an independent check:
+**Before v32** (3.12 through v31), this WAS the identity path: a muxer sat between "the bytes a
+record's id is computed from" and "the source container", on the theory that a pinned
+invocation plus an attested producer plus an independent sample-count check was durable
+enough — `-c copy -fflags +bitexact`, the retired `framing:` stamp naming muxer/version/
+count, `corpus.streams`' own ISOBMFF reader verifying the count independently. That
+regime existed to fix a REAL problem (the elementary form it replaced: AAC at
+`audioObjectType=29` has no ADTS encoding, 2-bit object-type field, AOT<=4 — 84 of 102
+public containers had a permanently unpromotable audio track for exactly this reason),
+but it was itself measured insufficient: engine output is not guaranteed byte-stable
+across tool versions even pinned, and an identity that keys on wrapped bytes strands its
+own records when the wrapping tool moves. The payload-identity principle (§2) removes the
+engine from the identity path entirely; this module keeps doing the muxing work, just for
+a rendering instead of a record.
 
 - **Pinned invocation.** `-c copy -fflags +bitexact`. Measured: `-c copy` is byte-identical
   across runs at a fixed version, and the entire default-vs-bitexact delta is a 37-byte
   `(c)too` atom carrying the libavformat version string. `mvhd`/`tkhd` creation and
   modification times are written as **zero** with or without the flag, even from a source
   that carries real ones — the muxer neither propagates nor invents a timestamp.
-- **Attested producer.** The `framing:` stamp (§7.2.1) carries muxer, version, flags and a
-  sample count, so a byte change across an ffmpeg upgrade is explainable rather than
-  mysterious.
-- **Independent check.** The sample count is computed by `corpus.streams` — this package's
+- **Sample-count check.** The sample count is computed by `corpus.streams` — this package's
   own engine-free ISOBMFF reader — from the SOURCE container's tables, and then verified
-  against the MUXED output by that same reader. A verification that shared the producer's
-  implementation would share its failure mode; this one does not. `corpus.streams` stays
-  deliberately ffmpeg-free for exactly this reason.
+  against the MUXED output by that same reader, so a rendering that dropped, duplicated or
+  re-framed a sample is caught rather than silently cached. `corpus.streams` stays
+  deliberately ffmpeg-free so the check and the thing it checks never share a failure mode.
 
 Cross-version stability is `-bitexact`'s designed contract (it is what ffmpeg's own
 regression suite depends on) and is **not** independently verified here — the suite canary
-in `tests/test_mux.py` is what fails the day a version moves the bytes.
+in `tests/test_mux.py` is what fails the day a version moves the bytes. It matters less
+than it once did: a version-drifted rendering is a fresh cache entry under a new engine
+label (§6.2/§6.3), never a record whose identity moved.
 """
 
 from __future__ import annotations
@@ -47,13 +57,16 @@ from . import streams
 
 _CHUNK = 1 << 20
 
-#: The producer id written into the `framing:` stamp. Names the tool and its library,
-#: not the CLI — what pins the bytes is libavformat's muxer, and its version is what
-#: `version` records.
+#: The producer id a `Framing` names. Names the tool and its library, not the CLI — what
+#: pins a rendering's bytes is libavformat's muxer, and its version is what `version`
+#: records. *(Pre-v32 history: this was written onto a promoted leaf's now-retired
+#: `framing:` stamp — the attestation that admitted a muxer into the identity path. v32's
+#: payload-identity principle removed the engine from that path entirely, so `Framing` now
+#: describes a derived rendering only, never a record's identity.)*
 MUXER_ID = "ffmpeg/lavf"
 
-#: The pinned determinism flags, stamped verbatim so a record says which invocation
-#: produced it rather than leaving it to be inferred from a version number.
+#: The pinned determinism flags — recorded so a rendering says which invocation produced
+#: it rather than leaving it to be inferred from a version number.
 FLAGS = "bitexact"
 
 #: The muxer, named explicitly and never inferred from the output filename.
@@ -101,7 +114,10 @@ class SampleCountMismatch(RuntimeError):
 
 @dataclass(frozen=True)
 class Framing:
-    """The `framing:` stamp's payload (spec §7.2.1)."""
+    """A rendering's producer facts: which muxer, which version, which flags, and the
+    sample count `corpus.streams` verified it against (§6.2). *(Pre-v32 this was a
+    promoted leaf's `framing:` stamp, spec §7.2.1 — retired; kept here only as the shape
+    `mux_stream_to` returns for a derived rendering's own bookkeeping.)*"""
 
     muxer: str
     version: str
@@ -109,8 +125,7 @@ class Framing:
     samples: int
 
     def as_stamp(self) -> dict[str, object]:
-        """The stamp as it lands on the artifact block — key order is the declaration
-        order in the spec, so a diff of two records reads top to bottom."""
+        """This producer's facts as a flat dict, in a stable field order."""
         return {
             "muxer": self.muxer,
             "version": self.version,
@@ -152,11 +167,11 @@ def libavformat_version() -> str:
 
 def mux_stream_to(path: Path, stream_id: int, dest: Path) -> Framing:
     """Write track `stream_id` of the ISOBMFF container at `path` to `dest` as a
-    single-track container, and return its `framing:` stamp.
+    single-track playable rendering, and return the `Framing` describing it.
 
-    The sample count in the returned stamp comes from `corpus.streams` reading the
+    The sample count in the returned `Framing` comes from `corpus.streams` reading the
     SOURCE container, and is verified against the muxed output by the same reader
-    before this returns — so a stamp that exists is a stamp that has been checked.
+    before this returns — so a `Framing` that exists is one that has been checked.
     """
     src = Path(path)
     expected = streams.sample_count(src, stream_id)  # engine-free, from the source tables
@@ -192,10 +207,11 @@ def mux_stream_to(path: Path, stream_id: int, dest: Path) -> Framing:
 
 
 def framing_for(path: Path, stream_id: int, *, workdir: Path | None = None) -> Framing:
-    """The `framing:` stamp a promotion of this track would write, computed by actually
-    muxing it into a throwaway file. There is no cheaper honest answer: the sample count
-    is only *verified* by producing the member, and a stamp that names an unverified
-    count is the thing the stamp exists to prevent.
+    """The `Framing` a rendering of this track would carry, computed by actually muxing
+    it into a throwaway file. No caller in this package still needs it for identity
+    (`promote` mints leaf ids from `streams.payload_blake3` instead, v32) — kept for a
+    caller that wants a rendering's producer facts verified ahead of materializing it for
+    real.
 
     Pass `workdir` for the same reason `mux_stream` takes one — a multi-GB track should
     not land in a small `/tmp`.
@@ -211,8 +227,10 @@ def framing_for(path: Path, stream_id: int, *, workdir: Path | None = None) -> F
 def mux_stream(
     path: Path, stream_id: int, *, workdir: Path | None = None
 ) -> Iterator[bytes]:
-    """Track `stream_id`'s pinned identity bytes as a chunk iterator — the drop-in for
-    the superseded `streams.extract_stream`.
+    """Track `stream_id` remuxed into a single-track playable rendering, as a chunk
+    iterator — the derived-surface producer `corpus.resolver` calls when an op needs
+    playable input from a payload leaf (§6.2), never the identity path (that's
+    `streams.extract_stream`, whose raw payload this remuxes back into a container).
 
     ISOBMFF muxing needs a seekable output (the `moov` index is finalized against real
     file offsets), so this materializes to a temporary file and then streams it. Pass
@@ -234,8 +252,7 @@ def mux_stream(
 
 def _kind_of(path: Path, stream_id: int) -> str:
     """The track's kind per the engine-free probe — raises `ValueError` naming the
-    available tracks when `stream_id` does not exist, the same contract the superseded
-    `extract_stream` had."""
+    available tracks when `stream_id` does not exist."""
     tracks = streams.probe_streams(Path(path))
     for t in tracks:
         if t.index == stream_id:

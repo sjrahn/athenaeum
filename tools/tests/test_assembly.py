@@ -702,7 +702,16 @@ def test_resolve_member_with_query_reserved_name(tmp_path):
     the percent-encoded URI form — the parse-side of the quote_value contract."""
     root = _corpus(tmp_path)
     payload = b'{"guild": "dnd"}'
-    tree = _tree(tmp_path / "export", {"Direct Messages - D&D 5e [673].json": payload})
+    # A second member keeps this a genuine multi-member zip-manifest — a ONE-file zip
+    # now collapses at ingest (spec §2, v32: the payload-identity principle), which
+    # would mint the JSON payload directly and leave no `path=` member to resolve.
+    tree = _tree(
+        tmp_path / "export",
+        {
+            "Direct Messages - D&D 5e [673].json": payload,
+            "index.json": b"{}",
+        },
+    )
     out = tmp_path / "bundle.zip"
     assembly.assemble([_part(tree)], [], out)
     cid = _ingest(root, out)

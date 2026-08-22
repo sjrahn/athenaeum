@@ -253,13 +253,20 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
     inside a strip-and-rebuild layer. The fix there was to stop storing it; here it cannot be
     derived at all, so the fix is to not strip it.)
 
-    *(3.12)* The `framing:` stamp is preserved on the same reasoning, arriving from the other
-    direction: it IS a byte-fact, and that is exactly why nothing here can rebuild it. Its
-    `samples` count is re-derivable from the leaf's own bytes, but `muxer`/`version`/`flags`
-    name what *produced* them, and produced bytes carry no record of their producer. Only the
-    promote pass knows, because only there is the muxer running. Note the stamp cannot go
-    stale the way a resolution can: the record is content-addressed, so bytes that changed
-    would be a different record."""
+    *(3.12, retired v32)* The `framing:` stamp was preserved on the same reasoning, arriving
+    from the other direction: it IS a byte-fact, and that is exactly why nothing here could
+    rebuild it. `muxer`/`version`/`flags` named what *produced* the bytes, and produced bytes
+    carry no record of their producer — only the promote pass knew, because only there was
+    the muxer running. A surviving pre-v32 `framing:` stamp is kept here for the same reason
+    it is kept anywhere: it is honest history, not a defect (§7.1).
+
+    *(v32)* `samples:` is preserved for the SAME reason `cutting:` is, not the reason
+    `framing:` was: it is a byte-fact about the CONTAINER's tables, and a v32 leaf's own
+    bytes carry no table of their own to re-derive it from (§2 — the payload has no sample
+    table, only the container does). The leaf's origin `corpus://<container>?stream_id=<N>`
+    is capture history, never a lookup route (§12.9), so only the promote pass — which holds
+    both records — can compute it. Stripping it would delete the self-check `cutting:` and
+    stored markers compare against, leaving nothing to catch a re-derivation that disagrees."""
     post.metadata["_embeds"] = []
     post.metadata["_members_block"] = True
     post.metadata["_contexts"] = [
@@ -271,6 +278,8 @@ def strip_attested_layer(post: frontmatter.Post) -> None:
         preserved["framing"] = stamp
     if (stamp := (art.get("fields") or {}).get("cutting")) is not None:
         preserved["cutting"] = stamp
+    if (n := (art.get("fields") or {}).get("samples")) is not None:
+        preserved["samples"] = n
     records.set_artifact_block(post, mime=str(art.get("mime") or ""), fields=preserved)
 
 

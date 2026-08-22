@@ -18,6 +18,13 @@ existing origin's `uri:`, a new origin block is appended.
 Capture-time metadata sidecar: a `<file>.capture.yaml` alongside the input carries
 capture metadata (`source_url`, `fetched_at`). On fresh ingest these seed the first
 origin block; after ingest the sidecar is removed.
+
+Compressed single-member envelope collapse (spec §2, the payload-identity principle,
+v32): a bare gzip stream, or a zip holding exactly one non-directory unencrypted
+member, mints under the PAYLOAD's identity — the envelope unwraps before identity is
+computed, so the same content delivered bare or wrapped mints the same record. The
+envelope's own transport hash attests as delivery provenance in frontmatter `hash:`
+(`_collapse_compressed_envelope`, below).
 """
 
 from __future__ import annotations
@@ -60,7 +67,29 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     from corpus import hashing, mime, paths, placement, records, schemas, touches
     from corpus.store import get_store
 
+    # `orig_src` stays pinned to the file exactly as staged — the compressed-envelope
+    # collapse below (spec §2, v32) may rename `src` to the recovered inner filename
+    # (needed for correct mime re-detection, since a stale wrapper extension like
+    # `.zip` would otherwise misdetect the unwrapped bytes), so every sidecar lookup
+    # keyed to the AS-STAGED path (the `.capture.yaml` sidecar, a yt-dlp `.info.json`
+    # companion) reads `orig_src`, never the post-collapse `src`.
+    orig_src = src
+    sidecar = _read_sidecar(orig_src)
+
     media_type = mime.detect(src, corpus_root)
+
+    # Compressed single-member envelope collapse (spec §2, the payload-identity
+    # principle, v32) — BEFORE mime-schema resolution and the mbox/json chrome strips,
+    # so the unwrapped payload composes with whatever ingest does next exactly as its
+    # bare delivery would (§2's "every wrapper removed"). Runs first because a bare
+    # gzip stream has no mime schema of its own at all — there is nothing to resolve
+    # until the payload is in hand. `src` may come back renamed (never moved out of
+    # its staging directory) or replaced in place; either way it now holds the fully-
+    # unwrapped bytes.
+    src, media_type, envelope_hash_values, envelope_fields = _collapse_compressed_envelope(
+        corpus_root, src, media_type
+    )
+
     mt_schema = schemas.load_mime_schema(corpus_root, media_type)
     if mt_schema is None:
         sys.exit(
@@ -93,22 +122,28 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     record_file = paths.record_path(corpus_root, record_id)
     store = get_store(corpus_root)
 
-    sidecar = _read_sidecar(src)
     origin_uri, origin_at, origin_fields, origin_schema = _derive_capture_origin(
         src, sidecar, media_type
     )
     origin_fields.update(strip_provenance)
+    origin_fields.update(envelope_fields)
 
     if record_file.is_file():
         post = records.load(record_file)
         appended = _append_origin_if_new(
             post, origin_uri, origin_at, origin_fields, origin_schema
         )
+        if envelope_hash_values:
+            # A collapsed-envelope re-encounter (spec §2, v32) — the payload was already
+            # ingested bare (or via a different envelope) and this delivery folds into it
+            # exactly as re-capturing identical bytes folds today; the envelope's own
+            # transport hash still attests as delivery provenance on THIS delivery.
+            records.set_record_hashes(post, envelope_hash_values)
         touches.record_touch(post, touches.script_identifier("ingest"))
         records.dump(post, record_file)
         src.unlink()
-        _cleanup_sidecar(src)
-        _relocate_info_sidecar(src, record_id)
+        _cleanup_sidecar(orig_src)
+        _relocate_info_sidecar(orig_src, record_id)
         print(f"re-encounter: {record_file.relative_to(corpus_root)}")
         if appended:
             print(f"  +origin: {origin_uri or origin_fields.get('filename', '(local file)')}")
@@ -129,10 +164,17 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     origin_overlay_id = _resolve_origin_overlay_id(corpus_root, origin_schema, origin_uri)
 
     def _pre_attest(post: frontmatter.Post) -> None:
+        if envelope_hash_values:
+            # The envelope's transport hash (spec §2, v32) — attested onto the freshly
+            # built stub's `hash:` field here (not via `hash_values` above, which is the
+            # §7.9 derived-hash recipe union machinery and its own hash-index write; the
+            # envelope hash is ad hoc delivery provenance, the mbox `source_transport`
+            # shape (§12.3.13) pointed at `hash:` instead of an origin field).
+            records.set_record_hashes(post, envelope_hash_values)
         _emit_sidecar_issues(post, sidecar)
         # Stage an enrichment sidecar (a yt-dlp `.info.json`) as `capture/<hash>.info.json`
         # BEFORE attestation so the sidecar-lift can consume it (spec §7.2, §8.1).
-        _relocate_info_sidecar(src, record_id)
+        _relocate_info_sidecar(orig_src, record_id)
 
     mint_stub(
         corpus_root,
@@ -152,7 +194,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
         origin_overlay_id=origin_overlay_id,
     )
 
-    _cleanup_sidecar(src)
+    _cleanup_sidecar(orig_src)
     _cleanup_enrichment(corpus_root, record_id)
 
     # The placement decision (spec §12.1.1, v22/v23) is recomputed here — cheap (config-only,
@@ -445,6 +487,288 @@ def _sidecar_origin_schema(src: Path) -> str | None:
         return None
     value = str(data.get("origin_schema") or "").strip()
     return value or None
+
+
+# The §7.6 tag for the envelope's transport hash (below): a bare algorithm id — the
+# value is byte-stable (raw blake3 of the as-delivered bytes, no canonicalization) and
+# directly verifiable against the delivered file, exactly the mbox `source_transport`
+# shape. Scope-qualified (`blake3-<qualifier>`, the `blake3-64k`/`blake3-4k` idiom)
+# rather than bare `blake3`: unlike `source_transport` (its own named origin field),
+# `hash:` is a shared multi-purpose field, and a bare `blake3` entry there would read
+# as a second copy of the record's own `id` (§7.6: "the primary blake3 … lives on `id`
+# and is not duplicated here") rather than the envelope's DIFFERENT bytes.
+_ENVELOPE_HASH_TAG = "blake3-envelope"
+
+_ENVELOPE_CHUNK = 1 << 20
+
+
+def _collapse_compressed_envelope(
+    corpus_root: Path, src: Path, media_type: str
+) -> tuple[Path, str, dict[str, str], dict[str, Any]]:
+    """Ingest-time compressed single-member envelope collapse (spec §2, the
+    payload-identity principle, v32): a gzip'd single stream, or a zip holding exactly
+    one non-directory, unencrypted member, mints under the *payload's* identity — the
+    envelope is packaging, never identity (the §1.2 pure-envelope rule, pulled forward
+    to ingest for the compressed case, where the same content delivered bare or
+    wrapped must mint the same record). Repeatedly unwraps `src` in place — recursing
+    while the freshly-unwrapped bytes are themselves a further collapsible envelope (a
+    zip-of-one holding a `.gz`, say) — per §2's "every wrapper removed."
+
+    Returns `(final_src, final_media_type, envelope_hash_values, origin_fields)`:
+
+    - `final_src` — `src` unchanged when nothing collapsed; otherwise the file now
+      holding the fully-unwrapped payload bytes, possibly RENAMED (never moved out of
+      its staging directory) to the recovered inner filename — needed for correct
+      mime re-detection, since the stale wrapper name (a `.zip` extension over what is
+      now, say, extensionless JSON) would otherwise misdetect the payload, or worse,
+      silently misattribute it to the wrapper's own type via the `mimetypes` fallback.
+    - `envelope_hash_values` — `{}` when nothing collapsed; otherwise
+      `{_ENVELOPE_HASH_TAG: <hex>}`, the AS-DELIVERED envelope's blake3 (computed once,
+      before any unwrap — later nested layers are packaging over packaging and are not
+      separately attested) for the caller to merge into frontmatter `hash:`.
+    - `origin_fields` — `{}` when nothing collapsed; otherwise `envelope_kind`
+      (`"gzip"` | `"zip"`, or a list across nested layers, outermost first) and, where
+      recovered, `envelope_filename` (the gzip FNAME field or the zip member's archive
+      path — the delivery's own name for the payload) in the same scalar-or-list
+      shape, kept as the "original filename provenance" the amendment calls for.
+
+    A media container (single-track or otherwise) is explicitly out of scope here — it
+    reduces via the §1.2 one-row-manifest rule at promotion time, a parallel
+    concern this function never touches. Neither is a plain (uncompressed) `.tar` or a
+    gzip-wrapped `.tgz`: `mime.detect` already resolves a gzip-wrapped tar straight to
+    `application/x-tar` (§12.3.2) before this function ever sees it — tar's member
+    concatenation is not itself a compression wrapper, so the tool-version-drift
+    rationale this collapse exists for (§2) doesn't reach it; a single-member tar
+    stays the ordinary tar-manifest path, unchanged, reducible only at promotion.
+
+    Multi-member archives are untouched (the ordinary manifest path); an encrypted zip
+    member, a directory-only "member", a non-empty archive comment (declared content,
+    not packaging — a `corpus session capture` single-transcript bundle among them),
+    or a corrupt/truncated stream leave `src` byte-identical and print a note — no
+    collapse, ingest proceeds exactly as before this amendment (the edge law). So does
+    a payload whose fully-unwrapped type has no
+    mime schema at all: a zip-manifest ingest of a member type that isn't independently
+    ingestable today must keep working exactly as it does today — collapsing into an
+    unmintable stub would be a regression, not a faithful reading of "the same content
+    mints the same record" (there is no bare-ingest route to compare against when the
+    payload's own type can't be ingested at all). The whole chain therefore runs over a
+    SCRATCH copy first, committed onto the real `src` only once the final payload type
+    is confirmed to resolve a schema; nothing touches `src` itself otherwise."""
+    from corpus import hashing, mime, schemas
+
+    if media_type not in ("application/gzip", "application/zip"):
+        return src, media_type, {}, {}
+
+    delivered = hashing.hash_file(src, also=())["blake3"]  # as-staged, before any unwrap
+
+    import shutil
+
+    # A PREFIX, not a suffix: mime re-detection's `mimetypes` fallback (below, when no
+    # layer recovers a rename-worthy filename) reads the trailing extension chain — a
+    # scratch copy named `export.json.gz.envelope-scratch` would break the exact
+    # compound-suffix stripping (`.gz` → `.json` → `application/json`) that lets a
+    # conventionally-named `.json.gz` detect correctly with no FNAME at all.
+    scratch = src.with_name("envelope-scratch~" + src.name)
+    shutil.copy2(src, scratch)
+
+    layers: list[dict[str, str]] = []
+    current = scratch
+    current_media_type = media_type
+    while True:
+        if current_media_type == "application/gzip":
+            result = _try_unwrap_gzip(current)
+        elif current_media_type == "application/zip":
+            result = _try_unwrap_single_member_zip(current)
+        else:
+            result = None
+        if result is None:
+            break
+        current, layer = result
+        layers.append(layer)
+        current_media_type = mime.detect(current, corpus_root)
+
+    if not layers or schemas.load_mime_schema(corpus_root, current_media_type) is None:
+        current.unlink(missing_ok=True)  # discard the scratch chain; `src` is untouched
+        return src, media_type, {}, {}
+
+    # Commit: the scratch chain's final file replaces `src` for real.
+    src.unlink(missing_ok=True)
+    if current == scratch:  # no layer recovered a rename-worthy filename
+        scratch.replace(src)
+        current = src
+    src = current
+
+    kinds = [layer["kind"] for layer in layers]
+    filenames = [layer["filename"] for layer in layers if layer.get("filename")]
+    origin_fields: dict[str, Any] = {"envelope_kind": kinds[0] if len(kinds) == 1 else kinds}
+    if filenames:
+        origin_fields["envelope_filename"] = filenames[0] if len(filenames) == 1 else filenames
+    print(
+        f"  envelope collapse ({'→'.join(kinds)}): payload identity minted "
+        f"(delivered {_ENVELOPE_HASH_TAG}:{delivered[:12]}…)"
+    )
+    return src, current_media_type, {_ENVELOPE_HASH_TAG: delivered}, origin_fields
+
+
+def _place_unwrapped(src: Path, tmp: Path, recovered_name: str | None) -> Path:
+    """Move freshly-unwrapped bytes at `tmp` into place, named for correct mime
+    re-detection: the recovered inner filename's BASENAME (directory components
+    stripped, so a zip member's archive path or a gzip FNAME value can never escape
+    the staging directory — no zip-slip surface) when one exists and doesn't collide
+    with an unrelated file already staged beside `src`; otherwise `src`'s own name
+    (best-effort — an extensionless payload still gets a fair shot at magic-byte
+    detection). Consumes `tmp`; removes the old `src` when the target differs from it.
+    Returns the final path."""
+    target = src
+    if recovered_name:
+        base = Path(recovered_name).name.strip()
+        if base and base not in (".", ".."):
+            candidate = src.with_name(base)
+            if candidate == src or not candidate.exists():
+                target = candidate
+    tmp.replace(target)
+    if target != src:
+        src.unlink(missing_ok=True)
+    return target
+
+
+def _try_unwrap_gzip(src: Path) -> tuple[Path, dict[str, str]] | None:
+    """One gzip-unwrap step (spec §2, v32): decompresses `src`, streaming (a tmp file,
+    then `_place_unwrapped`) — the tmp-then-replace pattern the mbox/json strip
+    helpers use. A gzip stream is a single compressed stream by nature — no member
+    count to check, unlike zip. Returns `(new_path, {"kind": "gzip", ...})`, with
+    `"filename"` present when the stream's optional FNAME header (RFC 1952 — stdlib's
+    `gzip` module reads and discards it; `_gzip_header_filename` hand-parses it back)
+    names the original file. Returns `None` — no collapse, `src` untouched, ingest
+    proceeds against the gzip bytes exactly as before this amendment — on a corrupt or
+    truncated stream, or an empty decompressed result (gzip has no encrypted-archive
+    analogue, so those are the only two failure modes here)."""
+    import gzip
+    import zlib
+
+    filename = _gzip_header_filename(src)
+    tmp = src.with_name(src.name + ".envelope-unwrapped")
+    try:
+        with gzip.open(src, "rb") as gz, tmp.open("wb") as out:
+            while chunk := gz.read(_ENVELOPE_CHUNK):
+                out.write(chunk)
+    except (OSError, EOFError, zlib.error) as exc:
+        tmp.unlink(missing_ok=True)
+        print(
+            f"  envelope collapse: {src.name} is not a well-formed gzip stream ({exc})"
+            " — ingesting the envelope as-is",
+            file=sys.stderr,
+        )
+        return None
+    if tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        print(
+            f"  envelope collapse: {src.name} decompressed to zero bytes — "
+            "ingesting the envelope as-is",
+            file=sys.stderr,
+        )
+        return None
+    new_path = _place_unwrapped(src, tmp, filename)
+    layer: dict[str, str] = {"kind": "gzip"}
+    if filename:
+        layer["filename"] = filename
+    return new_path, layer
+
+
+def _try_unwrap_single_member_zip(src: Path) -> tuple[Path, dict[str, str]] | None:
+    """One zip-unwrap step (spec §2, v32): a raw (unrefined) `application/zip` holding
+    exactly one member collapses to that member's bytes when it's a regular file, not
+    a directory, and not password-protected — a structured zip (docx/xlsx/epub/jar/…)
+    never reaches here, since `mime.detect` refines it to its own MIME first (§1.2:
+    "never reduces regardless of count"). Extracts the member (the same tmp-then-
+    place pattern) and returns `(new_path, {"kind": "zip", "filename": <member path>})`.
+    Returns `None` — no collapse; `src` untouched; ingest proceeds against the zip as
+    the ordinary zip-manifest it already is today — for a multi-member archive (the
+    common case, unchanged), a lone directory-only entry, an encrypted member, a
+    corrupt/unreadable archive, or a NON-EMPTY archive comment (the edge law; a
+    comment is declared content, not packaging — `application_zip.yaml`'s own
+    `extended_fields.comment` role-marks it `title`, the identity string the corpus's
+    own assembly/session-capture tooling stamps there, e.g. a single-transcript
+    `corpus session capture` bundle — collapsing would silently discard it)."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(src) as zf:
+            if zf.comment.strip():
+                print(
+                    f"  envelope collapse: {src.name} carries a non-empty archive "
+                    "comment (declared content, not packaging) — ingesting the zip as "
+                    "a manifest",
+                    file=sys.stderr,
+                )
+                return None
+            infolist = zf.infolist()
+            if len(infolist) != 1:
+                return None
+            entry = infolist[0]
+            if entry.is_dir():
+                print(
+                    f"  envelope collapse: {src.name}'s one entry is a directory — "
+                    "ingesting the zip as a manifest",
+                    file=sys.stderr,
+                )
+                return None
+            if entry.flag_bits & 0x1:  # general-purpose bit 0: member is encrypted
+                print(
+                    f"  envelope collapse: {src.name}'s one member is encrypted — "
+                    "ingesting the zip as a manifest",
+                    file=sys.stderr,
+                )
+                return None
+            data = zf.read(entry)
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError) as exc:
+        print(
+            f"  envelope collapse: {src.name} could not be unwrapped ({exc}) — "
+            "ingesting the zip as a manifest",
+            file=sys.stderr,
+        )
+        return None
+
+    tmp = src.with_name(src.name + ".envelope-unwrapped")
+    tmp.write_bytes(data)
+    new_path = _place_unwrapped(src, tmp, entry.filename)
+    return new_path, {"kind": "zip", "filename": entry.filename}
+
+
+def _gzip_header_filename(path: Path) -> str | None:
+    """Best-effort recovery of a gzip stream's optional FNAME header field (RFC 1952)
+    — stdlib's `gzip` module reads and discards it (no public accessor), so a small
+    hand-parse of the fixed 10-byte header plus optional fields recovers it for
+    envelope provenance. Pure stdlib, deterministic. `None` when the stream carries no
+    FNAME (the common case — most producers don't set it), is truncated before the
+    header completes, or isn't gzip-magic'd at all."""
+    import struct
+
+    FEXTRA = 0x04
+    FNAME = 0x08
+    try:
+        with path.open("rb") as fh:
+            header = fh.read(10)
+            if len(header) < 10 or header[:2] != b"\x1f\x8b":
+                return None
+            flag = header[3]
+            if flag & FEXTRA:
+                raw = fh.read(2)
+                if len(raw) < 2:
+                    return None
+                (xlen,) = struct.unpack("<H", raw)
+                fh.read(xlen)
+            if not flag & FNAME:
+                return None
+            name = bytearray()
+            while True:
+                b = fh.read(1)
+                if not b or b == b"\x00":
+                    break
+                name += b
+    except OSError:
+        return None
+    return name.decode("latin-1") or None
 
 
 def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:

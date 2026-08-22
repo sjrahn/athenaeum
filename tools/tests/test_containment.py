@@ -288,7 +288,11 @@ def test_self_referential_member_row_is_not_a_route(tmp_path):
     used to dead-end in the cycle guard before any real route was tried."""
     root = _corpus(tmp_path)
     card = b"BEGIN:VCARD\nVERSION:3.0\nFN:K\nEND:VCARD\n"
-    z = _zip(tmp_path / "b.zip", {"card.vcf": card})
+    # A second member keeps this a genuine multi-member zip-manifest — a ONE-file zip
+    # now collapses at ingest (spec §2, v32: the payload-identity principle), which
+    # would mint the vcard directly rather than leaving it a `path=`-addressed member
+    # this test promotes through containment.
+    z = _zip(tmp_path / "b.zip", {"card.vcf": card, "README.txt": b"one contact\n"})
     cid = _ingest_and_draft(root, z)
     member = _b3(card)
     assert _promote(root, f"corpus://{cid}?path=card.vcf") == 0

@@ -747,18 +747,20 @@ def _rule_cutting_stamp_shape(post, blocks, root) -> Iterator[Finding]:
 
 
 def _rule_framing_stamp_shape(post, blocks, root) -> Iterator[Finding]:
-    """A `framing:` stamp, if present, is well-formed (spec §7.2.1 — 3.12).
+    """A `framing:` stamp, if present, is well-formed (spec §7.1 — retired at v32).
 
-    3.12 admitted a muxer into the identity path, and this stamp is the entire compensating
-    control: it names the producer and its version, and carries a **sample count** any
-    consumer can re-derive without an engine. A stamp missing the count is decorative — it
-    documents a producer while withholding the one field that lets a reader discover it
-    disagrees. A stamp missing the version documents the present without constraining it,
-    which is the `touch:`-list role the stamp was deliberately given a slot away from.
+    3.12 admitted a muxer into the identity path, and this stamp was the entire
+    compensating control: it named the producer and its version, and carried a **sample
+    count** any consumer could re-derive without an engine. v32's payload-identity
+    principle (§2) removed the engine from the identity path entirely, so nothing new
+    writes this stamp — a leaf's `samples:` field is what carries the count now (see
+    `_rule_samples_stamp_shape`). A `framing:` stamp surviving on a pre-v32 leaf is honest
+    history of the bytes it described, not a defect, so every finding here is `info`: a
+    shape worth noticing, never an error to fix.
 
-    Absence of the whole stamp is NOT a finding: a leaf promoted before 3.12, or one whose
-    bytes were ingested standalone rather than muxed, is honestly unstamped (§7.2.1). This
-    checks only that a stamp which exists can do its job.
+    Absence of the whole stamp is NOT a finding: a leaf promoted before 3.12, one promoted
+    after v32, or one whose bytes were ingested standalone, is honestly unstamped. This
+    checks only that a stamp which exists is legible as the history it claims to be.
 
     Deliberately shape-only. The *real* check — does the leaf's own sample table agree with
     the count — needs the artifact bytes, which for a promoted leaf means muxing it back out
@@ -771,20 +773,20 @@ def _rule_framing_stamp_shape(post, blocks, root) -> Iterator[Finding]:
         if not str(stamp.get(key) or "").strip():
             yield Finding(
                 rule_id="framing-stamp-malformed",
-                severity="error",
+                severity="info",
                 message=(
-                    f"`framing:` stamp names no `{key}` — an unnamed producer is exactly "
-                    f"what the stamp exists to prevent (spec §7.2.1)."
+                    f"`framing:` stamp (pre-v32 history) names no `{key}` — an unnamed "
+                    f"producer is exactly what the stamp existed to prevent."
                 ),
             )
     samples = stamp.get("samples")
     if samples is None:
         yield Finding(
             rule_id="framing-stamp-malformed",
-            severity="error",
+            severity="info",
             message=(
-                "`framing:` stamp carries no `samples` count — the independent check is the "
-                "reason the stamp exists (spec §7.2.1)."
+                "`framing:` stamp (pre-v32 history) carries no `samples` count — the "
+                "independent check was the reason the stamp existed."
             ),
         )
         return
@@ -793,16 +795,60 @@ def _rule_framing_stamp_shape(post, blocks, root) -> Iterator[Finding]:
     except (TypeError, ValueError):
         yield Finding(
             rule_id="framing-stamp-malformed",
-            severity="error",
+            severity="info",
             message=f"`framing: samples` is {samples!r}, which is not a count.",
         )
         return
     if n < 1:
         yield Finding(
             rule_id="framing-stamp-malformed",
-            severity="error",
+            severity="info",
             message=f"`framing: samples` is {n}; a muxed member holds at least one sample.",
         )
+
+
+def _rule_samples_stamp_shape(post, blocks, root) -> Iterator[Finding]:
+    """A `samples:` count, if present, is a positive integer (spec §7.1, v32).
+
+    The payload-identity principle's own self-check: a promoted leaf's artifact block may
+    attest `samples:` — the engine-free count `corpus.streams.sample_count` reads from
+    the source container's tables — for `cutting:` and stored markers to compare against
+    (§12.8's sample-sequence comparison). Absence is not a finding: a leaf promoted before
+    v32, or whose count could not be resolved at promote time, is honestly unstamped.
+
+    Deliberately shape-only, exactly as `_rule_cutting_stamp_shape` and the retired
+    `_rule_framing_stamp_shape` are — the *real* check (does the leaf's own bytes hold
+    that many samples) needs the artifact bytes, a verification-pass concern, not a rule
+    that runs on every record of every lint."""
+    n = (records_artifact_fields(post) or {}).get("samples")
+    if n is None:
+        return
+    try:
+        count = int(n)
+    except (TypeError, ValueError):
+        yield Finding(
+            rule_id="samples-stamp-malformed",
+            severity="error",
+            message=f"`samples:` is {n!r}, which is not a count.",
+        )
+        return
+    if count < 1:
+        yield Finding(
+            rule_id="samples-stamp-malformed",
+            severity="error",
+            message=f"`samples:` is {count}; a promoted track holds at least one sample.",
+        )
+
+
+def records_artifact_fields(post) -> dict[str, Any] | None:
+    """The record's artifact-block `fields:` map, or None — the shared read
+    `_rule_samples_stamp_shape` needs (`records.samples` itself returns only a validated
+    int, which is exactly what this rule exists to check BEFORE trusting)."""
+    artifact = _records.artifact_block(post)
+    if not artifact:
+        return None
+    fields = artifact.get("fields")
+    return fields if isinstance(fields, dict) else None
 
 
 def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
@@ -2401,6 +2447,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
     ("framing-stamp-malformed", _rule_framing_stamp_shape),
+    ("samples-stamp-malformed", _rule_samples_stamp_shape),
     ("container-carries-rendering", _rule_container_carries_rendering),
     ("issue-shape", _rule_issue_shape),
     ("context-shape", _rule_context_shape),

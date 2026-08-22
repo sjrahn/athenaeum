@@ -29,6 +29,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import frontmatter
+
 from corpus import recordbuild, resolver, touches
 from corpus.draft import DrafterResult, register
 from corpus.draft._hostcfg import resolve_transcription
@@ -51,8 +53,9 @@ _AUDIO_SCHEMA_IDS = (
     # member's bytes, which §4.3.2.2 has forbidden since 3.8 and which survived only because no
     # video schema declared `disposition: manifest` (§65's gap, closed in 3.11).
     #
-    # Transcribing the leaf is also better input, not merely better placement: the leaf's bytes
-    # are the pinned ADTS/Opus extraction (§12.20.1), where `extract_audio` on the container
+    # Transcribing the leaf is also better input, not merely better placement: the leaf's own
+    # id names its payload-identity bytes (§2, v32), and `?transcribe` on it isolates the SAME
+    # bytes losslessly (route unification, §6.2), where `extract_audio` on the container
     # re-encodes to 64 kbps mono mp3. The old path transcribed a lossy derivative of the member.
     "audio/audio_aac",
     "audio/audio_opus",
@@ -74,6 +77,16 @@ def draft(
         "format": _format_for_extension(audio_path.suffix),
     }
     probe = _probe_audio(audio_path)
+    if not probe["root"].get("duration"):
+        # *(v32, §2)* A promoted media-stream leaf's own bytes are the raw payload —
+        # deliberately not playable, so ffprobe reads nothing from them directly (`probe`
+        # above degrades to empty, tolerantly). `duration` is a REQUIRED field
+        # (audio.yaml), and the container's is the honest answer: it's the same
+        # measurement the transcript itself will be read against (route unification,
+        # §6.2 — `?transcribe` on this leaf runs against the same container).
+        fallback_duration = _duration_via_container_lineage(corpus_root, record_metadata)
+        if fallback_duration is not None:
+            probe["root"]["duration"] = fallback_duration
     fields.update(probe["root"])
     if probe["audio_count"] > 1 and probe["streams"]:
         fields["streams"] = probe["streams"]
@@ -162,6 +175,38 @@ def _unavailable_issue(severity: str, reason: str) -> dict[str, Any]:
         "detector": touches.script_identifier("draft.audio"),
         "fields": {"reason": reason},
     }
+
+
+# ---------- container-lineage fallback (v32, §2) ---------- #
+
+
+def _duration_via_container_lineage(
+    corpus_root: Path, record_metadata: dict[str, Any] | None
+) -> float | None:
+    """The leaf's containing timeline's duration, via containment lineage — the fallback for
+    a v32 payload leaf whose own bytes ffprobe cannot read at all. None when the record
+    carries no lineage, or the container can't be read either (never fatal — the same
+    tolerant contract `_probe_audio` has)."""
+    from corpus import containment, paths, records
+    from corpus import cut as cut_mod
+    from corpus import mime as mime_mod
+    from corpus.store import ArtifactMissing
+
+    post = frontmatter.Post("", **dict(record_metadata or {}))
+    lineage = cut_mod.stream_lineage(post)
+    if lineage is None:
+        return None
+    container_id, _stream_address = lineage
+    try:
+        container_post = records.load(paths.record_path(corpus_root, container_id))
+        container_ext = mime_mod.extension_for(records.media_type_for(container_post))
+        container_path = containment.ensure_local_bytes(corpus_root, container_id, container_ext)
+    except (FileNotFoundError, ArtifactMissing, OSError):
+        return None
+    try:
+        return cut_mod.container_duration(container_post, container_path)
+    except cut_mod.Unresolved:
+        return None
 
 
 # ---------- ffprobe (tolerant) ---------- #

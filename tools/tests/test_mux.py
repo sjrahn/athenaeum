@@ -267,10 +267,15 @@ def test_an_unrecognized_codec_is_still_promotable(tmp_path: Path) -> None:
         check=True, capture_output=True,
     )
     track = streams.probe_streams(src)[0]
-    assert track.codec not in ("h264", "hevc", "aac", "opus"), (
+    assert track.codec not in ("h264", "hevc", "av1", "aac", "opus"), (
         "fixture no longer exercises the unrecognized path — the point of the test is gone"
     )
-    assert track.media_type == "video/mp4", "an unreadable config is not an unpromotable track"
+    # *(v32, §2)* An unrecognized codec is still promotable — it gets a generic
+    # `video/x-<codec>` leaf mime rather than one of the pinned registered types, but a
+    # mime is still minted (the fix this test guards), never `None`.
+    assert track.media_type == f"video/x-{track.codec}", (
+        "an unreadable config is not an unpromotable track"
+    )
 
     dest = tmp_path / "member.mp4"
     framing = mux.mux_stream_to(src, 0, dest)
@@ -285,8 +290,10 @@ def test_a_non_media_track_kind_stays_unpromotable(tmp_path: Path) -> None:
     conversion, not a reframing) and a chapter or timecode track is metadata ABOUT other
     tracks (§12.37). Asserted directly, because "we removed a gate" is exactly the change that
     quietly removes the neighbouring one too."""
-    from corpus.streams import _MEDIA_TYPE_BY_KIND
+    from corpus.streams import _leaf_mime_for
 
-    assert set(_MEDIA_TYPE_BY_KIND) == {"video", "audio"}
-    assert _MEDIA_TYPE_BY_KIND.get("subtitle") is None
-    assert _MEDIA_TYPE_BY_KIND.get("timecode") is None
+    # A subtitle-kind track never gets a leaf mime, whatever its (real) codec name is.
+    assert _leaf_mime_for("tx3g", "subtitle") is None
+    # Likewise a track this module doesn't even give a media KIND (chapter/timecode
+    # metadata about other tracks, §12.37).
+    assert _leaf_mime_for("tmcd", "other") is None

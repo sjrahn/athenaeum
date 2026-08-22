@@ -35,7 +35,7 @@ from typing import IO, Any
 import blake3
 import frontmatter
 
-from corpus import containment, hashindex, hashing, mime, mux, paths, records, schemas, touches
+from corpus import containment, hashindex, hashing, mime, paths, records, schemas, streams, touches
 from corpus import functional_uri as furi
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
@@ -245,21 +245,11 @@ def run(args: argparse.Namespace) -> int:
     if media_type == "unknown" and declared:
         media_type = declared
 
-    # *(3.12)* A track member is now a single-track ISOBMFF container, and its bytes are
-    # genuinely AMBIGUOUS between `video/mp4` and `audio/mp4`: both carry the same `ftyp`
-    # brand, so magic alone always answers `video/mp4`. `corpus.mime` resolves this from the
-    # filename suffix (`.m4a`), but a `stream_id=` address is a position and carries no
-    # filename, so that refinement has nothing to work with here. The roster row does know —
-    # it recorded the track's KIND from the container's own handler box at attestation. So
-    # for this one address family the row refines a generic sniff rather than only filling a
-    # blank. Deliberately narrow: it fires only when the row and the sniff are the two
-    # ISOBMFF spellings of each other, never to overrule a sniff that found something else.
-    if (
-        member_address.startswith("stream_id=")
-        and media_type == "video/mp4"
-        and declared in ("audio/mp4", "video/mp4")
-    ):
-        media_type = declared
+    # *(v32, §2)* A track member's bytes are now the raw codec payload, which has no
+    # reliable magic of its own by design (that is what "not reframed" means) — so for a
+    # `stream_id=` address the sniff is EXPECTED to come back `unknown`, and the roster
+    # row's codec-derived mime (written at attestation by `draft/_trackmanifest.py`) is
+    # the real answer, already applied by the `declared` fallback above.
 
     # 5. Verify: a promoted id MUST equal the roster's recorded byte identity (spec §8.1).
     if computed_id != expected_hex:
@@ -293,40 +283,34 @@ def run(args: argparse.Namespace) -> int:
             container_path=container_path,
         )
 
-    # 6c. *(3.12 §7.2.1)* A track member is MUXED, so a versioned engine produced the bytes
-    #     just verified above. The `framing:` stamp names it — muxer, version, pinned flags,
-    #     sample count — and this is the one moment it can be known: the leaf's own bytes
-    #     carry no record of what wrote them, and the containment origin is history rather
-    #     than a route back to a producer. Computed only after the id check, so a stamp that
-    #     exists is one attached to bytes whose identity was confirmed.
-    #
-    #     `framing_for` re-muxes rather than reusing the pass `_sniff_and_hash` just ran,
-    #     and that is deliberate: the count is only *verified* by producing the member, and
-    #     a stamp naming an unverified count is exactly what the stamp exists to prevent. A
-    #     `-c copy` remux is I/O-bound and negligible beside the scene-detect decode step 6b
-    #     already runs over the same track. Never fatal — the same rule as `cutting:` above:
-    #     the bytes are what promotion is for, and an unstamped leaf is honestly unstamped.
-    framing_stamp: dict[str, Any] | None = None
+    # 6c. *(v32, §7.1)* A track member's bytes are a table-driven sample concatenation with
+    #     no producer to attest (§2) — the retired `framing:` stamp's engine is gone, and
+    #     with it the reason to name one. What the leaf's artifact block MAY still attest is
+    #     `samples:` — the engine-free count, computed by this package's own reader
+    #     (`corpus.streams.sample_count`) from the SOURCE container's tables. It is the same
+    #     self-check `cutting:` and stored markers compare against, computed here because
+    #     this is the one moment the container is in hand. Never fatal — the same rule as
+    #     `cutting:` above: the bytes are what promotion is for, and a leaf whose count
+    #     could not be resolved is honestly unstamped.
+    samples_stamp: int | None = None
     if member_address.startswith("stream_id="):
         try:
-            framing_stamp = mux.framing_for(
-                container_path,
-                int(member_address.split("=", 1)[1]),
-                workdir=paths.cache_dir(corpus_root),
-            ).as_stamp()
-        except (mux.MuxUnavailable, mux.MuxFailed, mux.SampleCountMismatch, ValueError) as e:
-            print(f"  note: no framing stamp ({e})", file=sys.stderr)
+            samples_stamp = streams.sample_count(
+                container_path, int(member_address.split("=", 1)[1])
+            )
+        except (ValueError, NotImplementedError, OSError) as e:
+            print(f"  note: no samples stamp ({e})", file=sys.stderr)
 
     record_file = paths.record_path(corpus_root, computed_id)
     if record_file.is_file():
         outcome = _fold_into_existing(
             record_file, containment_uri, origin_fields,
-            cutting_stamp=cutting_stamp, framing_stamp=framing_stamp,
+            cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
         )
     else:
         outcome = _mint_stub(
             record_file, computed_id, media_type, hash_values, containment_uri, origin_fields,
-            cutting_stamp=cutting_stamp, framing_stamp=framing_stamp,
+            cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
         )
     # Bytes were in hand for THIS pass regardless of outcome (verified above) — the index is
     # deployment state (§12.9.1), so it's kept warm on a re-promote fold too, not just a mint.
@@ -408,7 +392,7 @@ def _fold_into_existing(
     origin_fields: dict[str, Any],
     *,
     cutting_stamp: dict[str, Any] | None = None,
-    framing_stamp: dict[str, Any] | None = None,
+    samples_stamp: int | None = None,
 ) -> str:
     """A record with this id already exists (a prior promote, or a standalone ingest of the
     same bytes): fold the containment origin into it rather than erroring (spec §5.2)."""
@@ -418,12 +402,12 @@ def _fold_into_existing(
     # under, which §7.2.1 gives to `corpus cut` (compare-before-write) and to nothing else.
     if cutting_stamp is not None and records.cutting(post) is None:
         _stamp_artifact_field(post, "cutting", cutting_stamp)
-    # *(3.12)* `framing:` is add-only for a different reason: the record is content-addressed,
-    # so an existing stamp describes THESE bytes and a re-derived one can only agree with it
-    # or be wrong. Filling a blank is the useful case — a leaf promoted before 3.12, or one
-    # folded in from a standalone ingest, learning what produced its bytes.
-    if framing_stamp is not None and records.framing(post) is None:
-        _stamp_artifact_field(post, "framing", framing_stamp)
+    # `samples:` is add-only for the same reason: the record is content-addressed, so an
+    # existing count describes THESE bytes and a re-derived one can only agree with it or be
+    # wrong. Filling a blank is the useful case — a leaf promoted before v32 (or before
+    # attestation carried a count at all), or one folded in from a standalone ingest.
+    if samples_stamp is not None and records.samples(post) is None:
+        _stamp_artifact_field(post, "samples", samples_stamp)
     if _origin_already_present(post, containment_uri):
         touches.record_touch(post, touches.script_identifier("promote"))
         records.dump(post, record_file)
@@ -439,7 +423,7 @@ def _fold_into_existing(
     return "folded"
 
 
-def _stamp_artifact_field(post: frontmatter.Post, key: str, stamp: dict[str, Any]) -> None:
+def _stamp_artifact_field(post: frontmatter.Post, key: str, stamp: Any) -> None:
     """Write one §7.2.1 stamp onto the leaf's artifact block, preserving whatever else the
     block carries."""
     artifact = records.artifact_block(post) or {
@@ -459,7 +443,7 @@ def _mint_stub(
     origin_fields: dict[str, Any],
     *,
     cutting_stamp: dict[str, Any] | None = None,
-    framing_stamp: dict[str, Any] | None = None,
+    samples_stamp: int | None = None,
 ) -> str:
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
     first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
@@ -472,12 +456,12 @@ def _mint_stub(
     record_hash_entries = {v.tag: v.hex for v in hash_values if v.record_resident}
     if record_hash_entries:
         records.set_record_hashes(post, record_hash_entries)
-    # Declaration order follows §7.2.1's: `framing:` (what produced these bytes) ahead of
+    # Declaration order: `samples:` (an engine-free byte-fact about these bytes) ahead of
     # `cutting:` (a resolution computed over them), so a diff of two leaves reads top to
-    # bottom in the same order the spec presents them.
+    # bottom in that order.
     stamps: dict[str, Any] = {}
-    if framing_stamp:
-        stamps["framing"] = framing_stamp
+    if samples_stamp is not None:
+        stamps["samples"] = samples_stamp
     if cutting_stamp:
         stamps["cutting"] = cutting_stamp
     records.set_artifact_block(post, mime=media_type, fields=stamps)

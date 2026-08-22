@@ -37,15 +37,16 @@ from .store import ArtifactMissing, ArtifactStore, get_store
 _CHUNK = 1 << 20
 
 # ISOBMFF media-container types whose members are addressed `stream_id=<n>` (spec §1.2,
-# §12.20 item 4) — the track axis, dispatched to `corpus.mux.mux_stream`
-# below. Matroska/WebM (EBML) is out of scope for this increment (`corpus.streams` itself
-# refuses non-ISOBMFF containers, §12.20.1's deferred item).
+# §2) — the track axis, dispatched to `corpus.streams.extract_stream` below: the
+# payload-identity bytes, engine-free. Matroska/WebM (EBML) is out of scope for this
+# increment (`corpus.streams` itself refuses non-ISOBMFF containers — a coverage gap,
+# spec §12.36/§12.37).
 _ISOBMFF_STREAM_CONTAINERS = frozenset({"video/mp4", "video/quicktime", "audio/mp4"})
 
 
 class _IteratorReader(io.RawIOBase):
     """A read-only raw stream over an iterator of byte chunks — lets a chunked producer (here,
-    `mux.mux_stream`) flow through `read()` without ever holding the whole track. The
+    `streams.extract_stream`) flow through `read()` without ever holding the whole track. The
     same adapter shape as `mboxfile._MemberReader`; wrapped in a `BufferedReader` by the caller
     for exact-length reads."""
 
@@ -175,14 +176,15 @@ def open_member_stream(
             raise ValueError(f"vcard member {address!r}: card= needs an integer ordinal") from exc
         yield io.BytesIO(vcardfile.resolve_member(container_path, ordinal))
         return
-    # A media container's track, addressed `stream_id=<N>` (spec §1.2, §12.20 item 4) — the
-    # pinned identity bytes via `corpus.mux.mux_stream`: a single-track container of the
-    # source's own family (3.12), streamed chunk by chunk through the `_IteratorReader`
-    # adapter so a large track is never held whole. ISOBMFF only (`corpus.streams` refuses
-    # Matroska/WebM with a clear error, which propagates here unchanged rather than being
-    # swallowed into the generic "cannot stream member" message).
+    # A media container's track, addressed `stream_id=<N>` (spec §1.2, §2) — the
+    # payload-identity bytes via `corpus.streams.extract_stream`: the raw codec payload,
+    # sample-table-driven and engine-free (v32), streamed chunk by chunk through the
+    # `_IteratorReader` adapter so a large track is never held whole. ISOBMFF only
+    # (`corpus.streams` refuses Matroska/WebM with a clear error, which propagates here
+    # unchanged rather than being swallowed into the generic "cannot stream member"
+    # message).
     if container_media_type in _ISOBMFF_STREAM_CONTAINERS and key == "stream_id":
-        from . import mux
+        from . import streams
 
         try:
             ordinal = int(value)
@@ -190,7 +192,9 @@ def open_member_stream(
             raise ValueError(
                 f"track member {address!r}: stream_id= needs an integer track index"
             ) from exc
-        yield io.BufferedReader(_IteratorReader(mux.mux_stream(container_path, ordinal)))
+        yield io.BufferedReader(
+            _IteratorReader(streams.extract_stream(container_path, ordinal))
+        )
         return
     # An email is a container whose members are addressed `part=<N>` (spec §12.11) — the
     # decoded MIME part's bytes. A single message is bounded (parsed whole), so this yields a
@@ -245,7 +249,7 @@ def member_source_metadata(
         return {}
     # A media-container track, likewise: `stream_id=<N>` is a position (moov `trak` order), not
     # a filename or a meaningful mtime — a promoted track's origin carries the containment-
-    # lineage uri only (spec §8.1, §12.20 item 3).
+    # lineage uri only (spec §8.1).
     if container_media_type in _ISOBMFF_STREAM_CONTAINERS and key == "stream_id":
         return {}
     # An email part carries its declared filename (e.g. a promoted `contract.pdf`) when it

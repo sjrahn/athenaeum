@@ -15,8 +15,8 @@ and this drafter runs the STAMPED strategy — never a fresh resolution. A leaf 
 emits **no markers at all**: unstamped is unresolved, not defaulted, and re-cutting on sight
 is the exact silent re-addressing the stamp exists to prevent.
 
-**The timeline belongs to the container, not to this leaf.** A bare Annex-B elementary stream
-carries no container timing at all — so detection runs against
+**The timeline belongs to the container, not to this leaf.** A bare payload (h264/hevc/av1,
+§2) carries no container timing at all — so detection runs against
 `corpus://<container>?stream_id=<N>` reached through the leaf's own containment lineage. That
 is §1.2's move for chapter marks ("tracks inherit the container's chapter marks at read time
 through lineage — never copied, because the track's own bytes do not carry them"), applied to
@@ -46,7 +46,7 @@ from corpus.segments import Segment
 
 log = logging.getLogger(__name__)
 
-_STREAM_SCHEMA_IDS = ("video/video_h264", "video/video_hevc")
+_STREAM_SCHEMA_IDS = ("video/video_h264", "video/video_hevc", "video/video_av1")
 
 #: Result keys the stamp carries alongside the declaration (`cutting.stamp` merges them in).
 #: Stripping them recovers the DECLARATION — what the strategy was resolved to — which is what

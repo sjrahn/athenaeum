@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 31
+version: 32
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 31 (2026-08-21, owner ruling) lands the manifestation tier and the sweep declaration. **The roster is the manifestation tier** (Part III §4.2): the concept is the work, each rostered record one representation — entries gain `modality`, `expression`, `derived_from`/`derivation`; coverage (Part III §9) gains **representation demand** (each uncovered record's prescribed work item, drainable, total horizon on a demand-driven schedule); type schemas carry **`normalization_intent:`**, flowing down through the queue's hint seam under proposes/disposes; codebook positions become durable under the lineage discipline. **The sweep declaration** (Part II §4.3.3.6): the annotations zone's second namespace — an extraction class declared exhaustive over a band, fail-closed (sparse everywhere by default), earned by the pass that processed the whole band, meaningful when empty. Prior version notes: the changelog.*
+*Version 32 (2026-08-21, owner ruling) lands the payload-identity principle. **Identity keys on the fully-unwrapped payload; wrappers are residence forms** (Part II §2): a member's identity bytes are the raw elementary stream / decompressed content, extracted by the corpus's own engine-free table reader — no engine in the identity path, so the id cannot drift across tool versions. `corpus://<leaf> ≡ corpus://<container>?<address>` becomes a verifiable identity equation; a leaf resolves through its container (one route, one cache entry, base form disclosed); playable renderings are derived version-labeled surfaces; the `framing:` stamp retires; single-track media containers become ordinary one-row manifests; compressed single-member envelopes collapse to payload identity at ingest. Store-wrapping (compressed/encrypted at rest) is the named follow-on direction. Prior version notes: the changelog.*

@@ -1,5 +1,5 @@
 """Track-manifest attestation, promotion, and bare `stream_id=` identity resolution
-(spec §12.20 items 2-4) — phase 2 of the media-ops increment.
+(spec §2, §4.3.1.4, v32's payload-identity principle).
 
 Self-contained: fixture clips are generated with ffmpeg lavfi inside this file (the
 `test_streams.py` / `test_video_muxing.py` pattern); no shared conftest fixtures are added.
@@ -18,7 +18,7 @@ from pathlib import Path
 import blake3
 import pytest
 
-from corpus import containment, mime, mux, paths, records, resolver, touches
+from corpus import containment, mime, paths, records, resolver, streams, touches
 from corpus._cli import ingest as ingest_cli
 from corpus._cli import promote as promote_cli
 from corpus._cli import reattest as reattest_cli
@@ -162,7 +162,9 @@ def test_format_timecode_rounds_and_pads():
 
 
 def test_sniff_head_adts_by_magic():
-    # `\xff\xf1` is the fixed prefix our ADTS synthesis always emits (ID=MPEG-4, no CRC).
+    # `\xff\xf1` is the standard ADTS "MPEG-4, no CRC" prefix. A v32 promoted leaf never
+    # carries this (its payload is deliberately not ADTS-framed) — this sniff exists for
+    # an ordinary standalone `.aac` file dropped into the corpus, unrelated to promotion.
     assert mime.sniff_head(b"\xff\xf1\x50\x80", None) == "audio/aac"
 
 
@@ -232,14 +234,16 @@ def test_attest_track_manifest_h264_aac(h264_aac_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_aac_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert set(by_media) == {"video/mp4", "audio/mp4"}
-    for media_type, ext in (("video/mp4", "mp4"), ("audio/mp4", "m4a")):
+    # v32 (§2): the roster row's media_type is the CODEC-derived leaf mime, never the
+    # container's — a promoted track's identity bytes are the raw payload.
+    assert set(by_media) == {"video/h264", "audio/aac"}
+    for media_type, ext in (("video/h264", "h264"), ("audio/aac", "aac")):
         e = by_media[media_type]
         assert e["address"].startswith("stream_id=")
         idx = int(e["address"].removeprefix("stream_id="))
         expected = blake3.blake3()
         length = 0
-        for chunk in mux.mux_stream(h264_aac_clip, idx):
+        for chunk in streams.extract_stream(h264_aac_clip, idx):
             expected.update(chunk)
             length += len(chunk)
         assert e["transport"] == f"blake3:{expected.hexdigest()}"
@@ -265,9 +269,9 @@ def test_attest_track_manifest_opus(h264_opus_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_opus_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert "audio/mp4" in by_media
-    opus = by_media["audio/mp4"]
-    assert opus["fields"]["filename"].endswith(".m4a")
+    assert "audio/opus" in by_media
+    opus = by_media["audio/opus"]
+    assert opus["fields"]["filename"].endswith(".opus")
 
 
 @needs_libx265
@@ -275,15 +279,15 @@ def test_attest_track_manifest_hevc(hevc_aac_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(hevc_aac_clip)
     assert issues == []
     by_media = {e["media_type"]: e for e in embeds}
-    assert "video/mp4" in by_media
-    assert by_media["video/mp4"]["fields"]["filename"].endswith(".mp4")
+    assert "video/hevc" in by_media
+    assert by_media["video/hevc"]["fields"]["filename"].endswith(".h265")
 
 
 @needs_ffmpeg
 def test_attest_track_manifest_unsupported_track_declared_not_embedded(h264_subtitle_clip):
     embeds, issues = _trackmanifest.attest_track_manifest(h264_subtitle_clip)
     media_types = {e["media_type"] for e in embeds}
-    assert "video/mp4" in media_types
+    assert "video/h264" in media_types
     # The subtitle track is a declared fact, not an embed: no transport hash for it.
     assert len(issues) == 1
     issue = issues[0]
@@ -325,8 +329,8 @@ def test_ingest_h264_aac_record_carries_stream_embeds(h264_aac_clip):
         embeds_by_media = {
             e.get("media_type"): e for e in records.iter_embed_blocks(post)
         }
-        assert "video/mp4" in embeds_by_media
-        assert "audio/mp4" in embeds_by_media
+        assert "video/h264" in embeds_by_media
+        assert "audio/aac" in embeds_by_media
 
         # The container's existing artifact facts (ffprobe duration/codec/etc) stay as-is —
         # additive attestation, never a replacement.
@@ -369,7 +373,7 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
         uri = f"corpus://{rid}?stream_id={stream_id}"
@@ -380,7 +384,7 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
         promoted_post = records.load(paths.record_path(root, expected_pid))
         assert promoted_post.metadata["id"] == expected_pid
         assert records.derived_state(promoted_post) == "proxy"
-        assert records.media_type_for(promoted_post) == "video/mp4"
+        assert records.media_type_for(promoted_post) == "video/h264"
         origins = list(records.iter_origin_blocks(promoted_post))
         assert origins[0]["fields"]["uri"] == uri
         assert touches.touch_list(promoted_post) == [touches.script_identifier("promote")]
@@ -393,8 +397,10 @@ def test_promote_stream_mints_record_with_lineage(h264_aac_clip):
 
 @needs_ffmpeg
 def test_promote_opus_stream_mime_via_extension_hint(h264_opus_clip):
-    """Opus has no reliable magic bytes at all — this exercises the extension-hint MIME
-    resolution path (`fields.filename`) end to end through the real promote flow."""
+    """Opus has no reliable magic bytes at all (§2, v32 — the raw payload is deliberately
+    not framed) — this exercises the fallback-to-declared MIME resolution path (the
+    roster row's codec-derived `media_type`, `promote.py`'s `declared` fallback) end to
+    end through the real promote flow."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
@@ -402,7 +408,7 @@ def test_promote_opus_stream_mime_via_extension_hint(h264_opus_clip):
         rid = _ingest(root, h264_opus_clip)
         post = records.load(paths.record_path(root, rid))
         opus_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "audio/mp4"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "audio/opus"
         )
         stream_id = str(opus_embed["address"]).removeprefix("stream_id=")
         uri = f"corpus://{rid}?stream_id={stream_id}"
@@ -410,7 +416,66 @@ def test_promote_opus_stream_mime_via_extension_hint(h264_opus_clip):
 
         expected_pid = str(opus_embed["transport"]).removeprefix("blake3:")
         promoted_post = records.load(paths.record_path(root, expected_pid))
-        assert records.media_type_for(promoted_post) == "audio/mp4"
+        assert records.media_type_for(promoted_post) == "audio/opus"
+
+
+# ---------- the identity equation (spec §2, §6.2 route unification) ---------- #
+
+
+@needs_ffmpeg
+def test_leaf_and_container_stream_id_are_byte_identical(h264_aac_clip):
+    """`corpus://<leaf> ≡ corpus://<container>?stream_id=<n>` (§2) — resolved two
+    entirely different ways (a bare promoted-record lookup vs a container-address
+    lookup), the bytes must be identical."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = _corpus(Path(td))
+        rid = _ingest(root, h264_aac_clip)
+        post = records.load(paths.record_path(root, rid))
+        video_embed = next(
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
+        )
+        stream_id = str(video_embed["address"]).removeprefix("stream_id=")
+        uri = f"corpus://{rid}?stream_id={stream_id}"
+        assert _promote(root, uri) == 0
+        leaf_id = str(video_embed["transport"]).removeprefix("blake3:")
+
+        from_leaf = resolver.resolve(f"corpus://{leaf_id}", root).read_bytes()
+        from_container = resolver.resolve(uri, root, regenerate=True).read_bytes()
+
+        assert from_leaf == from_container
+        assert from_leaf == b"".join(streams.extract_stream(h264_aac_clip, int(stream_id)))
+
+
+@needs_ffmpeg
+def test_resolve_cli_discloses_the_base_form(h264_aac_clip):
+    """`corpus resolve` on a bare leaf URI prints the container's own address alongside
+    the result (§6.2: "A resolver SHOULD disclose the base form")."""
+    import tempfile
+
+    from corpus._cli import resolve as resolve_cli
+
+    with tempfile.TemporaryDirectory() as td:
+        root = _corpus(Path(td))
+        rid = _ingest(root, h264_aac_clip)
+        post = records.load(paths.record_path(root, rid))
+        video_embed = next(
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
+        )
+        stream_id = str(video_embed["address"]).removeprefix("stream_id=")
+        assert _promote(root, f"corpus://{rid}?stream_id={stream_id}") == 0
+        leaf_id = str(video_embed["transport"]).removeprefix("blake3:")
+
+        assert (
+            resolve_cli._base_form(root, f"corpus://{leaf_id}")
+            == f"corpus://{rid}?stream_id={stream_id}"
+        )
+        # Not disclosed for a URI that already carries ops — it would just repeat what
+        # the caller already named.
+        assert resolve_cli._base_form(root, f"corpus://{leaf_id}?stream_id=0") is None
+        # Not disclosed for the container itself — it carries no lineage of its own.
+        assert resolve_cli._base_form(root, f"corpus://{rid}") is None
 
 
 # ---------- bare stream_id= identity resolution ---------- #
@@ -425,14 +490,15 @@ def test_bare_stream_id_resolves_to_pinned_identity_bytes(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
 
         out = resolver.resolve(f"corpus://{rid}?stream_id={stream_id}", root)
         resolved_bytes = out.read_bytes()
 
-        direct = b"".join(mux.mux_stream(h264_aac_clip, int(stream_id)))
+        # v32 (§2): the bare identity op is the PAYLOAD, engine-free — never a mux.
+        direct = b"".join(streams.extract_stream(h264_aac_clip, int(stream_id)))
         assert resolved_bytes == direct
         assert out.suffix == ".h264"
 
@@ -452,7 +518,7 @@ def test_bare_stream_id_does_not_return_raw_container(h264_aac_clip):
         rid = _ingest(root, h264_aac_clip)
         post = records.load(paths.record_path(root, rid))
         video_embed = next(
-            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/mp4"
+            e for e in records.iter_embed_blocks(post) if e.get("media_type") == "video/h264"
         )
         stream_id = str(video_embed["address"]).removeprefix("stream_id=")
         out = resolver.resolve(f"corpus://{rid}?stream_id={stream_id}", root)
@@ -521,3 +587,40 @@ def test_sidecar_chapters_land_as_structural_segments(h264_aac_clip):
             ("time=00:00:00", "Intro"),
             ("time=00:00:01", "Outro"),
         ]
+
+
+# ---------- playable-surface derivation for transcribe (spec §6.2, v32) ---------- #
+
+
+@needs_ffmpeg
+def test_isolated_stream_extracts_only_the_addressed_track(h264_aac_clip):
+    """`transforms.audio._isolated_stream` is the resolver-owned plumbing route
+    unification promised: given the render context a redirected `?transcribe` carries
+    (`artifact_path` == the container, `stream_ids` == the one addressed track), it hands
+    back a single-track playable remux of THAT track — never the whole (video+audio)
+    container the transcriber would otherwise silently default on."""
+    from corpus.transforms import audio as audio_tf
+
+    ctx = {"artifact_path": h264_aac_clip, "stream_ids": ["1"]}
+    with audio_tf._isolated_stream(h264_aac_clip, ctx) as isolated:
+        assert isolated != h264_aac_clip
+        tracks = streams.probe_streams(isolated)
+        assert len(tracks) == 1
+        assert tracks[0].kind == "audio"
+        assert streams.sample_sizes(isolated, 0) == streams.sample_sizes(h264_aac_clip, 1)
+
+
+@needs_ffmpeg
+def test_isolated_stream_is_a_passthrough_off_the_redirect_path(h264_aac_clip):
+    """No `stream_ids` in context (an ordinary, non-redirected `?transcribe` on a ready-
+    to-transcribe file — the ONLY case pre-v32), or `artifact_path` naming a different
+    file (an intermediate a prior op already produced): the audio path IS untouched, not
+    re-muxed to itself."""
+    from corpus.transforms import audio as audio_tf
+
+    with audio_tf._isolated_stream(h264_aac_clip, {}) as passthrough:
+        assert passthrough == h264_aac_clip
+
+    ctx = {"artifact_path": h264_aac_clip.with_name("other.mp4"), "stream_ids": ["1"]}
+    with audio_tf._isolated_stream(h264_aac_clip, ctx) as passthrough:
+        assert passthrough == h264_aac_clip

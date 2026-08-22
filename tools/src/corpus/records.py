@@ -884,12 +884,36 @@ def framing(post: frontmatter.Post) -> dict[str, Any] | None:
 
     Absence means the leaf predates 3.12 or was not muxed — unresolved, never defaulted.
     A consumer must report that rather than assume the current muxer produced it, for the
-    same reason `cutting` refuses to assume a strategy."""
+    same reason `cutting` refuses to assume a strategy.
+
+    *(Retired at v32.)* The payload-identity principle (§2) removed the engine from the
+    identity path entirely, so a v32 leaf's bytes have no producer to attest — nothing new
+    writes this stamp (`samples` replaces it, below). A surviving stamp on a pre-v32 leaf
+    is honest history of the bytes it described, not a defect (spec §7.1)."""
     artifact = artifact_block(post)
     if not artifact:
         return None
     value = (artifact.get("fields") or {}).get("framing")
     return value if isinstance(value, dict) else None
+
+
+def samples(post: frontmatter.Post) -> int | None:
+    """Return the record's attested `samples:` count (spec §7.1, v32), or None when absent.
+
+    Written at promotion onto a stream leaf's artifact block — the engine-free count
+    `corpus.streams.sample_count` reads from the SOURCE container's own tables, the same
+    self-check `cutting:` and stored markers compare against. Replaces the retired
+    `framing:` stamp: since a v32 leaf's bytes are a table-driven sample concatenation
+    with no producer, there is nothing left to name a muxer/version for — only the count
+    a reader can independently re-derive.
+
+    Absence means the leaf predates v32, or the count could not be resolved at promote
+    time — unresolved, never defaulted, the same rule `cutting`/`framing` follow."""
+    artifact = artifact_block(post)
+    if not artifact:
+        return None
+    value = (artifact.get("fields") or {}).get("samples")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def title_for(post: frontmatter.Post, corpus_root: Path) -> str:

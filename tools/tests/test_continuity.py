@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import frontmatter
 import pytest
 
 from corpus import ccsession, continuity, hashing, paths, records, schemas, streams
@@ -148,13 +149,18 @@ def _media_corpus(tmp_path: Path) -> Path:
     return root
 
 
-def _mp4_container(tmp_path: Path, root: Path, name: str = "clip") -> str:
-    """A 2s h264+aac mp4, ingested and attested — two tracks, so a wrong pairing is visible."""
+def _mp4_container(
+    tmp_path: Path, root: Path, name: str = "clip", *, freq: int = 440
+) -> str:
+    """A 2s h264+aac mp4, ingested and attested — two tracks, so a wrong pairing is visible.
+    `freq` (the sine tone's frequency) exists so two calls can produce DISTINCT content —
+    `testsrc2`/`sine` are otherwise fully deterministic (no wall-clock seed), so two
+    same-params invocations hash identically regardless of filename."""
     src = tmp_path / f"{name}.mp4"
     subprocess.run(
         ["ffmpeg", "-nostdin", "-v", "error", "-y",
          "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=15",
-         "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+         "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=44100",
          "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src)],
         check=True, capture_output=True,
     )
@@ -182,6 +188,51 @@ def _promote(root: Path, cid: str, address: str) -> str:
         argparse.Namespace(uri=f"corpus://{cid}?{address}", json=False, corpus_root=str(root))
     ) == 0
     return str(row["transport"]).split(":", 1)[1]
+
+
+@_needs_ffmpeg
+def test_old_muxed_leaf_and_new_payload_leaf_are_sample_identical(tmp_path):
+    """The v32 migration's own exactness proof (spec §12.8): re-running promote after v32
+    mints a DIFFERENT leaf id for the same track (the identity basis changed from muxed
+    envelope to raw payload), but the two leaves are two framings of the exact same
+    samples — verified here as byte-different, sample-identical, exactly as the spec's
+    migration narrative describes.
+
+    The "old muxed leaf" is built directly with `corpus.mux` (rather than by running a
+    pre-v32 checkout) — `mux_stream_to` IS the 3.12-through-v31 promoted-leaf producer,
+    unchanged by v32 (it only lost its role as the identity path, not its behavior) — and
+    planted as a STANDALONE artifact file under its own (muxed-bytes) id, simulating a
+    leaf record minted before the migration whose bytes are still resident."""
+    from corpus import mux
+
+    root = _media_corpus(tmp_path)
+    cid = _mp4_container(tmp_path, root)
+    container_path = paths.artifact_path(root, cid, "mp4")
+
+    old_dest = tmp_path / "old-leaf.mp4"
+    mux.mux_stream_to(container_path, 0, old_dest)
+    old_leaf_id = hashing.hash_file(old_dest)["blake3"]
+    old_leaf_artifact = paths.artifact_path(root, old_leaf_id, "mp4")
+    old_leaf_artifact.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(old_dest, old_leaf_artifact)
+    old_post = frontmatter.Post("", **records.stub_frontmatter(
+        record_id=old_leaf_id, touch_id="corpus.promote@0.1.0"
+    ))
+    records.set_artifact_block(old_post, mime="video/mp4", fields={})
+    records.append_origin_block(
+        old_post, uri=f"corpus://{cid}?stream_id=0", snapshot="2026-07-31T00:00:00Z"
+    )
+    records.dump(old_post, paths.record_path(root, old_leaf_id))
+
+    new_leaf_id = _promote(root, cid, "stream_id=0")
+    assert new_leaf_id != old_leaf_id, "same id proves nothing about the branch under test"
+
+    result = continuity.continuity(root, old_leaf_id, new_leaf_id)
+
+    assert [(m.address, m.status) for m in result.members] == [
+        ("stream_id=0", continuity.IDENTICAL)
+    ]
+    assert result.contains_a
 
 
 @_needs_ffmpeg
@@ -235,15 +286,23 @@ def test_the_sample_sequence_is_what_survives_the_reframe(tmp_path):
     """The property the whole branch rests on, asserted directly rather than inferred from a
     verdict: re-enveloping a track moves every sample's file offset and changes no sample's
     size. If this ever stops holding, the verdicts above become meaningless while still
-    passing."""
+    passing.
+
+    *(v32)* A promoted leaf's own bytes are the raw payload now — no envelope, no sample
+    table of its own (§2) — so this asserts the property against `corpus.mux`'s DERIVED
+    rendering instead (a single-track re-envelope of the same track), which is the
+    reframe this branch actually has to survive when comparing a pre-v32 muxed leaf
+    against its v32 payload successor."""
+    from corpus import mux
+
     root = _media_corpus(tmp_path)
     cid = _mp4_container(tmp_path, root)
     container_bytes = paths.artifact_path(root, cid, "mp4")
-    leaf = _promote(root, cid, "stream_id=0")
-    leaf_bytes = continuity.ensure_local_bytes(root, leaf, "mp4")
+    reframed = tmp_path / "reframed.mp4"
+    mux.mux_stream_to(container_bytes, 0, reframed)
 
-    assert leaf_bytes.read_bytes() != container_bytes.read_bytes(), "same bytes proves nothing"
-    assert streams.sample_sizes(container_bytes, 0) == streams.sample_sizes(leaf_bytes, 0)
+    assert reframed.read_bytes() != container_bytes.read_bytes(), "same bytes proves nothing"
+    assert streams.sample_sizes(container_bytes, 0) == streams.sample_sizes(reframed, 0)
 
 
 @_needs_ffmpeg
@@ -255,28 +314,41 @@ def test_growth_is_CONTAINED_not_diverged(monkeypatch, tmp_path):
     it for real would mean coaxing x264 into emitting an identical prefix for a longer input,
     which would test its lookahead rather than this comparison. Everything else — the record
     pair, the lineage pairing, the branch under test — is real.
+
+    *(v32)* A and B are each a promoted leaf of a SEPARATE container (two independent
+    captures), not container-vs-its-own-leaf: under the payload-identity principle a
+    leaf's sample sequence is read straight from ITS OWN container's tables (§2 — the
+    leaf carries none of its own), so a leaf promoted from A's own container and A itself
+    would resolve to the identical (path, index) pair, leaving no separate "B" path to
+    grow. Two distinct source containers keep that pair distinct, which is what the
+    monkeypatch below needs to discriminate on. The AUDIO track (`stream_id=1`), not the
+    video one: `testsrc2` is a fully deterministic pattern, so both clips' video payload
+    is byte-identical regardless of `freq` and would mint the SAME leaf id either way —
+    the varied sine tone is what actually makes the two captures distinct content.
     """
     root = _media_corpus(tmp_path)
-    cid = _mp4_container(tmp_path, root)
-    leaf = _promote(root, cid, "stream_id=0")
-    assert continuity.continuity(root, cid, leaf).members[0].status == continuity.IDENTICAL
+    cid_a = _mp4_container(tmp_path, root, name="clip-a", freq=440)
+    cid_b = _mp4_container(tmp_path, root, name="clip-b", freq=880)
+    leaf_a = _promote(root, cid_a, "stream_id=1")
+    leaf_b = _promote(root, cid_b, "stream_id=1")
 
-    # The leaf resolves through its container into the cache, so its path carries neither its
-    # own id nor the container's — resolve it up front and discriminate on the path itself.
-    leaf_path = continuity.ensure_local_bytes(root, leaf, "mp4")
-    real = streams.sample_sizes
+    path_b = paths.artifact_path(root, cid_b, "mp4")
     seen: list[Path] = []
 
-    def _grown(path, stream_id):
-        sizes = real(path, stream_id)
+    # Fully fabricated, keyed on path identity — real() is deliberately NOT the baseline
+    # here (unlike the pre-v32 version of this test): two genuinely different real audio
+    # encodes (the only way to mint two DISTINCT leaf ids off two DISTINCT containers,
+    # v32 §2) do not produce a real prefix relationship in their own sample sizes, so
+    # asserting on real()-derived values would make this a test of x264/aac's internals
+    # rather than of the continuity branch under test. B's sequence is A's, extended.
+    def _sizes(path, stream_id):
         seen.append(Path(path))
-        # The LEAF is B; extend only its sequence, leaving A's exactly as the container has it.
-        return [*sizes, 1, 2, 3] if Path(path) == leaf_path else sizes
+        return [10, 20, 30, 5, 6, 7] if Path(path) == path_b else [10, 20, 30]
 
-    monkeypatch.setattr(continuity.streams, "sample_sizes", _grown)
-    result = continuity.continuity(root, cid, leaf)
+    monkeypatch.setattr(continuity.streams, "sample_sizes", _sizes)
+    result = continuity.continuity(root, leaf_a, leaf_b)
 
     assert len(seen) == 2, "both sides must be read, or the verdict is about one sequence"
-    assert leaf_path in seen, "B's sequence was never the one grown — the test proves nothing"
+    assert path_b in seen, "B's sequence was never the one grown — the test proves nothing"
     assert [m.status for m in result.members] == [continuity.CONTAINED]
     assert result.contains_a, "growth preserves A — supersession stays safe"

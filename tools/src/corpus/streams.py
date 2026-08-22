@@ -1,50 +1,69 @@
-"""Engine-free ISOBMFF reading for media containers (mp4/m4a/mov) — the **oracle** half
-of the 3.12 identity contract (spec §12.20 item 1).
+"""Engine-free ISOBMFF reading for media containers (mp4/m4a/mov) — the payload-identity
+principle's own producer (spec §2, v32).
 
-Since 3.12 this module does not produce member bytes. A promoted track's identity bytes
-are a single-track container of the source's own family, muxed by `corpus.mux` — see that
-module for why an engine is admitted there. What lives here is everything needed to
-*read* a container without one, which is exactly what makes it a usable check on the
-producer: a verification sharing the producer's implementation would share its failure
-mode, so this module stays deliberately ffmpeg-free.
-
-This module owns two things:
+A promoted media-stream leaf's identity bytes are the **raw elementary stream**: the
+codec payload samples concatenated in decode order, exactly as the container's own
+sample tables lay them out — no reframing, no synthesized headers, no engine anywhere in
+the derivation. This module owns that extraction (`extract_stream`/`payload_blake3`)
+alongside the table-reading it has always done:
 
 - `probe_streams(path)` — read the container's `moov` box tree and report one
-  `StreamInfo` per track (index, kind, codec, media_type), by parsing the sample
-  description (`stsd`) and codec configuration record (`avcC`/`hvcC`/`esds`/`dOps`).
-  Cheap: only the (small) `moov` subtree is read, never sample data.
-- `sample_count(path, stream_id)` — how many samples a track holds per the container's
-  own tables (`stsc`/`stsz`/`stco`/`co64`), counting the layout without reading sample
-  data. This is the number the `framing:` stamp carries (§7.2.1) and the number
-  `corpus.mux` checks a muxed member against.
+  `StreamInfo` per track (index, kind, codec, media_type — the codec-derived LEAF mime,
+  §2), by parsing the sample description (`stsd`) and codec configuration record
+  (`avcC`/`hvcC`/`esds`/`dOps`). Cheap: only the (small) `moov` subtree is read, never
+  sample data.
+- `sample_count(path, stream_id)` / `sample_sizes(path, stream_id)` — the container's own
+  sample-table layout (`stsc`/`stsz`/`stco`/`co64`), counted or listed without reading
+  sample data. `sample_count` is the number a leaf's artifact block may attest as
+  `samples:` (§7.1, retiring `framing:`); `sample_sizes` is the re-framing fingerprint
+  `corpus.continuity` compares across a reframe.
+- `extract_stream(path, stream_id)` — the payload itself: every sample's bytes, in
+  decode order, streamed chunk by chunk so a multi-GB track is never held whole.
+  `payload_blake3` hashes that stream without materializing it.
 
-**What was removed at 3.12, and why it is worth knowing.** This module used to own the
-per-codec pinned *elementary* forms: h264/hevc reframed to Annex-B, aac wrapped in
-synthesized ADTS headers, opus in a corpus-defined length-prefixed framing. That rule
-failed on its own terms. ADTS encodes the audio object type in a **2-bit** field (AOT
-1-4), so AAC at `audioObjectType=29` (HE-AAC v2) has no representable ADTS header at all
-— and 84 of 102 public containers hold exactly that, which made their audio track
-permanently unpromotable. The elementary form was also insufficient in a second way: it
-carries no timescale and no duration, so a promoted leaf reported a meaningless frame
-rate and could not be seeked. Both are fixed by muxing into the source's own family
-instead, where admissibility is true by construction.
+**Why this module is the identity path now, and was not before 3.12 or between 3.12 and
+v32.** Extraction here is a pure function of the container bytes — a table-driven sample
+concatenation, identical under every tool version by construction — which is exactly what
+makes it safe to key identity on. Two earlier regimes tried other things and were both
+measured insufficient:
 
-Non-ISOBMFF containers (Matroska/WebM and kin) raise a clear error — ISOBMFF only (spec
-§12.20's deferred item). A `stsd` with more than one sample-description entry on a track
-is refused loudly — never guess which config applies to which samples.
+*Pre-3.12*, this module owned per-codec pinned *elementary* forms instead: h264/hevc
+reframed to Annex-B, aac wrapped in synthesized ADTS headers, opus in a corpus-defined
+length-prefixed framing. That rule failed on its own terms. ADTS encodes the audio object
+type in a **2-bit** field (AOT 1-4), so AAC at `audioObjectType=29` (HE-AAC v2) has no
+representable ADTS header at all — and 84 of 102 public containers hold exactly that,
+which made their audio track permanently unpromotable. The elementary form was also
+insufficient in a second way: it carries no timescale and no duration, so a promoted leaf
+reported a meaningless frame rate and could not be seeked.
+
+*3.12* fixed both by admitting an engine into the identity path instead: a promoted
+track's bytes became a single-track container of the source's own family, muxed by
+`corpus.mux` (`-c copy -fflags +bitexact`), with this module kept ffmpeg-free purely to
+serve as an independent check on the muxer's sample count. That traded one failure mode
+for another — engine output is not guaranteed stable across tool versions even pinned,
+measured live — which is what v32's payload-identity principle (§2) exists to end: the
+raw payload has no timescale/duration EITHER, but route unification (§6.2) solves that by
+resolving a leaf's timeline ops through its container rather than by giving the leaf bytes
+timing of their own. `corpus.mux` still exists — it now produces DERIVED, version-labeled
+playable renderings (§6.2), never identity bytes.
+
+Non-ISOBMFF containers (Matroska/WebM and kin) raise a clear error — ISOBMFF only (a
+coverage gap, not a determinism gap — spec §12.36/§12.37). A `stsd` with more than one
+sample-description entry on a track is refused loudly — never guess which config applies
+to which samples.
 
 Deliberately unparsed: `tkhd`/`mdhd` (track/media timing — track order comes from `trak`
 box order in `moov`, the spec's `stream_id=` integer; sample layout comes entirely from
 `stbl`) and `ctts` (composition-time offsets — display order, not decode order).
 
 NO ffmpeg/ffprobe anywhere in this module — that is the point of it. `corpus.mux` owns
-the muxer; `corpus.transforms.video` / `corpus.transforms.audio` own the engine-backed
-playable-rendering path (`format=`, §12.20 item 1's second layer).
+the muxer for derived playable renderings; `corpus.transforms.video` /
+`corpus.transforms.audio` own the engine-backed transform path (`format=`, `transcribe`).
 """
 
 from __future__ import annotations
 
+import re
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -59,15 +78,15 @@ class StreamInfo:
     """One elementary stream (track) reported by `probe_streams`.
 
     `index` is 0-based track order within `moov` — the spec's `stream_id=` integer.
-    `codec` is the resolved codec name for the four pinned forms ("h264", "hevc",
-    "aac", "opus"); for anything else it is the container's own identifier (the
-    `stsd` sample-entry fourcc, or an AAC `objectTypeIndication` annotation) so an
-    unsupported track is still nameable — `corpus.mux` raises on it.
-    `media_type` is the promoted record's MIME — since 3.12 the single-track *container*
-    type for the track's KIND (`video/mp4`, `audio/mp4`), never an elementary-stream type
-    (`video/h264`, `audio/aac`), which no longer names any promoted record. `None` when the
-    codec is outside the pinned set: such a track is a real fact the roster still reports,
-    it just has no member the oracle can vouch for.
+    `codec` is the resolved codec name for the pinned set ("h264", "hevc", "av1", "aac",
+    "opus"); for anything else it is the container's own identifier (the `stsd`
+    sample-entry fourcc, or an AAC `objectTypeIndication` annotation) so an unsupported
+    track is still nameable.
+    `media_type` is the promoted record's MIME (v32, §2) — the codec-derived LEAF type
+    (`video/h264`, `audio/aac`, …), because a promoted track's identity bytes are the raw
+    codec payload, not a container. `None` when the codec is outside the pinned set: such
+    a track is a real fact the roster still reports, it just has no member this module can
+    name a mime for.
     """
 
     index: int
@@ -76,15 +95,17 @@ class StreamInfo:
     media_type: str | None
 
 
-# The codec is still resolved and reported (it is a real track fact, and the roster names
-# it), but since 3.12 it no longer decides the promoted member's MIME. A member's bytes are
-# a single-track container of the source's own family, so its type follows the TRACK KIND:
-# a video-only mp4 is `video/mp4`, an audio-only one is `audio/mp4` (what an `.m4a` is).
-# Before 3.12 this map returned elementary-stream types (`video/h264`, `audio/aac`) because
-# the member's bytes were a bare stream; those types no longer name any promoted record.
-_MEDIA_TYPE_BY_KIND = {
-    "video": "video/mp4",
-    "audio": "audio/mp4",
+# The payload-identity principle (§2, v32): a promoted track's bytes are the raw codec
+# payload, so its mime is the CODEC's, not the container's. Before v32 (3.12) this mapped
+# track KIND to a single-track container type (`video/mp4`, `audio/mp4`) instead — a
+# promoted leaf's bytes were a muxed envelope then, so its type followed the envelope, not
+# the payload inside it.
+_LEAF_MIME_BY_CODEC = {
+    "h264": "video/h264",
+    "hevc": "video/hevc",
+    "av1": "video/av1",
+    "aac": "audio/aac",
+    "opus": "audio/opus",
 }
 
 #: *(Retired 2026-07-31.)* This was `{h264, hevc, aac, opus}` — the codecs whose config
@@ -121,6 +142,7 @@ _AAC_OBJECT_TYPE_INDICATION = 0x40
 
 _H264_FOURCCS = frozenset({"avc1", "avc3"})
 _HEVC_FOURCCS = frozenset({"hev1", "hvc1"})
+_AV1_FOURCCS = frozenset({"av01"})
 
 # VisualSampleEntry / AudioSampleEntry fixed-field byte counts (ISO/IEC 14496-12)
 # between the sample entry's own box header and its first child box (avcC/hvcC/esds/
@@ -383,6 +405,15 @@ def _resolve_codec(
         fh.seek(dops[0])
         payload = fh.read(dops[1] - dops[0])
         return "opus", payload, None
+    if fourcc in _AV1_FOURCCS:
+        av1c = _find_box(fh, "av1C", children_start, entry_pe)
+        if av1c is None:
+            raise ValueError(f"'{fourcc}' sample entry has no 'av1C' config box")
+        # The av1C payload is not parsed further — payload extraction needs no config
+        # record at all (§2: identity is a table-driven sample concatenation), and
+        # `corpus.mux`'s derived-rendering path re-derives whatever ffmpeg needs from the
+        # container directly rather than from anything this module hands it.
+        return "av1", None, None
     return fourcc, None, None
 
 
@@ -515,6 +546,29 @@ def _iter_sample_layout(fh: IO[bytes], track: _Track) -> Iterator[tuple[int, int
 # ---------- public API ---------- #
 
 
+def _leaf_mime_for(codec: str, kind: str) -> str | None:
+    """The leaf mime `StreamInfo.media_type` reports for one track's `(codec, kind)`.
+
+    A recognized codec gets its registered mime. An unrecognized one is NOT unpromotable
+    by that alone — extraction needs only a sample-table layout, which every ISOBMFF
+    track has regardless of codec (the fix a codec allowlist gate used to block, before
+    it was measured to cost 17 public containers their AV1 track on a fleet re-attest).
+    So a video/audio track with an unrecognized but mime-token-safe codec name (a bare
+    fourcc, e.g. `mp4v`) still gets a generic `video/x-<codec>` / `audio/x-<codec>` — no
+    registered schema, but content-addressed and promotable like any other type this
+    package doesn't have a schema for. A codec name that isn't a safe mime token (an
+    annotated one like `mp4a(objectType=0x66)`) falls back to None rather than minting
+    a malformed type. Subtitle/other-kind tracks always report None — they leave the
+    media family entirely (a conversion, never a reframing) or are metadata ABOUT other
+    tracks, neither of which this function's job is to name."""
+    mime = _LEAF_MIME_BY_CODEC.get(codec)
+    if mime is not None:
+        return mime
+    if kind in ("video", "audio") and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.+-]*", codec):
+        return f"{kind}/x-{codec}"
+    return None
+
+
 def probe_streams(path: Path) -> list[StreamInfo]:
     """One `StreamInfo` per elementary stream (track) in the ISOBMFF container at
     `path`, in `moov` track order (`index` == the spec's `stream_id=` integer). Reads
@@ -526,7 +580,7 @@ def probe_streams(path: Path) -> list[StreamInfo]:
             t.index,
             t.kind,
             t.codec,
-            _MEDIA_TYPE_BY_KIND.get(t.kind),
+            _leaf_mime_for(t.codec, t.kind),
         )
         for t in tracks
     ]
@@ -535,11 +589,11 @@ def probe_streams(path: Path) -> list[StreamInfo]:
 def sample_count(path: Path, stream_id: int) -> int:
     """How many samples track `stream_id` holds, per the container's OWN tables.
 
-    The engine-free half of the 3.12 identity contract (spec §12.20 item 1): this is the
-    number the `framing:` stamp carries, and the number a muxed member is checked against
-    by `corpus.mux`. It is deliberately computed here — by this package's own ISOBMFF
-    reader, which has no ffmpeg in it — so that the check and the thing it checks do not
-    share an implementation, and therefore cannot share a failure mode.
+    This is the number a promoted leaf's artifact block may attest as `samples:` (spec
+    §7.1, v32) — the engine-free count `extract_stream` produces exactly that many of.
+    Also the number `corpus.mux`'s derived-rendering path checks a muxed output against,
+    for the same reason it always did: a verification sharing the producer's
+    implementation would share its failure mode, and this module has no engine in it.
 
     Counts the sample-table layout rather than reading any sample data, so it is cheap on
     a multi-GB track. Raises `ValueError` if `stream_id` doesn't name a track.
@@ -577,3 +631,54 @@ def sample_sizes(path: Path, stream_id: int) -> list[int]:
         raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {src})")
     with src.open("rb") as fh:
         return [size for _offset, size in _iter_sample_layout(fh, track)]
+
+
+_EXTRACT_CHUNK = 1 << 20
+
+
+def extract_stream(path: Path, stream_id: int) -> Iterator[bytes]:
+    """Yield track `stream_id`'s **identity bytes** (spec §2, v32): every sample's raw
+    codec payload, in decode order, exactly as the container's own tables lay them out —
+    concatenated with NO reframing, no synthesized headers (no ADTS, no Annex-B start
+    codes, no corpus-invented framing), and no engine anywhere in the derivation. This is
+    what `corpus://<leaf>` and `corpus://<container>?stream_id=<n>` both resolve to — the
+    identity equation is verifiable by re-derivation because this function is a pure
+    function of the container bytes.
+
+    Streams chunk by chunk (never materializing a whole track), reading each sample at
+    its own file offset from `_iter_sample_layout` — the same layout `sample_count`/
+    `sample_sizes` walk without reading payload. A sample larger than the read chunk is
+    read in multiple reads; a short read at end-of-file is a truncated/malformed track and
+    raises `ValueError` rather than silently yielding fewer bytes than the table promises.
+    """
+    src = Path(path)
+    tracks = _parse_container(src)
+    track = next((t for t in tracks if t.index == stream_id), None)
+    if track is None:
+        raise ValueError(f"stream_id={stream_id}: no such track ({len(tracks)} track(s) in {src})")
+    with src.open("rb") as fh:
+        for offset, size in _iter_sample_layout(fh, track):
+            fh.seek(offset)
+            remaining = size
+            while remaining > 0:
+                chunk = fh.read(min(remaining, _EXTRACT_CHUNK))
+                if not chunk:
+                    raise ValueError(
+                        f"stream_id={stream_id}: truncated sample at offset {offset} "
+                        f"(table declares {size} bytes, {remaining} unread)"
+                    )
+                yield chunk
+                remaining -= len(chunk)
+
+
+def payload_blake3(path: Path, stream_id: int) -> str:
+    """The blake3 identity digest of track `stream_id`'s payload (spec §2) — `promote`'s
+    minted leaf id, and the byte-identity half of `corpus://<leaf> ≡
+    corpus://<container>?stream_id=<n>`. Streams via `extract_stream` — never
+    materializes the payload whole, so this is cheap on a multi-GB track."""
+    import blake3
+
+    b3 = blake3.blake3()
+    for chunk in extract_stream(path, stream_id):
+        b3.update(chunk)
+    return b3.hexdigest()

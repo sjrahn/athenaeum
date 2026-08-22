@@ -1,25 +1,29 @@
 description: |
-  A promoted media-container video track's pinned Annex-B elementary stream (spec §12.20.1):
-  the avcC config record's parameter-set NALs (SPS/PPS) followed by every sample's NAL units,
-  reframed to start-code framing, in decode order — a deterministic, engine-free extraction
-  produced by `corpus.streams.extract_stream`, never a standalone capture. Minimal schema: this
-  type exists so a promoted track record flows through ingest/lint/resolve like any other
-  artifact; the track itself carries no further mime-declared structure (it is a formless leaf
-  — frame work rides the video atom's derivation ops, §1.2). A bare elementary stream carries
-  no container timing of its own — no timescale, no duration — so `frame=`/`time_range=`/
-  `scenes=` on the track's own hash resolve through **timeline inheritance** (§6.2, 3.11): the
-  resolver reads the leaf's containment lineage and runs the op against the CONTAINER with
-  `stream_id=<n>` composed in. That is also where the shared-timeline composition lives (§1.2),
-  which is why the leaf's stored `time_range=` addresses are in the container's seconds and not
-  in a timebase imputed to the stream. Measured over 8 rostered containers: no leaf reports a
-  duration at all (8/8, the field absent rather than N/A), every leaf reports the same
-  meaningless placeholder rate (`avg_frame_rate=25/1`) whatever its source, and a real decode
-  agrees with the container in only 2 of 8 cases — both h264 with clean VUI-declared CFR. Three
-  diverge by a constant real_fps/25 factor and two by a non-constant drift no factor inverts.
-  All four hevc leaves fell back to 25 fps, including a clean-CFR one. And seeking fails even
-  where detection agrees: on a leaf whose cut list matched exactly, `ffmpeg -ss 30` returned
-  success and a zero-byte image — input seeking and a filter graph's fabricated timestamps are
-  not the same mechanism.
+  A promoted media-stream leaf's raw H.264 payload (spec §2, v32, the payload-identity
+  principle): the avcC config record's parameter-set NALs (SPS/PPS) followed by every
+  sample's NAL units, in decode order, exactly as the container's `stsz`/`stsc`/`stco`
+  tables lay them out — NO reframing (no Annex-B start codes synthesized). A
+  deterministic, engine-free extraction produced by `corpus.streams.extract_stream`,
+  never a standalone capture. Minimal schema: this type exists so a promoted track
+  record flows through ingest/lint/resolve like any other artifact; the track itself
+  carries no further mime-declared structure (it is a formless leaf — frame work rides
+  the video atom's derivation ops, §1.2).
+
+  A bare payload carries no container timing of its own — no timescale, no duration — so
+  `frame=`/`time_range=`/`scenes=` on the leaf's own hash resolve through **route
+  unification** (§6.2, v32): the resolver treats `corpus://<leaf>?<ops>` and
+  `corpus://<container>?stream_id=<n>&<ops>` as the same resolution (they name the same
+  bytes by the §2 identity equation), running timeline ops against the container's real
+  tables. Measured over 8 rostered containers (the pre-route-unification pilot, when a
+  bare Annex-B stream was resolved directly): no leaf reported a duration at all (8/8,
+  the field absent rather than N/A), every leaf reported the same meaningless placeholder
+  rate (`avg_frame_rate=25/1`) whatever its source, and a real decode agreed with the
+  container in only 2 of 8 cases — both h264 with clean VUI-declared CFR. Three diverge
+  by a constant real_fps/25 factor and two by a non-constant drift no factor inverts. And
+  seeking failed even where detection agreed: on a leaf whose cut list matched exactly,
+  `ffmpeg -ss 30` returned success and a zero-byte image — input seeking and a filter
+  graph's fabricated timestamps are not the same mechanism. This is the empirical case
+  for route unification, not merely its rationale.
 applies_to:
   content_types:
   - video/h264
