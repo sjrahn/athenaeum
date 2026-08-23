@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 35
+version: 36
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 35 (2026-08-22, owner ruling) returns the HTML address space to flat ordinals (Part II §6.1.1): `el=<N>` is the element's 1-based document-order ordinal, replacing the dotted child-index path — totality kept, containment becomes a tree question, ranges are sibling-only (`el=[A-B]`, endpoints sharing a parent), envelopes address up (subtree → sibling run → lowest common container), and grammar dispatch stays record-owned via `addressing.scheme`. The annotated view — ordinals span-surgically stamped as `data-el` attributes, faithfulness by construction — becomes the default delivery of a markup artifact; `?raw` yields the stored bytes exactly. Fleet migration: the v35 remap, operator-gated. Prior version notes: the changelog.*
+*Version 36 (2026-08-22, owner ruling) adds the second temporal-stratification onboarding mode (Part II §12.3.14): `partition.onboarding: settled-first-cut` — closed periods cut once from the first export that covers them, never re-cut or reconciled, no byte-stability claim and so no two-export measurement; the owner ruling banks in the overlay comment block where the measurement numbers would go. With it: producer-declared member↔sidecar pairing on `corpus period-split` (resolved through the `--origin` ladder; export-level metadata files excluded and disclosed, never undated primaries) and epoch-seconds integers on the sidecar date axis (UTC by definition). First producer: proton-mail-export. Prior version notes: the changelog.*

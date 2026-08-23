@@ -885,6 +885,13 @@ def resolve_strip_fields(
 
 _VALID_PARTITION_GRAINS = ("month", "year")
 
+#: The two onboarding modes (spec §12.3.14, v36): `measured` (the default — a banked
+#: two-export diff earns the closed-period byte-stability claim) or `settled-first-cut`
+#: (owner-ruled per producer — closed periods cut once, never re-cut or reconciled, no
+#: byte-stability claim made). Absence of the key means `measured`, byte-identical to
+#: pre-v36 semantics.
+_VALID_ONBOARDING_MODES = ("measured", "settled-first-cut")
+
 
 def _validate_partition(raw: Any) -> dict[str, Any] | None:
     """Light structural validation of a `partition:` block (spec §12.3.14). Tolerant of
@@ -892,9 +899,22 @@ def _validate_partition(raw: Any) -> dict[str, Any] | None:
     present, each `eras` entry's `until`/`grain` are checked. An invalid block is logged
     and treated as NOT a declaration (the namespace walk keeps climbing past it) rather
     than raised — one corpus's bad overlay can't break `mbox-split` for an unrelated
-    stream (parse-tolerant, like every other schema read in this module)."""
+    stream (parse-tolerant, like every other schema read in this module).
+
+    `onboarding` is the one exception to that tolerance (v36): an explicit value that is
+    neither `measured` nor `settled-first-cut` is not "try a broader ancestor" territory
+    — it is a typo in THIS overlay, and silently falling through to "no schedule
+    declared" would replace a specific, actionable message with a generic one further
+    downstream. Raises `ValueError` naming the two valid modes; absence of the key reads
+    as `measured`, unchanged from pre-v36 behavior."""
     if not isinstance(raw, dict):
         return None
+    onboarding = raw.get("onboarding", "measured")
+    if onboarding not in _VALID_ONBOARDING_MODES:
+        raise ValueError(
+            f"partition.onboarding={onboarding!r} is not a valid mode — expected "
+            f"one of {_VALID_ONBOARDING_MODES!r} (spec §12.3.14, v36)"
+        )
     if raw.get("grain") not in _VALID_PARTITION_GRAINS:
         log.warning("partition: block has invalid/missing grain %r — ignoring", raw.get("grain"))
         return None
@@ -956,7 +976,11 @@ def resolve_partition(
     `None` when nothing in the walk declares, no fallback to the default binding; no
     `origin_id` resolves the mime schema's `default_origin` binding and walks THAT
     namespace instead. Returns the declared (validated) `partition:` dict, or `None` when
-    nothing declares one — callers fall back to the pre-schedule year-grain behavior."""
+    nothing declares one — callers fall back to the pre-schedule year-grain behavior.
+
+    Raises `ValueError` when a declared block's `onboarding:` value is neither `measured`
+    nor `settled-first-cut` (v36) — callers running as a CLI verb should catch this and
+    exit with the message rather than let it propagate as a traceback."""
     if origin_id is not None:
         return _origin_partition_declaration(corpus_root, origin_id)
     default_id = resolve_default_origin(corpus_root, media_type)

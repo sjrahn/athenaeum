@@ -6,13 +6,19 @@ rather than a flat mbox gets the same closed-period / rolling / undated shape, o
 member file at a time instead of one mbox member at a time.
 
 `<source>` is a directory tree or a zip archive of member files, some of which may carry
-a paired JSON sidecar (recon target: the `osxphotos-export` origin in `corpus-private` —
-a media file `<name>.<ext>` pairs with a PhotoInfo sidecar named exactly `<name>.<ext>.json`
-when one exists; an `_edited.jpeg` derivative render has NO sidecar of its own — under the
-`sidecar:` date axis it therefore has nothing to read a date from and lands in the undated
-bucket, a disclosed limitation, not a bug). The pairing rule is a small, swappable function
-(`_osxphotos_sidecar_for`) — a future producer's different convention replaces just that
-one function, never the bucketing logic around it.
+a paired JSON sidecar. The member<->sidecar pairing convention is PRODUCER-DECLARED
+(v36), resolved by `--origin`'s leading namespace segment against `_SIDECAR_PAIRINGS`:
+`osxphotos-export` (recon target: `corpus-private`'s containers — a media file
+`<name>.<ext>` pairs with a PhotoInfo sidecar named exactly `<name>.<ext>.json` when one
+exists; an `_edited.jpeg` derivative render has NO sidecar of its own — under the
+`sidecar:` date axis it therefore has nothing to read a date from and lands in the
+undated bucket, a disclosed limitation, not a bug) and `proton-mail-export` (a message
+`<stem>.eml` pairs with `<stem>.metadata.json`). Each convention is a small, swappable
+function — a future producer's different convention adds one function and one registry
+entry, never touches the bucketing logic around it. A producer's convention may also
+name EXPORT-LEVEL metadata files that pair with no member at all (Proton's
+`labels.json`, naming every label the account has) — excluded from bucketing entirely
+and disclosed in the split's summary, never bucketed as an undated primary.
 
 Unlike `mbox-split`, there is no legacy no-schedule behavior to fall back to: a generic
 zip/tree has no honest media-type `default_origin` binding, so `--origin` is REQUIRED, and
@@ -47,6 +53,7 @@ import argparse
 import json
 import sys
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -82,8 +89,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help=(
             "the per-member date axis: `mtime` (the member file's own mtime) or "
             "`sidecar:<dotted-path>` (read from the member's paired sidecar JSON at "
-            "that key path, e.g. `sidecar:date` for an osxphotos PhotoInfo export). A "
-            "member with no parseable date on this axis goes to the undated bucket."
+            "that key path, e.g. `sidecar:date` for an osxphotos PhotoInfo export, "
+            "`sidecar:Time` for a Proton `Payload.Time` epoch). The sidecar value may "
+            "be an ISO string or an epoch-seconds INTEGER (v36) — the integer form is "
+            "UTC by definition. A member with no parseable date on this axis goes to "
+            "the undated bucket."
         ),
     )
     parser.add_argument(
@@ -99,7 +109,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
     add_corpus_root_arg(parser)
 
 
-# ---------- sidecar pairing convention (osxphotos, first of possibly several) ------- #
+# ---------- sidecar pairing conventions (producer-declared, v36) -------------------- #
+#
+# Each producer's member<->sidecar convention is a small, swappable function keyed by
+# the `--origin` producer id — never a single hardcoded dispatch. `_SIDECAR_PAIRINGS`
+# is the registry; adding a producer means adding one function and one entry, never
+# touching the bucketing logic in `run()` below.
 
 
 def _osxphotos_sidecar_for(member: str, name_set: set[str]) -> str | None:
@@ -108,11 +123,55 @@ def _osxphotos_sidecar_for(member: str, name_set: set[str]) -> str | None:
     dialect's media name itself carries an `_Original` suffix): a media member's
     PhotoInfo sidecar is `<member>.json`, when that exact path exists among the
     export's members. An `_edited.jpeg` derivative has none of its own — deliberately
-    NOT resolved here (no invented fallback to the original's sidecar); a small,
-    swappable function, so a future producer's different convention replaces just this
-    one, never the bucketing logic around it."""
+    NOT resolved here (no invented fallback to the original's sidecar)."""
     candidate = f"{member}.json"
     return candidate if candidate in name_set else None
+
+
+def _proton_mail_export_sidecar_for(member: str, name_set: set[str]) -> str | None:
+    """The proton-mail-export pairing convention (v36): a message member `<stem>.eml`
+    pairs with a metadata sidecar `<stem>.metadata.json` beside it, when that exact path
+    exists among the export's members. A non-`.eml` member (there should be none in a
+    Proton export, but nothing here assumes it) pairs with nothing."""
+    if not member.endswith(".eml"):
+        return None
+    stem = member[: -len(".eml")]
+    candidate = f"{stem}.metadata.json"
+    return candidate if candidate in name_set else None
+
+
+#: Producer id -> pairing function, keyed by `_producer_id`'s leading namespace segment
+#: of `--origin` — the same id-prefix convention `partition:`'s own resolution walks.
+_SidecarPairing = Callable[[str, "set[str]"], "str | None"]
+
+_SIDECAR_PAIRINGS: dict[str, _SidecarPairing] = {
+    "osxphotos-export": _osxphotos_sidecar_for,
+    "proton-mail-export": _proton_mail_export_sidecar_for,
+}
+
+#: Producer id -> export-ROOT metadata filenames that pair with no single member (v36)
+#: — a Proton export's `labels.json` names every label the account has, not one message.
+#: Excluded from bucketing entirely (never a member, never an undated primary) and
+#: disclosed in the split's summary + sidecar counts.
+_EXPORT_LEVEL_METADATA: dict[str, frozenset[str]] = {
+    "proton-mail-export": frozenset({"labels.json"}),
+}
+
+
+def _producer_id(origin: str) -> str:
+    """The leading namespace segment of `--origin` (`a/b/c` -> `a`) — what the pairing
+    registries key on, mirroring `partition:`'s own id-prefix namespace walk so a
+    subtyped origin (`proton-mail-export/work`) still resolves its producer's
+    conventions."""
+    return (origin or "").split("/", 1)[0]
+
+
+def _pairing_for(origin: str) -> _SidecarPairing | None:
+    return _SIDECAR_PAIRINGS.get(_producer_id(origin))
+
+
+def _export_level_metadata_for(origin: str) -> frozenset[str]:
+    return _EXPORT_LEVEL_METADATA.get(_producer_id(origin), frozenset())
 
 
 # ---------- uniform read access over a directory tree OR a zip source --------------- #
@@ -200,11 +259,18 @@ def _parse_date_axis(spec: str) -> tuple[str, str | None]:
 def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] | None:
     """Read a date value at `dotted_path` from sidecar JSON `data` and return its
     `(year, month)` — tolerant throughout: malformed JSON, a missing/non-object
-    intermediate segment, a non-string or unparseable value all read as "no date"
-    (undated), never an error that would abort the whole split. Per the UTC boundary
-    rule (spec §12.3.14, v34 owner ruling): an offset-bearing ISO value converts to UTC
-    before its year/month is read; a naive value (no offset in the bytes) buckets at
-    face value rather than an invented UTC."""
+    intermediate segment, a non-numeric/non-string or unparseable value all read as "no
+    date" (undated), never an error that would abort the whole split.
+
+    Two value SHAPES (v36): a **string**, read per the UTC boundary rule (spec §12.3.14,
+    v34 owner ruling) — an offset-bearing ISO value converts to UTC before its
+    year/month is read, a naive value (no offset in the bytes) buckets at face value
+    rather than an invented UTC; or an **epoch-seconds integer** (e.g. Proton's
+    `Payload.Time`) — UTC BY DEFINITION, so the v34 boundary question doesn't even arise.
+    `bool` is deliberately excluded even though it is an `int` subclass in Python — never
+    a legitimate date value. A negative epoch (pre-1970) or one large enough to overflow
+    `datetime`'s year-9999 ceiling is rejected outright (undated) rather than bucketed
+    into a bogus year — a producer's numeric date axis is never a place to guess."""
     try:
         doc = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -214,6 +280,16 @@ def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] |
         if not isinstance(value, dict) or seg not in value:
             return None
         value = value[seg]
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        if value < 0:
+            return None
+        try:
+            dt = datetime.fromtimestamp(value, UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+        return bucket_year_month(dt)
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -247,7 +323,10 @@ def run(args: argparse.Namespace) -> int:
     if not source_path.exists():
         sys.exit(f"source not found: {source_path}")
 
-    schedule = schemas.resolve_partition(corpus_root, "application/zip", origin_id=args.origin)
+    try:
+        schedule = schemas.resolve_partition(corpus_root, "application/zip", origin_id=args.origin)
+    except ValueError as exc:
+        sys.exit(str(exc))
     if schedule is None:
         sys.exit(
             f"no partition schedule declared for origin {args.origin!r} (spec §12.3.14) "
@@ -261,18 +340,34 @@ def run(args: argparse.Namespace) -> int:
     current_period = parse_current_period(getattr(args, "current_period", None))
     axis = _parse_date_axis(args.date_from)
 
+    pairing = _pairing_for(args.origin)
+    if pairing is None and axis[0] == "sidecar":
+        sys.exit(
+            f"--origin {args.origin!r} (producer {_producer_id(args.origin)!r}) has no "
+            f"registered sidecar-pairing convention — registered: "
+            f"{', '.join(sorted(_SIDECAR_PAIRINGS))} — --date-from sidecar:… needs one "
+            f"to find each member's sidecar (spec §12.3.14, v36); a producer with no "
+            f"convention can still use --date-from mtime."
+        )
+    export_level_names = _export_level_metadata_for(args.origin)
+
     src = _open_source(source_path)
     try:
-        names = src.names()
-        if not names:
+        all_names = src.names()
+        if not all_names:
             sys.exit(f"{source_path.name}: no members found")
+        excluded_export_level = sorted(n for n in all_names if n in export_level_names)
+        names = [n for n in all_names if n not in export_level_names]
+        if not names:
+            sys.exit(f"{source_path.name}: no members found (only export-level metadata?)")
         name_set = set(names)
 
         sidecar_of: dict[str, str] = {}
-        for n in names:
-            sc = _osxphotos_sidecar_for(n, name_set)
-            if sc:
-                sidecar_of[n] = sc
+        if pairing is not None:
+            for n in names:
+                sc = pairing(n, name_set)
+                if sc:
+                    sidecar_of[n] = sc
         is_sidecar = set(sidecar_of.values())
         primaries = [n for n in names if n not in is_sidecar]
         sidecar_of = {p: sidecar_of[p] for p in primaries if p in sidecar_of}
@@ -358,6 +453,10 @@ def run(args: argparse.Namespace) -> int:
                 origin_fields["period"] = period
             if source_transport:
                 origin_fields["source_transport"] = source_transport
+            if excluded_export_level:
+                # An export-wide fact (like `source_export`/`date_axis` above), disclosed
+                # on every emitted bucket rather than picking one to own it.
+                origin_fields["export_level_metadata"] = excluded_export_level
             origin_fields.update(extra_fields)
             sidecar_yaml: dict[str, Any] = {
                 "origin_schema": args.origin,
@@ -393,6 +492,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"  current → {current_target.name} ({len(current_primaries)} member(s))")
         if undated_primaries:
             print(f"  undated → {undated_target.name} ({len(undated_primaries)} member(s))")
+        if excluded_export_level:
+            print(
+                f"  export-level metadata (excluded from bucketing): "
+                f"{', '.join(excluded_export_level)}"
+            )
         print(
             "  next: corpus ingest each emitted zip; promote closed-period members as "
             "needed."

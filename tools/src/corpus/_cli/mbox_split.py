@@ -156,7 +156,10 @@ def run(args: argparse.Namespace) -> int:
     if strip_names:
         print(f"  chrome-strip active: {', '.join(strip_names)}")
 
-    schedule = schemas.resolve_partition(corpus_root, "application/mbox", origin_id=args.origin)
+    try:
+        schedule = schemas.resolve_partition(corpus_root, "application/mbox", origin_id=args.origin)
+    except ValueError as exc:
+        sys.exit(str(exc))
     schedule_declared = schedule is not None
     if schedule_declared:
         eras_note = f", {len(schedule.get('eras') or [])} era(s)" if schedule.get("eras") else ""
