@@ -10,9 +10,12 @@ Mechanical drafter for a single email message — one promoted out of an mbox
    query — references / in_reply_to ↔ message_id joins across siblings, thread_id groups them.
 2. **Body = the reply text only.** Renders the `text/plain` part (else `text/html` reduced to
    text) and mechanically trims trailing **quoted history** (the prior thread lives as its own
-   records; raw bytes retain everything). See `_trim_quoted_history` for the pinned, conservative
-   markers — it prefers false negatives (keeps everything when no marker matches confidently).
-   Signatures are part of the reply and kept.
+   records; raw bytes retain everything) via `corpus.emlfile.body_text` — shared with the
+   `block=<N>` resolve transform (`transforms/message.py`, spec §6.2), so a stored `block=`
+   address resolves against the SAME extraction its segment was authored from. See
+   `emlfile._trim_quoted_history` for the pinned, conservative markers — it prefers false
+   negatives (keeps everything when no marker matches confidently). Signatures are part of
+   the reply and kept.
 3. **Every non-body MIME part → an embed** (the HTML/EPUB embed model). Each attachment, inline
    image, and nested `message/rfc822` becomes a `part=<N>` embed (`transport` = blake3 over the
    CTE-decoded payload, `bytes` = decoded size, plus filename / disposition / content_id), so it
@@ -73,7 +76,7 @@ def draft(
         return {"issues": [_partial("message could not be parsed as RFC822/MIME.")]}
 
     fields = _artifact_fields(msg)
-    text = _trim_quoted_history(_message_text(msg))
+    text = emlfile.body_text(msg)
     embeds = _part_embeds(raw, msg)
 
     if text:
@@ -166,118 +169,6 @@ def _references(msg) -> list[str] | None:
         return None
     ids = re.findall(r"<[^>]+>", str(raw))
     return ids or None
-
-
-# ---------- body text (reply only) ---------- #
-
-
-def _message_text(msg) -> str:
-    """The message's text body — the `text/plain` part, else `text/html` reduced to text.
-    Returns '' when the message carries no textual body (attachments only)."""
-    part = emlfile.body_part(msg)
-    if part is None:
-        return ""
-    content = _decode_text_part(part)
-    if part.get_content_subtype() == "html":
-        return _html_to_text(content)
-    return content.strip("\n")
-
-
-def _decode_text_part(part) -> str:
-    """Transfer-decode + charset-decode a text part to `str`, replacing undecodable bytes
-    rather than raising (tolerate non-UTF-8 charsets)."""
-    try:
-        content = part.get_content()
-        if isinstance(content, str):
-            return content
-    except (LookupError, ValueError):
-        pass
-    payload = part.get_payload(decode=True) or b""
-    charset = part.get_content_charset() or "utf-8"
-    try:
-        return payload.decode(charset, errors="replace")
-    except LookupError:
-        return payload.decode("utf-8", errors="replace")
-
-
-# Reply-history containers HTML mail wraps quotes in — removed structurally in the text/html
-# fallback path so the text-marker trim below has less to catch (text/plain is preferred, so
-# this path is the fallback). Generic `<blockquote>` is included: in a reply it is quoted
-# history, and the raw bytes retain everything if a fresh-email blockquote is over-trimmed.
-_HTML_QUOTE_SELECTORS = ".gmail_quote, .gmail_extra, .yahoo_quoted, blockquote"
-
-
-def _html_to_text(html: str) -> str:
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    for tag in soup.select(_HTML_QUOTE_SELECTORS):
-        tag.decompose()
-    return soup.get_text("\n", strip=True)
-
-
-# --- quoted-history trim (pinned, conservative; spec §12.11 / schema description) --- #
-
-_ATTRIB_ONELINE = re.compile(r"^\s*On\b.*\bwrote:\s*$")
-_ATTRIB_START = re.compile(r"^\s*On\b")
-_ATTRIB_END = re.compile(r"\bwrote:\s*$")
-_ORIG_MSG = re.compile(r"^\s*-{2,}\s*Original Message\s*-{2,}\s*$", re.IGNORECASE)
-_UNDERSCORE_RULE = re.compile(r"^_{10,}\s*$")
-_QUOTE = re.compile(r"^\s*>")
-_OUTLOOK_FROM = re.compile(r"^\s*From:\s", re.IGNORECASE)
-_OUTLOOK_SENT = re.compile(r"^\s*Sent:\s", re.IGNORECASE)
-_OUTLOOK_TOSUBJ = re.compile(r"^\s*(To|Subject):\s", re.IGNORECASE)
-
-
-def _trim_quoted_history(text: str) -> str:
-    """Strip trailing quoted history from the FIRST confidently-matched marker to EOF; keep
-    everything when none matches (prefer false negatives). Markers:
-      - an `On <…> wrote:` attribution (one line, or wrapped over two) directly preceding a
-        `>`-quoted line;
-      - `-----Original Message-----`;
-      - a long underscore rule (Outlook);
-      - an Outlook forwarded-header block (`From:` with a nearby `Sent:` and `To:`/`Subject:`);
-      - a `>`-quoted run that extends to EOF (no attribution needed)."""
-    if not text:
-        return text
-    lines = text.split("\n")
-    n = len(lines)
-    for i, line in enumerate(lines):
-        if _ATTRIB_ONELINE.match(line) and _next_nonblank_is_quote(lines, i + 1):
-            return _cut(lines, i)
-        if (
-            _ATTRIB_START.match(line)
-            and not _ATTRIB_ONELINE.match(line)
-            and i + 1 < n
-            and _ATTRIB_END.search(line + " " + lines[i + 1])
-            and _next_nonblank_is_quote(lines, i + 2)
-        ):
-            return _cut(lines, i)
-        if _ORIG_MSG.match(line) or _UNDERSCORE_RULE.match(line):
-            return _cut(lines, i)
-        if _OUTLOOK_FROM.match(line):
-            window = lines[i : i + 6]
-            if any(_OUTLOOK_SENT.match(w) for w in window) and any(
-                _OUTLOOK_TOSUBJ.match(w) for w in window
-            ):
-                return _cut(lines, i)
-    for i, line in enumerate(lines):
-        if _QUOTE.match(line) and all(_QUOTE.match(w) for w in lines[i:] if w.strip()):
-            return _cut(lines, i)
-    return text
-
-
-def _next_nonblank_is_quote(lines: list[str], start: int) -> bool:
-    j = start
-    while j < len(lines) and lines[j].strip() == "":
-        j += 1
-    return j < len(lines) and bool(_QUOTE.match(lines[j]))
-
-
-def _cut(lines: list[str], i: int) -> str:
-    return "\n".join(lines[:i]).rstrip()
 
 
 # ---------- non-body parts → embeds ---------- #

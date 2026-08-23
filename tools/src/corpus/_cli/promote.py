@@ -310,7 +310,7 @@ def run(args: argparse.Namespace) -> int:
     else:
         outcome = _mint_stub(
             record_file, computed_id, media_type, hash_values, containment_uri, origin_fields,
-            cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
+            corpus_root=corpus_root, cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
         )
     # Bytes were in hand for THIS pass regardless of outcome (verified above) — the index is
     # deployment state (§12.9.1), so it's kept warm on a re-promote fold too, not just a mint.
@@ -442,12 +442,17 @@ def _mint_stub(
     containment_uri: str,
     origin_fields: dict[str, Any],
     *,
+    corpus_root: Path,
     cutting_stamp: dict[str, Any] | None = None,
     samples_stamp: int | None = None,
 ) -> str:
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
     first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
-    the container."""
+    the container. Attested immediately (spec §8.1), the SAME best-effort call a fresh
+    `corpus ingest` stub gets (`ingest._attest_stub`) — a promoted record's attested fields
+    (an eml's Subject/From/Date and its own `part=` embeds, a manifest's members, ...) must
+    equal what a direct ingest of the same bytes would attest: one extraction, shared via
+    `derive.attest` (already containment-aware, §2/§12.9), never a promote-side copy."""
     fm = records.stub_frontmatter(
         record_id=record_id,
         touch_id=touches.script_identifier("promote"),
@@ -471,5 +476,26 @@ def _mint_stub(
         snapshot=touches.now_iso(),
         fields=origin_fields or None,
     )
+    _attest_promoted_stub(post, corpus_root, record_id)
     records.dump(post, record_file)
     return "promoted"
+
+
+def _attest_promoted_stub(post: frontmatter.Post, corpus_root: Path, record_id: str) -> None:
+    """Attest byte-facts onto a fresh promoted stub (spec §8.1) — mirrors `ingest.
+    _attest_stub`'s best-effort call to the SAME shared `derive.attest`, so a promoted
+    record's attested layer equals a direct ingest's. `derive.attest`/`build_content_zone`
+    already resolve a promoted record's bytes through its container (`containment.
+    ensure_local_bytes`, §2/§12.9) exactly as `corpus reattest` would later — nothing
+    promote-specific to wire up. A type with no registered drafter, or unreadable bytes,
+    silently leaves a bare stub, attestable later via `corpus reattest`."""
+    import logging
+
+    from corpus import derive
+
+    try:
+        derive.attest(post, corpus_root, strip=False)
+    except Exception as exc:  # attest is best-effort at promote (no drafter / unreadable bytes)
+        logging.getLogger("corpus.promote").debug(
+            "no attestation for %s: %s", record_id[:12], exc
+        )

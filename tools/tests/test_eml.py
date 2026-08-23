@@ -19,9 +19,10 @@ import pytest
 from corpus import emlfile, hashing, lint, paths, records, resolver, schemas, segments
 from corpus._cli import draft as draft_cli
 from corpus._cli import ingest as ingest_cli
+from corpus._cli import lint as lint_cli
 from corpus._cli import promote as promote_cli
+from corpus._cli import reattest as reattest_cli
 from corpus._cli import redraft as redraft_cli
-from corpus.draft import eml as emldraft
 from corpus.store import LocalArtifactStore
 
 _PDF = b"%PDF-1.4\nfake contract payload\n"
@@ -92,6 +93,29 @@ def _draft(root: Path, target: str, messages: str | None = None) -> int:
 
 def _promote(root: Path, uri: str) -> int:
     return promote_cli.run(argparse.Namespace(uri=uri, json=False, corpus_root=str(root)))
+
+
+def _reattest(root: Path, target: str, messages: str | None = None) -> int:
+    return reattest_cli.run(
+        argparse.Namespace(
+            target=target,
+            mime=None,
+            host=None,
+            state="any",
+            dry_run=False,
+            fingerprint=None,
+            messages=messages,
+            corpus_root=str(root),
+        )
+    )
+
+
+def _lint_resolve_findings(root: Path, target: str) -> list:
+    """The `--resolve` pass's findings directly (`corpus.lint.resolve_addresses`), the
+    same `blocks_for_record` + `resolve_addresses` pair `corpus lint --resolve` runs."""
+    post = records.load(paths.record_path(root, target))
+    blocks = segments.blocks_for_record(post, root)
+    return lint.resolve_addresses(post, blocks, root)
 
 
 def _ingest_eml(tmp_path: Path, root: Path, raw: bytes, name: str = "m.eml") -> str:
@@ -341,7 +365,7 @@ _KEEP_WROTE = "On call we agreed X. I wrote the doc.\nDone."  # "wrote" mid-sent
     ],
 )
 def test_trim_quoted_history_variants(text, expected):
-    assert emldraft._trim_quoted_history(text) == expected
+    assert emlfile._trim_quoted_history(text) == expected
 
 
 # ---------- part embeds ---------- #
@@ -542,6 +566,190 @@ def test_three_hop_promote_and_resolve(tmp_path):
     assert not LocalArtifactStore(root).is_local(pid, "pdf")
     out = resolver.resolve(f"corpus://{pid}", root)  # zip → mbox → eml → part
     assert out.read_bytes() == _PDF
+
+
+# ---------- promote-from-mbox attests immediately (spec §8.1) ---------- #
+
+
+def test_promote_from_mbox_attests_same_fields_as_direct_ingest(tmp_path):
+    """A message promoted from an mbox gets its role-marked fields (Subject/From/…) AND
+    its own `part=` embeds attested immediately at mint time — the SAME extraction a
+    direct standalone `.eml` ingest gets at ITS mint time, not a bare `fields: {}` stub
+    waiting on a manual `corpus reattest`/normalize pass."""
+    root = _corpus(tmp_path)
+    raw = _rich_eml()
+    CRLF = b"\r\n"
+    mbox = b"From 1@x Mon Jan 01 00:00:00 +0000 2020" + CRLF + raw
+    mbox_path = tmp_path / "full.mbox"
+    mbox_path.write_bytes(mbox)
+    mbox_id = _ingest(root, mbox_path)
+    assert _draft(root, mbox_id, messages="1") == 0  # declares msg=1 as an embed
+
+    assert _promote(root, f"corpus://{mbox_id}?msg=1") == 0
+    eml_id = _b3(raw)
+    promoted_post = records.load(paths.record_path(root, eml_id))
+    promoted_fields = (records.artifact_block(promoted_post) or {}).get("fields") or {}
+    promoted_embeds = {e["address"] for e in records.iter_embed_blocks(promoted_post)}
+
+    # A direct standalone ingest of the SAME bytes, attested at ITS OWN mint time.
+    root2 = _corpus(tmp_path / "direct")
+    direct_id = _ingest_eml(tmp_path, root2, raw, name="direct.eml")
+    assert direct_id == eml_id  # same bytes, same identity (§2)
+    direct_post = records.load(paths.record_path(root2, direct_id))
+    direct_fields = (records.artifact_block(direct_post) or {}).get("fields") or {}
+    direct_embeds = {e["address"] for e in records.iter_embed_blocks(direct_post)}
+
+    assert promoted_fields  # the gap this fixes: was `{}` before promote attested
+    assert promoted_fields == direct_fields
+    assert promoted_fields["subject"] == "Café meeting"
+    assert promoted_fields["from"] == "Björn <bjorn@example.com>"
+    assert promoted_embeds == direct_embeds == {"part=3", "part=4", "part=5", "part=6"}
+
+
+def test_promote_part_message_also_attests(tmp_path):
+    """The nested `message/rfc822` attachment (part=6) promotes to its own record — also
+    attested immediately, the member-axis case beyond `msg=N` the fix must cover too."""
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, _rich_eml())
+    _draft(root, eid)
+
+    inner = EmailMessage()
+    inner["Subject"] = "Forwarded inner"
+    inner.set_content("inner message body\n")
+    inner_bytes = inner.as_bytes(policy=policy.SMTP)
+
+    assert _promote(root, f"corpus://{eid}?part=6") == 0
+    inner_id = _b3(inner_bytes)
+    inner_post = records.load(paths.record_path(root, inner_id))
+    fields = (records.artifact_block(inner_post) or {}).get("fields") or {}
+    assert fields.get("subject") == "Forwarded inner"
+
+
+def test_reattest_re_derives_promoted_fields(tmp_path):
+    """`corpus reattest` exercises the SAME `derive.attest` path the promote-time fix
+    calls — re-running it on an already-attested promoted record is idempotent (no
+    spurious touch), and it re-derives the fields from scratch (proving the extraction
+    genuinely lives on the reattest-exercised path, not a promote-only side channel)."""
+    root = _corpus(tmp_path)
+    raw = _rich_eml()
+    CRLF = b"\r\n"
+    mbox = b"From 1@x Mon Jan 01 00:00:00 +0000 2020" + CRLF + raw
+    mbox_path = tmp_path / "full.mbox"
+    mbox_path.write_bytes(mbox)
+    mbox_id = _ingest(root, mbox_path)
+    assert _draft(root, mbox_id, messages="1") == 0
+    assert _promote(root, f"corpus://{mbox_id}?msg=1") == 0
+    eml_id = _b3(raw)
+    rf = paths.record_path(root, eml_id)
+    before = records.dumps(records.load(rf))
+
+    assert _reattest(root, eml_id) == 0
+    after_post = records.load(rf)
+    after_fields = (records.artifact_block(after_post) or {}).get("fields") or {}
+    assert records.dumps(after_post) == before  # idempotent — no spurious touch
+    assert after_fields["subject"] == "Café meeting"
+
+    # Blank the artifact fields by hand, then confirm reattest RESTORES them — proof the
+    # extraction is re-derivable through reattest, not a one-shot promote-only stamp.
+    post = records.load(rf)
+    records.set_artifact_block(post, mime="message/rfc822", fields={})
+    records.dump(post, rf)
+    assert (records.artifact_block(records.load(rf)) or {}).get("fields") == {}
+    assert _reattest(root, eml_id) == 0
+    restored_fields = (records.artifact_block(records.load(rf)) or {}).get("fields") or {}
+    assert restored_fields["subject"] == "Café meeting"
+
+
+# ---------- block= resolves the derived body text (spec §6.2) ---------- #
+
+
+def test_block_transform_resolves_derived_body_text(tmp_path):
+    """`?block=1` resolves against the SAME extraction (`emlfile.body_text`) the drafter
+    authored the `block=1` segment from — a real materialization, not a no-op."""
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, _rich_eml())
+    _draft(root, eid)
+    post = records.load(paths.record_path(root, eid))
+    stored_body = post.content or ""
+
+    out = resolver.resolve(f"corpus://{eid}?block=1", root)
+    resolved_text = out.read_text()
+    expected = emlfile.body_text(emlfile.parse(_rich_eml()))
+    assert resolved_text == expected
+    assert resolved_text in stored_body  # the segment's own body IS this same text
+    assert "Reply body first line." in resolved_text
+    assert "old quoted line" not in resolved_text  # quoted history trimmed
+
+
+def test_block_transform_rejects_out_of_range_ordinal(tmp_path):
+    """A message has exactly one body block — a stale/hand-authored `block=2` names
+    nothing the drafter ever emitted, and must fail loudly, not resolve to something."""
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, _rich_eml())
+    _draft(root, eid)
+    with pytest.raises(ValueError, match="block=1"):
+        resolver.resolve(f"corpus://{eid}?block=2", root)
+
+
+def test_lint_resolve_no_longer_flags_message_block_address(tmp_path):
+    """The false positive this fix removes: `corpus lint --resolve` on a promoted (or
+    directly-ingested) message/rfc822 record no longer reports `address-unresolvable` on
+    its own `block=1` segment address."""
+    root = _corpus(tmp_path)
+    raw = _rich_eml()
+    CRLF = b"\r\n"
+    mbox = b"From 1@x Mon Jan 01 00:00:00 +0000 2020" + CRLF + raw
+    mbox_path = tmp_path / "full.mbox"
+    mbox_path.write_bytes(mbox)
+    mbox_id = _ingest(root, mbox_path)
+    assert _draft(root, mbox_id, messages="1") == 0
+    assert _promote(root, f"corpus://{mbox_id}?msg=1") == 0
+    eml_id = _b3(raw)
+    _draft(root, eml_id)  # builds the content zone (the block=1 segment) to lint
+
+    findings = _lint_resolve_findings(root, eml_id)
+    assert not any(f.rule_id == "address-unresolvable" for f in findings)
+    assert not any(f.address == "block=1" for f in findings)
+
+    assert lint_cli.run(
+        argparse.Namespace(target=eml_id, json=False, resolve=True, corpus_root=str(root))
+    ) == 0
+
+
+def test_lint_resolve_still_catches_a_genuinely_broken_block_address(tmp_path):
+    """The registration is a real check, not a blanket pass — a hand-corrupted `block=2`
+    address (naming a block the drafter never emitted) is still caught as unresolvable."""
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, _rich_eml())
+    _draft(root, eid)
+    rf = paths.record_path(root, eid)
+    post = records.load(rf)
+    content = post.content or ""
+    assert "block=1" in content
+    post.content = content.replace("block=1", "block=2")  # corrupt the stored address
+    records.dump(post, rf)
+
+    findings = _lint_resolve_findings(root, eid)
+    assert any(
+        f.rule_id == "address-unresolvable" and f.address == "block=2" for f in findings
+    )
+
+
+def test_lint_resolve_unaffected_for_other_message_axis_addresses(tmp_path):
+    """No regression: registering `("message", "block")` in the transforms REGISTRY
+    alongside the pre-existing `("message", "part")` entry doesn't disturb it — a
+    message record's `part=N` embeds (a totally different working-kind pairing) still
+    resolve cleanly under `--resolve`, and the record is clean end to end."""
+    root = _corpus(tmp_path)
+    eid = _ingest_eml(tmp_path, root, _rich_eml())
+    _draft(root, eid)
+    findings = _lint_resolve_findings(root, eid)
+    assert findings == []
+    assert {e["address"] for e in _embeds(root, eid)} == {
+        "part=3", "part=4", "part=5", "part=6",
+    }
+    for addr in ("part=3", "part=4", "part=5", "part=6"):
+        assert resolver.resolve(f"corpus://{eid}?{addr}", root).exists()
 
 
 def _embeds(root: Path, rid: str) -> list[dict]:

@@ -272,3 +272,127 @@ def part_facts(part: Message, decoded: bytes) -> tuple[str, dict[str, Any]]:
     if cid := part.get("Content-ID"):
         fields["content_id"] = str(cid).strip().lstrip("<").rstrip(">")
     return media_type, fields
+
+
+# ---------- body text (reply-only, quoted-history trimmed) ---------- #
+#
+# The shared axis between the eml drafter's `block=1` segment (`draft/eml.py`) and the
+# `block=<N>` resolve transform (`transforms/message.py`, spec §6.2) — a stored `block=`
+# address must resolve against the SAME extraction the segment was authored from, one
+# derivation, never a copy.
+
+
+def body_text(msg: Message) -> str:
+    """The message's derived reply-only body text: the `text/plain` part (else `text/html`
+    reduced to text), quoted history trimmed. Returns `''` when the message carries no
+    textual body (attachments only). See `_trim_quoted_history` for the pinned,
+    conservative markers — it prefers false negatives (keeps everything when no marker
+    matches confidently)."""
+    return _trim_quoted_history(_message_text(msg))
+
+
+def _message_text(msg: Message) -> str:
+    part = body_part(msg)
+    if part is None:
+        return ""
+    content = _decode_text_part(part)
+    if part.get_content_subtype() == "html":
+        return _html_to_text(content)
+    return content.strip("\n")
+
+
+def _decode_text_part(part: Message) -> str:
+    """Transfer-decode + charset-decode a text part to `str`, replacing undecodable bytes
+    rather than raising (tolerate non-UTF-8 charsets)."""
+    try:
+        content = part.get_content()
+        if isinstance(content, str):
+            return content
+    except (LookupError, ValueError):
+        pass
+    payload = part.get_payload(decode=True) or b""
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return payload.decode(charset, errors="replace")
+    except LookupError:
+        return payload.decode("utf-8", errors="replace")
+
+
+# Reply-history containers HTML mail wraps quotes in — removed structurally in the text/html
+# fallback path so the text-marker trim below has less to catch (text/plain is preferred, so
+# this path is the fallback). Generic `<blockquote>` is included: in a reply it is quoted
+# history, and the raw bytes retain everything if a fresh-email blockquote is over-trimmed.
+_HTML_QUOTE_SELECTORS = ".gmail_quote, .gmail_extra, .yahoo_quoted, blockquote"
+
+
+def _html_to_text(html: str) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    for tag in soup.select(_HTML_QUOTE_SELECTORS):
+        tag.decompose()
+    return soup.get_text("\n", strip=True)
+
+
+# --- quoted-history trim (pinned, conservative; spec §12.11 / schema description) --- #
+
+_ATTRIB_ONELINE = re.compile(r"^\s*On\b.*\bwrote:\s*$")
+_ATTRIB_START = re.compile(r"^\s*On\b")
+_ATTRIB_END = re.compile(r"\bwrote:\s*$")
+_ORIG_MSG = re.compile(r"^\s*-{2,}\s*Original Message\s*-{2,}\s*$", re.IGNORECASE)
+_UNDERSCORE_RULE = re.compile(r"^_{10,}\s*$")
+_QUOTE = re.compile(r"^\s*>")
+_OUTLOOK_FROM = re.compile(r"^\s*From:\s", re.IGNORECASE)
+_OUTLOOK_SENT = re.compile(r"^\s*Sent:\s", re.IGNORECASE)
+_OUTLOOK_TOSUBJ = re.compile(r"^\s*(To|Subject):\s", re.IGNORECASE)
+
+
+def _trim_quoted_history(text: str) -> str:
+    """Strip trailing quoted history from the FIRST confidently-matched marker to EOF; keep
+    everything when none matches (prefer false negatives). Markers:
+      - an `On <…> wrote:` attribution (one line, or wrapped over two) directly preceding a
+        `>`-quoted line;
+      - `-----Original Message-----`;
+      - a long underscore rule (Outlook);
+      - an Outlook forwarded-header block (`From:` with a nearby `Sent:` and `To:`/`Subject:`);
+      - a `>`-quoted run that extends to EOF (no attribution needed)."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if _ATTRIB_ONELINE.match(line) and _next_nonblank_is_quote(lines, i + 1):
+            return _cut(lines, i)
+        if (
+            _ATTRIB_START.match(line)
+            and not _ATTRIB_ONELINE.match(line)
+            and i + 1 < n
+            and _ATTRIB_END.search(line + " " + lines[i + 1])
+            and _next_nonblank_is_quote(lines, i + 2)
+        ):
+            return _cut(lines, i)
+        if _ORIG_MSG.match(line) or _UNDERSCORE_RULE.match(line):
+            return _cut(lines, i)
+        if _OUTLOOK_FROM.match(line):
+            window = lines[i : i + 6]
+            if any(_OUTLOOK_SENT.match(w) for w in window) and any(
+                _OUTLOOK_TOSUBJ.match(w) for w in window
+            ):
+                return _cut(lines, i)
+    for i, line in enumerate(lines):
+        if _QUOTE.match(line) and all(_QUOTE.match(w) for w in lines[i:] if w.strip()):
+            return _cut(lines, i)
+    return text
+
+
+def _next_nonblank_is_quote(lines: list[str], start: int) -> bool:
+    j = start
+    while j < len(lines) and lines[j].strip() == "":
+        j += 1
+    return j < len(lines) and bool(_QUOTE.match(lines[j]))
+
+
+def _cut(lines: list[str], i: int) -> str:
+    return "\n".join(lines[:i]).rstrip()
