@@ -48,6 +48,7 @@ import zipfile
 from collections import Counter
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 
 import blake3
@@ -270,19 +271,33 @@ def _mbox_report(a: Path, b: Path) -> dict:
 # ---------- directory/zip pair (file grain) ---------- #
 
 
+#: A file's mtime as the exact 6-tuple `corpus period-split` writes into `ZipInfo.date_time`
+#: for that same file (spec §12.3.14) — seconds precision, no timezone, no microseconds.
+#: Comparing THIS shape (not the raw float/zip-native forms) is what makes the drift
+#: measurement below answer the question that actually matters: would period-split's own
+#: deterministic zip assembly write the same bytes for this member across both exports.
+_MtimeTuple = tuple[int, int, int, int, int, int]
+
+
 class _Entry:
     """A lazily-hashed, lazily-read file — from a real directory entry or a zip member —
     behind one interface so tree-walking code never cares which."""
 
-    __slots__ = ("_blake3_fn", "_hash", "_read_fn", "size")
+    __slots__ = ("_blake3_fn", "_hash", "_mtime", "_mtime_fn", "_read_fn", "size")
 
     def __init__(
-        self, size: int, blake3_fn: Callable[[], str], read_fn: Callable[[], bytes]
+        self,
+        size: int,
+        blake3_fn: Callable[[], str],
+        read_fn: Callable[[], bytes],
+        mtime_fn: Callable[[], _MtimeTuple],
     ) -> None:
         self.size = size
         self._blake3_fn = blake3_fn
         self._read_fn = read_fn
+        self._mtime_fn = mtime_fn
         self._hash: str | None = None
+        self._mtime: _MtimeTuple | None = None
 
     def blake3(self) -> str:
         if self._hash is None:
@@ -291,6 +306,11 @@ class _Entry:
 
     def read(self) -> bytes:
         return self._read_fn()
+
+    def mtime(self) -> _MtimeTuple:
+        if self._mtime is None:
+            self._mtime = self._mtime_fn()
+        return self._mtime
 
 
 def _blake3_file(p: Path) -> str:
@@ -309,13 +329,32 @@ def _blake3_zip(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> str:
     return h.hexdigest()
 
 
+def _dos_round(t: _MtimeTuple) -> _MtimeTuple:
+    """The zip DOS timestamp format rounds an odd second DOWN to the nearest even one —
+    the FORMAT does this, not this tool (`ZipInfo(date_time=(…, 37))` reads back as
+    `…, 36`) — so a raw directory mtime must be rounded the same way before comparing
+    against a re-read zip's `date_time`, or every odd-second file would read as
+    spuriously "restamped" purely from format rounding, never a real producer
+    instability. `corpus period-split`'s own zip assembly is subject to the identical
+    rounding when its source is a directory, so this is what its actual container
+    identity depends on, not the raw filesystem mtime."""
+    y, mo, d, h, mi, s = t
+    return (y, mo, d, h, mi, s - (s % 2))
+
+
+def _dir_mtime(p: Path) -> _MtimeTuple:
+    dt = datetime.fromtimestamp(p.stat().st_mtime, UTC)
+    return _dos_round((dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second))
+
+
 def _dir_entries(root: Path) -> dict[str, _Entry]:
     entries: dict[str, _Entry] = {}
     for p in sorted(root.rglob("*")):
         if p.is_file():
             rel = p.relative_to(root).as_posix()
             entries[rel] = _Entry(
-                p.stat().st_size, lambda p=p: _blake3_file(p), lambda p=p: p.read_bytes()
+                p.stat().st_size, lambda p=p: _blake3_file(p), lambda p=p: p.read_bytes(),
+                lambda p=p: _dir_mtime(p),
             )
     return entries
 
@@ -329,6 +368,9 @@ def _zip_entries(zf: zipfile.ZipFile) -> dict[str, _Entry]:
             info.file_size,
             lambda info=info: _blake3_zip(zf, info),
             lambda info=info: zf.read(info),
+            # ZipInfo.date_time is ALREADY the exact 6-tuple shape, naive by format — the
+            # same value `corpus period-split`'s own `_ZipSource.mtime` reads.
+            lambda info=info: tuple(info.date_time),
         )
     return entries
 
@@ -340,7 +382,12 @@ def _load_entries(stack: ExitStack, path: Path) -> dict[str, _Entry]:
         zf = stack.enter_context(zipfile.ZipFile(path))
         return _zip_entries(zf)
     # A lone non-mbox file compared file-grain: a one-entry tree keyed by its own name.
-    return {path.name: _Entry(path.stat().st_size, lambda: _blake3_file(path), path.read_bytes)}
+    return {
+        path.name: _Entry(
+            path.stat().st_size, lambda: _blake3_file(path), path.read_bytes,
+            lambda: _dir_mtime(path),
+        )
+    }
 
 
 def _json_leaf_map(value: object) -> dict[str, list[str]]:
@@ -379,10 +426,18 @@ def _tree_report(a: Path, b: Path) -> dict:
         only_b = sorted(set(entries_b) - set(entries_a))
 
         identical = 0
+        mtime_drifted: list[str] = []
         differing: list[str] = []
         for rel in common:
             if entries_a[rel].blake3() == entries_b[rel].blake3():
                 identical += 1
+                # The mtime axis (spec §12.3.14, v36 follow-up): closed-period zip
+                # identity rides EVERY member's own mtime (`corpus period-split`'s
+                # deterministic `ZipInfo.date_time` assembly), so byte-identical content
+                # is not the whole byte-stability story for the CONTAINER — measured for
+                # every byte-identical member, never skipped.
+                if entries_a[rel].mtime() != entries_b[rel].mtime():
+                    mtime_drifted.append(rel)
             else:
                 differing.append(rel)
 
@@ -409,6 +464,7 @@ def _tree_report(a: Path, b: Path) -> dict:
             content_divergent=content_divergent,
             matched_total=matched_total,
         )
+        verdict = _qualify_verdict_for_mtime_drift(verdict, len(mtime_drifted), identical)
         return {
             "mode": "tree",
             "a": {"path": str(a), "total": len(entries_a)},
@@ -419,10 +475,39 @@ def _tree_report(a: Path, b: Path) -> dict:
             "matched_pairs": matched_pairs,
             "content_divergent": content_divergent,
             "chrome_eligible": len(chrome_pairs),
+            "mtime_checked": identical,
+            "mtime_drifted": len(mtime_drifted),
+            "mtime_drifted_sample": sorted(mtime_drifted)[:_CANDIDATE_CAP],
             "histogram": histogram,
             "candidates": candidates,
             "verdict": verdict,
         }
+
+
+def _qualify_verdict_for_mtime_drift(verdict: dict, drift_count: int, checked: int) -> dict:
+    """Downgrade a byte-only verdict's TEXT (never its byte-level `stable`/`pct` numbers,
+    which stay honest about the byte axis alone) when the container-identity mtime axis
+    drifted on any byte-identical member (v36 follow-up, spec §12.3.14). Byte identity
+    alone overstates full-strata readiness: closed-period zip identity rides every
+    member's own mtime (`corpus period-split`'s deterministic `ZipInfo.date_time`
+    assembly), so a producer that restamps mtimes on every export run can never produce a
+    byte-re-encountering closed zip regardless of how stable its member BYTES are. Applies
+    only to a verdict that currently claims full byte-stability (`clean` /
+    `full_strata_candidate`) — `member_dedup_only`/`no_data` already claim nothing to
+    qualify."""
+    if drift_count == 0 or verdict["kind"] not in ("clean", "full_strata_candidate"):
+        return verdict
+    qualified = dict(verdict)
+    qualified["kind"] = f"{verdict['kind']}_mtime_unstable"
+    qualified["text"] = (
+        f"{verdict['text']} HOWEVER: member bytes stable, but {drift_count}/{checked} "
+        f"byte-identical member mtime(s) were RESTAMPED between exports — closed-period "
+        f"zips will NOT byte-re-encounter under mtime-bearing assembly (`corpus "
+        f"period-split`); the full-strata claim is NOT SUPPORTED on the container axis. "
+        f"Fix the producer's mtime preservation and re-measure, or onboard via "
+        f"`settled-first-cut` (spec §12.3.14, v36) instead."
+    )
+    return qualified
 
 
 # ---------- shared histogram / reconciliation / verdict ---------- #
@@ -539,6 +624,22 @@ def render_report(report: dict) -> str:
             f"  unmatched after Message-ID/fallback pairing — "
             f"only-A: {report['unmatched_only_a']}   only-B: {report['unmatched_only_b']}"
         )
+    if "mtime_checked" in report:
+        # Tree mode only — measured for every byte-identical member, never skipped, so
+        # this line always appears (a zero count is itself the confirming measurement).
+        checked, drifted = report["mtime_checked"], report["mtime_drifted"]
+        if drifted:
+            sample = ", ".join(report["mtime_drifted_sample"])
+            more = "…" if drifted > len(report["mtime_drifted_sample"]) else ""
+            lines.append(
+                f"  mtime axis: {drifted}/{checked} byte-identical member(s) RESTAMPED "
+                f"between exports (sample: {sample}{more})"
+            )
+        else:
+            lines.append(
+                f"  mtime axis: 0/{checked} byte-identical member(s) restamped — "
+                f"container-identity axis measured clean"
+            )
     lines.append("")
     if report["histogram"]:
         lines.append(f"churn histogram ({field}s, descending):")

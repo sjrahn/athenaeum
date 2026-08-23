@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -144,10 +146,20 @@ def _write_tree(root: Path, files: dict[str, bytes]) -> Path:
 
 
 def _zip_dir(src: Path, zip_path: Path) -> Path:
+    """Zip `src`, each entry's `ZipInfo.date_time` set from the source file's mtime
+    CONVERTED TO UTC (matching `corpus period-split`'s own `_DirSource.mtime` and
+    `export_diff`'s `_dir_mtime` — both explicit-UTC) rather than `ZipFile.write()`'s
+    default (the LOCAL system timezone via `ZipInfo.from_file`), which would make this
+    fixture's zip-vs-directory comparison spuriously timezone-dependent."""
     with zipfile.ZipFile(zip_path, "w") as zf:
         for p in sorted(src.rglob("*")):
             if p.is_file():
-                zf.write(p, p.relative_to(src).as_posix())
+                dt = datetime.fromtimestamp(p.stat().st_mtime, UTC)
+                zi = zipfile.ZipInfo(
+                    p.relative_to(src).as_posix(),
+                    date_time=(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second),
+                )
+                zf.writestr(zi, p.read_bytes())
     return zip_path
 
 
@@ -238,3 +250,90 @@ def test_mismatched_shapes_exit(tmp_path):
     dir_path = _write_tree(tmp_path / "b", {"f.json": b"{}"})
     with pytest.raises(SystemExit, match="mismatched export shapes"):
         export_diff.build_report(mbox_path, dir_path)
+
+
+# ---------- v36 follow-up: the mtime axis (tree mode only) ---------- #
+
+
+def _touch(p: Path, iso: str) -> None:
+    ts = datetime.fromisoformat(iso).timestamp()
+    os.utime(p, (ts, ts))
+
+
+def test_mtime_drift_downgrades_a_full_strata_verdict(tmp_path):
+    """Byte-identical members whose mtimes were RESTAMPED between exports must never
+    read as an unqualified FULL STRATA CANDIDATE — the container-identity axis
+    (`corpus period-split`'s per-member `ZipInfo.date_time`) would never re-encounter."""
+    a = _write_tree(tmp_path / "a", {"msg1.eml": b"same-bytes", "msg2.eml": b"same-bytes-2"})
+    b = _write_tree(tmp_path / "b", {"msg1.eml": b"same-bytes", "msg2.eml": b"same-bytes-2"})
+    _touch(a / "msg1.eml", "2025-11-01T10:00:00+00:00")
+    _touch(b / "msg1.eml", "2025-11-01T10:00:00+00:00")  # same mtime — no drift
+    _touch(a / "msg2.eml", "2025-11-01T10:00:00+00:00")
+    _touch(b / "msg2.eml", "2025-12-15T09:00:00+00:00")  # restamped on re-export
+
+    report = export_diff.build_report(a, b)
+    assert report["mode"] == "tree"
+    assert report["identical"] == 2  # both members are byte-identical
+    assert report["mtime_checked"] == 2
+    assert report["mtime_drifted"] == 1
+    assert report["mtime_drifted_sample"] == ["msg2.eml"]
+
+    verdict = report["verdict"]
+    assert verdict["kind"] == "clean_mtime_unstable"  # byte-clean, but mtime-unstable
+    assert "1/2" in verdict["text"]
+    assert "period-split" in verdict["text"]
+    assert "NOT SUPPORTED" in verdict["text"]
+    # The byte-axis numbers themselves stay honest and unqualified.
+    assert verdict["stable"] == 2 and verdict["total"] == 2 and verdict["pct"] == 100.0
+
+    rendered = export_diff.render_report(report)
+    assert "mtime axis: 1/2" in rendered
+    assert "msg2.eml" in rendered
+
+
+def test_mtime_stable_pair_confirms_the_axis_was_measured(tmp_path):
+    a = _write_tree(tmp_path / "a", {"msg1.eml": b"same-bytes"})
+    b = _write_tree(tmp_path / "b", {"msg1.eml": b"same-bytes"})
+    _touch(a / "msg1.eml", "2025-11-01T10:00:00+00:00")
+    _touch(b / "msg1.eml", "2025-11-01T10:00:00+00:00")
+
+    report = export_diff.build_report(a, b)
+    assert report["mtime_checked"] == 1
+    assert report["mtime_drifted"] == 0
+    assert report["mtime_drifted_sample"] == []
+    assert report["verdict"]["kind"] == "clean"  # NOT downgraded — nothing drifted
+
+    rendered = export_diff.render_report(report)
+    assert "mtime axis: 0/1" in rendered
+    assert "measured clean" in rendered
+
+
+def test_mtime_drift_on_full_strata_candidate_downgrades_that_kind_too(tmp_path):
+    """The full_strata_candidate (modulo-some-churn) verdict, not just the clean one, must
+    also carry the mtime qualification — a mixed byte-churn + mtime-drift export."""
+    a = _write_tree(
+        tmp_path / "a",
+        {
+            "one.json": json.dumps({"exportedAt": "2026-01-01", "v": 1}).encode(),
+            "stable.json": b'{"k": "v"}',
+        },
+    )
+    b = _write_tree(
+        tmp_path / "b",
+        {
+            "one.json": json.dumps({"exportedAt": "2026-01-02", "v": 1}).encode(),
+            "stable.json": b'{"k": "v"}',
+        },
+    )
+    _touch(a / "stable.json", "2025-11-01T10:00:00+00:00")
+    _touch(b / "stable.json", "2025-11-05T10:00:00+00:00")  # the byte-identical one drifts
+
+    report = export_diff.build_report(a, b)
+    # one.json is chrome-eligible (churns on exportedAt), never counted on the mtime axis —
+    # only stable.json (byte-identical) is checked.
+    assert report["mtime_checked"] == 1
+    assert report["mtime_drifted"] == 1
+    assert report["verdict"]["kind"] == "full_strata_candidate_mtime_unstable"
+    assert "NOT SUPPORTED" in report["verdict"]["text"]
+    # The byte-axis reconciliation numbers are untouched by the mtime qualification.
+    assert report["verdict"]["modulo"] == ["exportedAt"]
