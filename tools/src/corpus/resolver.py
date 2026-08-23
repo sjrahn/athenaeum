@@ -270,7 +270,47 @@ def resolve(
         corpus_root, parsed.hash, mime_mod.extension_for(media_type), store=store
     )
 
-    # Bare URI — no derivation; the caller wants the source binary.
+    # `raw` (§6.1, §6.2, v35): the stored artifact bytes, exactly — terminal only, the
+    # identity equation's markup spelling and the escape from the annotated default below.
+    # For a non-markup type this is byte-identical to the bare route (which is untouched);
+    # composing it with anything else is a hard error, never a silent chain.
+    if any(k == "raw" for k, _ in parsed.params):
+        if len(parsed.params) != 1:
+            raise ValueError("raw= is terminal-only (§6.2) and composes with nothing")
+        return artifact_binary.resolve()
+
+    # `annotated` (§6.1.1, §6.2, v35) and the DEFAULT bare-route delivery it shares on an
+    # ordinal-scheme markup record — owner ruling: "the machine count is what readers get".
+    # Both route through the identical cache entry (`_resolve_annotated` keyed off the
+    # canonical `?annotated` URI, constructed here for the bare case too) — one resolution,
+    # disclosed by construction rather than two independent derivations of the same bytes.
+    # ONLY the resolver's terminal artifact-route delivery is affected: every internal
+    # consumer (transforms below, `el_member_bytes`, containment/promotion, drafters,
+    # verify/fidelity) reads `artifact_binary` — the RAW file — directly, never through this
+    # branch, so the working-kind pipeline can never accidentally see stamped bytes.
+    annotated_requested = len(parsed.params) == 1 and parsed.params[0] == ("annotated", None)
+    if annotated_requested or (parsed.is_bare and media_type == "text/html"):
+        el_addressing = records.el_addressing(artifact_record)
+        if el_addressing and el_addressing.get("scheme") == "ordinal":
+            annotated_uri = furi.canonical(
+                furi.ParsedURI(hash=parsed.hash, params=(("annotated", None),))
+            )
+            return _resolve_annotated(
+                corpus_root, annotated_uri, parsed.hash, artifact_binary, el_addressing,
+                regenerate=regenerate,
+            )
+        if annotated_requested:
+            frozen = "dotted" if el_addressing else "legacy"
+            raise ValueError(
+                f"?annotated requires an `addressing:` stamp carrying `scheme: ordinal` "
+                f"(§6.1.1, v35) — this record still speaks the frozen {frozen} el= "
+                f"grammar; the v35 remap has not run on it"
+            )
+        # Bare route on a frozen-generation (dotted or unstamped) markup record: the
+        # pre-v35 default — raw bytes — until the migration restamps it. Falls through.
+
+    # Bare URI — no derivation; the caller wants the source binary (raw bytes: every
+    # non-markup type, and a markup record with no ordinal stamp yet).
     if parsed.is_bare:
         return artifact_binary.resolve()
 
@@ -333,7 +373,12 @@ def resolve(
     elif any(k in _HTML_EL_OP_PARAMS for k, _ in parsed.params):
         from .transforms import html as html_tf
 
-        version_label = html_tf.ENGINE_VERSION
+        # Per-RECORD, not per-value (§6.1.1 v35 dispatch): an ordinal-scheme stamp pins
+        # `html-el@3`, the frozen dotted/legacy branches keep `html-el@2` — neither's
+        # resolution logic changed, so their cache identity doesn't either.
+        version_label = html_tf.engine_version_for_addressing(
+            records.el_addressing(artifact_record)
+        )
     elif any(k in _ARCHIVE_PATH_OP_PARAMS for k, _ in parsed.params):
         from .transforms import zip as zip_tf
 
@@ -987,6 +1032,68 @@ def _lineage_container(artifact_record: Any) -> str | None:
     return None
 
 
+def _resolve_annotated(
+    corpus_root: Path,
+    canonical_uri: str,
+    source_hash: str,
+    artifact_binary: Path,
+    el_addressing: dict,
+    *,
+    regenerate: bool,
+) -> Path:
+    """Materialize the `annotated` view (§6.1.1, §6.2, v35): `artifact_binary`'s raw bytes
+    with every element's document-order ordinal spliced into its own start tag as
+    `data-el="<N>"` (`transforms.html.annotate_bytes` — span-surgical, never a re-parse or
+    re-serialization). `canonical_uri` is always the CANONICAL `?annotated` form, even when
+    the caller is the bare-route default — so the bare route and the explicit spelling share
+    one cache entry by construction. Version-labeled (§6.4): the splice algorithm, not the
+    bytes it reads, is what can drift across a release.
+
+    Computed under the record's attested parse: the same two drift checks
+    `extract_el`'s ordinal branch runs FIRST — a foreign parser identity or a diverging
+    element count is a hard error, never a silent splice against the wrong tree."""
+    from .transforms import html as html_tf
+
+    key_uri = f"{canonical_uri}|engine={html_tf.ANNOTATED_ENGINE_VERSION}"
+    urihash_value = furi.urihash(key_uri)
+    cache_p = furi.cache_path(corpus_root, urihash_value, "html")
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+
+    from bs4 import BeautifulSoup
+
+    raw = artifact_binary.read_bytes()
+    soup = BeautifulSoup(raw, html_tf.EL_PARSER_ID)
+
+    parser = str(el_addressing.get("parser") or "")
+    if parser and parser != html_tf.EL_PARSER_ID:
+        raise ValueError(
+            f"record's el= addresses were computed under parser {parser!r}; this "
+            f"toolchain resolves with {html_tf.EL_PARSER_ID!r} and their trees may "
+            f"disagree (§6.1.1) — re-attest to re-stamp before annotating"
+        )
+    stamped = el_addressing.get("elements")
+    if stamped is not None:
+        actual = html_tf.total_element_count(soup)
+        if int(stamped) != actual:
+            raise ValueError(
+                f"element-count mismatch: the record attests {stamped} elements, this "
+                f"parse yields {actual} — the trees disagree, so ordinals would be "
+                f"stamped onto the wrong elements (§6.1.1); re-attest to re-derive"
+            )
+
+    root = html_tf.path_root(soup)
+    annotated = html_tf.annotate_bytes(raw, soup, root)
+
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    cache_p.write_bytes(annotated)
+    _write_sidecar(
+        corpus_root, canonical_uri, source_hash, cache_p, "text",
+        mime_override="text/html", version_label=html_tf.ANNOTATED_ENGINE_VERSION,
+    )
+    return cache_p.resolve()
+
+
 def _resolve_body(
     corpus_root: Path,
     canonical_uri: str,
@@ -1412,6 +1519,9 @@ def engine_version_for_param(key: str) -> str | None:
     if key in _HTML_EL_OP_PARAMS:
         from .transforms import html as html_tf
 
+        # Introspection is media-type-scoped, not record-scoped, so it cannot pick between
+        # `@2`/`@3` (that dispatch is per-record, §6.1.1 v35) — the frozen-branch pin, which
+        # is what every record predates the ordinal scheme has, is the honest default here.
         return html_tf.ENGINE_VERSION
     if key in _UNITS_TURN_OP_PARAMS:
         from .shape import units as units_tf

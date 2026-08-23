@@ -187,18 +187,23 @@ def _grouped(entries: list[dict[str, Any]]) -> list[tuple[str, list[tuple[str, s
     return [(a, groups[a]) for a in order]
 
 
-def _check_address(address: str) -> None:
+def _check_address(address: str, el_addressing: dict | None) -> None:
     """Refuse an address this rewrite cannot address with. `el=` is validated against the
-    §6.1.1 path grammar (every rail address in the corpus is one); any other axis is accepted
-    as an opaque single-line scalar, which is all the segment header needs of it."""
+    §6.1.1 grammar the RECORD's `addressing:` stamp names — ordinal (v35) or the frozen
+    3.6 dotted path, never sniffed from the value; any other axis is accepted as an
+    opaque single-line scalar, which is all the segment header needs of it."""
     if not address.strip() or "\n" in address:
         raise RailHold(f"a rail address is empty or multi-line ({address!r})")
     head, sep, tail = address.partition("=")
     if not sep:
         raise RailHold(f"a rail address names no axis ({address!r})")
     if head == "el":
+        value = tail.split("&", 1)[0]
         try:
-            furi.parse_el_path(tail.split("&", 1)[0])
+            if el_addressing and el_addressing.get("scheme") == "ordinal":
+                furi.parse_el_ordinal(value)
+            else:
+                furi.parse_el_path(value)
         except Exception as exc:
             raise RailHold(f"a rail address does not parse ({address!r}: {exc})") from exc
 
@@ -286,13 +291,14 @@ def home_rail_record(record_file: Path, corpus_root: Path) -> RailHome:
         return report
 
     # The rail's own reading, and every refusal it can raise, before anything is built.
+    el_addressing = records.el_addressing(post)
     try:
         groups = _grouped(entries)
         own = _own_routes(post)
         rendered: list[tuple[str, str]] = []  # (address, body)
         dropped = 0
         for address, items in groups:
-            _check_address(address)
+            _check_address(address, el_addressing)
             lines = []
             for text, url in items:
                 if (url.split("#", 1)[1] if "#" in url else url).rstrip("/") in own:

@@ -207,9 +207,10 @@ def _neutrality_hold(new_text: str, before: Counter[str], corpus_root: Path) -> 
 
 
 def _el_paths(value: Any) -> list[furi.ElPath]:
-    """Every `el=` address in `value` (scalar or list) as a parsed §6.1.1 path. A non-`el=`
-    axis or an unparseable value contributes nothing — containment is only meaningful
-    within one axis."""
+    """Every `el=` address in `value` (scalar or list) as a parsed §6.1.1 DOTTED path. A
+    non-`el=` axis or an unparseable value contributes nothing — containment is only
+    meaningful within one axis. Frozen-grammar only; see `_el_claims` for the
+    record-dispatched version `_restored` actually uses."""
     out = []
     for raw in segments._iter_addr_strings(value):
         head, _, tail = str(raw).partition("=")
@@ -222,6 +223,40 @@ def _el_paths(value: Any) -> list[furi.ElPath]:
     return out
 
 
+def _el_claims(value: Any, ordinal_scheme: bool) -> list[furi.ElPath | furi.ElOrdinal]:
+    """Every `el=` address in `value` as a parsed §6.1.1 claim, under the RECORD's own
+    grammar (`ordinal_scheme`, read off `records.el_addressing`, never sniffed from the
+    value) — `furi.ElOrdinal` (v35) or the frozen dotted `furi.ElPath`. A non-`el=` axis
+    or an unparseable value contributes nothing."""
+    if ordinal_scheme:
+        out: list[furi.ElOrdinal] = []
+        for raw in segments._iter_addr_strings(value):
+            head, _, tail = str(raw).partition("=")
+            if head != "el":
+                continue
+            try:
+                out.append(furi.parse_el_ordinal(tail.split("&", 1)[0]))
+            except Exception:
+                continue
+        return out
+    return _el_paths(value)
+
+
+def _el_claims_contain(outer: Any, inner: Any) -> bool:
+    """Whether `outer`'s claim contains `inner`'s — dispatched by the claim TYPE (both are
+    always parsed under the same record's single grammar, so this is a type check, not
+    value-sniffing). The ordinal side has no tree access here (`_restored` operates on
+    stored address text alone, no artifact), so it is the conservative NUMERIC proxy
+    (`furi.ordinal_contains`, §6.1.1: "not decidable from two addresses alone") — sound,
+    never a false positive, possibly missing a genuine ancestor relationship the numbers
+    alone can't show."""
+    if isinstance(outer, furi.ElOrdinal) and isinstance(inner, furi.ElOrdinal):
+        return furi.ordinal_contains(outer, inner)
+    if isinstance(outer, furi.ElPath) and isinstance(inner, furi.ElPath):
+        return furi.el_path_contains(outer, inner)
+    return False
+
+
 #: The form ids a framing restoration span may carry (#89): `nav` going forward, `index` for a
 #: record `corpus home-rail` / `corpus home-crumb` restored before `form/nav` existed and
 #: nothing has yet re-spelled. Keyed explicitly to these two rather than to "any form" — the
@@ -230,23 +265,29 @@ def _el_paths(value: Any) -> list[furi.ElPath]:
 _RESTORED_FORMS = ("nav", "index")
 
 
-def _restored(ctx: dict[str, Any], sections: list[segments.Section]) -> bool:
+def _restored(
+    ctx: dict[str, Any], sections: list[segments.Section], *, ordinal_scheme: bool = False
+) -> bool:
     """Whether this retired `relation` block's address is claimed by a framing-restoration
     span (`form/nav`, or the pre-#89 `form/index` spelling) — the §6.1.1 containment test
     against the span's own address and its child segments'. A record-scoped block (no address)
     can never be shown to have come home, and a whole-record section with no address claims
-    nothing in particular, so neither counts: both are exactly the pre-restoration shape."""
-    targets = _el_paths((ctx.get("fields") or {}).get("address"))
+    nothing in particular, so neither counts: both are exactly the pre-restoration shape.
+
+    `ordinal_scheme` (v35) is the RECORD's own grammar (`records.el_addressing`, never
+    sniffed) — every claim here, target and candidate alike, is parsed under it via
+    `_el_claims`, and compared via `_el_claims_contain`."""
+    targets = _el_claims((ctx.get("fields") or {}).get("address"), ordinal_scheme)
     if not targets:
         return False
-    claims: list[furi.ElPath] = []
+    claims: list[Any] = []
     for sec in sections:
         if sec.form not in _RESTORED_FORMS or sec.address is None:
             continue
-        claims.extend(_el_paths(sec.address))
+        claims.extend(_el_claims(sec.address, ordinal_scheme))
         for child in sec.segments:
-            claims.extend(_el_paths(child.address))
-    return all(any(furi.el_path_contains(c, t) for c in claims) for t in targets)
+            claims.extend(_el_claims(child.address, ordinal_scheme))
+    return all(any(_el_claims_contain(c, t) for c in claims) for t in targets)
 
 
 def _derived_pair(post: Any, corpus_root: Path) -> tuple[str, str]:
@@ -309,8 +350,12 @@ def sweep_record(
     # an index span exists on them while nothing renders the rail at all, and the loose reading
     # would have dropped 9,182 rail links from records that never restored one.
     if not allow_unrestored:
+        el_addressing = records.el_addressing(post)
+        ordinal_scheme = bool(el_addressing) and el_addressing.get("scheme") == "ordinal"
         relations = [c for c in doomed_contexts if str(c.get("namespace")) == "relation"]
-        homeless = [c for c in relations if not _restored(c, sections)]
+        homeless = [
+            c for c in relations if not _restored(c, sections, ordinal_scheme=ordinal_scheme)
+        ]
         if homeless:
             report.hold = (
                 f"{len(homeless)} of {len(relations)} `relation` block(s) sit at an address no "

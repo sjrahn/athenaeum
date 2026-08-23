@@ -274,3 +274,103 @@ def test_reshape_skips_a_record_that_neither_routes_nor_asserts(tmp_path):
     report = reshape_index.reshape_record(record_file, root)
     assert report.skipped is not None
     assert "neither routes to nor asserts" in report.skipped
+
+
+# ---------- v35: ordinal authoring ---------- #
+
+
+def _ordinal_record(tmp_path, html: str, *, uri_itype: str = "13"):
+    """`_record`'s ordinal-stamped counterpart — the only difference is the
+    `addressing:` fields, so any drift between the two authoring paths shows up as a
+    real test failure rather than a fixture difference."""
+    root = tmp_path / "c"
+    (root / "records").mkdir(parents=True)
+    overlay_dir = root / "schema" / "origin" / "web"
+    overlay_dir.mkdir(parents=True)
+    (overlay_dir / f"{HOST}.yaml").write_text(_OVERLAY, encoding="utf-8")
+    schemas.cache_clear()
+
+    src = root / "page.html"
+    src.write_text(html, encoding="utf-8")
+    rid = hashing.hash_file(src)["blake3"]
+    LocalArtifactStore(root).put(rid, "html", src)
+
+    post = frontmatter.Post("")
+    post.metadata.update({"id": rid, "touch": "corpus.ingest@0.1.0"})
+    records.set_artifact_block(
+        post,
+        mime="text/html",
+        fields={
+            "addressing": {
+                "parser": EL_PARSER_ID,
+                "elements": total_element_count(BeautifulSoup(html, EL_PARSER_ID)),
+                "scheme": "ordinal",
+            }
+        },
+    )
+    records.append_origin_block(
+        post,
+        uri=f"https://{HOST}/repair/#/vehicle/46076/component/421/itype/{uri_itype}/"
+        f"isSelfReferenceLink/false",
+        snapshot="2026-01-01T00:00:00Z",
+        schema_id=HOST,
+    )
+    records.dump(post, paths.record_path(root, rid))
+    return post, root
+
+
+def _shape_ordinal(tmp_path, html: str):
+    post, root = _ordinal_record(tmp_path, html)
+    assert shape_record(post, root) is True
+    return post, root, segments.iter_blocks(post.content or "")
+
+
+def test_ordinal_title_is_a_structural_byte_mark_at_its_own_ordinal(tmp_path):
+    _post, _root, blocks = _shape_ordinal(tmp_path, _page(_ENTRIES))
+    index = blocks[0]
+    mark = index.segments[0]
+    assert mark.is_structural and mark.level == 3
+    assert mark.body == "Technical Service Bulletins"
+    assert mark.address == "el=3"  # h3, verified against the raw tree (see module note)
+
+
+def test_ordinal_entries_take_the_sibling_range_over_their_own_ordinals(tmp_path):
+    """The sibling-position-vs-ordinal-adjacency distinction, live: the three
+    itype-containers sit at ordinals 18, 20, 22 (each carrying an `<a>` child that pushes
+    the next one two ahead) — not 18, 19, 20 — yet they ARE a contiguous sibling run of
+    `div.content`, so the range is `el=[18-22]`, not refused as non-contiguous."""
+    _post, _root, blocks = _shape_ordinal(tmp_path, _page(_ENTRIES))
+    entries = blocks[0].segments[1]
+    assert entries.address == "el=[18-22]"
+    assert entries.body.splitlines() == [
+        "- [All Technical Service Bulletins](#/vehicle/46076/component/421/itype/100/tsbs/x)",
+        "- [Customer Interest Bulletins](#/vehicle/46076/component/421/itype/109/x)",
+        "- [Repair Tips](#/vehicle/46076/component/421/itype/110/x)",
+    ]
+
+
+def test_ordinal_single_entry_takes_a_point_not_a_range(tmp_path):
+    _post, _root, blocks = _shape_ordinal(tmp_path, _page(_ENTRIES[:1]))
+    assert blocks[0].segments[1].address == "el=18"
+
+
+def test_ordinal_breadcrumb_is_verbatim_in_a_trailing_nav_span(tmp_path):
+    _post, _root, blocks = _shape_ordinal(tmp_path, _page(_ENTRIES))
+    nav = blocks[-1]
+    assert nav.form == "nav"
+    crumb = nav.segments[0]
+    assert crumb.address == "el=4"
+    assert crumb.body == (
+        "[Vehicle](#/vehicle/46076) > [Engine](#/vehicle/46076/component/8) > "
+        "Technical Service Bulletins"
+    )
+
+
+def test_ordinal_shaped_record_passes_the_fidelity_gate(tmp_path):
+    post, root, blocks = _shape_ordinal(tmp_path, _page(_ENTRIES))
+    html = (root / "page.html").read_text(encoding="utf-8")
+    result = check_fidelity(
+        html, blocks, records.el_addressing(post), schemas.origin_regions(root, HOST)
+    )
+    assert result["pass"] is True
+    assert result["misplaced"] == 0 and result["dropped"] == 0 and result["unresolvable"] == 0

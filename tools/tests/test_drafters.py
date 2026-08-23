@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from corpus import draft, lint, paths, records, resolver, schemas, segments
-from corpus import functional_uri as furi
 from corpus.draft import html as draft_html
 from corpus.store import LocalArtifactStore
 from corpus.transforms import html as transforms_html
@@ -332,9 +331,10 @@ def test_html_drafter_registered_and_axis_aligned():
 def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
     """A `<dl>` is a content-bearing block — the peer of `<ul>`/`<ol>` — so the emit
     heuristic annotates it; its `<dt>`/`<dd>` items get no annotation, exactly as `<li>`
-    doesn't. *(3.6)* Under the total path space its ADDRESS never depended on the tuple:
-    it is the element's child-index path (§6.1.1), so a heuristic edit like the one that
-    motivated this test (§12.28's `<dl>` incident) can no longer move any address."""
+    doesn't. *(v35)* Under the total ordinal space its ADDRESS never depended on the
+    tuple: it is the element's document-order position (§6.1.1), so a heuristic edit like
+    the one that motivated this test (§12.28's `<dl>` incident) can no longer move any
+    address."""
     assert "dl" in draft_html._ADDRESSABLE_TAGS
     assert "dt" not in draft_html._ADDRESSABLE_TAGS
     assert "dd" not in draft_html._ADDRESSABLE_TAGS
@@ -354,11 +354,13 @@ def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
     binary = LocalArtifactStore(root).local_path(rid, "html")
     result, segs = run_drafter(drafter, binary, corpus_root=root, record_id=rid, record_metadata={})
 
-    # The wrapper claims the body's element children: h1(1), p(2), dl(3), p(4).
+    # The wrapper claims the body's element children, each by its own ORDINAL: h1(1),
+    # p(2), dl(3), and the trailing p — NOT ordinal 4, because dl's own children (dt, dd)
+    # occupy ordinals 4 and 5 first, pushing it to 6.
     assert len(segs) == 1
     seg = segs[0]
     assert isinstance(seg, segments.Segment)
-    assert seg.address == ["el=1", "el=2", "el=3", "el=4"]
+    assert seg.address == ["el=1", "el=2", "el=3", "el=6"]
 
     body = BeautifulSoup(seg.body, "html.parser")
     dl = body.find("dl")
@@ -366,18 +368,19 @@ def test_html_drafter_addresses_dl_definition_list(tmp_path, run_drafter):
     # The dl's items carry no annotation of their own (peers of <li>).
     assert body.find("dt").get("data-el") is None
     assert body.find("dd").get("data-el") is None
-    # The trailing <p> is the body's 4th element child — its own path, owed to nothing.
-    assert body.find_all("p")[-1].get("data-el") == "4"
-    # Resolver side: walking the annotated path in the RAW artifact reaches the same dl.
+    # The trailing <p> is the document's 6th element overall — its own ordinal, owed to
+    # nothing about its position among siblings.
+    assert body.find_all("p")[-1].get("data-el") == "6"
+    # Resolver side: walking the annotated ordinal in the RAW artifact reaches the same dl.
     raw_soup = BeautifulSoup(binary.read_bytes(), "html.parser")
-    reached = transforms_html.resolve_element_path(
-        transforms_html.path_root(raw_soup), furi.parse_el_path("3")
-    )
+    reached = transforms_html.resolve_ordinal(transforms_html.path_root(raw_soup), 3)
     assert reached.name == "dl"
-    # The attested stamp (§7.1) rides the artifact fields: pinned parser + total count.
+    # The attested stamp (§7.1) rides the artifact fields: pinned parser + total count +
+    # `scheme: ordinal` (v35) — the only grammar this drafter writes going forward.
     stamp = (result.get("fields") or {})["addressing"]
     assert stamp["parser"] == "html.parser"
     assert stamp["elements"] == len(raw_soup.find_all(True))
+    assert stamp["scheme"] == "ordinal"
 
 
 def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
@@ -408,12 +411,14 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
     assert len(canonical.split(":", 1)[1]) == 64
 
     # Exactly one wrapping text segment claiming the body's element children (§6.1.1 —
-    # each child's subtree; nav/div/main/footer/script in this fixture).
+    # each child's subtree; nav/div/main/footer/script in this fixture), each named by
+    # its own document-order ORDINAL (v35) — not its position among siblings, which
+    # differ here because earlier siblings carry descendant elements of their own.
     assert len(segs) == 1
     seg = segs[0]
     assert isinstance(seg, segments.Segment)
     assert seg.atom == "text"
-    assert seg.address == ["el=1", "el=2", "el=3", "el=4", "el=5"]
+    assert seg.address == ["el=1", "el=4", "el=6", "el=20", "el=21"]
     assert seg.perceptual is None  # fingerprinting is opt-in — off by default
 
     # Mechanical drafter output: data-el annotations present; <img src> dropped
@@ -436,16 +441,16 @@ def test_html_drafter_emits_segment_embeds_and_canonical(tmp_path, run_drafter):
         assert e["transport"].startswith("blake3:")
         assert len(e["transport"].split(":", 1)[1]) == 64
     # The PNG appears twice (inside the first <figure>, then directly under <main>) →
-    # one embed with a list of paths (§6.1.1).
+    # one embed with a list of ordinals (§6.1.1, v35).
     png = by_type["image/png"]
-    assert png["address"] == ["el=3.3.1", "el=3.6"]
+    assert png["address"] == ["el=11", "el=15"]
     assert png["fields"]["width"] == 8 and png["fields"]["height"] == 6
     assert png["fields"]["alt"] == "Diagram one"
-    # GIF appears once → scalar path.
-    assert by_type["image/gif"]["address"] == "el=3.8"
+    # GIF appears once → scalar ordinal.
+    assert by_type["image/gif"]["address"] == "el=17"
     # SVG: PIL can't open it, so dimensions come from the SVG width=/height= attrs.
     svg = by_type["image/svg+xml"]
-    assert svg["address"] == "el=3.9.1"
+    assert svg["address"] == "el=19"
     assert svg["fields"]["width"] == 40 and svg["fields"]["height"] == 30
 
 
@@ -612,11 +617,9 @@ def test_html_drafter_div_soup_addresses_fine_now(tmp_path, run_drafter):
         if i.get("subtype") in ("unaddressable-content", "elementless-body")
     ]
     assert len(segs) == 1
-    assert segs[0].address == "el=1"  # the overlay div IS the body's first element child
+    assert segs[0].address == "el=1"  # the overlay div IS the document's first element
     raw_soup = BeautifulSoup(p.read_bytes(), "html.parser")
-    reached = transforms_html.resolve_element_path(
-        transforms_html.path_root(raw_soup), furi.parse_el_path("1")
-    )
+    reached = transforms_html.resolve_ordinal(transforms_html.path_root(raw_soup), 1)
     assert reached.name == "div" and reached.get("id") == "overlay"
 
     # The remnant degenerate: bare text directly under <body>, no element children.
@@ -681,9 +684,10 @@ def test_html_draft_cli_pipeline_and_lint(tmp_path):
 
 
 def test_html_el_addressing_round_trips(tmp_path):
-    """The drafter's pre-strip `el=` paths align with the resolver's raw-artifact walk:
-    resolving an embed's path returns the decoded image at the right size. The drafted
-    record carries the `addressing:` stamp, so the resolver reads the path grammar."""
+    """The drafter's pre-strip `el=` ORDINALS (v35) align with the resolver's raw-artifact
+    walk: resolving an embed's ordinal returns the decoded image at the right size. The
+    drafted record carries the `addressing:` stamp with `scheme: ordinal`, so the resolver
+    reads the ordinal grammar."""
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "article.html", "text/html", "html")
 
@@ -695,26 +699,25 @@ def test_html_el_addressing_round_trips(tmp_path):
     assert draft_for_test(root, rid) == 0
 
     post = records.load(paths.record_path(root, rid))
-    assert records.el_addressing(post) is not None  # the §7.1 stamp landed
-    # el=3.3.1 is the first PNG occurrence (8x6); el=3.8 is the GIF (4x4).
-    png_path = resolver.resolve(f"corpus://{rid}?el=3.3.1", root)
+    stamp = records.el_addressing(post)
+    assert stamp is not None and stamp.get("scheme") == "ordinal"  # the §7.1 stamp landed
+    # el=11 is the first PNG occurrence (8x6); el=17 is the GIF (4x4).
+    png_path = resolver.resolve(f"corpus://{rid}?el=11", root)
     with Image.open(png_path) as im:
         assert im.size == (8, 6)
-    gif_path = resolver.resolve(f"corpus://{rid}?el=3.8", root)
+    gif_path = resolver.resolve(f"corpus://{rid}?el=17", root)
     with Image.open(gif_path) as im:
         assert im.size == (4, 4)
     # And the LEGACY spelling of the same element no longer resolves silently to a
-    # different element: on a stamped record `el=4` is a path (body's 4th child, the
-    # <footer>) — a text element with no bytes — never the old whitelist's 4th entry.
+    # different element: on an ordinal-stamped record `el=4` is the cookie-banner <div>
+    # (a container with no inline bytes) — never the old whitelist's 4th entry.
     from corpus.transforms import NotMaterializable
 
     with pytest.raises(NotMaterializable):
         raw_soup = BeautifulSoup(
             LocalArtifactStore(root).local_path(rid, "html").read_bytes(), "html.parser"
         )
-        ref = transforms_html.extract_el(
-            raw_soup, "4", {"el_addressing": records.el_addressing(post)}
-        )
+        ref = transforms_html.extract_el(raw_soup, "4", {"el_addressing": stamp})
         transforms_html.htmlel_bytes(ref)
 
 

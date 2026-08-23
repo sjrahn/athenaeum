@@ -1081,6 +1081,135 @@ def _rule_address_frame_grammar(post, blocks, root) -> Iterator[Finding]:
             yield from _findings(addr, f"embed {i}")
 
 
+def _rule_address_el_range_grammar(post, blocks, root) -> Iterator[Finding]:
+    """Every stored `el=[A-B]` sibling range on an ORDINAL-scheme record (v35, spec
+    §6.1.1) is in bounds and its endpoints are real siblings — the owner ruling learned
+    from the retired 3.5 flat range's failure mode: a range bridging elements at
+    different depths is not one structural thing, so the grammar refuses to let it mean
+    anything the tree doesn't declare.
+
+    Scope: `addressing.scheme: ordinal` records only — the frozen dotted/legacy grammars
+    have no sibling-range constraint of this shape and are untouched (and cannot even
+    reach this rule: their stamps carry no `scheme` key).
+
+    Two independent checks, run separately because they need different access:
+
+    - **Bounds** reads the attested `elements` count straight off the stamp — no artifact
+      access, the `address-frame-invalid` precedent — so it always fires when the stamp
+      is ordinal, regardless of whether the artifact is resident.
+    - **Siblinghood** needs the parsed tree (§6.1.1: "not decidable from two addresses
+      alone") and silently does not fire when the artifact is unavailable, unparseable,
+      or the stamp's own attested facts disagree with this parse — the
+      `segment-address-fidelity` artifact-optional discipline: a defect the artifact
+      can't confirm is not reported, and a disagreeing stamp is another gate's finding."""
+    addressing = _records.el_addressing(post)
+    if not addressing or addressing.get("scheme") != "ordinal":
+        return
+
+    from corpus import functional_uri as _furi
+
+    count_raw = addressing.get("elements")
+    try:
+        count = int(count_raw) if count_raw is not None else None
+    except (TypeError, ValueError):
+        count = None
+
+    ranges: list[tuple[str, str, Any]] = []  # (address, where, ElOrdinal)
+
+    def _collect(addr: str, where: str) -> None:
+        for part in addr.split("&"):
+            key, sep, value = part.partition("=")
+            if key.strip() != "el":
+                continue
+            try:
+                parsed = _furi.parse_el_ordinal(value if sep else None)
+            except ValueError:
+                return  # a malformed value is another rule's business — not a range defect
+            if parsed.sibling_range is not None:
+                ranges.append((addr, where, parsed))
+
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            for addr in _addresses(blk.address):
+                _collect(addr, "section")
+            for seg in blk.segments:
+                for addr in _addresses(getattr(seg, "address", None)):
+                    _collect(addr, "segment")
+        elif isinstance(blk, _segments.Segment):
+            for addr in _addresses(getattr(blk, "address", None)):
+                _collect(addr, "segment")
+
+    if not ranges:
+        return
+
+    for addr, where, parsed in ranges:
+        a, b = parsed.sibling_range
+        if count is not None and b > count:
+            yield Finding(
+                rule_id="address-el-range-invalid",
+                severity="error",
+                message=(
+                    f"{where} address `{addr}`: range end {b} exceeds the record's "
+                    f"attested {count} elements (spec §6.1.1)"
+                ),
+                address=addr,
+                fields={"elements": count},
+            )
+
+    # Siblinghood — needs the tree; artifact-optional, and gated on the same two
+    # attested-fact checks `extract_el`/`check_fidelity` run first.
+    record_id = str(post.metadata.get("id") or "")
+    if not record_id:
+        return
+    from bs4 import BeautifulSoup
+
+    from corpus import mime as _mime
+    from corpus.containment import ArtifactMissing, ensure_local_bytes
+    from corpus.transforms.html import (
+        EL_PARSER_ID,
+        ordinals_are_siblings,
+        path_root,
+        total_element_count,
+    )
+
+    parser = str(addressing.get("parser") or "")
+    if parser and parser != EL_PARSER_ID:
+        return  # a foreign-parser stamp is `_rule_...` territory elsewhere, not this one
+
+    try:
+        artifact_path = ensure_local_bytes(
+            root, record_id, _mime.extension_for(_records.media_type_for(post))
+        )
+        html = artifact_path.read_text(encoding="utf-8", errors="replace")
+    except (ArtifactMissing, OSError, UnicodeError):
+        return
+
+    try:
+        soup = BeautifulSoup(html, EL_PARSER_ID)
+        if count is not None and total_element_count(soup) != count:
+            return  # the trees disagree — another gate's finding, not this one's to judge
+        el_root = path_root(soup)
+        for addr, where, parsed in ranges:
+            a, b = parsed.sibling_range
+            try:
+                siblings = ordinals_are_siblings(el_root, a, b)
+            except ValueError:
+                continue  # out of bounds — already reported by the bounds check above
+            if not siblings:
+                yield Finding(
+                    rule_id="address-el-range-invalid",
+                    severity="error",
+                    message=(
+                        f"{where} address `{addr}`: ordinals {a} and {b} are not "
+                        f"siblings (spec §6.1.1, the v35 owner ruling) — a range's "
+                        f"endpoints must share a parent element"
+                    ),
+                    address=addr,
+                )
+    except Exception:
+        return  # unparseable — does not fire
+
+
 # ---------- annotation-zone (issue) rules ---------- #
 
 
@@ -2343,7 +2472,9 @@ def _rule_segment_address_fidelity(post, blocks, root) -> Iterator[Finding]:
     unstamped record's `el=5` names the 5th WHITELISTED element under the frozen pre-3.6
     index, not the body's 5th element child, so resolving it through the path walk would
     compare the segment against the wrong element and report the very defect this rule
-    exists to find. Legacy-grammar records are frozen and never judged here.
+    exists to find. Legacy-grammar records are frozen and never judged here. A stamped
+    record judges under EITHER live grammar (`check_fidelity` dispatches on
+    `addressing.scheme`, v35) — ordinal or the frozen 3.6 dotted path.
 
     Reads artifact bytes, and keeps the artifact-optional discipline of the link gate: an
     absent artifact, an unparseable one, or a stamp whose attested parser/element-count
@@ -2444,6 +2575,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
     ("address-frame-invalid", _rule_address_frame_grammar),
+    ("address-el-range-invalid", _rule_address_el_range_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
     ("cutting-stamp-malformed", _rule_cutting_stamp_shape),
     ("framing-stamp-malformed", _rule_framing_stamp_shape),

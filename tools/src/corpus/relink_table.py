@@ -33,7 +33,12 @@ from corpus import lint, records, segments
 from corpus.fidelity import el_paths
 from corpus.reshape_index import HOST, fidelity_hold
 from corpus.shape.alldata_index import load_stamped_soup
-from corpus.transforms.html import iter_element_children, path_root, resolve_element_path
+from corpus.transforms.html import (
+    iter_element_children,
+    path_root,
+    resolve_element_path,
+    resolve_ordinal,
+)
 
 #: The segment opener this verb rewrites — nothing else is touched.
 _ATOM = "text/data-table"
@@ -98,16 +103,26 @@ def _is_pipe_table(body: str) -> bool:
     return bool(lines) and all(line.lstrip().startswith("|") for line in lines)
 
 
-def _addressed_table(soup: Tag, address: object) -> Tag | None:
+def _addressed_table(soup: Tag, address: object, el_addressing: dict | None) -> Tag | None:
     """The single `<table>` a segment's address names, or None when the address is not one
-    point path resolving to a table (a range, a list, another element — not this verb's)."""
-    paths = el_paths(address)
-    if len(paths) != 1:
+    point address resolving to a table (a range, a list, another element — not this
+    verb's). Reads only — never authors a new address — so it dispatches per the RECORD's
+    `addressing:` stamp (`el_addressing`, §6.1.1) exactly as the resolver does: ordinal
+    (v35) vs the frozen 3.6 dotted path."""
+    values = el_paths(address)
+    if len(values) != 1:
         return None
-    parsed = furi.parse_el_path(paths[0][1])
+    root = path_root(soup)
+    if el_addressing and el_addressing.get("scheme") == "ordinal":
+        ordinal = furi.parse_el_ordinal(values[0][1])
+        if ordinal.sibling_range is not None:
+            return None
+        node = resolve_ordinal(root, ordinal.point)
+        return node if isinstance(node, Tag) and node.name == "table" else None
+    parsed = furi.parse_el_path(values[0][1])
     if parsed.sibling_range is not None:
         return None
-    node = resolve_element_path(path_root(soup), parsed)
+    node = resolve_element_path(root, parsed)
     return node if isinstance(node, Tag) and node.name == "table" else None
 
 
@@ -148,11 +163,12 @@ def relink_table_record(record_file: Path, corpus_root: Path) -> TableRelink:
         return report
 
     before = Counter(f.rule_id for f in lint.lint(post, blocks, corpus_root))
+    el_addressing = records.el_addressing(post)
 
     rewritten = 0
     for seg in targets:
         try:
-            table = _addressed_table(soup, seg.address)
+            table = _addressed_table(soup, seg.address, el_addressing)
         except ValueError as exc:
             report.hold = f"segment address does not resolve: {exc}"
             return report

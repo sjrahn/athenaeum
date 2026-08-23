@@ -62,7 +62,11 @@ def _dump_json(payloads: list[dict]) -> None:
 
 def _lint_one(root, record_id, record_file, *, json_out: bool = False, resolve: bool = False) -> int:
     post = records.load(record_file)
-    blocks = segments.iter_blocks(post.content or "")
+    # `blocks_for_record` threads the ordinal tree for an ordinal-scheme record (v35) so a
+    # SECTION's derived address (never stored, §4.3.2.1) comes out right — several rules
+    # below (`address-region-invalid`, `address-el-range-invalid`, …) read `blk.address`
+    # directly and would silently see nothing to check on a None.
+    blocks = segments.blocks_for_record(post, root)
     findings = _lint.lint(post, blocks, root)
     if resolve:
         findings = findings + _lint.resolve_addresses(post, blocks, root)
@@ -93,7 +97,7 @@ def _lint_all(root, *, json_out: bool = False, resolve: bool = False) -> int:
         any_record = True
         try:
             post = records.load(md)
-            blocks = segments.iter_blocks(post.content or "")
+            blocks = segments.blocks_for_record(post, root)
             findings = _lint.lint(post, blocks, root)
             if resolve:
                 findings = findings + _lint.resolve_addresses(post, blocks, root)

@@ -26,20 +26,22 @@ Pipeline:
    description / `<html lang>` / og:site_name / canonical / capture-
    injected `corpus-capture-url` + `corpus-fetched-at`).
 3. Detect bot-block / WAF challenge pages on the pre-strip soup.
-4. Pre-walk the pre-strip work copy: assign 1-indexed `el=N` positions
-   to every addressable element (`section`, `article`, `p`, `ul`, `ol`,
-   `table`, `pre`, `blockquote`, `figure`, `h1`-`h6`, `img`) in
-   document order. For each `<img>` decode its base64 `data:` URI to
-   compute embed metadata (blake3 byte_hash, format, width, height,
-   alt) and dedup by byte_hash into the embed manifest.
+4. Pre-walk the pre-strip work copy: read off each addressable element's
+   (`section`, `article`, `p`, `ul`, `ol`, `table`, `pre`, `blockquote`,
+   `figure`, `h1`-`h6`, `img`) 1-based document-order ORDINAL (v35, spec
+   §6.1.1 — the position of the element in a pre-order walk over the
+   WHOLE body, `element` count included, not just the annotated subset).
+   For each `<img>` decode its base64 `data:` URI to compute embed
+   metadata (blake3 byte_hash, format, width, height, alt) and dedup by
+   byte_hash into the embed manifest.
 5. Strip non-rendered infrastructure ONLY: decompose `<script>` /
    `<style>` / `<noscript>` / `<template>` / `<link>` and HTML comments.
    No chrome/role/class heuristics — that is the capture layer's job.
 6. Rewrite label/value div pairs as `<p><strong>Label:</strong> Value</p>`.
 7. Collapse KaTeX (`<span class="katex">` and bare `<math>`) to LaTeX.
-8. Annotate surviving addressable elements with `data-el="N"` and drop
-   `<img src>`/`srcset` (the base64 URI is dead weight in the cleaned
-   body; `data-el="N"` is the address — a consumer builds
+8. Annotate surviving addressable elements with `data-el="N"` (their
+   ordinal) and drop `<img src>`/`srcset` (the base64 URI is dead weight
+   in the cleaned body; `data-el="N"` is the address — a consumer builds
    `corpus://<hash>?el=N` to fetch the bytes from the artifact).
 9. Strip attributes (keep whitelist + global `id` + `data-el`).
 10. Unwrap empty `<div>` / `<span>`.
@@ -53,15 +55,18 @@ dicts), one `<!--segment text-->` whose body is the cleaned HTML, drafter
 `issues`, and the `blake3-canonical-html` `canonical` hash.
 
 The normalizer reads that segment's body, parses it, decides section
-structure, emits markdown segments with `address: el=N` (or `el=N-M`).
-Image segments link to embeds by address membership — no explicit
-embed-reference field.
+structure, emits markdown segments with `address: el=N` (or the sibling
+range `el=[N-M]`, v35). Image segments link to embeds by address
+membership — no explicit embed-reference field.
 
-The `el=N` index axis (assigned on the pre-strip artifact, parsed with
+The `el=N` ordinal axis (read off the pre-strip artifact, parsed with
 `html.parser`) MUST stay identical to the resolver's
-`corpus.transforms.html` addressable-tag set / parser, or
-`corpus://<hash>?el=N` resolution silently breaks (`test_drafters.py`
-guards this).
+`corpus.transforms.html` ordinal walk / parser, or `corpus://<hash>?el=N`
+resolution silently breaks (`test_drafters.py` guards this). The
+`addressing:` stamp (§7.1) this drafter writes carries `scheme: ordinal`
+— every el= address this drafter emits speaks the v35 space; the dotted
+child-index path it replaces is resolvable read-only, never authored
+here again.
 
 Per spec §4.3 the body is faithful — no interpretation, no editorial.
 """
@@ -86,7 +91,7 @@ from corpus.transforms.html import (
     EL_PARSER_ID,
     attachment_filename,
     carrier_data_uri,
-    element_path,
+    element_ordinals,
     iter_element_children,
     largest_img_src,
     parse_data_uri,
@@ -358,11 +363,18 @@ def draft(
     cleaned_html, _root_selector, embeds, wrapper_addrs, total_elements = _clean_html(
         soup, record_id=record_id
     )
-    # The attested `addressing:` stamp (§7.1): the parser identity the paths were
-    # computed under, and the total element count of the tree they were computed ON —
-    # so a resolver whose own parse disagrees refuses loudly instead of walking paths
-    # through a different tree (§6.1.1).
-    fields["addressing"] = {"parser": EL_PARSER_ID, "elements": total_elements}
+    # The attested `addressing:` stamp (§7.1): the parser identity the ordinals were
+    # computed under, and the total element count of the tree they were computed ON — so a
+    # resolver whose own parse disagrees refuses loudly instead of walking ordinals through
+    # a different tree (§6.1.1). `scheme: ordinal` (v35) marks the total document-order
+    # ordinal space — the only grammar this drafter writes going forward; the dotted path
+    # space it replaces stays resolvable read-only under its own (schemeless) stamp shape,
+    # never written anew.
+    fields["addressing"] = {
+        "parser": EL_PARSER_ID,
+        "elements": total_elements,
+        "scheme": "ordinal",
+    }
     if cleaned_html:
         if wrapper_addrs:
             # The wrapping cleaned-HTML segment claims the body's element children —
@@ -443,50 +455,54 @@ def _clean_html(
     """Strip chrome from a fresh parse of `soup`, serialize the chosen root, and return
     (cleaned_html, root_selector, embeds, wrapper_addresses, total_elements).
 
-    `wrapper_addresses` are the `el=` paths of the body's element children in the raw
-    artifact — the wrapping text segment's address claim (each child's subtree, which
-    together are the document's content; §6.1.1). `total_elements` is the tree's total
-    element count, computed on the SAME parse the paths were, for the `addressing:`
-    stamp (§7.1) — if a resolver's own parse ever disagrees, the count makes it refuse
-    loudly rather than walk paths through a different tree.
+    `wrapper_addresses` are the `el=` document-order ORDINALS (v35, §6.1.1) of the body's
+    element children in the raw artifact — the wrapping text segment's address claim (each
+    child's subtree, which together are the document's content). `total_elements` is the
+    tree's total element count, computed on the SAME parse the ordinals were, for the
+    `addressing:` stamp (§7.1) — if a resolver's own parse ever disagrees, the count makes
+    it refuse loudly rather than walk ordinals through a different tree.
 
     Operates on a fresh re-parse so the caller's `soup` (used for block-
     page detection) is unaffected. When `record_id` is provided:
 
-    - Every element the emit heuristic (`_annotates`) admits gets a `data-el="<path>"`
-      annotation with its child-index path in the raw artifact (computed BEFORE chrome
-      strip, so paths are stable against the immutable artifact).
+    - Every element the emit heuristic (`_annotates`) admits gets a `data-el="<ordinal>"`
+      annotation with its document-order position in the raw artifact (computed BEFORE
+      chrome strip, so ordinals are stable against the immutable artifact — pre-order over
+      the WHOLE body, so an ordinal is a function of the full tree, not just the
+      annotated subset).
     - `<img>` tags additionally have their bloated base64 `data:` URIs
       stripped — the addressing scheme (`data-el`) is all a consumer
-      needs to construct a `corpus://<hash>?el=<path>` URI on demand.
+      needs to construct a `corpus://<hash>?el=<ordinal>` URI on demand.
     - A dedup'd image-embed manifest is returned: one embed dict per
-      unique content (byte_hash), with `address` listing every `el=` path
+      unique content (byte_hash), with `address` listing every `el=` ordinal
       where those bytes appear (scalar when 1, list when 2+).
     """
     work = BeautifulSoup(str(soup), "html.parser")
     root_el = path_root(work)
     total_elements = total_element_count(work)
 
-    # Pre-pass against pre-strip work: compute the el path of every element the emit
-    # heuristic admits, and embed metadata for every carrier with a usable base64 data
-    # URI. The work DOM is identical to the source artifact at this point — paths are
-    # stable. Chrome strip below removes some elements (decomposed tags lose their
-    # annotation); annotation walks surviving tags by id().
+    # Every element's document-order ORDINAL under the body (v35, §6.1.1) — one walk,
+    # shared by the wrapper claim below and the per-element annotation pre-pass, so
+    # neither pays a second tree walk for the same numbers. The work DOM is identical to
+    # the source artifact at this point — ordinals are stable. Chrome strip below removes
+    # some elements (decomposed tags lose their annotation); annotation walks surviving
+    # tags by id().
+    ordinal_by_id = element_ordinals(root_el)
     el_path_by_id: dict[int, str] = {}
     embed_by_hash: dict[str, dict[str, Any]] = {}
     if record_id:
         for tag in work.find_all(_annotates):
             if not isinstance(tag, Tag):
                 continue
-            p = element_path(tag, root_el)
-            if p is None:
-                continue  # outside the path root (e.g. an <img> in <head>) — unaddressable
-            el_path_by_id[id(tag)] = p
+            n = ordinal_by_id.get(id(tag))
+            if n is None:
+                continue  # outside the body (e.g. an <img> in <head>) — unaddressable
+            el_path_by_id[id(tag)] = str(n)
             meta = compute_embed_metadata(tag)
             if meta is None:
                 continue
             byte_hash = meta["byte_hash"]
-            addr = f"el={p}"
+            addr = f"el={n}"
             if byte_hash in embed_by_hash:
                 embed_by_hash[byte_hash]["addresses"].append(addr)
             else:
@@ -498,8 +514,11 @@ def _clean_html(
 
     # The wrapper's claim: the body's element children in the RAW artifact (computed
     # pre-strip — chrome-stripped children still belong to the claim; the artifact is
-    # what the address addresses).
-    wrapper_addresses = [f"el={i}" for i in range(1, len(iter_element_children(root_el)) + 1)]
+    # what the address addresses), each named by its own ORDINAL — not its position among
+    # siblings, which agree only when no earlier sibling carries any descendant element.
+    wrapper_addresses = [
+        f"el={ordinal_by_id[id(child)]}" for child in iter_element_children(root_el)
+    ]
 
     # Strip non-rendered infrastructure only (script/style/noscript/template/
     # link). No chrome/role/class heuristics — chrome removal is a capture-time,
@@ -533,14 +552,15 @@ def _clean_html(
 def _annotate_addressable(
     work: BeautifulSoup, el_path_by_id: dict[int, str]
 ) -> None:
-    """In-place: add `data-el="<path>"` to every surviving annotated element. The path
-    is the element's pre-strip child-index path in the raw artifact (§6.1.1), looked up
-    from `el_path_by_id` by `id(tag)` — stable through chrome strip for surviving tags.
+    """In-place: add `data-el="<ordinal>"` to every surviving annotated element. The
+    ordinal is the element's pre-strip document-order position in the raw artifact (v35,
+    §6.1.1), looked up from `el_path_by_id` by `id(tag)` — stable through chrome strip for
+    surviving tags.
 
     For every inline-media carrier, also drop the base64 `data:` URI it
     carries — huge dead weight in the cleaned body (a single inline video
     can be hundreds of MB), and the addressing scheme (`data-el`) is
-    all a consumer needs to construct a `corpus://<hash>?el=<path>` URI to
+    all a consumer needs to construct a `corpus://<hash>?el=<ordinal>` URI to
     fetch the bytes: `<img>` loses `src`/`srcset`; `<video>`/`<audio>`
     lose their own `src` and their `<source>` children are removed; an
     `<a href="data:…">` attachment loses its `href` (its label text

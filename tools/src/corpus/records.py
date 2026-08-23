@@ -840,11 +840,13 @@ def media_type_for(post: frontmatter.Post) -> str:
 
 
 def el_addressing(post: frontmatter.Post) -> dict[str, Any] | None:
-    """Return the record's attested `addressing:` stamp (§7.1) — `{parser, elements}`
-    from the artifact block — or None when absent. Presence is the 3.6 el= grammar
-    dispatch: a stamped record carries child-index PATH addresses (§6.1.1); an
-    unstamped one still carries the pre-3.6 filtered index, and every consumer that
-    reads an `el=` value must ask this before deciding what a bare integer means."""
+    """Return the record's attested `addressing:` stamp (§7.1) — `{parser, elements[,
+    scheme]}` from the artifact block — or None when absent. Presence/shape is the
+    three-generation el= grammar dispatch (§6.1.1): `scheme: ordinal` (v35) is the total
+    document-order ordinal space; a stamp WITHOUT the key is the frozen 3.6 dotted
+    child-index path; no stamp at all is the frozen pre-3.6 filtered index. Every
+    consumer that reads an `el=` value must ask this before deciding what a bare integer
+    means — sniffing the value resolves silently to the wrong element."""
     artifact = artifact_block(post)
     if not artifact:
         return None

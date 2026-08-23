@@ -57,6 +57,9 @@ Commands:
   remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
                 child-index paths, mapped against the artifacts (dry-run by
                 default; --apply writes)
+  remap-el-ordinal  v35 addressing remap for evidence anchors: dotted/legacy
+                el= → document-order ordinals, mapped against the artifacts
+                (dry-run by default; --apply writes)
   worklist REF  dependents to revisit — REF is a fact id, a corpus hash,
                 or an invariant id
   regen         rewrite the generated views (VOCAB.md, the open-questions
@@ -726,6 +729,64 @@ def _cmd_remap_el(argv: Sequence[str]) -> int:
     return 1 if res.holds else 0
 
 
+def _cmd_remap_el_ordinal(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger remap-el-ordinal",
+        "v35 addressing remap for evidence anchors: dotted/legacy el= → document-order "
+        "ordinals, mapped against the artifacts through the same engine the corpus "
+        "remap uses (dry-run by default).",
+    )
+    ap.add_argument("--apply", action="store_true", help="write the rewrites")
+    ap.add_argument(
+        "--manifest",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="corpus `remap-el-ordinal` run manifest (repeat once per hub). REQUIRED: "
+        "unlike the 3.6 precedent, a record's post-migration stamp cannot say whether "
+        "its addresses USED TO BE dotted or legacy, so the manifest supplies both the "
+        "eligibility set and each record's source generation.",
+    )
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, _ = _system(ns.root)
+    from ledger.remap_el_ordinal import load_migration_generations, remap_ledger_el_ordinal
+
+    if not ns.manifest:
+        print(
+            "ath ledger remap-el-ordinal: --manifest is required (one per hub, from "
+            "`corpus remap-el-ordinal`). Without it no record is eligible: an anchor "
+            "rewritten against the wrong source generation would point a §6.1.1 "
+            "ordinal at the wrong element.",
+            file=sys.stderr,
+        )
+        return 2
+    paths_in = [Path(p) for p in ns.manifest]
+    missing = [str(p) for p in paths_in if not p.is_file()]
+    if missing:
+        print(
+            f"ath ledger remap-el-ordinal: manifest not found: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        return 2
+    generations = load_migration_generations(paths_in)
+    print(f"eligibility: {len(generations)} record(s) migrated by the corpus remap")
+
+    res = remap_ledger_el_ordinal(ledger_root, join, apply=ns.apply, generations=generations)
+    for h in res.holds:
+        print(f"HOLD {h.fact}: {h.anchor[:60]} — {h.reason}", file=sys.stderr)
+    verb = "rewrote" if ns.apply else "would rewrite"
+    forms = ", ".join(f"{k}={v}" for k, v in sorted(res.forms.items())) or "none"
+    print(
+        f"{verb} {len(res.rewrites)} anchor(s)/citation(s) across "
+        f"{len(res.facts_touched)} file(s) ({forms}); {len(res.holds)} held, "
+        f"{res.skipped_not_migrated} on records the corpus remap did not migrate"
+    )
+    if ns.apply:
+        print("run `ath ledger check && ath ledger verify` — the gates must be green "
+              "in the same change (spec/ledger.md §13)")
+    return 1 if res.holds else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
@@ -747,6 +808,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "supersede": _cmd_supersede,
         "merge": _cmd_merge,
         "remap-el": _cmd_remap_el,
+        "remap-el-ordinal": _cmd_remap_el_ordinal,
     }
     try:
         if cmd in handlers:

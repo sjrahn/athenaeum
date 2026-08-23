@@ -29,7 +29,8 @@ PNG = bytes.fromhex("89504e470d0a1a0a") + b"\x00" * 40
 
 
 def _page_with_inline(tmp_path: Path, payload: bytes, media: str) -> tuple[Path, Path, str]:
-    """A corpus holding one HTML container whose `el=1.2.2` member is `payload`, promoted —
+    """A corpus holding one HTML container whose `el=5` member (v35 ordinal — the img is
+    the 5th element in document order: div, p, div, span, img) is `payload`, promoted —
     then mistyped as troff. Returns `(root, member record path, member id)`."""
     root = tmp_path / "c"
     (root / "records").mkdir(parents=True)
@@ -54,7 +55,7 @@ def _page_with_inline(tmp_path: Path, payload: bytes, media: str) -> tuple[Path,
     records.dump(post, container)
     assert (
         promote_cli.run(
-            argparse.Namespace(uri=f"corpus://{cid}?el=1.2.2", json=False, corpus_root=str(root))
+            argparse.Namespace(uri=f"corpus://{cid}?el=5", json=False, corpus_root=str(root))
         )
         == 0
     )

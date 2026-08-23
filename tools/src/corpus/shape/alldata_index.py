@@ -50,7 +50,14 @@ from bs4 import BeautifulSoup, Tag
 
 from corpus import containment, mime, recordbuild, records
 from corpus.shape import register_shaper
-from corpus.transforms.html import EL_PARSER_ID, element_path, path_root, total_element_count
+from corpus.transforms.html import (
+    EL_PARSER_ID,
+    element_ordinal,
+    element_path,
+    iter_element_children,
+    path_root,
+    total_element_count,
+)
 
 #: `<h3>` — the level a byte-mark records for this template's title (§4.3.2.3).
 _TITLE_LEVEL = 3
@@ -123,10 +130,12 @@ def _entries(content: Tag) -> list[tuple[Tag, str, str | None]]:
     return out
 
 
-def _entry_address(root: Tag, content: Tag, entries: list[tuple[Tag, str, str | None]]) -> str:
-    """The address of the entry run: a sibling range over the containers, or a point path
-    when the template carries exactly one (§6.1.1 — a single child IS its own point path, and
-    `[n-n]` is not a legal range).
+def _entry_address_dotted(
+    root: Tag, content: Tag, entries: list[tuple[Tag, str, str | None]]
+) -> str:
+    """The FROZEN 3.6 dotted-path address of the entry run: a sibling range over the
+    containers, or a point path when the template carries exactly one (§6.1.1 — a single
+    child IS its own point path, and `[n-n]` is not a legal range).
 
     The run must be CONTIGUOUS. It is on all 136 measured records — the banner is child 1 and
     the containers follow — but a gap would make the range claim an element the entries do
@@ -141,6 +150,48 @@ def _entry_address(root: Tag, content: Tag, entries: list[tuple[Tag, str, str | 
             f"{len(entries)} entries) — a range address would over-claim"
         )
     return f"el={base}.{lo}" if lo == hi else f"el={base}.[{lo}-{hi}]"
+
+
+def _entry_address_ordinal(
+    root: Tag, content: Tag, entries: list[tuple[Tag, str, str | None]]
+) -> str:
+    """The v35 ORDINAL address of the entry run: a sibling range `[A-B]` over the
+    containers' own document-order ordinals, or a point ordinal when the template carries
+    exactly one (§6.1.1).
+
+    The run must be a CONTIGUOUS SIBLING run — checked by POSITION among `content`'s
+    element children, never by ordinal adjacency (an earlier container's own descendants
+    would otherwise push a later container's ordinal ahead with no gap in the address
+    space to notice — the sibling-position vs ordinal-adjacency distinction §6.1.1's
+    envelope derivation is built on)."""
+    first, last = entries[0][0], entries[-1][0]
+    kids = iter_element_children(content)
+    try:
+        lo_pos = next(i for i, k in enumerate(kids) if k is first)
+        hi_pos = next(i for i, k in enumerate(kids) if k is last)
+    except StopIteration as exc:
+        raise TemplateMismatch(
+            "an itype-container is not a direct child of div.content"
+        ) from exc
+    if hi_pos - lo_pos + 1 != len(entries):
+        raise TemplateMismatch(
+            f"itype-containers are not a contiguous sibling run (positions "
+            f"{lo_pos}..{hi_pos} for {len(entries)} entries) — a range address would "
+            f"over-claim"
+        )
+    lo_ord, hi_ord = element_ordinal(first, root), element_ordinal(last, root)
+    if lo_ord is None or hi_ord is None:
+        raise TemplateMismatch("an itype-container sits outside the ordinal root")
+    return f"el={lo_ord}" if lo_ord == hi_ord else f"el=[{lo_ord}-{hi_ord}]"
+
+
+def _ordinal_address(tag: Tag, root: Tag) -> str:
+    """One element's v35 ordinal address, or a refusal when it sits outside the ordinal
+    root — the counterpart of `f"el={element_path(tag, root)}"` for the dotted branch."""
+    n = element_ordinal(tag, root)
+    if n is None:
+        raise TemplateMismatch("element sits outside the ordinal root (<body>)")
+    return f"el={n}"
 
 
 def _crumb_line(crumb: Tag) -> str:
@@ -169,6 +220,13 @@ def shape_alldata_index(
     unused — the template is the contract (§7.2: a `form:` declaration may carry no mapping
     when the shape needs none)."""
     soup = load_stamped_soup(corpus_root, post)
+    # Grammar dispatch is per RECORD, never value-sniffed (§6.1.1): an `addressing.scheme:
+    # ordinal` stamp (v35) authors ordinal addresses; a stamp without the key is the frozen
+    # 3.6 dotted-path era, which this shaper still writes for records the v35 remap has not
+    # yet reached.
+    stamp = records.el_addressing(post) or {}
+    ordinal_scheme = stamp.get("scheme") == "ordinal"
+    entry_address = _entry_address_ordinal if ordinal_scheme else _entry_address_dotted
     root = path_root(soup)
 
     view = soup.select_one("div.view-content")
@@ -191,17 +249,24 @@ def shape_alldata_index(
 
     entries = _entries(content)
 
+    if ordinal_scheme:
+        title_address = _ordinal_address(title, root)
+        crumb_address = _ordinal_address(crumb, root)
+    else:
+        title_address = f"el={element_path(title, root)}"
+        crumb_address = f"el={element_path(crumb, root)}"
+
     recordbuild.open_section(build, form="index")
     recordbuild.add_structural(
         build,
-        address=f"el={element_path(title, root)}",
+        address=title_address,
         level=_TITLE_LEVEL,
         mark=_text(title),
     )
     recordbuild.add_segment(
         build,
         atom="text",
-        address=_entry_address(root, content, entries),
+        address=entry_address(root, content, entries),
         body="\n".join(f"- {_mdlink(label, href)}" for _tag, label, href in entries),
     )
 
@@ -209,6 +274,6 @@ def shape_alldata_index(
     recordbuild.add_segment(
         build,
         atom="text",
-        address=f"el={element_path(crumb, root)}",
+        address=crumb_address,
         body=_crumb_line(crumb),
     )

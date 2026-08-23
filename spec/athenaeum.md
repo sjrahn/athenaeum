@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 34
+version: 35
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 34 (2026-08-22, owner ruling) pins the temporal-stratification boundary (Part II §12.3.14): period boundaries are **UTC calendar boundaries** for every producer and grain — no per-source timezone knob; offset-bearing date-axis values convert to UTC before bucketing, naive values bucket at face value (an offset the bytes don't carry is never invented), and a period closes at the first export after its UTC end, since membership keys on each member's own date. Prior version notes: the changelog.*
+*Version 35 (2026-08-22, owner ruling) returns the HTML address space to flat ordinals (Part II §6.1.1): `el=<N>` is the element's 1-based document-order ordinal, replacing the dotted child-index path — totality kept, containment becomes a tree question, ranges are sibling-only (`el=[A-B]`, endpoints sharing a parent), envelopes address up (subtree → sibling run → lowest common container), and grammar dispatch stays record-owned via `addressing.scheme`. The annotated view — ordinals span-surgically stamped as `data-el` attributes, faithfulness by construction — becomes the default delivery of a markup artifact; `?raw` yields the stored bytes exactly. Fleet migration: the v35 remap, operator-gated. Prior version notes: the changelog.*

@@ -17,7 +17,9 @@ def run(args: argparse.Namespace) -> int:
     root = resolved_corpus_root(args)
     _, record_file = paths.resolve_record(root, args.target)
     post = records.load(record_file)
-    blocks = segments.iter_blocks(post.content or "")
+    # A Section's address is DERIVED, never stored (§4.3.2.1) — this command PRINTS it, so
+    # an ordinal-scheme record (v35) needs the tree threaded or every section prints `None`.
+    blocks = segments.blocks_for_record(post, root)
     ord_ = 0
     for blk in blocks:
         ord_ += 1

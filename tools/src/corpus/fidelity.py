@@ -87,6 +87,7 @@ from .transforms.html import (
     iter_element_children,
     path_root,
     resolve_element_path,
+    resolve_ordinal,
     total_element_count,
 )
 
@@ -461,6 +462,29 @@ def _resolve(root: Any, path: furi.ElPath) -> list[Any]:
     return [n for n in region if isinstance(n, Tag) or type(n) is NavigableString]
 
 
+def _resolve_ordinal(root: Any, ordinal: furi.ElOrdinal) -> list[Any]:
+    """The ORDINAL counterpart of `_resolve` (v35, §6.1.1) — same node-collection
+    semantics (a point's own tag; a sibling range's parent-contiguous content run,
+    interleaved text nodes included), resolved through the ordinal tree walk rather than
+    dotted path algebra. Raises `ValueError` for an out-of-bounds ordinal or a range
+    whose endpoints are not siblings — exactly the checks `extract_el` runs before
+    materializing, applied here to the same question."""
+    if ordinal.sibling_range is None:
+        return [resolve_ordinal(root, ordinal.point)]
+    a, b = ordinal.sibling_range
+    first, last = resolve_ordinal(root, a), resolve_ordinal(root, b)
+    if first.parent is None or first.parent is not last.parent:
+        raise ValueError(
+            f"el={furi.format_el_ordinal(ordinal)}: ordinals {a} and {b} are not siblings "
+            f"(spec §6.1.1)"
+        )
+    contents = first.parent.contents
+    start = next(i for i, c in enumerate(contents) if c is first)
+    end = next(i for i, c in enumerate(contents) if c is last)
+    region = contents[start : end + 1]
+    return [n for n in region if isinstance(n, Tag) or type(n) is NavigableString]
+
+
 def _node_text(node: Any) -> str:
     """A region node's raw rendered text — an element's whole subtree, or a bare text node's
     own characters."""
@@ -518,10 +542,11 @@ def check_fidelity(
     if stamped is not None and int(stamped) != total_element_count(soup):
         raise ValueError(
             f"element-count mismatch: the record attests {stamped} elements, this parse "
-            f"yields {total_element_count(soup)} — the trees disagree, so el= paths resolve "
-            f"to the wrong elements (§6.1.1)"
+            f"yields {total_element_count(soup)} — the trees disagree, so el= addresses "
+            f"resolve to the wrong elements (§6.1.1)"
         )
     root = path_root(soup)
+    ordinal_scheme = el_addressing.get("scheme") == "ordinal"
     whole_text = textnorm.norm(soup.get_text(" "))
     rendered_text = _rendered_body(blocks)
     unowed = _unowed_region_tags(soup, regions)
@@ -542,7 +567,10 @@ def check_fidelity(
         unresolvable: list[str] = []
         for addr, value in addressed:
             try:
-                tags = _resolve(root, furi.parse_el_path(value))
+                if ordinal_scheme:
+                    tags = _resolve_ordinal(root, furi.parse_el_ordinal(value))
+                else:
+                    tags = _resolve(root, furi.parse_el_path(value))
             except ValueError as exc:
                 unresolvable.append(f"el={value}: {exc}")
                 continue

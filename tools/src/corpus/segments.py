@@ -54,6 +54,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -256,13 +257,15 @@ class Section:
         description: str | None = None,
         fields: dict[str, Any] | None = None,
         el_paths: bool = False,
+        el_ordinal_root: Any = None,
     ) -> Section:
         """Build a Section whose `address` is DERIVED as the envelope of `segments`' own
         addresses, in their discrete-index scheme (`page=`→`pages=`, `spine=`→`spines=`,
-        `block=`, `sheet=`; `el=` under the 3.6 path algebra when `el_paths` is True — the
-        caller reads the record's `addressing:` stamp, §6.1.1). The single place a section
-        span is computed: drafters build sections this way instead of hand-formatting the
-        range. *(3.7, §12.29)* Nothing stores the span any more — `iter_blocks` derives a
+        `block=`, `sheet=`; `el=` under the 3.6 dotted algebra when `el_paths` is True, or
+        the v35 ordinal tree algebra when `el_ordinal_root` is given — the caller reads
+        the record's `addressing:` stamp, §6.1.1). The single place a section span is
+        computed: drafters build sections this way instead of hand-formatting the range.
+        *(3.7, §12.29)* Nothing stores the span any more — `iter_blocks` derives a
         Section's `address` from its children on every parse, so there is no second value
         for a lint rule to compare against; the `section-address-span` rule this factory
         once fed is retired, and this IS now the only place the span is computed at all.
@@ -271,7 +274,7 @@ class Section:
         the span can't be derived (empty, heterogeneous, or an unrecognized/temporal scheme)
         — temporal (`time_range=`) sections are structural intervals, not content envelopes,
         and are built directly, not via this factory."""
-        address = section_address(segments, el_paths=el_paths)
+        address = section_address(segments, el_paths=el_paths, el_ordinal_root=el_ordinal_root)
         if address is None:
             raise ValueError(
                 "cannot derive a section address from these segments' addresses "
@@ -408,17 +411,118 @@ def _el_path_envelope(values: list[str]) -> str | list[str] | None:
     return [f"el={furi.format_el_path(t)}" for t in tops]
 
 
+def _el_ordinal_envelope(values: list[str], root: Any) -> str | list[str] | None:
+    """The §6.1.1 "address up, never across" envelope over children's ORDINAL `el=`
+    values (v35), under the attested parse (`root` — `transforms.html.path_root`'s
+    return, the tree the ordinals were computed against).
+
+    Unlike `_el_path_envelope` this cannot be pure address algebra: the CHANGELOG's own
+    words are the reason — "containment and siblinghood... become questions for the
+    attested parse" — so every claim is resolved against the tree before anything is
+    compared. Order, identical in spirit to the dotted derivation: dedup → claims
+    contained in another claim drop → one survivor is the envelope → survivors that are
+    all points sharing one parent, at CONSECUTIVE SIBLING POSITIONS (not consecutive
+    ordinals — a sibling's own subtree can push the next sibling's ordinal arbitrarily far
+    ahead) collapse to the sibling range `el=[<first>-<last>]` → anything wider takes the
+    lowest common container element's own ordinal. Returns None when a value fails the
+    ordinal grammar, resolves outside `root`, or the survivors' only common container is
+    `root` itself (which has no ordinal, §6.1.1) — "not derivable", never a guess."""
+    from . import functional_uri as furi
+    from .transforms.html import (
+        element_ordinal,
+        iter_element_children,
+        ordinal_interval,
+        resolve_ordinal,
+    )
+
+    try:
+        claims = [furi.parse_el_ordinal(v) for v in values]
+    except ValueError:
+        return None
+    unique: list[Any] = []
+    for c in claims:
+        if c not in unique:
+            unique.append(c)
+
+    def _interval(c: Any) -> tuple[int, int] | None:
+        try:
+            if c.sibling_range is None:
+                return ordinal_interval(resolve_ordinal(root, c.point), root)
+            a, b = c.sibling_range
+            ta, tb = resolve_ordinal(root, a), resolve_ordinal(root, b)
+        except ValueError:
+            return None
+        if ta.parent is not tb.parent:
+            return None
+        tb_interval = ordinal_interval(tb, root)
+        return None if tb_interval is None else (a, tb_interval[1])
+
+    pairs: list[tuple[Any, tuple[int, int]]] = []
+    for c in unique:
+        iv = _interval(c)
+        if iv is None:
+            return None
+        pairs.append((c, iv))
+
+    def _contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+        return outer[0] <= inner[0] and inner[1] <= outer[1]
+
+    tops = [
+        (c, iv) for c, iv in pairs
+        if not any(iv != other_iv and _contains(other_iv, iv) for _, other_iv in pairs)
+    ]
+    tops.sort(key=lambda pair: pair[1][0])
+
+    if len(tops) == 1:
+        return f"el={furi.format_el_ordinal(tops[0][0])}"
+
+    if all(c.sibling_range is None for c, _ in tops):
+        tags = [resolve_ordinal(root, c.point) for c, _ in tops]
+        if tags[0].parent is not None and all(t.parent is tags[0].parent for t in tags[1:]):
+            siblings = iter_element_children(tags[0].parent)
+            pos = {id(child): idx for idx, child in enumerate(siblings)}
+            idxs = sorted(pos[id(t)] for t in tags)
+            if idxs == list(range(idxs[0], idxs[-1] + 1)):
+                first_ord = element_ordinal(siblings[idxs[0]], root)
+                last_ord = element_ordinal(siblings[idxs[-1]], root)
+                if first_ord is not None and last_ord is not None:
+                    return f"el=[{first_ord}-{last_ord}]"
+
+    # Address up, never across: the lowest common container element's own ordinal.
+    lo = min(iv[0] for _, iv in tops)
+    hi = max(iv[1] for _, iv in tops)
+    first_claim = tops[0][0]
+    anchor = (
+        first_claim.point if first_claim.sibling_range is None else first_claim.sibling_range[0]
+    )
+    node = resolve_ordinal(root, anchor).parent
+    while node is not None and node is not root:
+        interval = ordinal_interval(node, root)
+        if interval is not None and interval[0] <= lo and hi <= interval[1]:
+            ordinal = element_ordinal(node, root)
+            if ordinal is not None:
+                return f"el={ordinal}"
+        node = node.parent
+    return None
+
+
 def section_address(
-    children: list[Segment], *, el_paths: bool = False
+    children: list[Segment], *, el_paths: bool = False, el_ordinal_root: Any = None
 ) -> str | list[str] | None:
     """Derive a section's address as the envelope of `children`'s addresses, in their own
     discrete-index scheme. Returns None when it can't be derived — no children, a
     heterogeneous mix of address families, or an unrecognized/temporal scheme.
 
-    `el_paths` selects the 3.6 path algebra for the `el` family (§6.1.1); the caller
-    reads it off the record's `addressing:` stamp (`records.el_addressing`) — a bare
-    integer value means different things under the two grammars, so the record, never
-    the value, decides.
+    `el_paths` selects the 3.6 dotted path algebra for the `el` family (§6.1.1); the
+    caller reads it off the record's `addressing:` stamp (`records.el_addressing`) — a
+    bare integer value means different things under the two grammars, so the record,
+    never the value, decides. `el_ordinal_root` (v35) selects the ordinal tree algebra
+    instead — a caller passing it is asserting `scheme: ordinal` (the two are mutually
+    exclusive by construction, since a record carries exactly one scheme) and takes
+    precedence when given. Neither is derivable without its respective access (a parsed
+    tree for the ordinal space); a caller with no soup to hand leaves `el_ordinal_root`
+    None, and the envelope for such a section is honestly None (§6.1.1: "not decidable
+    from two addresses alone" without the parse) rather than a guess.
 
     The single source of truth for a section span: `Section.spanning` builds with it, and
     `iter_blocks` re-derives with it on every parse (§12.29) — a section's `address` is
@@ -432,8 +536,11 @@ def section_address(
     if len(families) != 1:
         return None
     ((param, values),) = families.items()
-    if param == "el" and el_paths:
-        return _el_path_envelope(values)
+    if param == "el":
+        if el_ordinal_root is not None:
+            return _el_ordinal_envelope(values, el_ordinal_root)
+        if el_paths:
+            return _el_path_envelope(values)
     strategy = _SPAN_STRATEGIES.get(param)
     if strategy is None:
         return None
@@ -615,8 +722,17 @@ def render_segment(seg: Segment) -> str:
 # ---------- parse ---------- #
 
 
-def iter_blocks(body: str) -> list[Block]:
+def iter_blocks(body: str, *, el_ordinal_root: Any = None) -> list[Block]:
     """Parse `body` (the content zone only) into an ordered list of top-level blocks.
+
+    `el_ordinal_root` (v35, optional): the record's artifact tree root
+    (`transforms.html.path_root`'s return), for a caller that both HAS one and knows (from
+    the record's `addressing:` stamp) that its scheme is `ordinal` — threaded straight to
+    `section_address` for any section whose address must be derived. This is a pure
+    string→blocks parser with no I/O of its own, so it never opens an artifact itself;
+    with no root given, a section on an ordinal-scheme record derives no address at all
+    (`section_address`'s "not decidable... without the parse" honesty), exactly as it did
+    before this parameter existed.
 
     The content zone is a bare flat run of `Segment`s (the default), or one or more
     `Section`s, or — the mixed-artifact case (§4.3.2.1) — **formless top-level segments
@@ -728,9 +844,56 @@ def iter_blocks(body: str) -> list[Block]:
 
     for blk in blocks:
         if isinstance(blk, Section) and blk.address is None and blk.segments:
-            blk.address = section_address(blk.segments, el_paths=_el_path_children(blk.segments))
+            blk.address = section_address(
+                blk.segments,
+                el_paths=_el_path_children(blk.segments),
+                el_ordinal_root=el_ordinal_root,
+            )
 
     return blocks
+
+
+def blocks_for_record(post: Any, corpus_root: Path | None = None) -> list[Block]:
+    """`iter_blocks(post.content)`, with the ordinal tree threaded in when the record is
+    ordinal-scheme (v35) and its artifact is reachable — so a section's DERIVED address
+    (§4.3.2.1: never stored) comes out right instead of silently None, the honest-but-
+    unhelpful answer `iter_blocks` alone gives an ordinal-scheme record with no soup
+    (§6.1.1: the ordinal envelope needs the parse, which a pure string→blocks parser
+    never has on its own).
+
+    Falls back to the plain parse — byte-identical to calling `iter_blocks` directly —
+    when `corpus_root` is omitted, the record isn't ordinal-scheme, or the artifact
+    can't be read; a caller that only needs SEGMENT-level addresses (always stored,
+    never derived) is unaffected either way. The shared entry point for the handful of
+    callers that display or judge a record's SECTION addresses on a live corpus
+    (`corpus health`, `corpus lint`, `corpus show`) — everything else still calls
+    `iter_blocks` directly, deliberately: a pure index/token consumer has no reader
+    looking at a section's address string, so a None there costs nothing."""
+    content = post.content or ""
+    if corpus_root is None:
+        return iter_blocks(content)
+    from . import records as _records
+
+    addressing = _records.el_addressing(post)
+    if not addressing or addressing.get("scheme") != "ordinal":
+        return iter_blocks(content)
+    try:
+        from bs4 import BeautifulSoup
+
+        from . import containment as _containment
+        from . import mime as _mime
+        from .transforms.html import EL_PARSER_ID, path_root
+
+        record_id = str(post.metadata.get("id") or "")
+        media_type = _records.media_type_for(post)
+        artifact_path = _containment.ensure_local_bytes(
+            corpus_root, record_id, _mime.extension_for(media_type)
+        )
+        soup = BeautifulSoup(artifact_path.read_bytes(), EL_PARSER_ID)
+        root = path_root(soup)
+    except Exception:
+        return iter_blocks(content)
+    return iter_blocks(content, el_ordinal_root=root)
 
 
 def _collapse_adjacent_same_form(blocks: list[Block]) -> list[Block]:

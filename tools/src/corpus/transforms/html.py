@@ -1,24 +1,28 @@
 """HTML transforms.
 
-- `el=<path>` (HTML → htmlel) *(3.6, §6.1.1)* — the element named by a dotted
-  child-index path walked from the artifact's body, selected as an `HtmlElRef`. A
-  *terminal* `el=` materializes the element's inline bytes: an `<img>` decodes +
-  renders to a PIL image (cache: PNG); a `<video>`/`<audio>` or `<a href="data:…">`
-  attachment decodes to raw bytes (cache: the media's native extension). An
-  image-output op after `el=` (`bbox`/`mark`/`fit`/…) auto-promotes the `<img>` to an
-  image first (non-image carriers cannot promote). A record not yet stamped with
-  `addressing:` (§7.1) resolves through the FROZEN pre-3.6 filtered index instead —
-  `legacy_is_addressable`, below.
+- `el=<N>` (HTML → htmlel) *(v35, §6.1.1)* — the element named by its 1-based
+  document-order ordinal (a depth-first pre-order walk from the artifact's body),
+  selected as an `HtmlElRef`. **Three grammar generations, dispatched by the record's
+  `addressing:` stamp (§7.1), never by the value**: `scheme: ordinal` is the current
+  ordinal space (`iter_elements_preorder` / `resolve_ordinal`, below); a stamp WITHOUT
+  the key is the FROZEN 3.6 dotted child-index path (`element_path` /
+  `resolve_element_path`); no stamp at all is the FROZEN pre-3.6 filtered index
+  (`legacy_is_addressable`, below). A *terminal* `el=` materializes the element's
+  inline bytes: an `<img>` decodes + renders to a PIL image (cache: PNG); a
+  `<video>`/`<audio>` or `<a href="data:…">` attachment decodes to raw bytes (cache:
+  the media's native extension). An image-output op after `el=` (`bbox`/`mark`/`fit`/…)
+  auto-promotes the `<img>` to an image first (non-image carriers cannot promote).
 - `selector=<css>` (HTML → image) — CSS selector identifying a single `<img>`;
   decodes its data URI. Back-compat with earlier records.
 
 Inline media (every carrier) lives in the HTML as a base64 `data:` URI — `<img src>` /
 `srcset`, a `<video>`/`<audio>`'s `<source src>` (or own `src`), or an attachment
-`<a href>`. The drafter (`corpus.draft.html`) addresses each carrier by its `el=` path
-and the resolver re-materializes its bytes here. What the two share is the path walk
-itself (`element_path` / `resolve_element_path`) and the carrier→data-URI map
-(`carrier_data_uri`) — there is no membership predicate to drift, which is the 3.6
-amendment's substance (§12.28).
+`<a href>`. The drafter (`corpus.draft.html`) addresses each carrier by its `el=`
+ordinal and the resolver re-materializes its bytes here. What the two share is the
+ordinal walk itself (`iter_elements_preorder` / `element_ordinal` / `resolve_ordinal`)
+and the carrier→data-URI map (`carrier_data_uri`) — there is no membership predicate to
+drift, which is the 3.6 amendment's substance (§12.28), carried forward by v35's own
+"one shared implementation" of the ordinal walk.
 
 AVIF support depends on `pillow-avif-plugin` (declared as a base dependency).
 """
@@ -49,6 +53,24 @@ from . import NotMaterializable, RenderContext, register
 #: already-resolved (and potentially already-cited) result — `@2` is the 3.6 path space
 #: (§6.1.1) replacing the `@1` whitelist counter, exactly that rule applied to itself.
 ENGINE_VERSION = "html-el@2"
+
+#: *(v35)* The ordinal address space's own pin — a NEW id, never a silent reinterpretation of
+#: `@2`'s already-resolved (and cited) results: `el=5` means a different element under the two
+#: grammars, so a URI that happens to collide across them (same hash, same value — impossible in
+#: practice since a record carries exactly one scheme, §6.1.1) must never share a cache entry.
+#: Selected per RECORD, never per value — `engine_version_for_addressing`, below.
+ENGINE_VERSION_ORDINAL = "html-el@3"
+
+
+def engine_version_for_addressing(el_addressing: dict | None) -> str:
+    """The `html-el@` cache-key pin for the record's el= grammar generation (§6.1.1 dispatch,
+    v35): `ENGINE_VERSION_ORDINAL` for an `addressing.scheme: ordinal` stamp, `ENGINE_VERSION`
+    (the frozen `@2`) for the dotted-path and legacy-whitelist branches alike — both keep the
+    cache identity they always had, since neither's resolution logic changed. The grammar is
+    record-owned, not value-sniffed, so this reads the stamp rather than the URI."""
+    if el_addressing and el_addressing.get("scheme") == "ordinal":
+        return ENGINE_VERSION_ORDINAL
+    return ENGINE_VERSION
 
 #: The pinned parser identity (spec §6.1.1 / §7.1's `addressing` key): the stdlib-backed
 #: `html.parser` tree BeautifulSoup builds. Error recovery and implied-tag insertion
@@ -195,6 +217,204 @@ def total_element_count(soup: BeautifulSoup) -> int:
     return len(soup.find_all(True))
 
 
+# ---------- the el= ordinal walk (v35, spec §6.1.1) ---------- #
+#
+# The one shared implementation of the ordinal address space: the drafter computes ordinals
+# with it, the resolver walks them back with it, and envelope derivation (`corpus.segments`)
+# tests containment/siblinghood through it. Unlike the dotted path, an ordinal carries no
+# containment algebra of its own (CHANGELOG v35: "not decidable from two addresses alone") —
+# every relation question here reads the tree.
+
+
+def iter_elements_preorder(root: Tag) -> list[Tag]:
+    """Every element under `root`, in document order (depth-first pre-order) — the walk the
+    ordinal address space is a 1-based position in (§6.1.1). `root` itself is excluded (the
+    root has no ordinal, mirroring `element_path`'s root rule). BeautifulSoup's
+    `find_all(True)` already walks in document order, so this is that call, named for what
+    it means here — the shared basis `total_element_count` also reads, scoped to `root`
+    rather than the whole document."""
+    return root.find_all(True)
+
+
+def element_ordinal(tag: Tag, root: Tag) -> int | None:
+    """`tag`'s 1-based document-order ordinal under `root` (§6.1.1), or None when `tag` is
+    not under `root` (or IS `root` — the root has no ordinal). Identity comparison (`is`),
+    since BeautifulSoup tags compare structurally under `==`."""
+    for i, t in enumerate(iter_elements_preorder(root), start=1):
+        if t is tag:
+            return i
+    return None
+
+
+def element_ordinals(root: Tag) -> dict[int, int]:
+    """`id(tag) -> ordinal` for every element under `root`, computed in one walk — for a
+    caller (the drafter) that needs many elements' ordinals rather than paying
+    `element_ordinal`'s per-call walk once per element."""
+    return {id(t): i for i, t in enumerate(iter_elements_preorder(root), start=1)}
+
+
+def resolve_ordinal(root: Tag, n: int) -> Tag:
+    """The element named by ordinal `n` under `root` (§6.1.1). Raises `ValueError` naming the
+    walk length — bounds are a property of the ADDRESS (the `parse_index_span` lesson), so a
+    sibling-range address's endpoints are bounds-checked here too, before anything asks
+    whether they are siblings."""
+    elements = iter_elements_preorder(root)
+    if n < 1 or n > len(elements):
+        raise ValueError(
+            f"el={n}: out of range (the walk from <{root.name}> yields {len(elements)} "
+            f"elements)"
+        )
+    return elements[n - 1]
+
+
+def ordinal_interval(tag: Tag, root: Tag) -> tuple[int, int] | None:
+    """`tag`'s subtree as an inclusive ordinal interval `(start, end)` under `root` (§6.1.1)
+    — a subtree occupies a CONTIGUOUS ordinal run by construction of the pre-order walk, so
+    `end` is `start` plus `tag`'s own element-descendant count. None when `tag` is not under
+    `root`."""
+    start = element_ordinal(tag, root)
+    if start is None:
+        return None
+    return start, start + len(tag.find_all(True))
+
+
+def ordinals_are_siblings(root: Tag, a: int, b: int) -> bool:
+    """Whether ordinals `a` and `b` name elements that share a parent element (§6.1.1's
+    sibling-range constraint) — a property of the parsed tree, never decidable from the two
+    numbers alone (the v35 trade, CHANGELOG). Bounds-checks both via `resolve_ordinal`
+    first, exactly as a point ordinal is bounds-checked."""
+    ta, tb = resolve_ordinal(root, a), resolve_ordinal(root, b)
+    return ta.parent is tb.parent
+
+
+# ---------- the annotated view: a span-surgical byte splice (v35, §6.1.1/§6.2) ---------- #
+#
+# "Ordinals are counted by machines, never by eyes." The annotated view is the artifact's
+# own bytes with `data-el="<N>"` spliced into every addressable element's own start tag —
+# never a re-parse/re-serialization, which would renormalize quoting/entities and break the
+# faithfulness ruling (the `jsonfields.strip_fields` discipline, applied here to insertion
+# instead of removal). `html.parser` (fed the exact bytes BeautifulSoup decoded them as)
+# stamps `sourceline`/`sourcepos` on every tag at parse time — the position of its opening
+# `<`, as a (1-based line, 0-based CHARACTER column) pair in the DECODED text. Recovering a
+# BYTE offset in the ORIGINAL bytes from that pair requires re-encoding under the exact same
+# codec BeautifulSoup decoded with (`soup.original_encoding`); every computed offset is then
+# verified against the raw bytes before it is trusted — a mismatch is a hard error, never a
+# silent skip, because a partial annotation would invite exactly the guessing this surface
+# exists to end.
+
+
+class AnnotationError(ValueError):
+    """The splice could not be proven correct against the raw bytes — a foreign encoding
+    guess, a parser-implied element with no source position, or an offset that does not
+    land on the element's own start tag. Raised rather than guessed around."""
+
+
+def annotate_bytes(raw: bytes, soup: BeautifulSoup, root: Tag) -> bytes:
+    """The annotated view (§6.1.1, v35): `raw` with ` data-el="<N>"` spliced into every
+    element under `root`'s own start tag, immediately after the tag name — before any
+    attributes the source already carries. A pure function of `(raw, the attested parse)`,
+    provable by re-derivation: stripping exactly the injected spans recovers `raw`
+    byte-for-byte.
+
+    If a source element already carries its own `data-el` attribute, that attribute STAYS
+    in the bytes (faithfulness — nothing is deleted); the injected one lands FIRST, right
+    after the tag name. NOTE (measured, not the naive assumption): under THIS toolchain's
+    attested parser (`html.parser`, via BeautifulSoup's `dict(attrs)` construction), a
+    duplicate attribute resolves LAST-wins, not first — so a source element that already
+    happens to carry `data-el` will show ITS OWN value, not ours, if the annotated bytes
+    are re-parsed and a consumer reads `data-el` directly off the DOM. The byte-level
+    faithfulness guarantee (nothing the source wrote is ever deleted, and ours is always
+    present) holds regardless of which duplicate a given parser prefers; a reader that
+    needs the authoritative ordinal must resolve it via the shared walk
+    (`resolve_ordinal`/`element_ordinal`), never by trusting a `data-el` value read back
+    off arbitrary re-parsed HTML.
+
+    Raises `AnnotationError` — naming the offending element — when a splice point cannot be
+    proven correct: no source position at all (a parser-implied element; `html.parser`
+    rarely implies one, but nothing here assumes it never will), or the computed byte offset
+    does not land on `<` followed by the element's own tag name in `raw`."""
+    encoding = soup.original_encoding or "utf-8"
+    try:
+        text = raw.decode(encoding)
+    except (LookupError, UnicodeDecodeError) as exc:
+        raise AnnotationError(
+            f"cannot annotate: the raw artifact does not decode cleanly under the parse's "
+            f"own encoding ({encoding!r}): {exc}"
+        ) from exc
+
+    lines = text.split("\n")
+    newline_bytes = len("\n".encode(encoding))
+    line_byte_start = [0]
+    for line in lines[:-1]:
+        line_byte_start.append(line_byte_start[-1] + len(line.encode(encoding)) + newline_bytes)
+
+    # Per-line character->byte cumulative offset, built lazily (only for lines an element
+    # actually starts on) and reused across every tag on that line — O(document length)
+    # overall rather than O(elements x line length).
+    col_cache: dict[int, list[int]] = {}
+
+    def byte_offset(line_no: int, col: int) -> int:
+        idx = line_no - 1
+        arr = col_cache.get(idx)
+        if arr is None:
+            arr = [0]
+            total = 0
+            for ch in lines[idx]:
+                total += len(ch.encode(encoding))
+                arr.append(total)
+            col_cache[idx] = arr
+        if col >= len(arr):
+            raise AnnotationError(
+                f"source position line {line_no} col {col} exceeds the decoded line's own "
+                f"length — the attested encoding does not agree with the parse"
+            )
+        return line_byte_start[idx] + arr[col]
+
+    splices: list[tuple[int, bytes]] = []
+    for tag in iter_elements_preorder(root):
+        n = element_ordinal(tag, root)
+        if tag.sourceline is None or tag.sourcepos is None:
+            raise AnnotationError(
+                f"el={n} (<{tag.name}>): the parse carries no source position for this "
+                f"element (parser-implied) — cannot annotate it span-surgically"
+            )
+        start = byte_offset(tag.sourceline, tag.sourcepos)
+        if start >= len(raw) or raw[start : start + 1] != b"<":
+            raise AnnotationError(
+                f"el={n} (<{tag.name}>): the computed splice offset {start} does not land "
+                f"on '<' in the raw artifact — refusing to guess"
+            )
+        i = start + 1
+        while i < len(raw) and raw[i : i + 1] not in (b" ", b"\t", b"\n", b"\r", b"/", b">"):
+            i += 1
+        name_bytes = raw[start + 1 : i]
+        if name_bytes.decode("ascii", errors="replace").lower() != tag.name:
+            raise AnnotationError(
+                f"el={n}: the raw bytes at the computed offset name "
+                f"<{name_bytes.decode('ascii', errors='replace')}>, not <{tag.name}> — "
+                f"refusing to guess"
+            )
+        splices.append((i, f' data-el="{n}"'.encode("ascii")))
+
+    splices.sort(key=lambda s: s[0])  # document order == byte-offset order, already true
+    out = bytearray()
+    cursor = 0
+    for pos, insertion in splices:
+        out += raw[cursor:pos]
+        out += insertion
+        cursor = pos
+    out += raw[cursor:]
+    return bytes(out)
+
+
+#: Versioned op id (spec §6.4) for the `annotated` view's SPLICE algorithm — folded into the
+#: resolver's cache key exactly like `ENGINE_VERSION` above. The bytes it reads never drift
+#: (it is a pure function of the raw artifact + attested parse); what could drift across a
+#: release is the splice algorithm itself, so a change to it — never to `el=` materialization
+#: — is what bumps this pin.
+ANNOTATED_ENGINE_VERSION = "html-annotated@1"
+
+
 _SRCSET_CANDIDATE_RE = re.compile(r"(\S+)\s+(\d+(?:\.\d+)?)[wx]", re.IGNORECASE)
 
 
@@ -312,20 +532,20 @@ def extract_el(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> Ht
     `HtmlElRef`. The concrete materialization (image vs raw bytes) is decided terminally
     by the resolver, since it depends on which element the path names.
 
-    Which grammar the value is read under is decided by the RECORD, not the value: a
-    record stamped with `addressing:` (§7.1) carries path addresses; an unstamped record
-    still carries the pre-3.6 filtered index and resolves through the frozen legacy
-    enumeration, unchanged. The bare-integer spelling is valid under BOTH grammars with
-    different meanings (`el=5` = 5th whitelisted element vs body's 5th element child),
-    so sniffing the value would resolve silently to the wrong element — the exact
-    failure this amendment exists to end.
+    Which grammar the value is read under is decided by the RECORD, not the value —
+    **three** generations (v35, §6.1.1): an `addressing:` stamp (§7.1) carrying
+    `scheme: ordinal` speaks the total document-order ordinal space; a stamp WITHOUT the
+    key is the frozen 3.6 dotted child-index path; no stamp at all is the frozen pre-3.6
+    filtered index. The bare-integer spelling is valid under all three with different
+    meanings, so sniffing the value would resolve silently to the wrong element — the
+    exact failure this amendment exists to end.
 
-    On the stamped branch the two attested facts are checked FIRST: a foreign parser
+    On either stamped branch the two attested facts are checked FIRST: a foreign parser
     identity or a diverging element count is a hard error, never a silent walk of the
-    wrong tree. A sibling range (`el=1.3.[2-9]`) is bounds-checked exactly like a point
-    and only THEN declared unmaterializable — an envelope that runs past the tree names
-    nothing, and reporting it as declared coverage is how confabulated span addresses
-    stayed invisible to the gate (the `parse_index_span` lesson, kept)."""
+    wrong tree. A sibling range is bounds-checked exactly like a point and only THEN
+    declared unmaterializable — an envelope that runs past the tree names nothing, and
+    reporting it as declared coverage is how confabulated span addresses stayed invisible
+    to the gate (the `parse_index_span` lesson, kept)."""
     addressing = ctx.get("el_addressing")
     if addressing:
         parser = str(addressing.get("parser") or "")
@@ -345,6 +565,28 @@ def extract_el(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> Ht
                     f"would resolve to the wrong elements (§6.1.1); re-attest to "
                     f"re-derive addresses against the current parse"
                 )
+
+        if addressing.get("scheme") == "ordinal":
+            ordinal = furi.parse_el_ordinal(value)
+            root = path_root(soup)
+            if ordinal.is_point:
+                tag = resolve_ordinal(root, ordinal.point)
+                return HtmlElRef(tag=tag, index=ordinal.point)
+            a, b = ordinal.sibling_range
+            if not ordinals_are_siblings(root, a, b):
+                raise ValueError(
+                    f"el={furi.format_el_ordinal(ordinal)}: ordinals {a} and {b} are not "
+                    f"siblings — a range's endpoints must share a parent element (§6.1.1, "
+                    f"the v35 owner ruling); this is an invalid address, not a valid one "
+                    f"with no byte surface"
+                )
+            # A valid sibling range names a real envelope of elements; it just has no
+            # single byte surface. Not a defect — see `NotMaterializable`.
+            raise NotMaterializable(
+                f"el={furi.format_el_ordinal(ordinal)}: sibling-range envelope has no "
+                f"single byte surface to materialize; a point ordinal is required for that"
+            )
+
         path = furi.parse_el_path(value)
         tag = resolve_element_path(path_root(soup), path)
         if not path.is_point:

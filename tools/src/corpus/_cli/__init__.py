@@ -70,6 +70,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "locate":          ("Storage",                "Residency query: where do these bytes reside for a bare blake3? (spec §12.1.1, v24)"),
     # Maintenance — derived-data hygiene + deliberate record removal
     "remap-el":        ("Maintenance",            "§12.28 migration: rewrite legacy el=N addresses to child-index paths + stamp addressing (dry-run by default)"),
+    "remap-el-ordinal": ("Maintenance",           "v35 migration: rewrite dotted/legacy el= addresses to document-order ordinals + stamp scheme: ordinal (dry-run by default)"),
     "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired (dry-run by default)"),
     "reseat":          ("Maintenance",            "§12.30 migration: promote each placed member and move its rendering onto its own record, leaving a placement (dry-run by default)"),
     "home-crumb":      ("Maintenance",            "#89 migration: move a verbatim, alone-in-its-own-segment my.alldata.com breadcrumb into a new trailing index span (dry-run by default)"),

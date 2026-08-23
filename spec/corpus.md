@@ -2,7 +2,7 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 34
+version: 35
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -361,7 +361,7 @@ Members are deduplicated by `transport` — identical content collapses to one r
 
 Segments link to members by **address membership**, not by an explicit reference field. A segment whose address appears (scalar or list-member) in a member's `address` is the place where that asset sits in the record's representation. Unplaced members — rows no segment points at — are tolerated as a record of available assets: the roster is unabridged by design, and declining to *place* a favicon is the pruning decision, never editing the roster.
 
-The segment that does the linking is a **placement** (§4.3.2.4), and it is the only kind admitted at a member's address. The correspondence is exact in both directions: **a placement's address MUST appear in some member's address** — a placement naming no member names nothing — and **no content-atom segment's address may appear in, or chain from, a member's address**, because a member's content is its own record's to render. The chained form is included deliberately: `el=<path>&bbox=<x,y,w,h>` is a crop of the member's *pixels*, so it is a rendering of the member's bytes wearing the container's address, and it re-homes onto the member's own record with the crop intact and the `el=` prefix gone. Placing is therefore also what obliges promotion (§8.1). *(A **placement** may chain from a member's address, and only a placement may: that is the deconstructed import, and it names a region the member's own record has already declared rather than one the parent measured — §4.3.2.4. The prohibition here is on **content**, which is why the two forms do not collide: a chained placement still says only* member X sits here, *at finer grain.)* *(Structural byte-marks are unaffected and may stand at any address, member or not: a mark is the source declaring a boundary, which is a fact about this transport regardless of what sits at the position.)*
+The segment that does the linking is a **placement** (§4.3.2.4), and it is the only kind admitted at a member's address. The correspondence is exact in both directions: **a placement's address MUST appear in some member's address** — a placement naming no member names nothing — and **no content-atom segment's address may appear in, or chain from, a member's address**, because a member's content is its own record's to render. The chained form is included deliberately: `el=<N>&bbox=<x,y,w,h>` is a crop of the member's *pixels*, so it is a rendering of the member's bytes wearing the container's address, and it re-homes onto the member's own record with the crop intact and the `el=` prefix gone. Placing is therefore also what obliges promotion (§8.1). *(A **placement** may chain from a member's address, and only a placement may: that is the deconstructed import, and it names a region the member's own record has already declared rather than one the parent measured — §4.3.2.4. The prohibition here is on **content**, which is why the two forms do not collide: a chained placement still says only* member X sits here, *at finer grain.)* *(Structural byte-marks are unaffected and may stand at any address, member or not: a mark is the source declaring a boundary, which is a fact about this transport regardless of what sits at the position.)*
 
 Every image, audio, and video segment therefore addresses something the resolver materializes from **this record's own capture** without a roster row. Two cases qualify:
 
@@ -415,7 +415,7 @@ address: turn=2&att=1
 
 **There are no universal section-header fields.** Every field a section carries is one its form declares (§7.8) — codebook lists (e.g. `form/conversation`'s `participants:`, the authorship-ordered codebook that `participant:` segment indexes resolve against) and span envelope facts, each mechanically derivable from the span's own bytes. A form that declares nothing takes a **bare opener**, and the bare opener is complete: `<!--section index-->` says *this span takes the index form and renders under its contract*, which is the entire job of the block. The rule is structural, not stylistic: a field present on every section regardless of form is a field no contract owns and no check binds, so it is where accretion lands — removing the universal slot removes the landing site.
 
-**The envelope is derived, never stored.** A span **is** its children; its envelope is the min–max span of the child segment addresses (`pages=2-6`, `turn=1-74`, `el=` under the §6.1.1 path algebra), computed by every reader as `section_address(children)` under the children's own discrete-index scheme. A stored envelope could disagree with its children, and a derived one cannot. Two things follow: a section always claims exactly its children's extent — where one form governs everything, its one span's envelope simply covers everything, and there is no separate "whole-record section" spelling — and a record's display identity has no section-shaped input at all (§4.2.3). *(A **temporal** section — `time_range=` — is a structurally bounded interval, not a min–max over children: it states its bounds as the form's own declared field.)*
+**The envelope is derived, never stored.** A span **is** its children; its envelope is the min–max span of the child segment addresses (`pages=2-6`, `turn=1-74`; for `el=` the **tightest single containing address** under §6.1.1 — a contiguous sibling run's range, else the lowest common container element's own ordinal, derived under the attested parse), computed by every reader as `section_address(children)` under the children's own discrete-index scheme. A stored envelope could disagree with its children, and a derived one cannot. Two things follow: a section always claims the tightest address its children's extent admits — where one form governs everything, its one span's envelope simply covers everything, and there is no separate "whole-record section" spelling — and a record's display identity has no section-shaped input at all (§4.2.3). *(A **temporal** section — `time_range=` — is a structurally bounded interval, not a min–max over children: it states its bounds as the form's own declared field.)*
 
 ###### Rules
 
@@ -562,7 +562,7 @@ level: <int>
 <the mark's own text, verbatim — as markdown>     # empty when the mark is unlabeled
 ```
 
-A **structural segment** records that **the source itself declares a structural boundary** at an address: a heading (`el=<path>`, §6.1.1), an EPUB nav target (`spine=<N>`), a PDF outline entry (`page=<N>`), a media chapter (`time=<tc>`), a chat platform's topic boundary (`turn=<N>`). It carries no content atom and takes no atomic overlay. Its identity is (`structural`, address), stacking beside content segments at the same address per the standard rule.
+A **structural segment** records that **the source itself declares a structural boundary** at an address: a heading (`el=<N>`, §6.1.1), an EPUB nav target (`spine=<N>`), a PDF outline entry (`page=<N>`), a media chapter (`time=<tc>`), a chat platform's topic boundary (`turn=<N>`). It carries no content atom and takes no atomic overlay. Its identity is (`structural`, address), stacking beside content segments at the same address per the standard rule.
 
 **The mark's text lives in the BODY.** A mark is markup, and a header scalar is a string: a source heading routinely carries links, emphasis, and line breaks, and a scalar flattens all of it at authoring time, silently. Worse, text held outside any body displaces what is beside it — every position computed over a span's rendering comes out short by the mark's length. So a structural segment's body is its mark, rendered faithfully like any other content — links kept (§4.3.2.2), verbatim otherwise. An **empty body is an unlabeled boundary** (an `<hr>`, an untitled chapter). The mark contributes to the faithful text rendering and counts toward `token_counts.body` (§9.6), because it is text the record renders.
 
@@ -643,7 +643,7 @@ A record imports another record's rendering **iff** that record is a **member** 
 Within that permission there are two forms, and the default is the coarse one.
 
 - **Whole import** — a placement carrying the member's address **bare**. The leaf's rendering is imported entire, in the leaf's own order. This is the ordinary form and it asks nothing of the leaf but existence.
-- **Deconstructed import** — a placement whose address **chains** the member's address with a suffix (`el=<path>&<suffix>`). It imports only those leaf segments whose own address *is* that suffix, so a parent can position a member's parts individually rather than as one block.
+- **Deconstructed import** — a placement whose address **chains** the member's address with a suffix (`el=<N>&<suffix>`). It imports only those leaf segments whose own address *is* that suffix, so a parent can position a member's parts individually rather than as one block.
 
 ***The grain of the deconstruction is the address, not the segment.*** A leaf may carry several segments at one address — identity is (`opener-id`, `address`), so a `text` and a `text/data-table` describing the same region are distinct segments legitimately sharing one (§4.3.2.2) — and a placement naming that address imports **all** of them, in the leaf's order. This is a deliberate coarsening: a placement carries an address and no opener, and giving it one would make the parent name *which representation* of a region it wanted, which is a judgment about the member's content and therefore the leaf's to make. Until a real case needs that granularity, one address is one placeable unit — which also keeps *exhaustive* countable against something the leaf already partitions itself by.
 
@@ -675,7 +675,7 @@ Which settles the converse too: **a member's own title is part of its rendering,
 
 The rule reaches exactly the assets that have a roster row, and no others. A **region** of the record's own transport — a rastered PDF page, a `bbox=` crop of a single-image artifact, a video `frame=` — has no member row, no independent blake3, and no leaf to promote to; it stays a content-atom marker with its transcriptions beside it (§4.3.2.2), and nothing here touches it. The distinction is not a convention to remember: it is already exactly the line §4.3.1.4 draws for whether a row exists at all.
 
-A region **of a member** is the case worth stating, because it looks like the exempt one and is not. `el=<path>&bbox=…` chains a crop onto a member's address, so what it renders is the member's pixels — the member's own record is where that rendering belongs, and the address it takes there is the crop alone (the fractions were always relative to the member's extent, so nothing is recomputed). A whole-frame crop (`bbox=0,0,1,1`) is not a region at all — §4.3.2.2 already says so — and takes the whole-transport address, which is to say none.
+A region **of a member** is the case worth stating, because it looks like the exempt one and is not. `el=<N>&bbox=…` chains a crop onto a member's address, so what it renders is the member's pixels — the member's own record is where that rendering belongs, and the address it takes there is the crop alone (the fractions were always relative to the member's extent, so nothing is recomputed). A whole-frame crop (`bbox=0,0,1,1`) is not a region at all — §4.3.2.2 already says so — and takes the whole-transport address, which is to say none.
 
 ###### The two demands, at their two grains
 
@@ -688,11 +688,11 @@ A placed member in the wrong state is two different defects, and each lints wher
 
 ```
 <!--members
-- address: el=1.2.2.1.3.1.4.1.8.3
+- address: el=87
   media_type: image/png
   transport: blake3:cefda49d…
   bytes: 63420
-- address: el=1.2.2.1.3.1.4.1.14.3
+- address: el=93
   media_type: image/png
   transport: blake3:010894ee…
   bytes: 51420
@@ -701,18 +701,18 @@ A placed member in the wrong state is two different defects, and each lints wher
 <!--section document-->
 
 <!--segment structural
-address: el=1.2.2.1.1.1
+address: el=71
 level: 3
 -->
 
 Underhood Fuse Block
 
 <!--segment placement
-address: el=1.2.2.1.3.1.4.1.8.3
+address: el=87
 -->
 
 <!--segment placement
-address: el=1.2.2.1.3.1.4.1.14.3
+address: el=93
 -->
 ```
 
@@ -722,7 +722,7 @@ and, on the record whose id is `cefda49d…`:
 <!--artifact image/png-->
 
 <!--origin
-uri: corpus://<the article>?el=1.2.2.1.3.1.4.1.8.3
+uri: corpus://<the article>?el=87
 snapshot: …
 -->
 
@@ -923,37 +923,41 @@ corpus://<hash>[?<params>]
 - `<hash>` — blake3 hash of the source artifact, 64-char lowercase hex.
 - `<params>` — `&`-separated key/value pairs and flag-style keys. Order is significant — parameters compose left-to-right, each operating on the previous step's output. A param **value** percent-encodes the query-reserved characters `%`/`&`/`#` as `%25`/`%26`/`%23`; the parser decodes, and canonicalization re-encodes. Values may therefore carry any character — archive member names are producer-controlled (`?path=…D%26D 5e….json` addresses a member literally named `…D&D 5e….json`).
 
-Bare `corpus://<hash>` resolves to the source artifact's bytes. `corpus://<hash>?<params>` resolves to a derived view per §6.2.
+Bare `corpus://<hash>` resolves to the source artifact's bytes — with one declared exception *(v35, owner ruling)*: a **markup artifact** (the `el=` family, §6.1.1) delivers its **annotated view** by default, and `corpus://<hash>?raw` yields the stored bytes exactly. The identity invariant is untouched — the store holds the original bytes, attestation hashes them, and for markup the checkable equation keys on the `raw` route (`blake3(corpus://<hash>?raw) == <hash>`); for every other type the bare route is the raw route. `corpus://<hash>?<params>` resolves to a derived view per §6.2.
 
-#### 6.1.1 The `el=` path — the HTML address space
+#### 6.1.1 The `el=` ordinal — the HTML address space
 
-`el=<path>` names an element in a markup artifact by its **child-index path**: dot-separated 1-based positions among element siblings, walked from the artifact's body. `el=1` is the body's first element child; `el=1.3.2` is that element's third element child's second. Text nodes, comments, and attributes are not counted — only elements.
+`el=<N>` names an element in a markup artifact by its **document-order ordinal** *(v35)*: the 1-based position of the element in a depth-first pre-order walk of the artifact's body. `el=1` is the body's first element child; its descendants take the ordinals immediately after it, before its next sibling. Text nodes, comments, and attributes are not counted — only elements. Two properties fall out of pre-order for free: numeric order **is** document order, and a subtree occupies a **contiguous ordinal interval**.
 
 **The space is total.** *Every* element is addressable. There is no predicate deciding which tags may be named, and this is substance rather than convenience: any such predicate is a **versioned contract that records do not record** — adding one tag to a whitelist silently re-points every stored address that crosses an instance of it, with nothing in the record to say which version produced it and no gate able to detect the difference. A total space cannot be revised, so it cannot rot.
 
 **What a drafter emits is a separate question.** Which elements get their own segment is an authoring heuristic owned by the drafter and the form contracts — it may change in any release, add or drop element kinds freely, and none of that changes what an existing address *means*. Splitting the two is what buys permanence: the space is mechanical and frozen; the taste is free.
 
-**Relation is legible from the address.**
+**Relation is legible from the tree, not the address** *(the v35 trade, owner-ruled)*.
 
-- **Containment** — `A` contains `B` iff `A` is a component-wise prefix of `B` (`el=1.3` contains `el=1.3.2`; it does not contain `el=1.30`). No artifact access.
-- **Order and siblinghood** — component-wise **numeric** comparison, so `el=1.10` follows `el=1.9`. A lexical string sort is wrong here and is the obvious implementation trap.
-- **A subtree is one address.** The container's own path names it and everything under it, exactly. An envelope therefore cannot over-claim content it does not hold.
+- **Order** — plain numeric comparison, which is document order by construction. No sort trap.
+- **Containment and siblinghood** — properties of the parsed tree: `A` contains `B` iff `B`'s ordinal falls inside `A`'s subtree interval, and two ordinals are siblings iff their elements share a parent. Neither is decidable from the two numbers alone. This is the deliberate trade against the dotted child-index path this space replaces (history, CHANGELOG v35): the path bought address-local containment at the price of addresses no human could read, compare, or cite (`el=1.2.2.1.3.1.4.1.8.3`), and measurement across the live consumers showed the algebra always ran beside a parse anyway — span checks, envelope derivation, lint, and verify all walk the artifact, and the attested parser identity (below) guarantees every walker sees the same tree. What had to survive the trade, and does, is totality.
+- **A subtree is one address.** The container's own ordinal names it and everything under it, exactly.
 
-**Ranges.** Three forms, in order of preference:
+**Ranges.** Three forms:
 
 | form | meaning |
 |---|---|
-| `el=1.3` | the element **and its whole subtree** — the common case, and free |
-| `el=1.3.[2-9]` | **sibling range**: children 2 through 9 of `el=1.3`, inclusive, and their subtrees |
-| `[el=1.3.2, el=1.7, el=2.1]` | an ordered **list** — a region crossing subtree boundaries |
+| `el=7` | the element **and its whole subtree** — the common case, and free |
+| `el=[12-19]` | **sibling range**: the elements at ordinals 12 and 19 — which MUST be siblings — and every element sibling between them, subtrees included |
+| `[el=7, el=42]` | an ordered **list** — disjoint landmarks (§4.3.2.2) |
 
-The sibling range is the only special syntax; brackets cannot collide with the path grammar, which is digits and dots. The list is the existing multi-region address form (§4.3.2.2). A span that crosses subtree boundaries **must** use the list: there is deliberately no way to write a flat "from here to there" that cuts across structure, because such a region is not one structural thing — a flat integer range is how over-claiming envelopes arise.
+**The sibling constraint is normative, not advisory** *(owner ruling)*: a range whose endpoints do not share a parent element is an invalid address — refused at resolution and a lint **error** (`address-el-range-invalid`) on a stored value, checked against the attested parse exactly as a point ordinal is bounds-checked. The syntax could carry a flat "from here to there" that cuts across structure; the grammar deliberately refuses to let it mean anything, because such an interval is not one structural thing — endpoints at different depths name a region no element of the artifact declares, and a flat document-interval range is how over-claiming envelopes arise. The bracketless `el=<a>-<b>` spelling remains the retired flat form and is rejected with its own message.
+
+**Address up, never across** *(owner ruling)*. When a region spans more than a clean sibling run, the address is the **lowest common container element** — one ordinal, one subtree — never a longer bridge. The mechanical envelope derivation (§4.3.2) applies this in order: claims contained in another claim drop; one survivor is the envelope; survivors forming a contiguous sibling run collapse to the range; anything wider takes the common container's own ordinal. The ordered list remains an authorable address form for genuinely disjoint landmarks, but the derivation never emits it. This is the same honesty rule as prose with no element of its own (below): one segment at the container beats a claim that stitches together structure the artifact does not declare.
 
 **The space names elements, so text in no element has no tight address.** Making every element addressable does not make every *region* addressable. Prose emitted as bare text nodes between `<br>`s in a flat `<div>` belongs to no element but its container, and the container is routinely the page's whole content. This is not a gap to be closed by a fourth range form: a character-offset address would name a region that is not a structural thing and would re-point on any reparse, losing the permanence a total space buys. **The honest response is at the record layer, not the address layer**: where several segments' prose shares one container and none has an element of its own, they are one region of the artifact and belong in **one segment** addressed at that container (§4.3.2.1 — a span that is a subtree *is* that subtree's own address). What is lost is the prose's internal ordering against the pictures interleaved with it; what is gained is that the record stops claiming a picture's address for a paragraph.
 
-**Two attested facts keep drift loud.** The path is a function of the *parsed* tree, so the parse is part of the contract. The artifact block carries the **parser identity** the addresses were computed under and the total **element count** (§7.1 `addressing`). A resolver whose parse yields a different count knows immediately that it disagrees, and says so — instead of silently resolving a path to the wrong element.
+**Ordinals are counted by machines, never by eyes — so the machine count is what readers get** *(owner ruling)*. The **annotated view** — the artifact with every element's ordinal stamped on its own start tag as a `data-el="<N>"` attribute — is the **default delivery** of a markup artifact: bare `corpus://<hash>` resolves to it, because nearly every reader of delivered HTML is there to cite it, and an address authored any other way — counted by hand, inferred from position — is a guess, the failure class the attested parse checks exist to catch. The stamping **fully maintains faithfulness by construction**: it is a span-surgical splice into the original bytes (the header-strip / `strip_fields` discipline — each element's start tag gains the one attribute; no re-parse, no re-serialization, no byte the source carried moved or altered), a pure derivable function of the raw bytes, provable by re-derivation. `?raw` (§6.2) yields the stored bytes exactly — the route the identity equation keys on for markup, and rarely needed otherwise.
 
-*(An optional record-level `address_prefix` — a declared common ancestor shortening every address — is deliberately not specified: measurement found no heuristic-free definition that pays, and absence means absolute, so the field can be added later without re-pointing a single existing address.)*
+**Two attested facts keep drift loud.** The ordinal is a function of the *parsed* tree, so the parse is part of the contract. The artifact block carries the **parser identity** the addresses were computed under and the total **element count** (§7.1 `addressing`). A resolver whose parse yields a different count knows immediately that it disagrees, and says so — instead of silently resolving an ordinal to the wrong element.
+
+**Three grammar generations, dispatched by the record, never the value** *(v35)*. The spelling `el=5` has meant three things across this space's history — a filtered-whitelist index, a single-component child path, and today's ordinal — so the **record** picks the grammar: an `addressing` stamp carrying `scheme: ordinal` (§7.1) marks this space; a stamp without the key is the frozen dotted-path era; an unstamped record is the frozen whitelist era. Both frozen grammars remain resolvable read-only, exactly as stored, and both are scheduled out by the v35 remap (CHANGELOG). Sniffing the value is forbidden — it resolves silently to the wrong element, the exact failure the stamp exists to end.
 
 ### 6.2 Transformations
 
@@ -985,6 +989,8 @@ The transformation table is also the home of the **derivation ops** — mechanic
 | `dpi=<N>` | (render config) | (config) | Rasterization DPI for `page=<N>`. Position-independent. Default 200. |
 | `body` | any | markdown | The record's **derived body** — the faithful mechanical rendering: DOM→markdown under the overlay's capture-time chrome config (HTML), spine text (EPUB), reply-text trim (eml), verbatim passthrough (JSON, plain text), page markers (PDF). A pure function of (artifact × schemas × op version); what `corpus body` prints for a formless record. |
 | `members` | any transport with embedded assets | json | Member enumeration over every address axis (`el`/`spine`/`path`/`msg`/`part`/`card`/`stream_id`/…) — the roster **with its full descriptors**, derived. Beyond the stored row's four keys (§4.3.1.4) it carries every mechanically-readable per-member fact: pixel dimensions, verbatim `alt`, member filename, an email member's `from`/`subject`/`date`, a vCard's display name. The surface a normalize pass consults to see what an artifact carries — never the block, which by design says less. |
+| `annotated` | HTML | html | *(v35)* The **annotated view** — the artifact's original bytes with every element's document-order ordinal (§6.1.1) spliced into its own start tag as a `data-el="<N>"` attribute, span-surgically (no re-parse, no re-serialization; every source byte kept in order). The authoring surface, and the **default delivery**: bare `corpus://<hash>` on a markup artifact resolves here, so a reader cannot cite by guesswork — the correct coordinates are forced into view. Computed under the record's attested parse, version-labeled (§6.4), cache-only, provable by re-derivation. **Terminal only**, like `raw` — a delivery view, not a working step: ops run against the raw parse, never against stamped bytes. The explicit spelling exists for disclosure and symmetry; it and the bare route are one resolution, one cache entry. |
+| `raw` | any | bytes | *(v35)* The stored artifact bytes, exactly — for a markup artifact, the escape from the annotated default (rarely needed: byte-level verification, re-export, external diffing); for every other type the bare route already is this. `blake3(?raw) == <hash>` is the identity equation's markup spelling. Terminal only — it composes with nothing. |
 | `transcribe` | audio / audio stream | json/text | Speech-to-text over the addressed audio, with timestamps and speaker-turn indexes where determinable. **Version-labeled** (§6.4): the result carries engine + model version. |
 | `scene` | promoted media stream leaf | json | The leaf's **cut list** under its stamped `cutting:` strategy (§7.1): the resolved strategy, every span with its `time_range=` address and length, and the degeneracy signals (`no-boundaries`, `over-segmented`). The introspection surface an authoring pass reads before deciding anything — `probe`'s role for a PDF page, on a timeline. Runs the **stamped** strategy, never a fresh resolution, so this op can never be the route by which a record is silently re-cut; an unstamped leaf answers `unresolved` rather than failing, because that is a legitimate state (§7.1). |
 | `turn=<N>` | turn-structured record | json/text | The verbatim N-th unit of the record's declared unit array (1-indexed), located by the origin overlay's form mapping (§7.2) — for a chat transcript, the complete message object: reactions, edit history, attachment declarations, platform ids, one hop away from the envelope segments. |
@@ -999,7 +1005,7 @@ A PDF `page=<N>` is a **page selector**, not an unconditional render: a per-page
 
 `fit=` presets are **implementation-defined**, not enumerated here: a preset (e.g. `llm`) bounds the result to a consumer's budget — typically a vision model's maximum input dimensions and pixel count — and those limits are model-dependent and drift over time, so freezing them into the spec would rot. The normative contract is only that `fit=` downscales aspect-preserving and never enlarges; the concrete bounds of any named preset live in the resolver implementation.
 
-Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. `frame=` is polymorphic the same way: a **1-based ordinal** (or inclusive ordinal span) on an animated image, whose frames are a sequence with no timebase a reader can trust (GIF delays are per-frame and advisory), and a **timecode** on a video, whose timeline is the medium's own axis — the physics of each medium picks its reading, and the token does not collide. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<path>` (§6.1.1), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
+Parameter value grammar may be media-type-dependent; the resolver dispatches on the source artifact's type. In particular `bbox` is **polymorphic** — relative floats in `[0.0, 1.0]` when cropping a rendered image (an image artifact, or a `page=` render of a PDF), and a spreadsheet cell range (e.g. `bbox=B2:G30`) when narrowing a worksheet region — so the same token does not collide across media types. `frame=` is polymorphic the same way: a **1-based ordinal** (or inclusive ordinal span) on an animated image, whose frames are a sequence with no timebase a reader can trust (GIF delays are per-frame and advisory), and a **timecode** on a video, whose timeline is the medium's own axis — the physics of each medium picks its reading, and the token does not collide. Pure **address selectors** that locate a region without transforming it — `sheet=<name>`, `el=<N>` (§6.1.1), and any others — are defined by each media-type schema (§4.3.2) and are not enumerated here; §6.2 lists only the parameters that produce a derived view.
 
 **The muxing contract.** Media cutting, muxing, and conversion are resolver ops with normatively pinned *behavior* and implementation-owned *mechanics* — the contract maps onto ffmpeg's primitives, and exactly as with `fit=` presets, the supported codec/format sets are implementation-defined so the spec doesn't rot; only the behavior below is normative.
 
@@ -1083,7 +1089,7 @@ A `mime` schema declares everything the matching artifact block needs and everyt
 
   **An unstamped leaf is unresolved, not defaulted.** A stream promoted before its strategy existed carries no `cutting:`, and that is a record awaiting a stamp, not a defective one and not one to be re-cut on sight — the same rule §4.3.2.2 sets for a missing `whole_address_count`. An absent attested fact means the check has nothing to compare, so it reports rather than assuming.
 
-- `addressing` (optional) — for a format whose address space is a **parsed tree**, the parse the addresses were computed under. `parser` names the pinned implementation (the HTML family: the stdlib-backed `html.parser` tree BeautifulSoup builds — error recovery and implied-tag insertion differ between parsers, so the choice is part of the contract, not an implementation detail). At attestation the resolved parser identity and the artifact's total **element count** are stamped onto the artifact block as attested facts. The count is the cheap self-check: a consumer whose parse yields a different number knows its tree disagrees and reports that, rather than resolving `el=1.3.2` to whatever its own walk happens to reach (§6.1.1).
+- `addressing` (optional) — for a format whose address space is a **parsed tree**, the parse the addresses were computed under. `parser` names the pinned implementation (the HTML family: the stdlib-backed `html.parser` tree BeautifulSoup builds — error recovery and implied-tag insertion differ between parsers, so the choice is part of the contract, not an implementation detail). `scheme` names the address grammar the stored values are written under (*v35*): `ordinal` is the current space (§6.1.1); absence of the key on a stamped record is the frozen dotted-path era, resolvable read-only but never written anew. At attestation the resolved parser identity and the artifact's total **element count** are stamped onto the artifact block as attested facts. The count is the cheap self-check: a consumer whose parse yields a different number knows its tree disagrees and reports that, rather than resolving `el=42` to whatever its own walk happens to reach (§6.1.1).
 - `extended_fields` — fields the matching artifact block carries, each with type and optional `semantic_type` tag. A declaration may carry `role: title` / `role: description`, marking the field as an editorial candidate for the record's derived title/description (§4.2.3) — the artifact layer's contribution, weakest in the precedence. The artifact block holds only facts about the **primary-artifact bytes** (e.g. ffprobe codec / dimensions / streams); source metadata from a capturer's enrichment sidecar does NOT live here — see `sidecar`. Vendor/domain identity (what a bundle *is*, beyond its bytes) does NOT live here either — that is knowledge, asserted in the ledger as roster entries and claims citing the record, minted mechanically by a harvest rule keyed on the kept-whole MIME (`ledger.md` §10).
 - `sidecar` (optional) — for an artifact type a capturer enriches with a companion metadata sidecar (e.g. a yt-dlp `.info.json`), declares what is lifted and where. `source` names the sidecar (e.g. `ytdlp-info-json`); `ytdlp_keys` lists the info.json keys copied — each into the **origin block** as a flat `ytdlp_<key>` field (§7.2), the mapping the sidecar-lift attestation applies. The sidecar is companion metadata staged in `capture/<hash>.<suffix>`, consumed at ingest attestation (§8.1), then **deleted** — never persisted to `artifacts/` (only the artifact carries the `<hash>` name there). It is *non-primary-source* metadata, so nothing from it goes to the artifact block, the body, or the frontmatter.
 - `derived_hashes` — list of **recipe ids** (§7.9) this format adds to the corpus-wide default set (§7.9's layer model: default ∪ mime ∪ origin overlay, additive union — a declaration adds, never suppresses). Destination follows each recipe's residency class (§2, §7.9): a byte-stable recipe with `residency: record` lands in the frontmatter `hash:` **and** the index; every other recipe lands in the index only. (A schema still declaring the legacy `transport_algos` reads as `derived_hashes` with each bare algorithm name as a `residency: record` byte-stable recipe.)
@@ -1809,7 +1815,7 @@ Formats that arrive later slot into existing strategies, not new machinery: 7z/r
 
 - **Selective mailbox declaration** (mbox attestation). A mailbox may hold 10⁵ messages, so message members are declared **selectively**: the ingest/re-attest surface accepts named 1-indexed ordinals (`--messages 5,12,90-95`), each recorded as a `message/rfc822` member row at `msg=<N>` (blake3 over the un-stuffed member bytes, plus the message's Date / From / Subject and byte length). Declaration is **cumulative and idempotent**: a re-declaration unions the newly-named ordinals with the already-declared set, an identical re-declaration folds, and a changed hash for a declared ordinal is a **hard error**. An undeclared run attests the mailbox summary only (message count, byte size, date span), no members.
 - **The eml reply-text trim** (the `body` op for `message/rfc822`). The derived body is the **reply text only** — the `text/plain` part, else `text/html` reduced to text — with trailing quoted history trimmed from the first confidently-matched marker (an `On … wrote:` attribution directly above a `>`-quoted line, `-----Original Message-----`, an Outlook header block or underscore rule, or a `>`-run to EOF), keeping everything when no marker matches (**prefer false negatives**) and keeping signatures. Part member rows skip the text alternatives the body consumed.
-- **HTML addressability** (the `el=` selector). `el=<path>` names an element by its child-index path over **every** element in document order (§6.1.1) — there is no addressable-element predicate. What an address materializes is determined by the element it names (§6.2). What shapers and the resolver share is the path walk itself, which has no configuration to drift; which elements a drafter chooses to *emit a segment for* is a separate, freely-revisable heuristic that changes no address's meaning.
+- **HTML addressability** (the `el=` selector). `el=<N>` names an element by its document-order ordinal over **every** element (§6.1.1) — there is no addressable-element predicate. What an address materializes is determined by the element it names (§6.2). What shapers and the resolver share is the ordinal walk itself, which has no configuration to drift; which elements a drafter chooses to *emit a segment for* is a separate, freely-revisable heuristic that changes no address's meaning.
 - **Manifest lint conventions.** An empty archive attests a blocking `partial-content` issue. `embed-unreferenced` is relaxed for `manifest`-disposition records (the members ARE the content) and for `message/rfc822` records (parts are message *members*, not body-flow assets — the normalizer links an inline image into the body where it belongs).
 
 #### 12.4.2 One construction path (the constituent model)
@@ -2025,7 +2031,7 @@ Media-type schemas declare their own address grammar (§4.3.2). Schemes that hav
 
 | Axis | Example | Typical source |
 |---|---|---|
-| element | `el=<path>` · `el=<parent>.[<a>-<b>]` · list | marked-up / HTML text (a dotted child-index path over every element in document order, §6.1.1; output determined by the element — an `<img>` renders to an image, a `<video>`/`<audio>` or `<a href="data:…">` attachment carrier materializes to its raw bytes, a text element to its region) |
+| element | `el=<N>` · `el=[<a>-<b>]` (sibling range) · list | marked-up / HTML text (a 1-based document-order ordinal over every element, §6.1.1; output determined by the element — an `<img>` renders to an image, a `<video>`/`<audio>` or `<a href="data:…">` attachment carrier materializes to its raw bytes, a text element to its region) |
 | page | `page=<N>` | paginated documents |
 | block | `block=<N>` | block-structured documents without fixed pages |
 | sheet | `sheet=<name>` (+ `bbox=<A1-range>`) | spreadsheets |

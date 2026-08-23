@@ -316,6 +316,144 @@ def el_path_sort_key(path: ElPath) -> tuple[int, ...]:
     return (*path.components, path.sibling_range[0])
 
 
+# ---------- element-ordinal grammar (v35, spec §6.1.1) ---------- #
+
+# A bare ordinal: 1-based, no leading zeros — the space is permanent, one spelling per
+# address, same discipline as `_EL_COMPONENT_RE`.
+_ORDINAL_RE = re.compile(r"^[1-9]\d*$")
+# A bracketed sibling range: `[<a>-<b>]`, both bare ordinals.
+_ORDINAL_RANGE_RE = re.compile(r"^\[([1-9]\d*)-([1-9]\d*)\]$")
+# The retired 3.5 bracketless flat range — `parse_el_path`'s courtesy message, kept.
+_ORDINAL_FLAT_RANGE_RE = re.compile(r"^\d+-\d+$")
+
+
+@dataclass(frozen=True)
+class ElOrdinal:
+    """A parsed v35 `el=` value (spec §6.1.1): a 1-based document-order ordinal over every
+    element in a depth-first pre-order walk of the artifact's body — `el=7` names the
+    element AND its whole subtree — or, bracketed, a **sibling range** (`el=[12-19]`): the
+    elements at ordinals 12 and 19, which MUST share a parent element, and every element
+    sibling between them, subtrees included.
+
+    Exactly one of `point`/`sibling_range` is set. Unlike `ElPath`, an `ElOrdinal` carries
+    no containment or sibling algebra of its own — the v35 trade (CHANGELOG) is that
+    relation is legible from the parsed tree, not the two numbers, so that logic lives
+    beside the tree walk (`corpus.transforms.html`), not here."""
+
+    point: int | None = None
+    sibling_range: tuple[int, int] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.point is None) == (self.sibling_range is None):
+            raise ValueError("ElOrdinal carries exactly one of point/sibling_range")
+
+    @property
+    def is_point(self) -> bool:
+        return self.sibling_range is None
+
+
+def parse_el_ordinal(value: str | None) -> ElOrdinal:
+    """Parse a v35 `el=` value into an `ElOrdinal`. Raises `ValueError` naming the actual
+    mistake:
+
+    - a **dotted** value (`el=1.3.2`) — the pre-v35 grammar (§6.1.1); reaching the ordinal
+      parser at all means an address on an `addressing.scheme: ordinal` record that the v35
+      remap has not yet touched (CHANGELOG v35) — a migration gap, not an authoring one.
+    - the retired 3.5 **bracketless** flat range (`el=7-19`) — `parse_el_path`'s courtesy,
+      kept: every pre-migration record that ever carried one gets the same clear message.
+    - a malformed bracketed range (`a >= b`), a leading zero, zero itself, or empty.
+
+    The single definition of the ordinal grammar (the `parse_el_path` precedent): the
+    resolver walks through it, lint validates through it, and envelope derivation composes
+    through it, so an authored address cannot be legal to one and illegal to another."""
+    if value is None or not value.strip():
+        raise ValueError("el= requires an ordinal (spec §6.1.1), e.g. el=7 or el=[12-19]")
+    raw = value.strip()
+    if "." in raw:
+        raise ValueError(
+            f"el={raw}: a dotted value is the pre-v35 grammar (spec §6.1.1) — this record's "
+            f"`addressing:` stamp carries `scheme: ordinal`, so its el= values are "
+            f"document-order ordinals; a dotted address reaching here means the v35 remap "
+            f"has not run on this record (CHANGELOG v35)"
+        )
+    m = _ORDINAL_RANGE_RE.match(raw)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if a >= b:
+            raise ValueError(
+                f"el={raw}: sibling range [{a}-{b}] must run low-to-high across at least "
+                f"two siblings (a single element is its own point ordinal)"
+            )
+        return ElOrdinal(sibling_range=(a, b))
+    if _ORDINAL_FLAT_RANGE_RE.match(raw):
+        raise ValueError(
+            f"el={raw}: the bracketless flat range is the retired 3.5 form (spec §6.1.1) — "
+            f"a subtree is its own ordinal, a sibling run is el=[<a>-<b>], and a region "
+            f"crossing subtree boundaries is an address list"
+        )
+    if not _ORDINAL_RE.match(raw):
+        raise ValueError(
+            f"el={raw}: not a valid ordinal — el= is a 1-based document-order ordinal "
+            f"(e.g. el=7) or a bracketed sibling range (el=[12-19]) (spec §6.1.1)"
+        )
+    return ElOrdinal(point=int(raw))
+
+
+def format_el_ordinal(ordinal: ElOrdinal) -> str:
+    """Canonical string form of an `ElOrdinal` (the value only, no `el=` key)."""
+    if ordinal.sibling_range is not None:
+        a, b = ordinal.sibling_range
+        return f"[{a}-{b}]"
+    return str(ordinal.point)
+
+
+def el_ordinal_sort_key(ordinal: ElOrdinal) -> tuple[int, int]:
+    """Document-order sort key: plain numeric comparison, which IS document order by
+    construction (§6.1.1 — no sort trap the way dotted lexical components had). A sibling
+    range sorts at its first (lowest) ordinal."""
+    if ordinal.sibling_range is not None:
+        return ordinal.sibling_range
+    return (ordinal.point, ordinal.point)
+
+
+def ordinal_bounds(ordinal: ElOrdinal) -> tuple[int, int]:
+    """`(low, high)` of an `ElOrdinal`'s own declared numbers — a point as a singleton
+    range, a sibling range as its literal endpoints. NOT the subtree interval a caller with
+    tree access computes (`transforms.html.ordinal_interval`): a sibling range's true
+    covered span runs through its far endpoint's whole subtree, which these two numbers
+    alone cannot say (§6.1.1's "not decidable from two addresses alone"). Exists for the
+    callers that genuinely have no parse access and need a sound, conservative proxy."""
+    if ordinal.sibling_range is not None:
+        return ordinal.sibling_range
+    return (ordinal.point, ordinal.point)
+
+
+def ordinal_contains(outer: ElOrdinal, inner: ElOrdinal) -> bool:
+    """Conservative NUMERIC containment — `outer`'s declared bounds (`ordinal_bounds`)
+    enclose `inner`'s — with **no** parse access; the same honest approximation as
+    `ordinal_overlaps`, directed. Sound in the same one-way sense: it can miss a genuine
+    ancestor/descendant relationship where the outer claim's far endpoint carries
+    descendants past its own numbers, but it never reports containment that is not
+    numerically there. A caller with tree access should prefer
+    `transforms.html.ordinal_interval` instead — this is for the caller that has none."""
+    o_lo, o_hi = ordinal_bounds(outer)
+    i_lo, i_hi = ordinal_bounds(inner)
+    return o_lo <= i_lo and i_hi <= o_hi
+
+
+def ordinal_overlaps(a: ElOrdinal, b: ElOrdinal) -> bool:
+    """Conservative NUMERIC overlap between two ordinal claims, with **no** parse access —
+    the honest approximation available where the tree isn't reachable (e.g. the ledger's
+    cross-corpus verify, §13.2). Two points overlap only when equal; a range's covered span
+    is approximated by its own literal declared bounds (`ordinal_bounds`), which UNDERSTATES
+    a range whose far endpoint carries descendants. This can read a valid citation as a bad
+    anchor; it can never read a bad one as valid — §6.1.1's containment trade, applied
+    conservatively rather than guessed at."""
+    a_lo, a_hi = ordinal_bounds(a)
+    b_lo, b_hi = ordinal_bounds(b)
+    return a_lo <= b_hi and b_lo <= a_hi
+
+
 # ---------- integer index-span grammar ---------- #
 
 

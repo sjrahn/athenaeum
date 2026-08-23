@@ -95,13 +95,17 @@ class RecordContent:
     # (int for the integer axes; `time_range` stores fractional seconds)
     full_text: str
     touch: str  # the latest touch identity ("" when the record carries none)
-    # (3.6, corpus §6.1.1) `el=` child-index paths, when the RECORD is stamped with
-    # `addressing:` — [(path, text)]. Which grammar this record's el= values speak is
-    # decided by the record, never by the value's shape: `el=5` is legal under both and
-    # means different elements, so the stamp is the only honest discriminator. Integer
-    # axes (page/msg/turn/part/…) and unstamped records keep `spans` untouched.
+    # `el=` claims, when the RECORD is stamped with `addressing:` (corpus §6.1.1) —
+    # [(claim, text)], `claim` a `furi.ElOrdinal` (v35) or a `furi.ElPath` (the frozen 3.6
+    # dotted path), per `el_scheme`. Which grammar this record's el= values speak is
+    # decided by the record, never by the value's shape: `el=5` is legal under any of the
+    # three generations and means a different element under each, so the stamp is the
+    # only honest discriminator. Integer axes (page/msg/turn/part/…) and unstamped
+    # records keep `spans` untouched.
     el_paths: list[tuple[object, str]] = field(default_factory=list)
-    el_stamped: bool = False
+    #: None (unstamped — the frozen pre-3.6 whitelist), "dotted" (frozen 3.6 path), or
+    #: "ordinal" (v35, §6.1.1) — read off `records.el_addressing`.
+    el_scheme: str | None = None
     media_type: str = ""
     # the format's honest citation-surface class (corpus §7.1, ledger.md §6.3/§13.2.4):
     # "segments" — citable only once persisted segments exist; "raw" — the default,
@@ -149,16 +153,17 @@ _quote_found = _textnorm.quote_found
 
 
 def _parse_axis_values(
-    addr: str | list[str], *, el_stamped: bool = False
+    addr: str | list[str], *, el_scheme: str | None = None
 ) -> tuple[list[tuple[str, float, float]], list[object]]:
-    """Address strings → `(spans, el paths)`. An address may carry several params
+    """Address strings → `(spans, el claims)`. An address may carry several params
     (`el=5&bbox=0,0,2272,1234`); every span-checkable param registers its axis —
     integer axes as ints, `time_range=` as fractional seconds (`corpus.segments.
     parse_time_range` — numeric, never lexicographic: `9:59` < `10:00`).
 
-    On a record stamped with `addressing:` the `el` axis is a §6.1.1 child-index path
-    and is returned separately — parsed, not regex-matched, so a malformed value is
-    simply not registered rather than being mistaken for an integer span."""
+    On a record stamped with `addressing:` the `el` axis is parsed, not regex-matched,
+    under the RECORD's own grammar (`el_scheme` — `"ordinal"` v35, else the frozen 3.6
+    dotted path) and returned separately, so a malformed value is simply not registered
+    rather than being mistaken for an integer span."""
     from corpus.segments import parse_time_range
 
     out: list[tuple[str, float, float]] = []
@@ -170,9 +175,12 @@ def _parse_axis_values(
         for part in a.split("&"):
             axis, _, value = part.partition("=")
             axis, value = axis.strip(), value.strip()
-            if axis == "el" and el_stamped:
+            if axis == "el" and el_scheme:
                 with contextlib.suppress(ValueError):
-                    paths.append(furi.parse_el_path(value))
+                    if el_scheme == "ordinal":
+                        paths.append(furi.parse_el_ordinal(value))
+                    else:
+                        paths.append(furi.parse_el_path(value))
                 continue
             if axis == "time_range":
                 span = parse_time_range(value)
@@ -188,10 +196,17 @@ def _parse_axis_values(
 
 
 def _el_paths_overlap(a, b) -> bool:
-    """Two §6.1.1 addresses intersect when either contains the other — a segment at
-    `el=1.3` holds a quote anchored at `el=1.3.2`, and an anchored envelope
-    `el=1.[2-9]` holds a segment at `el=1.4`."""
-    return furi.el_path_contains(a, b) or furi.el_path_contains(b, a)
+    """Two §6.1.1 el= claims intersect when either contains the other. Dispatched by
+    TYPE — both are always parsed under the same record's single grammar, so this reads
+    which class the parser produced, never sniffs a value: `furi.ElPath` (frozen 3.6
+    dotted, exact prefix-test containment) or `furi.ElOrdinal` (v35 — `ordinal_overlaps`,
+    the conservative NUMERIC proxy, since containment genuinely isn't decidable from two
+    addresses alone without the parse this module doesn't have, §6.1.1)."""
+    if isinstance(a, furi.ElOrdinal) and isinstance(b, furi.ElOrdinal):
+        return furi.ordinal_overlaps(a, b)
+    if isinstance(a, furi.ElPath) and isinstance(b, furi.ElPath):
+        return furi.el_path_contains(a, b) or furi.el_path_contains(b, a)
+    return False  # unreachable in practice — a record's claims share one grammar
 
 
 def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
@@ -210,7 +225,12 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         return None
     spans: dict[str, list[tuple[int, int, str]]] = {}
     el_paths: list[tuple[object, str]] = []
-    el_stamped = records.el_addressing(post) is not None
+    _addressing = records.el_addressing(post)
+    el_scheme = (
+        None if _addressing is None
+        else "ordinal" if _addressing.get("scheme") == "ordinal"
+        else "dotted"
+    )
     texts: list[str] = []
 
     def add(addr, *parts):
@@ -227,7 +247,7 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
             # addresses.
             return
         texts.append(text)
-        int_spans, paths = _parse_axis_values(addr, el_stamped=el_stamped)
+        int_spans, paths = _parse_axis_values(addr, el_scheme=el_scheme)
         for axis, lo, hi in int_spans:
             spans.setdefault(axis, []).append((lo, hi, text))
         for p in paths:
@@ -293,7 +313,7 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
     return RecordContent(
         spans=spans, full_text="\n".join(texts), touch=touch,
         media_type=media_type, citation_surface=surface, segment_count=segment_count,
-        corpus_root=corpus_root, el_paths=el_paths, el_stamped=el_stamped,
+        corpus_root=corpus_root, el_paths=el_paths, el_scheme=el_scheme,
     )
 
 
@@ -307,19 +327,26 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
     for key, value in params:
         if key in _UNCHECKED_PARAMS:
             return None, "unchecked"
-        if key == "el" and content.el_stamped:
-            # (3.6) The record speaks §6.1.1, so the anchor does too: scope by path
-            # intersection rather than numeric interval. An anchor that names nothing
-            # the record persists is a BAD anchor, exactly as on the integer axes —
-            # falling back to a record-wide quote search would let a confabulated
-            # address read as verified evidence.
+        if key == "el" and content.el_scheme:
+            # (§6.1.1) The record speaks a claim grammar, so the anchor does too — parsed
+            # under the SAME scheme the record's own el_paths were (`content.el_scheme`,
+            # never sniffed): scope by containment (dotted, exact) or numeric overlap
+            # (ordinal, v35 — the conservative proxy, `_el_paths_overlap`) rather than a
+            # flat integer interval. An anchor that names nothing the record persists is
+            # a BAD anchor, exactly as on the integer axes — falling back to a
+            # record-wide quote search would let a confabulated address read as verified
+            # evidence.
             try:
-                anchor_path = furi.parse_el_path((value or "").strip())
+                anchor = (
+                    furi.parse_el_ordinal((value or "").strip())
+                    if content.el_scheme == "ordinal"
+                    else furi.parse_el_path((value or "").strip())
+                )
             except ValueError:
                 return None, "unchecked"
             if not content.el_paths:
                 return None, "unchecked"
-            hit = [t for (p, t) in content.el_paths if _el_paths_overlap(anchor_path, p)]
+            hit = [t for (p, t) in content.el_paths if _el_paths_overlap(anchor, p)]
             if not hit:
                 return None, "bad-anchor"
             return "\n".join(hit), "ok"
