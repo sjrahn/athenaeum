@@ -10,8 +10,10 @@ identity modulo the `X-Gmail-Labels` header = 99.1% stable — the header was th
 churn set (the export-sources runbook, "Temporal stratification onboarding" — runbooks
 ride the corpus repo, e.g. corpus/runbooks/export-sources.md).
 
-Read-only; no corpus root involved — this analyzes two export deliveries directly, before
-either is ever ingested.
+Read-only; no corpus root REQUIRED — this analyzes two export deliveries directly,
+before either is ever ingested, and stays usable with nothing ingested anywhere yet. A
+corpus root is consulted ONLY to resolve the `exclude_members` predicate (spec v37, see
+`--origin`/`--corpus-root`) when one is reachable — see `_resolve_exclude`.
 
 Two comparison modes, chosen by inspecting A and B (both must agree):
 
@@ -53,7 +55,8 @@ from pathlib import Path
 
 import blake3
 
-from corpus import mboxfile
+from corpus import mboxfile, schemas
+from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 # Above this, a differing file is reported byte-divergent without attempting a JSON parse
 # (matches the assemble/ingest family's caution around materializing large payloads).
@@ -86,10 +89,54 @@ def configure(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help="also write the full machine-readable report to PATH as JSON.",
     )
+    parser.add_argument(
+        "--origin",
+        default=None,
+        metavar="OVERLAY-ID",
+        help=(
+            "origin overlay id to namespace-walk for the `exclude_members` predicate "
+            "(spec v37) — the same ladder mbox-split/mbox-window resolve; when omitted, "
+            "resolves from a reachable corpus's mime-schema `default_origin` binding. "
+            "Meaningful only in mbox mode."
+        ),
+    )
+    add_corpus_root_arg(parser)
+
+
+def _resolve_exclude(
+    args: argparse.Namespace,
+) -> tuple[dict[bytes, frozenset[str]] | None, bool]:
+    """Best-effort `exclude_members` resolution (spec v37) → `(exclude, resolved)`.
+    Export-diff predates ingest and analyzes two export deliveries directly (docstring
+    above) — it has no corpus of its own, so a corpus is consulted ONLY when one is
+    reachable: an explicit `--corpus-root` that doesn't look like a corpus still errors
+    loudly (`resolved_corpus_root`'s usual contract); with no `--corpus-root`,
+    auto-discovery failing falls back to the pre-v37 raw measurement, so the tool stays
+    usable with nothing ingested anywhere yet. `resolved` is False ONLY in that fallback
+    case — measurement-honesty (the mtime precedent, spec §12.3.14): a report must never
+    let "0 excluded because nothing matched" read the same as "0 excluded because
+    exclusion was never even checked"."""
+    explicit = getattr(args, "corpus_root", None)
+    if explicit:
+        corpus_root = resolved_corpus_root(args)
+    else:
+        from corpus import paths
+
+        try:
+            corpus_root = paths.find_corpus_root()
+        except FileNotFoundError:
+            return None, False
+    predicates = schemas.resolve_exclude_members(
+        corpus_root, "application/mbox", origin_id=getattr(args, "origin", None)
+    )
+    return mboxfile.normalize_exclude_members(predicates), True
 
 
 def run(args: argparse.Namespace) -> int:
-    report = build_report(Path(args.a), Path(args.b))
+    exclude, exclusion_resolved = _resolve_exclude(args)
+    report = build_report(
+        Path(args.a), Path(args.b), exclude=exclude, exclusion_resolved=exclusion_resolved
+    )
     if getattr(args, "json_out", None):
         Path(args.json_out).write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"wrote {args.json_out}")
@@ -124,7 +171,13 @@ def _classify(path: Path) -> str:
     sys.exit(f"export-diff: not found: {path}")
 
 
-def build_report(a: Path, b: Path) -> dict:
+def build_report(
+    a: Path,
+    b: Path,
+    *,
+    exclude: dict[bytes, frozenset[str]] | None = None,
+    exclusion_resolved: bool = False,
+) -> dict:
     if not a.exists():
         sys.exit(f"export-diff: not found: {a}")
     if not b.exists():
@@ -135,7 +188,11 @@ def build_report(a: Path, b: Path) -> dict:
             f"export-diff: mismatched export shapes — {a} looks like {mode_a}, "
             f"{b} looks like {mode_b}; compare like with like."
         )
-    return _mbox_report(a, b) if mode_a == "mbox" else _tree_report(a, b)
+    return (
+        _mbox_report(a, b, exclude=exclude, exclusion_resolved=exclusion_resolved)
+        if mode_a == "mbox"
+        else _tree_report(a, b)
+    )
 
 
 # ---------- mbox pair (member grain) ---------- #
@@ -199,15 +256,29 @@ def _match_key(
     return ("triple", (f.date, f.sender, f.subject))
 
 
-def _mbox_report(a: Path, b: Path) -> dict:
-    scan_a = mboxfile.scan(a, None)
-    scan_b = mboxfile.scan(b, None)
-    hashes_a = {f.blake3 for f in scan_a.facts.values()}
-    hashes_b = {f.blake3 for f in scan_b.facts.values()}
+def _mbox_report(
+    a: Path,
+    b: Path,
+    *,
+    exclude: dict[bytes, frozenset[str]] | None = None,
+    exclusion_resolved: bool = False,
+) -> dict:
+    scan_a = mboxfile.scan(a, None, exclude=exclude)
+    scan_b = mboxfile.scan(b, None, exclude=exclude)
+    excl_a, excl_b = scan_a.excluded_ordinals, scan_b.excluded_ordinals
+    # A policy-excluded member (spec v37) is excluded from BOTH sides of the
+    # reconciliation — otherwise every provider-purged Spam/Trash member shows as churn
+    # (only-A or only-B) instead of the policy omission it actually is.
+    hashes_a = {f.blake3 for n, f in scan_a.facts.items() if n not in excl_a}
+    hashes_b = {f.blake3 for n, f in scan_b.facts.items() if n not in excl_b}
     identical = len(hashes_a & hashes_b)
 
-    only_a_ord = [n for n, f in scan_a.facts.items() if f.blake3 not in hashes_b]
-    only_b_ord = [n for n, f in scan_b.facts.items() if f.blake3 not in hashes_a]
+    only_a_ord = [
+        n for n, f in scan_a.facts.items() if n not in excl_a and f.blake3 not in hashes_b
+    ]
+    only_b_ord = [
+        n for n, f in scan_b.facts.items() if n not in excl_b and f.blake3 not in hashes_a
+    ]
 
     detail_a = {n: _read_member(a, n) for n in only_a_ord}
     detail_b = {n: _read_member(b, n) for n in only_b_ord}
@@ -254,6 +325,9 @@ def _mbox_report(a: Path, b: Path) -> dict:
         "mode": "mbox",
         "a": {"path": str(a), "total": scan_a.count},
         "b": {"path": str(b), "total": scan_b.count},
+        "excluded_a": len(excl_a),
+        "excluded_b": len(excl_b),
+        "exclusion_resolved": exclusion_resolved,
         "identical": identical,
         "only_a": len(only_a_ord),
         "only_b": len(only_b_ord),
@@ -623,6 +697,17 @@ def render_report(report: dict) -> str:
         lines.append(
             f"  unmatched after Message-ID/fallback pairing — "
             f"only-A: {report['unmatched_only_a']}   only-B: {report['unmatched_only_b']}"
+        )
+    if "excluded_a" in report:
+        # Always shown (even 0/0) — the omission is never inferred (spec v37 CHANGELOG).
+        # Measurement-honesty (the mtime precedent, §12.3.14): "0 excluded because
+        # resolved-and-nothing-matched" must never read the same as "0 excluded because
+        # exclusion was never even checked" — so an unresolved corpus is qualified
+        # explicitly rather than silently reporting a bare zero.
+        note = "" if report.get("exclusion_resolved") else " (NOT resolved — no corpus reachable)"
+        lines.append(
+            f"  policy-excluded (exclude_members): "
+            f"A={report['excluded_a']}   B={report['excluded_b']}{note}"
         )
     if "mtime_checked" in report:
         # Tree mode only — measured for every byte-identical member, never skipped, so

@@ -772,46 +772,59 @@ def _gzip_header_filename(path: Path) -> str | None:
 
 
 def _canonicalize_mbox(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:
-    """The mailbox chrome strip at ingest (spec §12.3.13). Resolves `strip_headers`
-    through the ORIGIN chain — the staged file's sidecar `origin_schema` stamp (when
-    present) namespace-walked, else the mime schema's `default_origin` binding walked
-    the same way (`schemas.resolve_strip_headers`) — and, for an `application/mbox`
-    staged file with a non-empty result, rewrites it in place with those headers removed
-    from every member's header zone — the stripped bytes are the stored bytes, identity
-    is computed over them — and returns the origin-field provenance
-    (`stripped_headers`, `stripped_members`, and `source_transport`, the delivered
-    bytes' blake3, so the pre-strip identity is never silently lost). Returns `{}` when
-    no strip is declared, the file holds no messages (parse tolerance), or no member
-    carries a declared header (already canonical — e.g. a window bundle emitted
-    stripped)."""
+    """The mailbox chrome strip AND the `exclude_members` policy filter (spec §12.3.13,
+    v37) at ingest — canonicalize-at-entry, one pass. Resolves both through the ORIGIN
+    chain — the staged file's sidecar `origin_schema` stamp (when present) namespace-
+    walked, else the mime schema's `default_origin` binding walked the same way
+    (`schemas.resolve_strip_headers` / `schemas.resolve_exclude_members`) — and, for an
+    `application/mbox` staged file, rewrites it in place: declared headers dropped from
+    every member's header zone, and any member the exclusion predicate matches (read
+    BEFORE the strip removes its header — same pass) dropped ENTIRELY — the surviving,
+    stripped bytes are the stored bytes, identity is computed over them. Returns the
+    origin-field provenance (`stripped_headers`/`stripped_members` and/or
+    `policy_excluded_count`, plus `source_transport`, the delivered bytes' blake3, so the
+    pre-canonicalization identity is never silently lost). Returns `{}` when neither a
+    strip nor an exclusion is declared, the file holds no messages (parse tolerance), or
+    neither touched anything (already canonical — e.g. a window bundle emitted stripped
+    with nothing to exclude)."""
     if media_type != "application/mbox":
         return {}
     from corpus import hashing, mboxfile, records, schemas
 
     origin_id = _sidecar_origin_schema(src)
     names = schemas.resolve_strip_headers(corpus_root, media_type, origin_id=origin_id)
-    if not names:
+    predicates = schemas.resolve_exclude_members(corpus_root, media_type, origin_id=origin_id)
+    strip = mboxfile.normalize_strip_headers(names)
+    exclude = mboxfile.normalize_exclude_members(predicates)
+    if not names and not exclude:
         return {}
     resolved_origin_id = origin_id or schemas.resolve_default_origin(corpus_root, media_type)
-    strip = mboxfile.normalize_strip_headers(names)
-    scan = mboxfile.scan(src, None, strip=strip)
-    if not scan.count or not scan.stripped_members:
+    scan = mboxfile.scan(src, None, strip=strip, exclude=exclude)
+    if not scan.count or (not scan.stripped_members and not scan.excluded_ordinals):
         return {}
     delivered = hashing.hash_file(src)["blake3"]
+    keep_ordinals = set(range(1, scan.count + 1)) - scan.excluded_ordinals
     tmp = src.with_name(src.name + ".canonical")
     with tmp.open("wb") as out:
-        mboxfile.extract_raw_members(src, set(range(1, scan.count + 1)), out, strip=strip)
+        mboxfile.extract_raw_members(src, keep_ordinals, out, strip=strip)
     tmp.replace(src)
+    notes = []
+    fields: dict[str, Any] = {}
+    if names and scan.stripped_members:
+        notes.append(
+            f"{', '.join(names)} removed from {scan.stripped_members}/{scan.count} member(s)"
+        )
+        fields["stripped_headers"] = list(names)
+        fields["stripped_members"] = scan.stripped_members
+    if scan.excluded_ordinals:
+        notes.append(f"{len(scan.excluded_ordinals)}/{scan.count} member(s) policy-excluded")
+        fields["policy_excluded_count"] = len(scan.excluded_ordinals)
     print(
-        f"  chrome-strip active (origin {resolved_origin_id}): {', '.join(names)} removed "
-        f"from {scan.stripped_members}/{scan.count} member(s) "
-        f"(delivered blake3:{delivered[:12]}…)"
+        f"  chrome-strip/exclude_members active (origin {resolved_origin_id}): "
+        f"{'; '.join(notes)} (delivered blake3:{delivered[:12]}…)"
     )
-    return {
-        "stripped_headers": list(names),
-        "stripped_members": scan.stripped_members,
-        "source_transport": records.format_hash("blake3", delivered),
-    }
+    fields["source_transport"] = records.format_hash("blake3", delivered)
+    return fields
 
 
 def _canonicalize_json(corpus_root: Path, src: Path, media_type: str) -> dict[str, Any]:

@@ -883,6 +883,81 @@ def resolve_strip_fields(
     return _origin_strip_fields_declaration(corpus_root, default_id) or []
 
 
+def _normalize_exclude_predicates(raw: list) -> list[dict[str, Any]]:
+    """Validate/normalize a declared `exclude_members` list (spec v37): each entry keeps
+    only a non-empty `header` name and a non-empty `contains` label list (whitespace-
+    stripped). A malformed entry is dropped rather than raised — parse-tolerant like every
+    other schema read in this module, so one bad entry can't sink the whole predicate list
+    or break resolution for an unrelated stream. An entry left with no labels after
+    stripping is dropped too: it would match nothing, so keeping it is meaningless."""
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        header = str(entry.get("header") or "").strip()
+        contains = entry.get("contains")
+        if not header or not isinstance(contains, (list, tuple)):
+            continue
+        labels = [str(v).strip() for v in contains if str(v).strip()]
+        if not labels:
+            continue
+        out.append({"header": header, "contains": labels})
+    return out
+
+
+def _origin_exclude_members_declaration(
+    corpus_root: Path, origin_id: str
+) -> list[dict[str, Any]] | None:
+    """The `exclude_members` walk (spec v37, §12.3.13) — mirrors `_origin_strip_declaration`
+    (`_origin_declared_string_list`) except the declared value is a list of predicate
+    dicts (`{header, contains: [...]}`), not a plain string list, so it can't reuse that
+    helper directly. Same finality rule: an explicit empty list is itself a declaration
+    ("no exclusion"), stopping the ladder exactly as `strip_headers`'s empty list does."""
+    parts = [p for p in (origin_id or "").split("/") if p]
+    if not parts:
+        return None
+    for i in range(len(parts), 0, -1):
+        candidate_id = "/".join(parts[:i])
+        overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
+        if not isinstance(overlay, dict):
+            continue
+        raw = overlay.get("exclude_members")
+        if isinstance(raw, (list, tuple)):
+            return _normalize_exclude_predicates(raw)
+    return None
+
+
+def resolve_exclude_members(
+    corpus_root: Path,
+    media_type: str,
+    *,
+    origin_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve the producer member-exclusion predicate list (spec v37, §12.3.13's
+    `exclude_members` bullet): a POLICY filter, not canonicalization — a matched member
+    enters no bucket, no container, no record, by design. Same resolution chain as
+    `resolve_strip_headers`/`resolve_partition`, minus the CLI override point (no
+    `--exclude` flag exists today):
+
+    - `origin_id` given (a stamped origin: CLI `--origin`, or the ingest sidecar's
+      `origin_schema`): walk ITS namespace and take that result as FINAL — `[]` when
+      nothing in the walk declares. An origin id was given, so its silence is a decision,
+      not an unknown; the walk never falls through to `default_origin`.
+    - No `origin_id`: resolve the mime schema's `default_origin` binding and walk ITS
+      namespace the same way, or `[]` when unbound or nothing declares.
+
+    Mechanics belong to the caller (`mboxfile.normalize_exclude_members` /
+    `MemberExcluder`): the predicate reads a member's declared header BEFORE any resolved
+    `strip_headers` removes it — read-then-strip, one pass — and matches when the header's
+    COMMA-SPLIT value intersects the declared labels."""
+    if origin_id is not None:
+        return _origin_exclude_members_declaration(corpus_root, origin_id) or []
+    default_id = resolve_default_origin(corpus_root, media_type)
+    if default_id is None:
+        return []
+    return _origin_exclude_members_declaration(corpus_root, default_id) or []
+
+
 _VALID_PARTITION_GRAINS = ("month", "year")
 
 #: The two onboarding modes (spec §12.3.14, v36): `measured` (the default — a banked

@@ -39,6 +39,7 @@ import argparse
 import shutil
 import sys
 import zipfile
+from collections import Counter
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -156,6 +157,14 @@ def run(args: argparse.Namespace) -> int:
     if strip_names:
         print(f"  chrome-strip active: {', '.join(strip_names)}")
 
+    predicates = schemas.resolve_exclude_members(
+        corpus_root, "application/mbox", origin_id=args.origin
+    )
+    exclude = mboxfile.normalize_exclude_members(predicates)
+    if predicates:
+        headers = sorted({p["header"] for p in predicates})
+        print(f"  exclude_members active: {', '.join(headers)}")
+
     try:
         schedule = schemas.resolve_partition(corpus_root, "application/mbox", origin_id=args.origin)
     except ValueError as exc:
@@ -170,29 +179,38 @@ def run(args: argparse.Namespace) -> int:
     eras = list(schedule.get("eras") or [])
     undated_mode = str(schedule.get("undated") or "standing")
 
-    scan = mboxfile.scan(source, None, strip=strip)
+    scan = mboxfile.scan(source, None, strip=strip, exclude=exclude)
     if not scan.count:
         sys.exit(f"{source.name}: no messages found — not an mboxrd?")
 
     # Bucket every ordinal: a closed period (at ITS OWN era's grain), the current residue,
-    # or — under a `standing` undated policy — the separate undated bucket.
+    # or — under a `standing` undated policy — the separate undated bucket. A policy-
+    # excluded ordinal (spec v37) still resolves the bucket key it WOULD have landed in
+    # (for the disclosure tally below) but never enters `bucket_of` — excluded members
+    # enter no bucket, no container, no record, by design.
     bucket_of: dict[int, str] = {}
+    excluded_bucket_of: dict[int, str] = {}
     undated = 0
     for n, facts in scan.facts.items():
         parts = _member_date_parts(facts.date)
         if parts is None:
-            undated += 1
-            bucket_of[n] = "undated" if undated_mode == "standing" else "current"
-            continue
-        year, month = parts
-        grain = schemas.grain_for_year(eras, grain_default, year)
-        if grain == "month":
-            is_current = (year, month) >= current_period
-            key = f"{year:04d}-{month:02d}"
+            key = "undated" if undated_mode == "standing" else "current"
         else:
-            is_current = year >= current_year
-            key = str(year)
-        bucket_of[n] = "current" if is_current else key
+            year, month = parts
+            grain = schemas.grain_for_year(eras, grain_default, year)
+            if grain == "month":
+                is_current = (year, month) >= current_period
+                key = "current" if is_current else f"{year:04d}-{month:02d}"
+            else:
+                is_current = year >= current_year
+                key = "current" if is_current else str(year)
+
+        if n in scan.excluded_ordinals:
+            excluded_bucket_of[n] = key
+            continue
+        if parts is None:
+            undated += 1
+        bucket_of[n] = key
 
     closed_keys = sorted({b for b in bucket_of.values() if b not in ("current", "undated")})
     current_count = sum(1 for b in bucket_of.values() if b == "current")
@@ -229,6 +247,9 @@ def run(args: argparse.Namespace) -> int:
         try:
             for bucket in buckets:
                 handles[bucket] = (tmpdir / f"{bucket}.mbox").open("wb")
+            # `sinks` is built from `bucket_of`, which already excludes policy-excluded
+            # ordinals (spec v37) — an ordinal absent from `sinks` is simply skipped by
+            # `demux_raw_members`, so exclusion needs no separate plumbing here.
             sinks = {n: handles[b] for n, b in bucket_of.items()}
             mboxfile.demux_raw_members(source, sinks, strip=strip)
         finally:
@@ -255,6 +276,8 @@ def run(args: argparse.Namespace) -> int:
 
     period_counts = {k: sum(1 for b in bucket_of.values() if b == k) for k in closed_keys}
     year_keys = [k for k in closed_keys if "-" not in k]
+    policy_excluded_by_key = Counter(excluded_bucket_of.values())
+    policy_excluded_total = len(excluded_bucket_of)
     origin_fields: dict[str, Any] = {
         "source_export": source.name,
         "source_message_count": scan.count,
@@ -277,6 +300,13 @@ def run(args: argparse.Namespace) -> int:
     if strip_names:
         origin_fields["stripped_headers"] = strip_names
         origin_fields["stripped_members"] = scan.stripped_members
+    # Only closed periods that produced an actual bucket file get a per-period tally here
+    # (a period excluded down to zero kept members never gets a bucket at all — no home
+    # for its count on THIS sidecar); the run total below still covers every exclusion.
+    closed_excluded = {k: v for k, v in policy_excluded_by_key.items() if k in period_counts}
+    if closed_excluded:
+        origin_fields["policy_excluded_count"] = sum(closed_excluded.values())
+        origin_fields["policy_excluded_by_period"] = closed_excluded
     if mtime := _source_modified_iso(source):
         origin_fields["source_modified"] = mtime
 
@@ -298,6 +328,8 @@ def run(args: argparse.Namespace) -> int:
         residue_fields["period"] = f"{current_period[0]:04d}-{current_period[1]:02d}"
     if undated_mode == "rolling" and undated:
         residue_fields["undated_count"] = undated
+    if policy_excluded_by_key.get("current"):
+        residue_fields["policy_excluded_count"] = policy_excluded_by_key["current"]
     _write_split_sidecar(residue, residue_fields, effective_origin)
 
     if undated_standing_count:
@@ -307,9 +339,11 @@ def run(args: argparse.Namespace) -> int:
             "source_export": source.name,
             "source_message_count": undated_standing_count,
         }
+        if policy_excluded_by_key.get("undated"):
+            undated_fields["policy_excluded_count"] = policy_excluded_by_key["undated"]
         _write_split_sidecar(undated_bundle, undated_fields, effective_origin)
 
-    closed_total = scan.count - current_count - undated_standing_count
+    closed_total = sum(period_counts.values())
     summary = (
         f"{scan.count} member(s): {closed_total} across {len(closed_keys)} closed period(s) "
         f"({closed_keys[0]}-{closed_keys[-1]}) → {container.name}; "
@@ -317,6 +351,8 @@ def run(args: argparse.Namespace) -> int:
     )
     if undated_standing_count:
         summary += f"; {undated_standing_count} undated → {undated_bundle.name}"
+    if policy_excluded_total:
+        summary += f"; {policy_excluded_total} policy-excluded (exclude_members)"
     print(summary)
     print(
         f"  next: corpus ingest {container.relative_to(corpus_root)}; promote the closed "

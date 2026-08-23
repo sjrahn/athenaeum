@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 36
+version: 37
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 36 (2026-08-22, owner ruling) adds the second temporal-stratification onboarding mode (Part II §12.3.14): `partition.onboarding: settled-first-cut` — closed periods cut once from the first export that covers them, never re-cut or reconciled, no byte-stability claim and so no two-export measurement; the owner ruling banks in the overlay comment block where the measurement numbers would go. With it: producer-declared member↔sidecar pairing on `corpus period-split` (resolved through the `--origin` ladder; export-level metadata files excluded and disclosed, never undated primaries) and epoch-seconds integers on the sidecar date axis (UTC by definition). First producer: proton-mail-export. Prior version notes: the changelog.*
+*Version 37 (2026-08-23, owner ruling) adds producer member exclusion and the retirement law (Part II §12.3.13, §12.8): `exclude_members` — a declarative policy filter on the producer overlay (gmail: `X-Gmail-Labels` contains Spam/Trash), read before the strip, applied identically by split, window, and measurement, disclosed by count, excluded members captured nowhere; and **container retirement: extend or die** — every promoted member of a retiring container re-points to a live container carrying its byte-identical bytes or is removed with it, manifest-first with ledger impact disclosed; no tombstones, no husks, no routes to bytes that no longer exist. Prior version notes: the changelog.*

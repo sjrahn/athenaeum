@@ -117,29 +117,37 @@ def _exclusion_set(
     corpus_root: Path,
     lineage: list[tuple[str, object]],
     strip: frozenset[bytes] | None = None,
+    exclude: dict[bytes, frozenset[str]] | None = None,
 ) -> set[str]:
     """The union of member blake3 hashes already persisted: full artifact enumeration per
     lineage record where the bytes are locally present, declared `msg=` transports as the
     warned fallback, plus every standalone `message/rfc822` record id. With `strip`,
     artifact enumeration hashes members as-if-stripped — a pre-strip snapshot serves as
     lineage across the strip boundary; the declared-embed fallback cannot (its hashes
-    predate the strip), which its warning states."""
+    predate the strip), which its warning states. With `exclude` (spec v37), a lineage
+    member the predicate matches is left OUT of the returned set — a policy-excluded
+    member is never treated as "already persisted," the same posture the source-side
+    selection loop takes."""
     excluded: set[str] = set()
     for rid, post in lineage:
         try:
             local = containment.ensure_local_bytes(
                 corpus_root, rid, mime.extension_for(_MBOX_MIME)
             )
-            scan = mboxfile.scan(local, None, strip=strip)
+            scan = mboxfile.scan(local, None, strip=strip, exclude=exclude)
             note = (
                 f" ({scan.stripped_members} hashed as-if-stripped)"
                 if strip and scan.stripped_members
                 else ""
             )
+            if exclude and scan.excluded_ordinals:
+                note += f" ({len(scan.excluded_ordinals)} policy-excluded, not counted)"
             print(
                 f"  lineage {rid[:12]}: {scan.count} member(s) enumerated from artifact bytes{note}"
             )
-            excluded.update(f.blake3 for f in scan.facts.values())
+            excluded.update(
+                f.blake3 for n, f in scan.facts.items() if n not in scan.excluded_ordinals
+            )
         except ArtifactMissing:
             declared = mbox_manifest.declared_transports(post)
             hashes = {
@@ -210,14 +218,25 @@ def run(args: argparse.Namespace) -> int:
     if strip_names:
         print(f"  chrome-strip active: {', '.join(strip_names)}")
 
-    lineage = _expand_lineage(corpus_root, list(args.against))
-    excluded_set = _exclusion_set(corpus_root, lineage, strip=strip)
+    predicates = schemas.resolve_exclude_members(
+        corpus_root, _MBOX_MIME, origin_id=getattr(args, "origin", None)
+    )
+    exclude = mboxfile.normalize_exclude_members(predicates)
+    if predicates:
+        headers = sorted({p["header"] for p in predicates})
+        print(f"  exclude_members active: {', '.join(headers)}")
 
-    scan = mboxfile.scan(source, None, strip=strip)
+    lineage = _expand_lineage(corpus_root, list(args.against))
+    excluded_set = _exclusion_set(corpus_root, lineage, strip=strip, exclude=exclude)
+
+    scan = mboxfile.scan(source, None, strip=strip, exclude=exclude)
     selected: list[int] = []
     seen_in_source: set[str] = set()
-    excluded = duplicates = 0
+    excluded = duplicates = policy_excluded = 0
     for n in range(1, scan.count + 1):
+        if n in scan.excluded_ordinals:
+            policy_excluded += 1
+            continue
         b3 = scan.facts[n].blake3
         if b3 in excluded_set:
             excluded += 1
@@ -231,6 +250,8 @@ def run(args: argparse.Namespace) -> int:
         f"{scan.count} member(s) in source: {len(selected)} new, "
         f"{excluded} already persisted, {duplicates} within-source duplicate(s)"
     )
+    if policy_excluded:
+        summary += f", {policy_excluded} policy-excluded"
     if not selected:
         print(f"{summary} — empty delta, nothing to emit.")
         return 0
@@ -269,6 +290,8 @@ def run(args: argparse.Namespace) -> int:
         # display grain the mail-window overlay's title template composes (§4.2.3).
         origin_fields["window_start"] = bounds[0].date().isoformat()
         origin_fields["window_end"] = bounds[1].date().isoformat()
+    if policy_excluded:
+        origin_fields["policy_excluded_count"] = policy_excluded
     if strip_names:
         origin_fields["stripped_headers"] = strip_names
         origin_fields["stripped_members"] = scan.stripped_members

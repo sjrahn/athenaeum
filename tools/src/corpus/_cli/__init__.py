@@ -81,6 +81,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "hash-index":      ("Maintenance",            "hash-index backfill — fill missing derived-hash index rows for the fleet"),
     "gc":              ("Maintenance",            "Prune regenerable data (cache / staging / orphan artifacts / export)"),
     "rm":              ("Maintenance",            "Remove a record (.md + artifact + empty shard dirs); ref-checked, dry-run by default"),
+    "retire":          ("Maintenance",            "Retire a container's promoted members — extend to a live route or die with it (spec §12.8, v37); dry-run by default"),
     "forget-origin":   ("Maintenance",            "Drop one origin alias from a record (keeps the record)"),
     "continuity":      ("Maintenance",            "Prove whether one record's content is preserved in another (supersession check)"),
     # Query (P1)

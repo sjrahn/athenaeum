@@ -66,6 +66,81 @@ def normalize_strip_headers(names: list[str] | tuple[str, ...] | None) -> frozen
     return frozenset(n.strip().lower().encode() + b":" for n in names if n.strip())
 
 
+def normalize_exclude_members(
+    predicates: list[dict[str, object]] | None,
+) -> dict[bytes, frozenset[str]] | None:
+    """Predicate list (spec v37: `[{header: <name>, contains: [<label>, ...]}, ...]`) →
+    `{lowercased "name:" byte prefix: frozenset(labels)}` for `MemberExcluder`, or None
+    when the list is empty/absent (no exclusion). Uses the SAME byte-prefix convention as
+    `normalize_strip_headers` so both filters walk the header zone identically. Multiple
+    predicate entries naming the same header pool their labels."""
+    if not predicates:
+        return None
+    by_header: dict[bytes, set[str]] = {}
+    for entry in predicates:
+        name = str((entry or {}).get("header") or "").strip()
+        if not name:
+            continue
+        key = name.lower().encode() + b":"
+        labels = (entry or {}).get("contains") or ()
+        by_header.setdefault(key, set()).update(str(v).strip() for v in labels if str(v).strip())
+    if not by_header:
+        return None
+    return {k: frozenset(v) for k, v in by_header.items()}
+
+
+class MemberExcluder:
+    """Per-member evaluator for the `exclude_members` predicate (spec v37, §12.3.13): a
+    POLICY filter, not canonicalization — a member whose named header's value contains
+    any declared label is excluded (captured nowhere, by design). Watches the declared
+    header name(s) in the header zone with the SAME zone/continuation tracking as
+    `HeaderStrip`, but `observe()` is called on the un-stuffed line BEFORE `HeaderStrip.
+    keep()` runs on it — read-then-strip, one pass — so a header that strip ALSO removes
+    is still seen. Call `reset()` at each member's separator; `observe(data)` on every
+    un-stuffed line in the header zone, in caller order, ahead of the stripper."""
+
+    def __init__(self, by_header: dict[bytes, frozenset[str]]) -> None:
+        self._by_header = by_header
+        self._in_header = True
+        self._capturing: bytes | None = None
+        self._values: dict[bytes, bytearray] = {}
+
+    def reset(self) -> None:
+        self._in_header = True
+        self._capturing = None
+        self._values = {}
+
+    def observe(self, data: bytes) -> None:
+        if not self._in_header:
+            return
+        if data in (b"\r\n", b"\n"):
+            self._in_header = False
+            self._capturing = None
+            return
+        if self._capturing is not None and data[:1] in (b" ", b"\t"):
+            # RFC 5322 unfolding: the fold (CRLF) is what's dropped, the continuation's
+            # own content joins with a single space — good enough for a comma-split
+            # label list, which is the only shape this predicate matches against.
+            self._values[self._capturing] += b" " + data.strip()
+            return
+        self._capturing = None
+        lowered = data.lower()
+        for name in self._by_header:
+            if lowered.startswith(name):
+                self._values[name] = bytearray(data[len(name) :].strip())
+                self._capturing = name
+                return
+
+    @property
+    def excluded(self) -> bool:
+        for name, buf in self._values.items():
+            declared = self._by_header.get(name, frozenset())
+            found = {p.strip() for p in buf.decode("utf-8", "replace").split(",")}
+            if found & declared:
+                return True
+        return False
+
+
 class HeaderStrip:
     """Per-member filter dropping the declared headers (spec §12.3.13, the mailbox chrome
     strip): a matching header line and its folded continuations are removed from the
@@ -270,13 +345,20 @@ class MessageFacts:
 class MboxScan:
     """The result of one streaming pass: the total message count, the per-ordinal facts for
     the requested messages, and the first/last separator lines (for the mailbox date span).
-    `stripped_members` counts members the header strip touched (0 when no strip ran)."""
+    `stripped_members` counts members the header strip touched (0 when no strip ran).
+    `excluded_ordinals` holds the 1-indexed ordinals the `exclude_members` predicate (spec
+    v37) matched — a policy filter, evaluated BEFORE the strip on the same pass, so it
+    still sees a header the strip also removes; empty when no predicate ran. `facts` still
+    holds an entry for an excluded ordinal (its blake3/bytes are computed the same as any
+    other member) — callers decide what "excluded" means for their own output, `scan`
+    only reports the verdict."""
 
     count: int
     facts: dict[int, MessageFacts]
     first_sep: bytes | None
     last_sep: bytes | None
     stripped_members: int = 0
+    excluded_ordinals: frozenset[int] = frozenset()
 
 
 def scan(
@@ -284,6 +366,7 @@ def scan(
     ordinals: set[int] | frozenset[int] | None,
     *,
     strip: frozenset[bytes] | None = None,
+    exclude: dict[bytes, frozenset[str]] | None = None,
 ) -> MboxScan:
     """One streaming pass over the mailbox: count every message, capture the first/last
     separator lines, and for each requested 1-indexed `ordinal` compute the un-stuffed
@@ -291,14 +374,19 @@ def scan(
     requests facts for EVERY message — the full enumeration the window-reduction dedup
     (spec §12.3.13) keys on. With `strip` (`normalize_strip_headers` output), the declared
     headers are dropped before hashing — facts describe the member AS-IF-STRIPPED, which
-    is how a pre-strip snapshot serves as lineage across the strip boundary. Never holds
-    the mailbox (or a whole message) in RAM. Raises `ValueError` when a requested ordinal
-    exceeds the message count."""
+    is how a pre-strip snapshot serves as lineage across the strip boundary. With `exclude`
+    (`normalize_exclude_members` output), each member's declared header is evaluated
+    BEFORE the strip removes it (read-then-strip, one pass, spec v37) and a match's
+    ordinal lands in `MboxScan.excluded_ordinals`. Never holds the mailbox (or a whole
+    message) in RAM. Raises `ValueError` when a requested ordinal exceeds the message
+    count."""
     wanted = None if ordinals is None else frozenset(ordinals)
     stripper = HeaderStrip(strip) if strip else None
+    excluder = MemberExcluder(exclude) if exclude else None
     facts: dict[int, MessageFacts] = {}
     total = 0
     stripped_members = 0
+    excluded_ordinals: set[int] = set()
     first_sep: bytes | None = None
     last_sep: bytes | None = None
     cur: dict | None = None
@@ -308,6 +396,8 @@ def scan(
         facts[acc["ordinal"]] = _finalize(acc)
         if stripper and stripper.dropped:
             stripped_members += 1
+        if excluder and excluder.excluded:
+            excluded_ordinals.add(acc["ordinal"])
 
     with mbox_path.open("rb") as fh:
         for line in fh:
@@ -322,6 +412,8 @@ def scan(
                 if wanted is None or total in wanted:
                     if stripper:
                         stripper.reset()
+                    if excluder:
+                        excluder.reset()
                     cur = {
                         "ordinal": total,
                         "b3": blake3.blake3(),
@@ -332,6 +424,8 @@ def scan(
                 continue
             if cur is not None:
                 data = _unstuff(line)
+                if excluder:
+                    excluder.observe(data)
                 if stripper and not stripper.keep(data):
                     continue
                 cur["b3"].update(data)
@@ -356,6 +450,7 @@ def scan(
         first_sep=first_sep,
         last_sep=last_sep,
         stripped_members=stripped_members,
+        excluded_ordinals=frozenset(excluded_ordinals),
     )
 
 
