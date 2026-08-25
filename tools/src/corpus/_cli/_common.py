@@ -6,6 +6,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from corpus import paths
 
@@ -74,6 +75,31 @@ def bucket_year_month(dt: datetime) -> tuple[int, int]:
     if dt.tzinfo is not None:
         dt = dt.astimezone(UTC)
     return dt.year, dt.month
+
+
+def bucket_rendered_local(naive_dt: datetime, zone: ZoneInfo) -> tuple[int, int]:
+    """The RENDERED-LOCAL date-axis bucketing rule (spec §12.3.14, v38 owner ruling): a
+    producer that stores UTC internally but renders every timestamp into the exporting
+    machine's local zone, with no offset anywhere in the output (imessage-exporter is
+    the motivating case), declares that zone as `render_timezone:`. `naive_dt` is
+    attached to the declared `zone` and converted to UTC through `bucket_year_month`,
+    DST-aware via zoneinfo's fold semantics.
+
+    An ambiguous local time (the repeated hour at a fall-back transition) or a
+    nonexistent one (the skipped hour at a spring-forward transition) resolves at
+    `fold=0` — the pre-transition offset / the FIRST occurrence — a deterministic,
+    documented choice rather than a guess; `datetime.replace(tzinfo=...)` defaults to
+    `fold=0` already, so this is the ordinary read, not a special case.
+
+    Rejects an aware `naive_dt` — this axis exists only for values with NO offset
+    anywhere in the bytes; an aware value already carries its own offset and takes the
+    ordinary `bucket_year_month` path instead."""
+    if naive_dt.tzinfo is not None:
+        raise ValueError(
+            f"bucket_rendered_local expects a naive datetime, got aware {naive_dt!r} "
+            "— an aware value already carries an offset and buckets via bucket_year_month"
+        )
+    return bucket_year_month(naive_dt.replace(tzinfo=zone))
 
 
 # The functional-URI transform grammar (spec §6.2), shown in `corpus resolve`/`preview`

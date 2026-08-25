@@ -50,6 +50,7 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -1062,6 +1063,92 @@ def resolve_partition(
     if default_id is None:
         return None
     return _origin_partition_declaration(corpus_root, default_id)
+
+
+def _origin_render_timezone_declaration(corpus_root: Path, origin_id: str) -> str | None:
+    """The `render_timezone` walk (spec §12.3.14, v38) — mirrors `_origin_strip_declaration`
+    (`_origin_declared_string_list`) except the declared value is a single IANA zone
+    string, not a list. Same finality: first overlay in the id-prefix namespace walk
+    whose `render_timezone` is a non-empty string wins. Unlike the strip's empty-list
+    rule, there is no "declared off" state for a zone — an absent or blank value just
+    means this axis isn't rendered-local, so the walk keeps climbing past it."""
+    parts = [p for p in (origin_id or "").split("/") if p]
+    if not parts:
+        return None
+    for i in range(len(parts), 0, -1):
+        candidate_id = "/".join(parts[:i])
+        overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
+        if not isinstance(overlay, dict):
+            continue
+        raw = overlay.get("render_timezone")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _validated_zone(zone: str) -> str:
+    """Validate `zone` against `zoneinfo.ZoneInfo`, returning it unchanged when it
+    resolves. Raises `ValueError` naming the bad value otherwise — shared by both the
+    CLI-override and the declared-overlay paths of `resolve_render_timezone` so an
+    unknown zone fails identically (a loud, message-named error) regardless of where it
+    came from."""
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"render_timezone={zone!r} is not a known IANA zone (spec §12.3.14, v38): {exc}"
+        ) from exc
+    return zone
+
+
+def resolve_render_timezone(
+    corpus_root: Path,
+    media_type: str,
+    cli_override: str | None = None,
+    *,
+    origin_id: str | None = None,
+) -> str | None:
+    """Resolve a producer's `render_timezone` declaration (spec §12.3.14, v38): the
+    rendered-local date-axis class — a producer that stores UTC internally but renders
+    every timestamp into the exporting machine's local zone, with no offset anywhere in
+    the output (imessage-exporter is the motivating case) — declares the IANA zone that
+    render used, banked with the measurement that proved it. The render zone is an
+    EXPORT-RUN property, not a machine constant (a producer with automatic timezone
+    switched on renders in wherever the machine was when that export ran), so a per-run
+    override sits ahead of the standing declaration — same precedence shape as
+    `resolve_strip_headers`:
+
+    - CLI override (`period-split --render-timezone`) — final, whatever it says, past
+      validation. Covers the divergent-export case: THIS run's export was measured to a
+      different zone than the overlay's standing declaration.
+    - `origin_id` given (a stamped origin: CLI `--origin`, or the ingest sidecar's
+      `origin_schema`): walk ITS namespace and take that result as FINAL — `None` when
+      nothing in the walk declares. An origin id was given, so its silence is a
+      decision, not an unknown; the walk never falls through to `default_origin`.
+    - No `origin_id` given: resolve the mime schema's `default_origin` binding and walk
+      ITS namespace the same way, or `None` when unbound or nothing declares.
+
+    Validates whichever value wins against `zoneinfo.ZoneInfo` — an unknown zone is a
+    hard `ValueError` naming the bad value, never a silent fallback to
+    naive-at-face-value: a producer (or an operator's override) that names rendered-local
+    and gets the zone wrong needs a loud failure, not a quietly wrong bucket."""
+    if cli_override is not None:
+        zone = cli_override.strip()
+        if not zone:
+            raise ValueError("--render-timezone: empty zone given")
+        return _validated_zone(zone)
+    if origin_id is not None:
+        zone = _origin_render_timezone_declaration(corpus_root, origin_id)
+    else:
+        default_id = resolve_default_origin(corpus_root, media_type)
+        zone = (
+            _origin_render_timezone_declaration(corpus_root, default_id)
+            if default_id is not None
+            else None
+        )
+    if zone is None:
+        return None
+    return _validated_zone(zone)
 
 
 def grain_for_year(eras: list[dict[str, Any]], default_grain: str, year: int) -> str:

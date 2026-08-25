@@ -13,6 +13,7 @@ import argparse
 import zipfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 import corpus as corpus_pkg
@@ -150,6 +151,104 @@ def test_resolve_partition_invalid_grain_ignored_walk_continues(tmp_path):
     )
     resolved = schemas.resolve_partition(root, "application/mbox", origin_id="google-takeout/gmail")
     assert resolved == {"grain": "year"}  # invalid subtype block skipped, parent wins
+
+
+# ---------- resolve_render_timezone ladder (spec v38, mirrors resolve_partition's) ------ #
+
+
+def test_resolve_render_timezone_subtype_overlay_wins_over_parent(tmp_path):
+    root = _corpus(tmp_path)
+    _origin_overlay(root, "imessage-export", "description: parent\nrender_timezone: UTC\n")
+    _origin_overlay(
+        root,
+        "imessage-export/steven",
+        "description: subtype\nrender_timezone: America/Edmonton\n",
+    )
+    resolved = schemas.resolve_render_timezone(
+        root, "application/zip", origin_id="imessage-export/steven"
+    )
+    assert resolved == "America/Edmonton"
+
+
+def test_resolve_render_timezone_walks_to_parent_when_subtype_silent(tmp_path):
+    root = _corpus(tmp_path)
+    _origin_overlay(
+        root, "imessage-export", "description: parent\nrender_timezone: America/Edmonton\n"
+    )
+    resolved = schemas.resolve_render_timezone(
+        root, "application/zip", origin_id="imessage-export/steven"
+    )
+    assert resolved == "America/Edmonton"
+
+
+def test_resolve_render_timezone_falls_back_to_default_origin_binding(tmp_path):
+    root = _corpus(tmp_path)
+    _mime_shadow(root, "imessage-export")
+    _origin_overlay(
+        root, "imessage-export", "description: parent\nrender_timezone: America/Edmonton\n"
+    )
+    assert schemas.resolve_render_timezone(root, "application/mbox") == "America/Edmonton"
+
+
+def test_resolve_render_timezone_none_when_nothing_declares(tmp_path):
+    root = _corpus(tmp_path)
+    assert schemas.resolve_render_timezone(root, "application/zip") is None
+    assert (
+        schemas.resolve_render_timezone(root, "application/zip", origin_id="nothing-here") is None
+    )
+
+
+def test_resolve_render_timezone_stamped_origin_never_falls_to_default_binding(tmp_path):
+    root = _corpus(tmp_path)
+    _mime_shadow(root, "imessage-export")
+    _origin_overlay(
+        root, "imessage-export", "description: parent\nrender_timezone: America/Edmonton\n"
+    )
+    assert (
+        schemas.resolve_render_timezone(root, "application/zip", origin_id="other-producer")
+        is None
+    )
+
+
+def test_resolve_render_timezone_unknown_zone_is_a_hard_error(tmp_path):
+    root = _corpus(tmp_path)
+    _origin_overlay(
+        root, "imessage-export", "description: parent\nrender_timezone: Not/AZone\n"
+    )
+    with pytest.raises(ValueError, match="not a known IANA zone") as excinfo:
+        schemas.resolve_render_timezone(root, "application/zip", origin_id="imessage-export")
+    assert "Not/AZone" in str(excinfo.value)
+
+
+def test_resolve_render_timezone_cli_override_beats_overlay_declaration(tmp_path):
+    """The render zone is an export-RUN property (v38 refinement): a per-run override
+    wins over the overlay's standing declaration, covering a divergent export measured
+    to a different zone than usual."""
+    root = _corpus(tmp_path)
+    _origin_overlay(
+        root, "imessage-export", "description: parent\nrender_timezone: America/Edmonton\n"
+    )
+    resolved = schemas.resolve_render_timezone(
+        root, "application/zip", "Europe/Berlin", origin_id="imessage-export"
+    )
+    assert resolved == "Europe/Berlin"
+
+
+def test_resolve_render_timezone_cli_override_works_with_no_overlay_declaration(tmp_path):
+    root = _corpus(tmp_path)
+    resolved = schemas.resolve_render_timezone(
+        root, "application/zip", "Europe/Berlin", origin_id="some-producer"
+    )
+    assert resolved == "Europe/Berlin"
+
+
+def test_resolve_render_timezone_cli_override_unknown_zone_is_a_hard_error(tmp_path):
+    root = _corpus(tmp_path)
+    with pytest.raises(ValueError, match="not a known IANA zone") as excinfo:
+        schemas.resolve_render_timezone(
+            root, "application/zip", "Not/AZone", origin_id="some-producer"
+        )
+    assert "Not/AZone" in str(excinfo.value)
 
 
 # ---------- mbox-split: schedule-driven bucketing ---------- #

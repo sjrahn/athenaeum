@@ -41,8 +41,18 @@ establish before a schedule is declared at all.
 member's own period AND the open/closed comparison against `--current-period` — is a
 UTC calendar boundary. On the `sidecar:` date axis, an offset-bearing ISO value converts
 to UTC before its year/month is read; a naive value (no offset in the bytes) buckets at
-face value. There is no per-source timezone knob. The `mtime` axis is unaffected by this
-change: a directory source's mtime is already read as UTC, and a zip source's
+face value UNLESS a `render_timezone` applies (v38, the rendered-local axis class —
+§12.3.14) — either `--render-timezone` on THIS run (final, ahead of everything: the
+render zone is an export-RUN property, not a machine constant, so a divergent export
+converts through the zone it was actually measured to) or the resolved origin overlay's
+standing `render_timezone:` declaration — in which case the naive value is attached to
+the applicable zone and converted through it, DST-aware, before the UTC read (see
+`schemas.resolve_render_timezone` / `_common.bucket_rendered_local`). Tooling cannot
+detect a rendered-local axis on its own — only a declaration or override distinguishes
+it from an ordinary naive value, so an undeclared, unoverridden naive value stays
+face-value, exactly as before. There is no per-source timezone knob for anything else
+beyond this axis. The `mtime` axis is unaffected
+by any of this: a directory source's mtime is already read as UTC, and a zip source's
 `ZipInfo.date_time` is naive by format (no offset ever present) — both already bucket
 correctly under the rule as written.
 """
@@ -57,11 +67,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
 from corpus._cli._common import (
     add_corpus_root_arg,
+    bucket_rendered_local,
     bucket_year_month,
     parse_current_period,
     resolved_corpus_root,
@@ -94,6 +106,21 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "be an ISO string or an epoch-seconds INTEGER (v36) — the integer form is "
             "UTC by definition. A member with no parseable date on this axis goes to "
             "the undated bucket."
+        ),
+    )
+    parser.add_argument(
+        "--render-timezone",
+        default=None,
+        metavar="IANA-ZONE",
+        dest="render_timezone",
+        help=(
+            "rendered-local axis OVERRIDE (spec §12.3.14, v38; final, ahead of the "
+            "origin overlay's `render_timezone:` declaration) — the render zone is an "
+            "export-RUN property, not a machine constant, so a divergent export (the "
+            "producing machine's automatic timezone put it somewhere else this run) "
+            "converts through the zone THIS export was measured to, not the overlay's "
+            "standing declaration. Validated the same way either source is: an unknown "
+            "IANA zone is a hard error."
         ),
     )
     parser.add_argument(
@@ -256,7 +283,9 @@ def _parse_date_axis(spec: str) -> tuple[str, str | None]:
     raise AssertionError("unreachable")
 
 
-def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] | None:
+def _sidecar_date_year_month(
+    data: bytes, dotted_path: str, render_zone: ZoneInfo | None = None
+) -> tuple[int, int] | None:
     """Read a date value at `dotted_path` from sidecar JSON `data` and return its
     `(year, month)` — tolerant throughout: malformed JSON, a missing/non-object
     intermediate segment, a non-numeric/non-string or unparseable value all read as "no
@@ -264,13 +293,16 @@ def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] |
 
     Two value SHAPES (v36): a **string**, read per the UTC boundary rule (spec §12.3.14,
     v34 owner ruling) — an offset-bearing ISO value converts to UTC before its
-    year/month is read, a naive value (no offset in the bytes) buckets at face value
-    rather than an invented UTC; or an **epoch-seconds integer** (e.g. Proton's
-    `Payload.Time`) — UTC BY DEFINITION, so the v34 boundary question doesn't even arise.
-    `bool` is deliberately excluded even though it is an `int` subclass in Python — never
-    a legitimate date value. A negative epoch (pre-1970) or one large enough to overflow
-    `datetime`'s year-9999 ceiling is rejected outright (undated) rather than bucketed
-    into a bogus year — a producer's numeric date axis is never a place to guess."""
+    year/month is read; a NAIVE value (no offset in the bytes) buckets at face value
+    UNLESS `render_zone` is given (v38, the rendered-local axis class), in which case it
+    is attached to `render_zone` and converted through it — see
+    `_common.bucket_rendered_local`; or an **epoch-seconds integer** (e.g. Proton's
+    `Payload.Time`) — UTC BY DEFINITION, so `render_zone` never applies to it (the v34
+    boundary question doesn't even arise). `bool` is deliberately excluded even though
+    it is an `int` subclass in Python — never a legitimate date value. A negative epoch
+    (pre-1970) or one large enough to overflow `datetime`'s year-9999 ceiling is rejected
+    outright (undated) rather than bucketed into a bogus year — a producer's numeric date
+    axis is never a place to guess."""
     try:
         doc = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -296,11 +328,17 @@ def _sidecar_date_year_month(data: bytes, dotted_path: str) -> tuple[int, int] |
         dt = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if dt.tzinfo is None and render_zone is not None:
+        return bucket_rendered_local(dt, render_zone)
     return bucket_year_month(dt)
 
 
 def _resolve_date(
-    src: _Source, primary: str, sidecar_name: str | None, axis: tuple[str, str | None]
+    src: _Source,
+    primary: str,
+    sidecar_name: str | None,
+    axis: tuple[str, str | None],
+    render_zone: ZoneInfo | None,
 ) -> tuple[int, int] | None:
     kind, dotted_path = axis
     if kind == "mtime":
@@ -309,7 +347,7 @@ def _resolve_date(
     if sidecar_name is None:
         return None
     assert dotted_path is not None
-    return _sidecar_date_year_month(src.read(sidecar_name), dotted_path)
+    return _sidecar_date_year_month(src.read(sidecar_name), dotted_path, render_zone)
 
 
 # ---------- run ---------- #
@@ -325,8 +363,15 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         schedule = schemas.resolve_partition(corpus_root, "application/zip", origin_id=args.origin)
+        render_zone_name = schemas.resolve_render_timezone(
+            corpus_root,
+            "application/zip",
+            getattr(args, "render_timezone", None),
+            origin_id=args.origin,
+        )
     except ValueError as exc:
         sys.exit(str(exc))
+    render_zone = ZoneInfo(render_zone_name) if render_zone_name else None
     if schedule is None:
         sys.exit(
             f"no partition schedule declared for origin {args.origin!r} (spec §12.3.14) "
@@ -377,7 +422,7 @@ def run(args: argparse.Namespace) -> int:
         bucket_of: dict[str, str] = {}
         undated = 0
         for p in primaries:
-            ym = _resolve_date(src, p, sidecar_of.get(p), axis)
+            ym = _resolve_date(src, p, sidecar_of.get(p), axis, render_zone)
             if ym is None:
                 undated += 1
                 bucket_of[p] = "undated" if undated_mode == "standing" else "current"
@@ -449,6 +494,10 @@ def run(args: argparse.Namespace) -> int:
                 "sidecar_count": sidecar_count,
                 "date_axis": args.date_from,
             }
+            if render_zone_name:
+                # Disclosed so the rendered-local bucketing is reproducible from the
+                # sidecar alone — the zone that converted this bucket's naive values.
+                origin_fields["render_timezone"] = render_zone_name
             if period is not None:
                 origin_fields["period"] = period
             if source_transport:

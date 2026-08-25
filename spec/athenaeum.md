@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 37
+version: 38
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
@@ -247,4 +247,4 @@ Deliberately outside this specification's authority — named so a session doesn
 
 ---
 
-*Version 37 (2026-08-23, owner ruling) adds producer member exclusion and the retirement law (Part II §12.3.13, §12.8): `exclude_members` — a declarative policy filter on the producer overlay (gmail: `X-Gmail-Labels` contains Spam/Trash), read before the strip, applied identically by split, window, and measurement, disclosed by count, excluded members captured nowhere; and **container retirement: extend or die** — every promoted member of a retiring container re-points to a live container carrying its byte-identical bytes or is removed with it, manifest-first with ledger impact disclosed; no tombstones, no husks, no routes to bytes that no longer exist. Prior version notes: the changelog.*
+*Version 38 (2026-08-23, owner ruling) adds the rendered-local date axis and the instance's own knife (Part II §12.3.14): a producer that renders UTC-stored timestamps into the export machine's local zone declares **`render_timezone:`** on its date axis (measured and banked, DST-aware conversion to UTC before bucketing — a declared fact, never an invented offset; boundaries stay UTC for everyone); and producer-specific member-grain splitting of bespoke formats is **instance-owned** — the distribution ships the generic flows and shared primitives and prescribes only the emitted stratum shape. Prior version notes: the changelog.*
