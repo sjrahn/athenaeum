@@ -1,10 +1,3 @@
-# The instance — the deployment's own private repo (corpus/ + ledger/ +
-# athenaeum.yaml), conventionally checked out (or symlinked) inside this
-# workspace during development. Never tracked here: this repo is the
-# distribution — spec + tooling only (spec Part I §2.1).
-/instance
-/athenaeum.yaml
-
 # macOS Finder metadata
 .DS_Store
 
@@ -17,9 +10,10 @@ tools/**/*.egg-info/
 tools/.pytest_cache/
 tools/.ruff_cache/
 
-# second copies of the law never enter the tree
-Universal knowledge backend system.zip
-
 # scratch test instance (testdata/) — seeded from a private source instance by
 # testdata/seed.py; holds real (if tiny) private artifact bytes, never tracked
 /testdata/instance/
+
+research
+
+__pycache__/

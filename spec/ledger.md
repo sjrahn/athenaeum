@@ -2,11 +2,11 @@
 spec_id: ATH
 part: III
 title: "Athenaeum Specification — Part III: The Ledger"
-version: 38
+version: 39
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
-date_modified: 2026-08-21
+date_modified: 2026-08-26
 ---
 
 # Athenaeum Specification — Part III: The Ledger
@@ -47,7 +47,7 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 | **Fact file** | JSON under `facts/{type}/{slug}.json` — a concept or an edge, holding claims. |
 | **Concept schema** | A declared, validating shape for a concept type — `schemas/{type}.yaml` (§4.4). |
 | **Artifact roster** | A concept's typed `corpus://` links: the records that are artifacts *of* the thing (§4.2). |
-| **Lineage map** | `facts/LINEAGE.json` — the committed `{"old-id": "survivor-id"}` map every merged or renamed id retires into (§4.1); its keys stay occupied forever. |
+| **Lineage map** | `facts/LINEAGE.json` — the committed map every merged or renamed id retires into: `"old-id"` → `{"to": "survivor-id", "reason": …}` (§4.1); its keys stay occupied forever. |
 | **Claim** | One atomic, typed, **asserted** statement with evidence (§5). |
 | **Evidence** | A `corpus://` or `ref://` citation grounding a claim, graded by `kind` (§6). |
 | **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, …), citable as evidence by native id via `ref://` — resolved at its `latest` snapshot tag, or pinned `@{tag}`; each snapshot's mirror is a corpus artifact (§6.5). |
@@ -57,6 +57,12 @@ An interpretation exists when the epistemic content **isn't claim-shaped** (§7)
 | **Harvest rule** | A deterministic derivation minting auto-provenance concepts, roster entries, and claims from corpus record facts, keyed by origin-native identity (§10). |
 | **Invariant** | A declared constraint over the fact graph, validated deterministically (§11). |
 | **`ledger://` URI** | The external reference form for ledger content: `ledger://{id}` or `…/{id}:{claim}` (§12). |
+| **Domain concept** | A concept carrying an `ontology:` block — the anchor of a domain: concept-scoped vocabulary and membership, with declared commitment (§15.4). |
+| **Domain (`domain:`)** | A fact's membership in a domain concept's scope — vocabulary resolution through the domain's import closure, commitment carried from the domain (§15.4). |
+| **Shared tier** | The instance-general vocabulary — every type, predicate, and schema not scoped to a domain; extension chains tie it to the spine (§15.1, §15.3). |
+| **Spine** | The ontology reference datasets the instance registers as its extension-chain roots — mirror bytes as corpus artifacts, `spine: true` in the config, tooling-shipped adapters; every extension chain terminates in it (§15.2). |
+| **Extension chain (`extends:`)** | A type's declared single-parent is-a chain into the spine — ISO 21838-1 D.2 conformance as data (§15.3). |
+| **Presence claim** | A claim asserting the shape of its predicate's extension — `presence: "none"` (verifiably no value) or `"some"` (value exists, identity unknown) — in place of a value (§5.5). |
 
 ## 2. The corpus join
 
@@ -75,6 +81,7 @@ ledger/
 │   └── {type}/{slug}.json
 ├── schemas/
 │   ├── {type}.yaml            # concept schemas — declared, validating type shapes (§4.4)
+│   ├── {domain-id}/{type}.yaml # domain type senses — per-domain operational schemas (§15.4)
 │   └── values/
 │       └── {kind}.yaml        # value kinds — declared typed-value shapes (§4.5)
 ├── interpretations/
@@ -103,13 +110,13 @@ Fact and interpretation ids are **readable slugs** (`[a-z0-9]+(--?[a-z0-9]+)*`):
 
 **Identity is real-world identity.** A concept id names the thing, not any record of it. When identity is established mechanically it comes from **origin-native keys** — a source's own stable identifiers exposed in origin facts (§10) — so re-captures and mirrors of the same thing converge on the same concept rather than minting shadows.
 
-**Ids carry lineage.** Once minted, an id never silently **changes meaning** — external consumers hold `ledger://` URIs (§12) the ledger does not control, and frozen corpus bytes name ids in prose forever. When concepts merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing id retires into the **lineage map** — `facts/LINEAGE.json`, a flat committed `{"old-id": "survivor-id"}` object — and the losing **file is deleted**: its claims move to the survivor, the type directories list only living concepts, and the merge's full story (date, moved claims, the diff itself) lives in the repository history. The map's semantics:
+**Ids carry lineage.** Once minted, an id never silently **changes meaning** — external consumers hold `ledger://` URIs (§12) the ledger does not control, and frozen corpus bytes name ids in prose forever. When concepts merge (an identity hypothesis resolving, §7.1) or a slug is renamed, the losing id retires into the **lineage map** — `facts/LINEAGE.json`, a flat committed object mapping `"old-id"` → `{"to": "survivor-id", "reason": "merged" | "renamed"}`; the `reason` vocabulary is closed, grown by amendment — and the losing **file is deleted**: its claims move to the survivor, the type directories list only living concepts, and the merge's full story (date, moved claims, the diff itself) lives in the repository history. The map's semantics:
 
 - **Retired slugs stay occupied.** Id uniqueness (§13.1) runs across facts, interpretations, *and the lineage map's keys* — a retired id can never be re-minted by accident, so an old reference can dangle loudly but never resolve silently to a different thing. Deliberate resurrection requires removing the row, a visible diff.
-- **References resolve through the map, one hop only**: wikilinks, claim `object`s, `{"entity": …}` refs, and `ledger://` chase a key to its survivor. Merging into an id that is itself a key **retargets the older row** to the final survivor, so chains never form.
+- **References resolve through the map, one hop only**: wikilinks, claim `object`s, `{"entity": …}` refs, `domain:` memberships (§15.4), and `ledger://` chase a key to its row's `to`. Merging into an id that is itself a key **retargets the older row** to the final survivor, so chains never form.
 - **Claim ids carry lineage through the file id.** A claim's id is `{file-id}:{short}` (§5.1); when claims move to a merge's survivor each is **re-keyed to the survivor's prefix with its `short` preserved** — an external `ledger://{id}:{short}` then resolves through the map unchanged: the row maps the id half, the preserved short maps the rest. A short colliding with an existing claim on the survivor is **renamed**, and the merge emits a **migration worklist** naming every renamed claim and its dependents (the §11 amended-invariant shape) — a rename is loud, never silent. Outside merge-collision, tooling MUST NOT rewrite a short; internal references that name claims by id (`challenges`, `based_on`) are rewritten in the same pass that re-keys them, and a correction's `challenges` pin is re-stamped when the only delta is the re-key itself (§7.3 — the content the dispute examined is unchanged).
 
-Outright deletion — id and lineage row both — is reserved for content that should never have existed.
+Outright deletion — id and lineage row both — is reserved for content that should never have existed. An outright deletion keeps no row and carries no reason field — the repository history is its record (the no-dead-lineage rule: reasons ride rows only where rows exist).
 
 ### 4.2 Concept files — `facts/{type}/{slug}.json`
 
@@ -123,6 +130,7 @@ A materialized real-world thing and the claims intrinsic to it:
   "aliases": [],                   // optional
   "meta": "…",                     // optional authoring commentary — never a claim, needs no evidence
   "sensitivity": "private",        // optional asserted override, upward only (§6.4)
+  "domain": "bsg-reimagined",      // optional — domain membership (§15.4)
   "period": "2026-07-08/2026-07-09",  // optional — the fact's own timebox (§5.2); mirrors an evidenced claim
   "artifacts": [                   // the roster — records that are artifacts OF this thing (optional)
     { "uri": "corpus://826482aa…", "role": "documents", "note": "Metal Archives band page" },
@@ -151,6 +159,8 @@ All four validate like everything else (§13.1): vocabulary registered, `derived
 
 A bare `{id, type, name}` **stub is valid** — every fact file is independently valid; there is no "incomplete" state. A stub is a signal: it marks the capture frontier and surfaces in the generated work-list. Any concept referenced as a claim `object` or an interpretation's `about` MUST have at least a stub — no dangling references.
 
+**Domains.** A fact MAY carry **`domain:`** — membership in a domain concept's scope — and a concept MAY itself carry an **`ontology:`** block, anchoring a domain. Both are §15.4's; nothing about them changes what a concept *is* here: a domain concept is an ordinary concept first, and membership is a resolution scope, never a partition.
+
 ### 4.3 Edge files — `facts/{edge-type}/{slug}.json`
 
 A claim cluster not owned by a single concept — an event, an episode, a comparison, a dated series:
@@ -176,6 +186,7 @@ A schema is the declared shape of a fact type — a concept type or an edge type
 ```yaml
 type: song
 description: A recorded or performed musical work.
+extends: "bfo:generically dependent continuant"  # the extension chain into the spine (§15.3)
 normalization_intent: |          # optional — prose that rides normalize demand (§6.3)
   Transcriptions of performances want per-track structural marks; lyrics are
   content, liner commentary is a separate span.
@@ -240,6 +251,7 @@ Semantics:
 - **Stubs stay valid.** A fact missing an owed field is *frontier*, not failure — `expected: true` marks a field owed unconditionally; an `expectations` entry marks its `expect` fields owed on the facts its `when` selects (no `when` — every fact of the type). An entry MAY declare **`id:`** — a stable slug in the demand-rule namespace (unique across `demands/` rules and all named expectations, §13.1): the name its demands are blocked under (§14). Unnamed entries evaluate identically; their positional display ids (`expectation:{type}[{i}]`) are display-only — reordering a schema's list renumbers them, so nothing durable may reference one. Either way conformance gaps sharpen the generated work-list (§7.4); they never invalidate a file. The `when` selector names an edge type: a fact is selected when it participates in an edge of that type — restricted, when given, to edges whose `kind` claim takes one of the listed `kind:` values and whose participants include `with:` (a fact is never selected by a `with:` naming itself). Unmarked fields are *admissible, not owed*: they register vocabulary and validate targets, and their absence means nothing (most organizations manufacture nothing). A type with no schema is equally legal: schemas are earned structure, not a gate.
 - **Timeboxed fields.** A field may declare `timeboxed: true` — e.g. `residence: { target: place, timeboxed: true }` — meaning every claim under that predicate owes a `period`: an attested residence or employment episode without a timespan is half a fact, and `asof` alone records observation, never duration. Like owed fields, a missing timebox is *frontier* (a labeled chase on the work-list, §7.4), never an error — the gap says "find the start/end", which is exactly how new evidence that widens a period announces where it belongs.
 - **Intent, not authorship.** A schema MAY declare **`normalization_intent:`** — prose stating what evidence against this type's facts wants from a formed surface. It is guidance the demand side *carries*, never a contract the corpus side obeys: when the citation discipline raises normalize demand on a record rostered to (or cited by) a fact of the type, the enqueue hint SHOULD compose this intent with what the graph already knows — the concept's participant identities as a codebook lexicon, its declared structure — under the queue's proposes/disposes seam (corpus §8.5): the ledger proposes what the bytes probably hold; the normalizer disposes against the bytes, never on the ledger's word. This is the back-channel that keeps shape knowledge from being re-derived per record: identity is established once (harvest, §10), and intent flows down with the demand instead of accreting as per-source overlay prose.
+- **Extension and membership.** `extends:` names the type's single parent — a spine class (concept types), a spine relation (edge types), or another declared type (§15.3); missing is frontier, unresolvable or cyclic is an error. `requires_domain: true` marks a type whose facts MUST carry `domain:` (§15.4). A field MAY carry `extends:` naming a spine relation its predicate specializes (optional, §15.3) and MAY carry `invariants:` — field-attached constraints (§11). Domain type senses live at `schemas/{domain-id}/{type}.yaml`, the same grammar plus a `domain:` key matching the parent directory (§15.4).
 - **Grown organically or imported** — declared when a real shape recurs, or adopted wholesale in a domain package (§10); either way a schema lands as a visible diff and its vocabulary registers (§8).
 
 ### 4.5 Value kinds — `schemas/values/{kind}.yaml`
@@ -299,6 +311,7 @@ Field semantics:
 - Wikilinks (`[[slug]]`) in string values are permitted and validated against fact ids.
 - Never store a relation *and* its inverse; symmetric relations are stored once. Which side stores a directed relation is a ledger convention, documented per type (`facts/SCHEMA.md`).
 - **Attribute the voice.** Advice, technique, opinion, analysis are claims about what someone asserts: `status: reported`, the speaker in `attribution`. Two voices stay two claims.
+- **Presence claims** (§5.5): a claim may carry `presence: "none" | "some"` in place of the value/object family — a presence claim carries neither.
 
 ### 5.2 Time
 
@@ -332,6 +345,23 @@ The bar counts only evidence resolving on **verifiable surfaces**. An evidence e
 **Array-valued claims clear the bar per element.** Where a claim's `value` is an array, each element must individually meet the bar, counting the claim's whole-value evidence (entries with no `element`) plus the entries bound to that element (`element`, §6.1) — the authoritative artifact or the two independent sources may differ from element to element. A claim whose elements all clear confirms; one uncorroborated element holds the whole claim below `confirmed`, and validation names it. This is the same bar applied at the value's real grain — it neither weakens the whole-claim reading (a claim with no element-bound evidence is checked exactly as a scalar) nor licenses splitting arrays to dodge it.
 
 Validation enforces the bar mechanically. Corroboration is multiple evidence entries on one claim; conflict is `conflicting` with all evidence kept; a graph contradiction is `disputed` plus the challenging `correction`.
+
+### 5.5 Presence claims
+
+A claim MAY assert, in place of a value, the **shape of its predicate's extension** on this fact:
+
+```jsonc
+{ "id": "elizabeth-i:child", "predicate": "child", "presence": "none",
+  "status": "confirmed", "asof": "2026-08-25",
+  "evidence": [ /* the sources attesting the absence */ ] }
+```
+
+- **`presence: "none"`** — the fact verifiably has no value under this predicate. Distinct from silence: absence of a claim means nothing (§4.4), while a presence claim is an evidence-bearing assertion of absence.
+- **`presence: "some"`** — a value exists but its identity is unknown: known-existence, unidentified ("this person has a father; no source names him"). The claim that closes the existence question while the identity question stays open.
+- **Shape.** `presence` stands in place of the value/object family: a presence claim carries neither `value` nor `object` (an ordinary claim carries either or both, §5.1). `element` bindings do not apply to presence claims; a field's declared value kind (§4.4) does not bind them — there is no value to parse.
+- **Otherwise ordinary.** The full ladder applies; the bar (§5.4) applies unchanged — for `none`, the evidence attests the absence itself (a source stating it, an authoritative record whose scope covers it; sweep-backed negative evidence remains the named extension point in §6). Invariants count presence claims as matching claims. A presence claim **satisfies demands** under its predicate (§14): a confirmed "verifiably none" settles an owed field the way a value does — `blocked` remains for demands no source can settle either way.
+- **Never mechanical.** Harvest MUST NOT mint presence claims (§10): absence is never derivable from the harvest fact base.
+- **Contradiction is the ordinary machinery.** A later value claim under a predicate carrying a standing `presence: "none"` is a graph contradiction — `conflicting`/`disputed` with a correction (§7.3), never a silent replacement.
 
 ## 6. Evidence
 
@@ -477,6 +507,8 @@ Every predicate, qualifier key, concept type, edge type, roster role, roster `mo
 - Vocabulary grows organically — minted when real evidence needs it, never pre-built. The one sanctioned pre-built form is a **declared import**: an adopted domain bundle's vocabulary (§10, the domain-package seam) enters `VOCAB.md` marked as imported — adoption is itself the evidence of need.
 - **Retired vocabulary** stays listed with its reason; using a retired term is a validation error.
 - Per-type conventions (e.g. an applicability discipline for vehicle-variant claims) live in `facts/SCHEMA.md` beside the vocabulary they govern; shapes that harden graduate into schemas (§4.4).
+- **Two tiers** (§15.1): unscoped vocabulary is the shared tier; domain-scoped vocabulary registers under its domain concept — `VOCAB.md` gains per-domain sections and qualified display (`vessel @ bsg-reimagined`). Reuse-before-minting applies across a fact's whole resolution set (§15.4); a domain never shadows a shared name.
+- **Extension chains are owed** (§15.3): an in-use type without `extends:` is work-list frontier — the one standing owed-ness of vocabulary itself.
 
 ## 9. Coverage
 
@@ -507,10 +539,11 @@ mint:                             # templated from the matched record's facts
 
 Semantics:
 
-- **Deterministic.** A harvest run is a pure function of the corpus's mechanical record facts — no LLM, no network, no clock. The **fact base** is exactly what the corpus pipeline exposes mechanically: `mime`, `origin.uri`/`host`/`path`/`fragment`/`query.<k>`, `origin.id`, any stored origin-block field (`origin.<field>` — producer-declared provenance is mechanical by definition), **`form.id` (the record's section-opener form ids) and `form.<field>` (a whole-record form section's mechanical header fields — codebooks and span envelope facts, mechanical by construction, corpus §7.8)**, `media.<field>` — with the operator grammar (`equals`/`in`/`glob`/`matches`/`exists`; `all_of`/`any_of`/`none_of`; exact-by-default, missing-fact-is-false). Body content — including titles and keywords — is permanently excluded: the canonical false-positive source stays out of deterministic rules.
+- **Deterministic.** A harvest run is a pure function of the corpus's mechanical record facts — no LLM, no network, no clock. The **fact base** is exactly what the corpus pipeline exposes mechanically: `mime`, `origin.uri`/`host`/`path`/`fragment`/`query.<k>`, `origin.id`, any stored origin-block field (`origin.<field>` — producer-declared provenance is mechanical by definition), **`form.id` (the record's section-opener form ids) and `form.<field>` (a whole-record form section's mechanical header fields — codebooks and span envelope facts, mechanical by construction, corpus §7.8)**, `media.<field>` — with the operator grammar (`equals`/`in`/`glob`/`matches`/`exists`; `all_of`/`any_of`/`none_of`; exact-by-default, missing-fact-is-false). Body content — including titles and keywords — is permanently excluded: the canonical false-positive source stays out of deterministic rules. The grammar additionally carries the `domain:` fact axis and the opt-in `isa:` operator (§15.5); existing operators are unchanged.
 - **Keyed by the world, never the record.** A minted concept id MUST derive from **origin-native identity** — the source's own stable key exposed in origin facts (a site's entity id in the path, a catalog number in a query param) — never from record identity. A rule that can only key by hash cannot mint concepts (the record-shadow prohibition, §4); it can still roster records onto, and mint claims against, concepts that exist. This is what makes harvest converge: re-captures and mirrors of the same thing match the same key and accumulate as roster entries and evidence on **one** concept.
 - **Auto provenance, asserted wins.** Harvested concepts, roster entries, and claims carry `provenance: auto` and are stripped and regenerated on every run (rules or records changed → output converges); anything a human edits loses its `auto` mark and the harvester never touches it again. An auto claim never overwrites an asserted one.
 - **Born low.** A harvested claim's evidence is the matched record (span-level where the rule can address it); its status is capped at `provisional` — confirmation is earned through the bar (§5.4), never minted.
+- **Minting into domains.** `mint.concept` MAY carry `domain:` — a domain concept the rule names statically; the minted type must resolve in that domain's closure (§15.4). Harvest MUST NOT mint presence claims (§5.5).
 - **Registered like everything else.** Harvested types, predicates, and roster roles appear in `VOCAB.md` (§8) with their counts; a new rule lands as a visible diff, and its first run *is* the review surface.
 
 *(Non-normative — the domain-package seam.)* Concept schemas (§4.4), harvest rules (§10), invariants (§11), types + predicates (§8), and per-type authoring conventions (`facts/SCHEMA.md`) are deliberately shaped as **one bundleable unit**: together they are a complete declarative domain model — a music package's song/album/artist schemas and roster roles; a fiction package's character/scene schemas, no-overlap invariants, and narrative-position conventions; a methodology package's condition/parameter types and citation disciplines. A bundling/import mechanism is intentionally deferred until a second real domain demands it; when adopted, a package's vocabulary enters `VOCAB.md` as a **declared import**, never a silent mint — adoption is the evidence of need that the organic-growth rule (§8) requires.
@@ -542,6 +575,7 @@ Semantics:
 - **Deterministic**, run by validation (§13.1); a violation names the exact claims.
 - **Resolution is human, and binary**: either the invariant is wrong — amend it, and validation emits the **migration worklist** of claims and dependent notes to revisit — or a claim is wrong — challenge it with a `correction` (§7), sending it to `disputed`. An invariant is never silently bent.
 - **Grown organically**, like vocabulary: declare an invariant when a real inconsistency class appears, never ahead of one. A new invariant lands as a visible diff, and its first validation run *is* the audit.
+- **Field-attached sugar** (§4.4): a schema field MAY carry `invariants:` — the same constraint kinds, `applies_to` implied by the declaring type and field — absorbed as sugar over this section exactly as `expectations:` are sugar over demands (§14). One engine, two homes; violations report identically.
 
 ## 12. The consumption contract
 
@@ -555,18 +589,18 @@ ledger://{id}:{short}            → a specific claim
 ```
 
 - **Read knowledge here; never re-author it.** Facts, claims, and interpretations are citable; **generated views are not** — and no consumer's derived prose is a citation target for anything. A consumer that hand-authors facts into its own output has left the contract: knowledge lives in the ledger, authored once. Within the ledger, plain slugs suffice — wikilinks and `object` references resolve by id, following the lineage map (§4.1) so references survive merges and renames.
-- **Render the epistemic state honestly.** A consumer surfacing claims carries their ladder position with them — a `provisional` claim MUST NOT present like a `confirmed` one, and interpretive content (standing corrections, open questions) presents as interpretive. The ladder survives into presentation; that is the honesty the ledger bought.
+- **Render the epistemic state honestly.** A consumer surfacing claims carries their ladder position with them — a `provisional` claim MUST NOT present like a `confirmed` one, interpretive content (standing corrections, open questions) presents as interpretive, and conditional-domain content presents as depiction, never as world-fact (§15.4). The ladder survives into presentation; that is the honesty the ledger bought.
 - **Publication filters on sensitivity, fail closed.** What a published deliverable may *contain* is governed by derived sensitivity (§6.4) — a filter over content, never a URI form. A consumer publishing beyond the owner MUST NOT emit private-backed claim content, the ids of fully-private fact files, or evidence bytes and derived assets that resolve only privately; private-backed content is excluded or explicitly stubbed, never leaked. This is the system's publication wall. A publishing consumer SHOULD read exclusively through the read surface's **public plane** (Part I §5.1) — the wall pre-applied in system code, so the obligation is discharged by construction; a consumer with raw instance access bears the obligation unchanged. *(Non-normative: the codex kit's public-profile leak check remains a consumer-side reference for raw-access consumers.)*
 - **Pin the tuple when freezing.** A consumer freezing a deliverable SHOULD record its reproducibility tuple — the instance commit, the touch identity of every record cited or resolved (§13.2), and every `ref://` citation's stamped snapshot binding — tag + mirror-artifact blake3 (§6.5, §13.2) — so ledger or corpus movement beneath a frozen build is a *detected transition* (`ath ledger worklist` names the dependents), never silent rot discovered by readers.
-- **Evidence resolution materializes; it never originates.** A consumer's own `corpus://`/`ref://` reads happen only to render citations the ledger already asserts (footnotes, embeds, rasters) — never as a second, independent evidence path.
+- **Evidence resolution materializes; it never originates.** A consumer's own `corpus://`/`ref://` reads happen only to render citations the ledger already asserts (footnotes, embeds, rasters) — never as a second, independent evidence path. When materializing a citation, the anchor's resolved scope is the quote's context payload — a consumer SHOULD load the coarse selection to contextualize the quoted span, rather than peeking arbitrarily around it.
 
 ### 12.1 Scope selection and traversal
 
 Compilations are compiled from **scoped** facts; the scope's semantics are specified once, here, and exposed as one library call and as the read surface's query parameters — never re-implemented per consumer. A **scope evaluation** is deterministic: seed, traverse, close.
 
-- **Seed** — the starting set: explicit fact ids; every fact of a type; or the facts matched by a deterministic predicate over fact fields and claim predicates/values, in the operator grammar the ledger already speaks (§10: `equals` / `in` / `glob` / `matches` / `exists`; `all_of` / `any_of` / `none_of`; exact-by-default, missing-is-false).
+- **Seed** — the starting set: explicit fact ids; every fact of a type; or the facts matched by a deterministic predicate over fact fields and claim predicates/values — including the `domain:` axis and the `isa:` operator (§15.5) — in the operator grammar the ledger already speaks (§10: `equals` / `in` / `glob` / `matches` / `exists`; `all_of` / `any_of` / `none_of`; exact-by-default, missing-is-false).
 - **Traverse** — which reference kinds to follow, to what depth: relational claim `object`s, `{"entity": …}` references inside claim values, wikilinks in string values, roster `uri`s, and edge participation (an edge joins the scope when a participant is in it, and its participants are then reachable). Every hop resolves through the lineage map (§4.1) before it counts — a scope never sees a retired id.
-- **Close** — the evaluation is a visited-set closure: cycle-safe, order-deterministic (ids sorted at each frontier), reproducible for a given instance commit. **Evidence chasing** is a scope parameter, not a traversal kind: `none` (facts only), `references` (evidence entries carried as URIs), or `resolved` (each citation materialized through the corpus resolver or `ref://` adapter — read-time resolution under the contract above, never an evidence path).
+- **Close** — the evaluation is a visited-set closure: cycle-safe, order-deterministic (ids sorted at each frontier), reproducible for a given instance commit. **Evidence chasing** is a scope parameter, not a traversal kind: `none` (facts only), `references` (evidence entries carried as URIs), or `resolved` (each citation materialized through the corpus resolver or `ref://` adapter — read-time resolution under the contract above, never an evidence path). **Commitment** is a scope parameter: conditional-domain facts are included by default, carried with their bracket; a scope may exclude them (§15.5).
 
 Sensitivity is orthogonal: a scope evaluation computes membership; what a consumer may *emit* from it stays governed by the publication filter — on the public plane and every audience plane alike, the projection for the reader's grant set (§6.4) applies after scoping, fail closed.
 
@@ -580,15 +614,17 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 
 **Sensitivity** — derived sensitivity (§6.4) computes for every claim (all evidence resolves against the corpus or registered datasets, so every visibility determination is total); asserted `sensitivity` overrides are upward only. The tenancy declarations hold: declared tier names are slugs colliding with no reserved name, and audience names are slugs colliding with no plane name (`public`, `private`, `owner` are never audience names — Part I §5.1); every origin-overlay `tenancy:`, the `visibility:` floor, and every audience grant names a **declared** tier — an unknown name is an error, and the record it would have widened stays at the floor until fixed (fail closed); no audience is granted `private`.
 
-**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; the lineage map (§4.1) satisfies references and resolves in one hop (every value names a living fact, never another key; keys collide with no living id; no fact file carries a retired shape).
+**Graph** — no dangling claim `object`s, `about`s, `based_on` claim ids, wikilinks, or `{"entity": <id>}` references inside claim values (§4.4); no relation stored with its inverse; the lineage map (§4.1) satisfies references and resolves in one hop (every row's `to` names a living fact, never another key; every row's `reason` is from the closed vocabulary; keys collide with no living id; no fact file carries a retired shape).
 
-**Epistemics** — the authentication bar for every `confirmed` claim, counting only verifiable-surface evidence (§5.4) — per element for array-valued claims, naming each element that fails; `element` bindings well-formed: integer, in range, on an array `value` only; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3).
+**Epistemics** — the authentication bar for every `confirmed` claim, counting only verifiable-surface evidence (§5.4) — per element for array-valued claims, naming each element that fails; `element` bindings well-formed: integer, in range, on an array `value` only; `disputed` ⇄ standing `correction` pairing, with `challenges` pins current (a pinned claim edited since its challenge was filed flags the correction for re-review, §7.3); `reported` claims carrying `attribution`; retired vocabulary unused; `proposes` and `challenges` objects well-formed (against §5.1 and §7.3); presence claims well-formed: `presence` never co-occurring with `value` or `object`, `presence` from `none | some`, no `element` bindings on presence claims (§5.5).
 
 **Evidence** — URI grammar and resolution discipline (§6.2); cited and rostered records exist (bare-hash resolution in the corpus); `ref://` citations name registered datasets — and, when pinned, registered snapshot tags: a pin whose tag is no longer registered is an error, a dangling pin — (§6.5); claim evidence citing a corpus hash registered as a mirror artifact warns — the content's citation surface is `ref://` (§6.5); roster representation fields (§4.2) are well-formed — `modality`/`derivation` terms registered (§8), a `derived_from` URI rostered on the same concept; every citation resolves to a **verifiable surface** and passes §13.2.
 
 **Harvest** — harvested (`provenance: auto`) concepts, roster entries, and claims converge with the current rules (stale output is an error the harvester fixes); no minted id derives from record identity (§10); no auto claim shadows an asserted one; harvested claims respect the `provisional` cap (§10).
 
 **Schemas** — declared schemas (§4.4) hold: relational fields target the declared type(s); field values stay within declared `values`; declared **element** values stay within their `values` and element `entity`s resolve within their `target` type(s); `participant: true` objects name a participant; edge participants match the declared `participants`; roster roles are registered; conformance gaps — owed fields, unmet expectations, and missing timeboxes alike — land on the work-list as frontier, never as stub errors.
+
+**Ontology** — `ontology:` blocks well-formed (§15.4): `commitment` from `real | conditional`, `imports` resolve to domain concepts and form a DAG, minted types well-formed with no shared-tier shadowing; every `domain:` membership resolves (through the lineage map) to a domain concept; every fact's type and predicates resolve in its resolution set, unambiguously; a domain-minted type's facts carry `domain:`; `requires_domain` honored; a domain concept's own type and membership resolve outside its own closure; `extends:` chains (§15.3) acyclic and spine-terminated where declared, frontier where missing; spine references resolve through the registered spine datasets (label or native id — unresolvable is an error, a deprecated term warns, absent mirror bytes report honestly unverifiable, §15.2); the conformance gate (§15.7) runs where the environment provides a reasoner and reports honestly-unverifiable where it cannot.
 
 **Value kinds** — kind declarations (§4.5) are well-formed: every `constraint:` names a primitive the distribution knows, `required` names declared shape fields, no `value:` references an undeclared or retired kind. Typed claim values parse under their kind's declared shape, each present field checked by its constraint; a field newly typed over nonconforming existing claims, or a kind whose shape changed under standing claims, emits the migration worklist. A **missing** typed field is frontier, never an error.
 
@@ -603,7 +639,7 @@ Validation is deterministic, ledger-local plus read-only corpus access. It MUST 
 Beyond record existence, validation MUST — once per claim edit, and on demand — verify the evidence *content*:
 
 1. **Anchor resolution**: every span parameter resolves against the cited record (the segment address exists; the page/region/time-range is within bounds).
-2. **Quote verification**: every `quote` is found verbatim (modulo whitespace and presentational-markup normalization — inline markers such as `<u>…</u>` vanish before matching, so a quote cites the *rendered* text and never truncates around markup) within the content the URI resolves to. The citable content is the record's **faithful rendering** — segment bodies under their form (form-span renderings) and the derivation ops' mechanical output — plus attested byte-facts (artifact-block fields, the members roster, structural byte-marks; §6.3). *(Residue clause)* A record ingested before the corpus's faithfulness sweep may still carry retired descriptive fields; verification reads them **tolerantly** where present — an existing anchor into one still resolves and its quote still checks — but a fresh claim's evidence may never cite one: new evidence cites the faithful rendering or the byte-facts, never a field the corpus grammar no longer writes.
+2. **Quote verification**: every `quote` is found verbatim (modulo whitespace and presentational-markup normalization — inline markers such as `<u>…</u>` vanish before matching, so a quote cites the *rendered* text and never truncates around markup) within the content the URI resolves to. A quote that fails against a **re-derived** surface (a normalization or derivation-op pass that shifted the text) is flagged for **re-anchoring by re-evaluation within its anchor's resolved scope** — the anchor is the repair scope; record-wide fuzzy matching is never the repair. The citable content is the record's **faithful rendering** — segment bodies under their form (form-span renderings) and the derivation ops' mechanical output — plus attested byte-facts (artifact-block fields, the members roster, structural byte-marks; §6.3). *(Residue clause)* A record ingested before the corpus's faithfulness sweep may still carry retired descriptive fields; verification reads them **tolerantly** where present — an existing anchor into one still resolves and its quote still checks — but a fresh claim's evidence may never cite one: new evidence cites the faithful rendering or the byte-facts, never a field the corpus grammar no longer writes.
 3. **Snapshot binding**: verification records the cited record's content state (its latest `touch` identity) — for `ref://` evidence, the **resolved snapshot's tag and its mirror-artifact blake3** (§6.5): a bare citation resolves through `latest` and is flagged for re-verification when the resolved tag or its artifact hash moves (the hash is the true pin — the config is mutable, the hash is not; a re-pointed tag flags exactly as a moved `latest` does); a pinned citation is drift-free by construction, its residual failure modes being mirror absence (honestly unverifiable) and tag deregistration (a §13.1 error) — on the fact's **sources entry**: one binding per *(fact, source)*, shared by every evidence entry anchored to it, so a later authoring pass or mirror update flags the evidence for re-verification instead of silently rotting. Re-stamping is touch-keyed: an unchanged touch never rewrites the binding. For evidence whose anchored content resolves through a **derivation op** rather than the stored record body, the binding additionally pins the op's version label (`spec/corpus.md` §6.4): the touch chain does not move when resolver tooling upgrades, so the op pin is what flags a derived surface's drift — exactly as the touch flags a re-authored one. The binding's `verified` object carries an **`ops` map** — `"ops": {"<axis-param>": "<engine-pin>"}`, e.g. `{"prop": "vcard-prop@1", "path": "archive-path@1"}` — one entry per derivation-op axis any of that source's evidence resolves through, valued with the engine pin current at stamp time (read from the resolver's own registry introspection, never hand-written). Anchors resolvable from the record's stored body pin nothing — the touch already covers them; only derived-surface resolution pins. At verification, a source whose evidence resolves through an op whose current engine differs from the pinned one is flagged for re-verification (warning), and re-stamping is pin-keyed exactly as it is touch-keyed: an unchanged pin never rewrites the binding. Correspondingly, verification MUST resolve a derived-surface anchor **through the corpus resolver** (the derivation ops themselves — ledger depends on corpus, so this is a library call, never a re-implementation) and check the quote against the derived output; the honestly-unverifiable class narrows to anchors whose op the verifying environment genuinely cannot run (artifact bytes absent, an optional extra not installed), which stay honestly unverifiable, never errors.
 
 Verifying against derived surfaces makes member anchors first-class: a `?path=` member's bytes derive mechanically through their container, so anchors and quotes into members verify like any other surface — no honest citation form remains unverifiable by construction.
@@ -636,7 +672,7 @@ owes:
   - field: hat_colour              # answer shape rides from the field's own declaration
 ```
 
-- **Conditions are fact-first**: the fact's `id` (the §10 operator grammar over the living id; `equals`/`in` operands resolve through the lineage map (§4.1) so a rule survives merges and renames, while `glob`/`matches` match living ids as written), its `type`, its claims (predicate + value/object match), its roster, and its edge participation (`edge: { {edge-type}: {kind?, with?, target_type?} }` — the §4.4 `when` selector, generalized), composed with `all_of`/`any_of`/`none_of`. Identity exclusion is the idiom for perspective: a rule that owes something of *whoever hosts the appointment* excludes the graph's visiting subject with `none_of: [{id: {equals: …}}]` — data, visible in the rule, honest about whom it exempts.
+- **Conditions are fact-first**: the fact's `id` (the §10 operator grammar over the living id; `equals`/`in` operands resolve through the lineage map (§4.1) so a rule survives merges and renames, while `glob`/`matches` match living ids as written), its `type`, its claims (predicate + value/object match), its roster, and its edge participation (`edge: { {edge-type}: {kind?, with?, target_type?} }` — the §4.4 `when` selector, generalized), composed with `all_of`/`any_of`/`none_of`. Identity exclusion is the idiom for perspective: a rule that owes something of *whoever hosts the appointment* excludes the graph's visiting subject with `none_of: [{id: {equals: …}}]` — data, visible in the rule, honest about whom it exempts. Conditions additionally carry the `domain:` fact axis and the `isa:` operator (§15.5).
 - **Cross-fact conditions are one hop.** A condition MAY reach a fact's immediate neighbors: `related: { via: {kind}, edge?: …, where?: {condition}, exists?: true|false }`. `via` names a fact-reaching §12.1 traversal kind — `object` | `entity` | `wikilink` | `edge` (with `edge:` carrying the §4.4 selector to narrow which edges count; `roster` is deliberately not among them — roster rows target corpus records, never facts (§4.2), so a roster `via` could never hold and is malformed, not vacuous) — and the neighbor set is that hop, lineage-resolved, exactly as a scope evaluation would take it. `where` is this same condition grammar evaluated against each neighbor, **except `related:` itself — one hop is deliberate**; multi-hop reach is scope's business (§12.1), never a rule condition's. `exists: true` (the default) holds iff some neighbor matches `where` (or any neighbor exists, when `where` is omitted); `exists: false` holds iff none does. Missing-is-false throughout: a fact with no neighbors along `via` fails `exists: true` and passes `exists: false`. Deeper reach — conditions over a closure, aggregate counts — remains the named extension point, landing as amendment to this section, never a redesign: the rule-engine trajectory is intentional, and growth is grammar, not invention.
 - **What a demand carries.** The owed field — and, riding along from that field's own declaration (§4.4, §4.5), its answer shape: a value kind, a closed `values:` vocabulary, or a relational `target` type. The demand surface returns demands **with their shapes attached**, so an authoring pass fills a constrained slot rather than free text. (Value-level completeness needs no rule at all: a `money` kind's `required` fields make the currency demand structural — rules cover the conditional cases.)
 - **Filing is never denied.** A fact with unmet demands is a legitimate, visible state — the interpretations precedent applied to completeness. A demand is **open** (owed, unmet — frontier, never a validation error), **satisfied** (the demanded claim exists, having cleared the ordinary evidence discipline — demands direct attention and never lower the bar), or **blocked**.
@@ -646,6 +682,127 @@ owes:
 - **Grown organically**, like invariants: declare a demand rule when a real completeness class appears; a new rule lands as a visible diff, and its first evaluation is the review surface. Rules and their vocabulary register (§8).
 
 The surfaces: **`ath ledger demands <fact-id>`** (and evaluation against a draft fact file, for mid-authoring use), the read surface's owner-plane demand endpoint, and the §7.4 work-list — all the same deterministic evaluation.
+
+## 15. Ontology — the spine and the anchored domains
+
+### 15.1 The two tiers and the spine
+
+The ledger's vocabulary (§8) carries an ontological backbone. Every concept and edge type in use ultimately **extends** the **registered spine** — the BFO-2020 top-level ontology and the Common Core Ontologies mid-level, held by the instance as registered reference datasets (§15.2) — and vocabulary lives in exactly two tiers:
+
+- **The shared tier** — the instance-general vocabulary: every type, predicate, schema, and registered term as this specification already defines them. Storage is unchanged (`schemas/{type}.yaml`, `VOCAB.md`); the tier gains extension chains into the spine (§15.3).
+- **Domains** — concept-anchored vocabulary: a concept MAY carry an **`ontology:` block**, making it a **domain concept** that scopes vocabulary and membership to itself (§15.4).
+
+Principles, each load-bearing:
+
+- **One substrate.** A domain is a concept. Domain identity is concept identity — the slug is the namespace, unique by construction (§4.1), carried by the lineage map through merges and renames, addressable by wikilink and `ledger://` like everything else. There is no module registry, no parallel ontology tree, and no new identity grammar anywhere in this section.
+- **A domain is a real thing.** A domain concept is an ordinary concept first (§4): a narrative universe, a franchise, a show, a system — something materialized because it was recognized, carrying its own claims and roster. A concept minted solely to house vocabulary is the bucket §4.2 prohibits; discipline-level vocabulary ("fiction", "automotive") belongs to the shared tier, never to an invented topic concept.
+- **Organic, with promotion.** Vocabulary mints where evidence needs it (§8): domain-specific terms mint in their domain; what recurs across domains promotes to the shared tier. A domain that outgrows its first anchor re-seats to a better concept mechanically (§15.4). Nothing is pre-built.
+- **Conformance is ISO/IEC 21838-1 Annex D.** Unique extension chains (D.2) compose transitively through the spine (D.3) and are demonstrated by a standard reasoner over the export (D.5.1 — §15.7). The chain declarations are data; the lint is graph traversal; the reasoner runs at check time, never at runtime.
+
+### 15.2 The registered spine
+
+The spine is **instance data, not distribution code**. Each spine source — BFO-2020 and the CCO release, per the adoption rulings — is a **reference dataset** (§6.5): its release bytes are an ordinary mirror artifact in the corpus (a terminal-contract record — capture provenance, content-addressed integrity, custody routes, and gc protection with no new machinery), registered in the instance config (Part I §2.3) with tag-keyed snapshots and a declared `latest:`, and marked **`spine: true`** — the flag that admits it as an extension-chain root. The distribution ships the **adapters** — the format knowledge for reading a BFO-2020 table set or a CCO release tree — and nothing else: which releases an instance trusts, at which bytes, is the instance's own declared, pinned, visible-diff state, updated independently of any tooling release.
+
+- **Reference form.** Declarations reference spine terms as `{dataset}:{id}` — the registered dataset's name plus the term's native identity (`cco:ont00001017`) — or its **label** where the label is unique in the resolved release (`cco:Artifact`, `bfo:site`); tooling surfaces the resolved pair, and the derived form is an ordinary `ref://{dataset}/{id}` (§6.5). **A reference that does not resolve against the resolved release is a validation error** — never a warning: nothing human-checks an opaque IRI by eye, and a plausible fabricated reference is precisely the failure class this gate exists to stop. Where the mirror bytes are not locally materialized, resolution reports **honestly unverifiable**, never failure (the §6.5 idiom — CI holds the mirrors).
+- **Always bare — one spine version per instance.** Extension chains resolve at each spine dataset's `latest` only; the per-citation `@{tag}` pin (§6.5) is deliberately not admitted in `extends:` — per-type pins would mix spine versions inside one ontology, which the conformance gate (§15.7) cannot make coherent. The instance-wide pin point is the registration itself: the tag names the release, the snapshot's artifact blake3 is the true pin.
+- **Updating is a registration diff.** Register the new snapshot, bump `latest` — one visible config diff — and validation re-resolves every chain: a reference the new release no longer carries **errors** loudly; one resolving to a term the release marks deprecated **warns**; and the conformance gate (§15.7) re-runs against the new spine. A spine migration keeps both snapshots registered until its sweep completes.
+- **Extend, never modify.** The spine's whole value is shared semantics — divergence belongs in the shared tier and the domains, as extensions. A deliberate fork remains possible and honest — it is a new registered snapshot whose mirror bytes and capture provenance say exactly what it is — but its cost (every interoperability dividend of a shared spine) is the forker's to carry, knowingly.
+
+The distribution's templates carry the default registration shape (BFO-2020 + CCO, per the rulings); capturing the release bytes is an ordinary owner-gated capture, and registration follows it. An instance with no spine registered has no ontology layer yet — every `extends:` is frontier and the gate has nothing to run against; the layer activates by registration, exactly as the reference-dataset layer did (v17).
+
+### 15.3 Extension chains — `extends:`
+
+Every concept and edge type in use owes a chain into the spine, declared in its schema (§4.4) by the key **`extends:`** — exactly **one** parent:
+
+- a spine **class**, for concept types (`extends: "cco:Organization"`);
+- a spine **relation**, for edge types (relations, not categories, are what edges specialize);
+- or **another declared type**, resolvable where the declaring type resolves (§15.4) — chains compose.
+
+The chain is derived by following `extends:` upward. It MUST be acyclic and MUST terminate in the spine; exactly one parent per type is D.2(2a)'s "unique chain of is-a relations" as a lint rule. The D.2(2b) defined-class escape is deliberately deferred (Part I §9) until a real type needs it.
+
+A **missing** `extends:` on an in-use type is **frontier**, never an error — surfaced on the work-list (§7.4) like every owed thing — and the v39 migration seeds chains for every type in use at landing, so the frontier is only ever a new mint awaiting its chain. A minimal schema (`type`, `description`, `extends:`) is legal and imposes no field validation: the chain declaration is earned structure's floor, not a gate on minting.
+
+A predicate MAY declare `extends:` in its field declaration (§4.4), naming a spine relation or property — optional; an unextended predicate projects as an instance-local property (§15.7).
+
+### 15.4 Domains — concept-anchored ontology
+
+A concept MAY carry an **`ontology:` block**:
+
+```jsonc
+// facts/continuity/bsg-reimagined.json (excerpt)
+{
+  "id": "bsg-reimagined",
+  "type": "continuity",            // resolves OUTSIDE this domain — see guards
+  "name": "Battlestar Galactica (2003 continuity)",
+  "ontology": {
+    "commitment": "conditional",   // real (default) | conditional
+    "imports": [],                 // other domain concepts; DAG, lineage-resolved
+    "types": {
+      "vessel": { "extends": "cco:Artifact", "description": "An in-universe craft." }
+    }
+  },
+  "claims": [ /* ordinary claims about the property itself */ ]
+}
+```
+
+- **Membership.** Any fact MAY carry a top-level **`domain:`** — a domain concept's id, resolved through the lineage map (§4.1) like every reference. Membership scopes vocabulary resolution and carries the domain's commitment.
+- **Resolution is upward.** A member fact's types and predicates resolve in its domain's **import closure** (the domain, its imports, transitively) ∪ the shared tier ∪ the spine — nothing else. A fact with no `domain:` resolves in the shared tier ∪ spine alone. Reuse-before-minting (§8) applies across the whole resolution set. A name resolving ambiguously across the closure (two imported domains minting the same type) is a validation error — loud, resolved by rename or import restructuring, never by precedence.
+- **Domain-minted types.** Declared in `ontology.types`, same grammar as the shared tier (`extends:` chains into the closure, the shared tier, or the spine; missing chain = frontier). A fact whose type is domain-minted MUST carry `domain:` naming a domain whose closure declares it. The directory layout is unchanged — `facts/{type}/{slug}.json`, type = directory name — and two domains minting the same type name coexist: ids stay globally unique, the `domain:` field selects the sense, `VOCAB.md` renders the qualified form (`vessel @ bsg-reimagined`). A domain type's operational schema (fields, expectations), when earned, lives at **`schemas/{domain-id}/{type}.yaml`** — the §4.4 grammar plus a `domain:` key that MUST equal the parent directory name.
+- **No shadowing.** A domain MUST NOT mint a type or predicate name that resolves in the shared tier — the shared term is the reuse target; a genuinely divergent sense takes a distinct name, or the divergence promotes. Cross-domain reuse of a name is fine (disjoint scopes).
+- **The economy default.** Prefer a shared-tier generic type plus `domain:` membership; mint a domain type sense only when the kind is genuinely domain-specific. (The precedent is Wikidata's two-tier threshold: per-work variation stays qualified claims; a version earns its own item only on distinctive features.) A shared type whose instances are meaningless without domain context MAY declare **`requires_domain: true`** in its schema — a fact of that type without `domain:` is then a validation error.
+- **Commitment.** `real` (default) or **`conditional`** — ISO/IEC 21838-2 §4.9.3(b): the domain's members and minted vocabulary use the full machinery of the system with **no existence commitment**. The bracket is declared once, on the domain, wholesale; member facts never override it. It changes nothing inside the ledger — evidence discipline (§6) and the bar (§5.4) apply unchanged, because evidence always attested what artifacts state and depict, never that a claim's subject exists — and it binds at the edges: presentation renders conditional content as depiction, never as world-fact (§12), and the export never asserts it (§15.7). Claims from real facts to conditional facts (a portrayal, an appearance, a depiction) are ordinary out-of-universe claims about the fiction — always legitimate.
+- **Guards**, each validated (§13.1):
+  - a domain concept's own `type` — and its own `domain:`, if any — MUST resolve outside its own import closure (no self-anchoring);
+  - `imports` name domain concepts only and form a DAG (no cycles), lineage-resolved;
+  - `commitment` is one of `real | conditional`.
+- **Re-seating.** Moving a domain to a better concept — the first work to the continuity that outgrew it — is a mechanical remap: the `ontology:` block moves, member `domain:` fields re-point, `schemas/{domain-id}/` renames, and the pass emits the migration worklist (§11's amended-invariant shape). Where the old domain concept itself merges or renames, the lineage map already carries every reference, `domain:` fields included. Domains are grown at the leaf and promoted when reality proves the recurrence — never designed upfront.
+
+### 15.5 Condition-grammar growth
+
+The shared operator grammar (§10) gains, everywhere it runs — harvest `match`, invariant `applies_to`, demand and expectation `when`, scope seeds (§12.1):
+
+- **The `domain:` fact axis** — operators over the fact's domain membership, `equals`/`in` operands lineage-resolved exactly as `id:` operands are (§14).
+- **The `isa:` operator on `type:`** — matches when the fact's type equals the operand **or reaches it through `extends:` chains** (transitive closure over the declared DAG — deterministic, datalog-class, no reasoner). The operand names a shared-tier type or a spine class (label or opaque id). The existing operators are **unchanged**: `equals`/`in`/`glob`/`matches` stay literal — subsumption matching is opt-in by operator, never a silent redefinition of rules already deployed.
+
+Scope evaluation (§12.1) gains the same two seed axes, plus a **commitment parameter**: include or exclude conditional-domain facts (default include, carried with their bracket visible).
+
+### 15.6 Correspondence across domains
+
+- **No cross-domain merge.** The lineage map's merge is **within-domain identity** — two mints that should have been one entity from the start. Across domains, and categorically across differing commitment, correspondence is **claims, never merges**: typed, evidence-bearing, graded, revisable. (The grounds are SKOS's own: merged resources are interchangeable in every statement, and separately-governed, separately-committed scopes are precisely where that must not happen. Merging a conditional concept into a real one is a category error outright.)
+- **Hub-and-spoke.** When one thing has many domain-specific versions — a character across continuities — version concepts link **hub-ward** to one central concept, one claim per version, never pairwise (n links, not n²). The hub is minted at the second version, per the organic rule; the reading is the librarians' ladder — hub at work level, versions at expression level. Cross-spoke links exist only where a work itself asserts the connection (a crossover), as ordinary evidenced claims.
+- **The version threshold.** A version earns its own concept only when it has distinctive features; mere per-work variation stays qualified claims on the one concept. The correspondence predicates (`version_of` and kin) are shared-tier vocabulary, minted organically when the first hub is.
+
+### 15.7 The export projection
+
+**`ath ledger export`** — a one-way, deterministic, regenerable projection of the fact graph into RDF. The ledger's JSON is the source of truth — the system's intermediate representation — and is **not constrained by the limits of the projection**: IR-side verification (§13, §11, §14) is the authority; the export carries what the target can express and no consumer round-trips it. RDF is how the product speaks, never how the ledger thinks.
+
+- **Plane-projected — the wall applies.** An export computes for a grant set (Part I §5.1): the **owner plane** (the default — local artifacts, the conformance gate) or, explicitly, the **public plane** or a declared audience plane. On any plane but the owner's, the §12 publication filter is pre-applied, fail closed: private-backed claims, the ids of fully-private fact files, evidence that resolves only privately, and the `ontology:` declarations of domain concepts not visible to the grant set are never emitted. An export handed beyond the owner is a publication; the plane — not the recipient's care — is the wall.
+- **Target and shape.** The projection targets **RDF 1.2** — the triple-term + `rdf:reifies` "triple annotation" pattern, whose non-assertion semantics are normative in the target itself. Every claim exports as a **reifier** carrying its status, `asof`, `period`, qualifiers, and evidence (PROV-O derivation to the anchored `corpus://`/`ref://` URIs; quoted entries carry quotation-grade derivation). The tooling pins the dated editions of the target specifications it implements.
+- **The assertion map** (normative). `confirmed`, `provisional`, and `inferred` claims **assert** their triple and annotate it; `reported`, `disputed`, and `conflicting` claims are **described, never asserted** — reifier and triple term only. The line is principled: the first three are the ledger asserting the world is so (however graded); the last three are assertions *about* assertions — a voice's testimony, a standing dispute, source disagreement. Presence claims (§5.5) have no triple and export as reifier-only descriptions carrying their presence marker. **Conditional-domain claims are never asserted on any plane**, whatever their status — the commitment bracket, expressed in the target's own non-assertion semantics. Interpretations are never exported at all.
+- **Vocabulary mapping.** Concepts and edges export as OWL **individuals**, never classes. Types export as classes subclassed per their `extends:` chains into the registered spine. The record↔bytes joint is generic dependence (the spine's own relation — no intermediate pattern-individuals the ledger cannot address). The artifact roster projects as IAO aboutness (the record is about the concept; quoted evidence entries as mention-grade). The lineage map exports as the deprecation pattern — retired IRI kept, deprecated, equivalence to the survivor. Invariants export as SHACL shapes **where the target expresses them** — a partial projection for interchange; the IR engine remains the authority (open-world OWL cannot state them, and no reasoner is ever consulted about instance data at runtime).
+- **The conformance gate** (ISO/IEC 21838-1 Annex D.5.1). Validation includes the gate: where the verifying environment provides a standard OWL 2 reasoner, it MUST demonstrate that the owner-plane export combined with the registered spine (its mirrors materialized) is consistent, and the spine logically interpretable in it; where the environment cannot, the gate reports **honestly unverifiable**, never a silent pass (the §13.2 idiom — CI provides the reasoner). The gate runs over export artifacts at check time — never in any authoring or query path. The reasoner is implementation detail this specification never names.
+- **Reproducibility.** Every export stamps the §12 tuple — specification version, instance commit, the spine snapshot bindings (resolved tag + mirror-artifact blake3, §6.5), plane — so a consumer pinning an export pins what produced it.
+
+### 15.8 Worked sketch (non-normative)
+
+The fiction pattern, end to end, in the instance's idiom. The continuity concept anchors a conditional domain (its own type, `continuity`, resolves in the shared tier — media vocabulary extending the spine). The character rides the **shared** `character` type (economy default; the schema declares `requires_domain: true`) with membership selecting the universe; only `vessel` is domain-minted, because no shared kind fits. Evidence discipline is unchanged throughout — the in-universe claim anchors a time-coded quote in a real record, exactly like any claim:
+
+```jsonc
+// facts/character/william-adama.json
+{
+  "id": "william-adama", "type": "character", "domain": "bsg-reimagined",
+  "name": "William Adama",
+  "sources": { "s1": { "record": "<miniseries-pt1 blake3>" } },
+  "claims": [{
+    "id": "william-adama:commands", "predicate": "commands", "object": "galactica",
+    "status": "provisional",
+    "evidence": [{ "source": "s1", "anchor": "time_range=41:05-41:12",
+                   "quote": "This is the Commander.", "kind": "direct" }]
+  }]
+}
+```
+
+`galactica` is a `vessel` fact carrying `domain: "bsg-reimagined"`. Edward James Olmos is a real `person`; his `portrays → william-adama` claim is an ordinary out-of-universe claim and exports asserted. Adama's `commands` claim exports described-never-asserted (conditional domain), whatever its rung. A second continuity arriving later mints its own membership and, at that moment, the hub concept and its `version_of` spokes (§15.6) — and if the first domain's anchor proves too narrow (a film that grew into a franchise), the domain re-seats (§15.4) without an id changing anywhere.
 
 ## Appendix A: Worked example (non-normative)
 

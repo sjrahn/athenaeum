@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 38
+version: 39
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-21
+date_modified: 2026-08-26
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -133,13 +133,23 @@ references:                # reference datasets (Part III §6.5) — mirrored da
     adapter: …             # optional — the format adapter resolving native ids (zim,
                            #   osm-pbf, …); when omitted, derived from the mirror record's
                            #   mime overlay `ref_adapter` (Part II §7.1); explicit wins
+    spine: true            # optional — admits this dataset as an extension-chain
+                           #   root for the ledger's ontology layer (Part III §15.2)
     latest: …              # the default snapshot tag — names a key below, declared, never inferred
     snapshots:
       {tag}:
         artifact: …        # blake3 of the mirror's bytes — the pin verification stamps
+
+assets:                    # instance-registered tool assets (Part II §12.3.6):
+  {name}:                  #   engine payloads the tooling injects or executes,
+    description: …         #   pinned exactly as reference snapshots are
+    latest: {tag}          # declared, never inferred
+    snapshots:
+      {tag}:
+        artifact: …        # blake3 of the registered build's bytes
 ```
 
-The registry earns tracking: a snapshot registration (tag → mirror blake3) is a durable fact about the system — it now lands as a visible diff with history, like every other durable declaration (§1.2 principle 8). Machine-specific custody (where mirror bytes physically reside) stays out of the config — that is `corpus.toml`'s job (Part IV).
+The registry earns tracking: a snapshot registration (tag → mirror blake3) is a durable fact about the system — it now lands as a visible diff with history, like every other durable declaration (§1.2 principle 8). Machine-specific custody (where mirror bytes physically reside) stays out of the config — that is `corpus.toml`'s job (Part IV). An `assets:` entry registers a **tool asset** — a payload the tooling injects or executes (the web capturer's SingleFile bundle, Part II §12.3.6) whose exact bytes shape captured content and therefore belong to the instance, not the tooling: captured with provenance, pinned by artifact blake3, resolved through custody, updated by registration diff. Same snapshot grammar as `references:`, none of the citation semantics — asset content is never a `ref://` surface.
 
 A deployment bootstraps by installing the distribution's CLIs, running `ath init` (or cloning an existing instance), and working inside the instance.
 
@@ -209,6 +219,7 @@ The distribution ships the product's one network doorway: **`ath serve`** — a 
 | Demand evaluation (Part III §14) and scope evaluation (Part III §12.1) | Deterministic |
 | The read surface (`ath serve`, §5.1) | Deterministic |
 | Instance status (`ath`) | Deterministic |
+| Ontology export + conformance gate (Part III §15.7) | Deterministic |
 
 If the operation could produce different valid outputs depending on judgment, it is agent-driven; if the output is a function of the input, it is scripted. This enables independent re-processing at every stage.
 
@@ -225,7 +236,9 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 One distribution — **`athenaeum`** (Python, `tools/` in the distribution repo) — ships the system's CLIs:
 
 - **`corpus`** — the corpus pipeline and query surface: capture / ingest / attest / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, and the custody verbs (Part IV: location, locate, gc).
-- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot; writes go through the forge's own CLI), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
+- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot; writes go through the forge's own CLI), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands, and `ath ledger export` — the plane-projected RDF projection, Part III §15.7), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
+
+The distribution ships **spine adapters** — the format knowledge for reading the registered ontology reference datasets (a BFO-2020 table set, a CCO release tree — Part III §15.2); the spine data itself is instance state, captured and registered like any reference dataset, never shipped with the tooling.
 
 Tooling agnosticism is normative: no instance ids or paths in code; instance-local extensions load through declared seams; a third party brings their own instance and agents to the same distribution. Consumers use the distribution **as a library** — the resolver, the ledger read surface, the instance join — through the same public contracts.
 
@@ -243,8 +256,8 @@ The **residence scanner** (`scanner/` in the distribution repo) is the one non-P
 
 ## 9. Out of scope
 
-Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a second corpus per instance; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5); cross-instance federation and any resolver spanning instances; full-text search on the read surface (`/facts` selection is deterministic matching, never search); write verbs on the read surface; per-consumer or per-request grants (disclosure is granted per declared **audience** — §2.3, §5.1 — never negotiated at the door); instance-shipped value-kind validator code (kinds are data, Part III §4.5; an algorithmic-validity seam is designed but deferred until a declared kind needs one); SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
+Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a second corpus per instance; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5); cross-instance federation and any resolver spanning instances; full-text search on the read surface (`/facts` selection is deterministic matching, never search); write verbs on the read surface; per-consumer or per-request grants (disclosure is granted per declared **audience** — §2.3, §5.1 — never negotiated at the door); instance-shipped value-kind validator code (kinds are data, Part III §4.5; an algorithmic-validity seam is designed but deferred until a declared kind needs one); ISO 21838-1 D.2(2b) defined-class declarations (every chain is single-parent until a real type needs the escape); domain-scoped vocabulary classes beyond types and predicates (roster roles, modalities, and value kinds stay shared-tier); export serializations beyond the RDF 1.2 projection (nanopublication and Web Annotation renderings are mechanical futures of the same projection, not law); ontology-block nesting beyond `imports`; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
 
 ---
 
-*Version 38 (2026-08-23, owner ruling) adds the rendered-local date axis and the instance's own knife (Part II §12.3.14): a producer that renders UTC-stored timestamps into the export machine's local zone declares **`render_timezone:`** on its date axis (measured and banked, DST-aware conversion to UTC before bucketing — a declared fact, never an invented offset; boundaries stay UTC for everyone); and producer-specific member-grain splitting of bespoke formats is **instance-owned** — the distribution ships the generic flows and shared primitives and prescribes only the emitted stratum shape. Prior version notes: the changelog.*
+*Version 39 (2026-08-26, owner ruling) lands the ontology layer (Part III §15): the registered BFO-2020 + CCO spine (instance-held reference datasets, tooling-shipped adapters), extension chains on the shared tier, concept-anchored domains (a domain is a concept; the slug is the namespace), the opt-in `isa` operator, presence claims (§5.5), field-attached invariants, lineage reasons, and the plane-projected RDF 1.2 export with the D.5.1 conformance gate. Prior version notes: the changelog.*

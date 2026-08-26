@@ -2,11 +2,11 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 38
+version: 39
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-21
+date_modified: 2026-08-26
 ---
 
 # Athenaeum Specification — Part II: The Corpus
@@ -1686,6 +1686,8 @@ A web capture renders the page in a headless browser, drives it to surface all d
 The snapshot's **fidelity** is a per-host tier (`capture.fidelity:` — `exact` | `balanced` | `lean`, default `balanced`; `FIDELITY_PRESETS` in `capture/__init__.py`). On asset-heavy SPAs the self-contained inlining (web/icon fonts in redundant formats, app icon-sprite SVGs) is re-inlined into every page, dwarfs the content, and defeats content-addressed dedup (each page's whole-file hash differs). `balanced` drops redundant font/image/media alternates (≈−76%, no rendering risk); `lean` also prunes unused CSS (≈−91%); `exact` keeps everything for presentation-critical sites. The tiers touch only the gitignored `artifacts/` — the mechanical body derivation reads DOM text/tables, so the record and its derived body are identical across tiers. The resolved tier is stamped into a `corpus-fidelity` meta tag; `corpus capture --fidelity` / `corpus crawl --fidelity` override per run.
 
 Capture config (`capturer`, `transport`, `fidelity`, `interactions`, `viewport`) lives on the per-host origin overlay under its `capture:` section (§7.2); global defaults can sit on the universal `origin.yaml`. `scaffold.py`'s example overlay shows the full annotated shape.
+
+**The snapshot engine is an instance asset, not tooling.** The injected SingleFile bundle is registered in the instance config (`assets:`, Part I §2.3): its bytes are an ordinary corpus artifact — captured from upstream with retrieval provenance, content-addressed, resolved through custody routes, and pinned against deletion by its registration exactly as a reference snapshot is — and the capturer resolves the registered `latest` tag to its artifact blake3 and materializes the bytes locally. The tooling ships the **harness** (browser driving, injection, the snapshot call) and the format knowledge to load a registered build (the upstream string-constant module form or a direct IIFE); which build runs, at which bytes, is the instance's declared, pinned, visible-diff state — updated by capturing the new upstream release and bumping `latest`, never by a tooling release. Each web capture records the resolved asset identity on its capture sidecar as **`snapshot_engine:`** (`singlefile@{tag}` plus the artifact hash), landing in origin provenance — the engine-pin discipline (§6.4) applied to capture itself. With no asset registered, or its bytes not materialized in the capturing environment, capture degrades to the rendered-DOM snapshot and **discloses it loudly** — degraded fidelity is never silent.
 
 #### 12.3.7 The video (yt-dlp) pathway
 
