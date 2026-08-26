@@ -10,12 +10,15 @@ is the browser. There is no hardcoded host knowledge (no built-in video-host lis
                          `.info.json` (metadata + top comments). yt-dlp options are
                          declared in the overlay's `capture.ytdlp:` block and merged
                          over library defaults. Requires the ``[media]`` extra.
-    text/html (xhtml)  → Playwright renders the page; an optional vendored
-                         SingleFile bundle inlines CSS / images / fonts as
-                         `data:` URIs for a self-contained snapshot. Without the
-                         bundle the rendered DOM (`page.content()`) is captured —
-                         still valid HTML, just without inlined sub-resources.
-                         Requires the ``[capture]`` extra.
+    text/html (xhtml)  → Playwright renders the page; the SingleFile bundle — the
+                         instance's registered `assets.singlefile` (spec/corpus.md
+                         §12.3.6), never tooling-shipped — inlines CSS / images /
+                         fonts as `data:` URIs for a self-contained snapshot. With
+                         no asset registered (or its bytes not materialized here),
+                         the rendered DOM (`page.content()`) is captured instead —
+                         still valid HTML, just without inlined sub-resources — and
+                         the degrade is disclosed loudly (a warning + a capture
+                         issue), never silent. Requires the ``[capture]`` extra.
     anything else      → re-fetch the bytes via the browser's session (cookies
                          already set) and write the raw response.
 
@@ -28,7 +31,9 @@ drafter can recover capture provenance from the bytes alone::
 
 The capture provenance is *also* written to a `<file>.capture.yaml` sidecar that
 ``corpus ingest`` reads to seed the record's first `<!--origin-->` block and to
-replay any capture-stage issues as `<!--issue-->` blocks.
+replay any capture-stage issues as `<!--issue-->` blocks. A web capture's resolved
+snapshot engine rides the same sidecar as `snapshot_engine:` (spec/corpus.md
+§12.3.6), landing on that first origin block as an ordinary extended field.
 
 This module is the importable library. `capture()` produces bytes under
 `capture/` and returns a `CaptureResult`; `capture_and_ingest()` chains
@@ -46,6 +51,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import json
 import logging
 import os
 import re
@@ -56,6 +62,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
+from .. import assets as corpus_assets
 from .. import hashing, mime, paths, records, touches
 from .. import urls as urlcanon
 
@@ -118,7 +125,7 @@ SINGLEFILE_OPTIONS = {
 # pages) and want `exact`; others we keep only for the information and can run `lean`.
 # None of these options touch the drafted record — the mechanical drafter reads DOM
 # text/tables, not fonts/CSS — so records are identical across tiers; only the
-# gitignored `artifacts/` shrink. Spellings verified against the vendored bundle.
+# gitignored `artifacts/` shrink. Spellings verified against the registered bundle.
 FIDELITY_PRESETS: dict[str, dict[str, bool]] = {
     "exact": {},  # byte-faithful; presentation IS content
     "balanced": {  # ~-76%, no rendering risk: drop redundant font / image / media alternates
@@ -187,6 +194,10 @@ class CaptureResult:
     capture_path: Path
     used_video: bool
     issues: list[dict] = field(default_factory=list)
+    # The resolved snapshot engine identity (spec/corpus.md §12.3.6), stamped onto the
+    # capture sidecar as `snapshot_engine:` — `None` for a capturer that never touches
+    # SingleFile (the video pathway, a non-HTML binary re-fetch).
+    snapshot_engine: str | None = None
 
 
 # ---------- pluggable capturer seam ---------- #
@@ -409,15 +420,18 @@ def capture_from_save(
     from .recipes import capture_recipe_for_url
 
     recipe = capture_recipe_for_url(corpus_root, canonical)
-    cap_path, issues = _capture_from_save(
+    cap_path, issues, snapshot_engine = _capture_from_save(
         src,
         url=canonical,
         saved_at=prov.saved_at,
         capture_dir=capture_dir,
         opts=opts,
         recipe=recipe,
+        corpus_root=corpus_root,
     )
-    return CaptureResult(capture_path=cap_path, used_video=False, issues=issues)
+    return CaptureResult(
+        capture_path=cap_path, used_video=False, issues=issues, snapshot_engine=snapshot_engine
+    )
 
 
 def capture_from_save_and_ingest(
@@ -454,15 +468,18 @@ def capture_from_save_and_ingest(
         prov.saved_at,
         prov.source,
     )
-    cap_path, issues = _capture_from_save(
+    cap_path, issues, snapshot_engine = _capture_from_save(
         src,
         url=canonical,
         saved_at=prov.saved_at,
         capture_dir=capture_dir,
         opts=opts,
         recipe=recipe,
+        corpus_root=corpus_root,
     )
-    result = CaptureResult(capture_path=cap_path, used_video=False, issues=issues)
+    result = CaptureResult(
+        capture_path=cap_path, used_video=False, issues=issues, snapshot_engine=snapshot_engine
+    )
     return _ingest_capture(
         result, original_url=canonical, corpus_root=corpus_root, fetched_at=prov.saved_at
     )
@@ -476,7 +493,8 @@ def _capture_from_save(
     capture_dir: Path,
     opts: CaptureOptions,
     recipe: dict[str, Any] | None,
-) -> tuple[Path, list[dict]]:
+    corpus_root: Path,
+) -> tuple[Path, list[dict], str]:
     """Replay a manual SingleFile save through a headless browser and re-snapshot it.
 
     The saved bytes are self-contained (SingleFile inlined every asset as `data:` URIs),
@@ -488,8 +506,10 @@ def _capture_from_save(
     the same SingleFile fidelity machinery. The corpus-* metas record the BANNER url and
     saved date, never the `file://` path or the re-snapshot moment.
 
-    Returns `(capture_path, issues)`. No capture-stage detectors run: there was no live
-    navigation to drift, and a save's inlined images are neither re-fetched nor scored.
+    Returns `(capture_path, issues, snapshot_engine)`. No capture-stage detectors run —
+    there was no live navigation to drift, and a save's inlined images are neither
+    re-fetched nor scored — except the snapshot-engine degrade check (spec §12.3.6),
+    which applies here exactly as it does to a live browser capture.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -507,7 +527,12 @@ def _capture_from_save(
     interaction_steps = recipe.get("interactions")
     viewport = _recipe_viewport(recipe) or opts.viewport
     user_agent = str(recipe.get("user_agent") or "") or opts.user_agent
-    bundle = _resolve_singlefile_bundle()
+    resolved_bundle = _resolve_singlefile_bundle(corpus_root)
+    bundle = resolved_bundle.path if resolved_bundle else None
+    snapshot_engine = resolved_bundle.engine if resolved_bundle else SNAPSHOT_ENGINE_DEGRADED
+    issues: list[dict] = []
+    if issue := _snapshot_engine_issue(snapshot_engine):
+        issues.append(issue)
     base = _sanitize_filename(url)
     file_uri = src.as_uri()
 
@@ -547,7 +572,7 @@ def _capture_from_save(
                 fidelity,
                 capture_path.name,
             )
-            return capture_path, []
+            return capture_path, issues, snapshot_engine
         finally:
             if page is not None:
                 with contextlib.suppress(Exception):
@@ -1039,13 +1064,16 @@ def _capture_via_playwright(
     opts: CaptureOptions,
     cdp_url: str | None,
     recipe: dict[str, Any] | None = None,
-) -> tuple[Path, list[dict]]:
+    corpus_root: Path,
+) -> tuple[Path, list[dict], str | None]:
     """Drive Playwright; branch on response content-type.
 
-    HTML → a snapshot (SingleFile if a bundle is available, else the rendered
-    DOM) with corpus-* meta injection and capture-stage detectors. Anything else
-    → raw bytes re-fetched via the browser session, written with a MIME-derived
-    extension. Returns `(capture_path, issues)`.
+    HTML → a snapshot (the registered SingleFile asset if resolved, else the
+    rendered DOM, disclosed as a degrade — spec §12.3.6) with corpus-* meta
+    injection and capture-stage detectors. Anything else → raw bytes re-fetched
+    via the browser session, written with a MIME-derived extension. Returns
+    `(capture_path, issues, snapshot_engine)` — `snapshot_engine` is `None` for
+    the binary branch, which never touches SingleFile.
 
     A `recipe` (resolved per-origin) may override the transport (`headless` |
     `headed` | `cdp`), the viewport / user-agent, and the pre-snapshot
@@ -1067,7 +1095,9 @@ def _capture_via_playwright(
     timeout_ms = opts.timeout_s * 1000
     fetched_at = touches.now_iso()
     base = _sanitize_filename(url)
-    bundle = _resolve_singlefile_bundle()
+    resolved_bundle = _resolve_singlefile_bundle(corpus_root)
+    bundle = resolved_bundle.path if resolved_bundle else None
+    snapshot_engine = resolved_bundle.engine if resolved_bundle else SNAPSHOT_ENGINE_DEGRADED
 
     recipe = recipe or {}
     transport = (str(recipe.get("transport") or "").strip().lower()) or None
@@ -1183,10 +1213,11 @@ def _capture_via_playwright(
                     final_url=final_url,
                     response_status=response_status,
                     image_stats=image_stats,
+                    snapshot_engine=snapshot_engine,
                 )
                 capture_path = capture_dir / f"{base}.html"
                 capture_path.write_text(snapshot, encoding="utf-8")
-                return capture_path, issues
+                return capture_path, issues, snapshot_engine
 
             api = ctx.request.get(url, timeout=timeout_ms)
             raw = api.body()
@@ -1207,7 +1238,7 @@ def _capture_via_playwright(
             capture_path = capture_dir / f"{base}.{ext}"
             capture_path.write_bytes(raw)
             log.info("non-HTML response: saved %d bytes as .%s", len(raw), ext)
-            return capture_path, []
+            return capture_path, [], None
         finally:
             if page is not None:
                 with contextlib.suppress(Exception):
@@ -1236,8 +1267,13 @@ def _capture_with_browser(
     if chosen:
         eff_recipe["transport"] = chosen
     cdp_url = _resolve_cdp_endpoint(opts.cdp_url)
-    path, issues = _capture_via_playwright(
-        url=url, capture_dir=capture_dir, opts=opts, cdp_url=cdp_url, recipe=eff_recipe
+    path, issues, snapshot_engine = _capture_via_playwright(
+        url=url,
+        capture_dir=capture_dir,
+        opts=opts,
+        cdp_url=cdp_url,
+        recipe=eff_recipe,
+        corpus_root=corpus_root,
     )
     if issues:
         log.info(
@@ -1246,7 +1282,9 @@ def _capture_with_browser(
                 f"{i['id']}" + (f"/{i['subtype']}" if i.get("subtype") else "") for i in issues
             ),
         )
-    return CaptureResult(capture_path=path, used_video=False, issues=issues)
+    return CaptureResult(
+        capture_path=path, used_video=False, issues=issues, snapshot_engine=snapshot_engine
+    )
 
 
 def _recipe_viewport(recipe: dict[str, Any]) -> tuple[int, int] | None:
@@ -1456,7 +1494,7 @@ def _snapshot_html(
     final_url = capture_url or page.url
     if bundle is not None:
         log.info("snapshotting via SingleFile bundle: %s (fidelity=%s)", bundle, fidelity)
-        page.add_script_tag(content=bundle.read_text())
+        page.add_script_tag(content=_unwrap_bundle_source(bundle.read_text(encoding="utf-8")))
         data = page.evaluate(
             "async (opts) => { const d = await singlefile.getPageData(opts); "
             "return { content: d.content, title: d.title }; }",
@@ -1466,8 +1504,8 @@ def _snapshot_html(
         log.info("snapshot %d bytes, title %r", len(snapshot.encode()), data["title"])
     else:
         log.warning(
-            "no SingleFile bundle (set CORPUS_SINGLEFILE_BUNDLE or vendor "
-            "src/corpus/vendor/single-file.js) — capturing rendered DOM without "
+            "no SingleFile bundle resolved (registered `assets.singlefile`, or set "
+            "CORPUS_SINGLEFILE_BUNDLE for local dev) — capturing rendered DOM without "
             "inlined CSS/fonts"
         )
         snapshot = page.content()
@@ -1477,22 +1515,92 @@ def _snapshot_html(
     )
 
 
-def _resolve_singlefile_bundle() -> Path | None:
-    """Locate the SingleFile JS bundle.
+# The upstream `single-file-cli` distribution ships the bundle as a JS module
+# exporting the minified source as a string constant (`const script = "...";
+# const ...` / `...; export ...`). A registered/env asset may be that verbatim
+# upstream file OR an already-injectable IIFE — format knowledge for telling them
+# apart, and unwrapping the former, lives in the loader (spec/corpus.md §12.3.6) so
+# registering a build needs no manual pre-processing step.
+_BUNDLE_MODULE_RE = re.compile(
+    r"^\s*const\s+script\s*=\s*(\".*?\");(?:\s*const|\s*export)", re.DOTALL
+)
 
-    Order: `CORPUS_SINGLEFILE_BUNDLE` env → packaged `corpus/vendor/single-file.js`.
-    Returns None when neither exists (capture degrades to a rendered-DOM snapshot).
+
+def _unwrap_bundle_source(raw: str) -> str:
+    """Injectable JS for a SingleFile bundle: unwrap the upstream `script`
+    string-constant module form into its decoded JS text, or pass a direct IIFE
+    through unchanged."""
+    m = _BUNDLE_MODULE_RE.match(raw)
+    if not m:
+        return raw
+    return json.loads(m.group(1))
+
+
+@dataclass(frozen=True)
+class ResolvedBundle:
+    """A located SingleFile bundle plus the engine identity to stamp on the capture
+    sidecar as `snapshot_engine:` (spec/corpus.md §12.3.6)."""
+
+    path: Path
+    engine: str
+
+
+# Stamped when no bundle resolves at all — capture degrades to the rendered-DOM
+# snapshot, and this is the honest, undisguised record of that (spec §12.3.6:
+# "degraded fidelity is never silent").
+SNAPSHOT_ENGINE_DEGRADED = "rendered-dom"
+
+
+def _resolve_singlefile_bundle(corpus_root: Path) -> ResolvedBundle | None:
+    """Locate the SingleFile JS bundle (spec/corpus.md §12.3.6).
+
+    Resolution order:
+
+    1. `CORPUS_SINGLEFILE_BUNDLE` env — the dev escape hatch, checked first. A set-
+       but-missing path is a hard miss (no fallthrough to the registered asset): the
+       operator asked for THIS file. Stamped `singlefile@env` + the blake3 of the
+       loaded file's bytes.
+    2. The instance's registered `assets.singlefile` (`athenaeum.yaml`, Part I §2.3):
+       its `latest` tag resolved to an artifact blake3, materialized through the
+       corpus's own artifact/custody routes (`corpus.assets.materialize`). Stamped
+       `singlefile@{tag}` + the artifact blake3.
+    3. Neither resolves (no asset registered, or its bytes aren't materialized in
+       this environment) → `None`. The caller degrades to the rendered-DOM snapshot
+       and discloses it loudly — a warning here, plus a capture issue at the call
+       site (`_snapshot_engine_issue`), never silent.
     """
     env = os.environ.get("CORPUS_SINGLEFILE_BUNDLE")
     if env:
         p = Path(env).expanduser()
         if p.is_file():
-            return p
+            digest = hashing.hash_file(p, also=())["blake3"]
+            engine = f"singlefile@env {records.format_hash('blake3', digest)}"
+            return ResolvedBundle(path=p, engine=engine)
         log.warning("CORPUS_SINGLEFILE_BUNDLE points at a missing file: %s", p)
         return None
-    # parents[1] is the `corpus` package dir (this module is corpus/capture/__init__.py).
-    packaged = Path(__file__).resolve().parents[1] / "vendor" / "single-file.js"
-    return packaged if packaged.is_file() else None
+
+    asset = corpus_assets.load_asset(corpus_root, "singlefile")
+    if asset is None:
+        log.warning(
+            "no `singlefile` asset registered (assets: in athenaeum.yaml) and no "
+            "CORPUS_SINGLEFILE_BUNDLE override — capturing rendered DOM without inlined "
+            "CSS/fonts/images"
+        )
+        return None
+    snapshot = asset.snapshots[asset.latest]
+    path = corpus_assets.materialize(corpus_root, snapshot.artifact)
+    if path is None:
+        log.warning(
+            "registered singlefile asset @%s (artifact %s) is not materialized in this "
+            "environment — capturing rendered DOM without inlined CSS/fonts/images",
+            asset.latest,
+            snapshot.artifact[:12],
+        )
+        return None
+    return ResolvedBundle(
+        path=path,
+        engine=f"singlefile@{asset.latest} {records.format_hash('blake3', snapshot.artifact)}",
+    )
 
 
 # ---------- CDP endpoint resolution ---------- #
@@ -1530,6 +1638,7 @@ def _run_capture_detectors(
     final_url: str,
     response_status: int | None,
     image_stats: tuple[int, int],
+    snapshot_engine: str | None = None,
 ) -> list[dict]:
     """Run capture-stage detectors against the snapshot + orchestration context.
 
@@ -1557,7 +1666,28 @@ def _run_capture_detectors(
             issues.append(issue)
     if issue := _detect_inline_image_failure(image_stats=image_stats, detector_id=detector_id):
         issues.append(issue)
+    if issue := _snapshot_engine_issue(snapshot_engine, detector_id=detector_id):
+        issues.append(issue)
     return issues
+
+
+def _snapshot_engine_issue(
+    snapshot_engine: str | None, *, detector_id: str | None = None
+) -> dict | None:
+    """A `snapshot-engine-degraded` issue when `snapshot_engine` is the rendered-DOM
+    degrade stamp (spec §12.3.6: "discloses it loudly") — the loud, on-record half
+    of the disclosure; `_resolve_singlefile_bundle`'s `log.warning` is the other.
+    `None` for a resolved engine (registered asset or env override), never emitted."""
+    if snapshot_engine != SNAPSHOT_ENGINE_DEGRADED:
+        return None
+    return {
+        "id": "snapshot-engine-degraded",
+        "subtype": None,
+        "severity": "warning",
+        "resolution": "open",
+        "detector": detector_id or touches.script_identifier("capture"),
+        "fields": {"snapshot_engine": SNAPSHOT_ENGINE_DEGRADED},
+    }
 
 
 def _detect_http_error_with_200_body(
@@ -1810,9 +1940,9 @@ def _ingest_capture(
     corpus_root: Path,
     fetched_at: str | None = None,
 ) -> Path | None:
-    """Write the `.capture.yaml` sidecar (source_url / fetched_at / issues) and
-    dispatch `ingest` in-process. Returns the resulting record path, or None on a
-    non-zero ingest exit.
+    """Write the `.capture.yaml` sidecar (source_url / fetched_at / snapshot_engine /
+    issues) and dispatch `ingest` in-process. Returns the resulting record path, or
+    None on a non-zero ingest exit.
 
     `fetched_at` overrides the recorded snapshot timestamp — used by from-save capture
     to seed the origin `snapshot:` with the SingleFile saved date (when the human saved
@@ -1834,6 +1964,8 @@ def _ingest_capture(
         "source_url": original_url,
         "fetched_at": fetched_at or touches.now_iso(),
     }
+    if result.snapshot_engine:
+        payload["snapshot_engine"] = result.snapshot_engine
     if result.issues:
         payload["capture_issues"] = result.issues
     sidecar.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")

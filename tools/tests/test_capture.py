@@ -2,14 +2,18 @@
 
 Playwright / yt-dlp / network paths are exercised only by the `network`-marked
 end-to-end test (skipped by default). Everything here runs offline: URL
-dispatch, viewport parsing, meta injection, SingleFile-bundle resolution, and
-the detector suite — including a conformance check that every issue a detector
-emits is spec §4.3.3.1-shaped and carries a lint-valid touch identifier.
+dispatch, viewport parsing, meta injection, SingleFile-bundle resolution (env
+override, registered-asset resolution, and the disclosed rendered-DOM degrade,
+spec §12.3.6), and the detector suite — including a conformance check that every
+issue a detector emits is spec §4.3.3.1-shaped and carries a lint-valid touch
+identifier.
 """
 
 from __future__ import annotations
 
+import blake3
 import pytest
+import yaml
 
 from corpus import capture, touches
 from corpus.lint import _TOUCH_RE
@@ -146,28 +150,177 @@ def test_snapshot_html_passes_resolved_fidelity_to_singlefile(tmp_path):
     assert '<meta name="corpus-fidelity" content="lean">' in out
 
 
-# ---------- SingleFile bundle resolution ---------- #
+# ---------- SingleFile bundle resolution (spec §12.3.6) ---------- #
+
+
+def _write_instance(tmp_path, *, assets_yaml: str = ""):
+    """A minimal instance: `athenaeum.yaml` at the root (carrying `assets_yaml`,
+    already the full `assets:` block text or empty) + an empty `corpus/` beneath
+    it. Returns `(instance_root, corpus_root)`."""
+    instance = tmp_path / "instance"
+    corpus_root = instance / "corpus"
+    corpus_root.mkdir(parents=True)
+    (instance / "athenaeum.yaml").write_text(assets_yaml, encoding="utf-8")
+    return instance, corpus_root
 
 
 def test_resolve_singlefile_bundle_env(tmp_path, monkeypatch):
     bundle = tmp_path / "sf.js"
     bundle.write_text("// bundle", encoding="utf-8")
     monkeypatch.setenv("CORPUS_SINGLEFILE_BUNDLE", str(bundle))
-    assert capture._resolve_singlefile_bundle() == bundle
+    resolved = capture._resolve_singlefile_bundle(tmp_path)
+    assert resolved.path == bundle
+    assert resolved.engine.startswith("singlefile@env blake3:")
 
 
 def test_resolve_singlefile_bundle_env_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("CORPUS_SINGLEFILE_BUNDLE", str(tmp_path / "nope.js"))
-    assert capture._resolve_singlefile_bundle() is None
+    # A set-but-missing env override is a hard miss — no fallthrough to a registered
+    # asset even if one exists.
+    assert capture._resolve_singlefile_bundle(tmp_path) is None
 
 
-def test_resolve_singlefile_bundle_absent_default(monkeypatch):
-    """No env + no vendored bundle committed → None (capture degrades gracefully)."""
+def test_resolve_singlefile_bundle_no_instance_or_asset(tmp_path, monkeypatch):
+    """No env, no instance config above `corpus_root` → degrade (None)."""
     monkeypatch.delenv("CORPUS_SINGLEFILE_BUNDLE", raising=False)
-    # The packaged bundle is gitignored / not committed, so this is None in CI.
-    # If a developer has dropped one in locally, it's a Path — accept both.
-    result = capture._resolve_singlefile_bundle()
-    assert result is None or result.name == "single-file.js"
+    corpus_root = tmp_path / "bare-corpus"
+    corpus_root.mkdir()
+    assert capture._resolve_singlefile_bundle(corpus_root) is None
+
+
+def test_resolve_singlefile_bundle_no_asset_registered(tmp_path, monkeypatch):
+    """An instance config with no `assets:` block (or none named `singlefile`) is
+    an ordinary miss, not an error."""
+    monkeypatch.delenv("CORPUS_SINGLEFILE_BUNDLE", raising=False)
+    _instance, corpus_root = _write_instance(tmp_path, assets_yaml="name: test\n")
+    assert capture._resolve_singlefile_bundle(corpus_root) is None
+
+
+def test_resolve_singlefile_bundle_registered_asset(tmp_path, monkeypatch):
+    """The registered `assets.singlefile` `latest` tag resolves to its artifact
+    blake3, materialized from the co-located `artifacts/<shard>/` tree."""
+    monkeypatch.delenv("CORPUS_SINGLEFILE_BUNDLE", raising=False)
+    payload = b"(() => { window.singlefile = {}; })();"
+    digest = blake3.blake3(payload).hexdigest()
+    _instance, corpus_root = _write_instance(
+        tmp_path,
+        assets_yaml=yaml.safe_dump(
+            {
+                "assets": {
+                    "singlefile": {
+                        "latest": "v1",
+                        "snapshots": {"v1": {"artifact": digest}},
+                    }
+                }
+            }
+        ),
+    )
+    shard_dir = corpus_root / "artifacts" / digest[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{digest}.js").write_bytes(payload)
+
+    resolved = capture._resolve_singlefile_bundle(corpus_root)
+    assert resolved is not None
+    assert resolved.path == shard_dir / f"{digest}.js"
+    assert resolved.engine == f"singlefile@v1 blake3:{digest}"
+
+
+def test_resolve_singlefile_bundle_registered_asset_not_materialized(tmp_path, monkeypatch):
+    """Registered but its bytes aren't on disk anywhere this corpus root resolves —
+    a degrade (None), not a crash."""
+    monkeypatch.delenv("CORPUS_SINGLEFILE_BUNDLE", raising=False)
+    digest = "ab" * 32
+    _instance, corpus_root = _write_instance(
+        tmp_path,
+        assets_yaml=yaml.safe_dump(
+            {"assets": {"singlefile": {"latest": "v1", "snapshots": {"v1": {"artifact": digest}}}}}
+        ),
+    )
+    assert capture._resolve_singlefile_bundle(corpus_root) is None
+
+
+def test_resolve_singlefile_bundle_env_beats_registered_asset(tmp_path, monkeypatch):
+    """The env override is checked first, exactly as documented — it wins even
+    when a registered asset also resolves."""
+    payload = b"(() => {})();"
+    digest = blake3.blake3(payload).hexdigest()
+    _instance, corpus_root = _write_instance(
+        tmp_path,
+        assets_yaml=yaml.safe_dump(
+            {"assets": {"singlefile": {"latest": "v1", "snapshots": {"v1": {"artifact": digest}}}}}
+        ),
+    )
+    shard_dir = corpus_root / "artifacts" / digest[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{digest}.js").write_bytes(payload)
+
+    env_bundle = tmp_path / "env-sf.js"
+    env_bundle.write_text("// env bundle", encoding="utf-8")
+    monkeypatch.setenv("CORPUS_SINGLEFILE_BUNDLE", str(env_bundle))
+    resolved = capture._resolve_singlefile_bundle(corpus_root)
+    assert resolved.path == env_bundle
+    assert resolved.engine.startswith("singlefile@env ")
+
+
+# ---------- SingleFile bundle format: upstream module form vs. direct IIFE ---------- #
+
+
+def test_unwrap_bundle_source_module_form():
+    """The upstream `single-file-bundle.js` module form (`const script = "...";
+    const ...`) is unwrapped to its decoded JS text."""
+    raw = 'const script = "console.log(1);"; const foo = 1;'
+    assert capture._unwrap_bundle_source(raw) == "console.log(1);"
+
+
+def test_unwrap_bundle_source_module_form_export():
+    raw = 'const script = "console.log(2);"; export { script };'
+    assert capture._unwrap_bundle_source(raw) == "console.log(2);"
+
+
+def test_unwrap_bundle_source_direct_iife_passes_through():
+    raw = "(() => { window.singlefile = {}; })();"
+    assert capture._unwrap_bundle_source(raw) == raw
+
+
+# ---------- snapshot-engine degrade disclosure (spec §12.3.6) ---------- #
+
+
+def test_snapshot_engine_issue_on_degrade():
+    issue = capture._snapshot_engine_issue(capture.SNAPSHOT_ENGINE_DEGRADED, detector_id=_DET)
+    assert issue is not None
+    assert issue["id"] == "snapshot-engine-degraded"
+    assert issue["severity"] in _VALID_SEVERITIES
+    assert issue["fields"]["snapshot_engine"] == "rendered-dom"
+
+
+def test_snapshot_engine_issue_none_when_resolved():
+    resolved = "singlefile@v1 blake3:" + "ab" * 32
+    assert capture._snapshot_engine_issue(resolved, detector_id=_DET) is None
+    assert capture._snapshot_engine_issue(None, detector_id=_DET) is None
+
+
+def test_run_capture_detectors_flags_degraded_snapshot_engine():
+    issues = capture._run_capture_detectors(
+        snapshot="<html><body>fine</body></html>",
+        request_url="https://example.com/a",
+        final_url="https://example.com/a",
+        response_status=200,
+        image_stats=(0, 0),
+        snapshot_engine=capture.SNAPSHOT_ENGINE_DEGRADED,
+    )
+    assert any(i["id"] == "snapshot-engine-degraded" for i in issues)
+
+
+def test_run_capture_detectors_silent_when_engine_resolved():
+    issues = capture._run_capture_detectors(
+        snapshot="<html><body>fine</body></html>",
+        request_url="https://example.com/a",
+        final_url="https://example.com/a",
+        response_status=200,
+        image_stats=(0, 0),
+        snapshot_engine="singlefile@v1 blake3:" + "ab" * 32,
+    )
+    assert not any(i["id"] == "snapshot-engine-degraded" for i in issues)
 
 
 # ---------- capture-stage detectors ---------- #

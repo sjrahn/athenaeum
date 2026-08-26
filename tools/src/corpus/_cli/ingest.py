@@ -916,7 +916,11 @@ def _derive_capture_origin(
     A producer may also DECLARE an overlay (spec §7.2): the sidecar's `origin_schema:` (the
     overlay id stamped on the block, the only way a uri-less origin binds an overlay) and
     `origin_fields:` (its extended fields) are consumed here for either origin shape — e.g. an
-    `imessage-export` carrying `chat_name`/`phone_number`/`period`."""
+    `imessage-export` carrying `chat_name`/`phone_number`/`period`.
+
+    A web capture's `snapshot_engine:` (spec §12.3.6 — the resolved SingleFile asset
+    identity, or the disclosed rendered-DOM degrade) rides the same sidecar and lands
+    here as an ordinary extended field, exactly like an `origin_fields:` declaration."""
     from corpus import singlefile, touches
 
     uri = str(sidecar.get("source_url") or "").strip()
@@ -924,6 +928,9 @@ def _derive_capture_origin(
     schema_id = str(sidecar.get("origin_schema") or "").strip() or None
     declared = sidecar.get("origin_fields")
     extra: dict[str, Any] = {str(k): v for k, v in declared.items()} if isinstance(declared, dict) else {}
+    snapshot_engine = str(sidecar.get("snapshot_engine") or "").strip()
+    if snapshot_engine:
+        extra["snapshot_engine"] = snapshot_engine
     if uri:
         return uri, discovered_at, dict(extra), schema_id
     # Tier 2 — the SingleFile banner (HTML only; explicit sidecar above still wins).
