@@ -255,6 +255,188 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   base_url: "http://localhost:9000"
 """
 
+# YouTube platform-provenance overlay — the distribution's one worked, UNCOMMENTED
+# per-host origin overlay (`example.com.yaml` above stays a commented, inert seed).
+# Ships alongside it at `schema/origin/web/youtube.com.yaml` so a new corpus has a
+# real example of the one namespace every user must author (origin overlays are a
+# per-corpus concern, spec §7.2 — the distribution packages none by default), and it
+# closes a documentation gap: the packaged video/audio mime schemas mechanically lift
+# yt-dlp sidecar fields (`sidecar.ytdlp_keys`, spec §7.1) onto the origin block, but
+# nothing declared those fields' types/semantics until now.
+#
+# Byte-identical with `tools/tests/data/origin_youtube.com.yaml` in the distribution's
+# own test tree — `test_origin_youtube.py::test_fixture_matches_shipped_template`
+# guards the two from drifting apart.
+_YOUTUBE_ORIGIN_OVERLAY_YAML = """\
+# YouTube platform-provenance overlay — the distribution's one worked, uncommented
+# example of a per-host origin overlay (see also the commented generic seed,
+# `example.com.yaml`, that `ath init` seeds alongside this file). This exact content
+# also ships as `ath init`'s worked example (`corpus.scaffold._YOUTUBE_ORIGIN_OVERLAY_YAML`)
+# and as this test fixture — `tools/tests/test_origin_youtube.py` asserts the two stay
+# byte-identical.
+#
+# Matches any record whose <!--origin--> block carries a URI on a YouTube host — apex
+# + subdomains covers www./m./music., `youtu.be` is a distinct domain and needs its
+# own pattern. Declares the extended fields the video/audio mime schemas' yt-dlp
+# sidecar lift actually produces (spec §7.1 `sidecar.ytdlp_keys`) beyond
+# `ytdlp_title`/`ytdlp_description`, which are host-agnostic and already declared
+# (role-marked) on the universal `schema/origin/origin.yaml` — every yt-dlp capture
+# gets those two, not just YouTube's.
+description: |
+  YouTube — video/audio captured via yt-dlp. This overlay is platform-keyed,
+  orthogonal to any body-shape overlay a corpus declares (e.g. `media-format/webinar`):
+  a YouTube webinar carries both. The origin block's `ytdlp_*` fields are the sidecar
+  lift's flat metadata (spec §7.1) — non-primary-source facts about the source POST,
+  never the primary-artifact bytes. Other video platforms (Vimeo, a raw mp4 on a
+  publisher CDN) get their own `origin/web/<host>.yaml`.
+applies_to:
+  host_patterns:
+    - youtube.com
+    - youtu.be
+    - m.youtube.com
+    - music.youtube.com
+  include_subdomains: true
+capture:
+  capturer: video
+  ytdlp:
+    format: "bv*+ba/b"
+    getcomments: true # populates `ytdlp_comments` below; omit to skip top comments
+normalization:
+  guidance: |
+    Every field below is the yt-dlp `.info.json` sidecar's ground truth (spec §7.1) —
+    present on the origin block once ingest lifts it, never re-derived from the
+    transcript, and never copied into the body, the artifact block, or the frontmatter
+    (§7.1's non-primary-source rule; the body stays faithful to the MEDIA bytes alone).
+    `ytdlp_title` / `ytdlp_description` are declared on the universal origin overlay,
+    not here — they're host-agnostic and role-marked there (`role: title` /
+    `role: description`), so every yt-dlp capture derives an honest display title and
+    description with no pass, per spec §4.2.3. There is nothing to "promote": the
+    title/description are never stored, so a wrong one means the source `.info.json`
+    was wrong at capture — re-capture, don't hand-edit.
+
+    **Chapters are already structural, not a field.** The uploader's `chapters[]` is
+    lifted mechanically at ingest as `<!--segment structural-->` byte-marks (spec
+    §4.3.2.3's byte-mark rule, §12.3.7) — each chapter's own title already renders
+    verbatim in the body at its `time=` mark. Do not additionally render a "Key
+    topics" table or otherwise restate chapter titles in body prose; that would
+    duplicate content the structural marks already carry faithfully.
+
+    **`ytdlp_comments` stays metadata.** When the capture's `ytdlp:` config sets
+    `getcomments: true`, the sidecar's top comments land in `ytdlp_comments` here
+    (author/like_count/timestamp per entry) — origin-block metadata only. It is never
+    rendered into the body (no "Top comments" section): the body is the transcript,
+    faithful to the audio, and nothing else.
+
+    **Identity and engagement fields are ground truth, not to re-derive.**
+    `ytdlp_uploader(_id|_url)`, `ytdlp_channel(_id|_url)`, `ytdlp_upload_date`,
+    `ytdlp_view_count`, `ytdlp_like_count`, `ytdlp_comment_count`,
+    `ytdlp_repost_count`, `ytdlp_track`, `ytdlp_artists` are stale-by-definition
+    snapshots at capture time (view/like/comment counts especially) — don't "correct"
+    them against a later look at the live page; a re-capture is how they refresh.
+
+    **Extending the lift.** yt-dlp's info.json also reports `availability`
+    (`public`/`unlisted`/`subscriber_only`/`premium_only`/`needs_auth`/…),
+    `live_status` (`not_live`/`is_live`/`was_live`/…), and `was_live` — useful signals
+    the packaged mime schemas don't lift by default (extend the corpus's own copy of
+    `sidecar.ytdlp_keys` locally to add them; they then surface here as
+    `ytdlp_availability` / `ytdlp_live_status` / `ytdlp_was_live`, under the same rules
+    as every field above). Where a corpus does lift them: a non-public
+    `ytdlp_availability` means the URL may not survive re-capture — emit a
+    record-scope `<!--context issue/partial-content-->`. A `was_live` true (or
+    `live_status: was_live`) recording has a different speech-flow than a scripted
+    upload (speaker overlap, off-camera moments, audience-chat references) — a
+    `<!--context issue/format-loss-->` at the affected segment is the honest signal,
+    not a silent edit.
+
+    **Canonical URL — already automatic.** yt-dlp's `webpage_url`/`original_url` fold
+    into the origin block's `uri:` alias list mechanically at ingest (spec §7.2, the
+    sidecar-lift merge) — a `youtu.be/<id>` short link, a tracker-tagged share URL, and
+    the canonical `youtube.com/watch?v=…` form all collapse under one origin block
+    with no overlay work needed here.
+extended_fields:
+  ytdlp_uploader:
+    type: string
+    required: false
+    description: |-
+      Uploader display name from yt-dlp's info.json. Often equal to `ytdlp_channel`,
+      but YouTube exposes them separately, so they're kept separate here too.
+  ytdlp_uploader_id:
+    type: string
+    semantic_type: identifier
+    required: false
+    description: Stable uploader/handle id from yt-dlp.
+  ytdlp_uploader_url:
+    type: string
+    semantic_type: uri
+    required: false
+    description: |-
+      Uploader profile URL (handle form, e.g. 'https://www.youtube.com/@name').
+      Distinct from `ytdlp_channel_url`, which uses the channel-id form.
+  ytdlp_channel:
+    type: string
+    required: false
+    description: Channel display name from yt-dlp's info.json.
+  ytdlp_channel_id:
+    type: string
+    semantic_type: identifier
+    required: false
+    description: |-
+      Stable channel id (e.g. 'UCxxxxxxxxxxxxxxxxxxxxxx'). Survives channel renames;
+      pair with `ytdlp_channel` for human-readable provenance.
+  ytdlp_channel_url:
+    type: string
+    semantic_type: uri
+    required: false
+    description: Direct URL to the channel page, channel-id form.
+  ytdlp_upload_date:
+    type: string
+    semantic_type: timestamp
+    required: false
+    description: |-
+      Upload date, yt-dlp's native `YYYYMMDD` form (the sidecar lift copies the
+      info.json value verbatim — no reformatting at draft time).
+  ytdlp_view_count:
+    type: number
+    required: false
+    description: View count at capture time. Stale by definition — not refreshed.
+  ytdlp_like_count:
+    type: number
+    required: false
+    description: |-
+      Like count at capture time. Engagement signal orthogonal to view count; stale
+      by definition.
+  ytdlp_comment_count:
+    type: number
+    required: false
+    description: Total comment count the platform reported at capture time.
+  ytdlp_repost_count:
+    type: number
+    required: false
+    description: |-
+      Share/repost count at capture time, where the platform reports one (yt-dlp's
+      shared field name across hosts — rarely populated on YouTube proper, more
+      common on other yt-dlp-backed origins).
+  ytdlp_track:
+    type: string
+    required: false
+    description: |-
+      Track title, for YouTube Music captures. Absent for ordinary video uploads.
+  ytdlp_artists:
+    type: array
+    required: false
+    description: |-
+      Credited artists, for YouTube Music captures. Absent for ordinary video
+      uploads.
+  ytdlp_comments:
+    type: array
+    required: false
+    description: |-
+      Top comments captured alongside the video (present only when the capture's
+      `ytdlp: {getcomments: true}` was set) — each entry `{text, author?,
+      like_count?, timestamp?}`, sorted and capped by the capturer. Origin-block
+      metadata only; never rendered into the body.
+"""
+
 
 def scaffold(target: Path, *, force: bool = False) -> Path:
     """Create the minimal corpus seam at `target`.
@@ -304,6 +486,12 @@ def scaffold(target: Path, *, force: bool = False) -> Path:
     example_overlay = web_dir / "example.com.yaml"
     if not example_overlay.exists() or force:
         example_overlay.write_text(_EXAMPLE_ORIGIN_OVERLAY_YAML, encoding="utf-8")
+
+    # The one worked, uncommented origin-overlay example (see the constant's own
+    # docstring above) — ships beside the commented `example.com.yaml` seed.
+    youtube_overlay = web_dir / "youtube.com.yaml"
+    if not youtube_overlay.exists() or force:
+        youtube_overlay.write_text(_YOUTUBE_ORIGIN_OVERLAY_YAML, encoding="utf-8")
 
     gi = target / ".gitignore"
     if not gi.exists() or force:
