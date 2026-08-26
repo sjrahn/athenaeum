@@ -44,10 +44,3 @@ behavior also owes the instance gates run against a real instance:
 
     uv run --no-sync ath ledger check --root $ATHENAEUM_ROOT
     uv run --no-sync ath ledger verify --root $ATHENAEUM_ROOT
-
-## Backlog
-
-`athenaeum/athenaeum` on the deployment forge carries spec + tooling tickets
-(read via `ath issue --root <instance>` where the instance's tracker points
-here, or the forge UI; writes via `fj`). Instance content tickets live on the
-instance's own tracker — see its config.
