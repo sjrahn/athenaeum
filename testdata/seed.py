@@ -17,8 +17,17 @@ bytes are committed straight into this repo under testdata/synthetic/ — no
 source instance involved. It's staged and ingested exactly like a `direct`
 entry, just with the bytes coming from testdata/ instead of `--from`.
 
+After the manifest is seeded, `seed_v39_ontology_exemplars` (below) also
+seeds the v39 ontology layer's exemplars (spec/ledger.md §15) straight into
+the test instance's ledger — this library is otherwise strictly
+mime-record-shaped (exemplars.yaml has no ledger-fact axis at all), so
+there is no manifest entry for it. Entirely synthetic (a fictional TV
+franchise, hand-authored evidence record) — no dependency on --from, no
+real bytes, safe to commit its provenance here even though the exemplars
+themselves land only in the gitignored `instance/`.
+
 Plain stdlib only — no PyYAML, no `corpus`-package imports. Talks to the
-`corpus` CLI as a subprocess, exactly as a human operator would.
+`corpus`/`ath` CLIs as a subprocess, exactly as a human operator would.
 
 Usage:
     uv run --no-sync python testdata/seed.py [--from SOURCE_INSTANCE_ROOT]
@@ -163,6 +172,182 @@ def promote(instance_corpus: Path, container: str, address: str, corpus_bin: str
     return data["id"] if "id" in data else data.get("record_id", "")
 
 
+# --------------------------------------------------------- v39 ontology exemplars
+#
+# spec/ledger.md §15: a domain concept (ontology block, conditional
+# commitment), a domain-minted member fact carrying both an ordinary claim
+# and a presence claim (§5.5), and a rehearsal export (§15.7). A fictional
+# TV franchise (Battlestar Galactica) so the whole thing is safe, synthetic
+# content — no source instance, no real bytes.
+#
+# The one evidence record these facts cite is hand-authored directly as a
+# corpus record (skipping `corpus ingest` entirely) — mirroring the ledger
+# test suite's own fixture idiom (`tests/test_ledger_tools.py`'s bare
+# `<!--origin-->`/`<!--segment-->` records): a `corpus ingest` pass would
+# need this content routed through a declared mime drafter before its text
+# becomes citable at all, which is real machinery this seeder has no
+# business exercising just to mint one evidence source. The id below is
+# deliberately patterned, not a real blake3 — exactly the H1/H2/… convention
+# ledger tests already use for a hand-authored record's identity.
+
+V39_NOTE_HASH = "39" * 32
+
+_V39_NOTE_RECORD = f"""---
+id: {V39_NOTE_HASH}
+title: ''
+status: normalized
+touch:
+- corpus.ingest@0.1.0
+---
+
+<!--artifact text/plain
+-->
+
+<!--origin
+snapshot: '2026-08-26T00:00:00Z'
+-->
+
+<!--segment text
+address: el=1
+-->
+Battlestar Galactica (2003 reimagined continuity) is a fictional
+franchise; nothing asserted in this note is a real-world fact.
+<!--/segment-->
+
+<!--segment text
+address: el=2
+-->
+The battlestar Galactica is classed as a battlestar.
+<!--/segment-->
+
+<!--segment text
+address: el=3
+-->
+This note names no production designer for the Galactica program.
+<!--/segment-->
+"""
+
+# facts/continuity/bsg-reimagined.json — the exemplar domain concept: an
+# ordinary concept first (§15.1: "a domain is a real concept"), carrying an
+# `ontology:` block that mints one domain-scoped type (`vessel`) with its
+# own `extends:` chain into the spine, and declares `commitment:
+# "conditional"` (§15.4, ISO/IEC 21838-2 §4.9.3(b) — no existence
+# commitment for the franchise's in-universe content).
+_V39_DOMAIN_FACT = {
+    "id": "bsg-reimagined",
+    "type": "continuity",
+    "name": "Battlestar Galactica (2003 reimagined continuity)",
+    "ontology": {
+        "commitment": "conditional",
+        "imports": [],
+        "types": {
+            "vessel": {
+                "extends": "cco:Artifact",
+                "description": "An in-universe craft (v39 exemplar domain-minted "
+                               "type, spec/ledger.md §15.4).",
+            },
+        },
+    },
+    "sources": {"s1": {"record": V39_NOTE_HASH}},
+    "claims": [{
+        "id": "bsg-reimagined:kind", "predicate": "kind", "value": "television franchise",
+        "status": "provisional", "asof": "2026-08-26",
+        "evidence": [{"source": "s1", "anchor": "el=1", "kind": "incidental",
+                     "quote": "Battlestar Galactica (2003 reimagined continuity) is "
+                              "a fictional franchise"}],
+    }],
+}
+
+# facts/vessel/galactica.json — the exemplar member fact: `domain:` names
+# the concept above, its type (`vessel`) resolves as that domain's own
+# minted sense (§15.4). Carries one ordinary claim and one presence claim
+# (§5.5) — a fact verifiably has no value under `designer`, evidence-bearing
+# rather than mere silence.
+_V39_MEMBER_FACT = {
+    "id": "galactica", "type": "vessel", "domain": "bsg-reimagined", "name": "Galactica",
+    "sources": {"s1": {"record": V39_NOTE_HASH}},
+    "claims": [
+        {
+            "id": "galactica:class", "predicate": "class", "value": "battlestar",
+            "status": "provisional", "asof": "2026-08-26",
+            "evidence": [{"source": "s1", "anchor": "el=2", "kind": "incidental",
+                         "quote": "The battlestar Galactica is classed as a battlestar."}],
+        },
+        {
+            "id": "galactica:designer", "predicate": "designer", "presence": "none",
+            "status": "provisional", "asof": "2026-08-26",
+            "evidence": [{"source": "s1", "anchor": "el=3", "kind": "incidental",
+                         "quote": "This note names no production designer for the "
+                                  "Galactica program."}],
+        },
+    ],
+}
+
+
+def _run_ath(ath_bin: str, *args: str, instance_root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [ath_bin, "ledger", *args, "--root", str(instance_root)],
+        capture_output=True, text=True,
+    )
+
+
+def seed_v39_ontology_exemplars(instance_root: Path, ath_bin: str) -> bool:
+    """Seed the v39 ontology exemplars into the test instance's ledger, then
+    rehearse `check`/`verify`/`regen`/`export` over them as the regression
+    check itself — a fixture that doesn't gate clean teaches nothing.
+    Idempotent: skipped once the domain concept file exists. Returns False
+    (never exits the process) on a gate failure, so the caller can fold it
+    into the overall exit code exactly like a manifest-entry error.
+    """
+    ledger_root = instance_root / "ledger"
+    domain_path = ledger_root / "facts" / "continuity" / "bsg-reimagined.json"
+    if domain_path.is_file():
+        print("skip (already seeded): v39 ontology exemplars")
+        return True
+
+    print("seeding: v39 ontology exemplars (domain concept + member fact + presence claim)")
+
+    note_path = (instance_root / "corpus" / "records" / V39_NOTE_HASH[:2]
+                / f"{V39_NOTE_HASH}.md")
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(_V39_NOTE_RECORD, encoding="utf-8")
+
+    domain_path.parent.mkdir(parents=True, exist_ok=True)
+    domain_path.write_text(json.dumps(_V39_DOMAIN_FACT, indent=2) + "\n", encoding="utf-8")
+    member_path = ledger_root / "facts" / "vessel" / "galactica.json"
+    member_path.parent.mkdir(parents=True, exist_ok=True)
+    member_path.write_text(json.dumps(_V39_MEMBER_FACT, indent=2) + "\n", encoding="utf-8")
+
+    check = _run_ath(ath_bin, "check", instance_root=instance_root)
+    print("  " + check.stdout.strip().replace("\n", "\n  "))
+    if check.returncode != 0:
+        print(f"  ERROR: v39 exemplars failed `ath ledger check`:\n{check.stdout}{check.stderr}")
+        return False
+
+    verify = _run_ath(ath_bin, "verify", instance_root=instance_root)
+    print("  " + verify.stdout.strip().replace("\n", "\n  "))
+    if verify.returncode != 0:
+        print(f"  ERROR: v39 exemplars failed `ath ledger verify`:\n"
+              f"{verify.stdout}{verify.stderr}")
+        return False
+
+    regen = _run_ath(ath_bin, "regen", instance_root=instance_root)
+    if regen.returncode != 0:
+        print(f"  ERROR: v39 exemplars failed `ath ledger regen`:\n{regen.stdout}{regen.stderr}")
+        return False
+
+    export = _run_ath(ath_bin, "export", "--gate", instance_root=instance_root)
+    if export.returncode != 0:
+        print(f"  ERROR: v39 exemplars failed `ath ledger export`:\n"
+              f"{export.stdout}{export.stderr}")
+        return False
+    export_path = ledger_root / ".cache" / "v39-export-sample.ttl"
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    export_path.write_text(export.stdout, encoding="utf-8")
+    print(f"  wrote {export_path.relative_to(instance_root)} (rehearsal export fixture, §15.7)")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -256,6 +441,12 @@ def main() -> int:
         ingested += 1
 
     print(f"\ningested {ingested}, skipped {skipped}, errors {errors}, of {len(entries)} entries")
+
+    print()
+    ath_bin = find_tool("ath")
+    if not seed_v39_ontology_exemplars(INSTANCE_ROOT, ath_bin):
+        errors += 1
+
     return 1 if errors else 0
 
 

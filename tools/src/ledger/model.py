@@ -52,17 +52,20 @@ ASOF_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 
 CONCEPT_KEYS = {
     "id", "type", "name", "aliases", "meta", "sensitivity", "period", "provenance",
-    "artifacts", "claims", "sources",
+    "artifacts", "claims", "sources", "domain", "ontology",
 }
 EDGE_KEYS = {
     "id", "type", "subject", "participants", "title", "period", "meta", "sensitivity",
-    "provenance", "claims", "sources",
+    "provenance", "claims", "sources", "domain",
 }
 REDIRECT_KEYS = {"id", "type", "merged_into"}
 CLAIM_KEYS = {
-    "id", "predicate", "value", "object", "qualifiers", "period", "status",
+    "id", "predicate", "value", "object", "presence", "qualifiers", "period", "status",
     "asof", "reasoning", "sensitivity", "provenance", "evidence",
 }
+# Presence claims (§5.5): `presence` stands in place of `value`/`object`,
+# asserting the shape of the predicate's extension rather than a value.
+PRESENCE_VALUES = {"none", "some"}
 # Claim evidence cites a `source` key (+ optional `anchor`) into the fact's own
 # `sources` table (sibling of `claims`) rather than an inline `uri` — the
 # per-fact sources table, replacing the old {uri, quote, note, kind, verified}
@@ -98,6 +101,9 @@ NEED_KEYS = {"action", "record", "why", "demand"}
 CHALLENGE_KEYS = {"claim", "state"}
 STATE_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 
+# The lineage row `reason` vocabulary (§4.1) — closed, grown by amendment.
+LINEAGE_REASONS = {"merged", "renamed"}
+
 
 def load_json_dir(base: Path, pattern: str) -> tuple[dict[Path, dict], list[str]]:
     """All JSON files under *base* matching *pattern* → ({path: obj}, parse errors)."""
@@ -127,13 +133,22 @@ def is_redirect(fact: dict) -> bool:
     return "merged_into" in fact
 
 
-def load_lineage(ledger_root: Path) -> tuple[dict[str, str], list[str]]:
-    """Tolerant read of `facts/LINEAGE.json` (§4.1) → ({old-id: survivor-id}, errors).
+def load_lineage_rows(ledger_root: Path) -> tuple[dict[str, dict], list[str]]:
+    """Tolerant read of `facts/LINEAGE.json` (§4.1) → ({old-id: {"to", "reason"}}, errors).
 
-    Missing file → empty map, no errors. A non-object top level, or an entry
-    whose key/value isn't a plain string, is reported as an error string
-    (prefixed `facts/LINEAGE.json: …`) and the entry is dropped — parse
-    tolerantly, author strictly.
+    v39 object-row form: `"old-id": {"to": "survivor-id", "reason": "merged"|"renamed"}`
+    — `reason` is closed vocabulary (`LINEAGE_REASONS`), grown by amendment. This is
+    the full per-row metadata behind `load_lineage`'s old->survivor resolution map:
+    `reason` is what check's Graph block validates and what a future export projects
+    as the deprecation pattern (§15.7).
+
+    Missing file → empty map, no errors. A non-object top level is an error, whole
+    file dropped. Per row: a legacy flat-string row (`"old": "survivor"`, pre-v39)
+    still populates the map — as `{"to": survivor, "reason": None}` — so tooling
+    stays operable while red, but is reported as an error naming the v39 shape it
+    must migrate to. An object row missing a string `to`, carrying an unknown
+    `reason`, or otherwise malformed, is reported as an error and the row is
+    dropped from the map entirely — parse tolerantly, author strictly.
     """
     path = ledger_root / "facts" / "LINEAGE.json"
     if not path.is_file():
@@ -144,15 +159,48 @@ def load_lineage(ledger_root: Path) -> tuple[dict[str, str], list[str]]:
         return {}, [f"facts/LINEAGE.json: invalid JSON — {e}"]
     if not isinstance(obj, dict):
         return {}, ["facts/LINEAGE.json: top level must be a JSON object"]
-    lineage: dict[str, str] = {}
+    rows: dict[str, dict] = {}
     errors: list[str] = []
     for k, v in obj.items():
-        if not isinstance(k, str) or not isinstance(v, str):
-            errors.append(f"facts/LINEAGE.json: entry {k!r} -> {v!r} must be a string -> "
-                          "string mapping")
+        if not isinstance(k, str):
+            errors.append(f"facts/LINEAGE.json: entry key {k!r} must be a string")
             continue
-        lineage[k] = v
-    return lineage, errors
+        if isinstance(v, str):
+            errors.append(
+                f"facts/LINEAGE.json: {k!r} -> {v!r}: lineage row not in v39 object "
+                'form — {"to": …, "reason": …}'
+            )
+            rows[k] = {"to": v, "reason": None}
+            continue
+        if not isinstance(v, dict):
+            errors.append(f"facts/LINEAGE.json: entry {k!r} -> {v!r} must be an object "
+                          '{"to": …, "reason": …} (or a legacy string, migrated loudly)')
+            continue
+        unknown = set(v) - {"to", "reason"}
+        if unknown:
+            errors.append(f"facts/LINEAGE.json: entry {k!r} unknown keys {sorted(unknown)}")
+        to = v.get("to")
+        if not isinstance(to, str) or not to:
+            errors.append(f"facts/LINEAGE.json: entry {k!r} missing string `to`")
+            continue
+        reason = v.get("reason")
+        if reason not in LINEAGE_REASONS:
+            errors.append(f"facts/LINEAGE.json: entry {k!r} reason {reason!r} not in "
+                          f"{sorted(LINEAGE_REASONS)}")
+            continue
+        rows[k] = {"to": to, "reason": reason}
+    return rows, errors
+
+
+def load_lineage(ledger_root: Path) -> tuple[dict[str, str], list[str]]:
+    """Tolerant read of `facts/LINEAGE.json` (§4.1) → ({old-id: survivor-id}, errors).
+
+    The old->survivor resolution map alone — see `load_lineage_rows` for the full
+    per-row metadata (including `reason`) and the parsing/error contract, which
+    this derives from unchanged so every existing caller keeps working untouched.
+    """
+    rows, errors = load_lineage_rows(ledger_root)
+    return {k: v["to"] for k, v in rows.items()}, errors
 
 
 def is_edge(fact: dict) -> bool:

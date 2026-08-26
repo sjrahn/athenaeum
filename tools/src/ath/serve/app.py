@@ -25,6 +25,7 @@ import blake3
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+from ath._version import SPEC_VERSION
 from ath.manifest import Instance, Reference, load_instance, load_references
 from ath.serve._project import (
     claim_is_visible,
@@ -43,10 +44,6 @@ from ledger.coverage import render_coverage
 from ledger.model import FULL_HASH_RE, is_edge, is_redirect, load_json_dir, load_lineage
 from ledger.schemas import load_schemas
 from ledger.scope import evaluate_scope
-
-# Bumped with the specification version — the OpenAPI document is stamped
-# with it (Part I §5.1).
-SPEC_VERSION = 30
 
 _PUBLIC_GRANTS = frozenset({"public"})
 
@@ -403,7 +400,11 @@ def get_scope(
     except json.JSONDecodeError as e:
         raise HTTPException(422, f"spec is not valid JSON: {e}") from e
     try:
-        result = evaluate_scope(ctx.ledger_root, parsed)
+        result = evaluate_scope(
+            ctx.ledger_root, parsed,
+            references=list(ctx.datasets.values()),
+            corpora_roots=[c.root for c in ctx.join.corpora],
+        )
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     except NotImplementedError as e:

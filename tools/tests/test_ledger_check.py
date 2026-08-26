@@ -122,10 +122,11 @@ def _interp(root: Path, obj: dict) -> Path:
 
 
 def _lineage(root: Path, mapping: dict[str, str]) -> Path:
-    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1)."""
+    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1) in the
+    v39 object-row form: `"old-id": {"to": "survivor-id", "reason": "merged"}`."""
     p = root / "ledger" / "facts" / "LINEAGE.json"
     existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
-    existing.update(mapping)
+    existing.update({k: {"to": v, "reason": "merged"} for k, v in mapping.items()})
     p.write_text(json.dumps(existing, indent=1), encoding="utf-8")
     return p
 
@@ -1177,7 +1178,9 @@ def test_frontier_aggregates_per_field(system: Path) -> None:
     gap lists once, under Demands, per fact — never duplicated on the
     legacy Frontier section (that double-listing was the bug: ~430 lines,
     every item twice). An unmarked field is admissible vocabulary and never
-    owed at all."""
+    owed at all. The `song` schema declares no `extends:` (§15.3), so v39
+    puts exactly one chain-owed line on the Frontier — once per type, not
+    once per fact, mirroring the timebox-gap aggregation."""
     from ledger.views import render_worklist
     (system / "ledger" / "schemas").mkdir()
     (system / "ledger" / "schemas" / "song.yaml").write_text(
@@ -1196,8 +1199,9 @@ def test_frontier_aggregates_per_field(system: Path) -> None:
     from ledger.schemas import load_schemas
     schemas, _ = load_schemas(system / "ledger")
     block = render_worklist(system / "ledger", facts, {}, schemas)
-    # no stubs, no timebox gaps here — the frontier section doesn't even render
-    assert "### Frontier" not in block
+    # no stubs, no timebox gaps — only the chain-owed frontier item (§15.3)
+    frontier_section = block.split("### Frontier", 1)[1].split("### Demands", 1)[0]
+    assert frontier_section.count("`song` has no `extends:`") == 1
     # the demands section (§14) carries the gap, once per fact, with its shape
     demands_section = block.split("### Demands", 1)[1]
     assert demands_section.count("owes `appears_on`") == 7  # one per fact, no duplicate
@@ -1275,7 +1279,10 @@ def test_expectations_frontier(system: Path) -> None:
     itself. The reserved name `period` owes the fact's own timebox, which
     puts edges on the Demands section too. The demand engine (§14) is the
     sole source for expectation gaps now — they no longer double up on the
-    legacy Frontier section."""
+    legacy Frontier section. None of the four types here (person, employment,
+    organization, relationship) declare `extends:` — organization and
+    relationship carry no schema file at all — so v39 puts one chain-owed
+    line per type on the Frontier (§15.3)."""
     from ledger.model import load_json_dir
     from ledger.schemas import load_schemas
     from ledger.views import render_worklist
@@ -1311,7 +1318,9 @@ def test_expectations_frontier(system: Path) -> None:
     facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
     schemas, _ = load_schemas(system / "ledger")
     block = render_worklist(system / "ledger", facts, {}, schemas)
-    assert "### Frontier" not in block  # nothing else lands on the frontier here
+    frontier_section = block.split("### Frontier", 1)[1].split("### Demands", 1)[0]
+    for t in ("person", "employment", "organization", "relationship"):
+        assert f"`{t}` has no `extends:`" in frontier_section
     demands_section = block.split("### Demands", 1)[1]
     assert "- `kat`" in demands_section
     assert ("owes `date_of_birth` (expectation:person[0]) — family birthdays are "
@@ -1404,6 +1413,103 @@ def test_concept_carries_own_period(system: Path) -> None:
     rep = _check(system)
     assert not any("unknown concept keys" in e for e in rep.errors)
     assert any("odd period format" in w and "fest2" in w for w in rep.warnings)
+
+
+def test_vocab_domain_minted_types_get_their_own_section(system: Path) -> None:
+    """§15.4/§8's two-tier split: a domain-minted type is carved out of the
+    shared tier's `Concept types` table entirely and rendered qualified
+    under its own `## Domain: {id}` section — with its own extends chain
+    and its `ontology.types` `description:` as the (authoritative, never
+    hand-curated) definition cell."""
+    from ledger.model import load_json_dir
+    from ledger.views import fresh_vocab
+
+    _fact(system, "continuity", {
+        "id": "bsg-reimagined", "type": "continuity", "name": "BSG",
+        "ontology": {
+            "commitment": "conditional", "imports": [],
+            "types": {"vessel": {"extends": "cco:Artifact",
+                                 "description": "An in-universe craft."}},
+        },
+    })
+    _fact(system, "vessel", {
+        "id": "galactica", "type": "vessel", "domain": "bsg-reimagined", "name": "Galactica",
+    })
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    vocab = fresh_vocab(system / "ledger", facts)
+    types_block = vocab.split("## Concept types", 1)[1].split("## Edge types", 1)[0]
+    assert "vessel" not in types_block  # never in the shared tier
+    assert "## Domain: bsg-reimagined" in vocab
+    domain_block = vocab.split("## Domain: bsg-reimagined", 1)[1]
+    assert "| `vessel @ bsg-reimagined` | 1 | `cco:Artifact` | An in-universe craft. |" \
+        in domain_block
+
+
+def test_worklist_chain_frontier_shared_and_domain_minted(system: Path) -> None:
+    """§15.3's owed-ness on the work-list: a shared-tier type with no
+    `extends:` and a domain-minted type with no `extends:` both surface as
+    chain-owed frontier items, qualified the same way VOCAB qualifies them;
+    a domain type that DOES declare `extends:` does not."""
+    from ledger.model import load_json_dir
+    from ledger.schemas import load_schemas
+    from ledger.views import render_worklist
+
+    (system / "ledger" / "schemas").mkdir()
+    (system / "ledger" / "schemas" / "album.yaml").write_text(
+        "type: album\ndescription: a record\n"  # no extends: — chain-owed
+    )
+    _fact(system, "album", {"id": "obscura", "type": "album", "name": "Obscura"})
+    _fact(system, "continuity", {
+        "id": "bsg-reimagined", "type": "continuity", "name": "BSG",
+        "ontology": {
+            "commitment": "conditional", "imports": [],
+            "types": {
+                "vessel": {"description": "no chain yet"},          # chain-owed
+                "character": {"extends": "cco:Agent",                # chain declared
+                             "description": "an in-universe person"},
+            },
+        },
+    })
+    _fact(system, "vessel", {"id": "galactica", "type": "vessel",
+                             "domain": "bsg-reimagined", "name": "Galactica"})
+    _fact(system, "character", {"id": "adama", "type": "character",
+                                "domain": "bsg-reimagined", "name": "Adama"})
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    schemas, _ = load_schemas(system / "ledger")
+    block = render_worklist(system / "ledger", facts, {}, schemas)
+    frontier = block.split("### Frontier", 1)[1]
+    assert "`album` has no `extends:`" in frontier
+    assert "`vessel @ bsg-reimagined` has no `extends:`" in frontier
+    assert "`character @ bsg-reimagined`" not in frontier  # its chain is declared
+
+
+def test_worklist_timeboxed_gap_is_domain_aware(system: Path) -> None:
+    """The `timeboxed:` frontier check (§4.4) routes through a fact's
+    effective schema (§15.4) — a domain sense's own `timeboxed: true` field
+    is honored for a member fact even with no shared-tier schema of the
+    same name declaring it."""
+    from ledger.model import load_json_dir
+    from ledger.schemas import load_schemas
+    from ledger.views import render_worklist
+
+    _fact(system, "continuity", {
+        "id": "bsg-reimagined", "type": "continuity", "name": "BSG",
+        "ontology": {"commitment": "conditional", "imports": [],
+                    "types": {"vessel": {"description": "craft"}}},
+    })
+    (system / "ledger" / "schemas" / "bsg-reimagined").mkdir(parents=True)
+    (system / "ledger" / "schemas" / "bsg-reimagined" / "vessel.yaml").write_text(
+        "type: vessel\ndomain: bsg-reimagined\ndescription: a domain sense\n"
+        "fields:\n  commanded_by: { timeboxed: true }\n"
+    )
+    _fact(system, "vessel", {
+        "id": "galactica", "type": "vessel", "domain": "bsg-reimagined", "name": "Galactica",
+        "claims": [_claim("galactica", "cmd", predicate="commanded_by", value="adama")],
+    })
+    facts, _ = load_json_dir(system / "ledger", "facts/*/*.json")
+    schemas, _ = load_schemas(system / "ledger")
+    block = render_worklist(system / "ledger", facts, {}, schemas)
+    assert "`vessel.commanded_by` claims missing their timebox (`period`)" in block
 
 
 def test_schema_elements_and_entity_refs(system: Path) -> None:

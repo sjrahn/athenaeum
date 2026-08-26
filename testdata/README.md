@@ -38,6 +38,26 @@ image/heic (spec/corpus.md specs it as its own manifest shape —
 `item=<id>` image items — not yet implemented; see `exemplars.yaml`'s
 comment on the shape). The bytes are ready for whenever that lands.
 
+### The v39 ontology exemplars
+
+This library is otherwise strictly mime-record-shaped — `exemplars.yaml` has
+no ledger-fact axis at all. The v39 ontology layer (spec/ledger.md §15)
+needs one anyway, so `seed.py`'s `seed_v39_ontology_exemplars` seeds it
+straight into `instance/ledger/` after the manifest pass: a domain concept
+(`facts/continuity/bsg-reimagined.json` — an `ontology:` block minting one
+domain type, `commitment: "conditional"`), a domain-minted member fact
+(`facts/vessel/galactica.json`) carrying both an ordinary claim and a
+presence claim (§5.5), and the one evidence record they cite, hand-authored
+directly as a corpus record (a fixed, patterned id — `"39" * 32` — never a
+real blake3, mirroring the ledger test suite's own `H1`/`H2`/… fixtures).
+Entirely synthetic — a fictional TV franchise — so it needs no `--from`
+source and commits no real bytes; only the seeding code lives here,
+tracked, same as every other exemplar. It rehearses `check`/`verify`/
+`regen`/`export --gate` over itself as its own regression check, and writes
+the export projection to `instance/ledger/.cache/v39-export-sample.ttl` —
+gitignored with the rest of `instance/`, a write-side probe rather than a
+tracked fixture.
+
 ## Reseeding
 
 ```

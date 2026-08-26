@@ -25,7 +25,7 @@ from ledger.model import (
     canonical_claim_state,
     is_redirect,
     load_json_dir,
-    load_lineage,
+    load_lineage_rows,
     next_source_key,
     source_target,
 )
@@ -397,15 +397,19 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
         survivor_fact["artifacts"] = existing_artifacts
 
     # --------------------------------------------------------------- lineage
-    lineage, lineage_errors = load_lineage(ledger_root)
+    # v39 object rows (§4.1): `"old-id": {"to": "survivor-id", "reason": …}`.
+    # Retargeting an older row on a chained merge keeps its ORIGINAL reason —
+    # only the row this merge itself adds is stamped "merged".
+    lineage_rows, lineage_errors = load_lineage_rows(ledger_root)
     plan["warnings"].extend(lineage_errors)
-    for key, target in list(lineage.items()):
-        if target == loser:
-            lineage[key] = survivor
+    for key, row in list(lineage_rows.items()):
+        if row.get("to") == loser:
+            reason = row.get("reason") or "merged"
+            lineage_rows[key] = {"to": survivor, "reason": reason}
             plan["lineage_retargeted"].append({"key": key, "old_target": loser,
                                                "new_target": survivor})
-    lineage[loser] = survivor
-    plan["lineage_row"] = {loser: survivor}
+    lineage_rows[loser] = {"to": survivor, "reason": "merged"}
+    plan["lineage_row"] = {loser: dict(lineage_rows[loser])}
 
     # ------------------------------------------------- reference rewrite pass
     touched_paths: set[Path] = set()
@@ -446,7 +450,7 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
     lineage_rel = "facts/LINEAGE.json"
     originals[lineage_rel] = lineage_path.read_text(encoding="utf-8") \
         if lineage_path.is_file() else None
-    writes[lineage_rel] = json.dumps(dict(sorted(lineage.items())), indent=1,
+    writes[lineage_rel] = json.dumps(dict(sorted(lineage_rows.items())), indent=1,
                                      ensure_ascii=False) + "\n"
 
     plan["_writes"] = writes

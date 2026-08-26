@@ -28,10 +28,12 @@ def _interp(root: Path, obj: dict) -> Path:
     return p
 
 
-def _lineage(root: Path, mapping: dict[str, str]) -> Path:
+def _lineage(root: Path, mapping: dict[str, str], *, reason: str = "merged") -> Path:
+    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1) in the
+    v39 object-row form: `"old-id": {"to": "survivor-id", "reason": …}`."""
     p = root / "facts" / "LINEAGE.json"
     existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
-    existing.update(mapping)
+    existing.update({k: {"to": v, "reason": reason} for k, v in mapping.items()})
     p.write_text(json.dumps(existing, indent=1), encoding="utf-8")
     return p
 
@@ -125,7 +127,7 @@ def test_happy_merge_end_to_end(ledger: Path) -> None:
     assert note["based_on"] == ["bcm:weight"]
 
     lineage = _read(ledger, "facts/LINEAGE.json")
-    assert lineage == {"bcm-old": "bcm"}
+    assert lineage == {"bcm-old": {"to": "bcm", "reason": "merged"}}
 
     from ledger.check import run_check
     from ledger.corpora import CorpusJoin
@@ -167,7 +169,7 @@ def test_short_collision_renamed_and_surfaced(ledger: Path) -> None:
 def test_existing_lineage_row_retargeted(ledger: Path) -> None:
     _fact(ledger, "part", {"id": "b", "type": "part", "name": "B"})
     _fact(ledger, "part", {"id": "c", "type": "part", "name": "C"})
-    _lineage(ledger, {"a-old": "b"})
+    _lineage(ledger, {"a-old": "b"}, reason="renamed")
 
     plan = plan_merge(ledger, None, "b", "c")
     assert plan["errors"] == []
@@ -176,7 +178,12 @@ def test_existing_lineage_row_retargeted(ledger: Path) -> None:
     ]
     apply_merge(ledger, plan)
     lineage = _read(ledger, "facts/LINEAGE.json")
-    assert lineage == {"a-old": "c", "b": "c"}
+    # retargeting a chained merge keeps the OLDER row's original reason —
+    # only the row this merge itself adds is stamped "merged" (§4.1)
+    assert lineage == {
+        "a-old": {"to": "c", "reason": "renamed"},
+        "b": {"to": "c", "reason": "merged"},
+    }
 
 
 # ---------------------------------------------------------------- refusals

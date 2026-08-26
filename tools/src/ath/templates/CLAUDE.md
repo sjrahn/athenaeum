@@ -34,6 +34,11 @@ live in `ledger/docs/`.
   the consumption contract is the wall (ledger.md §6.4, §12).
 - **Thin operation**: no resident skill, no logbook. Memory = the spec +
   tracker + git history + the runbooks here.
+- **Ontology (ledger.md §15)**: a domain is a real concept, never a bucket —
+  economy default is a shared type plus `domain:` membership, and a domain
+  never shadows a shared name. Every in-use type owes an `extends:` chain
+  into the registered spine; missing is work-list frontier, never a
+  blocker.
 
 ## Gates (run before reporting any content change done)
 

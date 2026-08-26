@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 
+from ledger import ontology
 from ledger.schemas import expectation_selects
 from ledger.scope import (
     build_edges_touching,
@@ -35,7 +36,7 @@ from ledger.scope import (
 
 RULE_KEYS = {"id", "description", "when", "owes"}
 OWE_KEYS = {"field", "description"}
-CONDITION_KEYS = {"type", "claim", "roster", "edge", "id", "related",
+CONDITION_KEYS = {"type", "claim", "roster", "edge", "id", "domain", "related",
                   "all_of", "any_of", "none_of"}
 CLAIM_COND_KEYS = {"predicate", "value", "object"}
 ROSTER_COND_KEYS = {"role", "exists"}
@@ -217,9 +218,18 @@ def _validate_condition(cond: object, where: str, *, allow_related: bool = True)
             ok = isinstance(spec, str) or (
                 isinstance(spec, dict) and set(spec) == {"in"}
                 and isinstance(spec["in"], list) and all(isinstance(x, str) for x in spec["in"])
+            ) or (
+                # §15.5: `isa:` — subsumption over declared `extends:` chains — is
+                # valid ONLY under the `type:` axis; elsewhere it's a plain unknown
+                # operator (`_validate_op` never admits it).
+                isinstance(spec, dict) and set(spec) == {"isa"} and isinstance(spec["isa"], str)
+                and spec["isa"]
             )
             if not ok:
-                errors.append(f"{where}.type: must be a string or {{in: [strings]}}")
+                errors.append(f"{where}.type: must be a string, {{in: [strings]}}, or "
+                              "{isa: <type-or-spine-ref>} (§15.5)")
+        elif key == "domain":
+            errors.extend(_validate_op(spec, f"{where}.domain"))
         elif key == "claim":
             if not isinstance(spec, dict):
                 errors.append(f"{where}.claim: must be a mapping")
@@ -308,13 +318,33 @@ def _id_matches(spec: object, fact: dict, lineage: dict[str, str]) -> bool:
     return _op_test(spec, [str(fact.get("id"))])
 
 
-def _type_matches(spec: object, fact: dict) -> bool:
+def _type_matches(spec: object, fact: dict, ctx: dict | None = None) -> bool:
     ftype = str(fact.get("type"))
     if isinstance(spec, str):
         return ftype == spec
     if isinstance(spec, dict) and "in" in spec:
         return ftype in [str(x) for x in spec["in"] or []]
+    if isinstance(spec, dict) and set(spec) == {"isa"} and isinstance(spec.get("isa"), str):
+        # §15.5: `isa:` needs the run's schema/domain/spine context — a bare
+        # `condition_matches` call with no ctx (e.g. a hand-built condition in
+        # a test) simply never matches, consistent with "evaluation never
+        # raises" (§13.1 Demands); `evaluate_demands` always supplies ctx.
+        if ctx is None:
+            return False
+        return ontology.isa_matches(
+            fact, spec["isa"], schemas=ctx.get("schemas") or {},
+            domains=ctx.get("domains") or {}, resolve_id=ctx.get("resolve_id"),
+            references=ctx.get("references") or (), corpora_roots=ctx.get("corpora_roots") or (),
+        )
     return False
+
+
+def _domain_matches(spec: object, fact: dict, lineage: dict[str, str]) -> bool:
+    """`domain:` condition (§15.5): the fact-domain axis — `equals`/`in`
+    operands lineage-resolved exactly as `id:` operands are."""
+    values = ontology.domain_axis_values(fact, lineage)
+    resolved = ontology.resolve_domain_operand(spec, lineage)
+    return _op_test(resolved, values)
 
 
 def _claim_matches(spec: dict, fact: dict) -> bool:
@@ -481,7 +511,7 @@ def _neighbor_facts(spec: dict, fact: dict, edges: list[dict],
 
 
 def _related_matches(spec: dict, fact: dict, edges: list[dict], facts_by_id: dict[str, dict],
-                     lineage: dict[str, str]) -> bool:
+                     lineage: dict[str, str], ctx: dict | None) -> bool:
     """`related:` condition (§14): one hop, lineage-resolved. `exists: true`
     (default) holds iff some neighbor matches `where` (or any neighbor
     exists, when `where` is omitted); `exists: false` holds iff none does."""
@@ -490,34 +520,42 @@ def _related_matches(spec: dict, fact: dict, edges: list[dict], facts_by_id: dic
     if where is None:
         matched = bool(neighbors)
     else:
-        matched = any(condition_matches(where, n, edges, facts_by_id, lineage=lineage)
+        matched = any(condition_matches(where, n, edges, facts_by_id, lineage=lineage, ctx=ctx)
                       for n in neighbors)
     return matched == bool(spec.get("exists", True))
 
 
 def condition_matches(cond: dict, fact: dict, edges: list[dict],
                       facts_by_id: dict[str, dict], *,
-                      lineage: dict[str, str] | None = None) -> bool:
+                      lineage: dict[str, str] | None = None,
+                      ctx: dict | None = None) -> bool:
     """Does this `when` (sub-)condition select *fact*? Several keys at the
     top level are an implicit `all_of`; missing-is-false throughout.
-    *lineage* — the `facts/LINEAGE.json` map (§4.1) — resolves `id:`
-    operands and `related:` neighbor hops; callers with no lineage on hand
-    may omit it (no rows resolve, correct for a lineage-free ledger)."""
+    *lineage* — the `facts/LINEAGE.json` map (§4.1) — resolves `id:`/
+    `domain:` operands and `related:` neighbor hops; callers with no
+    lineage on hand may omit it (no rows resolve, correct for a
+    lineage-free ledger). *ctx* — {schemas, domains, resolve_id, references,
+    corpora_roots} — feeds the §15.5 `isa:` operator under `type:`;
+    `evaluate_demands` builds and threads it, a bare `isa:` condition with
+    no ctx simply never matches (evaluation never raises, §13.1)."""
     if not isinstance(cond, dict) or not cond:
         return False
     lineage = lineage or {}
     for key, spec in cond.items():
         if key == "all_of":
             ok = isinstance(spec, list) and bool(spec) and all(
-                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage, ctx=ctx)
+                for s in spec)
         elif key == "any_of":
             ok = isinstance(spec, list) and any(
-                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage, ctx=ctx)
+                for s in spec)
         elif key == "none_of":
             ok = isinstance(spec, list) and not any(
-                condition_matches(s, fact, edges, facts_by_id, lineage=lineage) for s in spec)
+                condition_matches(s, fact, edges, facts_by_id, lineage=lineage, ctx=ctx)
+                for s in spec)
         elif key == "type":
-            ok = _type_matches(spec, fact)
+            ok = _type_matches(spec, fact, ctx)
         elif key == "claim":
             ok = isinstance(spec, dict) and _claim_matches(spec, fact)
         elif key == "roster":
@@ -526,9 +564,11 @@ def condition_matches(cond: dict, fact: dict, edges: list[dict],
             ok = isinstance(spec, dict) and _edge_matches(spec, fact, edges, facts_by_id, lineage)
         elif key == "id":
             ok = _id_matches(spec, fact, lineage)
+        elif key == "domain":
+            ok = _domain_matches(spec, fact, lineage)
         elif key == "related":
             ok = isinstance(spec, dict) and _related_matches(spec, fact, edges, facts_by_id,
-                                                              lineage)
+                                                              lineage, ctx)
         else:
             ok = False  # unknown key — well-formedness is caught at load time
         if not ok:
@@ -651,6 +691,7 @@ def schema_expectation_satisfaction(
     edges: list[dict],
     interps: list[dict],
     lineage: dict[str, str] | None = None,
+    domain_schemas: dict[str, dict[str, dict]] | None = None,
 ) -> dict[str, dict]:
     """Per-type satisfaction summary over each schema's own `expectations:`
     (§4.4) — how many expectation-owed fields the live population satisfies,
@@ -664,35 +705,58 @@ def schema_expectation_satisfaction(
     a typo'd `when:`, a field name that never matches — so this rolls up
     the total/satisfied/concepts-bound counts a caller can render as one
     line per type, with the zero-concepts-bound case visibly distinct from
-    the all-satisfied one (`regen`'s feedback line, below)."""
-    own_ids: dict[str, set[str]] = {}
-    for ftype, schema in schemas.items():
+    the all-satisfied one (`regen`'s feedback line, below).
+
+    *domain_schemas* (§15.4) rolls up a domain sense's own `expectations:`
+    too — a distinct declared shape from the shared-tier schema of the same
+    name, never merged with it (`ontology.effective_schema`'s reading) — under
+    the qualified display key `{type} @ {domain}` (VOCAB's own idiom, §8), so
+    a domain-only expectation isn't silently invisible to this roll-up the
+    way it would be if only the shared tier were consulted."""
+    domain_schemas = domain_schemas or {}
+
+    def _ids(ftype: str, schema: dict) -> set[str] | None:
         if not isinstance(schema, dict) or not schema.get("expectations"):
-            continue
+            return None
         ids: set[str] = set()
         for i, exp in enumerate(schema["expectations"]):
             exp_id = exp.get("id") if isinstance(exp, dict) else None
             ids.add(exp_id if isinstance(exp_id, str) else f"expectation:{ftype}[{i}]")
-        own_ids[ftype] = ids
+        return ids
+
+    own_ids: dict[str, set[str]] = {}
+    for ftype, schema in schemas.items():
+        ids = _ids(ftype, schema)
+        if ids is not None:
+            own_ids[ftype] = ids
+    for did, tschemas in sorted(domain_schemas.items()):
+        for ftype, schema in tschemas.items():
+            ids = _ids(ftype, schema)
+            if ids is not None:
+                own_ids[f"{ftype} @ {did}"] = ids
 
     totals = {t: 0 for t in own_ids}
     satisfied = {t: 0 for t in own_ids}
     bound: dict[str, set[str]] = {t: set() for t in own_ids}
     for fact in facts_by_id.values():
         ftype = str(fact.get("type"))
-        ids = own_ids.get(ftype)
+        dom = fact.get("domain")
+        key = ftype
+        if isinstance(dom, str) and dom and ftype in domain_schemas.get(dom, {}):
+            key = f"{ftype} @ {dom}"
+        ids = own_ids.get(key)
         if not ids:
             continue
         for d in evaluate_demands(
             fact, rules=rules, schemas=schemas, kinds=kinds, facts_by_id=facts_by_id,
-            edges=edges, interps=interps, lineage=lineage,
+            edges=edges, interps=interps, lineage=lineage, domain_schemas=domain_schemas,
         ):
             if d["rule"] not in ids:
                 continue
-            totals[ftype] += 1
-            bound[ftype].add(d["fact"])
+            totals[key] += 1
+            bound[key].add(d["fact"])
             if d["state"] == "satisfied":
-                satisfied[ftype] += 1
+                satisfied[key] += 1
 
     return {
         t: {"total": totals[t], "satisfied": satisfied[t], "concepts": len(bound[t])}
@@ -737,6 +801,10 @@ def evaluate_demands(
     edges: list[dict],
     interps: list[dict] | dict[object, dict],
     lineage: dict[str, str] | None = None,
+    domain_schemas: dict[str, dict[str, dict]] | None = None,
+    domains: dict[str, dict] | None = None,
+    references=(),
+    corpora_roots=(),
 ) -> list[dict]:
     """Every demand *fact* currently carries (§14), deterministic.
 
@@ -752,14 +820,25 @@ def evaluate_demands(
     named expectations) — a positional or `expected:*` id can never be a
     needs entry's blocking target, so it stays open until satisfied.
 
-    *lineage* — `facts/LINEAGE.json` (§4.1) — feeds a rule `when`'s `id:` and
-    `related:` conditions (§14); callers with none on hand may omit it.
+    *lineage* — `facts/LINEAGE.json` (§4.1) — feeds a rule `when`'s `id:`/
+    `domain:` and `related:` conditions (§14); callers with none on hand may
+    omit it. *domain_schemas*/*domains*/*references*/*corpora_roots* are
+    §15.4/§15.5's: the owed-field schema is the fact's domain type sense
+    when it has one (`ontology.effective_schema`), and a rule `when`'s
+    `isa:` operator (under `type:`) resolves through *schemas*/*domains*
+    plus the registered spine — all optional, and a demand set using
+    neither axis runs exactly as before.
     """
     interp_list = list(interps.values()) if isinstance(interps, dict) else list(interps)
     fact_id = str(fact.get("id"))
     ftype = str(fact.get("type"))
-    schema = schemas.get(ftype) if isinstance(schemas.get(ftype), dict) else {}
+    schema = ontology.effective_schema(fact, schemas, domain_schemas or {})
     blockable = blockable_ids(rules, schemas)
+    ctx = {
+        "schemas": schemas, "domains": domains or {},
+        "resolve_id": make_resolver(facts_by_id, lineage or {}),
+        "references": references, "corpora_roots": corpora_roots,
+    }
     out: list[dict] = []
 
     def make(rule_id: str, field_name: str, why: str) -> None:
@@ -783,7 +862,7 @@ def evaluate_demands(
     for rule_id, rule in sorted(rules.items()):
         when = rule.get("when")
         if not isinstance(when, dict) or not condition_matches(
-            when, fact, edges, facts_by_id, lineage=lineage,
+            when, fact, edges, facts_by_id, lineage=lineage, ctx=ctx,
         ):
             continue
         for owe in rule.get("owes") or []:

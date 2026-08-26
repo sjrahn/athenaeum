@@ -125,7 +125,7 @@ def instance(tmp_path: Path) -> Path:
     })
 
     (ledger_root / "facts" / "LINEAGE.json").write_text(
-        json.dumps({RETIRED_ID: FACT_PUBLIC}), encoding="utf-8"
+        json.dumps({RETIRED_ID: {"to": FACT_PUBLIC, "reason": "merged"}}), encoding="utf-8"
     )
 
     (ledger_root / "interpretations" / f"{INTERP_ID}.json").write_text(json.dumps({
@@ -162,7 +162,7 @@ def test_instance_shape(instance: Path) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "testeum"
-    assert body["spec_version"] == 30
+    assert body["spec_version"] == 39
     assert body["plane"] == "public"
     assert "instance_commit" in body
 
@@ -402,7 +402,7 @@ def test_lineage_redirect_to_invisible_successor_404s(instance: Path) -> None:
     "never existed" via a 307-vs-404 split."""
     lineage_path = instance / "ledger" / "facts" / "LINEAGE.json"
     lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
-    lineage["retired-to-private"] = FACT_PRIVATE
+    lineage["retired-to-private"] = {"to": FACT_PRIVATE, "reason": "merged"}
     lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
 
     client = _client(instance)
@@ -777,7 +777,7 @@ def test_openapi_stamped_with_spec_version(instance: Path) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["info"]["title"] == "Athenaeum read surface"
-    assert data["info"]["version"] == str(SPEC_VERSION) == "30"
+    assert data["info"]["version"] == str(SPEC_VERSION) == "39"
 
 
 def test_openapi_is_read_only(instance: Path) -> None:

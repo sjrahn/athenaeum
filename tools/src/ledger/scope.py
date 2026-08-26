@@ -25,13 +25,19 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ledger.model import WIKILINK_RE, derived_uri, is_edge, is_redirect, load_json_dir, load_lineage
+
+if TYPE_CHECKING:
+    from ath.manifest import Reference
 
 FOLLOW_KINDS = {"object", "entity", "wikilink", "roster", "participants"}
 DEFAULT_FOLLOW = ["object", "entity", "wikilink", "participants"]
 EVIDENCE_MODES = {"none", "references", "resolved"}
+COMMITMENT_MODES = {"include", "exclude"}
 _OPS = {"equals", "in", "glob", "matches", "exists"}
 _GROUPS = {"all_of", "any_of", "none_of"}
 
@@ -39,8 +45,9 @@ _GROUPS = {"all_of", "any_of", "none_of"}
 # ------------------------------------------------------------------ spec validation
 
 
-def _validate_spec(spec: dict) -> tuple[dict, list[str], int | None, str]:
-    """Tolerant-but-strict spec validation → (seed, follow, depth, evidence).
+def _validate_spec(spec: dict) -> tuple[dict, list[str], int | None, str, str]:
+    """Tolerant-but-strict spec validation → (seed, follow, depth, evidence,
+    commitment).
 
     Raises ValueError with a clear message on malformed spec. Does not touch
     the ledger — pure shape checking.
@@ -87,7 +94,14 @@ def _validate_spec(spec: dict) -> tuple[dict, list[str], int | None, str]:
     if evidence not in EVIDENCE_MODES:
         raise ValueError(f"evidence must be one of {sorted(EVIDENCE_MODES)}, got {evidence!r}")
 
-    return seed, follow, depth, evidence
+    # §12.1, §15.5: conditional-domain facts are included by default, carried
+    # with their bracket; a scope may exclude them outright.
+    commitment = spec.get("commitment", "include")
+    if commitment not in COMMITMENT_MODES:
+        raise ValueError(f"commitment must be one of {sorted(COMMITMENT_MODES)}, "
+                         f"got {commitment!r}")
+
+    return seed, follow, depth, evidence, commitment
 
 
 # ------------------------------------------------------------------ the match predicate (§10)
@@ -201,17 +215,52 @@ def _field_values(fact: dict, key: str) -> list[str]:
     return []  # an unaddressable field is simply never present — missing-is-false
 
 
-def _match_predicate(predicate: dict, fact: dict) -> bool:
-    """The §10 operator grammar over one fact's addressable fields."""
+def _match_predicate(predicate: dict, fact: dict, ctx: dict | None = None) -> bool:
+    """The §10 operator grammar over one fact's addressable fields, plus —
+    per §15.5 — the `domain:` fact axis and the `isa:` operator under
+    `type:`. *ctx* — {lineage, schemas, domains, resolve_id, references,
+    corpora_roots} — feeds both; `evaluate_scope` always supplies it, so
+    only a caller hand-building a predicate outside that path need worry
+    about the (both-axes-inert) default."""
     if not isinstance(predicate, dict):
         raise ValueError("match predicate must be an object")
+    ctx = ctx or {}
+    lineage = ctx.get("lineage") or {}
     for key, spec in predicate.items():
         if key in _GROUPS:
             subs = spec if isinstance(spec, list) else [spec]
-            results = [_match_predicate(s, fact) for s in subs]
+            results = [_match_predicate(s, fact, ctx) for s in subs]
             ok = {"all_of": all(results), "any_of": any(results),
                   "none_of": not any(results)}[key]
             if not ok:
+                return False
+            continue
+        if key == "domain":
+            from ledger import ontology
+
+            values = ontology.domain_axis_values(fact, lineage)
+            resolved = ontology.resolve_domain_operand(spec, lineage)
+            if isinstance(resolved, dict) and len(resolved) == 1:
+                (op, arg), = resolved.items()
+                if op not in _OPS:
+                    raise ValueError(f"unknown operator {op!r} on 'domain'")
+                if not op_matches(op, arg, values):
+                    return False
+            elif not op_matches("equals", resolved, values):
+                return False
+            continue
+        if key == "type" and isinstance(spec, dict) and set(spec) == {"isa"}:
+            from ledger import ontology
+
+            operand = spec.get("isa")
+            if not (isinstance(operand, str) and operand):
+                raise ValueError("'isa' operand must be a non-empty string")
+            if not ontology.isa_matches(
+                fact, operand, schemas=ctx.get("schemas") or {},
+                domains=ctx.get("domains") or {}, resolve_id=ctx.get("resolve_id"),
+                references=ctx.get("references") or (),
+                corpora_roots=ctx.get("corpora_roots") or (),
+            ):
                 return False
             continue
         if not isinstance(spec, dict):
@@ -361,14 +410,29 @@ def _neighbors(
 # ------------------------------------------------------------------ evaluate_scope
 
 
-def evaluate_scope(ledger_root: Path, spec: dict) -> dict:
+def evaluate_scope(
+    ledger_root: Path,
+    spec: dict,
+    *,
+    references: Sequence[Reference] = (),
+    corpora_roots: Sequence[Path] = (),
+) -> dict:
     """Evaluate a scope spec against the ledger at *ledger_root* (§12.1).
 
     Deterministic: seed, traverse, close. Raises ValueError on malformed
     *spec*; raises NotImplementedError for `evidence: resolved` (materializing
     citations is the read surface's job, not this library's, §12).
+
+    *references*/*corpora_roots* feed the §15.5 `isa:` operator's spine
+    unification (`refdata.spine.resolve_term`) when a seed's `type:` names a
+    spine class by label where the declared chain carries a native id, or
+    vice versa — optional; omitted, `isa:` still matches every declared
+    shared-tier/domain chain literally.
     """
-    seed, follow, depth, evidence = _validate_spec(spec)
+    from ledger import ontology
+    from ledger.schemas import load_schemas
+
+    seed, follow, depth, evidence, commitment = _validate_spec(spec)
     if evidence == "resolved":
         raise NotImplementedError("resolved evidence chasing lands with the read surface")
 
@@ -383,7 +447,26 @@ def evaluate_scope(ledger_root: Path, spec: dict) -> dict:
         fact_paths[fid] = path
 
     lineage, _ = load_lineage(ledger_root)
+    schemas, _ = load_schemas(ledger_root)
+    domains = ontology.load_domains(live_facts)
     resolve_id = make_resolver(live_facts, lineage)
+
+    # §12.1/§15.5: the commitment parameter — `exclude` drops conditional-
+    # domain facts from the WHOLE evaluation (seed and traversal alike), as
+    # if they were never in the ledger for this run; `include` (default)
+    # keeps them, annotated below with their bracket.
+    if commitment == "exclude":
+        live_facts = {
+            fid: f for fid, f in live_facts.items()
+            if ontology.commitment_for_fact(f, domains, resolve_id) != "conditional"
+        }
+        fact_paths = {fid: p for fid, p in fact_paths.items() if fid in live_facts}
+        resolve_id = make_resolver(live_facts, lineage)
+
+    ctx = {
+        "lineage": lineage, "schemas": schemas, "domains": domains, "resolve_id": resolve_id,
+        "references": references, "corpora_roots": corpora_roots,
+    }
     edges_touching = build_edges_touching(
         [f for f in live_facts.values() if is_edge(f)], resolve_id)
 
@@ -400,7 +483,8 @@ def evaluate_scope(ledger_root: Path, spec: dict) -> dict:
     elif "type" in seed:
         seed_ids = {fid for fid, f in live_facts.items() if f.get("type") == seed["type"]}
     else:
-        seed_ids = {fid for fid, f in live_facts.items() if _match_predicate(seed["match"], f)}
+        seed_ids = {fid for fid, f in live_facts.items()
+                    if _match_predicate(seed["match"], f, ctx)}
 
     # ---------------------------------------------------------------- traverse + close
     depth_of: dict[str, int] = {sid: 0 for sid in seed_ids}
@@ -421,13 +505,26 @@ def evaluate_scope(ledger_root: Path, spec: dict) -> dict:
         frontier = sorted(next_frontier)
         hop += 1
 
+    # §12.1/§15.5: every visited fact's commitment bracket, carried alongside
+    # the member list regardless of the `commitment` parameter — under
+    # `exclude` every entry here reads "real" (conditional facts never made
+    # it into `visited`); under `include` (default) a consumer sees exactly
+    # which members are depiction, never world-fact, without re-deriving it.
+    commitment_of = {
+        fid: ontology.commitment_for_fact(live_facts[fid], domains, resolve_id)
+        for fid in sorted(visited)
+    }
     members = [
         {"id": fid, "type": live_facts[fid].get("type"),
-         "path": str(fact_paths[fid].relative_to(ledger_root)), "depth": depth_of[fid]}
+         "path": str(fact_paths[fid].relative_to(ledger_root)), "depth": depth_of[fid],
+         "commitment": commitment_of[fid]}
         for fid in sorted(visited)
     ]
 
-    result: dict = {"members": members, "unknown_seeds": sorted(set(unknown_seeds))}
+    result: dict = {
+        "members": members, "unknown_seeds": sorted(set(unknown_seeds)),
+        "commitment": commitment_of,
+    }
 
     if evidence == "references":
         ev: dict[str, list[str]] = {}

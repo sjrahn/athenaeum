@@ -33,7 +33,12 @@ from ledger.scope import op_matches
 
 RULE_KEYS = {"id", "description", "match", "mint"}
 MINT_KEYS = {"concept", "roster", "claims"}
-CONCEPT_MINT_KEYS = {"id", "type", "name"}
+# `domain:` (§10, §15.4) — a domain concept the rule names statically; the
+# minted type must resolve in that domain's import closure. Shape-checked
+# here (a non-empty string); semantic resolution (does it name a REAL domain
+# concept? does the type actually resolve in its closure?) needs the live
+# ledger and is `domain_mint_errors`'s job, run from `ledger.check`.
+CONCEPT_MINT_KEYS = {"id", "type", "name", "domain"}
 _OPS = {"equals", "in", "glob", "matches", "exists"}
 _GROUPS = {"all_of", "any_of", "none_of"}
 _TEMPLATE_RE = re.compile(r"\{([a-z0-9_.]+)(?:\[(\d+)\])?(?:\|([a-z0-9_.]+))?\}")
@@ -78,8 +83,60 @@ def load_rules(ledger_root: Path) -> list[dict]:
                             f"{f.name}: concept id may only be keyed by origin "
                             f"facts, got {{{key}}}"
                         )
+            dom = concept.get("domain")
+            if dom is not None and not (isinstance(dom, str) and dom):
+                raise HarvestError(
+                    f"{f.name}: mint.concept.domain must be a non-empty string (§15.4)"
+                )
+        # harvest MUST NOT mint presence claims (§5.5, §10): absence is never
+        # mechanically derivable from the harvest fact base — only a claim
+        # template minting an ordinary value is legitimate here.
+        for cs in mint.get("claims") or []:
+            if isinstance(cs, dict) and "presence" in cs:
+                raise HarvestError(
+                    f"{f.name}: mint.claims entry for predicate "
+                    f"{cs.get('predicate')!r} carries presence — harvest MUST NOT "
+                    "mint presence claims (§5.5, §10)"
+                )
         rules.append(data)
     return rules
+
+
+def domain_mint_errors(rules: list[dict], domains: dict[str, dict], resolve_id) -> list[str]:
+    """`mint.concept.domain` (§10, §15.4) — semantic half: the named domain
+    MUST resolve to an actual domain concept, and — only when the minted
+    type is itself domain-minted somewhere in the ledger — that minting must
+    be within the NAMED domain's own import closure. A plain shared-tier
+    type carried with `domain:` membership needs no further check here (it
+    always resolves, §15.4's "shared tier or spine" half); this needs the
+    live ledger (`domains`, `resolve_id`), so it runs from `ledger.check`,
+    never from `run_harvest` itself."""
+    from ledger import ontology
+
+    all_minted = ontology.all_domain_minted_types(domains)
+    errors: list[str] = []
+    for rule in rules:
+        concept = (rule.get("mint") or {}).get("concept") or {}
+        dom = concept.get("domain")
+        if not dom:
+            continue
+        rid = rule.get("id", "?")
+        live = resolve_id(dom)
+        if live is None or live not in domains:
+            errors.append(f"harvest/{rid}.yaml: mint.concept.domain {dom!r} does not "
+                          "resolve to a domain concept (§15.4)")
+            continue
+        mtype = str(concept.get("type"))
+        if mtype in all_minted:
+            closure = ontology.import_closure(live, domains, resolve_id)
+            dtypes = ontology.domain_types(closure, domains)
+            if mtype not in dtypes:
+                errors.append(
+                    f"harvest/{rid}.yaml: mint.concept.type {mtype!r} is domain-minted "
+                    f"(by {', '.join(all_minted[mtype])}) but not within domain {dom!r}'s "
+                    "import closure (§15.4)"
+                )
+    return errors
 
 
 # ------------------------------------------------------------------ fact base

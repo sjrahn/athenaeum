@@ -19,10 +19,11 @@ from typing import TYPE_CHECKING
 
 from ath.manifest import MANIFEST_NAME, Instance, ManifestError, load_instance
 from ledger import demands as demands_mod
+from ledger import harvest as harvest_mod
 from ledger import invariants as invariants_mod
+from ledger import ontology, views
 from ledger import tenancy as tenancy_mod
 from ledger import values as values_mod
-from ledger import views
 from ledger.corpora import CorpusJoin
 from ledger.model import (
     ASOF_RE,
@@ -43,6 +44,7 @@ from ledger.model import (
     NEED_ACTIONS,
     NEED_KEYS,
     PERIOD_RE,
+    PRESENCE_VALUES,
     PROPOSES_EVIDENCE_KEYS,
     QUALIFIED_URI_RE,
     REF_URI_RE,
@@ -60,7 +62,23 @@ from ledger.model import (
     load_json_dir,
     load_lineage,
 )
-from ledger.schemas import load_schemas
+from ledger.schemas import (
+    extends_chain_errors,
+    load_domain_schemas,
+    load_schemas,
+    spine_references,
+)
+from refdata.errors import (
+    AdapterUnavailable,
+    AmbiguousSpineLabel,
+    InvalidSpineReference,
+    MirrorCorrupt,
+    MirrorUnavailable,
+    NotSpineDataset,
+    SpineIncapableAdapter,
+    SpineTermNotFound,
+)
+from refdata.spine import resolve_term
 
 if TYPE_CHECKING:
     from ath.manifest import Reference
@@ -130,10 +148,24 @@ def run_check(
 
     schemas, schema_errors = load_schemas(ledger_root)
     rep.errors.extend(schema_errors)
+    # domain type senses (§15.4): schemas/{domain-id}/{type}.yaml — a separate
+    # namespace from the shared tier's, resolved per-fact via its own
+    # `domain:` (ontology.effective_schema, used throughout the fact/claims
+    # pass below wherever the shared-tier schema was looked up by bare type).
+    domain_schemas, domain_schema_errors = load_domain_schemas(ledger_root)
+    rep.errors.extend(domain_schema_errors)
     kinds, kind_errors = values_mod.load_kinds(ledger_root)
     rep.errors.extend(kind_errors)
     invs, inv_errors = invariants_mod.load_invariants(ledger_root)
     rep.errors.extend(inv_errors)
+    # field-attached invariants sugar (§4.4, §11): a schema field's own
+    # `invariants:` list absorbs into the same engine, shared + domain-sense
+    # schemas alike — merged into the ordinary rule list `evaluate` runs.
+    field_invariant_rules, field_invariant_errors = invariants_mod.field_invariant_rules(
+        schemas, domain_schemas,
+    )
+    rep.errors.extend(field_invariant_errors)
+    invs = invs + field_invariant_rules
     demand_rules, demand_errors = demands_mod.load_demand_rules(ledger_root)
     rep.errors.extend(demand_errors)
     blockable_demand_ids = demands_mod.blockable_ids(demand_rules, schemas)
@@ -166,8 +198,9 @@ def run_check(
     # undeclared kind is an error at the schema, independent of any claim
     # actually using the field — checked structurally here rather than only
     # on use, the same way a dangling `value:` should surface immediately.
-    for tname, schema in schemas.items():
-        swhere = f"schemas/{tname}.yaml"
+    # Domain-sense schemas (§15.4) carry the same field grammar, so they get
+    # the identical check.
+    def _check_field_kinds(swhere: str, schema: dict) -> None:
         for fname, fspec in (schema.get("fields") or {}).items():
             if not isinstance(fspec, dict):
                 continue
@@ -182,6 +215,19 @@ def run_check(
                 if isinstance(ekind, str) and ekind not in kinds:
                     rep.err(swhere, f"field {fname!r} element {ekey!r} value {ekind!r} "
                                     "names an undeclared value kind (§4.5)")
+
+    for tname, schema in schemas.items():
+        _check_field_kinds(f"schemas/{tname}.yaml", schema)
+    for did, types in domain_schemas.items():
+        for tname, schema in types.items():
+            _check_field_kinds(f"schemas/{did}/{tname}.yaml", schema)
+
+    # extension chains (§15.3): acyclic, and terminated only at a declared type
+    # or a spine-form reference — structural lint over the schema set alone.
+    # A missing `extends:` is frontier (never checked here); resolving a
+    # spine-form reference against the registered spine datasets happens
+    # below, once the ontology layer (domains) is resolved.
+    rep.errors.extend(extends_chain_errors(schemas))
 
     # -------------------------------------------------- resolution availability
     resolve_live = not no_corpus and join.complete
@@ -311,6 +357,156 @@ def run_check(
         for tag, snap in (dref.snapshots or {}).items():
             mirror_hash_owner.setdefault(snap.artifact, (dname, tag))
 
+    # ------------------------------------------------------------- ontology (§15)
+    #
+    # Domain concepts, resolved from the live snapshot already built above
+    # (`live_facts`, `resolve_id`) — every guard §13.1's Ontology paragraph
+    # names, in one place.
+    domains = ontology.load_domains(live_facts)
+
+    for did, block in sorted(domains.items()):
+        dwhere = rel(fact_paths[did])
+        unknown = set(block) - ontology.ONTOLOGY_KEYS
+        if unknown:
+            rep.err(dwhere, f"ontology: unknown keys {sorted(unknown)} (§15.4)")
+        block_commitment = block.get("commitment", "real")
+        if block_commitment not in ontology.COMMITMENTS:
+            rep.err(dwhere, f"ontology.commitment must be one of "
+                            f"{sorted(ontology.COMMITMENTS)}, got {block_commitment!r} (§15.4)")
+        imports = block.get("imports")
+        if imports is not None and not (
+            isinstance(imports, list) and all(isinstance(i, str) for i in imports)
+        ):
+            rep.err(dwhere, "ontology.imports must be a list of domain-concept ids (§15.4)")
+            imports = []
+        for imp in imports or []:
+            live_imp = resolve_id(imp)
+            if live_imp is None:
+                rep.err(dwhere, f"ontology.imports {imp!r} does not resolve to a living "
+                                "fact (§15.4)")
+            elif live_imp not in domains:
+                rep.err(dwhere, f"ontology.imports {imp!r} resolves to {live_imp!r}, which "
+                                "carries no ontology: block — imports name domain concepts "
+                                "only (§15.4)")
+        types = block.get("types")
+        if types is not None and not isinstance(types, dict):
+            rep.err(dwhere, "ontology.types must be a mapping of type name to declaration "
+                            "(§15.4)")
+            types = {}
+        for tname, tdecl in (types or {}).items():
+            twhere = f"{dwhere} :: ontology.types.{tname}"
+            if not isinstance(tdecl, dict):
+                rep.err(twhere, "type declaration must be a mapping (§15.4)")
+                continue
+            bad = set(tdecl) - ontology.DOMAIN_TYPE_KEYS
+            if bad:
+                rep.err(twhere, f"unknown keys {sorted(bad)}")
+            ext = tdecl.get("extends")
+            if ext is not None and not (isinstance(ext, str) and ext.strip()):
+                rep.err(twhere, "extends must be a non-empty string (§15.3)")
+            if tname in schemas:
+                rep.err(twhere, f"mints type {tname!r}, which already resolves in the "
+                                "shared tier — no shared-tier shadowing (§15.4)")
+
+    # imports form a DAG (§15.4); domain-minted types' own extends chains
+    # (§15.3 applied to the §15.4 minting grammar) are acyclic and resolve.
+    rep.errors.extend(ontology.import_cycle_errors(domains, resolve_id))
+    rep.errors.extend(ontology.domain_type_chain_errors(domains, schemas))
+
+    all_minted = ontology.all_domain_minted_types(domains)
+    for did in sorted(domains):
+        closure = ontology.import_closure(did, domains, resolve_id)
+        dom_fact = live_facts.get(did)
+        if dom_fact is not None:
+            dwhere = rel(fact_paths[did])
+            # self-anchoring guard (§15.4): a domain concept's own type — and
+            # its own domain:, if any — MUST resolve outside its own closure.
+            if dom_fact.get("type") in ontology.domain_types(closure, domains):
+                rep.err(dwhere, f"domain's own type {dom_fact.get('type')!r} resolves "
+                                "inside its own import closure — no self-anchoring (§15.4)")
+            own_dom = dom_fact.get("domain")
+            if isinstance(own_dom, str) and own_dom and resolve_id(own_dom) in closure:
+                rep.err(dwhere, f"domain's own domain: {own_dom!r} resolves inside "
+                                "its own import closure — no self-anchoring (§15.4)")
+        for tname, owners in ontology.ambiguous_type_names(closure, domains).items():
+            rep.err(rel(fact_paths[did]), f"type {tname!r} is ambiguous across this "
+                                          f"domain's import closure — minted by "
+                                          f"{', '.join(owners)} (§15.4)")
+
+    # every fact's `domain:` membership and domain-minted type resolve in its
+    # resolution set (§15.4) — checked over every live fact, domain concepts
+    # included (a domain can itself carry `domain:` membership, §15.4).
+    for fid, o in live_facts.items():
+        where = rel(fact_paths[fid])
+        dom = o.get("domain")
+        if isinstance(dom, str) and dom:
+            live_dom = resolve_id(dom)
+            if live_dom is None:
+                rep.err(where, f"domain {dom!r} does not resolve to a living fact (§15.4)")
+            elif live_dom not in domains:
+                rep.err(where, f"domain {dom!r} resolves to {live_dom!r}, which carries no "
+                               "ontology: block — membership names a domain (§15.4)")
+        ftype = o.get("type")
+        if ftype in all_minted:
+            if not (isinstance(dom, str) and dom):
+                rep.err(where, f"type {ftype!r} is domain-minted (by "
+                               f"{', '.join(all_minted[ftype])}) but this fact carries no "
+                               "domain: (§15.4)")
+            else:
+                live_dom = resolve_id(dom)
+                if live_dom is not None and live_dom in domains:
+                    dtypes = ontology.domain_types(
+                        ontology.import_closure(live_dom, domains, resolve_id), domains,
+                    )
+                    if ftype not in dtypes:
+                        rep.err(where, f"type {ftype!r} is domain-minted but domain "
+                                       f"{dom!r}'s import closure does not declare it (§15.4)")
+
+    # spine references (§15.2): schema-level + domain-minted-type-level,
+    # resolved through the registered spine datasets — degrades to frontier
+    # (a note) when no spine dataset is registered at all (no athenaeum.yaml,
+    # or none marked spine: true), never a crash; grammar/registration/
+    # ambiguity failures are errors, a deprecated term warns, and an absent
+    # mirror or unavailable adapter is honestly unverifiable (a note).
+    all_spine_refs = set(spine_references(schemas)) | ontology.domain_spine_references(domains)
+    for dtypes_schemas in domain_schemas.values():
+        all_spine_refs |= spine_references(dtypes_schemas)
+    has_spine = any(d.spine for d in datasets.values())
+    if all_spine_refs and not has_spine:
+        rep.note(f"ontology: {len(all_spine_refs)} spine reference(s) declared — no spine "
+                 "dataset registered yet (frontier, §15.2)")
+    elif has_spine:
+        references_list = list(datasets.values())
+        corpora_roots = [c.root for c in join.corpora]
+        for spine_ref in sorted(all_spine_refs):
+            try:
+                term = resolve_term(spine_ref, references_list, corpora_roots)
+            except (InvalidSpineReference, NotSpineDataset, SpineIncapableAdapter,
+                    SpineTermNotFound, AmbiguousSpineLabel) as e:
+                rep.err("ontology: spine reference", f"{spine_ref!r}: {e}")
+                continue
+            except (MirrorUnavailable, AdapterUnavailable, MirrorCorrupt) as e:
+                rep.note(f"ontology: spine reference {spine_ref!r} honestly unverifiable "
+                         f"— {e}")
+                continue
+            if term.deprecated:
+                rep.warn("ontology: spine reference", f"{spine_ref!r} resolves to a "
+                         f"deprecated term ({term.dataset}:{term.native_id} "
+                         f"{term.label!r})")
+
+    # harvest rules' static domain-minting (§10, §15.4) — well-formedness
+    # (shape) is `harvest.load_rules`'s own job and raises loudly there; the
+    # semantic half (does the named domain/type actually resolve?) needs the
+    # live ledger, so it runs here.
+    try:
+        harvest_rules = harvest_mod.load_rules(ledger_root)
+    except harvest_mod.HarvestError as e:
+        rep.err("harvest", str(e))
+    else:
+        rep.errors.extend(
+            harvest_mod.domain_mint_errors(harvest_rules, domains, resolve_id)
+        )
+
     # ------------------------------------------------------------- fact files
     all_claims: list[tuple[Path, dict, dict]] = []
     for f, o in facts.items():
@@ -343,6 +539,14 @@ def run_check(
         # a claim period; mirrors an evidenced timebox claim by convention
         if "period" in o and not PERIOD_RE.match(str(o["period"])):
             rep.warn(where, f"odd period format {o['period']!r}")
+        # `requires_domain: true` (§15.4): string-presence only — a fact of a
+        # type declaring it MUST carry a top-level `domain:` key; resolving
+        # that value to an actual domain concept is a later pass's job.
+        type_schema = schemas.get(str(o.get("type")))
+        if isinstance(type_schema, dict) and type_schema.get("requires_domain") \
+                and "domain" not in o:
+            rep.err(where, f"schema: {o.get('type')} declares requires_domain: true — "
+                           "fact carries no top-level domain: (§15.4)")
         if edge:
             subj = o.get("subject")
             if subj is not None and resolve_id(str(subj)) is None:
@@ -404,8 +608,11 @@ def run_check(
             elif resolve_live and not join.resolves(m.group(1)):
                 rep.err(where, f"rostered corpus://{m.group(1)[:12]}… resolves in no "
                                "registered corpus")
-            schema = schemas.get(str(o.get("type")))
-            declared_roles = (schema or {}).get("roster_roles")
+            # §15.4: a domain-sense schema (schemas/{domain}/{type}.yaml) governs
+            # a domain-member fact exactly as a shared-tier schema governs any
+            # other — `roster_roles` included.
+            schema = ontology.effective_schema(o, schemas, domain_schemas)
+            declared_roles = schema.get("roster_roles")
             if role and declared_roles and str(role) not in declared_roles:
                 rep.err(where, f"roster role {role!r} not among the {o.get('type')!r} "
                                f"schema's roster_roles {declared_roles}")
@@ -564,6 +771,21 @@ def run_check(
         st = c.get("status")
         if st not in CLAIM_STATUSES:
             rep.err(where, f"bad status {st!r} (allowed: {sorted(CLAIM_STATUSES)})")
+        # presence claims (§5.5): `presence` stands in place of value/object —
+        # asserting the shape of the predicate's extension, not a value. The
+        # bar (§5.4), status ladder, and evidence discipline apply unchanged;
+        # `element` bindings on presence-claim evidence are already rejected
+        # below by the ordinary "not an array" check (presence claims carry
+        # no `value`, so `value_is_array` is always False for them).
+        if "presence" in c:
+            presence = c.get("presence")
+            if presence not in PRESENCE_VALUES:
+                rep.err(where, f"presence {presence!r} must be one of "
+                               f"{sorted(PRESENCE_VALUES)} (§5.5)")
+            if "value" in c or "object" in c:
+                rep.err(where, "a claim carries exactly one of value, object, or "
+                               "presence — this one carries presence alongside "
+                               f"{sorted(set(c) & {'value', 'object'})} (§5.5)")
         quals = c.get("qualifiers") or {}
         if not isinstance(quals, dict):
             rep.err(where, "qualifiers must be a mapping")
@@ -589,7 +811,10 @@ def run_check(
         if "asof" not in c and "period" not in c:
             rep.warn(where, "no asof or period (when was this observed/true?)")
 
-        fspec = ((schemas.get(str(o.get("type"))) or {}).get("fields") or {}).get(str(pred))
+        # §15.4: claims on a domain-member fact validate against its domain's
+        # own type sense when one is declared, the shared-tier schema otherwise.
+        fspec = (ontology.effective_schema(o, schemas, domain_schemas).get("fields") or {}) \
+            .get(str(pred))
         if not isinstance(fspec, dict):
             fspec = {}
         values = fspec.get("values")
@@ -1067,7 +1292,10 @@ def run_check(
                     f"{claim.get('status')!r} — the challenged claim carries disputed")
 
     # ---------------------------------------------------------------- invariants
-    for sev, msg in invariants_mod.evaluate(invs, facts):
+    for sev, msg in invariants_mod.evaluate(
+        invs, facts, lineage=lineage, schemas=schemas, domains=domains,
+        references=list(datasets.values()), corpora_roots=[c.root for c in join.corpora],
+    ):
         (rep.errors if sev == "error" else rep.warnings).append(msg)
 
     # the disagreement view (§13.1 Views): what voices assert vs what the

@@ -25,8 +25,10 @@ def _write(root: Path, ftype: str, fid: str, **extra: object) -> None:
 
 
 def _lineage(root: Path, rows: dict[str, str]) -> None:
+    """v39 object-row form (§4.1): `"old-id": {"to": "survivor-id", "reason": …}`."""
     (root / "facts").mkdir(parents=True, exist_ok=True)
-    (root / "facts" / "LINEAGE.json").write_text(json.dumps(rows), encoding="utf-8")
+    obj_rows = {k: {"to": v, "reason": "merged"} for k, v in rows.items()}
+    (root / "facts" / "LINEAGE.json").write_text(json.dumps(obj_rows), encoding="utf-8")
 
 
 def _members(result: dict) -> set[str]:

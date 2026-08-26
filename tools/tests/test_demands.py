@@ -1336,6 +1336,37 @@ def test_schema_expectation_satisfaction_zero_when_type_absent() -> None:
     assert summary["widget"] == {"total": 0, "satisfied": 0, "concepts": 0}
 
 
+def test_schema_expectation_satisfaction_is_domain_aware() -> None:
+    """A domain sense's own `expectations:` (§15.4) roll up too — a distinct
+    declared shape, never merged with (or falling back to) a shared-tier
+    schema of the same name (`ontology.effective_schema`'s reading). No
+    shared-tier `vessel` schema exists at all here, so without
+    *domain_schemas* this type would be invisible to the roll-up entirely —
+    the gap the previous wave flagged."""
+    domain_schemas = {
+        "bsg-reimagined": {
+            "vessel": {"type": "vessel", "domain": "bsg-reimagined", "expectations": [
+                {"id": "vessel-class", "expect": ["vessel_class"]},
+            ]},
+        },
+    }
+    facts_by_id = {
+        "galactica": {
+            "id": "galactica", "type": "vessel", "domain": "bsg-reimagined",
+            "claims": [{"id": "galactica:vc", "predicate": "vessel_class",
+                       "value": "battlestar"}],
+        },
+        "pegasus": {"id": "pegasus", "type": "vessel", "domain": "bsg-reimagined",
+                   "claims": []},
+    }
+    summary = schema_expectation_satisfaction(
+        {}, facts_by_id, rules={}, kinds={}, edges=[], interps=[],
+        domain_schemas=domain_schemas,
+    )
+    assert summary["vessel @ bsg-reimagined"] == {"total": 2, "satisfied": 1, "concepts": 2}
+    assert "vessel" not in summary  # no shared-tier schema declares expectations
+
+
 # --------------------------------------------------------------- shape attachment
 
 

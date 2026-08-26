@@ -87,7 +87,11 @@ fallback for claim-content searches. Same for vocabulary: check `VOCAB.md` (gene
 read, never edit) before using a predicate, type, qualifier key, or roster role that may
 already exist under another name. A **new** term is legitimate when real evidence needs
 it — but it must be deliberate: list every minted term in your report (the visible-diff
-rule, §8). Using **retired** vocabulary is a validation error.
+rule, §8). Using **retired** vocabulary is a validation error. The same economy applies to
+domains (§15.4): a domain is a real concept, never a bucket minted to house vocabulary —
+prefer a shared type + `domain:` membership over minting a domain type sense, a domain
+never shadows a shared name, and every in-use type owes an `extends:` chain into the
+registered spine (missing is work-list frontier, §15.3 — never a blocker).
 
 **A partial fit loses to a fresh floater (#177).** Reuse-before-mint applies to *the same
 thing under another name*, never to *a different thing under a nearby type*: when a new
@@ -171,7 +175,11 @@ knowledge takes arrays/objects, one checkable element each). `object` for relati
 inverse — which side stores a directed relation is a per-type convention in `facts/SCHEMA.md`.
 Claim ids are `{file-id}:{short}`, unique ledger-wide. Time: `period` = when the fact holds
 (`~` for circa, `a/..` open ranges); `asof` = when observed (the record's origin `snapshot`
-is the natural value); time never rides in ad-hoc qualifiers.
+is the natural value); time never rides in ad-hoc qualifiers. A **presence claim**
+(`presence: "none"|"some"`, §5.5) stands in place of `value`/`object` where a source
+verifiably attests absence or known-existence-with-unknown-identity — never mint one
+mechanically (harvest is forbidden from this), and never confuse it with silence (no claim
+asserts nothing).
 
 **Stubs are valid and useful (§4.2).** A bare `{id, type, name}` concept marks the capture
 frontier. Every concept you reference as a claim `object` or an interpretation's `about` MUST

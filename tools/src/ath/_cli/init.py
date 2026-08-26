@@ -26,11 +26,32 @@ _LEDGER_DIRS = ("facts", "interpretations", "schemas", "harvest", "invariants", 
 _LEDGER_FACTS_SCHEMA = """\
 # The fact model — authoring conventions
 
-The normative contract is spec/ledger.md (§4 facts, §5 claims, §6 evidence).
-This file carries this ledger's own per-type conventions — which side stores a
-directed relation, value shapes for attribute claims, applicability
-disciplines. Grow it as real shapes recur; shapes that harden graduate into
-schemas/ (spec/ledger.md §4.4).
+The normative contract is spec/ledger.md (§4 facts, §5 claims, §6 evidence,
+§15 ontology). This file carries this ledger's own per-type conventions —
+which side stores a directed relation, value shapes for attribute claims,
+applicability disciplines. Grow it as real shapes recur; shapes that harden
+graduate into schemas/ (spec/ledger.md §4.4).
+
+## Ontology (§15)
+
+- A domain is a real concept — a narrative universe, a franchise, a system —
+  never a bucket minted to house vocabulary. Economy default: reuse a shared
+  type plus `domain:` membership; mint a domain type sense
+  (`ontology.types`, or an earned `schemas/{domain}/{type}.yaml`) only when
+  the kind is genuinely domain-specific. A domain never shadows a shared
+  name.
+- Every concept/edge type in use owes an `extends:` chain into the
+  registered spine (`extends:` in `schemas/{type}.yaml`, or the domain
+  sense) — missing is work-list frontier (`ath ledger regen`), never a
+  blocker; give a fresh mint its chain before landing where practical.
+- `isa:` is opt-in subsumption over declared `extends:` chains (harvest
+  `match`, invariant/demand `when:`, scope seeds) — `equals`/`in` stay
+  literal.
+- A **presence claim** (`presence: "none"|"some"`, §5.5) is an
+  evidence-bearing assertion of absence or known-existence-with-unknown-
+  identity, standing in place of `value`/`object` — never mechanical
+  (harvest may never mint one), and never confused with silence (no claim
+  asserts nothing).
 """
 
 _LEDGER_INTERP_SCHEMA = """\

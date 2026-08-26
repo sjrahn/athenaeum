@@ -31,10 +31,11 @@ def _interp(root: Path, obj: dict) -> Path:
 
 
 def _lineage(root: Path, mapping: dict[str, str]) -> Path:
-    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1)."""
+    """Write (merging into any existing rows) `facts/LINEAGE.json` (§4.1) in the
+    v39 object-row form: `"old-id": {"to": "survivor-id", "reason": "merged"}`."""
     p = root / "facts" / "LINEAGE.json"
     existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
-    existing.update(mapping)
+    existing.update({k: {"to": v, "reason": "merged"} for k, v in mapping.items()})
     p.write_text(json.dumps(existing, indent=1), encoding="utf-8")
     return p
 

@@ -64,6 +64,11 @@ Commands:
                 or an invariant id
   regen         rewrite the generated views (VOCAB.md, the open-questions
                 block; --coverage additionally sweeps corpora for coverage.md)
+  export        plane-projected RDF projection of the fact graph (§15.7):
+                --plane owner (default) | public | audience:{name}; --out
+                DIR|- (default stdout); --gate runs the conformance gate
+                (ISO/IEC 21838-1 Annex D.5.1) over the owner-plane export,
+                honestly-unverifiable without a reasoner
 
 All commands resolve the ledger, corpus, and reference datasets through the
 instance config (athenaeum.yaml, walked up from the current directory; --root
@@ -113,11 +118,39 @@ def _cmd_check(argv: Sequence[str]) -> int:
         print(f"WARN  {w}")
     for e in rep.errors:
         print(f"ERROR {e}")
+    # The conformance gate (§13.1 Ontology / §15.7): runs at check time over the
+    # owner-plane export + the registered spine, wherever the environment provides
+    # a reasoner — honestly unverifiable where it cannot. No spine registered =
+    # no ontology layer yet, nothing to gate; --no-corpus skips (no join).
+    gate_failed = False
+    if not ns.no_corpus and any(r.spine for r in datasets.values()):
+        from ledger.export import ExportError, export_ledger, gate_owner_export
+
+        base = find_root(ns.root)
+        instance = load_instance(base)
+        corpora_roots = [c.root for c in join.corpora]
+        try:
+            owner_text, _ = export_ledger(ledger_root, join, datasets, instance,
+                                          plane="owner", corpora_roots=corpora_roots)
+        except ExportError as e:
+            print(f"note: conformance gate not run — owner-plane export failed: {e}")
+        else:
+            result, spine_notes = gate_owner_export(
+                owner_text, list(datasets.values()), corpora_roots,
+                work_dir=ledger_root / ".cache" / "gate",
+            )
+            for n in spine_notes:
+                print(f"note: {n}")
+            if result.status == "failed":
+                print(f"ERROR conformance gate failed — {result.detail}")
+                gate_failed = True
+            else:
+                print(f"note: conformance gate: {result.status} — {result.detail}")
     print(f"\n{rep.counts.get('facts', 0)} fact files, "
           f"{rep.counts.get('claims', 0)} claims, "
           f"{rep.counts.get('interpretations', 0)} interpretations — "
           f"{len(rep.errors)} errors, {len(rep.warnings)} warnings")
-    return 0 if rep.ok else 1
+    return 0 if rep.ok and not gate_failed else 1
 
 
 def _cmd_regen(argv: Sequence[str]) -> int:
@@ -167,6 +200,7 @@ def _print_expectation_satisfaction(
     from ledger import demands as demands_mod
     from ledger import values as values_mod
     from ledger.model import is_edge, is_redirect, load_lineage
+    from ledger.schemas import load_domain_schemas
 
     live = [f for f in facts.values() if not is_redirect(f)]
     edges = [f for f in live if is_edge(f)]
@@ -174,9 +208,10 @@ def _print_expectation_satisfaction(
     rules, _ = demands_mod.load_demand_rules(ledger_root)
     kinds, _ = values_mod.load_kinds(ledger_root)
     lineage, _ = load_lineage(ledger_root)
+    domain_schemas, _ = load_domain_schemas(ledger_root)
     summary = demands_mod.schema_expectation_satisfaction(
         schemas, facts_by_id, rules=rules, kinds=kinds, edges=edges,
-        interps=list(interps.values()), lineage=lineage,
+        interps=list(interps.values()), lineage=lineage, domain_schemas=domain_schemas,
     )
     for ftype in sorted(summary):
         row = summary[ftype]
@@ -787,6 +822,77 @@ def _cmd_remap_el_ordinal(argv: Sequence[str]) -> int:
     return 1 if res.holds else 0
 
 
+def _cmd_export(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger export",
+        "Plane-projected, deterministic RDF export of the fact graph (§15.7).",
+    )
+    ap.add_argument("--plane", default="owner",
+                    help="owner (default, unfiltered) | public | audience:{name}")
+    ap.add_argument("--out", default="-", metavar="DIR|-",
+                    help="write export.ttl into DIR, or '-' for stdout (default)")
+    ap.add_argument("--gate", action="store_true",
+                    help="also run the conformance gate (ISO/IEC 21838-1 Annex D.5.1) over "
+                         "the owner-plane export; honestly-unverifiable without a reasoner "
+                         "on PATH ($ATHENAEUM_REASONER overrides)")
+    ns = ap.parse_args(list(argv))
+    base = find_root(ns.root)
+    instance = load_instance(base)
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.export import ExportError, export_ledger, gate_owner_export
+
+    corpora_roots = [c.root for c in join.corpora]
+    try:
+        text, report = export_ledger(ledger_root, join, datasets, instance, plane=ns.plane,
+                                     corpora_roots=corpora_roots)
+    except ExportError as e:
+        print(f"ath ledger export: {e}", file=sys.stderr)
+        return 2
+
+    # The export IS the primary output — it goes to stdout by default, so
+    # every diagnostic below prints to stderr to keep a piped `--out -` clean.
+    if ns.out == "-":
+        print(text, end="")
+    else:
+        out_dir = Path(ns.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "export.ttl"
+        out_path.write_text(text, encoding="utf-8")
+        print(f"wrote {out_path}", file=sys.stderr)
+
+    for n in report.notes:
+        print(f"note: {n}", file=sys.stderr)
+    if report.unverified_spine_refs:
+        print(f"unverified spine references ({len(report.unverified_spine_refs)}):",
+              file=sys.stderr)
+        for u in report.unverified_spine_refs:
+            print(f"  {u}", file=sys.stderr)
+    if report.unexpressed_invariants:
+        print(f"invariants SHACL cannot express ({len(report.unexpressed_invariants)}):",
+              file=sys.stderr)
+        for u in report.unexpressed_invariants:
+            print(f"  {u}", file=sys.stderr)
+    print(f"plane={report.plane} spec_version={report.spec_version} "
+          f"instance_commit={report.instance_commit or 'absent'} triples={report.triples}",
+          file=sys.stderr)
+
+    if ns.gate:
+        owner_text = text
+        if ns.plane != "owner":
+            owner_text, _ = export_ledger(ledger_root, join, datasets, instance, plane="owner",
+                                          corpora_roots=corpora_roots)
+        result, spine_notes = gate_owner_export(
+            owner_text, list(datasets.values()), corpora_roots,
+            work_dir=ledger_root / ".cache" / "gate",
+        )
+        for n in spine_notes:
+            print(f"note: {n}", file=sys.stderr)
+        print(f"conformance gate: {result.status} — {result.detail}", file=sys.stderr)
+        if result.status == "failed":
+            return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help", "help"):
@@ -796,6 +902,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     handlers = {
         "check": _cmd_check,
         "regen": _cmd_regen,
+        "export": _cmd_export,
         "verify": _cmd_verify,
         "resolve": _cmd_resolve,
         "index": _cmd_index,

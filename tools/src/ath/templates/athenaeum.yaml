@@ -41,4 +41,37 @@ visibility: private
 #     latest: "2026-06"
 #     snapshots:
 #       "2026-06": { artifact: <64-hex blake3 of the ZIM's bytes> }
+#
+# The ledger's ontology layer (spec/ledger.md §15.2) extends into the
+# registered spine — BFO-2020 and the CCO release, per the adoption rulings.
+# Register both with `spine: true` once their release bytes are captured as
+# ordinary mirror artifacts (an owner-gated capture, same as any reference) —
+# fill in `latest:`/`snapshots:`/`artifact:` after capture:
+#   bfo-2020:
+#     description: BFO-2020 top-level ontology
+#     adapter: bfo-2020
+#     spine: true
+#     latest: "<release tag>"
+#     snapshots:
+#       "<release tag>": { artifact: <64-hex blake3 of the BFO-2020 table set> }
+#   cco-release:
+#     description: Common Core Ontologies release
+#     adapter: cco-release
+#     spine: true
+#     latest: "<release tag>"
+#     snapshots:
+#       "<release tag>": { artifact: <64-hex blake3 of the CCO release tree> }
 references: {}
+
+# Instance-registered tool assets (spec/athenaeum.md §2.3, spec/corpus.md
+# §12.3.6) — engine payloads the tooling injects or executes, pinned exactly
+# as reference snapshots are (captured with provenance, resolved through
+# custody, updated by registration diff); same snapshot grammar as
+# `references:`, none of the adapter/citation semantics. Register as
+# captured, e.g.:
+#   singlefile:
+#     description: the SingleFile snapshot engine
+#     latest: "<build tag>"
+#     snapshots:
+#       "<build tag>": { artifact: <64-hex blake3 of the registered build> }
+assets: {}
