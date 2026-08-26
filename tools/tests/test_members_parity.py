@@ -8,6 +8,9 @@ the artifact on demand.
 
 This module makes that argument checkable rather than assumed. `tests/data/members_parity/`
 freezes the exact fields stored today, on a small set of real records chosen to cover every
+address axis. The fixtures are therefore INSTANCE DATA — frozen slices of real records,
+third-party correspondence and contact fields included — so they are untracked (gitignored)
+and live only alongside an instance; every test here self-skips without them. They cover every
 address axis (`el`, `path`, `msg`, `part`, `card`, `stream_id` — the full set found; see
 `AXIS_FIELD_CENSUS`) and every distinct field-vocabulary combination within each axis. Each
 fixture's `note` explains why that record was chosen. Some fixtures freeze every embed in the
@@ -60,6 +63,16 @@ _NO_CORPORA_REASON = (
 
 _DATA_DIR = Path(__file__).resolve().parent / "data" / "members_parity"
 _FIXTURE_PATHS = sorted(_DATA_DIR.glob("*.json"))
+
+# The fixtures are untracked instance data (see the module docstring): a public
+# checkout has none, and the whole battery skips rather than asserting into a void.
+pytestmark = pytest.mark.skipif(
+    not _FIXTURE_PATHS,
+    reason=(
+        "no members-parity fixtures present — they are frozen slices of real "
+        "instance records (untracked); restore a local copy to run the battery"
+    ),
+)
 
 # Census taken 2026-07-26 across BOTH hubs (corpora/corpus + corpora/corpus-private),
 # parsed via `records.iter_embed_blocks` (real API, not regex): 11,824 records scanned,
@@ -253,8 +266,6 @@ def test_axis_field_vocabulary_is_covered() -> None:
     """
     covered_axes: set[str] = set()
     covered_fields: dict[str, set[str]] = {axis: set() for axis in AXIS_FIELD_CENSUS}
-
-    assert _FIXTURE_PATHS, "no fixtures found under tests/data/members_parity/"
 
     for fixture_path in _FIXTURE_PATHS:
         fixture = _load_fixture(fixture_path)

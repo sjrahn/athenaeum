@@ -14,6 +14,11 @@ tools/.ruff_cache/
 # testdata/seed.py; holds real (if tiny) private artifact bytes, never tracked
 /testdata/instance/
 
+# members-parity fixtures — frozen slices of real instance records (third-party
+# correspondence, contacts, host configs): instance data, never tracked here.
+# The battery self-skips without them; restore a local copy to run it in full.
+/tools/tests/data/members_parity/
+
 research
 
 __pycache__/
