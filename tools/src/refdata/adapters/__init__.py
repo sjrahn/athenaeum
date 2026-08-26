@@ -70,6 +70,28 @@ when the caller can supply one.
 index is absent or stale; this is not part of the required four-function
 contract every adapter carries, only the formats that need a sidecar at all.
 The `ath ref index <dataset>` CLI verb is what calls `build_index`.
+
+**Optional spine API.** The two ontology-release adapters — `bfo-2020`,
+`cco-release` (spec/ledger.md §15.2) — additionally expose, beyond the four
+required functions:
+
+- `iter_terms(handle) -> Iterator[SpineTerm]` — every term the release
+  carries, native id + label + deprecated flag. This is `refdata.spine`'s
+  entire surface onto an adapter: it never calls `resolve_entry` or
+  `search_entries` (those stay the ordinary `ref://` citation path, spec
+  §6.5, independent of the extension-chain machinery). A plain reference
+  adapter (`zim`, `osm-pbf`) carries no `iter_terms` at all — registering it
+  as `spine: true` is a load-time-legal but resolution-time error
+  (`refdata.errors.SpineIncapableAdapter`).
+- `ontology_payload_paths(archive_path: Path, work_dir: Path) -> list[Path]`
+  — extracts the release's reasoner-consumable ontology file(s) (BFO's
+  RDF-XML table, CCO's merged Turtle file) out of the mirror archive into
+  `work_dir`, for `ledger.export`'s conformance gate (spec/ledger.md §15.7,
+  ISO/IEC 21838-1 Annex D.5.1): a standard OWL 2 reasoner needs the spine's
+  own axioms as files on disk beside the export, not merely resolvable
+  through `iter_terms`. Raises `refdata.errors.MirrorCorrupt` on the same
+  terms `open_archive` does; a plain reference adapter carries no
+  `ontology_payload_paths` any more than it carries `iter_terms`.
 """
 
 from __future__ import annotations
@@ -108,6 +130,20 @@ class AdapterSearchHit:
     context: str | None = None
 
 
+@dataclass(frozen=True)
+class SpineTerm:
+    """One entry in a spine dataset's full term enumeration (spec/ledger.md
+    §15.2) — the optional spine API's unit, distinct from `AdapterResult`
+    (the ordinary `ref://` resolution unit): only spine-capable adapters
+    (`bfo-2020`, `cco-release`) expose `iter_terms`, consumed by
+    `refdata.spine.resolve_term` for native-id/label lookup, label-uniqueness
+    checking, and surfacing a resolved term's deprecation."""
+
+    native_id: str
+    label: str
+    deprecated: bool
+
+
 def _load_zim() -> ModuleType:
     from . import zim
 
@@ -120,10 +156,27 @@ def _load_osm_pbf() -> ModuleType:
     return osm_pbf
 
 
+def _load_bfo_2020() -> ModuleType:
+    from . import bfo_2020
+
+    return bfo_2020
+
+
+def _load_cco_release() -> ModuleType:
+    from . import cco_release
+
+    return cco_release
+
+
 # Adapter name -> module. Registered by name rather than instantiated so an
 # adapter whose optional dependency is missing still imports cleanly (the
 # module's own `available()` reports the guarded truth).
-ADAPTERS: dict[str, ModuleType] = {"zim": _load_zim(), "osm-pbf": _load_osm_pbf()}
+ADAPTERS: dict[str, ModuleType] = {
+    "zim": _load_zim(),
+    "osm-pbf": _load_osm_pbf(),
+    "bfo-2020": _load_bfo_2020(),
+    "cco-release": _load_cco_release(),
+}
 
 
 def adapter_available(name: str) -> bool:

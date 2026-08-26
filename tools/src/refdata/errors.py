@@ -57,3 +57,51 @@ class MirrorUnindexed(RefdataError):
     mirror is fine, only its optional derived index is missing or stale —
     honestly unverifiable, never a crash, same as every other `RefdataError`
     subclass. Fixed by (re)building the index (`ath ref index <dataset>`)."""
+
+
+# --- the spine resolution layer (spec/ledger.md §15.2) ----------------------
+#
+# `refdata.spine.resolve_term` builds on the resolution above — a spine
+# dataset is an ordinary registered reference dataset (§6.5) marked
+# `spine: true` — so the "honestly unverifiable, never a crash" outcomes for
+# an unmaterialized mirror or an unavailable adapter are exactly
+# `MirrorUnavailable`/`AdapterUnavailable`/`MirrorCorrupt` above, raised
+# unchanged. The classes below are the spine layer's OWN failures: grammar,
+# registration, and resolution-uniqueness problems that are errors regardless
+# of mirror availability (§15.2 "a reference that does not resolve … is a
+# validation error — never a warning").
+
+
+class SpineError(RefdataError):
+    """Base for `refdata.spine`'s own resolution failures — distinct from,
+    but a subclass of, the ordinary `RefdataError` family so a caller
+    catching either broadly or narrowly gets what it expects."""
+
+
+class InvalidSpineReference(SpineError):
+    """The spec string isn't `{dataset}:{id-or-label}` grammar, or carries an
+    `@{tag}` pin — deliberately never admitted in a spine reference form
+    (spec/ledger.md §15.2: "Always bare — one spine version per instance")."""
+
+
+class NotSpineDataset(SpineError):
+    """The named dataset names no registered `references:` entry, or is
+    registered but not marked `spine: true` (spec/ledger.md §15.2)."""
+
+
+class SpineIncapableAdapter(SpineError):
+    """The dataset's format adapter carries no `iter_terms` — it can serve
+    ordinary `ref://` citations but was never built to enumerate a release's
+    terms, so it cannot root a spine (spec/ledger.md §15.2)."""
+
+
+class SpineTermNotFound(SpineError):
+    """Neither a native id nor a unique label in the dataset's resolved
+    release matched the reference — "an unresolvable reference is an error"
+    (spec/ledger.md §15.2)."""
+
+
+class AmbiguousSpineLabel(SpineError):
+    """A label matched more than one term in the dataset's resolved release
+    — "a label ambiguous in the resolved release is an error" (spec/ledger.md
+    §15.2); cite the native id instead."""

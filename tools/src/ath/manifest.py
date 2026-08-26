@@ -22,7 +22,16 @@ declaration wins, but when absent it derives at resolution time from the
 latest snapshot's mirror record's mime overlay `ref_adapter`
 (`refdata.resolve_adapter_name`, spec/corpus.md §7.1). A snapshot's mirror
 bytes are a corpus artifact, distributed and integrity-checked through the
-corpus store (Part IV).
+corpus store (Part IV). `spine: true` (spec/ledger.md §15.2) admits a
+dataset as an extension-chain root for the ledger's ontology layer — the
+distribution ships the format adapters (`bfo-2020`, `cco-release`); which
+release an instance trusts is this registration, same as any other.
+
+Tool assets (`spec/corpus.md` §12.3.6) register under `assets:` — payloads
+the tooling injects or executes (the web capturer's SingleFile bundle),
+pinned exactly as a reference snapshot is: the same tag-keyed `snapshots:` /
+`latest:` grammar (`load_assets`), carrying none of `references:`'s
+adapter/citation machinery — an asset's bytes are never a `ref://` surface.
 
 The issue tracker registers under `tracker:` — the forge repo whose issues
 carry the instance's backlog, the forge `host:`, and the in-repo path of the
@@ -162,6 +171,11 @@ class Reference:
     override path), but when absent the format adapter is derived from the
     latest snapshot's mirror record's mime overlay `ref_adapter`
     (spec/corpus.md §7.1) via `refdata.resolve_adapter_name`.
+
+    `spine` (spec/ledger.md §15.2) admits this dataset as an extension-chain
+    root for the ledger's ontology layer — the flag `refdata.spine` checks
+    before resolving an `extends:`/spine reference form against it. Default
+    False: an ordinary reference dataset carries no ontology role.
     """
 
     dataset: str
@@ -169,6 +183,23 @@ class Reference:
     latest: str  # the default snapshot tag — a key of snapshots
     snapshots: dict[str, Snapshot]  # tag -> Snapshot
     adapter: str | None = None  # explicit override; None derives from the mirror's mime overlay
+    spine: bool = False  # admits this dataset as a spine extension-chain root (§15.2)
+
+
+@dataclass(frozen=True)
+class Asset:
+    """A registered tool asset (spec/athenaeum.md §2.3, spec/corpus.md
+    §12.3.6) — a payload the tooling injects or executes (the web capturer's
+    SingleFile bundle), pinned exactly as a reference snapshot is: the same
+    tag-keyed `snapshots`/`latest` grammar as `Reference`, none of its
+    adapter or citation semantics — an asset's bytes are never a `ref://`
+    surface, so this carries no `adapter` field at all.
+    """
+
+    name: str
+    description: str
+    latest: str  # the default snapshot tag — a key of snapshots
+    snapshots: dict[str, Snapshot]  # tag -> Snapshot
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -290,6 +321,41 @@ def load_instance(root: Path) -> Instance:
                     tiers=tiers, audiences=audiences)
 
 
+def _parse_snapshots(context: str, snapshots_raw: object) -> dict[str, Snapshot]:
+    """The tag-keyed `snapshots:` grammar shared by `references:` and
+    `assets:` (spec/athenaeum.md §2.3): tag -> `Snapshot` (a 64-hex blake3
+    `artifact`, plus the deprecated deployment-local `path:` override).
+    `context` names the owning entry for error messages (e.g.
+    `"references/{name}"` or `"assets/{name}"`)."""
+    if not isinstance(snapshots_raw, dict) or not snapshots_raw:
+        raise ManifestError(f"{context}: snapshots must be a non-empty tag-keyed mapping")
+    snapshots: dict[str, Snapshot] = {}
+    for tag, snap in snapshots_raw.items():
+        tag = str(tag)
+        if not _TAG_RE.match(tag):
+            raise ManifestError(f"{context}: snapshot tag {tag!r} must match "
+                                "^[a-z0-9][a-z0-9._-]*$")
+        snap = snap or {}
+        artifact = str(snap.get("artifact") or "")
+        if not _ARTIFACT_RE.match(artifact):
+            raise ManifestError(f"{context}/{tag}: artifact must be a 64-hex "
+                                f"lowercase blake3, got {artifact!r}")
+        # No existence check here — a declared path may live on a mount
+        # that isn't up; presence is a resolver/status concern.
+        path = snap.get("path")
+        snapshots[tag] = Snapshot(artifact=artifact, path=str(path) if path else None)
+    return snapshots
+
+
+def _parse_latest(context: str, spec: dict, snapshots: dict[str, Snapshot]) -> str:
+    """The `latest:` grammar shared by `references:` and `assets:`: declared,
+    never inferred, and must name a key of the entry's own `snapshots`."""
+    latest = str(spec.get("latest") or "")
+    if not latest or latest not in snapshots:
+        raise ManifestError(f"{context}: latest {latest!r} must name a key of snapshots")
+    return latest
+
+
 def load_references(root: Path) -> list[Reference]:
     """Parse the config's `references:` section — registered reference datasets
     (`spec/ledger.md` §6.5)."""
@@ -309,39 +375,56 @@ def load_references(root: Path) -> list[Reference]:
         # time from the mirror record's mime overlay ref_adapter
         # (refdata.resolve_adapter_name); not a load-time error.
         adapter = str(spec.get("adapter") or "") or None
-        snapshots_raw = spec.get("snapshots") or {}
-        if not isinstance(snapshots_raw, dict) or not snapshots_raw:
-            raise ManifestError(f"references/{name}: snapshots must be a non-empty "
-                                "tag-keyed mapping")
-        snapshots: dict[str, Snapshot] = {}
-        for tag, snap in snapshots_raw.items():
-            tag = str(tag)
-            if not _TAG_RE.match(tag):
-                raise ManifestError(f"references/{name}: snapshot tag {tag!r} must match "
-                                    "^[a-z0-9][a-z0-9._-]*$ (rides in ref:// URIs after '@')")
-            snap = snap or {}
-            artifact = str(snap.get("artifact") or "")
-            if not _ARTIFACT_RE.match(artifact):
-                raise ManifestError(f"references/{name}/{tag}: artifact must be a 64-hex "
-                                    f"lowercase blake3, got {artifact!r}")
-            # No existence check here — a declared path may live on a mount
-            # that isn't up; presence is a resolver/status concern.
-            path = snap.get("path")
-            snapshots[tag] = Snapshot(artifact=artifact, path=str(path) if path else None)
-        latest = str(spec.get("latest") or "")
-        if not latest or latest not in snapshots:
-            raise ManifestError(f"references/{name}: latest {latest!r} must name a key "
-                                "of snapshots")
+        spine_raw = spec.get("spine")
+        if spine_raw is not None and not isinstance(spine_raw, bool):
+            raise ManifestError(f"references/{name}: spine must be a boolean, got {spine_raw!r}")
+        context = f"references/{name}"
+        snapshots = _parse_snapshots(context, spec.get("snapshots") or {})
+        latest = _parse_latest(context, spec, snapshots)
         refs.append(
             Reference(
                 dataset=str(name),
                 description=str(spec.get("description") or ""),
                 adapter=adapter,
+                spine=bool(spine_raw),
                 latest=latest,
                 snapshots=snapshots,
             )
         )
     return refs
+
+
+def load_assets(root: Path) -> list[Asset]:
+    """Parse the config's `assets:` section — registered tool assets
+    (spec/athenaeum.md §2.3, spec/corpus.md §12.3.6): name-keyed entries
+    sharing `references:`'s snapshot grammar (tag-keyed `snapshots:`, an
+    explicit `latest:`), carrying no adapter or citation semantics — an
+    unknown key (`adapter:`, `spine:`, the retired `mirror:`/`snapshot:`)
+    is a load-time error rather than silently ignored."""
+    entries = _read(root).get("assets") or {}
+    if not isinstance(entries, dict):
+        raise ManifestError("manifest assets: expected a name-keyed mapping")
+    assets: list[Asset] = []
+    for name, spec in entries.items():
+        spec = spec or {}
+        unknown = set(spec) - {"description", "latest", "snapshots"}
+        if unknown:
+            raise ManifestError(
+                f"assets/{name}: unknown keys {sorted(unknown)} — assets carry no "
+                "adapter/citation semantics (spec/athenaeum.md §2.3)"
+            )
+        context = f"assets/{name}"
+        snapshots = _parse_snapshots(context, spec.get("snapshots") or {})
+        latest = _parse_latest(context, spec, snapshots)
+        assets.append(
+            Asset(
+                name=str(name),
+                description=str(spec.get("description") or ""),
+                latest=latest,
+                snapshots=snapshots,
+            )
+        )
+    return assets
 
 
 def load_tracker(root: Path) -> Tracker:
