@@ -58,6 +58,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
     "bands":           ("Inspect",                "Audit page=N&bbox= bands against the rendered pixels (pixel-truth geometry)"),
     "view":            ("Inspect",                "Bundle one record as <id>.zip — artifact + record.md + a self-contained page showing both (the human's eyes; --html for the page alone)"),
+    "export":          ("Inspect",                "Single-record portable export — md/typst/pdf rendering with materialized surfaces (spec §10; --annotated for the debug variant)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream a record's body (stored, else the derived `body` op)"),
     "lint":            ("Inspect",                "Conformance check (the verification gate)"),
