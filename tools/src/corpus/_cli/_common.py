@@ -115,6 +115,7 @@ left-to-right, each operating on the previous step's output:
   page=N&text        the page's embedded text layer -> text  (empty if it's a scan)
   page=N&words       per-word boxes [{text, bbox:x,y,w,h}] as JSON -> json
   page=N&probe       per-page probe: dims, rotation, text/image stats, shape hint -> json
+  page=N&geometry    line boxes + chrome/heading classification + body band -> json
   probe              whole-document probe: per-page table + /Info + outline flag -> json
   outline            the PDF outline / TOC tree -> json
   (page=N&bbox=… and the image ops below auto-render the page first.)

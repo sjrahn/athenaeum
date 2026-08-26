@@ -1,13 +1,12 @@
-"""PDF introspection — the read-time analysis the resolver's PDF ops expose to a
-normalizer, plus the `/Info` metadata the drafter lifts.
+"""PDF introspection — shared read-time PDF analysis used by both the resolver's
+introspection ops and the drafter: the embedded text layer, `/Info` metadata,
+per-page structural signals (image coverage, invisible-text / OCR-layer tells,
+dimensions, rotation), the outline, per-word boxes, and visual-line geometry
+(line assembly, cross-page chrome detection, heading candidates, body bands).
 
-The PDF drafter is mechanical: it rasterizes every page to a body-empty `image` segment
-(`page=<N>`) and makes **no** born-digital-vs-scanned determination and extracts **no**
-text. Everything an agent needs to make that determination — the embedded text layer,
-per-word boxes, per-page structural signals (image coverage, invisible-text / OCR-layer
-tells, dimensions, rotation), and the outline — lives here and is reachable through the
-functional-URI resolver (`page=<N>&text`, `page=<N>&words`, `page=<N>&probe`, `probe`,
-`outline`). See the `application/pdf` schema guidance.
+Reachable through the functional-URI resolver (`page=<N>&text`, `page=<N>&words`,
+`page=<N>&probe`, `page=<N>&geometry`, `probe`, `outline`). See the `application/pdf`
+schema guidance.
 
 pypdf reads text + `/Info` + the content stream (image coverage, text render mode);
 pypdfium2 reads page geometry, the text layer's character boxes, and the outline. Both
@@ -17,6 +16,8 @@ are base dependencies (the resolver and drafter already import them at module to
 from __future__ import annotations
 
 import logging
+import re
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
@@ -273,6 +274,161 @@ def page_words(doc: Any, index0: int) -> dict[str, Any]:
         "word_count": len(words),
         "words": words,
     }
+
+
+# ---------- visual-line geometry (chrome, headings, body band) ---------- #
+
+# Rects whose top edges fall within this fraction of page height belong to the same
+# visual line. 0.004 of an A4 page is ~3.4pt — under a single line's leading, over the
+# jitter within one line's glyphs.
+_LINE_TOLERANCE = 0.004
+# A line is chrome if its text repeats on at least this fraction of pages (floor of 3
+# pages). Running heads and page furniture repeat; body text does not — and a cover
+# page's one-off "Version 01.0" correctly stays body while the identical string in a
+# running header is dropped.
+_CHROME_PAGE_RATIO = 0.4
+# A line is a heading CANDIDATE if its tallest glyph exceeds the page's modal glyph
+# height by this factor and it opens with a section number. Best-effort only: weight is
+# not exposed on the text layer, so a heading set in the same size as body and
+# distinguished by bold alone will not trip this. `headings` is therefore a hint for the
+# raster reader to confirm, never a structure to trust — an empty list means "none
+# detected", not "none present".
+_HEADING_HEIGHT_RATIO = 1.12
+_NUMBERED = re.compile(r"^\s*(?:[IVX]+\.|\d+(?:\.\d+)*\.?)\s+\S")
+
+
+def assemble_lines(page: Any) -> list[dict]:
+    """Group a page's characters into visual lines, in relative coordinates.
+
+    Works at character granularity (`count_chars` / `get_charbox`), not at pypdfium2's
+    rect granularity. Rects are lossy — `get_text_bounded` over them drops hyphens and
+    duplicates the odd glyph, so a hyphenated identifier like `PROJ-2024-001` comes back
+    as `PROJ 2024 001`. Character indices are 1:1 with `get_text_range()` and already in
+    reading order, so lines rebuild exactly, spaces included, with no x-sorting or gap
+    heuristics.
+
+    **Known failure: pages set in mathematical-italic Unicode** (the U+1D400 block, as
+    some equation-heavy documents use for variable names). Those glyphs carry charboxes
+    that do not sit on the surrounding text baseline, so banding shreds the page — one
+    physical line can be reported at three or four different `y` values at once.
+    Fragmentary `text` values (single characters, mid-word splits) are the tell. Treat
+    geometry from such a page as unusable and adjudicate from the raster; do not derive
+    addresses from it.
+    """
+    tp = page.get_textpage()
+    pw, ph = page.get_width(), page.get_height()
+    n = tp.count_chars()
+    text = tp.get_text_range()
+
+    lines: list[dict] = []
+    cur: dict | None = None
+    for i in range(min(n, len(text))):
+        ch = text[i]
+        if ch in "\r\n":
+            cur = None  # hard break; next glyph opens a line
+            continue
+        left, bottom, right, top = tp.get_charbox(i)
+        # Band on the BASELINE, not the top edge. Glyph tops vary within a line by more
+        # than a line's worth — a period's top sits well below a capital's — so
+        # top-banding shreds each line into words. Baselines agree closely; the
+        # tolerance only has to absorb descenders.
+        base = 1 - bottom / ph
+        if cur is not None and abs(base - cur["_base"]) > _LINE_TOLERANCE:
+            cur = None
+        if cur is None:
+            cur = {
+                "_base": base,
+                "_top": 1 - top / ph,
+                "h": (top - bottom) / ph,
+                "x0": left / pw,
+                "x1": right / pw,
+                "text": "",
+            }
+            lines.append(cur)
+        cur["text"] += ch
+        cur["_top"] = min(cur["_top"], 1 - top / ph)
+        cur["h"] = max(cur["h"], (top - bottom) / ph)
+        cur["x0"] = min(cur["x0"], left / pw)
+        cur["x1"] = max(cur["x1"], right / pw)
+
+    out: list[dict] = []
+    for line in lines:
+        stripped = line["text"].strip()
+        if not stripped:
+            continue
+        out.append(
+            {
+                # `y` is the line's topmost glyph edge — the value a bbox wants, since a
+                # crop must clear the tallest ascender, not the baseline.
+                "y": round(line["_top"], 4),
+                "h": round(line["h"], 4),
+                "x0": round(line["x0"], 4),
+                "x1": round(line["x1"], 4),
+                "text": stripped,
+            }
+        )
+    return out
+
+
+def detect_chrome(pdf: Any) -> set[str]:
+    """Return the set of line texts that are page furniture, not content.
+
+    Chrome is only identifiable across pages: a running head, document-id banner or
+    `N of M` footer repeats, body text does not. Scans every page, so cost is linear in
+    the document.
+    """
+    repeats: Counter[str] = Counter()
+    for pg in pdf:
+        for line in assemble_lines(pg):
+            if len(line["text"]) < 90:
+                repeats[line["text"]] += 1
+    threshold = max(3, len(pdf) * _CHROME_PAGE_RATIO)
+    return {t for t, c in repeats.items() if c >= threshold}
+
+
+def is_chrome(text: str, chrome_text: set[str]) -> bool:
+    """True if a line is page furniture — repeated across pages, or a page number."""
+    return text in chrome_text or bool(
+        re.fullmatch(r"\d+\s+of\s+\d+|Page\s+\d+|\d+", text)
+    )
+
+
+def body_band(lines: list[dict], chrome_text: set[str]) -> tuple[float, float] | None:
+    """Return (top, bottom) of the non-chrome content on a page, or None if blank."""
+    body = [line for line in lines if not is_chrome(line["text"], chrome_text)]
+    if not body:
+        return None
+    return (
+        round(min(line["y"] for line in body), 4),
+        round(max(line["y"] + line["h"] for line in body), 4),
+    )
+
+
+def classify_headings(
+    lines: list[dict], chrome_text: set[str]
+) -> tuple[list[dict], float]:
+    """Annotate `lines` in place with `chrome`/`heading` bools; return (heading
+    candidates, body glyph height).
+
+    Modal glyph height is taken as the body text size — mode rather than mean, because
+    footnotes drag a mean down and headings drag it up. See `_HEADING_HEIGHT_RATIO` for
+    what counts as a heading candidate and its caveats.
+    """
+    heights = Counter(line["h"] for line in lines)
+    body_h = heights.most_common(1)[0][0] if heights else 0.0
+
+    headings: list[dict] = []
+    for line in lines:
+        line["chrome"] = is_chrome(line["text"], chrome_text)
+        line["heading"] = (
+            not line["chrome"]
+            and body_h > 0
+            and line["h"] >= body_h * _HEADING_HEIGHT_RATIO
+            and bool(_NUMBERED.match(line["text"]))
+        )
+        if line["heading"]:
+            headings.append({"y": line["y"], "h": line["h"], "text": line["text"]})
+    return headings, body_h
 
 
 # ---------- structural probe ---------- #

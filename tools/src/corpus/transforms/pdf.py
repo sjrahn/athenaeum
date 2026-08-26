@@ -7,6 +7,7 @@ Grammar (selector + sub-op):
     page=N&text       the page's embedded text layer                  -> text
     page=N&words      per-word boxes ([{text, bbox}], JSON)           -> json
     page=N&probe      per-page structural probe (JSON)                -> json
+    page=N&geometry   line boxes + chrome + heading classification (JSON) -> json
     probe             whole-document structural probe (JSON)          -> json
     outline           the PDF outline / TOC tree (JSON)               -> json
 
@@ -113,6 +114,41 @@ def page_probe(ref: PdfPageRef, value: str | None, ctx: RenderContext) -> str:
     _no_value(value, "probe")
     data = pdf_introspect.probe_page(_reader(ref), ref.doc, ref.index0)
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@register("pdfpage", "geometry", "json")
+def page_geometry(ref: PdfPageRef, value: str | None, ctx: RenderContext) -> str:
+    """Line boxes, chrome, and heading classification for the selected page, as JSON.
+
+    Coordinates are relative floats with origin top-left, matching the record address
+    convention (`bbox=x,y,w,h`) — so a section boundary reads straight off a heading's
+    `y` with no conversion and no estimation. A line's `y` is its topmost glyph edge,
+    which is what a crop must clear.
+
+    Geometry is for coordinates, not content: it reads the same text layer that mangles
+    a curly-apostrophe `manufacturer's` into `manufacturerâs` on some older PDFs, and a
+    mis-decoded glyph can also split a line. Take the words from the raster.
+    """
+    _no_value(value, "geometry")
+    page = ref.doc[ref.index0]
+    lines = pdf_introspect.assemble_lines(page)
+    chrome_text = pdf_introspect.detect_chrome(ref.doc)
+    headings, body_h = pdf_introspect.classify_headings(lines, chrome_text)
+    band = pdf_introspect.body_band(lines, chrome_text)
+    return json.dumps(
+        {
+            "page": ref.index0 + 1,
+            "pages": len(ref.doc),
+            "width_pt": round(page.get_width(), 2),
+            "height_pt": round(page.get_height(), 2),
+            "body_band": {"top": band[0], "bottom": band[1]} if band else None,
+            "body_glyph_height": body_h,
+            "headings": headings,
+            "lines": lines,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @register("pdf", "probe", "json")
