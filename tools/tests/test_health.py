@@ -15,7 +15,7 @@ from pathlib import Path
 import frontmatter
 
 from corpus import config as config_mod
-from corpus import hashing, health, locationindex, paths, records, segments
+from corpus import hashing, health, locationindex, paths, records, segments, touches
 from corpus._cli import dispatch
 from corpus._cli import location as location_cli
 
@@ -181,6 +181,124 @@ def test_validity_violations_no_origin(tmp_path):
     by_id = {i["id"]: i for i in items}
     assert E in by_id
     assert any("origin" in p for p in by_id[E]["problems"])
+
+
+# ---------- undescribed / sparse_body / stale_model_touches ---------- #
+
+
+def test_undescribed_scoped_to_content_bearing_records(tmp_path):
+    """Only C is flagged: A and E have stored no rendering (proxy, spec §4.1) — an empty
+    description there is the honest, expected answer, not a defect. B and D both carry a
+    frontmatter description override. C is formed (a real rendering) but never earns a
+    description candidate on any layer."""
+    root = _populate(tmp_path)
+    refs = health.load_all_records(root)
+    items = health.undescribed(refs, root)
+    assert _ids(items) == {C}
+
+
+def _pdf_with_pages(root: Path, rid: str, *, page_count: int, body_text: str) -> None:
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="application/pdf", fields={"page_count": page_count})
+    records.append_origin_block(
+        post, uri=f"https://e.com/{rid[:4]}", snapshot="2026-08-01T00:00:00Z"
+    )
+    post.content = segments.emit([segments.Segment(atom="text", address="page=1", body=body_text)])
+    records.dump(post, paths.record_path(root, rid))
+
+
+def test_sparse_body_flags_low_density_paginated_record(tmp_path):
+    root = _corpus(tmp_path)
+    sparse, dense = "11" * 32, "12" * 32
+    _pdf_with_pages(root, sparse, page_count=10, body_text="short")
+    _pdf_with_pages(root, dense, page_count=10, body_text="x" * 4000)
+
+    refs = health.load_all_records(root)
+    items = health.sparse_body(refs, root)
+    assert _ids(items) == {sparse}
+    assert items[0]["page_count"] == 10
+
+
+def test_sparse_body_skips_records_with_no_page_count_field(tmp_path):
+    """Generalizes past the reference's PDF-only gate to any mime carrying an artifact
+    `page_count` — but a mime that never populates one (plain text/html, image/png in this
+    fixture) simply never enters the signal; no threshold is invented for it."""
+    root = _populate(tmp_path)
+    refs = health.load_all_records(root)
+    assert health.sparse_body(refs, root) == []
+
+
+def _compile_model_touch(root: Path, rid: str, *, model: str, repeat: int = 1) -> None:
+    post = frontmatter.Post(
+        content="", **records.stub_frontmatter(record_id=rid, touch_id="corpus.ingest@0.1.0")
+    )
+    records.set_artifact_block(post, mime="application/pdf")
+    touch_id = f"{touches.script_identifier('compile')}+{model}"
+    for _ in range(repeat):
+        touches.record_touch(post, touch_id)
+    records.dump(post, paths.record_path(root, rid))
+
+
+def test_stale_model_touches_unconfigured_reports_distinctly_from_zero_findings(tmp_path):
+    root = _populate(tmp_path)
+    refs = health.load_all_records(root)
+    report = health.stale_model_touches(refs, root, preferred_models=[])
+    assert report == {"configured": False, "items": []}
+
+
+def test_stale_model_touches_flags_off_allowlist_and_skips_unmodeled(tmp_path):
+    root = _corpus(tmp_path)
+    current, stale, unmodeled = "cc" * 32, "dd" * 32, "ee" * 32
+    _compile_model_touch(root, current, model="claude-opus-4-7[1m]")
+    _compile_model_touch(root, stale, model="claude-opus-3-5")
+    # No model touch at all (deterministic-only pass) — silently excluded, regardless
+    # of what's configured; this is `unshaped`'s population, not this signal's.
+    post = frontmatter.Post(
+        content="",
+        **records.stub_frontmatter(record_id=unmodeled, touch_id="corpus.ingest@0.1.0"),
+    )
+    records.set_artifact_block(post, mime="application/pdf")
+    records.dump(post, paths.record_path(root, unmodeled))
+
+    refs = health.load_all_records(root)
+    report = health.stale_model_touches(refs, root, preferred_models=["claude-opus-4-7[1m]"])
+    assert report["configured"] is True
+    assert _ids(report["items"]) == {stale}
+    assert report["items"][0]["last_model_touch"] == "claude-opus-3-5"
+
+
+def test_stale_model_touches_strips_coalesced_count_suffix(tmp_path):
+    """`touches.record_touch` appends a `_<count>` suffix to the WHOLE entry — model
+    included — when the same compile+model touch repeats back-to-back; the model
+    extraction must see through that to compare the bare model id."""
+    root = _corpus(tmp_path)
+    rid = "ff" * 32
+    _compile_model_touch(root, rid, model="claude-opus-3-5", repeat=2)
+
+    refs = health.load_all_records(root)
+    (ref,) = refs
+    assert touches.touch_list(ref.post)[-1].endswith("_2")
+    report = health.stale_model_touches(refs, root, preferred_models=["claude-opus-4-7[1m]"])
+    (item,) = report["items"]
+    assert item["last_model_touch"] == "claude-opus-3-5"
+
+
+def test_undescribed_sparse_body_stale_model_touches_cli_summary(tmp_path, capsys):
+    root = _populate(tmp_path)
+    rc = dispatch(
+        [
+            "health", "--summary",
+            "--filter", "undescribed,sparse_body,stale_model_touches",
+            "--corpus-root", str(root),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "undescribed: 1 " in out
+    assert "sparse_body: 0 " in out
+    assert "stale_model_touches: unconfigured" in out
 
 
 # ---------- dangling origin refs ---------- #

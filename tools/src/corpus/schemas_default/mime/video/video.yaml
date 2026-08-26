@@ -14,7 +14,7 @@ normalization:
 
     For each image segment the drafter emitted, materialize the frame via `corpus resolve 'corpus://<hash>?frame=HH:MM:SS'` and look at the bytes. Then do one of:
 
-    1. **Classify** the segment with the appropriate `image/<sub>` atom overlay when the frame depicts a specific kind: `image/presentation-slide` for slide-deck content, `image/chart`, `image/diagram`, `image/photo`, etc. The opener becomes `<!--segment image/<sub>-->`. The body stays empty (per the image-atom contract). The overlay's own guidance covers what to do next.
+    1. **Classify** the segment with the appropriate `image/<sub>` atom overlay when the frame depicts a specific kind: `image/presentation-slide` for slide-deck content, `image/chart`, `image/figure`, `image/photo`, etc. The opener becomes `<!--segment image/<sub>-->`. The body stays empty (per the image-atom contract). The overlay's own guidance covers what to do next.
 
     2. **Add a sibling lossless text segment** when the frame contains transcribable text (slide titles + bullets, on-screen data tables, captions, code). Emit a `<!--segment text/ocr-->`, `<!--segment text/data-table-->`, `<!--segment text/captions-->`, `<!--segment text/code-->`, etc. at the same `frame=HH:MM:SS` address (or chained `frame=HH:MM:SS&bbox=...` when the text occupies only a region of the frame). The text-atom's body carries the verbatim transcription.
 

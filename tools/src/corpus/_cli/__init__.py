@@ -56,6 +56,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "workflow":        ("Inspect",                "Operating-mode runbooks for the tooling (loop modes, queue lifecycle)"),
     "overlay":         ("Inspect",                "Show an origin overlay's declarations + normalization tactics"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
+    "bands":           ("Inspect",                "Audit page=N&bbox= bands against the rendered pixels (pixel-truth geometry)"),
     "view":            ("Inspect",                "Bundle one record as <id>.zip — artifact + record.md + a self-contained page showing both (the human's eyes; --html for the page alone)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),
     "body":            ("Inspect",                "Stream a record's body (stored, else the derived `body` op)"),
@@ -64,6 +65,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Edit (P1)
     "decompose":       ("Edit",                   "Explode a record into a working dir (manifest + body/desc files)"),
     "compile":         ("Edit",                   "Rebuild a record from a decomposed working dir"),
+    "validate-fragment": ("Edit",                 "Write-free lint of a decomposed working dir or one fragments/*.corpus fragment"),
     # Storage (P3)
     "store":           ("Storage",                "Status / push / pull / fetch against the configured ArtifactStore"),
     "location":        ("Storage",                "Attest / list attached [[corpus.location]] byte roots (spec §12.1.1)"),
@@ -89,6 +91,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "atoms":           ("Query",                  "List atomic overlays + their body / lossless contract"),
     "hosts":           ("Query",                  "Count records by origin host"),
     "schemas":         ("Query",                  "List packaged + corpus-local schemas (debug)"),
+    "schema-lint":     ("Query",                  "Validate schema-tree guidance prose against itself (stale field/overlay refs)"),
 }
 
 # Render groups in this order in `corpus --help`.

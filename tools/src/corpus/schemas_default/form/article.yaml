@@ -49,7 +49,7 @@ normalization:
 
     A tracked advisory (TSB, recall, safety notice) is an ordinary article here. Carry
     its identity block — bulletin number, date, supersession line, campaign id — VERBATIM
-    in the body, never normalized and never lifted into a header field: a ledger
-    `bulletin_ref` claim quotes those lines to cite them, so a tidied number breaks the
+    in the body, never normalized and never lifted into a header field: a ledger claim
+    that cites this bulletin quotes those lines directly, so a tidied number breaks the
     quote. A supersession stub whose whole body is the printed forward-reference is a
     complete rendering of a short page, not a failed pass.

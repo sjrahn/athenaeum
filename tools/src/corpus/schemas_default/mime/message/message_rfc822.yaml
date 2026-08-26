@@ -67,6 +67,55 @@ extended_fields:
     role: title
     source: file_metadata
     description: RFC2047-decoded `Subject:` header, single-line. Repeats across a thread (`Re:`/`Fwd:` chains) — not unique among siblings, but honestly the message's own title-shaped fact.
+  from:
+    type: string
+    required: false
+    source: file_metadata
+    description: RFC2047-decoded `From:` header, single-line. Omitted (per-message) when the header is absent.
+  to:
+    type: string-or-list
+    required: false
+    source: file_metadata
+    description: |-
+      RFC2047-decoded `To:` header — a string for one recipient, a string list for
+      several (a comma inside a quoted display name is never a split point). Omitted
+      when absent.
+  cc:
+    type: string-or-list
+    required: false
+    source: file_metadata
+    description: Same shape as `to`, from the `Cc:` header. Omitted when absent.
+  bcc:
+    type: string-or-list
+    required: false
+    source: file_metadata
+    description: Same shape as `to`, from the `Bcc:` header (rarely present in captured mail). Omitted when absent.
+  date:
+    type: string
+    semantic_type: timestamp
+    required: false
+    source: file_metadata
+    description: RFC 5322 `Date:` header, verbatim. Omitted when absent.
+  message_id:
+    type: string
+    required: false
+    source: file_metadata
+    description: The `Message-ID:` header, verbatim (including angle brackets) — what sibling records' `references`/`in_reply_to` join against.
+  in_reply_to:
+    type: string
+    required: false
+    source: file_metadata
+    description: The `In-Reply-To:` header, verbatim — the immediate parent's `message_id` in a thread.
+  references:
+    type: list
+    required: false
+    source: file_metadata
+    description: The `References:` header, split into a YAML list of message-ids in file order (oldest first).
+  thread_id:
+    type: string
+    required: false
+    source: file_metadata
+    description: Gmail's `X-GM-THRID` header, when present — groups sibling records into one thread independent of the `references`/`in_reply_to` chain.
 normalization:
   method: refinement
   guidance: |

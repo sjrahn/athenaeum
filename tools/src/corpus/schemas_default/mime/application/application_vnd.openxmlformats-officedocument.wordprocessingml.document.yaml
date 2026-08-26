@@ -72,9 +72,16 @@ normalization:
 
     Re-segment within each section to structural-unit grain per `document.yaml` — split tables, equations, and figures into their own segments. The drafter packs a whole section (prose + sub-headings + inline tables) into one text segment as a faithful starting point; the structural-unit decomposition is the normalizer's job.
 
-    ## Forward reference
+    ## Publisher-specific tactics
 
-    The bulk of body-refinement tactics — paragraph reflow, heading promotion, tables (markdown vs HTML), equation LaTeX rendering, footnote renumbering, definitions sections, image alt text, re-segmentation — live on the `document` composite (see `corpus overlay document`). Its guidance is media-type-agnostic (it explicitly names docx as a substrate); apply it if its cues match. Publisher overlays (`cdm/methodology`, `verra/methodology`, etc.) stack on top and add source-specific tactics (e.g. CDM paragraph-numbering strip, version-history-table drop).
+    Paragraph reflow, heading promotion, and the equation/table handling below are this
+    schema's own guidance — there is no shared cross-format tactics library to defer to
+    (the pre-ledger `composite` classification system this forward-referenced is retired,
+    spec §7.4; `form/document` is a structural SHAPE contract bound at section scope, not
+    an interpretive tactics overlay). Publisher-specific tactics (a CDM paragraph-numbering
+    strip, a version-history-table drop, and similar source quirks) stack on top via the
+    record's own origin overlay(s) — `corpus overlay <origin-id>` — exactly as any other
+    format's publisher-specific normalization does (spec §7.2).
 
     ## Reading the drafter's signals
 

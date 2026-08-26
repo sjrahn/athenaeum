@@ -3,13 +3,13 @@ kind: atomic
 description: |
   A presentation slide captured as an image — most commonly a single frame from a video (webinar, recorded talk, slide-driven panel) where the slide deck is the dominant on-screen content. Indicates that the segment marks the position in the reading order where this specific slide is being shown.
 
-  Distinct from `image/chart` / `image/figure` / `image/diagram`: those describe what the image inherently IS regardless of source. `image/presentation-slide` is shape-of-presentation: a composed deck slide with a title, structured bullets, and (often) speaker context, captured at a specific moment in a talk.
+  Distinct from `image/chart` / `image/figure` (which covers diagrams too — see that overlay's own description): those describe what the image inherently IS regardless of source. `image/presentation-slide` is shape-of-presentation: a composed deck slide with a title, structured bullets, and (often) speaker context, captured at a specific moment in a talk.
 
   When the source is a video, the segment's address slices into the video itself (`frame=HH:MM:SS` or `time=HH:MM:SS`); the resolver renders the frame from the video's bytes on demand. There is no separate embed — the artifact is the source. Image-atom segments stay body-empty per the `atom: image` contract; the slide's verbatim text (title + bullets + section header + photo credits, etc.) lives on a sibling `<!--segment text/ocr-->` (or `text/transcript` / `text/code` / `text/equation` if the slide carries one of those losslessly-transcribable shapes) at a chained address (`frame=HH:MM:SS&bbox=...`).
 
   When the source is a static image of a slide deck (e.g. a screenshot of one PowerPoint page), the segment's address is `bbox=0,0,1,1` (or a tighter region). Same convention: body-empty positioning marker; lossless text on a sibling text-atom segment.
 
-  Why not use `image/figure` or `image/diagram` for slides? Both name the kind of visual ("it's a figure", "it's a diagram"), but a presentation slide is a *composite* — title + body + decoration — assembled for talk-pacing reasons, not for the slide itself to be the primary content. A reader scanning a talk's transcript should be able to pick out where each slide begins; a reader scanning a methodology PDF doesn't care whether figure 3 was originally projected on a screen.
+  Why not use `image/figure` for slides? It names the kind of visual ("it's a figure" — a diagram among them), but a presentation slide is a *composite* — title + body + decoration — assembled for talk-pacing reasons, not for the slide itself to be the primary content. A reader scanning a talk's transcript should be able to pick out where each slide begins; a reader scanning a methodology PDF doesn't care whether figure 3 was originally projected on a screen.
 applies_to:
   atom: image
 enables_lossless: false

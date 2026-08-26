@@ -44,6 +44,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
+    from corpus import config as config_mod
     from corpus import health
 
     logging.basicConfig(
@@ -55,10 +56,15 @@ def run(args: argparse.Namespace) -> int:
     corpus_root = resolved_corpus_root(args)
     only = _parse_filter(args.filter, list(health.SIGNAL_NAMES))
     effective_limit = args.limit if args.limit > 0 else 10**6
+    preferred_models = config_mod.load_config(corpus_root).health.get("preferred_models") or []
 
     logging.info("scanning corpus at %s", corpus_root)
     report = health.scan_all(
-        corpus_root, limit=effective_limit, only=only, skip_remote_check=args.skip_remote_check
+        corpus_root,
+        limit=effective_limit,
+        preferred_models=preferred_models,
+        only=only,
+        skip_remote_check=args.skip_remote_check,
     )
     logging.info("scanned %d record(s)", report["total_records"])
 
@@ -119,6 +125,32 @@ def _format_summary(report: dict[str, Any]) -> str:
         lines.append(f"validity_violations: {len(items)}")
         for item in items[:5]:
             lines.append(f"  - {item['id'][:8]}… {item['problems'][0]}")
+    if "undescribed" in report:
+        items = report["undescribed"]
+        lines.append(f"undescribed: {len(items)} content-bearing record(s) with no derived description")
+    if "sparse_body" in report:
+        items = report["sparse_body"]
+        lines.append(
+            f"sparse_body: {len(items)} record(s) far below their page-count density expectation"
+        )
+        for item in items[:5]:
+            lines.append(
+                f"  - {item['id'][:8]}… {item['body_chars']} chars / "
+                f"{item['page_count']} pages (density {item['density']})"
+            )
+    if "stale_model_touches" in report:
+        smt = report["stale_model_touches"]
+        if not smt["configured"]:
+            lines.append(
+                "stale_model_touches: unconfigured (set [corpus.health] preferred_models)"
+            )
+        else:
+            items = smt["items"]
+            lines.append(
+                f"stale_model_touches: {len(items)} record(s) off the current-generation allowlist"
+            )
+            for item in items[:5]:
+                lines.append(f"  - {item['id'][:8]}… last model touch: {item['last_model_touch']}")
     if "dangling_origin_refs" in report:
         groups = report["dangling_origin_refs"]
         total = sum(len(v) for v in groups.values())

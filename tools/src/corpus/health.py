@@ -12,10 +12,19 @@ keywords, keyword cross-referencing, classification cue-matching, v0.3 migration
 residue, legacy PDF page-markers) are dropped; `missing_artifacts` routes through the
 configured `ArtifactStore` instead of a hardcoded Azure lookup. Records are loaded as
 `frontmatter.Post`s and read through the `records` accessors — no shadow parsing.
+
+Three more signals port forward with their gate re-derived rather than copied: the
+reference's `status: normalized` doesn't exist here (`status` is retired, spec §4.1) —
+`undescribed` and `sparse_body` key on `records.has_stored_rendering` (rendered or
+formed, the population that actually carries content to judge) instead.
+`stale_model_touches` keys on the touch chain's `corpus.compile@<version>+<model-id>`
+form (spec §4.2.2) against `[corpus.health] preferred_models` (`config.py`) — absent
+config is reported `configured: False`, never silently zero findings.
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -383,6 +392,134 @@ def validity_violations(
     return out[:limit]
 
 
+_TOUCH_COUNT_SUFFIX_RE = re.compile(r"_(\d+)$")
+
+
+def _model_touch(entry: str) -> str | None:
+    """The model id one touch-chain entry carries, or `None`. The only touch form that
+    ever names a model is the combined `corpus.<module>@<version>+<model-id>` shape
+    `corpus compile --model` writes (spec §4.2.2, `_cli/compile.py`) — a bare script
+    touch never does. Strips a coalesced `_<count>` suffix first: `touches.record_touch`
+    appends that to the WHOLE entry, model included, when the same compile+model touch
+    repeats back-to-back (`corpus.compile@0.1.0+claude-opus-4-7[1m]_2`)."""
+    base = _TOUCH_COUNT_SUFFIX_RE.sub("", entry, count=1)
+    if "+" not in base:
+        return None
+    return base.partition("+")[2] or None
+
+
+def _last_model_touch(chain: list[str]) -> str | None:
+    """The most recent model-naming entry in a touch chain, or `None` when the record
+    has never carried one (never normalized, or normalized only by deterministic
+    passes) — that population is silent here by design."""
+    for entry in reversed(chain):
+        model = _model_touch(entry)
+        if model:
+            return model
+    return None
+
+
+def undescribed(
+    refs: list[RecordRef], corpus_root: Path, *, limit: int = 50
+) -> list[dict[str, Any]]:
+    """Content-bearing records (`records.has_stored_rendering` — `rendered` or `formed`,
+    spec §4.1) whose derived display description (§4.2.3) resolves empty across every
+    layer (override → origin → artifact).
+
+    Scoped to content-bearing records deliberately: an empty description on a still-
+    `proxy` stub is the honest, expected answer (§4.2.3's "empty is the answer") and
+    would just restate `layer_presence`'s untitled-style census as noise. A record that
+    has actually stored a rendering and STILL earns no description anywhere is the
+    genuine role-marking gap `corpus curate` wants surfaced — the successor to the
+    reference's `empty_description_normalized`, a `status: normalized` population this
+    distribution retired (spec §4.1) in favor of the derived-state layers."""
+    out: list[dict[str, Any]] = []
+    for r in refs:
+        if not records.has_stored_rendering(r.post):
+            continue
+        if records.description_for(r.post, corpus_root).strip():
+            continue
+        out.append({"id": r.record_id, "title": records.title_for(r.post, corpus_root)})
+    return out[:limit]
+
+
+def sparse_body(
+    refs: list[RecordRef],
+    corpus_root: Path,
+    *,
+    limit: int = 50,
+    density_threshold: int = 300,
+) -> list[dict[str, Any]]:
+    """Content-bearing records (`records.has_stored_rendering`) whose body is far
+    sparser than their own artifact-attested extent implies — generalized from the
+    reference's PDF-only `sparse_body_normalized` (page_count x 300 chars/page) to ANY
+    mime whose artifact block carries an integer `page_count` (both PDF and docx do —
+    `draft/pdf.py`, `draft/docx.py`) rather than a hardcoded mime check. A record whose
+    mime carries no paginated extent field simply never enters this signal — no
+    threshold is invented for it. `page_count <= 3` is excluded: a document that short
+    divides too coarsely for a density read to mean anything."""
+    out: list[dict[str, Any]] = []
+    for r in refs:
+        if not records.has_stored_rendering(r.post):
+            continue
+        artifact = records.artifact_block(r.post) or {}
+        page_count = (artifact.get("fields") or {}).get("page_count")
+        if not isinstance(page_count, int) or isinstance(page_count, bool) or page_count <= 3:
+            continue
+        body_len = len(r.post.content or "")
+        if body_len >= page_count * density_threshold:
+            continue
+        out.append(
+            {
+                "id": r.record_id,
+                "title": records.title_for(r.post, corpus_root),
+                "page_count": page_count,
+                "body_chars": body_len,
+                "density": round(body_len / page_count, 1),
+            }
+        )
+    out.sort(key=lambda d: d["density"])
+    return out[:limit]
+
+
+def stale_model_touches(
+    refs: list[RecordRef],
+    corpus_root: Path,
+    *,
+    preferred_models: list[str],
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Records whose most recent LLM pass ran a model outside the configured
+    current-generation allowlist (`[corpus.health] preferred_models`, `config.py`) — the
+    drift signal for a fleet mid-upgrade to a new model generation. See `_model_touch`
+    for what counts as a model touch; a record that has never carried one is silently
+    excluded — that's `unshaped`'s / `layer_presence`'s population to report, not this
+    signal's.
+
+    Degrades honestly (an absent config is not the same fact as zero findings): with no
+    `preferred_models` configured, `configured` is `False` and `items` is empty —
+    distinct from a genuinely all-current fleet, which reports `configured: True` with
+    an empty `items` list.
+    """
+    if not preferred_models:
+        return {"configured": False, "items": []}
+    pref = set(preferred_models)
+    items: list[dict[str, Any]] = []
+    for r in refs:
+        chain = touches.touch_list(r.post)
+        last_model = _last_model_touch(chain)
+        if last_model and last_model not in pref:
+            items.append(
+                {
+                    "id": r.record_id,
+                    "title": records.title_for(r.post, corpus_root),
+                    "last_model_touch": last_model,
+                    "touch": chain,
+                }
+            )
+    return {"configured": True, "items": items[:limit]}
+
+
 def canonical_duplicate_clusters(
     refs: list[RecordRef], corpus_root: Path, *, limit: int = 50, **_kw: Any
 ) -> dict[str, Any]:
@@ -686,6 +823,9 @@ SIGNAL_NAMES = (
     "unresolved_issues",
     "missing_artifacts",
     "validity_violations",
+    "undescribed",
+    "sparse_body",
+    "stale_model_touches",
     "canonical_duplicate_clusters",
     "dangling_origin_refs",
     "normalization_pressure",
@@ -807,6 +947,7 @@ def scan_all(
     corpus_root: Path,
     *,
     limit: int = 50,
+    preferred_models: list[str] | None = None,
     only: list[str] | None = None,
     skip_remote_check: bool = False,
 ) -> dict[str, Any]:
@@ -829,6 +970,14 @@ def scan_all(
         )
     if "validity_violations" in selected:
         report["validity_violations"] = validity_violations(refs, corpus_root, limit=limit)
+    if "undescribed" in selected:
+        report["undescribed"] = undescribed(refs, corpus_root, limit=limit)
+    if "sparse_body" in selected:
+        report["sparse_body"] = sparse_body(refs, corpus_root, limit=limit)
+    if "stale_model_touches" in selected:
+        report["stale_model_touches"] = stale_model_touches(
+            refs, corpus_root, preferred_models=preferred_models or [], limit=limit
+        )
     if "canonical_duplicate_clusters" in selected:
         report["canonical_duplicate_clusters"] = canonical_duplicate_clusters(
             refs, corpus_root, limit=limit

@@ -26,6 +26,12 @@ File schema (all keys optional):
     [corpus.capture]
     default_transport = "headless"   # browser transport when overlay + --transport unset
 
+    [corpus.health]
+    preferred_models = ["claude-opus-4-7[1m]"]   # `stale_model_touches` signal knob:
+                                      # current-generation model ids. Absent/empty →
+                                      # the signal reports itself unconfigured and
+                                      # finds nothing — never a hardcoded default.
+
     [[corpus.location]]              # additional byte roots (spec §12.1.1, v21/v22)
     name = "..."                     # required, unique
     kind = "store"                   # required: "attached" | "store"
@@ -151,11 +157,14 @@ class CorpusConfig:
     `transcription` always carries at least `{"adapter": "noop"|"http-whisper"}`.
     `locations` is empty when no `[[corpus.location]]` tables are declared — every
     existing behavior is unchanged for a corpus that declares none.
+    `health` always carries `{"preferred_models": [...]}`, empty by default — the
+    `stale_model_touches` signal's only knob (`corpus.health.stale_model_touches`).
     """
 
     store: dict[str, Any] = field(default_factory=dict)
     transcription: dict[str, Any] = field(default_factory=dict)
     capture: dict[str, Any] = field(default_factory=dict)
+    health: dict[str, Any] = field(default_factory=dict)
     locations: tuple[LocationConfig, ...] = field(default_factory=tuple)
 
 
@@ -177,15 +186,21 @@ def load_config(corpus_root: Path) -> CorpusConfig:
     file_store = dict(file_data.get("store") or {})
     file_transcription = dict(file_data.get("transcription") or {})
     file_capture = dict(file_data.get("capture") or {})
+    file_health = dict(file_data.get("health") or {})
     file_locations = file_data.get("location") or []
 
     store = _resolve_store_section(file_store)
     transcription = _resolve_transcription_section(file_transcription)
     capture = _resolve_capture_section(file_capture)
+    health = _resolve_health_section(file_health)
     locations = _resolve_locations_section(file_locations)
 
     return CorpusConfig(
-        store=store, transcription=transcription, capture=capture, locations=locations
+        store=store,
+        transcription=transcription,
+        capture=capture,
+        health=health,
+        locations=locations,
     )
 
 
@@ -255,6 +270,27 @@ def _resolve_capture_section(file_c: dict[str, Any]) -> dict[str, Any]:
                 f"unknown default_transport {transport!r}; use headless | headed | cdp."
             )
         out["default_transport"] = transport
+    return out
+
+
+def _resolve_health_section(file_h: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the `[corpus.health]` section — currently just `preferred_models`, the
+    `stale_model_touches` signal's allowlist of current-generation model ids (the
+    `corpus compile --model <id>` touch, spec §4.2.2, is the only thing that ever writes
+    a model into `touch:`). No env-var override: this is fleet policy, not a secret or a
+    transport knob. Absent or empty → `[]`, which the signal reads as "unconfigured" and
+    honestly reports as such rather than silently returning zero findings."""
+    out: dict[str, Any] = dict(file_h)
+    raw = out.get("preferred_models")
+    if raw is None:
+        out["preferred_models"] = []
+    elif isinstance(raw, list) and all(isinstance(v, str) and v.strip() for v in raw):
+        out["preferred_models"] = [str(v).strip() for v in raw]
+    else:
+        raise ValueError(
+            f"corpus.toml [corpus.health] 'preferred_models' must be a list of "
+            f"non-empty strings, got {raw!r}."
+        )
     return out
 
 
