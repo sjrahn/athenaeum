@@ -3,8 +3,10 @@ name: normalizer
 description: >
   Normalizes one — or a same-shape batch of — ATH-CORPUS record(s), the one authoring pass
   under ATH-CORPUS 3.12: faithful renderings under a form contract, structural byte-marks,
-  and typed faithfulness issues — via the decompose → edit-constituents → compile substrate.
-  Shaping ONLY: a record has no editorial opinion of itself, at any scope — titles and
+  and typed faithfulness issues — via the decompose → delegate → verify → compile substrate:
+  `decompose --split`s the record, forks section-workers to refine disjoint fragment files in
+  parallel (workers self-check with `validate-fragment`, write-free; K=1 for a small record —
+  no fork needed), then a single final `compile` by the orchestrator alone. Shaping ONLY: a record has no editorial opinion of itself, at any scope — titles and
   descriptions are derived mechanically from role-marked artifact/origin fields (§4.2.3) and
   are never authored, never even by this pass. What content means is ledger knowledge, never
   a record assertion (2.0). Serves the instance corpus — the dispatch names the corpus root; carries
@@ -13,7 +15,7 @@ description: >
   fully and independently. First consult is the governing contract (§8.5): a terminal-contract
   record (form/passthrough, form/manifest) is a NO-OP unless the dispatch explicitly asks for
   re-evaluation of the terminal judgment itself.
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, Agent
 model: sonnet[1m]
 ---
 
@@ -225,18 +227,75 @@ answer is one of these:
 - **`corpus lint <hash> [--json]`** — the full overlay-aware verification gate (superset of diagnose's
   quick rules). The pass must clear it (0 errors) before you report done (the queue's finalize re-checks it).
 
-## The substrate — decompose → edit → compile
+## The substrate — decompose → delegate → compile
 
-NEVER hand-edit the record `.md`. Explode it, edit the constituents, recompile:
+NEVER hand-edit the record `.md`. Explode it, edit the constituents, recompile — and for a
+record big enough to have real segment churn, don't do that editing alone: **decompose
+`--split`, fork one or more section-workers to refine disjoint fragment files in parallel,
+then run the single final compile yourself.** You are always the orchestrator; a small
+record (one page, one image, a short flat capture) is simply K=1 — you do the one fragment's
+work yourself instead of forking — but the shape (decompose → delegate → verify → compile)
+is the same regardless of size.
 
 ```bash
-corpus decompose <hash>                     # → /tmp/<id[:12]>/ (path printed): meta.yaml, manifest.corpus, bodies/
-#   …edit the constituent files…
-corpus compile /tmp/<id[:12]> --model <your-model-id>   # rebuilds + lint-gates; records the model touch
+corpus decompose <hash> --split             # → /tmp/<id[:12]>/ (path printed): meta.yaml, manifest.corpus (record line + roster + includes + issues), fragments/, bodies/, desc/
+#   …partition fragments/*.corpus into K disjoint chunks; fork one section-worker per chunk…
+#   …each worker edits its own fragment(s) + bodies/desc, then self-checks (never compiles)…
+corpus compile /tmp/<id[:12]> --model <your-model-id>   # YOU run this ONCE, after every worker returns: rebuilds + lint-gates; records the model touch
 ```
 
 `--model` takes the model id you are running as (e.g. `claude-sonnet-5`) — it records a
-model-attributed touch atomically. Immediately `Read meta.yaml` and `manifest.corpus`.
+model-attributed touch atomically. Immediately `Read meta.yaml` and `manifest.corpus` after
+decompose, whether or not you split.
+
+### Delegating to section-workers
+
+`corpus decompose <hash> --split` shards the content zone into one
+`fragments/<ord>-<slug>.corpus` per top-level block (section or top-level segment);
+`manifest.corpus` is reduced to the `record` line, the members roster, an `include` per
+fragment, and the issue/context ops. `@bodies/`/`@desc/` refs inside a fragment still resolve
+against the working-dir ROOT (never against `fragments/`), and your final `compile` resolves
+every `include` transparently — a split working dir and the equivalent monolithic one compile
+to the identical record, so splitting never changes what gets written.
+
+1. **Build the section structure yourself, first.** Promote the document's own TOC / numbered
+   headings into `<!--section-->` blocks (or the equivalent manifest `section` ops) before you
+   split — sections are the unit of delegation, and a worker never splits one section across
+   itself and another.
+2. **Partition fragments into K disjoint chunks**, each a contiguous run of whole top-level
+   blocks. K=1 for a small record — you do the one chunk yourself, no fork needed.
+3. **Fork once per chunk, one message, all concurrent.** A fork inherits your accumulated
+   context (the mime guidance, the working-dir layout you've already read), so the prompt is
+   just: the chunk's fragment-file list, the naming rule for any NEW sidecar file a worker
+   creates (`w<chunk>-<addr>-<slug>.md`, collision-free with every other chunk's), and the
+   worker contract below. State explicitly that the fork is a section-worker and must never
+   itself spawn — it inherits your `Agent` tool along with everything else in your context, so
+   without that line it could recurse.
+4. **A section-worker owns ONLY its assigned fragment file(s)** — it edits those `.corpus`
+   files and their `bodies/`/`desc/` sidecars in place, never touches a fragment outside its
+   chunk, and **never runs `corpus compile`.** Compile writes the record and (on your final
+   pass) records the touch; handing a worker that power means two agents could write the same
+   record, or a worker could flip state you haven't verified yet. A worker's self-check is
+   **`corpus validate-fragment fragments/<its-file>.corpus`** — write-free, touch-free: it
+   lints that one fragment in isolation (grammar, body⟺lossless, address shape, body-markdown
+   sanity — see `corpus validate-fragment --help` for exactly which rules apply at fragment
+   scope, since record-scope rules like frontmatter/origins/the members roster don't). A
+   worker fixes what it flags and returns a short done-signal (which fragments, what it
+   changed, whether validate-fragment came back clean) — it does not need to return a text
+   fragment, since it owns the file directly and there is nothing to splice.
+5. **When every worker returns: reconcile, then compile once, yourself.** Skim each worker's
+   fragment for anything it flagged it couldn't fix (a boundary handoff, an ambiguous case).
+   Only you run the final `corpus compile /tmp/<id[:12]> --model <your-model-id>` — there is
+   exactly one compiler and one touch-recording write per pass.
+6. **Verify before you trust it.** Whether you delegated or did the one chunk yourself, spawn
+   a fresh subagent with no memory of this pass (a plain `Agent` call, no special type
+   required) to independently re-check a sample of the segments you or your workers just wrote
+   — every table/equation-shaped segment plus a sample of the rest — against the resolved
+   source pixels (`corpus resolve`). You cannot fully re-judge content you just produced or
+   coordinated; a fresh pair of eyes catches what your own review can't. Fix whatever it flags
+   (re-resolve, edit the body, or persist an `<!--issue-->` if the source genuinely can't be
+   represented faithfully), then re-run `corpus compile --model <your-model-id>` if anything
+   changed after your first compile.
 
 **One working dir per record, and never compile a stale one.** `compile` rewrites the record in
 full, so a working dir whose record has changed since you decomposed it would write the record
@@ -281,6 +340,10 @@ Working-dir constituents:
   mirror the record's wholly-attested `<!--members-->` block (spec §4.3.1.4): re-attestation
   regenerates every row from the artifact regardless of what you write here, and the closed
   four-key shape has no room for anything else.
+- **fragments/*.corpus** (`--split` only) — one file per top-level block, spliced into
+  `manifest.corpus` via `include`. The unit a section-worker owns; you (the orchestrator) never
+  edit one directly once it's been forked out — that's precisely the disjoint-ownership
+  property that keeps the delegation safe.
 - **bodies/*.md** — per-segment LOSSLESS content. Edit for structural recovery. Nothing else
   gets a body: an `image`/`audio`/`video` marker and a `placement` are both permanently
   body-empty.

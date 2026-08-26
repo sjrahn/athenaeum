@@ -26,6 +26,17 @@ def configure(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Output directory (default: /tmp/<id[:12]>/).",
     )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help=(
+            "write one fragments/<ord>-<slug>.corpus per top-level block (section or "
+            "top-level segment), with manifest.corpus reduced to the record line, the "
+            "members roster, an include per fragment, and the issue/context ops — so "
+            "parallel section-workers each own a disjoint set of fragment files and the "
+            "orchestrator never hand-splices."
+        ),
+    )
     add_corpus_root_arg(parser)
 
 
@@ -50,14 +61,19 @@ def run(args: argparse.Namespace) -> int:
         except (DeriveError, ArtifactMissing) as exc:
             print(f"  note: body not derivable ({exc}); decomposing the stored (empty) record.")
 
+    split = getattr(args, "split", False)
     blocks = segments.iter_blocks(content)
     orig_sha = recordbuild.sha256_file(record_file)
     recordbuild.write_workdir(
         post, blocks, out_dir, source=str(record_file), orig_sha256=orig_sha,
-        derived_body=derived_body,
+        derived_body=derived_body, split=split,
     )
     print(f"decomposed {record_id[:12]} → {out_dir}")
-    print("  manifest.corpus, meta.yaml, bodies/, desc/")
+    if split:
+        print("  manifest.corpus, meta.yaml, bodies/, desc/, fragments/")
+        print("  --split: one fragments/<ord>-<slug>.corpus per top-level block")
+    else:
+        print("  manifest.corpus, meta.yaml, bodies/, desc/")
     if derived_body:
         print(f"  BODY DERIVED at decompose ({derived_body}) — compiling is authoring, not a "
               "round-trip of stored bytes.")

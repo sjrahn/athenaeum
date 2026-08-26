@@ -18,6 +18,7 @@ Working-dir layout (`decompose <hash> [dir]` → default `/tmp/<id[:12]>/`):
     meta.yaml                  # frontmatter core + artifact + origins + classifies
     bodies/<ord>-<loc>-<slug>.md   # one file per lossless segment body
     desc/<ord>-<loc>-<slug>.txt    # one file per description
+    fragments/<ord>-<slug>.corpus  # (--split only) one file per top-level block
     .corpus-decompose.json     # lock {record_id, source, orig_sha256, version}
 
 The lock's `orig_sha256` is the BASE STAMP: the sha256 of the record file decompose read.
@@ -39,6 +40,17 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]
     seg     structural addr=<a> level=<int> [mark=..]     # §4.3.2.3 byte-mark
     issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]
+    include <relpath>          # splice another manifest file's ops here (--split fragments)
+
+`decompose --split` shards the content zone into one `fragments/<ord>-<slug>.corpus` per
+top-level block (section or top-level segment); `manifest.corpus` then keeps only the
+`record` line, the members roster (metadata-zone, orchestrator-owned — reconciliation #1),
+an `include` per fragment, and the issue/context ops — so parallel section-workers each own
+a disjoint set of fragment files and the orchestrator never hand-splices a returned text
+fragment. `@bodies/..`/`@desc/..` refs always resolve against the working-dir ROOT, so a
+fragment under `fragments/` still references `@bodies/..` at the top. `compile` resolves
+every `include` transparently: a split working dir and its equivalent monolithic one compile
+to the identical record.
 
 `seg` enforces body⟺lossless (spec §4.3.2.2): a `body=` ref is permitted only for a
 lossless atom/overlay. `image`/`audio`/`video` and a text overlay declaring
@@ -112,8 +124,11 @@ _MANIFEST_HEADER = [
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]",
     "#   seg     structural addr=<a> level=<int> [mark=..]   # §4.3.2.3 byte-mark",
     "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]",
+    "#   include <relpath>   # splice another manifest file's ops here (fragments/*.corpus from --split)",
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
+    "# `@bodies/..`/`@desc/..` refs resolve against this working-dir ROOT, so a fragment",
+    "#   under fragments/ still references @bodies/.. and @desc/.. at the top level.",
     "# section addr is OMITTED on a whole-record form section (§4.3.2.1).",
     "# `entry=`/`desc=` are RETIRED on `section`/content-`seg` lines, and `desc=` on `issue`",
     "#   lines (spec §4.3.2.1/§4.3.2.2/§4.3.3.2, 3.5) — no successor; do not add one.",
@@ -470,10 +485,39 @@ def _fmt_addr(address) -> str:
     return shlex.quote(raw)
 
 
+def _check_addr_corruption(raw: str) -> None:
+    """Raise loudly on a comma-joined multi-address masquerading as one address.
+
+    The bracket-list form splits on `|` only (`_fmt_addr`'s own encoding), so a manifest
+    line that mistakenly comma-joins two addresses instead of `|`-joining them
+    (`addr=[page=1&bbox=0.1,0.2,0.3,0.4,page=2&bbox=…]`) silently parses as ONE address
+    with the comma swallowed into the bbox value — the second address's own `page=`/`bbox=`
+    become extra, un-consumed digits inside the first address's params. Inside a single
+    address, a comma is only ever a value separator (`bbox=x,y,w,h`, an A1 range) — it is
+    NEVER directly followed by a bare `key=`, since a legitimate value is numeric or
+    A1-style. `,(?=[a-z_]+=)` catches exactly that shape, wherever it occurs, and splits on
+    every such boundary so a 3+-address corruption is named in full, not just its first
+    pair. Loud error, not a silent husk (owner's standing rule)."""
+    parts = re.split(r",(?=[a-z_]+=)", raw)
+    if len(parts) > 1:
+        corrected = "[" + "|".join(parts) + "]"
+        raise ValueError(
+            f"address value {raw!r} comma-joins what look like {len(parts)} separate "
+            f"addresses (found a comma directly followed by `key=` — bbox/range values are "
+            f"numeric or A1-style, never `key=`, so this is never a legitimate single "
+            f"address). Multiple addresses must be `|`-separated inside brackets, not "
+            f"comma-joined: {corrected}"
+        )
+
+
 def _parse_addr(raw: str):
     raw = raw.strip()
     if raw.startswith("[") and raw.endswith("]"):
-        return [x.strip() for x in raw[1:-1].split("|") if x.strip()]
+        parts = [x.strip() for x in raw[1:-1].split("|") if x.strip()]
+        for p in parts:
+            _check_addr_corruption(p)
+        return parts
+    _check_addr_corruption(raw)
     return raw
 
 
@@ -561,6 +605,7 @@ def write_workdir(
     source: str,
     orig_sha256: str,
     derived_body: str | None = None,
+    split: bool = False,
 ) -> None:
     """Serialize `post` + content-zone `blocks` into a working dir.
 
@@ -572,6 +617,19 @@ def write_workdir(
     recorded in the lock (`body_source: derived`, `body_op`) and flagged in the manifest header
     so a compile from this working dir is understood as an authoring act, never a round-trip of
     stored bytes.
+
+    `split` — when True, each top-level content-zone block (a section, or a top-level segment)
+    is written to its own `fragments/<ord>-<slug>.corpus` instead of inline, and
+    `manifest.corpus` carries only the `record` line, the members roster, an `include` per
+    fragment, and the issue/context ops. This is the substrate for parallel section-workers:
+    each owns a disjoint set of fragment files, self-checks with `corpus validate-fragment`,
+    and never touches `compile` (which writes the record — the orchestrator's job alone).
+    Filename ordinals for `bodies/`/`desc/` sidecars are UNCHANGED by `split` — the per-block
+    iteration order is identical either way — so a record decomposes to identical sidecar
+    files whether split or not; only where the block's own manifest line lives (inline vs. a
+    fragment file spliced in by `include`) differs. Content-zone-only: the members roster
+    stays in the main `manifest.corpus` even under `--split` — it is metadata-zone,
+    orchestrator-owned, and never a section-worker's to edit.
     """
     out = Path(out_dir)
     (out / "bodies").mkdir(parents=True, exist_ok=True)
@@ -684,8 +742,11 @@ def write_workdir(
             parts.append(f"{k}={_fmt_scalar(v)}")
         return " ".join(parts)
 
+    if split:
+        (out / "fragments").mkdir(parents=True, exist_ok=True)
+
     sec_i = seg_i = 0
-    for blk in blocks:
+    for frag_i, blk in enumerate(blocks, 1):
         if isinstance(blk, segments.Section):
             sec_i += 1
             parts = ["section"]
@@ -706,13 +767,25 @@ def write_workdir(
                 parts.append("desc=" + _desc_ref(f"s{sec_i}", loc, blk.description))
             for k, v in (blk.extra or {}).items():
                 parts.append(f"{k}={_fmt_scalar(v)}")
-            lines.append("")
-            lines.append(" ".join(parts))
+            block_lines = [" ".join(parts)]
             for child in blk.segments:
-                lines.append(_seg_line(child, f"s{sec_i}"))
+                block_lines.append(_seg_line(child, f"s{sec_i}"))
+            slug = _slug(blk.address) if blk.address is not None else f"section-{sec_i}"
         elif isinstance(blk, segments.Segment):
             seg_i += 1
-            lines.append(_seg_line(blk, f"seg{seg_i}"))
+            block_lines = [_seg_line(blk, f"seg{seg_i}")]
+            slug = _slug(blk.address) if blk.address is not None else f"seg-{seg_i}"
+        else:
+            continue
+
+        if split:
+            rel = f"fragments/{frag_i:04d}-{slug}.corpus"
+            (out / rel).write_text("\n".join(block_lines) + "\n", encoding="utf-8")
+            lines.append(f"include {rel}")
+        else:
+            if isinstance(blk, segments.Section):
+                lines.append("")  # blank line before each section, as before
+            lines.extend(block_lines)
 
     # ----- Context blocks (annotations zone) ----- #
     contexts = post.metadata.get("_contexts") or []
@@ -763,6 +836,8 @@ def write_workdir(
     }
     if derived_body:
         lock["body_op"] = derived_body
+    if split:
+        lock["split"] = True
     (out / LOCK_NAME).write_text(json.dumps(lock, indent=2), encoding="utf-8")
 
 
@@ -833,138 +908,85 @@ def check_base(in_dir: Path, record_file: Path) -> BaseCheck:
     return BaseCheck(stamped=True, drift=None)
 
 
+MAX_INCLUDE_DEPTH = 8
+
+
+class ManifestError(ValueError):
+    """A manifest op failure, already annotated with file + line + raw text.
+
+    Subclasses `ValueError` so every existing catch of a read/compile failure still works
+    unchanged. The marker class lets a parent manifest reader re-raise an error surfaced
+    from an `include`d fragment without wrapping an already-annotated message a second time.
+    """
+
+
+@dataclass
+class _ReadState:
+    """Threaded through one `read_workdir`/`read_fragment` call as it walks `include`s.
+
+    `meta_id` — the `id` `meta.yaml` declares, checked against a `record` op's own `id=` (a
+    fragment carries no `record` op, so this is None there). `seen_record` — the manifest's
+    own `record` op has been read (a fragment starts with this already True: it carries no
+    `record` op of its own). `visited`/`depth` — cycle + nesting guards for `include`.
+    """
+
+    meta_id: str | None = None
+    seen_record: bool = False
+    visited: set[Path] = field(default_factory=set)
+    depth: int = 0
+
+
 def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
     work = Path(in_dir)
     meta = yaml.safe_load((work / META_NAME).read_text(encoding="utf-8")) or {}
     b = begin(meta, corpus_root)
-    meta_id = (meta.get("frontmatter") or {}).get("id")
+    state = _ReadState(meta_id=(meta.get("frontmatter") or {}).get("id"))
+    _read_manifest(b, work, work / MANIFEST_NAME, MANIFEST_NAME, state)
+    if not state.seen_record:
+        raise ValueError("manifest has no `record` op")
+    restore_legacy_roster(b.post, meta)
+    return finish(b)
 
-    seen_record = False
-    raw_lines = (work / MANIFEST_NAME).read_text(encoding="utf-8").splitlines()
+
+def read_fragment(
+    fragment: Path, corpus_root: Path | None, *, work: Path | None = None
+) -> frontmatter.Post:
+    """Build a post from a standalone manifest FRAGMENT (`section`/`seg`/`issue`/`context`
+    ops only — no `record` op, and no members roster, since the roster is metadata-zone,
+    orchestrator-owned, and never split into a fragment). `@bodies/`/`@desc/` refs resolve
+    against the working-dir ROOT — derived as the fragment's parent, or its grandparent when
+    the fragment lives under a `fragments/` dir (the `--split` layout), unless `work` is
+    passed explicitly. Used by `corpus validate-fragment` so a section-worker can lint its
+    own fragment write-free, without decomposing or compiling the whole record."""
+    frag = Path(fragment)
+    if work is None:
+        work = frag.parent.parent if frag.parent.name == "fragments" else frag.parent
+    b = begin({}, corpus_root)
+    state = _ReadState(seen_record=True)  # a fragment carries no `record` op of its own
+    _read_manifest(b, Path(work), frag, frag.name, state)
+    return finish(b)
+
+
+def _read_manifest(
+    b: Build, work: Path, path: Path, label: str, state: _ReadState
+) -> None:
+    """Parse one manifest file's ops into `b`, dispatching `include <relpath>` as a splice
+    of another manifest-shaped file (a `--split` fragment) rather than an ordinary op."""
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
     for ln, raw in enumerate(raw_lines, 1):
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
         try:
             toks = shlex.split(s)
-            verb = toks[0]
-            if verb == "record":
-                kv = _kv(toks[1:])
-                if meta_id and kv.get("id") and kv["id"] != meta_id:
-                    raise ValueError("record id disagrees with meta.yaml")
-                # `status=` on a legacy manifest line is parse-tolerated and ignored — spec
-                # §4.1 retires the field; a record's state is derived, never authored here.
-                seen_record = True
+            if toks[0] == "include":
+                _do_include(b, work, toks, state)
                 continue
-            if not seen_record:
-                raise ValueError("first op must be `record`")
-            if verb in ("member", "embed"):
-                # `member` is the 3.4 spelling; `embed` reads tolerantly so a manifest
-                # decomposed by an older tool still compiles. Either way only the closed
-                # four-key shape survives — `add_member` drops the rest (spec §4.3.1.4).
-                kv = _kv(toks[2:])
-                add_member(
-                    b,
-                    media_type=toks[1],
-                    address=_parse_addr(kv["addr"]),
-                    transport=kv["transport"],
-                    extra=_rest(kv, {"addr", "transport", "desc"}),
-                )
-            elif verb == "section":
-                kv = _kv(toks[1:])
-                # `form=` is the 3.0 spelling; `class=` reads tolerantly (a decomposed dir
-                # produced by a 2.x tool). `addr` is optional (whole-record form section).
-                # `entry=`/`desc=` are retired (§4.3.2.1, 3.5) — read tolerantly so a working
-                # dir carrying a legacy record's already-present field round-trips (§12.26);
-                # `compile`'s retirement gate (#116) refuses only a rebuild that ACQUIRES one
-                # (a net increase over the base record), never a carry.
-                open_section(
-                    b,
-                    address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
-                    entry=kv.get("entry"),
-                    form=(kv.get("form") or kv.get("class")),
-                    description=_filetext(work, kv.get("desc")),
-                    fields=_rest(kv, {"addr", "entry", "form", "class", "desc"}),
-                )
-            elif verb == "seg":
-                opener = toks[1]
-                atom, slash, _sub = opener.partition("/")
-                overlay = opener if slash else None
-                kv = _kv(toks[2:])
-                # A content segment's `desc=`/`entry=` are retired (§4.3.2.2, 3.5) — read
-                # tolerantly, same reasoning as `section` above (round-trip, not authoring;
-                # #116 gates the acquisition, not the carry).
-                add_segment(
-                    b,
-                    atom=atom,
-                    overlay=overlay,
-                    address=_parse_addr(kv["addr"]),
-                    body=_filetext(work, kv.get("body")),
-                    description=_filetext(work, kv.get("desc")),
-                    # *(3.8, §12.32)* A structural block's text is its `body=` ref. `mark=`
-                    # (3.5-3.7) and `entry=` (<=3.4) are still read so a decompose dir
-                    # written before the move recompiles, and fold into the body.
-                    entry=(None if atom == segments._STRUCTURAL else kv.get("entry")),
-                    mark=(
-                        (kv.get("mark") or kv.get("entry"))
-                        if atom == segments._STRUCTURAL
-                        else kv.get("mark")
-                    ),
-                    perceptual=kv.get("perceptual"),
-                    level=(int(kv["level"]) if "level" in kv else None),
-                    extra=_rest(
-                        kv, {"addr", "body", "desc", "entry", "mark", "perceptual", "level"}
-                    ),
-                )
-            elif verb == "issue":
-                opener = toks[1]
-                iid, _slash, sub = opener.partition("/")
-                kv = _kv(toks[2:])
-                extras: dict[str, Any] = {}
-                # `desc=` on an issue line is read tolerantly for round-trip only — the
-                # printed grammar no longer teaches it (§4.3.3.2, 3.5: no successor); adding
-                # a NEW one is `retired.census`'s "issue description", which `compile`'s
-                # retirement gate (#116) refuses same as any other acquisition (#153/#152).
-                for k, v in kv.items():
-                    if k in ("sev", "res", "detector", "addr"):
-                        continue
-                    if k == "desc":
-                        extras["description"] = _filetext(work, v)
-                    else:
-                        extras[k] = _typed(v)
-                add_issue(
-                    b,
-                    id=iid,
-                    subtype=(sub or None),
-                    severity=kv["sev"],
-                    resolution=kv["res"],
-                    detector=kv["detector"],
-                    address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
-                    fields=extras,
-                )
-            elif verb == "context":
-                ns, _slash, rest = toks[1].partition("/")
-                cid, _slash2, sub = rest.partition("/")
-                kv = _kv(toks[2:])
-                extras = {}
-                for k, v in kv.items():
-                    if k == "addr":
-                        continue
-                    extras[k] = _filetext(work, v) if k == "desc" else _typed(v)
-                if "desc" in extras:
-                    extras["description"] = extras.pop("desc")
-                add_context(
-                    b,
-                    namespace=ns,
-                    id=cid,
-                    subtype=(sub or None),
-                    address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
-                    fields=extras,
-                )
-            else:
-                raise ValueError(f"unknown verb {verb!r}")
+            _dispatch_op(b, work, toks, state)
+        except ManifestError:
+            raise  # already annotated by a deeper (included) frame — don't double-wrap
         except Exception as e:
-            # Annotate per-line failures with the line number and raw line.
+            # Annotate per-line failures with the file label, line number, and raw line.
             if isinstance(e, KeyError):
                 key = e.args[0] if e.args else "?"
                 detail = f"missing required field: {key}"
@@ -972,12 +994,146 @@ def read_workdir(in_dir: Path, corpus_root: Path | None) -> frontmatter.Post:
                 detail = str(e)
             else:
                 detail = f"{type(e).__name__}: {e}"
-            raise ValueError(f"manifest line {ln}: {s!r}\n  {detail}") from e
+            raise ManifestError(f"{label} line {ln}: {s!r}\n  {detail}") from e
 
-    if not seen_record:
-        raise ValueError("manifest has no `record` op")
-    restore_legacy_roster(b.post, meta)
-    return finish(b)
+
+def _do_include(b: Build, work: Path, toks: list[str], state: _ReadState) -> None:
+    if not state.seen_record:
+        raise ValueError("`include` before `record` — the `record` op must come first")
+    if len(toks) != 2:
+        raise ValueError("`include` takes exactly one path: include <relpath>")
+    if state.depth >= MAX_INCLUDE_DEPTH:
+        raise ValueError(f"include nesting deeper than {MAX_INCLUDE_DEPTH}")
+    inc = (work / toks[1]).resolve()
+    if inc in state.visited:
+        raise ValueError(f"include cycle on {toks[1]!r}")
+    if not inc.is_file():
+        raise ValueError(f"include references missing file: {toks[1]}")
+    state.visited.add(inc)
+    state.depth += 1
+    try:
+        _read_manifest(b, work, inc, str(toks[1]), state)
+    finally:
+        state.depth -= 1
+
+
+def _dispatch_op(b: Build, work: Path, toks: list[str], state: _ReadState) -> None:
+    verb = toks[0]
+    if verb == "record":
+        kv = _kv(toks[1:])
+        if state.meta_id and kv.get("id") and kv["id"] != state.meta_id:
+            raise ValueError("record id disagrees with meta.yaml")
+        # `status=` on a legacy manifest line is parse-tolerated and ignored — spec
+        # §4.1 retires the field; a record's state is derived, never authored here.
+        state.seen_record = True
+        return
+    if not state.seen_record:
+        raise ValueError("first op must be `record`")
+    if verb in ("member", "embed"):
+        # `member` is the 3.4 spelling; `embed` reads tolerantly so a manifest
+        # decomposed by an older tool still compiles. Either way only the closed
+        # four-key shape survives — `add_member` drops the rest (spec §4.3.1.4).
+        kv = _kv(toks[2:])
+        add_member(
+            b,
+            media_type=toks[1],
+            address=_parse_addr(kv["addr"]),
+            transport=kv["transport"],
+            extra=_rest(kv, {"addr", "transport", "desc"}),
+        )
+    elif verb == "section":
+        kv = _kv(toks[1:])
+        # `form=` is the 3.0 spelling; `class=` reads tolerantly (a decomposed dir
+        # produced by a 2.x tool). `addr` is optional (whole-record form section).
+        # `entry=`/`desc=` are retired (§4.3.2.1, 3.5) — read tolerantly so a working
+        # dir carrying a legacy record's already-present field round-trips (§12.26);
+        # `compile`'s retirement gate (#116) refuses only a rebuild that ACQUIRES one
+        # (a net increase over the base record), never a carry.
+        open_section(
+            b,
+            address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
+            entry=kv.get("entry"),
+            form=(kv.get("form") or kv.get("class")),
+            description=_filetext(work, kv.get("desc")),
+            fields=_rest(kv, {"addr", "entry", "form", "class", "desc"}),
+        )
+    elif verb == "seg":
+        opener = toks[1]
+        atom, slash, _sub = opener.partition("/")
+        overlay = opener if slash else None
+        kv = _kv(toks[2:])
+        # A content segment's `desc=`/`entry=` are retired (§4.3.2.2, 3.5) — read
+        # tolerantly, same reasoning as `section` above (round-trip, not authoring;
+        # #116 gates the acquisition, not the carry).
+        add_segment(
+            b,
+            atom=atom,
+            overlay=overlay,
+            address=_parse_addr(kv["addr"]),
+            body=_filetext(work, kv.get("body")),
+            description=_filetext(work, kv.get("desc")),
+            # *(3.8, §12.32)* A structural block's text is its `body=` ref. `mark=`
+            # (3.5-3.7) and `entry=` (<=3.4) are still read so a decompose dir
+            # written before the move recompiles, and fold into the body.
+            entry=(None if atom == segments._STRUCTURAL else kv.get("entry")),
+            mark=(
+                (kv.get("mark") or kv.get("entry"))
+                if atom == segments._STRUCTURAL
+                else kv.get("mark")
+            ),
+            perceptual=kv.get("perceptual"),
+            level=(int(kv["level"]) if "level" in kv else None),
+            extra=_rest(
+                kv, {"addr", "body", "desc", "entry", "mark", "perceptual", "level"}
+            ),
+        )
+    elif verb == "issue":
+        opener = toks[1]
+        iid, _slash, sub = opener.partition("/")
+        kv = _kv(toks[2:])
+        extras: dict[str, Any] = {}
+        # `desc=` on an issue line is read tolerantly for round-trip only — the
+        # printed grammar no longer teaches it (§4.3.3.2, 3.5: no successor); adding
+        # a NEW one is `retired.census`'s "issue description", which `compile`'s
+        # retirement gate (#116) refuses same as any other acquisition (#153/#152).
+        for k, v in kv.items():
+            if k in ("sev", "res", "detector", "addr"):
+                continue
+            if k == "desc":
+                extras["description"] = _filetext(work, v)
+            else:
+                extras[k] = _typed(v)
+        add_issue(
+            b,
+            id=iid,
+            subtype=(sub or None),
+            severity=kv["sev"],
+            resolution=kv["res"],
+            detector=kv["detector"],
+            address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
+            fields=extras,
+        )
+    elif verb == "context":
+        ns, _slash, rest = toks[1].partition("/")
+        cid, _slash2, sub = rest.partition("/")
+        kv = _kv(toks[2:])
+        extras = {}
+        for k, v in kv.items():
+            if k == "addr":
+                continue
+            extras[k] = _filetext(work, v) if k == "desc" else _typed(v)
+        if "desc" in extras:
+            extras["description"] = extras.pop("desc")
+        add_context(
+            b,
+            namespace=ns,
+            id=cid,
+            subtype=(sub or None),
+            address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
+            fields=extras,
+        )
+    else:
+        raise ValueError(f"unknown verb {verb!r}")
 
 
 def sha256_file(path: Path) -> str:

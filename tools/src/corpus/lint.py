@@ -989,6 +989,49 @@ def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
             yield from _check(addr, f"embed {i}")
 
 
+def _rule_address_pipe_scalar(post, blocks, root) -> Iterator[Finding]:
+    """Flag a multi-region address written as one pipe-joined SCALAR instead of a YAML list.
+
+    Spec §4.3.2.2: a segment spanning several non-contiguous regions carries an address that
+    is an ORDERED YAML LIST of single-region address strings. Writing them `|`-joined in one
+    scalar (`page=1&bbox=…|page=2&bbox=…`) is a silent corruption — the whole string parses
+    as ONE address, so the resolver folds the second region's own params into the first
+    address's value and either fails deep in the transform chain or resolves to something
+    plausible-looking but wrong. Nothing else catches it: the record parses as valid YAML,
+    `compile` and the region-grammar rule above both pass, and the failure surfaces only when
+    a reader finally tries to render the region.
+
+    The bracket-pipe form (`[a|b]`) is the MANIFEST's own list encoding (`_fmt_addr`,
+    `decompose`) and is correct there; this rule scans the record's/fragment's already-PARSED
+    address value, never manifest source text, so only a genuine pipe-joined scalar trips it.
+    """
+
+    def _scan(addr: Any, where: str) -> Iterator[Finding]:
+        if not isinstance(addr, str) or "|" not in addr:
+            return
+        parts = [p.strip() for p in addr.split("|") if p.strip()]
+        yield Finding(
+            rule_id="address-pipe-scalar",
+            severity="error",
+            message=(
+                f"{where} address `{addr}` joins {len(parts)} regions with `|` in a single "
+                f"scalar; a multi-region address must be a YAML list (spec §4.3.2.2). "
+                "Rewrite as: " + "; ".join(f"- {p}" for p in parts)
+            ),
+            address=addr,
+        )
+
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            yield from _scan(blk.address, "section")
+            for seg in blk.segments:
+                yield from _scan(seg.address, "segment")
+        elif isinstance(blk, _segments.Segment):
+            yield from _scan(blk.address, "segment")
+    for i, eb in enumerate(_records.iter_embed_blocks(post), 1):
+        yield from _scan(eb.get("address"), f"embed {i}")
+
+
 def _rule_address_frame_grammar(post, blocks, root) -> Iterator[Finding]:
     """Every `frame=` value in an IMAGE record's stored addresses is a declared axis,
     a valid 1-based index or inclusive span, within the attested `frame_count`, and
@@ -2574,6 +2617,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-empty", _rule_section_empty),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
+    ("address-pipe-scalar", _rule_address_pipe_scalar),
     ("address-frame-invalid", _rule_address_frame_grammar),
     ("address-el-range-invalid", _rule_address_el_range_grammar),
     ("whole-address-not-admissible", _rule_whole_address_admissible),
@@ -2609,6 +2653,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("body-unknown-comment", _rule_body_unknown_comment),
     # 3.0 byte-mark + form-coherence (§4.3.2.1, §4.3.2.3, §7.8).
     ("structural-level-invalid", _rule_structural_byte_mark),
+    ("structural-mark-retired", _rule_structural_byte_mark),
     ("form-overlay-unknown", _rule_form_coherence),
     ("form-envelope-missing", _rule_form_coherence),
     ("form-codebook-index-out-of-range", _rule_form_coherence),
@@ -2632,6 +2677,51 @@ DIAGNOSE_QUICK_RULES: tuple[str, ...] = (
     "artifact-block-missing",
     "origins-empty",
     "atom-invalid",
+)
+
+
+# ---------- fragment subset used by `corpus validate-fragment` ---------- #
+#
+# The rules meaningful on a single manifest FRAGMENT in isolation — segment / section /
+# body-local checks that need no frontmatter, no whole-record members roster, no artifact
+# bytes, and no other record on disk. A section-worker runs these against its own fragment
+# (`corpus validate-fragment fragments/<file>.corpus`) to catch malformed addresses,
+# body⟺lossless violations, and body-markdown defects BEFORE the orchestrator's single final
+# `compile`.
+#
+# Deliberately excluded, and why: every frontmatter rule (id/hash/touch/visibility/…) — a
+# fragment carries no frontmatter at all; every metadata-zone rule (artifact/origin/member
+# roster) — the roster stays in the orchestrator's main manifest.corpus even under `--split`
+# (reconciliation #1) and is never a worker's to touch; every rule that reads artifact bytes
+# or another record's file on disk (address-frame-invalid, address-el-range-invalid,
+# subject-link-flattened, segment-address-fidelity, container-carries-rendering, the whole
+# placement family, embed-unreferenced/embed-missing-target, whole-address-not-admissible,
+# terminal-stored-rendering) — none of that is resolvable from one fragment's own text; and
+# every annotations-zone rule (issue-shape/context-shape/sweep-*) — issues and context blocks
+# are orchestrator-owned ops that stay in the main manifest, never split into a fragment.
+# `corpus compile --dry-run` (or the final compile itself) covers all of those on the
+# fully-assembled record.
+FRAGMENT_RULES: tuple[str, ...] = (
+    "atom-invalid",
+    "segment-non-text-with-body",
+    "segment-perceptual-format",
+    "section-empty",
+    "segment-address-duplicate",
+    "address-region-invalid",
+    "address-pipe-scalar",
+    "segment-body-requires-lossless",
+    "segment-mode-deprecated",
+    "structural-level-invalid",
+    "structural-mark-retired",
+    "form-overlay-unknown",
+    "form-envelope-missing",
+    "form-codebook-index-out-of-range",
+    "form-address-axis",
+    "form-address-nonmonotonic",
+    "body-html-residue",
+    "body-corpus-link-forbidden",
+    "body-codefence-unbalanced",
+    "body-unknown-comment",
 )
 
 
