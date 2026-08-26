@@ -1,5 +1,5 @@
 description: |
-  Portable Document Format — Adobe's fixed-layout document format. Covers the single canonical MIME `application/pdf`. The drafter is uniform and mechanical: it lifts `/Info` metadata and emits one body-empty `image` segment per page (`page=<N>`), sectionless — no text extraction, no shape determination. The normalizer recovers content through the resolver's PDF introspection ops (`page=<N>&text` / `&words` / `&probe`, `probe`, `outline`) and rasterizes pages / regions on demand via `page=<N>` and `page=<N>&bbox=<x>,<y>,<w>,<h>`.
+  Portable Document Format — Adobe's fixed-layout document format. Covers the single canonical MIME `application/pdf`. The drafter is **shape-aware**: per page it probes born-digital vs. scanned (the same probe the resolver exposes) and drafts accordingly — a born-digital page's embedded text layer lands pre-extracted as a `text` segment addressed to its measured non-chrome content band (`page=<N>&bbox=...`, falling back to a bare `page=<N>` when the geometry can't be trusted), a scanned or textless page keeps a body-empty `image` marker at bare `page=<N>`, and the PDF's top-level outline entries draft as structural byte-marks. Sectionless either way — section grouping is normalizer judgment. The normalizer verifies drafted text against the rendered pixels, handles hybrid pages and scanned OCR, measures exact boundaries with the resolver's introspection ops (`page=<N>&text` / `&words` / `&probe` / `&geometry`, `probe`, `outline`) and the `corpus bands` pixel-truth audit, and rasterizes pages / regions on demand via `page=<N>` and `page=<N>&bbox=<x>,<y>,<w>,<h>`.
 applies_to:
   content_types:
   - application/pdf
@@ -32,34 +32,50 @@ canonical_strategy:
   - blake3 the concatenation
 normalization:
   guidance: |
-    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is **uniform and mechanical**: it walks pypdf to populate frontmatter (`page_count`, `title`, `author`, `creation_date`, `modification_date`, `producer`) and emits **one body-empty `<!--segment image-->` per page** with address `page=<N>`, **sectionless**. It makes **no** born-digital-vs-scanned determination and extracts **no** text. Every PDF — born-digital or scanned — arrives in this same shape; **you** determine the shape and recover the content, using the resolver's introspection ops.
+    This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The PDF drafter is **shape-aware**: per page, it runs the same structural probe the resolver exposes (`page=<N>&probe`) and drafts from what it finds, rather than emitting one uniform marker per page.
 
-    ## Determine the shape first — probe, then read
+    - **Born-digital, geometry trusted** → an `atom: text` segment whose body is the page's embedded text layer (pypdf), addressed to the page's measured non-chrome **content band**: `page=<N>&bbox=0,<top>,1,<height>`.
+    - **Born-digital, geometry untrusted** (the page's assembled lines look fragmented, or the computed band would already cover ~the whole page) → the same `atom: text` segment, same raw pypdf body, but at a **bare** `page=<N>` address — imprecise rather than wrong.
+    - **Born-digital, but effectively no text** (under ~5 non-whitespace characters extracted) → an `atom: image` body-empty marker at bare `page=<N>`, the same treatment as a scan.
+    - **Scanned / no-text** (`image_coverage` ≥ 0.9, or a vector-only/DRM'd page with nothing extractable) → an `atom: image` body-empty marker at bare `page=<N>`.
 
-    A fresh PDF record is always a flat list of `page=<N>` image markers. Before refining anything, find out what each page actually is. The resolver exposes the PDF's structure as functional-URI ops (run `corpus resolve --help` for the authoritative grammar; add `--print` to dump text/JSON content to stdout instead of a cache path):
+    The PDF's top-level **outline** entries draft as `atom: structural` byte-marks (`address: page=<N>`, `level: 1`, body = the bookmark title verbatim), one immediately before its page's own content segment, in document order — the same treatment docx headings and EPUB nav already get. A fresh draft is still **sectionless** either way: grouping structural marks and their pages into `<!--section-->` blocks is normalizer judgment, never the drafter's (below).
+
+    ## Page addresses are content bands, not whole pages — and bodies are not bands
+
+    The address and the body of a `text` segment carry independent facts, and conflating them is the most common misreading of a fresh draft:
+
+    - **The address** already excludes chrome geometrically. Rendering `page=<N>&bbox=0,<top>,1,<height>` crops out the running header, the document-id banner, and the `N of M` footer — you do not need to crop them away by hand. A bare `page=<N>` (no `&bbox`) on a `text` segment means the drafter could not trust that page's line geometry, not that the segment's *content* fills the whole page.
+    - **The body does not.** The segment's stored body is pypdf's raw extraction of the **whole page**, unfiltered — the running header and page-number footer the address excludes are still sitting in the body text, verbatim. Stripping them from the body is still your job (see "Repeating page chrome" below); the drafter only ever adjusted the *address*.
+
+    **Distinguish the two bare-`page=<N>` shapes by atom, not by address alone.** A bare address appears on both an `atom: text` segment (born-digital, geometry the drafter declined to trust) and an `atom: image` segment (scanned, textless, or blank) — they mean opposite things (unread text vs. no text to read), and the atom is the only field that tells them apart. The drafter declines the bbox — leaving the address bare — for measured reasons: the page's assembled lines look too fragmented to trust (the mathematical-italic tell — see "Measure the boundary" below), the computed content band would already cover essentially the whole page (at which point a bbox states a precision it doesn't have), or geometry simply couldn't be read at all. None of these is a defect to silently patch — a bare-address `text` segment is exactly as usable as a banded one, just less precisely addressed; if you tighten it during normalization, measure it (below) rather than guessing.
+
+    ## Determine the shape — verify what the drafter already decided
+
+    A fresh PDF record's per-page shape (above) already reflects one run of the same probe you can re-run at any time — for verification, for hybrid pages the drafter's single per-page call can't see into, and on any later re-pass:
 
         corpus resolve 'corpus://<hash>?probe' --print
         # whole-document probe (JSON): page_count, /Info, has_outline, shape_summary, and a
         # per-page table — width/height, rotation, text_char_count, image_coverage,
         # has_invisible_text, and an advisory shape_hint per page.
 
-    Read the probe first. `shape_hint` is advisory — you decide — but the signals are reliable:
+    Read the probe. `shape_hint` is advisory — you decide — but the signals are reliable:
 
-    - **born-digital** (low `image_coverage`, real `text_char_count`) → the page has a faithful text layer. Pull it: `corpus resolve 'corpus://<hash>?page=<N>&text' --print` (the embedded text, verbatim — NOT an OCR of the raster), or `?page=<N>&words` for the per-word boxes (`{text, bbox}` in `[0,1]` page fractions) when you need to map text to regions or detect column layout. Still verify against the rendered page — pypdf text is approximate (see "See the source" below).
-    - **scanned-ocr / scanned-no-text** (`image_coverage` ≥ 0.9) → the page is a full-page raster (a scan). Any text layer it carried is a machine-OCR layer baked in *before* capture (`has_invisible_text` often flags it); treat the page as an **image-of-document** and produce the corpus's own OCR (next section). Do NOT pull `&text` and trust it as faithful source.
-    - **no-text** (low coverage, zero text) → a vector-only or DRM'd page with nothing extractable. Leave the page marker body-empty and permanent, and add a record-scope `partial-content` issue naming the missing text layer.
+    - **born-digital** (low `image_coverage`, real `text_char_count`) → the page already arrived with its text layer extracted into the segment body (see "Reading drafter signals" below) — the drafter made the same call this probe reports. Verify the drafted text against the rendered page (pypdf text is approximate — see "See the source" below); pull `?page=<N>&words` for the per-word boxes (`{text, bbox}` in `[0,1]` page fractions) when you need to map text to regions or detect column layout.
+    - **scanned-ocr / scanned-no-text** (`image_coverage` ≥ 0.9) → the drafter left this page as a body-empty `image` marker. Any text layer it carried is a machine-OCR layer baked in *before* capture (`has_invisible_text` often flags it); treat the page as an **image-of-document** and produce the corpus's own OCR (next section). Do NOT pull `&text` and trust it as faithful source.
+    - **no-text** (low coverage, zero text) → a vector-only or DRM'd page with nothing extractable; the drafter left it as a body-empty marker too. Leave the page marker body-empty and permanent, and add a record-scope `partial-content` issue naming the missing text layer.
 
-    A document may be **mixed** (`shape_summary: mixed`) — born-digital body pages plus scanned inserts, or vice versa. Decide per page from its row.
+    A document may be **mixed** (`shape_summary: mixed`) — born-digital body pages plus scanned inserts, or vice versa. The drafter already decided per page; this just confirms it.
 
-    **Hybrid pages — a born-digital page can still hide raster content.** `shape_hint` keys on whole-page coverage (`image_coverage` ≥ 0.9 = scanned), so a born-digital page with a **sub-0.9 but nonzero** `image_coverage` (anything from ~0.05 up) is the tell that the page embeds a raster *region* — a figure, a chart, or a table rendered as an image — whose content is **NOT in the text layer**. `page=<N>&text` returns nothing (or garbage) for that region. Do not trust `&text` to have captured it: **render the page, find the raster region, and treat it as its own `page=<N>&bbox=...` segment** — a body-empty, permanent `image` segment for a figure/chart (no `description:` field to fill), and/or a sibling lossless `text/data-table` (or `text/ocr`) where the raster is a table or readable text. A born-digital page is "born-digital text plus zero or more raster inserts," not "all text."
+    **Hybrid pages — a born-digital page can still hide raster content.** `shape_hint` keys on whole-page coverage (`image_coverage` ≥ 0.9 = scanned), so a born-digital page with a **sub-0.9 but nonzero** `image_coverage` (anything from ~0.05 up) is the tell that the page embeds a raster *region* — a figure, a chart, or a table rendered as an image — whose content is **NOT in the text layer**, and which the drafter's per-page shape call has no way to see. `page=<N>&text` (and the drafted segment body) returns nothing (or garbage) for that region. Do not trust the drafted text to have captured it: **render the page, find the raster region, and treat it as its own `page=<N>&bbox=...` segment** — a body-empty, permanent `image` segment for a figure/chart (no `description:` field to fill), and/or a sibling lossless `text/data-table` (or `text/ocr`) where the raster is a table or readable text. A born-digital page is "born-digital text plus zero or more raster inserts," not "all text."
 
-    Don't re-extract content from the artifact yourself with `pdftotext`; `page=<N>&text` already gives you pypdf's extraction, and the rendered page is the real source of truth. **Use the resolver to render pages and look at them** — see below.
+    Don't re-extract content from the artifact yourself with `pdftotext`; the drafter's body is already pypdf's extraction, and the rendered page is the real source of truth. **Use the resolver to render pages and look at them** — see below.
 
-    **Read every page as a raster at least once — even a born-digital one. This is mandatory.** The probe and the text layer are not enough to trust a page: `&text` silently mangles math and layout, and a born-digital page can hide a raster figure or table the text layer doesn't contain (see "Hybrid pages" above). So for **every page**, render it (`corpus resolve 'corpus://<hash>?page=<N>'`) and actually look at the pixels at least once — comparing what you see against the extracted text — *before* you decide how to segment it. A full-page overview render (~463 px) is enough for this compare-and-decide step: it shows you the layout, whether a region is a raster, and whether the text is intact. You then crop into any region you intend to transcribe losslessly (see "Crop-first is a REQUIREMENT"). **Never segment or transcribe a page you have not looked at.** (For a long PDF normalized in chunks, this happens within the pass that handles each page — every page in your chunk gets a raster read; you don't pre-read the whole document.)
+    **Read every page as a raster at least once — even a born-digital one whose text already arrived pre-extracted. This is mandatory.** The probe and the drafted text are not enough to trust a page: pypdf's extraction silently mangles math and layout, and a born-digital page can hide a raster figure or table the text layer doesn't contain (see "Hybrid pages" above). So for **every page**, render it (`corpus resolve 'corpus://<hash>?page=<N>'`) and actually look at the pixels at least once — comparing what you see against the drafted text — *before* you decide how to re-segment it. A full-page overview render (~463 px) is enough for this compare-and-decide step: it shows you the layout, whether a region is a raster, and whether the text is intact. You then crop into any region you intend to transcribe losslessly (see "Crop-first is a REQUIREMENT"). **Never segment or transcribe a page you have not looked at.** (For a long PDF normalized in chunks, this happens within the pass that handles each page — every page in your chunk gets a raster read; you don't pre-read the whole document.)
 
     ## Scanned pages (image-of-document)
 
-    When a page probes as a full-page raster (`shape_hint: scanned-*`, `image_coverage` ≥ 0.9), there is no faithful text layer to refine: any text the file carried was a machine-OCR layer added *before* capture, which you ignore so the corpus produces (and provenances) its own OCR. Normalize the page **exactly as a standalone image-of-document** — the tactics are identical to the image mime guidance (`corpus overlay visual-type`, and the image schema's own guidance):
+    When a page probes as a full-page raster (`shape_hint: scanned-*`, `image_coverage` ≥ 0.9), there is no faithful text layer to refine — the drafter has already left it as a body-empty `image` marker, exactly the shape a standalone image-of-document arrives in. Any text the file carried was a machine-OCR layer added *before* capture, which you ignore so the corpus produces (and provenances) its own OCR. Normalize the page **exactly as a standalone image-of-document** — the tactics are identical to the image mime guidance (`corpus overlay visual-type`, and the image schema's own guidance):
 
     - **See each page:** `corpus resolve 'corpus://<hash>?page=<N>'` to render it, or place regions by eye with `corpus preview <id> --page <N> --mark x,y,w,h`. Crop into a region (`page=<N>&bbox=...`) for fine print; `autocontrast` / `contrast=<f>` / `rotate=` / `resize=` compose just as they do for images (a scanned page is a raster — no `dpi=` detail to recover beyond the scan's own resolution).
     - **Transcribe text regions** as `<!--segment text/ocr-->` at `page=<N>&bbox=<x,y,w,h>` — one per logical text block, verbatim, recording `ocr_engine` (e.g. `vlm`) and `confidence` (see the `text/ocr` overlay). OCR segments **always carry a `&bbox=...` sub-region** — never the bare `page=<N>` address, which belongs to the page's image marker.
@@ -70,7 +86,7 @@ normalization:
 
     ## See the source — resolve pages to images and READ them
 
-    This is the single most important tactic for normalizing a born-digital PDF. pypdf's text extraction (what `page=<N>&text` returns) is approximate. It mangles equation glyphs (Unicode bold-mathematical-italic codepoints in place of typeset math), flattens column layout, drops spacing, hard-wraps prose at column width, packs footnote anchors as `0F`/`1F` superscript-marker garbage, and produces output that bears only weak resemblance to what the page actually contains. Treat `page=<N>&text` (and any `pdftotext` output) as a **low-quality starting point**, not source of truth — and `page=<N>&words` when you need each token's box. The PDF's rendered pixels are the closest available representation of what the document author put on the page; you are a multimodal model and you can see them directly.
+    This is the single most important tactic for normalizing a born-digital PDF. pypdf's text extraction — what the drafter already put in a born-digital segment's body, and what `page=<N>&text` also returns — is approximate. It mangles equation glyphs (Unicode bold-mathematical-italic codepoints in place of typeset math), flattens column layout, drops spacing, hard-wraps prose at column width, packs footnote anchors as `0F`/`1F` superscript-marker garbage, and produces output that bears only weak resemblance to what the page actually contains. Treat the drafted body (and any `pdftotext` output) as a **low-quality starting point**, not source of truth — and `page=<N>&words` when you need each token's box. The PDF's rendered pixels are the closest available representation of what the document author put on the page; you are a multimodal model and you can see them directly.
 
     The corpus resolver rasterizes any page (or any bbox region of any page) on demand:
 
@@ -82,13 +98,13 @@ normalization:
 
     The command writes a PNG to the cache and prints the absolute path on stdout. Read that file — you see the region. The resolver caches automatically; repeated calls with the same URI return instantly.
 
-    `bbox=x,y,w,h` is a **position (x,y) plus a size (width,height)** in [0,1] fractions of the page — NOT corners `x0,y0,x1,y1`, so `x+w` and `y+h` must each be <= 1.0. To *place* a region without guessing, draw it on the full page first: `corpus preview <id> --page <N> --mark x,y,w,h` (repeat `--mark` for several). After you've written the bbox segments, verify them: `corpus preview <id> --page <N> --from-segments` redraws the record's committed boxes on the page so you can confirm each frames the span you meant.
-
     ### Crop into the region, don't bump DPI
 
     The harness that delivers the resolved image to you aggressively downsamples large images to fit a token budget. A full-page render at the default 200 dpi is natively 1700×2200, but typically arrives as a 463×599 JPEG — a ~14× pixel reduction. Bumping `dpi=300` is unreliable: sometimes the harness passes the larger PNG through unchanged, but it can also downsample back to 463×599 anyway. **The reliable lever is cropping into the region of interest.**
 
     A `bbox` crop is in [0.0, 1.0] units of the page, so a 0.1 × 0.15 crop of an equation row is natively 170×330 pixels at 200 dpi — small enough that the harness has nothing to downsample. You see it at full source fidelity.
+
+    As a deliberate alternative to leaving the harness to downsample unpredictably, request `page=<N>&fit=llm` for a full-page read: it downscales to the vision-model budget explicitly (`fit=llm` bounds the long edge to ≤1568 px and the total to ≤1,150,000 px, §12.5.5) rather than an opaque post-hoc resize, and a full A4/Letter page fit to that budget still reads legibly for body text, table rules, and section headings at well under a third of a native 200dpi render's pixel count. Footnotes and subscripted variables still want a tight crop at that size or below.
 
     **Crop-first is a REQUIREMENT, not advice, for lossless work.** Before you transcribe a table, an equation, or any fine detail (footnotes, sub/superscripts, formula glyphs, a numeric grid) into a **lossless `text/*` segment** (`text/data-table`, `text/equation`, `text/ocr`, `text/code`), you MUST resolve a `page=<N>&bbox=...` crop of that exact region and read *it*. A transcription or description produced from a full-page (~463 px) render is **insufficient fidelity** and is not acceptable for a lossless body — the downsampling silently corrupts digits, superscripts, and glyphs, and lint cannot catch a wrong number. (Overview reads of full pages are fine for *recognizing* structure; they are not fine for *transcribing* it.) After writing your `bbox=` segments, verify the frames: `corpus preview <id> --page <N> --from-segments` redraws the committed boxes so you can confirm each crop frames what you transcribed.
 
@@ -105,16 +121,32 @@ normalization:
 
     Run `corpus resolve --help` for the authoritative list of available transforms and their exact parameter shapes. Never guess crop or resize parameter forms — running --help is cheap and authoritative; bbox validation rejects out-of-bounds values.
 
+    ## Measure the boundary — `corpus bands` and `?geometry`
+
+    Any boundary the drafter didn't already draw for you — a section split mid-page, a footnote band, tightening a bare-address page's bbox, a figure's extent — deserves to be **measured**, not read off a rendered page by eye. Two instruments exist for exactly this, and they read different things:
+
+        corpus bands <hash> --rows <N>                                # rendered pixels: every ink row's top/bottom, and the gaps between them
+        corpus resolve 'corpus://<hash>?page=<N>&geometry' --print     # PDF text layer: per-line y/h/x0/x1/text, chrome flags, heading candidates, the non-chrome body band
+
+    Both report in the same relative, top-left-origin space `bbox=` uses, and a row's `top`/`y` is the value a crop must clear to avoid slicing it.
+
+    - **`corpus bands`** renders the page and measures ink directly. It cannot be defeated by a text-layer defect, because it never reads the text layer — which is also its limit: it locates rows, it can't say what they contain. Read the page render to learn which content belongs to which row, then take the *numbers* from `bands`.
+    - **`?geometry`** reads the same text layer `&text`/`&words` do, so it additionally tells you what a row *says* — heading candidates, chrome flags, x-extents for a column split. Two costs come with that: it mangles the same glyphs `&text` mangles (a curly apostrophe decoding as a stray character on some older PDFs — take **words** from the raster, not from geometry), and it cannot band a page set in mathematical-italic Unicode (the U+1D400 block some equation-heavy documents use for variable names), where one physical line reports at several different `y` values at once. Fragmentary single- or two-character `text` values in the line list are the tell — the same signal that makes the drafter itself decline a bbox for a page (above). That failure is silent and lands precisely on equation pages, the pages hardest to address by eye, so a page carrying equations is a `bands`-only page.
+
+    **Set a band the way the drafter does.** The drafter pads its own measured band by ~0.0025 (roughly 2pt on an A4 page) above and below the content extent — glyph boxes are exact, but a crop that hugs them looks clipped, and a page's text layer can under-report a descender. Match that convention for any boundary you set by hand: `y = firstRow.top - 0.0025`, `h = lastRow.bottom + 0.0025 - y`.
+
+    **Audit what you wrote.** `corpus bands <hash>` (no `--rows`) audits every `page=<N>&bbox=...` band already in the record against the rendered pixels, reporting bands that cut a text row, bands that swallow chrome, drifted bands, and content rows no band covers. **Zero bands cutting a text row is the bar** — an edge inside a line means neither side of the cut renders a readable sentence, and it's not optional the way an uncovered gap can be (a gap is often a sanctioned drop, e.g. a trailing metadata block a schema says to skip; a cut never is).
+
     ### Page-walk strategy
 
     - **Render every page in your working range as a full-page raster at least once and look at it** — the compare-and-decide step from "Read every page as a raster" above. Not optional, and not limited to "suspicious" pages: a born-digital page that probes clean can still carry a hidden raster or layout the text layer flattens, and you only find out by looking.
     - Cover page first (full render is fine — you're recognizing structure).
-    - For each page that carries an equation, a table, a figure, a hidden raster, or any region the text layer renders with pypdf damage: **crop into** the specific region(s) and read at full fidelity — required before any lossless transcription (see "Crop-first is a REQUIREMENT").
+    - For each page that carries an equation, a table, a figure, a hidden raster, or any region the drafted text shows with pypdf damage: **crop into** the specific region(s) and read at full fidelity — required before any lossless transcription (see "Crop-first is a REQUIREMENT").
     - A short PDF (≤10 pages) is a cheap full walk. A long PDF is read **per chunk** — the every-page raster read happens within the pass that normalizes each page (see "Large PDFs — chunked normalization"); you don't pre-read all 200 pages at once, but you never segment a page you haven't seen.
 
     ## Fresh per-page signals — `probe`
 
-    The drafter body never goes stale relative to the source, because it's just page markers — all the per-page signal lives in the artifact and is reachable any time, independent of how the record body has been edited: `corpus resolve 'corpus://<hash>?probe' --print` (whole-document) or `?page=<N>&probe` (one page). Use it to re-read a page's extracted-text length, image coverage, rotation, and shape hint at any point in a normalize pass.
+    A page's structural signals never go stale relative to the source, because they're recomputed straight from the PDF bytes each time — reachable any time, independent of anything already written into the record's body: `corpus resolve 'corpus://<hash>?probe' --print` (whole-document) or `?page=<N>&probe` (one page). Use it to re-read a page's extracted-text length, image coverage, rotation, and shape hint at any point in a normalize pass.
 
     ## Forward reference
 
@@ -124,12 +156,14 @@ normalization:
 
     ## Reading drafter signals
 
-    A fresh PDF record is **always** the same shape: one body-empty `<!--segment image-->` per page at `page=<N>`, no sections, no text, no embeds. There is no born-digital-vs-scanned signal *in the body* to read — you get it from `probe` (see "Determine the shape first"). What you build from there:
+    A fresh PDF record's segments already carry the shape decision (above) — read the **atom** and the **address** together to know what you're looking at:
 
-    - **born-digital page** → pull `page=<N>&text` (verify against the render), reflow it into prose `<!--segment text-->`, and split out atom-prefixed segments (equations/tables/figures); the original `page=<N>` image marker is replaced by your structural-unit segments.
-    - **scanned page** → keep the `page=<N>` image marker as the positioning anchor and add `page=<N>&bbox=...` sub-segments around it (`text/ocr`, `text/data-table`, figures) per "Scanned pages" above.
+    - **`atom: text` at `page=<N>&bbox=...`** — born-digital, geometry trusted. The body is pypdf's raw extraction of the whole page (not just the banded region — see "Page addresses are content bands" above), verbatim, unrefined: column-width hard wraps, footnote anchors packed as `0F`/`1F` superscript-marker garbage, mangled math glyphs, repeating chrome lines still present. Verify against the render (above), reflow into prose, strip chrome, and split out atom-prefixed sub-segments (equations/tables/figures); the drafted segment is your starting material, not a finished one.
+    - **`atom: text` at bare `page=<N>`** — born-digital, but the drafter declined to trust this page's geometry (fragmented line assembly, or a band that would already cover the whole page). Same raw-pypdf body, same refinement work; when you tighten the address, measure it (`corpus bands`/`?geometry`, above) rather than guessing a bbox that then needs auditing anyway.
+    - **`atom: image` at bare `page=<N>`** — scanned, textless, or a born-digital page whose extracted text came back blank. Treat exactly as "Scanned pages" above: keep the marker as the positioning anchor, add `page=<N>&bbox=...` sub-segments (`text/ocr`, `text/data-table`, figures) around it. Nothing in the probe distinguishes "scanned" from "blank born-digital" at this point — re-run `page=<N>&probe` if it matters which.
+    - **`atom: structural` at `page=<N>`, `level: 1`** — a drafted outline entry, body = the bookmark title verbatim, sitting immediately before that page's content segment. This is the seed of a section (below) — group it and the segments that follow, up to the next top-level mark or the document's end, under a `<!--section-->` block. The drafter keeps only the **first** entry when two outline entries resolve to the same page — if the source's second heading is genuinely worth preserving, add it yourself as a bbox-scoped structural mark (see "The outline is a starting point" below).
     - **figures** (on any page) → bare image segments (see "Figures, diagrams, charts"): resolve `page=N&bbox=...`, Read it, tighten the bbox, and transcribe any losslessly-recoverable content as a sibling segment (body and marker both stay empty of any description — the field doesn't exist).
-    - **no extractable text** (probe `shape_hint: no-text` — DRM'd / vector-only) → leave the page marker body-empty and permanent, and add a record-scope `partial-content` issue naming the missing text layer.
+    - **no extractable text** (probe `shape_hint: no-text` — DRM'd / vector-only) → the page arrives as the same body-empty `atom: image` marker as a scan; add a record-scope `partial-content` issue naming the missing text layer.
 
     Record-level — read frontmatter and the `<!--artifact application/pdf-->` block:
 
@@ -138,24 +172,24 @@ normalization:
 
     ## Sections — group from the document's structure (SPEC §4.3)
 
-    The drafter is always sectionless (a flat list of `page=<N>` markers). **Sectioning is the normalizer's job.** A `<!--section-->` is a positional span with no body and no stored header field of its own — `entry:` (and `address`) retired from the section header in 3.5/3.7 (spec §4.3.2.1); the derived TOC now reads structural byte-marks instead (§4.3.2.3).
+    A fresh draft is always **sectionless** — no `<!--section-->` wrapper exists yet, even when the drafter has already seeded top-level structural marks from the outline (above). **Sectioning is the normalizer's job**: wrapping each structural mark (or, for a heading the source doesn't bookmark, one you find yourself) and the segments that belong to it into a `<!--section-->` block. A `<!--section-->` is a positional span with no body and no stored header field of its own — `entry:` (and `address`) retired from the section header in 3.5/3.7 (spec §4.3.2.1); the derived TOC now reads structural byte-marks instead (§4.3.2.3).
 
     **How a section's address works — read this before you assign one.** You do **not** compute or write a section's page range — it is **derived**, never stored: the min-max page envelope of its child segments, computed by every reader (`bbox` plays no part — the envelope is over pages). You assign segments to a section and the envelope follows automatically; there is nothing to write on the opener beyond the bare `<!--section-->` (or the form id, where one is asserted). Two consequences, both easy to get wrong:
 
     - **Adjacent sections may legitimately share a boundary page.** Section A ending on page 9 and section B starting on page 9 is fine — there is no section-overlap rule. (What you must NOT do: give two *segments* the same `page=N&bbox` region — see below.)
-    - **A section's own heading is TRANSCRIBED, not labeled.** Open each section with a `<!--segment structural addr=page=<N> level=1-->` whose body is the heading text verbatim (spec §4.3.2.3) — this is what a derived TOC reads. There is no `entry:` field anywhere any more, on a section or a segment; a figure's identifying label, where the source prints one, is its own transcribed `text` segment, never a header field (see "Figures, diagrams, charts").
+    - **A section's own heading is TRANSCRIBED, not labeled.** For an outline-seeded section this transcription is already done — the drafted `<!--segment structural addr=page=<N> level=1-->` opening it carries the bookmark title verbatim (spec §4.3.2.3); for a section you introduce yourself (no outline entry), open it the same way. This is what a derived TOC reads. There is no `entry:` field anywhere any more, on a section or a segment; a figure's identifying label, where the source prints one, is its own transcribed `text` segment, never a header field (see "Figures, diagrams, charts").
 
-    **The outline is a starting point, not an authority.** Read it:
+    **The outline is a starting point, not an authority.** The drafter has already read it and seeded a structural mark for every resolvable top-level entry (above); re-read it yourself to audit that seeding or to handle a case it didn't (below):
 
         corpus resolve 'corpus://<hash>?outline' --print
         # JSON tree of {title, page (1-indexed), children}; [] when the PDF has no bookmarks.
 
-    A clean, complete outline maps each **top-level** entry to a section whose opening structural mark transcribes the bookmark title (verbatim) and whose remaining children are the segments for that entry's page range; a synthetic `Preamble` section (no structural mark, since there is no heading to transcribe) wraps unbookmarked front matter (cover, Contents). But real outlines are frequently broken, and you section from the document's **genuine printed structure**, not the outline mechanically:
+    A clean, complete outline needs only wrapping: group each drafted structural mark and its remaining page-range segments into a `<!--section-->`; a synthetic `Preamble` section (no structural mark, since there is no heading to transcribe) wraps unbookmarked front matter (cover, Contents). But real outlines are frequently broken, and the drafter's mechanical seeding inherits every one of these problems rather than solving them — section from the document's **genuine printed structure**, not the outline mechanically:
 
-    - **Missing top-level headings** — the outline omits real printed sections (an un-bookmarked "Consumer Information" leaflet). Add them as sections from the printed headings; don't let a naive "last entry runs to page_count" bury them.
-    - **Degenerate single bookmark** — the entire document nested under one bookmark (common in drug-label SPLs). Ignore it and section from the printed top-level headings.
-    - **Duplicate / non-monotonic entries** — many entries anchored to pp1–2, out of order, repeated (Highlights + a Contents listing + the body all bookmarked). Deduplicate to the real printed structure; ignore the noise.
-    - **Two top-level entries on the same page** — promoting both independently would need two structural marks at the same bare `page=N` address, which collides on segment identity (`(opener-id, address)`, spec §4.3.2.2). Do NOT emit two same-page structural marks this way. Instead **group them under one coarser section** with one structural mark for the page, and carry the sub-structure as `##`/`###` prose headings on bbox-distinct child segments — or, where each entry's own heading text is worth preserving verbatim, address each structural mark at a distinct `page=N&bbox=…` crop of just that heading. This is the standard move for a dense single-page run of headings.
+    - **Missing top-level headings** — the outline (and so the seeded structural marks) omits real printed sections (an un-bookmarked "Consumer Information" leaflet). Add a structural mark and section for each from the printed headings yourself; don't let a naive "last entry runs to page_count" bury them.
+    - **Degenerate single bookmark** — the entire document nested under one bookmark (common in drug-label SPLs). Ignore the seeded mark and section from the printed top-level headings instead.
+    - **Duplicate / non-monotonic entries** — many entries anchored to pp1–2, out of order, repeated (Highlights + a Contents listing + the body all bookmarked). The drafter keeps only the **first** entry resolving to a given page and silently drops the rest (above) — the noise you'd otherwise dedupe by hand is already gone from the drafted marks; still section from the real printed structure, not whatever the surviving marks happen to say.
+    - **Two top-level entries on the same page** — the drafter has already resolved this collision by keeping only the first entry's mark, so you won't find two structural marks fighting for one bare `page=N` address. If the *second* entry's heading text is still worth preserving verbatim, add it yourself as a second structural mark at a distinct `page=N&bbox=…` crop of just that heading — never at the same bare address the first mark already claims (segment identity is `(opener-id, address)`, spec §4.3.2.2). This is the standard move for a dense single-page run of headings.
 
     **PDF without an outline** (the op returns `[]`). Section from the printed structure when it's clearly present (see "Normalizer-introduced sections" below); otherwise stay sectionless — a legitimate shape for short or structure-light PDFs.
 
@@ -167,7 +201,7 @@ normalization:
 
     ### Sub-outline entries
 
-    Promote only the **top-level** (level-0) outline entries to sections, even though the `outline` op returns the full nested tree (each node's `children`). PDF outlines often carry sub-entries (chapters with sub-chapters, appendices nested under a parent); those nested entries are NOT promoted to sections. Sub-outline content lives inside its parent section's child segments, with prose-internal headings (`##`, `###`) representing the sub-structure. A PDF whose top-level outline groups all appendices under "Definitions" becomes one section spanning the appendix range; that's faithful to the source author's outline grouping.
+    Only the **top-level** (level-0) outline entries arrive as drafted structural marks, even though the `outline` op itself returns the full nested tree (each node's `children`) — nested entries are never promoted, by the drafter or by you. PDF outlines often carry sub-entries (chapters with sub-chapters, appendices nested under a parent); those nested entries stay off the section list. Sub-outline content lives inside its parent section's child segments, with prose-internal headings (`##`, `###`) representing the sub-structure. A PDF whose top-level outline groups all appendices under "Definitions" becomes one section spanning the appendix range; that's faithful to the source author's outline grouping.
 
     ### Normalizer-introduced sections (sectionless drafts)
 
@@ -195,7 +229,7 @@ normalization:
 
     ## Re-segment to structural units
 
-    The drafter emits one segment per page because page is PDF's natural transport grain. Page boundaries do not respect document structure — a paragraph wraps from column 1 to column 2; a paragraph continues across pages; a numbered list of steps interleaves with an equation. The normalizer re-segments at structural-unit grain.
+    The drafter emits one content segment per page because page is PDF's natural transport grain — banding trims the *address* to the page's non-chrome content, but the grain is still one page, one segment. Page boundaries do not respect document structure — a paragraph wraps from column 1 to column 2; a paragraph continues across pages; a numbered list of steps interleaves with an equation. The normalizer re-segments at structural-unit grain.
 
     **A segment is logically contiguous content of one classification.** Multi-column text on one page is one segment. Cross-page text continuation is one segment. An embedded artifact of a different classification (an image, an equation, a table, a figure) forces a segment boundary — the surrounding prose splits and the artifact gets its own segment.
 
@@ -275,11 +309,11 @@ normalization:
         address: page=<P>&bbox=0.05,0.62,0.90,0.18
         -->
 
-    The bbox values are heuristic — you don't have to nail them to the pixel. They're identifying which physical regions belong to which segment, not specifying exact extraction rectangles. The rule that matters is the **logical partition**: every visible region of source content belongs to exactly one segment.
+    Two different things are being decided here, and only one of them is a judgment call. *Which* region belongs to which segment is the logical partition — every visible region of source content belongs to exactly one segment — and that is a content question you answer by reading the page. *Where the edge lands* is a measurement: an edge may sit anywhere in the whitespace between two rows, so a little slack is fine (match the drafter's own ~0.0025 padding, above); an edge **inside** a row is a defect — the crop then renders half a line, and the address no longer bounds the content it names. Take the partition from the prose and the numbers from `corpus bands` (above).
 
     ### Address uniqueness across segments
 
-    Per SPEC §4.3, no two segments in a record may claim the same source region. A multi-region segment listing `page=4&bbox=A` and `page=5&bbox=B` blocks any other segment from claiming `page=4&bbox=A` or `page=5&bbox=B`. When you re-segment, the union of every segment's address list must be a partition of the source content the segments collectively cover — no overlaps. Bboxes are approximate (heuristic identifiers, not pixel-precise rectangles), but the partition over logical content is exact: a region of source content belongs to exactly one segment, even when that requires multi-bbox jump-over addresses on a single page.
+    Per SPEC §4.3, no two segments in a record may claim the same source region. A multi-region segment listing `page=4&bbox=A` and `page=5&bbox=B` blocks any other segment from claiming `page=4&bbox=A` or `page=5&bbox=B`. When you re-segment, the union of every segment's address list must be a partition of the source content the segments collectively cover — no overlaps. Where an edge sits within the whitespace between two rows is slack (above); the partition over logical content is exact — a region of source content belongs to exactly one segment, even when that requires multi-bbox jump-over addresses on a single page. `corpus bands` audits exactly this: run it after you re-segment to confirm no band cuts a row and no content row is claimed by nothing.
 
     ## Large PDFs — chunked normalization
 
@@ -301,15 +335,17 @@ normalization:
         uv run --directory scripts corpus toc <hash>          # segment table of contents: ordinal, atom, structural-mark body
         uv run --directory scripts corpus segment <hash> 7    # one segment's full detail (by ordinal or address)
 
-    `corpus toc` is your one-shot shape recon — the record's full structure in a few hundred lines, derived from the structural marks (there is no `entry:` field to read any more). A bare `page=<N>` image marker (atom `image`, plain `page=` address, no sibling segments at that page) is still drafter-shaped; the first such ordinal in document order is where your chunk starts, and any section-opening structural marks let you pick a clean end boundary at a section break.
+    `corpus toc` is your one-shot shape recon — the record's full structure in a few hundred lines, derived from the structural marks (there is no `entry:` field to read any more). A page still in drafter shape shows as a single segment whose body is raw, unrefined pypdf text (`atom: text`, at either a `page=<N>&bbox=...` content band or a bare `page=<N>`) or a body-empty `atom: image` marker at bare `page=<N>` — see "Detect prior-pass state" below for the exact discriminators. The first such ordinal in document order is where your chunk starts, and any section-opening structural marks let you pick a clean end boundary at a section break.
 
     ### Detect prior-pass state
 
-    On startup, walk the body's segments and find the first page still in fresh drafter shape. The discriminator is the drafter's own output: a **bare `<!--segment image-->` at a plain `page=<N>` address** (no `&bbox`, no list), with **no other segments addressing that page**. That page is un-normalized.
+    On startup, walk the body's segments and find the first page still in fresh drafter shape. The drafter now emits three different-looking segments depending on what it decided about the page (above), so the discriminator is no longer one shape — check the **atom** first:
 
-    A normalized page looks different: its `page=<N>` marker has been **replaced** by structural-unit segments (born-digital — prose `text`, `text/equation`, `text/data-table`, with bbox-refined or list-form addresses), or **kept and surrounded** by `page=<N>&bbox=...` sub-segments (a scanned page — `text/ocr`, figures). Either way the bare page marker is gone or no longer alone. The first page still carrying only its bare marker, in document order, is where this pass starts.
+    - **`atom: text`** — drafter-shaped when its body is still raw, unrefined pypdf output: column-width hard wraps, no heading promotion, footnote anchors packed as `0F`/`1F`/`2F`, mangled equation glyphs in Unicode mathematical-bold-italic codepoints, repeating page chrome still sitting in the text. The **address alone doesn't decide this** — a bbox-addressed segment can still be un-normalized, since the address only ever excluded chrome geometrically, never from the body (see "Page addresses are content bands" above). A **normalized** page looks structurally different: prose reflowed into single physical lines per paragraph, headings promoted to markdown `#`/`##`, chrome stripped from the body, equations rendered as LaTeX, tables as markdown/HTML, and — usually — a list-form or bbox-refined address in place of a bare one, plus sibling atom-prefixed segments (`text/equation`, `text/data-table`, `text/code`, `image/…`) split out where the page carried any.
+    - **`atom: image` at a bare `page=<N>`** — drafter-shaped (scanned, textless, or blank) when it has **no sibling segments addressing that page** — a scanned page you haven't yet added `text/ocr`/`text/data-table`/figure sub-segments around, or a figure you haven't cropped. Normalized: the marker is **kept and surrounded** by `page=<N>&bbox=...` sub-segments per "Scanned pages" above.
+    - **`atom: structural`** marks (drafted outline entries) aren't a normalize target themselves — they're the seed a `<!--section-->` wraps (above); a structural mark with no enclosing `<!--section-->` block is a sign sectioning hasn't happened yet, but isn't itself "drafter-shaped content" to refine.
 
-    If every page is still a bare marker, start at page 1.
+    The first page whose content segment is still drafter-shaped by either test above, in document order, is where this pass starts. If every page is still drafter-shaped, start at page 1.
 
     ### Choose the chunk range
 
@@ -323,9 +359,9 @@ normalization:
 
     ### Normalize the chunk
 
-    Apply every structural-unit tactic to the segments in your chunk range: chrome strip, heading promotion, section-grain prose-flow segments, atom-prefixed segments for equations / tables / code / figures, multi-region addresses where content spans columns or pages, footnote ownership rules, equation LaTeX reconstruction from page renders. The segments outside your chunk range are left exactly as the drafter emitted them — don't touch them.
+    Apply every structural-unit tactic to the segments in your chunk range: chrome strip (the body's own text, not just the address — above), heading promotion, section-grain prose-flow segments, atom-prefixed segments for equations / tables / code / figures, multi-region addresses where content spans columns or pages, footnote ownership rules, equation LaTeX reconstruction from page renders, wrapping any drafted structural marks into `<!--section-->` blocks. The segments outside your chunk range are left exactly as the drafter emitted them — don't touch them.
 
-    Re-segment freely within your range. The drafter's `page=N` segments inside the range get replaced by the structural-unit segments you produce; the segments outside the range stay page-grain. The body ends up in a mixed shape: structural-unit segments for the normalized range, page-grain segments for the rest.
+    Re-segment freely within your range. Each drafter-shaped `atom: text` segment in the range — its raw pypdf body sitting at a content-band or bare `page=<N>` address, no atom-overlay siblings split out yet — gets replaced by the structural-unit segments you produce; a drafter-shaped `atom: image` marker gets kept and surrounded (above), not replaced. The segments outside the range stay drafter-shaped. The body ends up in a mixed shape: structural-unit segments for the normalized range, drafter-shaped (band- or page-grain) segments for the rest.
 
     ### Cross-chunk references
 
@@ -349,7 +385,7 @@ normalization:
 
     ## Repeating page chrome
 
-    Per the `document` overlay, mechanical chrome (page-N footers, repeated document-title headers, URL footers) is **silent-stripped** from content-bearing segments — no separate chrome segment is needed. The cover content already carries the document title; the strip loses nothing.
+    Per the `document` overlay, mechanical chrome (page-N footers, repeated document-title headers, URL footers) is **silent-stripped** from content-bearing segments — no separate chrome segment is needed. **This is body-text work, not address work**: the drafter's content-band address already excludes chrome pixels when rendered, but the segment's stored body is unfiltered pypdf output and still carries the chrome lines verbatim (see "Page addresses are content bands" above) — stripping them from the body during normalization is unchanged from before. The cover content already carries the document title; the strip loses nothing.
 
     When chrome carries information beyond mechanical pagination (a "DRAFT" or "CONFIDENTIAL" watermark, a running header that names a different version than the cover, an embargo notice), hoist to one **bare `<!--segment text-->`** at the top of the body carrying the chrome's literal text verbatim — a single representation of the repeating chrome, not one per page. There is no `text/chrome` overlay in v1.0; chrome that's worth keeping is just faithful text. The segment carries:
 
