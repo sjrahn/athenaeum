@@ -172,10 +172,14 @@ def test_pdf_drafter_scanned_emits_page_image_markers(tmp_path, run_drafter):
     assert all(b.body == "" for b in blocks)
 
 
-def test_pdf_drafter_uniform_image_shape_for_born_digital(tmp_path, run_drafter):
-    """The drafter is now uniform: a born-digital PDF (real vector text, no full-page
-    image) drafts to the SAME body-empty image markers — NO text extraction, NO sections.
-    The normalizer pulls text via the resolver's page=N&text op."""
+def test_pdf_drafter_born_digital_emits_text_segments(tmp_path, run_drafter):
+    """A born-digital PDF (real vector text, no full-page image) drafts to `atom: text`
+    segments carrying the extracted body — no sections. born_text.pdf's own glyph
+    geometry fragments (a base-14 Helvetica hyphen trips `assemble_lines`' baseline
+    tolerance — the known failure mode its docstring describes), so both pages fall back
+    to the bare `page=N` address rather than a content band;
+    `test_pdf_drafter_outline_marks_precede_content_and_dedupe_same_page` below exercises
+    a fixture whose geometry DOES support the band form."""
     root = _make_corpus(tmp_path)
     rid = _ingest(root, "born_text.pdf", "application/pdf", "pdf")
     binary = LocalArtifactStore(root).local_path(rid, "pdf")
@@ -185,14 +189,128 @@ def test_pdf_drafter_uniform_image_shape_for_born_digital(tmp_path, run_drafter)
     )
     assert result.get("fields", {})["page_count"] == 2
     assert all(isinstance(b, segments.Segment) for b in blocks)
-    assert [b.atom for b in blocks] == ["image", "image"]
+    assert [b.atom for b in blocks] == ["text", "text"]
     assert [b.address for b in blocks] == ["page=1", "page=2"]
-    assert all(b.body == "" for b in blocks)  # no text extracted at draft
+    assert blocks[0].body.strip() == "Hello born-digital vector text"
+    assert blocks[1].body.strip() == "Second page vector text only"
+    assert blocks[0].perceptual is None  # fingerprinting is opt-in — off by default
+
+
+def _minimal_text_pdf(text: str) -> bytes:
+    """A hand-built single-page PDF (mirrors `born_text.pdf`'s raw-content-stream style)
+    whose page draws exactly `text` in one `Tj` — for a page short enough to trip the
+    drafter's blank-page threshold while still carrying a real, non-empty text layer."""
+    escaped = text.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
+    content = f"BT /F1 24 Tf 72 700 Td ({escaped}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref_offset = len(out)
+    n = len(objects) + 1
+    out += f"xref\n0 {n}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for off in offsets[1:]:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF".encode()
+    return bytes(out)
+
+
+def test_pdf_drafter_blank_born_digital_page_emits_image_marker(tmp_path, run_drafter):
+    """A born-digital page (real vector text, so `probe_page` reports shape_hint
+    'born-digital') whose extracted text is below the blank threshold gets the same
+    image marker a scanned page gets — never an empty text segment."""
+    blankish = tmp_path / "blankish.pdf"
+    blankish.write_bytes(_minimal_text_pdf("."))
+
+    drafter = draft.get_drafter("application/application_pdf")
+    result, blocks = run_drafter(
+        drafter, blankish, corpus_root=None, record_id="c" * 64, record_metadata={}
+    )
+    assert result.get("fields", {})["page_count"] == 1
+    assert len(blocks) == 1
+    assert blocks[0].atom == "image"
+    assert blocks[0].address == "page=1"
+    assert blocks[0].body == ""
+
+
+def test_pdf_drafter_mixed_document_text_then_image(tmp_path, run_drafter):
+    """A document mixing a born-digital page with a scanned (full-page-image) page drafts
+    each page independently by its own shape: text where the geometry says born-digital,
+    an image marker where it doesn't."""
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    writer.add_page(PdfReader(str(_FIXTURES / "born_text.pdf")).pages[0])
+    writer.add_page(PdfReader(str(_FIXTURES / "onepager.pdf")).pages[0])
+    mixed = tmp_path / "mixed.pdf"
+    with open(mixed, "wb") as f:
+        writer.write(f)
+
+    drafter = draft.get_drafter("application/application_pdf")
+    result, blocks = run_drafter(
+        drafter, mixed, corpus_root=None, record_id="a" * 64, record_metadata={}
+    )
+    assert result.get("fields", {})["page_count"] == 2
+    assert [b.atom for b in blocks] == ["text", "image"]
+    assert blocks[0].address == "page=1"
+    assert blocks[0].body.strip() == "Hello born-digital vector text"
+    assert blocks[1].address == "page=2"
+    assert blocks[1].body == ""
+
+
+def test_pdf_drafter_outline_marks_precede_content_and_dedupe_same_page(tmp_path, run_drafter):
+    """Top-level outline entries become `atom: structural` marks inserted immediately
+    before their page's own content segment, in document order; two entries resolving to
+    the same page keep only the first. `geometry_pages.pdf`'s per-page glyph geometry
+    (unlike `born_text.pdf`'s) supports real content-band addressing, so this also
+    exercises the `page=N&bbox=...` form on a mid-document page with no outline entry of
+    its own."""
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for page in PdfReader(str(_FIXTURES / "geometry_pages.pdf")).pages:
+        writer.add_page(page)
+    writer.add_outline_item("Introduction", 0)
+    writer.add_outline_item("Conclusion", 2)
+    writer.add_outline_item("Conclusion Redux", 2)  # same page as "Conclusion" — dropped
+    outlined = tmp_path / "outlined.pdf"
+    with open(outlined, "wb") as f:
+        writer.write(f)
+
+    drafter = draft.get_drafter("application/application_pdf")
+    result, blocks = run_drafter(
+        drafter, outlined, corpus_root=None, record_id="b" * 64, record_metadata={}
+    )
+    assert result.get("fields", {})["page_count"] == 3
+    assert [(b.atom, b.address) for b in blocks] == [
+        ("structural", "page=1"),
+        ("text", "page=1&bbox=0,0.0992,1,0.0831"),
+        ("text", "page=2&bbox=0,0.1046,1,0.0146"),
+        ("structural", "page=3"),
+        ("text", "page=3&bbox=0,0.1046,1,0.0146"),
+    ]
+    intro_mark, page1_text, _page2_text, concl_mark, page3_text = blocks
+    assert intro_mark.level == 1 and intro_mark.body == "Introduction"
+    assert concl_mark.level == 1 and concl_mark.body == "Conclusion"  # "Redux" dropped
+    assert "1. Introduction" in page1_text.body
+    assert "Body text on page three only." in page3_text.body
 
 
 def test_pdf_introspect_shape_signal(tmp_path):
-    """Born-digital vs scanned is now an advisory normalize-time signal (pdf_introspect),
-    not a drafter switch. Coverage keys on full-page-image area, not vendor strings."""
+    """Born-digital vs scanned is the drafter's own advisory shape signal
+    (`pdf_introspect.probe_page`'s `shape_hint`) — this test pins the underlying
+    image-coverage measurement directly, independent of the drafter. Coverage keys on
+    full-page-image area, not vendor strings."""
     import pypdfium2 as pdfium
     from pypdf import PdfReader
 
