@@ -152,6 +152,19 @@ def _ref(iri: str) -> str:
     return f"<{iri}>"
 
 
+_IRI_ILLEGAL_RE = re.compile(r'[\x00-\x20<>"{}|^`\\\[\]%]')
+
+
+def _iri_escape(uri: str) -> str:
+    """A verbatim stored URI (corpus:// with §6.1 functional-URI queries —
+    `?el=…[1-43]`, `?path=…` with raw spaces) made IRI-legal for `<…>`
+    serialization: every char an IRIREF cannot carry (space/controls,
+    `<>"{}|^`\\[]`) percent-encoded, `%` itself included so a read-side
+    percent-decode recovers the stored bytes exactly. Write-edge only — the
+    §6.1 first-`=`-wins parse never sees the encoded form."""
+    return _IRI_ILLEGAL_RE.sub(lambda m: f"%{ord(m.group(0)):02X}", uri)
+
+
 def fact_iri(fact_id: str) -> str:
     return f"{_LEDGER_SCHEME}{_q(fact_id)}"
 
@@ -399,7 +412,7 @@ def _emit_claim_common(
         if uri is None:
             continue
         pred = PROV + ("wasQuotedFrom" if e.get("quote") else "wasDerivedFrom")
-        w.add(_ref(reifier), _ref(pred), _ref(uri))
+        w.add(_ref(reifier), _ref(pred), _ref(_iri_escape(uri)))
 
 
 def _emit_claim(
@@ -736,7 +749,7 @@ def export_ledger(
             if grants is not None and not _roster_entry_visible(uri, join, datasets, grants,
                                                                  declared):
                 continue
-            w.add(_ref(uri), _ref(IAO_IS_ABOUT), _ref(fact_iri(fid)))
+            w.add(_ref(_iri_escape(uri)), _ref(IAO_IS_ABOUT), _ref(fact_iri(fid)))
 
     for name in sorted(used_predicates):
         _emit_predicate_decl(w, name, schemas, references, corpora_roots, unverified)
@@ -789,6 +802,30 @@ def export_ledger(
 _REASONER_ENV = "ATHENAEUM_REASONER"
 _DEFAULT_REASONER_TEMPLATE = "robot merge {inputs} reason --reasoner ELK -o {output}"
 
+_TRIPLE_TERM_MARKER = f"<{RDF}reifies> <<("
+
+# JVM boilerplate the JDK prints ahead of anything useful when robot runs
+# (the sun.misc.Unsafe deprecation block its caffeine dependency triggers).
+_STDERR_NOISE = ("sun.misc.Unsafe", "Please consider reporting this to the maintainers")
+
+
+def _reasoner_projection(export_text: str) -> str:
+    """What the gate hands the reasoner: the export minus its `rdf:reifies`
+    triple-term statements. OWLAPI/RDF4J parse at best RDF-star's `<< >>`,
+    never RDF 1.2's `<<( )>>` — the full export dies as an invalid ontology
+    file before any reasoning. The reifier IRIs' plain annotation triples
+    all stay, and the 1.2 text itself remains the §15.7 export contract —
+    this narrowing exists only at the reasoner edge."""
+    return "\n".join(
+        ln for ln in export_text.splitlines() if _TRIPLE_TERM_MARKER not in ln
+    ) + "\n"
+
+
+def _failure_detail(stderr: str, stdout: str, returncode: int) -> str:
+    lines = [ln for ln in stderr.strip().splitlines()
+             if not any(n in ln for n in _STDERR_NOISE)]
+    return "\n".join(lines).strip() or stdout.strip() or f"reasoner exited {returncode}"
+
 
 def run_conformance_gate(
     owner_export_text: str,
@@ -805,16 +842,21 @@ def run_conformance_gate(
     Seam: `reasoner_cmd` (or the `ATHENAEUM_REASONER` env var) names a
     command **template** with `{inputs}` (one `--input PATH` per export/
     spine file, already shell-quoted), `{output}`, and `{export}` (the
-    export file alone) substitution points; absent either, this looks for
-    `robot` (ROBOT's `merge`+`reason`) on PATH. Neither present -> **honestly
-    unverifiable**, never a silent pass (§13.2's idiom, generalized). Runs
-    only over already-produced export artifacts — never in an authoring
-    path — and never raises: a reasoner that can't be invoked, times out, or
-    errors is unverifiable/failed, never a traceback escaping to the CLI.
+    reasoner-facing export file alone) substitution points; absent either,
+    this looks for `robot` (ROBOT's `merge`+`reason`) on PATH. Neither
+    present -> **honestly unverifiable**, never a silent pass (§13.2's
+    idiom, generalized). The reasoner is handed `_reasoner_projection`'s
+    OWL-consumable narrowing of the export (`export-reasoner.ttl`; the full
+    1.2 text is still written alongside as `export.ttl` for the record).
+    Runs only over already-produced export artifacts — never in an
+    authoring path — and never raises: a reasoner that can't be invoked,
+    times out, or errors is unverifiable/failed, never a traceback escaping
+    to the CLI.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
-    export_path = work_dir / "export.ttl"
-    export_path.write_text(owner_export_text, encoding="utf-8")
+    (work_dir / "export.ttl").write_text(owner_export_text, encoding="utf-8")
+    export_path = work_dir / "export-reasoner.ttl"
+    export_path.write_text(_reasoner_projection(owner_export_text), encoding="utf-8")
     output_path = work_dir / "reasoned.owl"
 
     template = reasoner_cmd or os.environ.get(_REASONER_ENV)
@@ -848,8 +890,7 @@ def run_conformance_gate(
     if proc.returncode == 0:
         return GateResult("passed", proc.stdout.strip() or "reasoner reported the export "
                           "consistent with the registered spine")
-    detail = proc.stderr.strip() or proc.stdout.strip() or f"reasoner exited {proc.returncode}"
-    return GateResult("failed", detail)
+    return GateResult("failed", _failure_detail(proc.stderr, proc.stdout, proc.returncode))
 
 
 def spine_payloads(

@@ -46,7 +46,8 @@ def test_invoked_path_captures_argv_and_passes(tmp_path: Path, monkeypatch) -> N
     assert result.status == "passed"
     logged = argv_log.read_text(encoding="utf-8")
     assert "--input" in logged
-    assert str(tmp_path / "gate" / "export.ttl") in logged
+    # the reasoner is handed the OWL-consumable projection, not the 1.2 text
+    assert str(tmp_path / "gate" / "export-reasoner.ttl") in logged
     assert "reason" in logged
 
 

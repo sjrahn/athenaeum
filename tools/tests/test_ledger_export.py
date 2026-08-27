@@ -308,6 +308,48 @@ def test_determinism_two_runs_byte_identical(ledger) -> None:
     assert text1 == text2
 
 
+# ------------------------------------------------------------- IRI legality
+
+
+def test_verbatim_uris_are_iri_escaped(ledger) -> None:
+    """§6.1 functional-URI refs (raw `[…]`, raw spaces) are written
+    percent-encoded inside `<…>` — RDF4J rejects the raw forms — and a
+    read-side percent-decode recovers the stored bytes exactly."""
+    from urllib.parse import unquote
+
+    ledger_root, join, datasets, instance = ledger
+    rough = f"corpus://{H_PUB}?path=The Black Lodge - General - x[3].json"
+    _write_json(ledger_root / "facts" / "thing" / "rough.json", {
+        "id": "rough", "type": "thing", "name": "Rough",
+        "sources": {"s1": {"record": H_PUB}},
+        "artifacts": [{"uri": rough, "role": "documents"}],
+        "claims": [{
+            "id": "rough:colour", "predicate": "colour", "value": "red",
+            "status": "confirmed", "asof": "2026-08-25",
+            "evidence": [{"source": "s1", "kind": "direct", "anchor": "el=quote[1-43]"}],
+        }],
+    })
+    text, _ = export_ledger(ledger_root, join, datasets, instance, plane="owner")
+    esc_roster = (f"corpus://{H_PUB}"
+                  "?path=The%20Black%20Lodge%20-%20General%20-%20x%5B3%5D.json")
+    esc_evidence = f"corpus://{H_PUB}?el=quote%5B1-43%5D"
+    assert f"<{esc_roster}>" in text
+    assert f"<{esc_evidence}>" in text
+    assert rough not in text  # never written raw inside an IRIREF
+    assert unquote(esc_roster) == rough
+
+
+def test_iri_escape_percent_first_roundtrips() -> None:
+    from urllib.parse import unquote
+
+    from ledger.export import _iri_escape
+
+    raw = f"corpus://{H_PUB}?path=100%_x [y].json"
+    escaped = _iri_escape(raw)
+    assert "%25" in escaped and " " not in escaped and "[" not in escaped
+    assert unquote(escaped) == raw
+
+
 # ----------------------------------------------------------------------- CLI
 
 
@@ -394,3 +436,73 @@ def test_cli_export_gate_includes_registered_spine_payload(
     assert "[spine" not in err  # full coverage — no caveat
     logged = argv_log.read_text(encoding="utf-8")
     assert "bfo-core.owl" in logged
+
+
+# ---------------------------------------------------------------- gate input
+
+
+def test_gate_hands_reasoner_owl_consumable_projection(ledger, tmp_path: Path) -> None:
+    """OWLAPI/RDF4J cannot parse RDF 1.2's `<<( )>>` triple terms — the gate
+    feeds the reasoner a projection with the `rdf:reifies` statements
+    dropped (reifier annotation triples kept), while the full 1.2 text
+    stays the export contract, written alongside for the record."""
+    import sys
+
+    from ledger.export import run_conformance_gate
+
+    text, _ = _export(ledger)
+    assert "<<(" in text  # the 1.2 export itself keeps its triple terms
+    checker = tmp_path / "checker.py"
+    checker.write_text(
+        "import sys\n"
+        "text = open(sys.argv[1], encoding='utf-8').read()\n"
+        "sys.exit(2 if '<<(' in text else 0)\n",
+        encoding="utf-8",
+    )
+    result = run_conformance_gate(
+        text, work_dir=tmp_path / "gate",
+        reasoner_cmd=f"{sys.executable} {checker} {{export}} {{output}}",
+    )
+    assert result.status == "passed"
+    full = (tmp_path / "gate" / "export.ttl").read_text(encoding="utf-8")
+    assert "<<(" in full
+    projected = (tmp_path / "gate" / "export-reasoner.ttl").read_text(encoding="utf-8")
+    assert "<<(" not in projected
+    assert "#reifies>" not in projected
+    # the reifier IRIs' plain annotation triples survive the narrowing
+    assert f"<{PROV}wasQuotedFrom>" in projected
+    assert "<ledger://meta/status>" in projected
+
+
+def test_gate_failure_detail_filters_jvm_noise(ledger, tmp_path: Path) -> None:
+    """robot's caffeine dep triggers the JDK sun.misc.Unsafe warning block on
+    stderr ahead of anything useful — a failed gate's detail drops it so the
+    real error leads."""
+    import sys
+
+    from ledger.export import run_conformance_gate
+
+    text, _ = _export(ledger)
+    noisy = tmp_path / "noisy.py"
+    noisy.write_text(
+        "import sys\n"
+        "w = sys.stderr.write\n"
+        "w('WARNING: A terminally deprecated method in sun.misc.Unsafe "
+        "has been called\\n')\n"
+        "w('WARNING: sun.misc.Unsafe::allocateMemory has been called by "
+        "com.github.benmanes.caffeine.base.UnsafeAccess\\n')\n"
+        "w('WARNING: Please consider reporting this to the maintainers of "
+        "class com.github.benmanes.caffeine.base.UnsafeAccess\\n')\n"
+        "w('WARNING: sun.misc.Unsafe::allocateMemory will be removed in a "
+        "future release\\n')\n"
+        "w('INVALID ONTOLOGY FILE ERROR: something real\\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    result = run_conformance_gate(
+        text, work_dir=tmp_path / "gate",
+        reasoner_cmd=f"{sys.executable} {noisy} {{export}} {{output}}",
+    )
+    assert result.status == "failed"
+    assert result.detail.startswith("INVALID ONTOLOGY FILE ERROR")
+    assert "sun.misc.Unsafe" not in result.detail
