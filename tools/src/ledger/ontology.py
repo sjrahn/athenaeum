@@ -360,9 +360,11 @@ def isa_matches(
     id). Comparison tries literal string equality against every element of
     the declared chain first; where that misses and *operand* is spine-form
     (colon-bearing), it unifies against each spine-form chain element via
-    `refdata.spine.resolve_term` — so `isa: "cco:Artifact"` matches a chain
-    declaring `cco:ont00000995` and vice versa wherever the mirrors are
-    materialized. Where they aren't, unification simply misses (nothing
+    `refdata.spine.resolve_term` — so `isa: "cco:Material Artifact"` matches
+    a chain declaring `cco:ont00000995` and vice versa wherever the mirrors
+    are materialized (that pair is CCO v2.2's artifact root: label-form
+    references use the release's actual `rdfs:label`, and there is no bare
+    "Artifact" class in v2.2). Where they aren't, unification simply misses (nothing
     silently wrong: check's Ontology block separately reports an
     unresolvable spine reference)."""
     ftype = str(fact.get("type"))

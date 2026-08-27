@@ -193,17 +193,31 @@ def _parse_rows(block: str) -> list[list[str]]:
     return rows
 
 
+def _has_extends_column(block: str) -> bool:
+    """Whether the section's header row carries the v39 `extends` column
+    (§15.3) — False for a pre-v39 3-column file, whose definition cells sit
+    one cell left. Read from the header row so the first regen after the
+    upgrade carries every preserved definition across losslessly."""
+    for line in block.strip().splitlines():
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0] and not set(cells[0]) <= set("-: "):
+            return "extends" in cells
+    return True
+
+
 def parse_definitions(vocab_text: str) -> dict[str, dict[str, str]]:
     """{section: {term: definition}} from an existing VOCAB.md — the
     definition column sits one cell further right in **Concept types**/
     **Edge types** (§15.3's extra `extends` column, `_CHAIN_SECTIONS`) than
-    in every other section."""
+    in every other section — except in a pre-v39 file (no `extends` header
+    cell), where those sections are still 3-column and the parse falls back
+    accordingly: the one-time upgrade regen writes the 4-column shape."""
     defs: dict[str, dict[str, str]] = {}
     for section, _, _ in _SECTIONS:
         block = _block(vocab_text, section)
         if block is None:
             continue
-        idx = 3 if section in _CHAIN_SECTIONS else 2
+        idx = 3 if section in _CHAIN_SECTIONS and _has_extends_column(block) else 2
         defs[section] = {r[0]: (r[idx] if len(r) > idx else "") for r in _parse_rows(block)}
     return defs
 

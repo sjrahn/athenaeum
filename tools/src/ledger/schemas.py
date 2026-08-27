@@ -319,8 +319,8 @@ def expectation_selects(exp: dict, fact: dict, edges: list[dict],
 def spine_references(schemas: dict[str, dict]) -> set[str]:
     """Every spine-form `extends:` reference a schema set declares (§15.3) — type-
     level and field-level alike — recognized structurally by its colon (a qualified
-    `{dataset}:{id-or-label}`, e.g. `cco:Artifact`, `bfo:generically dependent
-    continuant`). This module stops here: resolving a reference against the
+    `{dataset}:{id-or-label}`, e.g. `cco:Material Artifact`, `bfo:generically
+    dependent continuant`). This module stops here: resolving a reference against the
     registered spine datasets' actual terms (§15.2) is another seam's job — this
     is that seam, the set it resolves against.
     """

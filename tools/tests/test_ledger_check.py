@@ -1710,6 +1710,28 @@ def test_retired_vocabulary_is_rejected(system: Path) -> None:
     assert any("retired vocabulary" in e.lower() for e in rep.errors)
 
 
+def test_pre_v39_three_column_vocab_definitions_survive_regen(system: Path) -> None:
+    """One-time v39 migration: the first regen after the upgrade reads a
+    pre-v39 3-column Concept/Edge types table — its hand-curated definition
+    cells sit one column left of current law (§15.3's `extends` column) and
+    must carry into the regenerated 4-column shape, never silently drop."""
+    _fact(system, "artist", {"id": "x", "type": "artist", "name": "X"})
+    _regen(system)
+    vocab_path = system / "ledger" / "facts" / "VOCAB.md"
+    text = vocab_path.read_text()
+    start, end = "<!-- vocab:types:start -->", "<!-- vocab:types:end -->"
+    old_table = ("| type | count | definition |\n|---|---:|---|\n"
+                 "| `artist` | 1 | A musical act. |")
+    head, rest = text.split(start, 1)
+    _, tail = rest.split(end, 1)
+    vocab_path.write_text(f"{head}{start}\n{old_table}\n{end}{tail}")
+    _regen(system)
+    vocab = vocab_path.read_text()
+    row = next(ln for ln in vocab.splitlines() if ln.startswith("| `artist` |"))
+    assert row.endswith("| A musical act. |")
+    assert "| extends |" in vocab  # regen wrote the current 4-column shape
+
+
 def test_worklist_lists_open_interpretations_and_frontier(system: Path) -> None:
     _fact(system, "artist", {"id": "stub", "type": "artist", "name": "Stub"})
     _interp(system, {
