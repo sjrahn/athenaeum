@@ -162,7 +162,7 @@ def test_instance_shape(instance: Path) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "testeum"
-    assert body["spec_version"] == 40
+    assert body["spec_version"] == 41
     assert body["plane"] == "public"
     assert "instance_commit" in body
 
@@ -777,7 +777,7 @@ def test_openapi_stamped_with_spec_version(instance: Path) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["info"]["title"] == "Athenaeum read surface"
-    assert data["info"]["version"] == str(SPEC_VERSION) == "40"
+    assert data["info"]["version"] == str(SPEC_VERSION) == "41"
 
 
 def test_openapi_is_read_only(instance: Path) -> None:

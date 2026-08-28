@@ -35,7 +35,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"corpus inspect {record_id[:12]}\n")
     _print_identity(root, record_id, post)
     _print_artifact(root, record_id, post)
-    _print_origins(post)
+    _print_origins(root, post)
     _print_content_axes(post)
     _print_resolver_ops(root, post)
     return 0
@@ -146,17 +146,58 @@ def _print_artifact(root, record_id, post) -> None:
 # ---------- 3. origins ---------- #
 
 
-def _print_origins(post) -> None:
+def _print_origins(root, post) -> None:
     origins = list(records.iter_origin_blocks(post))
     print(f"== origins ({len(origins)}) ==")
     if not origins:
         print("none")
     for ob in origins:
         oid = ob.get("id") or "(bare)"
+        if ob.get("id") and ob.get("subtype"):
+            oid = f"{ob['id']}/{ob['subtype']}"
         uri = (ob.get("fields") or {}).get("uri")
         snap = (ob.get("fields") or {}).get("snapshot")
         print(f"  [{oid}] {uri}  snapshot={snap}")
+        _print_sidecar_lift(root, ob)
     print()
+
+
+def _short(value) -> str:
+    text = str(value)
+    return text if len(text) <= 48 else text[:45] + "…"
+
+
+def _print_sidecar_lift(root, origin_block) -> None:
+    """*(v41, §7.2)* The container-member sidecar lift on a qualified origin block: the
+    declaration its `<id>/<subtype>` ladder resolves to names the prefix, so the lifted
+    fields and the sibling references can be told apart from the block's other fields
+    without knowing what any of them mean. Silent for a block whose ladder declares no
+    `sidecar:`; a malformed declaration is printed, never swallowed."""
+    from corpus import sidecar as _sidecar
+
+    if not origin_block.get("id"):
+        return
+    try:
+        decl = _sidecar.resolve_declaration(
+            root, str(origin_block["id"]), origin_block.get("subtype") or None
+        )
+    except _sidecar.DeclarationError as e:
+        print(f"    sidecar:     (declaration error: {e})")
+        return
+    if decl is None or not decl.prefix:
+        return
+    fields = origin_block.get("fields") or {}
+    refs = decl.reference_names()
+    lifted = [(k, v) for k, v in fields.items() if str(k).startswith(decl.prefix) and k not in refs]
+    referenced = [(k, v) for k, v in fields.items() if k in refs]
+    print(
+        f"    lifted ({decl.prefix}*, {len(lifted)}): "
+        + (", ".join(f"{k}={_short(v)}" for k, v in lifted) or "none")
+    )
+    print(
+        f"    references ({len(referenced)}): "
+        + (", ".join(f"{k}={_short(v)}" for k, v in referenced) or "none")
+    )
 
 
 # ---------- 4. content axes ---------- #

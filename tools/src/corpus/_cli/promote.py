@@ -16,6 +16,14 @@ exists — a prior promote, or a standalone ingest of the same bytes — the con
 appended to it rather than erroring. Streaming throughout, so a multi-GB member never loads
 whole.
 
+*(v41, §7.2)* When the CONTAINER's origin overlay declares a `sidecar:`, the member's paired
+sidecar (a sibling roster member, found by the declared pairing template) is read out of the
+container, projected per the declared lift map onto the lineage origin block as
+`<prefix><field>` fields plus roster-resolved sibling references, and the block is qualified
+`<id>/<subtype>`. A consumed sidecar's own address is refused — it is never a record of its
+own. The engine is producer-agnostic: what pairs with what, and what lifts where, is entirely
+the declaration's (`corpus.sidecar`); `corpus reattest` regenerates the lift from the container.
+
 The same stream also computes the member's resolved derived-hash recipe union (§7.9): the
 corpus-wide default set layered with the member's own mime schema's `derived_hashes:` — no
 origin overlay layer, since a promoted member's origin is containment lineage, never a producer
@@ -35,7 +43,18 @@ from typing import IO, Any
 import blake3
 import frontmatter
 
-from corpus import containment, hashindex, hashing, mime, paths, records, schemas, streams, touches
+from corpus import (
+    containment,
+    hashindex,
+    hashing,
+    mime,
+    paths,
+    records,
+    schemas,
+    sidecar,
+    streams,
+    touches,
+)
 from corpus import functional_uri as furi
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
@@ -198,6 +217,32 @@ def run(args: argparse.Namespace) -> int:
             f"(got {embed.get('transport')!r}); cannot verify a promoted id."
         )
 
+    # 1b. *(v41, §7.2)* The container's origin overlay MAY declare a `sidecar:` — a member
+    #     whose export pairs each primary with a companion metadata member. A consumed
+    #     sidecar is never a record of its own: refuse its address here, naming the primary
+    #     it belongs to, BEFORE a single byte is streamed. The engine is producer-agnostic —
+    #     the declaration says what pairs with what; nothing here knows what the members are.
+    try:
+        sidecar_decl = sidecar.declaration_for_container(corpus_root, container_post)
+    except sidecar.DeclarationError as e:
+        sys.exit(f"container {container_id[:12]}: {e}")
+    member_path = (
+        member_address[len("path=") :]
+        if member_address.startswith("path=") and "&" not in member_address
+        else None
+    )
+    roster = sidecar.container_roster(container_post) if sidecar_decl is not None else ()
+    if sidecar_decl is not None and member_path is not None:
+        primary = sidecar_decl.primary_of(member_path, roster)
+        if primary is not None:
+            sys.exit(
+                f"{member_address!r} is the consumed sidecar of member {primary!r} under "
+                f"the container's `sidecar:` declaration (spec §7.2 — a sidecar member is "
+                f"never a record of its own): promote "
+                f"corpus://{container_id}?path={primary} instead; the sidecar projects "
+                f"into that record's origin block."
+            )
+
     # 2. The container's bytes (standalone, or streamed out of a nested container).
     from corpus.store import ArtifactMissing
 
@@ -266,6 +311,32 @@ def run(args: argparse.Namespace) -> int:
     if meta.get("source_modified"):
         origin_fields["source_modified"] = meta["source_modified"]
 
+    # 6a. *(v41, §7.2)* The container-member sidecar lift — resolved HERE for the same reason
+    #     `cutting:` is (6b, below): this is the one moment both records are in hand. The
+    #     paired sidecar member is streamed out of the container, parsed, and projected per
+    #     the declaration onto the lineage origin block, which is then qualified with the
+    #     declared subtype. Present-only, never invented; a member with no paired sidecar
+    #     lifts nothing and stays bare. A sidecar that will not parse is a note, never a
+    #     failed promote — the bytes are what promotion is for — and `corpus reattest`
+    #     regenerates the lift from the container later (§12.4.6).
+    sidecar_path: str | None = None
+    lifted: dict[str, Any] = {}
+    lift_schema_id: str | None = None
+    if sidecar_decl is not None and member_path is not None:
+        sidecar_path = sidecar_decl.sidecar_for(member_path, roster)
+    if sidecar_path is not None:
+        try:
+            doc = sidecar.read_sidecar(
+                container_path, container_media_type, sidecar_path, el_addressing=el_addressing
+            )
+        except (ValueError, OSError) as e:
+            print(f"  note: sidecar {sidecar_path!r} not lifted ({e})", file=sys.stderr)
+            sidecar_path = None
+        else:
+            lifted = sidecar.project(sidecar_decl, doc, member_path, roster)
+            origin_fields.update(lifted)
+            lift_schema_id = sidecar_decl.qualified_id
+
     # 6b. *(3.11 §7.2.1)* A promoted VIDEO STREAM's cut strategy is resolved HERE, because this
     #     is the one moment both records are in hand: the leaf's own origin
     #     `corpus://<container>?stream_id=<N>` is capture lineage and never a lookup route
@@ -306,11 +377,13 @@ def run(args: argparse.Namespace) -> int:
         outcome = _fold_into_existing(
             record_file, containment_uri, origin_fields,
             cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
+            sidecar_decl=sidecar_decl if sidecar_path is not None else None, lifted=lifted,
         )
     else:
         outcome = _mint_stub(
             record_file, computed_id, media_type, hash_values, containment_uri, origin_fields,
             corpus_root=corpus_root, cutting_stamp=cutting_stamp, samples_stamp=samples_stamp,
+            origin_schema_id=lift_schema_id,
         )
     # Bytes were in hand for THIS pass regardless of outcome (verified above) — the index is
     # deployment state (§12.9.1), so it's kept warm on a re-promote fold too, not just a mint.
@@ -326,12 +399,22 @@ def run(args: argparse.Namespace) -> int:
     }
     if cutting_note:
         result["cutting"] = cutting_note
+    if sidecar_path is not None:
+        result["sidecar"] = f"path={sidecar_path}"
+        result["lifted"] = sorted(lifted)
+        if lift_schema_id:
+            result["origin_schema"] = lift_schema_id
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(f"{outcome}: {record_file.relative_to(corpus_root)}")
         print(f"  id:         {computed_id}")
         print(f"  media_type: {media_type}")
+        if sidecar_path is not None:
+            print(
+                f"  sidecar:    path={sidecar_path} → {len(lifted)} field(s) lifted onto "
+                f"<!--origin {lift_schema_id or ''}-->"
+            )
         print(f"  bytes:      resident in {container_id[:12]} (not copied; resolves via §12.9)")
     return 0
 
@@ -393,9 +476,17 @@ def _fold_into_existing(
     *,
     cutting_stamp: dict[str, Any] | None = None,
     samples_stamp: int | None = None,
+    sidecar_decl: sidecar.Declaration | None = None,
+    lifted: dict[str, Any] | None = None,
 ) -> str:
     """A record with this id already exists (a prior promote, or a standalone ingest of the
-    same bytes): fold the containment origin into it rather than erroring (spec §5.2)."""
+    same bytes): fold the containment origin into it rather than erroring (spec §5.2).
+
+    *(v41, §7.2)* With a `sidecar_decl` (the container's declaration, given only when the
+    member's sidecar was read) the lift is applied either way: a NEW lineage block is
+    appended already carrying `origin_fields` (the projection included) and qualified with
+    the declared subtype; an EXISTING lineage block is refreshed in place — the declaration-
+    owned names stripped and regenerated, every other field left as it is (§12.4.6)."""
     post = records.load(record_file)
     # Only ever ADDS the stamp — an existing one is left exactly as it is. Overwriting would
     # be a fresh resolution silently replacing the one this record's addresses were computed
@@ -409,6 +500,13 @@ def _fold_into_existing(
     if samples_stamp is not None and records.samples(post) is None:
         _stamp_artifact_field(post, "samples", samples_stamp)
     if _origin_already_present(post, containment_uri):
+        if sidecar_decl is not None:
+            for block in records.iter_origin_blocks(post):
+                uri = (block.get("fields") or {}).get("uri")
+                uris = uri if isinstance(uri, list) else [uri]
+                if containment_uri in [str(u) for u in uris if u]:
+                    sidecar.apply_lift(block.setdefault("fields", {}), sidecar_decl, lifted or {})
+                    sidecar.qualify_block(block, sidecar_decl)
         touches.record_touch(post, touches.script_identifier("promote"))
         records.dump(post, record_file)
         return "already-promoted"
@@ -416,6 +514,7 @@ def _fold_into_existing(
         post,
         uri=containment_uri,
         snapshot=touches.now_iso(),
+        schema_id=sidecar_decl.qualified_id if sidecar_decl is not None else None,
         fields=origin_fields or None,
     )
     touches.record_touch(post, touches.script_identifier("promote"))
@@ -445,9 +544,11 @@ def _mint_stub(
     corpus_root: Path,
     cutting_stamp: dict[str, Any] | None = None,
     samples_stamp: int | None = None,
+    origin_schema_id: str | None = None,
 ) -> str:
     """Emit a fresh promoted stub — the artifact's proxy (§4.1), `touch[0]` the promote pass,
-    first origin the containment lineage. Bytes are NOT written to `artifacts/`; they stay in
+    first origin the containment lineage — qualified `<id>/<subtype>` by `origin_schema_id`
+    when a container-member sidecar was lifted into `origin_fields` (§7.2, v41). Bytes are NOT written to `artifacts/`; they stay in
     the container. Attested immediately (spec §8.1), the SAME best-effort call a fresh
     `corpus ingest` stub gets (`ingest._attest_stub`) — a promoted record's attested fields
     (an eml's Subject/From/Date and its own `part=` embeds, a manifest's members, ...) must
@@ -474,6 +575,7 @@ def _mint_stub(
         post,
         uri=containment_uri,
         snapshot=touches.now_iso(),
+        schema_id=origin_schema_id,
         fields=origin_fields or None,
     )
     _attest_promoted_stub(post, corpus_root, record_id)

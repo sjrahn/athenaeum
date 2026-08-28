@@ -283,6 +283,15 @@ def build_vocabulary(root: Path) -> tuple[set[str], set[str], set[str]]:
             for key in sidecar.get("ytdlp_keys") or []:
                 if isinstance(key, str) and key:
                     fields.add(f"ytdlp_{key}")
+            # *(v41)* An origin overlay's container-member `sidecar:` lifts
+            # `<prefix><field>` for every `lift`/`references` key (spec §7.2) — the same
+            # derivation, prefix declared rather than fixed.
+            prefix = sidecar.get("prefix")
+            if isinstance(prefix, str) and prefix:
+                for section in ("lift", "references"):
+                    entries = sidecar.get(section)
+                    if isinstance(entries, dict):
+                        fields |= {f"{prefix}{k}" for k in entries if isinstance(k, str)}
         overlays |= _namespace_overlay_ids(root, ns, relpath, doc)
         if ns == "mime":
             axis = relpath.removeprefix("mime/").split("/", 1)[0]

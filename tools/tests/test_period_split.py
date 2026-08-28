@@ -21,6 +21,18 @@ import yaml
 from corpus import schemas
 from corpus._cli import period_split
 
+# *(v41, spec §7.2)* The member↔sidecar pairing the v36 code registry used to hard-code
+# per producer is now the producer's own `sidecar.pairing` declaration — the fixtures
+# declare exactly what the registry did, so every bucketing assertion below holds
+# byte-identically under the declaration (the registry's retirement is parity-tested).
+_PAIRING_YAML = {
+    "osxphotos-export": "sidecar:\n  pairing: {template: '{member}.json'}\n",
+    "proton-mail-export": (
+        "sidecar:\n  pairing: {template: '{stem}.metadata.json', "
+        "export_level: [labels.json]}\n"
+    ),
+}
+
 
 def _corpus(
     tmp_path: Path, partition_yaml: str | None, origin_id: str = "osxphotos-export"
@@ -30,7 +42,9 @@ def _corpus(
     schema_dir = root / "schema" / "origin"
     schema_dir.mkdir(parents=True)
     if partition_yaml is not None:
-        (schema_dir / f"{origin_id}.yaml").write_text(f"description: test\n{partition_yaml}")
+        (schema_dir / f"{origin_id}.yaml").write_text(
+            f"description: test\n{partition_yaml}{_PAIRING_YAML.get(origin_id, '')}"
+        )
     schemas.cache_clear()
     return root
 

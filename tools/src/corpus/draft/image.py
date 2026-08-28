@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
+import corpus._pil  # noqa: F401 — registers the optional HEIF opener (v41)
 from corpus import content_hash, recordbuild, records
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, image_fingerprints
@@ -26,6 +27,7 @@ _IMAGE_SCHEMA_IDS = (
     "image/image_gif",
     "image/image_webp",
     "image/image_avif",
+    "image/image_heic",
 )
 
 _EXIF_FIELDS: tuple[tuple[str, str], ...] = (

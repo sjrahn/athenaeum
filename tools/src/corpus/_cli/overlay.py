@@ -54,7 +54,7 @@ def _run_origin(corpus_root, oid: str, overlay: dict[str, Any]) -> int:
 
     declared = [
         k
-        for k in ("capture", "transcription", "canonical", "metadata")
+        for k in ("capture", "transcription", "canonical", "sidecar")
         if isinstance(overlay.get(k), dict) and overlay.get(k)
     ]
     if declared:

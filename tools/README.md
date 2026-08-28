@@ -30,6 +30,11 @@ uv tool install --reinstall --editable "tools[capture,media,fingerprint]" --with
 Consuming repos never vendor or path-depend on this package — the CLIs
 auto-discover the corpus root / instance config by cwd ($ATHENAEUM_ROOT overrides).
 
+The editable install makes `src/` edits live, but NOT dependency changes: when an
+extra gains a package (v41 added `pillow-heif` to `media` — without it a HEIC
+member cannot be decoded and `reattest` skips the record), every deployment
+re-runs the `uv tool install --reinstall …` line above to pick it up.
+
 ## Dev quickstart
 
 ```bash

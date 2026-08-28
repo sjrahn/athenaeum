@@ -22,6 +22,10 @@ from corpus import schemas
 from corpus._cli import period_split
 from corpus._cli._common import bucket_rendered_local
 
+# *(v41, spec §7.2)* The `<member>.json` pairing, declared rather than registered — see
+# `test_period_split._PAIRING_YAML`.
+_PAIRING_YAML = "sidecar:\n  pairing: {template: '{member}.json'}\n"
+
 
 def _corpus(tmp_path: Path, partition_yaml: str | None, origin_id: str) -> Path:
     root = tmp_path / "c"
@@ -29,7 +33,9 @@ def _corpus(tmp_path: Path, partition_yaml: str | None, origin_id: str) -> Path:
     schema_dir = root / "schema" / "origin"
     schema_dir.mkdir(parents=True)
     if partition_yaml is not None:
-        (schema_dir / f"{origin_id}.yaml").write_text(f"description: test\n{partition_yaml}")
+        (schema_dir / f"{origin_id}.yaml").write_text(
+            f"description: test\n{partition_yaml}{_PAIRING_YAML}"
+        )
     schemas.cache_clear()
     return root
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
+import corpus._pil  # noqa: F401 — registers the optional HEIF opener (v41)
 from corpus import functional_uri as furi
 
 from . import NotMaterializable, RenderContext, register

@@ -25,7 +25,7 @@ from typing import Any
 
 import frontmatter
 
-from corpus import containment, mime, recordbuild, records, schemas
+from corpus import containment, mime, recordbuild, records, schemas, sidecar
 from corpus import draft as draft_pkg
 from corpus.draft import DrafterResult
 
@@ -342,6 +342,16 @@ def attest(
         post, corpus_root, fingerprint_cli=fingerprint_cli, messages=eff_messages
     )
     apply_drafter_result(post, result, mime_schema_id, corpus_root)
+    # *(v41, §7.2 / §12.4.6)* The container-member sidecar lift is attested too — but from
+    # the CONTAINER, not from these bytes: a promoted record's lineage `uri:` names the
+    # container whose overlay declares what pairs with what, and the paired sidecar member
+    # is re-read and re-projected on every attest. Strip + regenerate of exactly the
+    # declaration-owned names; every other origin field survives. A record with no
+    # containment lineage, or whose container declares nothing, is untouched here.
+    try:
+        sidecar.refresh_lineage_lift(post, corpus_root)
+    except sidecar.DeclarationError as exc:
+        raise DeriveError(str(exc)) from exc
     return mime_schema_id or ""
 
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import corpus._pil  # noqa: F401 — registers the optional HEIF opener (v41)
+
 ALGO = "phash"
 STRATEGY = "phash-64"
 

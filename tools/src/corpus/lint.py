@@ -424,6 +424,116 @@ def _rule_origin_uri_shape(post, blocks, root) -> Iterator[Finding]:
             )
 
 
+# ---------- container-member sidecar rules (spec §7.2 `sidecar:`, v41) ---------- #
+
+
+def _rule_sidecar_member_promoted(post, blocks, root) -> Iterator[Finding]:
+    """*(v41, §7.2)* A consumed sidecar is never a record of its own. Fires when EVERY
+    origin block of the record is a containment lineage `corpus://<container>?path=<p>`
+    whose container's overlay declares a `sidecar:` under which `<p>` is the paired sidecar
+    of some primary member — the record's sole reason to exist is a member the declaration
+    says projects into its primary. A record that also carries some other origin (a
+    standalone ingest of the same bytes) is that other origin's record and is left alone.
+
+    Reads each lineage container's RECORD (cached per file — one parse per container, not
+    one per promoted member), never its bytes. A malformed declaration on a lineage
+    container is reported as `sidecar-declaration-invalid` rather than swallowed: a lift
+    that quietly didn't happen is worse than none. Nothing here knows what a sidecar is
+    FOR — the declaration says what pairs with what, and that is the whole test."""
+    from corpus import sidecar as _sidecar
+
+    if root is None:
+        return
+    origins = list(_records.iter_origin_blocks(post))
+    if not origins:
+        return
+    invalid: list[str] = []
+    verdicts: list[tuple[str, str, str] | None] = []
+    for block in origins:
+        lineage = _sidecar.lineage_member(block)
+        if lineage is None:
+            verdicts.append(None)
+            continue
+        container_id, member = lineage
+        container_post = _sidecar.load_container(root, container_id)
+        if container_post is None:
+            verdicts.append(None)
+            continue
+        try:
+            primary = _sidecar.consumed_sidecar_primary(root, container_post, member)
+        except _sidecar.DeclarationError as exc:
+            if str(exc) not in invalid:
+                invalid.append(str(exc))
+            verdicts.append(None)
+            continue
+        verdicts.append((container_id, member, primary) if primary else None)
+    for message in invalid:
+        yield Finding(rule_id="sidecar-declaration-invalid", severity="error", message=message)
+    if verdicts and all(v is not None for v in verdicts):
+        container_id, member, primary = verdicts[0]  # type: ignore[misc]
+        yield Finding(
+            rule_id="sidecar-member-promoted",
+            severity="error",
+            message=(
+                f"this record's only lineage is `path={member}` in container "
+                f"{container_id[:12]}…, which that container's `sidecar:` declaration "
+                f"names as the consumed sidecar of `path={primary}` — a sidecar member "
+                f"projects into its primary's origin block and is never a record of its "
+                f"own (spec §7.2); retire this record and promote the primary instead."
+            ),
+            fields={
+                "container": container_id,
+                "member": f"path={member}",
+                "primary": f"path={primary}",
+            },
+        )
+
+
+def _rule_sidecar_field_undeclared(post, blocks, root) -> Iterator[Finding]:
+    """*(v41, §7.2)* Every lifted field on a subtype-qualified origin block — every field
+    carrying the declaration's `prefix` — must be declared, with type and role, on the
+    block's overlay ladder `extended_fields` (the `<id>/<subtype>` overlay first, the
+    producer's as fallback). An undeclared lifted name is a declaration defect: the lift
+    map grew and the subtype overlay did not, so nothing types the value and no role marks
+    it. Blocks whose ladder declares no `sidecar:`, and bare blocks, are out of scope."""
+    from corpus import sidecar as _sidecar
+
+    if root is None:
+        return
+    for idx, block in enumerate(_records.iter_origin_blocks(post)):
+        id_, subtype = block.get("id"), block.get("subtype")
+        if not id_ or not subtype:
+            continue
+        try:
+            decl = _sidecar.resolve_declaration(root, str(id_), str(subtype))
+        except _sidecar.DeclarationError:
+            continue  # reported once by `sidecar-member-promoted`'s lineage walk
+        if decl is None or not decl.prefix:
+            continue
+        declared: set[str] = set()
+        for overlay_id in _records._origin_overlay_ladder(block):
+            overlay = _schemas.load_origin_overlay_by_id(root, overlay_id) or {}
+            ext = overlay.get("extended_fields")
+            if isinstance(ext, dict):
+                declared |= {str(k) for k in ext}
+        fields = block.get("fields") or {}
+        undeclared = [
+            str(k) for k in fields if str(k).startswith(decl.prefix) and str(k) not in declared
+        ]
+        if undeclared:
+            yield Finding(
+                rule_id="sidecar-field-undeclared",
+                severity="error",
+                message=(
+                    f"origin block #{idx + 1} (`{id_}/{subtype}`) carries lifted field(s) "
+                    f"{', '.join(f'`{k}`' for k in undeclared)} that no overlay on its ladder "
+                    f"declares under `extended_fields` — declare each lifted name with its "
+                    f"type and role on the subtype overlay (spec §7.2 `sidecar.subtype`)."
+                ),
+                fields={"overlay": f"{id_}/{subtype}", "fields": undeclared},
+            )
+
+
 # ---------- embed rules (reconciliation #1 — read from metadata zone) ---------- #
 
 
@@ -2609,6 +2719,11 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("artifact-block-missing", _rule_artifact_block_missing),
     ("origins-empty", _rule_origins_empty),
     ("origin-uri-shape", _rule_origin_uri_shape),
+    # *(v41, §7.2)* The container-member sidecar contract: a consumed sidecar is never a
+    # record; a lifted field is always declared.
+    ("sidecar-member-promoted", _rule_sidecar_member_promoted),
+    ("sidecar-declaration-invalid", _rule_sidecar_member_promoted),
+    ("sidecar-field-undeclared", _rule_sidecar_field_undeclared),
     ("embed-format", _rule_embed_format),
     ("member-row-unknown-key", _rule_member_row_unknown_key),
     ("atom-invalid", _rule_atom_invalid),

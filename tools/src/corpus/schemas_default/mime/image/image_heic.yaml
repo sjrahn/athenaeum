@@ -1,0 +1,30 @@
+applies_to:
+  content_types:
+  - image/heic
+  - image/heif
+# HEIF stills (v41) — `ftypheic`/`ftypheix` (the HEVC-coded iPhone brands) and the generic
+# `ftypmif1` brand, sniffed by the shared MIME detector. Decoding needs `pillow-heif` (the
+# `media` extra, registered by `corpus._pil`); without it the drafter cannot open the
+# bytes and the record stays a bare proxy until the extra is installed.
+#
+# whole-address admissibility: a HEIF container may hold an image SEQUENCE (a burst, a
+# live-photo key-frame set) as well as a still, exactly like AVIF — the same ISOBMFF box
+# family, the same `frame_count` gate.
+whole_address: single_unit_only
+whole_address_count: frame_count
+# The frame axis: a 1-based ordinal `frame=<N>` selects one item of the sequence; an
+# inclusive span `frame=<A>-<B>` is the whole-sequence ASSERTION (spec section 4.3.2.2).
+# Chains frame-then-region: `frame=3&bbox=...` names a region OF frame 3 (spec section
+# 6.2). The subtype declares its OWN scheme (this list replaces the axis default's
+# bbox-only scheme rather than merging with it), so bbox is restated here.
+address_scheme:
+- param: frame
+  type: index-span
+  description: |-
+    1-based frame ordinal `N`, or inclusive span `A-B` (the whole-sequence assertion).
+    Bounds-checked against the attested `frame_count`. Must lead its chain.
+- param: bbox
+  type: rect
+  description: |-
+    <x>,<y>,<w>,<h> - relative floats in [0.0, 1.0]. Origin top-left. After a `frame=`,
+    addresses a region of that frame.

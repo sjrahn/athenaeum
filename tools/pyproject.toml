@@ -31,7 +31,9 @@ capture        = ["playwright>=1.49"]
 # the stable channel lagged months behind TikTok's page changes — extraction failed
 # to a video-only, audio-less stream — while nightly extracts every format with audio.
 # `uv lock --upgrade-package yt-dlp` pulls the newest nightly. See gotchas (TikTok).
-media          = ["yt-dlp[default,curl-cffi]>=2026.5.25.234532.dev0"]
+# pillow-heif teaches Pillow HEIC/HEIF (the iPhone still format, most of a photo-library
+# export) — guard-imported in corpus/_pil.py, so the base install just cannot open one.
+media          = ["yt-dlp[default,curl-cffi]>=2026.5.25.234532.dev0", "pillow-heif>=1.5"]
 # docx drafting uses only the stdlib; xlsx needs openpyxl, xls needs xlrd.
 office         = ["openpyxl>=3.1", "xlrd>=2.0.1"]
 # text simhash is pure-Python (no dep); image pHash needs imagehash, audio
@@ -85,10 +87,11 @@ dev = [
     "pytest>=8",
     "pytest-mock>=3",
     "ruff>=0.7",
-    # Optional-extra deps the test suite exercises (office drafters, image pHash).
+    # Optional-extra deps the test suite exercises (office drafters, image pHash, HEIC).
     "openpyxl>=3.1",
     "xlrd>=2.0.1",
     "imagehash>=4.3",
+    "pillow-heif>=1.5",
 ]
 
 [tool.ruff]

@@ -424,6 +424,8 @@ def extension_for(mime: str, *, fallback: str = "bin") -> str:
         "image/gif": "gif",
         "image/webp": "webp",
         "image/avif": "avif",
+        "image/heic": "heic",
+        "image/heif": "heif",
         "audio/mpeg": "mp3",
         "audio/mp4": "m4a",
         "audio/x-wav": "wav",

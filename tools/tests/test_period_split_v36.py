@@ -22,6 +22,16 @@ import yaml
 from corpus import schemas
 from corpus._cli import period_split
 
+# *(v41, spec §7.2)* The pairing the v36 registry hard-coded, now declared per producer —
+# see `test_period_split._PAIRING_YAML`. `mystery-producer` / `some-producer` declare none.
+_PAIRING_YAML = {
+    "osxphotos-export": "sidecar:\n  pairing: {template: '{member}.json'}\n",
+    "proton-mail-export": (
+        "sidecar:\n  pairing: {template: '{stem}.metadata.json', "
+        "export_level: [labels.json]}\n"
+    ),
+}
+
 
 def _corpus(tmp_path: Path, partition_yaml: str | None, origin_id: str) -> Path:
     root = tmp_path / "c"
@@ -29,7 +39,9 @@ def _corpus(tmp_path: Path, partition_yaml: str | None, origin_id: str) -> Path:
     schema_dir = root / "schema" / "origin"
     schema_dir.mkdir(parents=True)
     if partition_yaml is not None:
-        (schema_dir / f"{origin_id}.yaml").write_text(f"description: test\n{partition_yaml}")
+        (schema_dir / f"{origin_id}.yaml").write_text(
+            f"description: test\n{partition_yaml}{_PAIRING_YAML.get(origin_id, '')}"
+        )
     schemas.cache_clear()
     return root
 
@@ -165,15 +177,17 @@ def test_labels_json_excluded_and_disclosed(tmp_path, capsys):
     assert "labels.json" in out and "excluded from bucketing" in out
 
 
-def test_unregistered_producer_with_sidecar_axis_is_a_hard_error(tmp_path):
+def test_undeclared_producer_with_sidecar_axis_is_a_hard_error(tmp_path):
+    """*(v41)* A producer whose overlay ladder declares no `sidecar:` has no pairing —
+    the sidecar axis cannot find a sidecar to read, so the run refuses (never guesses a
+    convention), and the error names the declaration the operator has to author."""
     root = _corpus(tmp_path, _MONTH_STANDING, "mystery-producer")
     src = tmp_path / "export"
     src.mkdir()
     (src / "a.eml").write_bytes(b"x")
-    with pytest.raises(SystemExit, match="no registered sidecar-pairing convention"):
+    with pytest.raises(SystemExit, match="declares no `sidecar:`"):
         _run(root, src, origin="mystery-producer", date_from="sidecar:Time")
-    # The error names the registered producers, never leaves the operator guessing.
-    with pytest.raises(SystemExit, match="osxphotos-export"):
+    with pytest.raises(SystemExit, match=r"pairing\.template"):
         _run(root, src, origin="mystery-producer", date_from="sidecar:Time")
 
 
