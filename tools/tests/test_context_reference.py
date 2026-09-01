@@ -16,7 +16,7 @@ from corpus import derived_views, lint, paths, records, segments
 
 RID = "a1" * 32
 TARGET = "b2" * 32
-_ISSUE_FIELDS = {"severity": "warning", "resolution": "open", "detector": "corpus.ingest@0.1.0"}
+_ISSUE_FIELDS = {"severity": "warning", "detector": "corpus.ingest@0.1.0"}
 
 
 def _corpus(tmp_path: Path) -> Path:
@@ -80,7 +80,7 @@ def test_legacy_issue_block_reads_and_upgrades(tmp_path):
     p = paths.record_path(root, RID)
     seeded = _post()
     records.append_issue_block(
-        seeded, id="paywall", severity="warning", resolution="open", detector="corpus.ingest@0.1.0"
+        seeded, id="paywall", severity="warning", detector="corpus.ingest@0.1.0"
     )
     records.dump(seeded, p)
     p.write_text(
@@ -108,7 +108,7 @@ def test_legacy_issue_block_reads_and_upgrades(tmp_path):
 def test_context_view_and_issues_projection(tmp_path):
     post = _post()
     records.append_issue_block(
-        post, id="paywall", severity="warning", resolution="open", detector="corpus.ingest@0.1.0"
+        post, id="paywall", severity="warning", detector="corpus.ingest@0.1.0"
     )
     records.append_context_block(
         post, namespace="reference", id="reference", fields={"attribution_text": "Capital"}

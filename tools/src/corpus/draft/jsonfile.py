@@ -65,8 +65,7 @@ def draft(
             {
                 "id": "malformed-json",
                 "severity": "warning",
-                "resolution": "open",
-                "detector": _DRAFTER_DETECTOR_ID,
+                        "detector": _DRAFTER_DETECTOR_ID,
                 "fields": {
                     "description": (
                         "The artifact does not parse as JSON "

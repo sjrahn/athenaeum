@@ -326,7 +326,7 @@ Working-dir constituents:
   `seg <atom> addr=… [body=@bodies/…]` ·
   `seg placement addr=…` ·
   `seg structural addr=… level=…` (body carries the mark's own text) ·
-  `issue <id> sev=… res=… detector=… [addr=…] [<structured-field>=…]`.
+  `issue <id> sev=… detector=… [addr=…] [<structured-field>=…]`.
   **The op grammar's own printed help (`corpus compile --help`) still advertises `entry=` and
   `desc=` flags on `section`/`seg`/`issue` — these are retired-era residue in the tooling's help
   text, not law.** `entry=`/`desc=`/`title=` on a section or segment write fields §4.3.2.1/§4.3.2.2
@@ -530,17 +530,22 @@ lives).
   If you only spot-extracted (a few on-screen titles, one legible page), write NO sweep: sparse
   is the default and it is honest.
 
-- **`issue`** — `<id[/subtype]> sev=blocking|warning|info res=open|fixed|wontfix|superseded
-  detector=<your model id> [addr=…]` plus whatever structured, non-prose fields the id's overlay
-  declares (a count, a URL, a signature). **An issue carries no prose** (spec §4.3.3.2 — "a typed
-  code at an address"). The type IS the meaning: `partial-content/paywall` at `el=12` needs no
-  gloss, and an id too vague to be self-explanatory is under-specified — the fix is a better id,
-  never a sentence tacked on. Examples: `partial-content`, `missing-media`, `bot-block`,
-  `encoding-corruption`, `format-loss`, an unreadable image, a table too blurry to extract. An
-  issue spanning many segments → lift to record scope (drop `addr=`).
+- **`issue`** — `<id[/subtype]> sev=blocking|warning|info detector=<your model id> [addr=…]`
+  plus whatever structured, non-prose fields the id's overlay declares (a count, a URL, a
+  signature). **An issue carries no prose** (spec §4.3.3.2 — "a typed code at an address").
+  The type IS the meaning: `partial-content/paywall` at `el=12` needs no gloss, and an id too
+  vague to be self-explanatory is under-specified — the fix is a better id, never a sentence
+  tacked on. Examples: `partial-content`, `missing-media`, `bot-block`, `encoding-corruption`,
+  `format-loss`, an unreadable image, a table too blurry to extract. An issue spanning many
+  segments → lift to record scope (drop `addr=`).
+  **An issue is a standing attestation, not a ticket** (spec §4.3.3.2): it has no lifecycle
+  field — you emit one only for a fidelity fact of THIS pass's rendering that stands (a paywall,
+  an unreadable region), and a later pass that renders what you couldn't simply doesn't re-emit
+  it. A defect you notice that a fix could clear — in a prior pass's work, in a schema, in
+  tooling — is **report material**: put it in your report; the persona files it on the tracker.
   **An issue is NOT a lint-finding receipt.** If `corpus lint` fires on content that is genuinely
-  correct and faithful, the *rule* is wrong — **say so in your report so a lint bug can be filed**; do
-  NOT bury a `res=wontfix` acknowledgement in the record. Never guess a value you cannot read — emit an
+  correct and faithful, the *rule* is wrong — **say so in your report so a lint bug can be
+  filed**; never acknowledge it in the record. Never guess a value you cannot read — emit an
   `issue` instead.
   **An issue is record-local — never a corpus-coverage note.** `missing-media` means a separable asset
   *of this artifact* (an image/file the page embeds) failed to extract — NEVER "a page this record

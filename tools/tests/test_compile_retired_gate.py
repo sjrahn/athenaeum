@@ -109,7 +109,7 @@ def _issue_record(root: Path, *, description: str | None = None) -> Path:
     )
     fields = {"description": description} if description else None
     records.append_issue_block(
-        post, id="partial-content", severity="warning", resolution="open",
+        post, id="partial-content", severity="warning",
         detector="claude-opus-4-8[1m]", address="page=1", fields=fields,
     )
     records.dump(post, p)

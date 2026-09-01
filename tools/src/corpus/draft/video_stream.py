@@ -173,7 +173,6 @@ def _issue(
     return {
         "id": issue_id,
         "severity": severity,
-        "resolution": "open",
         "detector": touches.script_identifier("draft.video_stream"),
         "fields": {"reason": reason, **(fields or {})},
     }

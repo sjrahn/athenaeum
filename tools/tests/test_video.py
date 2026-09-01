@@ -459,7 +459,7 @@ def test_unavailable_issue_is_spec_shaped():
     iss = video_mod._unavailable_issue("warning", "no adapter")
     assert iss["id"] == "transcription-unavailable"
     assert iss["severity"] == "warning"
-    assert iss["resolution"] == "open"
+    assert "resolution" not in iss
     assert _TOUCH_RE.match(iss["detector"])
 
 

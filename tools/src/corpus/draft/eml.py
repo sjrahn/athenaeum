@@ -203,7 +203,6 @@ def _partial(description: str, *, severity: str = "blocking") -> dict[str, Any]:
     issue: dict[str, Any] = {
         "id": "partial-content",
         "severity": severity,
-        "resolution": "open",
         "detector": _DETECTOR,
         "fields": {"description": description},
     }

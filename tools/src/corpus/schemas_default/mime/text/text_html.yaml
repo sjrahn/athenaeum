@@ -207,7 +207,6 @@ normalization:
 
         <!--issue partial-content/paywall
         severity: warning
-        resolution: open
         detector: <normalizer-touch-id>
         publisher: <publisher>
         paragraphs_captured: N

@@ -352,7 +352,7 @@ def test_detect_paywall_marker():
     assert issue["fields"]["signature"] == "paywall-marker"
     # #17: the HTML-class marker alone is informational, not a warning.
     assert issue["severity"] == "info"
-    assert issue["resolution"] == "open"
+    assert "resolution" not in issue
 
 
 def test_detect_login_wall_partial_title_does_not_fire():

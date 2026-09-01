@@ -39,7 +39,7 @@ Manifest grammar (one op per line; `#` comments; `shlex` tokenised):
     section [form=<form-id>] [addr=<a>] [k=v ...]
     seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]
     seg     structural addr=<a> level=<int> [mark=..]     # §4.3.2.3 byte-mark
-    issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]
+    issue   <id[/subtype]> sev=<s> detector=<d> [addr=<a>] [k=v ...]
     include <relpath>          # splice another manifest file's ops here (--split fragments)
 
 `decompose --split` shards the content zone into one `fragments/<ord>-<slug>.corpus` per
@@ -123,7 +123,7 @@ _MANIFEST_HEADER = [
     "#   section [form=<form-id>] [addr=<a>] [k=v ...]",
     "#   seg     <atom|atom/overlay> addr=<a> [body=@bodies/..] [k=v ...]",
     "#   seg     structural addr=<a> level=<int> [mark=..]   # §4.3.2.3 byte-mark",
-    "#   issue   <id[/subtype]> sev=<s> res=<r> detector=<d> [addr=<a>] [k=v ...]",
+    "#   issue   <id[/subtype]> sev=<s> detector=<d> [addr=<a>] [k=v ...]",
     "#   include <relpath>   # splice another manifest file's ops here (fragments/*.corpus from --split)",
     "# addr is one address, or a |-SEPARATED list in brackets: [a|b|…]  — NOT commas",
     "#   (a single address such as bbox=x,y,w,h already contains commas).",
@@ -333,7 +333,6 @@ def add_issue(
     id: str,
     subtype: str | None = None,
     severity: str,
-    resolution: str,
     detector: str,
     address: str | None = None,
     fields: dict | None = None,
@@ -351,7 +350,6 @@ def add_issue(
         id=id,
         subtype=subtype,
         severity=severity,
-        resolution=resolution,
         detector=detector,
         address=address,
         fields=dict(fields or {}),
@@ -368,7 +366,7 @@ def add_context(
     fields: dict | None = None,
 ) -> None:
     """Append a non-issue context block (reference / note / aside / …). `issue`-namespace
-    blocks go through `add_issue` (which carries the severity/resolution shape)."""
+    blocks go through `add_issue` (which carries the severity/detector shape)."""
     f = dict(fields or {})
     if address:
         f = {"address": address, **f}
@@ -798,19 +796,20 @@ def write_workdir(
             f_ = dict(ctx.get("fields") or {})
             addr = f_.pop("address", None)
             if ns == "issue":
-                # Keep the dedicated `issue <id> sev= res= detector=` manifest line. A
+                # Keep the dedicated `issue <id> sev= detector=` manifest line. A
                 # `description` surviving in `f_` below (§4.3.3.2, 3.5 — no successor) is
                 # ROUND-TRIPPED only, never taught: the printed grammar doesn't list `desc=`
                 # as an issue-line slot any more, and `compile`'s retirement gate (#116)
                 # refuses a rebuild that adds one where the base record had none (#153/#152).
+                # A retired `resolution` (v42) is SHED here, not round-tripped: the sweep
+                # (`corpus retire-resolution`) is the migration; a straggler sheds on write.
                 opener = f"{cid}/{sub}" if sub else cid
                 sev = f_.pop("severity", "")
-                res = f_.pop("resolution", "")
+                f_.pop("resolution", None)
                 det = f_.pop("detector", "")
                 parts = [
                     f"issue {opener}",
                     f"sev={_fmt_scalar(sev)}",
-                    f"res={_fmt_scalar(res)}",
                     f"detector={_fmt_scalar(det)}",
                 ]
             else:
@@ -1096,6 +1095,7 @@ def _dispatch_op(b: Build, work: Path, toks: list[str], state: _ReadState) -> No
         # printed grammar no longer teaches it (§4.3.3.2, 3.5: no successor); adding
         # a NEW one is `retired.census`'s "issue description", which `compile`'s
         # retirement gate (#116) refuses same as any other acquisition (#153/#152).
+        # A legacy `res=` (retired v42) is read tolerantly and dropped — never round-tripped.
         for k, v in kv.items():
             if k in ("sev", "res", "detector", "addr"):
                 continue
@@ -1108,7 +1108,6 @@ def _dispatch_op(b: Build, work: Path, toks: list[str], state: _ReadState) -> No
             id=iid,
             subtype=(sub or None),
             severity=kv["sev"],
-            resolution=kv["res"],
             detector=kv["detector"],
             address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
             fields=extras,

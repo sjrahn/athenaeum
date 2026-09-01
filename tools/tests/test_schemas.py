@@ -78,10 +78,10 @@ def test_load_issue_schema_merges_universal_under_per_id(tmp_path):
     fm = schemas.load_issue_schema(root, "format-loss")
     assert fm is not None
     # `format-loss.yaml` carries description only; the universal contributes the
-    # severity/resolution/detector field declarations.
+    # severity/detector field declarations (`resolution` is retired, v42).
     extended = fm.get("extended_fields") or {}
     assert "severity" in extended
-    assert "resolution" in extended
+    assert "resolution" not in extended
     assert "detector" in extended
 
 

@@ -69,7 +69,6 @@ def partial_content_issue(detector: str, description: str) -> dict[str, Any]:
         "id": "partial-content",
         "subtype": "empty-body",
         "severity": "blocking",
-        "resolution": "open",
         "detector": detector,
         "fields": {"description": description},
     }

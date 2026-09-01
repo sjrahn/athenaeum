@@ -125,7 +125,6 @@ def apply_drafter_result(
             id=str(issue.get("id") or "unknown"),
             subtype=issue.get("subtype"),
             severity=str(severity),
-            resolution=str(issue.get("resolution", "open")),
             detector=str(
                 issue.get("detector") or f"corpus.draft.{mime_schema_id}@{_pkg_version()}"
             ),

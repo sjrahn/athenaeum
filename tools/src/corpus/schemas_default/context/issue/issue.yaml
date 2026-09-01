@@ -22,16 +22,10 @@ extended_fields:
       - `info` — informational observation, no remediation expected.
       A corpus may extend this `enum:` in its local `context/issue/issue.yaml`; lint
       validates against the schema-declared set, not a hardcoded vocabulary.
-  resolution:
-    type: string
-    required: true
-    enum: [open, fixed, wontfix, superseded]
-    description: |
-      The issue's resolution state. Closed enum: `open | fixed | wontfix | superseded`.
-      - `open` — issue is current; needs action.
-      - `fixed` — issue was addressed in a subsequent pass.
-      - `wontfix` — issue is acknowledged but won't be remediated (out of scope, faithful).
-      - `superseded` — issue is no longer current (e.g. re-segmentation made the address obsolete).
+      There is deliberately no `resolution` field (retired v42, spec §4.3.3.2): an issue
+      is a lifecycle-free attestation — dropped by its emitting pass when the fact stops
+      being true, never marked fixed. Fixable findings are report material for the
+      instance tracker (Part I §2.3), never blocks.
   detector:
     type: string
     required: true

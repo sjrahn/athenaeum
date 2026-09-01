@@ -69,7 +69,6 @@ def loss_issue(
     return {
         "id": "format-loss",
         "severity": severity,
-        "resolution": "open",
         "detector": detector,
         "address": address,
         "fields": {"reason": reason, **fields},

@@ -81,11 +81,10 @@ _PERCEPTUAL_RE = re.compile(r"^[a-z][a-z0-9_-]*:[0-9a-f]{16,128}$", re.IGNORECAS
 _BLAKE3_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 _VALID_ATOMS = {"text", "image", "audio", "video"}
 _VALID_VISIBILITIES = {"visible", "deranked", "hidden"}
-# Universal FALLBACK vocab for issue severity/resolution. The authoritative set is the
-# `enum:` declared on the layered `context/issue` schema (a corpus may extend it); these
-# constants apply only when the schema declares no enum. See `_issue_vocab`.
+# Universal FALLBACK vocab for issue severity. The authoritative set is the `enum:`
+# declared on the layered `context/issue` schema (a corpus may extend it); the constant
+# applies only when the schema declares no enum. See `_issue_vocab`.
 _VALID_SEVERITIES = {"blocking", "warning", "info"}
-_VALID_RESOLUTIONS = {"open", "fixed", "wontfix", "superseded"}
 
 
 # ---------- frontmatter rules ---------- #
@@ -1366,28 +1365,26 @@ def _rule_address_el_range_grammar(post, blocks, root) -> Iterator[Finding]:
 # ---------- annotation-zone (issue) rules ---------- #
 
 
-def _issue_vocab(root, id_: str) -> tuple[set[str], set[str]]:
-    """Allowed (severity, resolution) value sets for an issue id, read from the layered
-    `context/issue` schema's `enum:` declarations (spec §4.3.3.1: the vocab is
-    schema-declared and corpus-local). Falls back to the universal constants when the
-    schema declares no enum."""
+def _issue_vocab(root, id_: str) -> set[str]:
+    """Allowed severity value set for an issue id, read from the layered `context/issue`
+    schema's `enum:` declaration (spec §4.3.3.1: the vocab is schema-declared and
+    corpus-local). Falls back to the universal constant when the schema declares no enum."""
     schema = _schemas.load_issue_schema(root, id_) or {}
     ext = schema.get("extended_fields") or {}
-    sev = set((ext.get("severity") or {}).get("enum") or ()) or _VALID_SEVERITIES
-    res = set((ext.get("resolution") or {}).get("enum") or ()) or _VALID_RESOLUTIONS
-    return sev, res
+    return set((ext.get("severity") or {}).get("enum") or ()) or _VALID_SEVERITIES
 
 
 def _rule_issue_shape(post, blocks, root) -> Iterator[Finding]:
     """Reconciliation #2: every `<!--issue-->` block carries the spec §4.3.3.1 shape.
 
-    Required: severity + resolution drawn from the schema-declared vocab (universal default
-    {blocking, warning, info} / {open, fixed, wontfix, superseded}, extensible per corpus);
-    detector (a touch identifier).
+    Required: severity drawn from the schema-declared vocab (universal default
+    {blocking, warning, info}, extensible per corpus); detector (a touch identifier).
+    Forbidden: `resolution` — retired v42 (spec §4.3.3.2: an issue is a lifecycle-free
+    attestation; the fleet sweep is `corpus retire-resolution`).
     """
     for idx, issue in enumerate(_records.iter_issue_blocks(post)):
         fields = issue.get("fields") or {}
-        valid_sev, valid_res = _issue_vocab(root, str(issue.get("id") or ""))
+        valid_sev = _issue_vocab(root, str(issue.get("id") or ""))
         sev = fields.get("severity")
         if sev not in valid_sev:
             yield Finding(
@@ -1398,14 +1395,13 @@ def _rule_issue_shape(post, blocks, root) -> Iterator[Finding]:
                     f"{sorted(valid_sev)}."
                 ),
             )
-        res = fields.get("resolution")
-        if res not in valid_res:
+        if "resolution" in fields:
             yield Finding(
-                rule_id="issue-resolution-invalid",
+                rule_id="issue-resolution-retired",
                 severity="error",
                 message=(
-                    f"issue #{idx + 1} `resolution: {res!r}`; expected one of "
-                    f"{sorted(valid_res)}."
+                    f"issue #{idx + 1} carries `resolution:` — retired v42 (an issue is a "
+                    "lifecycle-free attestation; run `corpus retire-resolution`)."
                 ),
             )
         det = fields.get("detector")

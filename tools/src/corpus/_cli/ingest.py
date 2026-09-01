@@ -995,7 +995,6 @@ def _emit_sidecar_issues(post: frontmatter.Post, sidecar: dict) -> None:
             id=str(issue_id),
             subtype=entry.get("subtype"),
             severity=str(severity),
-            resolution=str(entry.get("resolution") or "open"),
             detector=str(detector),
             fields=entry.get("fields") or None,
         )

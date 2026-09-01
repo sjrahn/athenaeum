@@ -161,16 +161,18 @@ def unshaped(
     return out[:limit]
 
 
-def unresolved_issues(
+def fidelity_attestations(
     refs: list[RecordRef], *, limit: int = 50
 ) -> dict[str, list[dict[str, Any]]]:
-    """Open `<!--issue-->` blocks grouped by severity (`blocking|warning|info`)."""
+    """`<!--issue-->` blocks grouped by severity (`blocking|warning|info`).
+
+    A disclosure surface, not a worklist (spec §4.3.3.2, v42): every block is a standing
+    fidelity attestation — lifecycle-free, current-truth by construction. The worklist for
+    fixable findings is the instance tracker (Part I §2.3)."""
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in refs:
         for issue in records.iter_issue_blocks(r.post):
             fields = issue.get("fields") or {}
-            if str(fields.get("resolution", "open")).lower() != "open":
-                continue
             severity = str(fields.get("severity") or "unknown")
             id_ = issue.get("id") or ""
             subtype = issue.get("subtype")
@@ -820,7 +822,7 @@ SIGNAL_NAMES = (
     "layer_presence",
     "records_by_mime",
     "unshaped",
-    "unresolved_issues",
+    "fidelity_attestations",
     "missing_artifacts",
     "validity_violations",
     "undescribed",
@@ -962,8 +964,8 @@ def scan_all(
         report["records_by_mime"] = records_by_mime(refs)
     if "unshaped" in selected:
         report["unshaped"] = unshaped(refs, corpus_root, limit=limit)
-    if "unresolved_issues" in selected:
-        report["unresolved_issues"] = unresolved_issues(refs, limit=limit)
+    if "fidelity_attestations" in selected:
+        report["fidelity_attestations"] = fidelity_attestations(refs, limit=limit)
     if "missing_artifacts" in selected:
         report["missing_artifacts"] = missing_artifacts(
             refs, corpus_root, limit=limit, skip_remote_check=skip_remote_check

@@ -129,8 +129,7 @@ def draft(
                 "id": "partial-content",
                 "subtype": "empty-body",
                 "severity": "blocking",
-                "resolution": "open",
-                "detector": _DRAFTER_DETECTOR_ID,
+                        "detector": _DRAFTER_DETECTOR_ID,
                 "fields": {
                     "description": (
                         "EPUB produced no readable spine content (missing/unreadable OPF "

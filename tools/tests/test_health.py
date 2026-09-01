@@ -67,8 +67,7 @@ def _write(
             post,
             id=issue["id"],
             severity=issue["severity"],
-            resolution=issue.get("resolution", "open"),
-            detector=issue["detector"],
+                detector=issue["detector"],
             address=issue.get("address"),
         )
     record_path = paths.record_path(root, rid)
@@ -158,10 +157,10 @@ def test_unshaped(tmp_path):
     assert all(i["shapable"] is False for i in items)
 
 
-def test_unresolved_issues_grouped(tmp_path):
+def test_fidelity_attestations_grouped(tmp_path):
     root = _populate(tmp_path)
     refs = health.load_all_records(root)
-    groups = health.unresolved_issues(refs)
+    groups = health.fidelity_attestations(refs)
     assert "warning" in groups
     assert {e["id"] for e in groups["warning"]} == {D}
 

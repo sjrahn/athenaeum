@@ -75,6 +75,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "remap-el":        ("Maintenance",            "§12.28 migration: rewrite legacy el=N addresses to child-index paths + stamp addressing (dry-run by default)"),
     "remap-el-ordinal": ("Maintenance",           "v35 migration: rewrite dotted/legacy el= addresses to document-order ordinals + stamp scheme: ordinal (dry-run by default)"),
     "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired (dry-run by default)"),
+    "retire-resolution": ("Maintenance",          "v42 migration: strip the retired issue `resolution:` field; fixed/superseded blocks drop outright (dry-run by default)"),
     "reseat":          ("Maintenance",            "§12.30 migration: promote each placed member and move its rendering onto its own record, leaving a placement (dry-run by default)"),
     "home-crumb":      ("Maintenance",            "#89 migration: move a verbatim, alone-in-its-own-segment my.alldata.com breadcrumb into a new trailing index span (dry-run by default)"),
     "home-rail":       ("Maintenance",            "#89 migration: render a my.alldata.com related-information rail out of its retired relation blocks into a trailing index span (dry-run by default)"),

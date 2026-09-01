@@ -120,7 +120,6 @@ def _unsupported_track_issue(track: streams.StreamInfo, reason: str) -> dict[str
         "id": "partial-content",
         "subtype": "unsupported-track",
         "severity": "info",
-        "resolution": "open",
         "detector": _DETECTOR,
         "fields": {
             "description": (

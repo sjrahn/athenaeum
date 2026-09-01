@@ -453,7 +453,7 @@ def _emit_context_block(ctx: dict[str, Any]) -> str:
 
     `ctx` carries `{namespace, id, subtype, fields}` — the same shape as a classify block,
     in the annotations zone (spec §4.3.3). The `issue` namespace's blocks carry the §4.3.3.1
-    severity/resolution/detector fields; `reference` carries the citation-ladder fields; etc.
+    severity/detector fields; `reference` carries the citation-ladder fields; etc.
     Collapse mirrors `_emit_classify_block`: a bare namespace is emitted when `id == namespace`
     and there is no subtype.
     """
@@ -1550,7 +1550,6 @@ def append_issue_block(
     id: str,
     subtype: str | None = None,
     severity: str,
-    resolution: str = "open",
     detector: str,
     address: str | None = None,
     fields: dict[str, Any] | None = None,
@@ -1558,12 +1557,13 @@ def append_issue_block(
     """Append an `issue`-namespace context block (spec §4.3.3.1 shape).
 
     Convenience over `append_context_block(namespace="issue", …)`: assembles the universal
-    issue fields (severity, resolution, detector, optional address) plus any id-specific
-    `fields`. If `address` is provided the issue is segment-scoped, otherwise record-scoped.
+    issue fields (severity, detector, optional address) plus any id-specific `fields`. If
+    `address` is provided the issue is segment-scoped, otherwise record-scoped. There is no
+    `resolution` parameter — an issue is a lifecycle-free attestation (spec §4.3.3.2, v42):
+    it is dropped by its emitting pass when the fact stops being true, never marked fixed.
     """
     block_fields: dict[str, Any] = {
         "severity": severity,
-        "resolution": resolution,
         "detector": detector,
     }
     if address:

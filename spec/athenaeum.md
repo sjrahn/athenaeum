@@ -122,8 +122,10 @@ tenancy:                   # optional — the instance-declared disclosure set (
                            # Absent block: the public|private binary — pre-tier behavior.
 
 tracker:                   # the issue tracker — the system's backlog
+  kind: forgejo            # forge dialect: forgejo (default) | github
   repo: {owner}/{name}     # the forge repo carrying instance issues
-  host: https://…          # the forge instance (API host derives from it)
+  host: https://…          # the forge instance (API host derives from it; optional
+                           # for kind github, defaulting to https://github.com)
   snapshot: corpus/runbooks/tickets.md   # where `ath issue sync` writes the committed
                            # offline read (relative to the instance root)
 
@@ -150,6 +152,8 @@ assets:                    # instance-registered tool assets (Part II §12.3.6):
 ```
 
 The registry earns tracking: a snapshot registration (tag → mirror blake3) is a durable fact about the system — it now lands as a visible diff with history, like every other durable declaration (§1.2 principle 8). Machine-specific custody (where mirror bytes physically reside) stays out of the config — that is `corpus.toml`'s job (Part IV). An `assets:` entry registers a **tool asset** — a payload the tooling injects or executes (the web capturer's SingleFile bundle, Part II §12.3.6) whose exact bytes shape captured content and therefore belong to the instance, not the tooling: captured with provenance, pinned by artifact blake3, resolved through custody, updated by registration diff. Same snapshot grammar as `references:`, none of the citation semantics — asset content is never a `ref://` surface.
+
+**The tracker is the system's external issues surface** *(v42)*. Beyond the backlog and its rulings, the tracker carries **per-record findings** — defects of the authored layer a reviewer found after the fact, coverage work, schema work — which the record itself deliberately does not (Part II §4.3.3.2: in the record an issue is a fidelity attestation, never a ticket; lifecycle lives here). Conventions, so `ath issue list` filters into work packages: labels `layer:corpus|ledger|spec|tooling|scanner` and `kind:fidelity|coverage|schema|ops` (tooling treats unknown labels gracefully); machine-readable **trailers** at the end of the issue body, git-trailer style — `Record: corpus://<blake3>` (repeatable), `Address: <segment-address>` (repeatable), `Detector: <touch-id>`, `Ledger: <item-id>` when an epistemic twin exists (Part II §4.3.3.2). Priority, assignment, and comments ride the forge's own fields. Two invariants: the corpus queue (`corpus enqueue`) stays the sole demand channel — the tracker manages work, it never becomes a second queue — and tracker state is management, never truth: a finding is *resolved* by the fix landing in the record or ledger, where the touch chain or item history proves it; closing the ticket records that. The persona files issues from worker reports (workers touch neither git nor the forge); reads go through `ath issue`, writes through the forge's own CLI (§7).
 
 A deployment bootstraps by installing the distribution's CLIs, running `ath init` (or cloning an existing instance), and working inside the instance.
 
@@ -236,7 +240,7 @@ Agent passes are one-item-scoped, report to their driver, and share no state bey
 One distribution — **`athenaeum`** (Python, `tools/` in the distribution repo) — ships the system's CLIs:
 
 - **`corpus`** — the corpus pipeline and query surface: capture / ingest / attest / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, and the custody verbs (Part IV: location, locate, gc).
-- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot; writes go through the forge's own CLI), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands, and `ath ledger export` — the plane-projected RDF projection, Part III §15.7), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
+- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot, forge-dialect-aware per `tracker.kind`; `list --label`/`--record` filter into work packages; writes go through the forge's own CLI — `fj` on Forgejo, `gh` on GitHub), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands, and `ath ledger export` — the plane-projected RDF projection, Part III §15.7), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
 
 The distribution ships **spine adapters** — the format knowledge for reading the registered ontology reference datasets (a BFO-2020 table set, a CCO release tree — Part III §15.2); the spine data itself is instance state, captured and registered like any reference dataset, never shipped with the tooling.
 

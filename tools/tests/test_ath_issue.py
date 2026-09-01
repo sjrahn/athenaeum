@@ -138,3 +138,77 @@ def test_check_detects_drift(tmp_path):
 
     closed_now = _render_snapshot(t, [_issue(52, "original title", "closed")])
     assert first != closed_now, "a ticket closing must change the snapshot"
+
+
+# ---------- the GitHub dialect (spec Part I §2.3, v42) ---------- #
+
+
+def test_github_kind_defaults_to_github_dot_com(tmp_path):
+    root = _root(tmp_path, "tracker:\n  kind: github\n  repo: LuklaCloud/Corpus\n")
+    t = load_tracker(root)
+    assert t.kind == "github"
+    assert t.base == "https://api.github.com"
+    assert t.issues_path == "/repos/LuklaCloud/Corpus/issues"
+    assert t.web == "https://github.com/LuklaCloud/Corpus/issues"
+
+
+def test_github_enterprise_host_gets_the_v3_api_root(tmp_path):
+    root = _root(
+        tmp_path, "tracker:\n  kind: github\n  host: https://gh.corp.test\n  repo: o/r\n"
+    )
+    t = load_tracker(root)
+    assert t.base == "https://gh.corp.test/api/v3"
+    assert t.web == "https://gh.corp.test/o/r/issues"
+
+
+def test_forgejo_stays_the_default_kind(tmp_path):
+    assert load_tracker(_root(tmp_path)).kind == "forgejo"
+
+
+def test_an_unknown_tracker_kind_is_refused_not_guessed(tmp_path):
+    with pytest.raises(ManifestError) as e:
+        load_tracker(_root(tmp_path, "tracker:\n  kind: gitlab\n  repo: o/r\n"))
+    assert "forgejo|github" in str(e.value)
+
+
+# ---------- the `Record:` trailer and work-package grouping (Part I §2.3) ---------- #
+
+
+def test_record_trailers_parse_bare_and_corpus_spellings():
+    from ath._cli.issue import _trailer_records
+
+    body = (
+        "The rendering drops the third table.\n\n"
+        f"Record: corpus://{'ab' * 32}\n"
+        f"Record: {'cd' * 32}\n"
+        "Address: el=87\n"
+        "Detector: claude-opus-4-8[1m]\n"
+    )
+    got = _trailer_records(_issue(1, "t") | {"body": body})
+    assert got == ["ab" * 32, "cd" * 32]
+    # a body with no trailers (or no body at all) contributes nothing
+    assert _trailer_records(_issue(2, "t")) == []
+
+
+def test_snapshot_groups_open_by_layer_label(tmp_path):
+    t = load_tracker(_root(tmp_path))
+    out = _render_snapshot(t, [
+        _issue(1, "corpus fix", "open", ["layer:corpus", "kind:fidelity"]),
+        _issue(2, "ledger fix", "open", ["layer:ledger"]),
+        _issue(3, "loose end", "open"),
+        _issue(4, "was done", "closed", ["layer:corpus"]),
+    ])
+    open_section = out.split("## Closed")[0]
+    assert "### layer:corpus" in open_section
+    assert "### layer:ledger" in open_section
+    assert "### (unlabeled)" in open_section
+    assert open_section.index("### layer:corpus") < open_section.index("corpus fix")
+    assert open_section.index("### (unlabeled)") < open_section.index("loose end")
+    # closed issues never group — the section is a flat trace
+    assert "### " not in out.split("## Closed")[1]
+
+
+def test_snapshot_stays_flat_when_no_layer_labels_exist(tmp_path):
+    t = load_tracker(_root(tmp_path))
+    out = _render_snapshot(t, [_issue(1, "a", "open"), _issue(2, "b", "open")])
+    assert "### " not in out

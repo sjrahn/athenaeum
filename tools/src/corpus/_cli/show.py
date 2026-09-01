@@ -112,7 +112,7 @@ def run(args: argparse.Namespace) -> int:
                 label += f"/{ctx['subtype']}"
             fields = ctx.get("fields") or {}
             if ns == "issue":
-                detail = f"severity={fields.get('severity')}  resolution={fields.get('resolution')}"
+                detail = f"severity={fields.get('severity')}  detector={fields.get('detector')}"
             elif ns == "reference":
                 rung = fields.get("source_uri") or fields.get("source_url") or fields.get("attribution_text")
                 detail = f"→ {rung}" if rung else ""

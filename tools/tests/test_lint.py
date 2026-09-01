@@ -494,7 +494,7 @@ def test_perceptual_list_with_bad_entry_is_an_error(tmp_path):
 
 
 def test_issue_vocab_is_schema_extensible(tmp_path):
-    """§4.3.3.1 — issue severity/resolution vocab is schema-declared, not hardcoded; a
+    """§4.3.3.1 — issue severity vocab is schema-declared, not hardcoded; a
     corpus may extend it in its local `context/issue/issue.yaml`."""
     root = _make_corpus(tmp_path)
     issue_dir = root / "schema" / "context" / "issue"
@@ -511,7 +511,6 @@ def test_issue_vocab_is_schema_extensible(tmp_path):
         post,
         id="format-loss",
         severity="critical",  # corpus-extended value, not in the universal default
-        resolution="open",
         detector="corpus.ingest@0.1.0",
     )
     findings = _lint(post, root)
@@ -536,14 +535,28 @@ def test_issue_shape_validation(tmp_path):
         post,
         id="format-loss",
         severity="major",  # not in the schema enum
-        resolution="needs-human-review",  # not in the schema enum
         detector="not a touch id",  # whitespace → not a valid touch identifier
     )
     findings = _lint(post, root)
     rule_ids = {f.rule_id for f in findings}
     assert "issue-severity-invalid" in rule_ids
-    assert "issue-resolution-invalid" in rule_ids
     assert "issue-detector-format" in rule_ids
+
+
+def test_issue_resolution_retired(tmp_path):
+    """§4.3.3.2 (v42): an issue is a lifecycle-free attestation — a `resolution:` field,
+    whatever its value, is an error naming the sweep (`corpus retire-resolution`)."""
+    root = _make_corpus(tmp_path)
+    post = _clean_post()
+    records.append_issue_block(
+        post,
+        id="format-loss",
+        severity="warning",
+        detector="corpus.ingest@0.1.0",
+        fields={"resolution": "open"},  # a legacy block, pre-sweep
+    )
+    findings = _lint(post, root)
+    assert any(f.rule_id == "issue-resolution-retired" for f in findings)
 
 
 def test_issue_spec_shape_passes(tmp_path):
@@ -553,7 +566,6 @@ def test_issue_spec_shape_passes(tmp_path):
         post,
         id="format-loss",
         severity="warning",
-        resolution="open",
         detector="corpus.draft.mime/application/pdf@0.1.0",
     )
     findings = _lint(post, root)
@@ -747,7 +759,7 @@ def test_issue_on_draft_rule_dropped(tmp_path):
     root = _make_corpus(tmp_path)
     post = _clean_post()
     records.append_issue_block(
-        post, id="incomplete", severity="warning", resolution="open", detector="claude-opus-4-8[1m]"
+        post, id="incomplete", severity="warning", detector="claude-opus-4-8[1m]"
     )
     assert "issue-on-draft" not in _fired(post, root)
 

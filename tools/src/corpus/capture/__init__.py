@@ -1684,7 +1684,6 @@ def _snapshot_engine_issue(
         "id": "snapshot-engine-degraded",
         "subtype": None,
         "severity": "warning",
-        "resolution": "open",
         "detector": detector_id or touches.script_identifier("capture"),
         "fields": {"snapshot_engine": SNAPSHOT_ENGINE_DEGRADED},
     }
@@ -1704,8 +1703,7 @@ def _detect_http_error_with_200_body(
                 "id": "partial-content",
                 "subtype": "http-error",
                 "severity": "blocking",
-                "resolution": "open",
-                "detector": detector_id,
+                        "detector": detector_id,
                 "fields": {"http_status": 200, "signature": name},
             }
     return None
@@ -1734,8 +1732,7 @@ def _detect_final_url_drift(
             "id": "partial-content",
             "subtype": "redirect-drift",
             "severity": "warning",
-            "resolution": "open",
-            "detector": detector_id,
+                "detector": detector_id,
             "fields": {
                 "drift": "hostname-change",
                 "request_url": request_url,
@@ -1752,8 +1749,7 @@ def _detect_final_url_drift(
                 "id": "partial-content",
                 "subtype": "redirect-drift",
                 "severity": "warning",
-                "resolution": "open",
-                "detector": detector_id,
+                        "detector": detector_id,
                 "fields": {"drift": name, "request_url": request_url, "final_url": final_url},
             }
     return None
@@ -1772,8 +1768,7 @@ def _detect_login_wall(*, snapshot: str, detector_id: str, **_: Any) -> dict | N
                     "id": "partial-content",
                     "subtype": "login-wall",
                     "severity": "warning",
-                    "resolution": "open",
-                    "detector": detector_id,
+                                "detector": detector_id,
                     "fields": {"signature": sig_name},
                 }
         elif body_re is not None and body_re.search(body_text):
@@ -1781,8 +1776,7 @@ def _detect_login_wall(*, snapshot: str, detector_id: str, **_: Any) -> dict | N
                 "id": "partial-content",
                 "subtype": "login-wall",
                 "severity": "warning",
-                "resolution": "open",
-                "detector": detector_id,
+                        "detector": detector_id,
                 "fields": {"signature": sig_name},
             }
     return None
@@ -1800,8 +1794,7 @@ def _detect_paywall(*, snapshot: str, detector_id: str, **_: Any) -> dict | None
                 "id": "partial-content",
                 "subtype": "paywall",
                 "severity": severity,
-                "resolution": "open",
-                "detector": detector_id,
+                        "detector": detector_id,
                 "fields": {"signature": name},
             }
     return None
@@ -1819,8 +1812,7 @@ def _detect_captcha(*, snapshot: str, detector_id: str, **_: Any) -> dict | None
                 "id": "partial-content",
                 "subtype": "captcha",
                 "severity": "blocking",
-                "resolution": "open",
-                "detector": detector_id,
+                        "detector": detector_id,
                 "fields": {"signature": name},
             }
     return None
@@ -1841,7 +1833,6 @@ def _detect_inline_image_failure(
         "id": "inline-image-failure",
         "subtype": None,
         "severity": "warning" if rate > 0.50 else "info",
-        "resolution": "open",
         "detector": detector_id,
         "fields": {
             "inlined_count": inlined,

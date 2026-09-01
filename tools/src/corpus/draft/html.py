@@ -336,8 +336,7 @@ def draft(
             {
                 "id": "bot-block",
                 "severity": "blocking",
-                "resolution": "open",
-                "detector": _DRAFTER_DETECTOR_ID,
+                        "detector": _DRAFTER_DETECTOR_ID,
                 "fields": {
                     "signature": source,
                     "description": (
@@ -407,8 +406,7 @@ def draft(
                     "id": "partial-content",
                     "subtype": "elementless-body",
                     "severity": "warning",
-                    "resolution": "open",
-                    "detector": _DRAFTER_DETECTOR_ID,
+                                "detector": _DRAFTER_DETECTOR_ID,
                     "fields": {
                         "description": (
                             "The artifact's <body> carries visible content as bare "
@@ -900,7 +898,6 @@ def _detect_empty_body(soup: BeautifulSoup) -> dict[str, Any] | None:
         "id": "partial-content",
         "subtype": "empty-body",
         "severity": "blocking",
-        "resolution": "open",
         "detector": _DRAFTER_DETECTOR_ID,
         "fields": {
             "description": (
@@ -922,8 +919,7 @@ def _detect_generic_title(title: str | None) -> dict[str, Any] | None:
             return {
                 "id": "generic-title",
                 "severity": "warning",
-                "resolution": "open",
-                "detector": _DRAFTER_DETECTOR_ID,
+                        "detector": _DRAFTER_DETECTOR_ID,
                 "fields": {
                     "signature": name,
                     "title": raw[:200],
@@ -955,7 +951,6 @@ def _detect_noscript_heavy(soup: BeautifulSoup) -> dict[str, Any] | None:
     return {
         "id": "noscript-heavy",
         "severity": "warning",
-        "resolution": "open",
         "detector": _DRAFTER_DETECTOR_ID,
         "fields": {
             "noscript_chars": len(noscript_text),
@@ -988,7 +983,6 @@ def _detect_charset_mismatch(raw_bytes: bytes) -> dict[str, Any] | None:
         "id": "encoding-corruption",
         "subtype": "charset-mismatch",
         "severity": "warning",
-        "resolution": "open",
         "detector": _DRAFTER_DETECTOR_ID,
         "fields": {
             "signatures_matched": hits[:10],

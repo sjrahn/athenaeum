@@ -178,7 +178,6 @@ def _unavailable_issue(severity: str, reason: str) -> dict[str, Any]:
     return {
         "id": "transcription-unavailable",
         "severity": severity,
-        "resolution": "open",
         "detector": touches.script_identifier("draft.audio"),
         "fields": {"reason": reason},
     }

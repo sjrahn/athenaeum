@@ -136,7 +136,7 @@ def issues(post: frontmatter.Post) -> list[dict[str, Any]]:
     """§9.2 — derive `issues[]`: the `issue`-namespace projection of the context view.
 
     Returns a list of structured records `{id, subtype?, ...fields}` (fields include
-    severity, resolution, detector, optional address + id-specific extras).
+    severity, detector, optional address + id-specific extras).
     """
     out: list[dict[str, Any]] = []
     for issue in records.iter_issue_blocks(post):

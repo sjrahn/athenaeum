@@ -21,10 +21,13 @@ visibility: private
 #    family: [family]           # implicit in every audience; `private` is the
 #    finances: [accountant]     # owner's alone, never grantable.
 
-# The issue tracker — the instance's backlog. Reads go through `ath issue`;
-# writes go through the forge's own CLI.
+# The issue tracker — the instance's backlog, and the external issues surface
+# for per-record findings (spec Part I §2.3: `layer:`/`kind:` labels, `Record:`
+# body trailers). Reads go through `ath issue`; writes go through the forge's
+# own CLI (`fj` on Forgejo, `gh` on GitHub).
 #tracker:
-#  host: https://forge.example.com
+#  kind: forgejo                          # forge dialect: forgejo | github
+#  host: https://forge.example.com        # optional for kind github
 #  repo: my-org/my-athenaeum
 #  snapshot: corpus/runbooks/tickets.md   # where `ath issue sync` writes the
 #                                         # committed offline read

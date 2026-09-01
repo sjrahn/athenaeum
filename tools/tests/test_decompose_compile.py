@@ -62,7 +62,6 @@ def _make_golden_record_file(corpus_root: Path) -> Path:
         post,
         id="format-loss",
         severity="warning",
-        resolution="open",
         detector="corpus.draft.mime/application/pdf@0.1.0",
     )
     records.dump(post, p)

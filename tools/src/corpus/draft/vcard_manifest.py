@@ -108,7 +108,6 @@ def _issue(
     issue: dict[str, Any] = {
         "id": "partial-content",
         "severity": severity,
-        "resolution": "open",
         "detector": _DETECTOR,
         "fields": {"description": description, **(fields or {})},
     }

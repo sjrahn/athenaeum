@@ -6,7 +6,7 @@ description: |
   The captured page is gated by a subscription paywall — the visible content
   is the paywall prompt, not the article. The captured bytes are typically
   partial: a teaser paragraph plus a subscribe CTA. Typically a warning;
-  resolution is either to capture via an authenticated session that has a
+  the remedy is either to capture via an authenticated session that has a
   subscription, or to accept the partial content as the corpus's record of
   what's publicly visible.
 

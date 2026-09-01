@@ -705,7 +705,7 @@ def test_html_drafter_flags_empty_body(tmp_path, run_drafter):
     assert len(empties) == 1
     issue = empties[0]
     assert issue["severity"] == "blocking"
-    assert issue["resolution"] == "open"
+    assert "resolution" not in issue
     assert issue["detector"].startswith("corpus.draft.text/text_html@")
 
 

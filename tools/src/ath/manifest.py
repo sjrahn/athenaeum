@@ -34,8 +34,10 @@ pinned exactly as a reference snapshot is: the same tag-keyed `snapshots:` /
 adapter/citation machinery — an asset's bytes are never a `ref://` surface.
 
 The issue tracker registers under `tracker:` — the forge repo whose issues
-carry the instance's backlog, the forge `host:`, and the in-repo path of the
-snapshot `ath issue sync` writes.
+carry the instance's backlog, the forge dialect (`kind: forgejo|github`,
+default forgejo), the forge `host:` (optional on github, defaulting to
+https://github.com), and the in-repo path of the snapshot `ath issue sync`
+writes.
 
 Tenancy (`spec/ledger.md` §6.4) registers under `tenancy:` — the instance's
 declared tier set beside the reserved `public`/`private`, and named
@@ -122,12 +124,20 @@ class Instance:
 
 @dataclass(frozen=True)
 class Tracker:
-    """The issue tracker holding the instance's backlog."""
+    """The issue tracker holding the instance's backlog.
 
-    base: str  # API root, e.g. https://host/api/v1
+    `kind` is the forge dialect (spec Part I §2.3): `forgejo` (the default; API
+    at `{host}/api/v1`) or `github` (API at https://api.github.com, or
+    `{host}/api/v3` on an enterprise host). The issues route and payload shapes
+    are GitHub-compatible on both; the differences (pagination param, write
+    CLI) live with the callers.
+    """
+
+    base: str  # API root, e.g. https://host/api/v1 or https://api.github.com
     owner: str
     repo: str
     snapshot: Path  # in-repo path of the generated offline snapshot
+    kind: str = "forgejo"
 
     @property
     def issues_path(self) -> str:
@@ -135,6 +145,11 @@ class Tracker:
 
     @property
     def web(self) -> str:
+        if self.kind == "github":
+            host = "github.com" if self.base == "https://api.github.com" else (
+                self.base.split("://", 1)[1].removesuffix("/api/v3")
+            )
+            return f"https://{host}/{self.owner}/{self.repo}/issues"
         return f"{self.base.removesuffix('/api/v1')}/{self.owner}/{self.repo}/issues"
 
 
@@ -430,7 +445,9 @@ def load_assets(root: Path) -> list[Asset]:
 def load_tracker(root: Path) -> Tracker:
     """Parse the config's `tracker:` section.
 
-    `host:` names the forge instance (`https://host`); the legacy `org:` key
+    `kind:` picks the forge dialect (`forgejo`, the default, or `github`).
+    `host:` names the forge instance (`https://host`) — optional on github,
+    defaulting to https://github.com; the legacy `org:` key
     (`https://host/org`) is read as a fallback so a pre-v26 config's tracker
     still resolves during migration. `repo:` is `owner/name`.
     """
@@ -438,7 +455,11 @@ def load_tracker(root: Path) -> Tracker:
     spec = data.get("tracker") or {}
     if not isinstance(spec, dict):
         raise ManifestError("manifest tracker: expected a mapping")
-    host_url = str(spec.get("host") or data.get("org") or "").rstrip("/")
+    kind = str(spec.get("kind") or "forgejo").lower()
+    if kind not in ("forgejo", "github"):
+        raise ManifestError(f"manifest tracker.kind: expected forgejo|github, got {kind!r}")
+    default_host = "https://github.com" if kind == "github" else ""
+    host_url = str(spec.get("host") or data.get("org") or default_host).rstrip("/")
     if not host_url:
         raise ManifestError("manifest tracker: no host to derive the forge API from")
     slug = str(spec.get("repo") or "")
@@ -449,9 +470,14 @@ def load_tracker(root: Path) -> Tracker:
     # lives at the instance root either way.
     scheme, _, rest = host_url.partition("://")
     host = rest.split("/", 1)[0]
+    if kind == "github":
+        base = "https://api.github.com" if host == "github.com" else f"{scheme}://{host}/api/v3"
+    else:
+        base = f"{scheme}://{host}/api/v1"
     return Tracker(
-        base=f"{scheme}://{host}/api/v1",
+        base=base,
         owner=owner,
         repo=repo,
         snapshot=root / str(spec.get("snapshot") or _DEFAULT_SNAPSHOT),
+        kind=kind,
     )

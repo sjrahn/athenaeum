@@ -110,11 +110,11 @@ def _format_summary(report: dict[str, Any]) -> str:
         items = report["unshaped"]
         shapable = sum(1 for i in items if i["shapable"])
         lines.append(f"unshaped: {len(items)} ({shapable} shapable)")
-    if "unresolved_issues" in report:
-        groups = report["unresolved_issues"]
+    if "fidelity_attestations" in report:
+        groups = report["fidelity_attestations"]
         total = sum(len(v) for v in groups.values())
         bysev = ", ".join(f"{k}: {len(v)}" for k, v in sorted(groups.items()))
-        lines.append(f"unresolved_issues: {total}" + (f" ({bysev})" if bysev else ""))
+        lines.append(f"fidelity_attestations: {total}" + (f" ({bysev})" if bysev else ""))
     if "missing_artifacts" in report:
         items = report["missing_artifacts"]
         by_cat: Counter[str] = Counter(i.get("category", "unknown") for i in items)

@@ -53,7 +53,6 @@ def _make_golden_record(corpus_root: Path) -> Path:
         post,
         id="encoding-artifact",
         severity="warning",
-        resolution="open",
         detector="corpus.draft.mime/application/pdf@0.1.0",
     )
     records.dump(post, p)
@@ -78,7 +77,7 @@ def test_issues_view_returns_structured(tmp_path):
     e = iss[0]
     assert e["id"] == "encoding-artifact"
     assert e["severity"] == "warning"
-    assert e["resolution"] == "open"
+    assert "resolution" not in e
     assert e["detector"].startswith("corpus.")
 
 

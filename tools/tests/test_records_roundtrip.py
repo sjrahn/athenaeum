@@ -55,7 +55,6 @@ def _make_golden(tmp_path):
         post,
         id="encoding-artifact",
         severity="warning",
-        resolution="open",
         detector="corpus.draft.mime/application/pdf@0.1.0",
     )
     return post, p
@@ -120,7 +119,7 @@ def test_dump_then_load_roundtrips_every_block(tmp_path):
     assert len(issues) == 1
     assert issues[0]["id"] == "encoding-artifact"
     assert issues[0]["fields"]["severity"] == "warning"
-    assert issues[0]["fields"]["resolution"] == "open"
+    assert "resolution" not in issues[0]["fields"]
     assert issues[0]["fields"]["detector"].startswith("corpus.")
 
 

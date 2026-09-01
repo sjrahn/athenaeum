@@ -7,7 +7,7 @@ description: |
   authenticate before seeing the underlying article. The captured bytes
   represent the wall, not the content. Typically a warning rather than
   blocking because the wall itself is a meaningful artifact (it tells us
-  the publisher gated the content); resolution is to re-capture with an
+  the publisher gated the content); the remedy is to re-capture with an
   authenticated CDP session if access is needed.
 
 applies_at: [record]
