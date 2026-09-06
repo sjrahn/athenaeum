@@ -1053,6 +1053,51 @@ def _rule_whole_address_admissible(post, blocks, root) -> Iterator[Finding]:
                 )
 
 
+def _rule_address_op_class(post, blocks, root) -> Iterator[Finding]:
+    """Every param in every stored address is ADDRESS-class (spec §6.2 op classes, v43).
+
+    A stored address names a place in the bytes: selectors, the frame a region is measured
+    in, a disclosed region subtraction. A view op (`fit=`, `mark=`, `autocontrast`, …), an
+    instrument (`probe`, `geometry`, `scenes=`), an engine (`transcribe`), or a reading
+    (`text`) in a stored address bakes a tool's output — or the segment's own rendering —
+    into what should be a coordinate: the segment then claims a place that does not exist
+    in the artifact. Measured before the rule landed: zero stored addresses on the
+    reference instance carried one, so this is an error from day one. An unknown param
+    is not this rule's finding (the address grammars check their own axes)."""
+    from . import transforms as _transforms
+
+    def _check(addr: str, where: str) -> Iterator[Finding]:
+        if "=" not in addr and "&" not in addr:
+            return
+        for part in addr.split("&"):
+            key = part.partition("=")[0].strip()
+            cls = _transforms.op_class(key)
+            if cls is None or cls == _transforms.OP_CLASS_ADDRESS:
+                continue
+            yield Finding(
+                rule_id="address-op-class",
+                severity="error",
+                message=(
+                    f"{where} address `{addr}` carries `{key}`, a {cls}-class op — a stored "
+                    f"address names a place and is made of address-class ops only "
+                    f"(spec §6.2 op classes); a {cls} op is a tool, not a coordinate."
+                ),
+                address=addr,
+                fields={"param": key, "op_class": cls},
+            )
+
+    for blk in blocks:
+        if isinstance(blk, _segments.Section):
+            for addr in _addresses(blk.address):
+                yield from _check(addr, "section")
+            for seg in blk.segments:
+                for addr in _addresses(getattr(seg, "address", None)):
+                    yield from _check(addr, "segment")
+        elif isinstance(blk, _segments.Segment):
+            for addr in _addresses(getattr(blk, "address", None)):
+                yield from _check(addr, "segment")
+
+
 def _rule_address_region_grammar(post, blocks, root) -> Iterator[Finding]:
     """Every region-op value in every authored address conforms to the region grammar:
     `x,y,WIDTH,HEIGHT` as FRACTIONS of the image in [0,1], origin top-left (spec §6.2).
@@ -2728,6 +2773,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("section-empty", _rule_section_empty),
     ("segment-address-duplicate", _rule_segment_address_duplicate),
     ("address-region-invalid", _rule_address_region_grammar),
+    ("address-op-class", _rule_address_op_class),
     ("address-pipe-scalar", _rule_address_pipe_scalar),
     ("address-frame-invalid", _rule_address_frame_grammar),
     ("address-el-range-invalid", _rule_address_el_range_grammar),
@@ -2819,6 +2865,7 @@ FRAGMENT_RULES: tuple[str, ...] = (
     "section-empty",
     "segment-address-duplicate",
     "address-region-invalid",
+    "address-op-class",
     "address-pipe-scalar",
     "segment-body-requires-lossless",
     "segment-mode-deprecated",

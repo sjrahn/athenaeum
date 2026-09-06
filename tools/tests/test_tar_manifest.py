@@ -212,7 +212,7 @@ def test_path_sidecar_records_engine_version(tmp_path):
     out = resolver.resolve(uri, root)
     sidecar = furi.cache_sidecar_path(out)
     data = json.loads(sidecar.read_text("utf-8"))
-    assert data["engine"] == "archive-path@1"
+    assert data["engine"] == "archive-path@2"
 
 
 def test_resolve_member_missing_raises(tmp_path):

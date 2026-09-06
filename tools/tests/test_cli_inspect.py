@@ -148,9 +148,9 @@ def test_inspect_full_card_on_formed_fixture(tmp_path, capsys):
     # The record-level unit ops (§6.2) — available because the origin overlay declares
     # a form mapping, independent of the (absent) mime pipeline.
     assert (
-        "record-level: body -> markdown · members -> json (0 embed(s)) · "
-        "turn=<N> -> json  (form: conversation) [engine: units-turn@1] · "
-        "turn=<N>&att=<M> -> bytes  (lineage-chained) [engine: units-turn@1]"
+        "record-level: body -> markdown [reading] · members -> json (0 embed(s)) [reading] · "
+        "turn=<N> -> json  (form: conversation) [engine: units-turn@1] [address] · "
+        "turn=<N>&att=<M> -> bytes  (lineage-chained) [engine: units-turn@1] [address]"
     ) in out
 
 
@@ -192,7 +192,9 @@ def test_inspect_no_mapping_form_omits_turn_ops(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "turn=<N>" not in out
-    assert "record-level: body -> markdown · members -> json (0 embed(s))" in out
+    assert (
+        "record-level: body -> markdown [reading] · members -> json (0 embed(s)) [reading]"
+    ) in out
 
 
 # ---------- citability line (§7.1 `citation_surface:`) ---------- #
@@ -327,8 +329,8 @@ def test_ops_for_media_type_zip_and_tar_pin_the_same_engine_on_path(tmp_path):
     root = _corpus(tmp_path)
     zip_ops = {op.param: op for op in resolver.ops_for_media_type(root, "application/zip")}
     tar_ops = {op.param: op for op in resolver.ops_for_media_type(root, "application/x-tar")}
-    assert zip_ops["path"].engine_version == "archive-path@1"
-    assert tar_ops["path"].engine_version == "archive-path@1"
+    assert zip_ops["path"].engine_version == "archive-path@2"
+    assert tar_ops["path"].engine_version == "archive-path@2"
     # One canonical id shared verbatim between zip and tar (spec §12.11 `path=`).
     assert zip_ops["path"].engine_version == tar_ops["path"].engine_version
 

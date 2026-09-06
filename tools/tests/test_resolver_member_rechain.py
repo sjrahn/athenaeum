@@ -121,7 +121,7 @@ def test_pdf_member_page_render_terminal_still_works(tmp_path):
 def test_pdf_member_extraction_is_cached_and_reused_across_pages(tmp_path):
     """The member's own bytes are materialized once (cached under the prefix URI up to
     `path=`, engine-folded), so a second op over the SAME member never re-extracts from
-    the zip — and an `archive-path@1` bump invalidates the staging file rather than
+    the zip — and an `archive-path@2` bump invalidates the staging file rather than
     serving pre-bump bytes into a re-chained continuation."""
     root = _corpus(tmp_path)
     rid = _zip_record(root)

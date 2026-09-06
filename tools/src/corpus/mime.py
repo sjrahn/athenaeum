@@ -234,6 +234,24 @@ def _scan_signatures(head: bytes) -> str | None:
     return None
 
 
+def looks_textual(head: bytes) -> bool:
+    """The CONTENT test for "already-textual" (spec §6.2 member re-chaining, v43): the head
+    is non-empty, carries no NUL byte, and is valid UTF-8. The judgement of last resort for
+    a member whose declared type and name are both silent (`config/docker.cfg` in a
+    diagnostics zip — no mimetypes entry, no magic) so a plain-text member never stays an
+    opaque `.bin` merely for lacking a known extension. Deliberately strict: a Latin-1 file
+    fails UTF-8 and stays bytes (a MIME part with a declared charset never reaches this —
+    its declaration decides), and a single NUL is the binary tell. Never used for
+    attestation: a roster row's `media_type` comes from `sniff_head`, unchanged."""
+    if not head or b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def _looks_like_message(head: bytes) -> bool:
     """The WEAK email-header test: the first TWO logical lines are header-shaped (or the
     second is a folded continuation). Two consecutive `field: value` lines is a far stronger

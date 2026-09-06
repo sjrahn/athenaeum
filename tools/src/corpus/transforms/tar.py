@@ -18,7 +18,7 @@ from . import RenderContext, register
 
 #: Versioned op id (spec §6.4 / `ledger.md` §13.2's op-version pin) — re-exported from
 #: `tararchive.ENGINE_VERSION`, itself `ziparchive.ENGINE_VERSION` (the ONE canonical
-#: `archive-path@1` id shared verbatim by zip and tar, `ziparchive`'s module docstring).
+#: `archive-path@2` id shared verbatim by zip and tar, `ziparchive`'s module docstring).
 ENGINE_VERSION = tararchive.ENGINE_VERSION
 
 

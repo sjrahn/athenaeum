@@ -119,7 +119,15 @@ When nothing captured can settle it, that is a `capture` or `observe` need.
   `ref://{dataset}@{tag}/{id}` pins one — pin only for genuinely point-in-time content;
   ref citations are **entry-level, never anchored** — §6.5). **Anchor only as precisely as
   verified** — a record-level cite is always safe; a wrong anchor is worse than none. Segment
-  addresses printed by `corpus body` / `corpus toc` are ground truth.
+  addresses printed by `corpus body` / `corpus toc` are ground truth. **An anchor is made of
+  address-class ops, optionally ending in ONE reading** (corpus §6.2 op classes): a place
+  (`page=`, `el=`, `bbox=`, `msg=N&part=M`, `msg=N&header=subject`, `prop=`, `turn=`, …) plus at most the place's
+  text (`page=N&text`, `part=M&text`, `members`). Never a **view** (`mark=`, `fit=`, `render`,
+  `annotated`), an **instrument** (`probe`, `geometry`, `words`, `scenes=`, a contact sheet),
+  or an **engine** (`transcribe` — cite the STORED transcript segments instead): those are the
+  normalizer's and the querier's tools, and `ath ledger verify` refuses them as a citation
+  defect, never as "unverifiable". `corpus inspect <id>` lists every op available for the
+  record with its class — read it before anchoring into a derived surface.
 - `quote` — a **verbatim span** of the resolved content at the cited anchor; it exists to be
   machine-checked by `ath ledger verify`. Paraphrase goes in `note` or the claim's
   `reasoning`, never in `quote`.

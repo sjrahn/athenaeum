@@ -27,7 +27,11 @@ from typing import IO
 #: into the resolver's cache key exactly like `transforms.csv.ENGINE_VERSION`: a later change to
 #: member-path resolution or decode semantics is a NEW id, never a silent reinterpretation of an
 #: already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
-ENGINE_VERSION = "archive-path@1"
+# `@2` (v43): the terminal textual decode gained the content test (`mime.looks_textual`) — a
+# plain-text member with no known extension now decodes to text where `@1` served opaque
+# bytes; a NEW id, so no `@1` cache entry is ever served for it and a ledger binding pinned
+# on `@1` is flagged for re-verification rather than silently re-read.
+ENGINE_VERSION = "archive-path@2"
 
 
 def member_names(zf: zipfile.ZipFile) -> list[str]:

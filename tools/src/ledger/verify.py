@@ -730,6 +730,25 @@ def verify_ledger(
                     params = [(k, v or "") for k, v in parsed.params]
                 except Exception:
                     params = []
+                # (v43, corpus §6.2 op classes) an anchor is address-class ops, optionally
+                # ending in one reading. A view (`mark=`, `fit=`), an instrument (`probe`,
+                # `geometry`, `scenes=`), or an engine (`transcribe`) in an anchor cites a
+                # TOOL, not the source — a citation defect at the claim's severity, never
+                # the honest-unverifiable path (which is for surfaces this environment
+                # cannot run, not for anchors that should not exist).
+                from corpus.transforms import anchor_class_defects
+
+                defects = anchor_class_defects(params)
+                if defects:
+                    listed = ", ".join(f"`{k}` ({cls})" for k, cls in defects)
+                    hint = (" — an engine's output is citable only as stored transcript "
+                            "segments (corpus §6.4)"
+                            if any(cls == "engine" for _, cls in defects) else "")
+                    sev.append(f"{where}: anchor `{anchor}` carries {listed}: anchors name "
+                               f"places and readings, never tools (corpus §6.2 op "
+                               f"classes){hint}")
+                    bad(skey)
+                    continue
                 text, status = scoped_text(content, params)
                 if status == "bad-anchor":
                     sev.append(f"{where}: anchor does not resolve — {anchor} "

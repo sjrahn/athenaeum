@@ -52,6 +52,25 @@ address_scheme:
     containers get no ordinal), materialized as its **CTE-decoded** payload bytes (identity is
     the decoded bytes, not the base64/QP transfer text). The address the eml drafter records on
     each non-body part's embed; round-trips to byte-identical content via `transforms/message.py`.
+    A terminal `part=<N>` on a **textual** part (`text/plain`, `text/html` — the declared
+    Content-Type, decoded per its declared charset) prints as text, per §6.2's member
+    re-chaining rule — so `?part=<N>` on the text/plain alternative is a citable, verifiable
+    surface for the whole body (forwarded history included — `block=1` deliberately trims
+    it); a `text/html` part chains on into the HTML pipeline — `part=<N>&text` reduces it to
+    its text (the citable surface of an HTML-only message, §6.2), `part=<N>&el=<M>` names an
+    element, and an `<img src="cid:…">` in it materializes through THIS message (§6.2
+    intra-container references) — every other part stays its raw bytes. Engine-pinned
+    `eml-part@1`.
+- param: header
+  type: string
+  description: |-
+    `header=<name>` — one header of the message as text (spec §6.2, v43): RFC 2047-decoded,
+    folded onto a single line, a repeated header newline-joined in file order; name is
+    case-insensitive (`subject`, `from`, `to`, `cc`, `date`, `message-id`, `in-reply-to`,
+    `references`, …). The envelope's own facts as a span-precise, verifiable citation
+    surface — `msg=<N>&header=subject` on the mailbox itself — without promoting the
+    message; the same values the promoted record lifts to its artifact block. A header the
+    message does not carry is an error. Engine-pinned `eml-header@1`.
 # (3.2) `subject` is the artifact's own honest title-shaped fact (the RFC2047-decoded
 # Subject: header) — role-marked so a message derives a display title with no LLM pass.
 # The drafter ALSO writes a redundant `title` field (an exact copy of `subject`, the

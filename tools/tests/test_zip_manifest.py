@@ -289,12 +289,12 @@ def test_path_sidecar_records_engine_version(tmp_path):
     out = resolver.resolve(f"corpus://{rid}?path=config/disk.cfg", root)
     sidecar = furi.cache_sidecar_path(out)
     data = json.loads(sidecar.read_text("utf-8"))
-    assert data["engine"] == "archive-path@1"
+    assert data["engine"] == "archive-path@2"
     # The one canonical id `transforms/tar.py` re-exports too (spec §12.11 `path=`).
     from corpus.transforms import tar as tar_tf
     from corpus.transforms import zip as zip_tf
 
-    assert zip_tf.ENGINE_VERSION == tar_tf.ENGINE_VERSION == "archive-path@1"
+    assert zip_tf.ENGINE_VERSION == tar_tf.ENGINE_VERSION == "archive-path@2"
 
 
 def test_path_cache_key_includes_engine_version(tmp_path, monkeypatch):

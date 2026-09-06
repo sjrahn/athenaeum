@@ -14,7 +14,33 @@ address_scheme:
 - param: el
   type: string
   description: |-
-    *(ATH-CORPUS 3.6, spec §6.1.1.)* A dotted child-index PATH walked from the artifact's `<body>`: `el=1` is the body's first element child, `el=1.3.2` that element's third element child's second. Components count ELEMENTS only (text nodes and comments are invisible), 1-based, one spelling per address (no leading zeros). The space is TOTAL — every element is addressable, `<div>`/`<span>` included; there is no whitelist, so no tooling change can ever re-point a stored address (§12.28 is the incident that rule comes from). A point path names the element AND its whole subtree, which gives the three claim forms: a container's own path for a subtree; a sibling range `el=<parent>.[<a>-<b>]` for a contiguous run of one parent's element children (inclusive, and their subtrees); an ordered address LIST for a region crossing subtree boundaries. There is deliberately NO flat `el=<N>-<M>` form — a span cutting across structure is not one structural thing, and that form is how over-claiming envelopes arose (records carrying it predate the §12.28 remap and read under the frozen legacy enumeration until remapped; the `addressing:` stamp on the artifact block says which grammar a record's addresses are in). Prose with no element of its own takes the path of the element that CONTAINS it — in a total space something always does. Every component must resolve: a path that walks past a parent's element-child count names nothing and is an `address-unresolvable` error, checked before any materializability question (the §12.24/§12.25 lesson). Two attested facts keep parses honest (§7.1): the artifact block's `addressing:` carries the pinned parser identity (`html.parser`) and the total element count, and a resolver whose own parse disagrees refuses loudly instead of walking the wrong tree. Resolver `corpus.transforms.html.extract_el` returns the decoded PIL image when the resolved element is `<img>`; non-img resolution via `el=` is not supported (the normalizer reads structural HTML from the record's body, not via the resolver).
+    *(spec §6.1.1, v35 ordinal space; v43 `&text`.)* A 1-based **document-order ordinal**
+    over EVERY element under the artifact's `<body>` — a depth-first pre-order count in which
+    `<div>`/`<span>`/`<br>` count exactly like `<p>` and `<table>`: the space is TOTAL, so no
+    tooling change can ever re-point a stored address (§12.28 is the incident that rule comes
+    from), and an ordinal names the element AND its whole subtree. Three claim forms: a point
+    `el=7` (the element and its subtree); a **sibling range** `el=[12-19]` — both endpoints
+    MUST share a parent element (checked against the attested parse; a range across depths is
+    an invalid address, `address-el-range-invalid`, never a valid one with no surface); an
+    ordered address LIST for genuinely disjoint landmarks. **Address up, never across**: a
+    region wider than one sibling run takes the lowest common container's own ordinal. Prose
+    with no element of its own takes the ordinal of the element that CONTAINS it. Ordinals are
+    counted by machines, never eyes: bare `corpus://<hash>` delivers the **annotated view**
+    (`data-el="<N>"` on every start tag), and that is where an address is read from. Two
+    attested facts keep parses honest (§7.1 `addressing:` on the artifact block): the pinned
+    parser identity (`html.parser`), the total element count, and `scheme: ordinal`; a resolver
+    whose own parse disagrees refuses loudly instead of walking the wrong tree. **The record,
+    never the value, picks the grammar**: a stamp without `scheme` is the frozen 3.6 dotted
+    child-index path (`el=1.3.2`), an unstamped record the frozen pre-3.6 filtered whitelist —
+    both resolvable read-only exactly as stored until the v35 remap reaches them; a container
+    MEMBER's html (no record, no stamp) speaks the ordinal space. Resolution
+    (`corpus.transforms.html.extract_el`): an `<img>` renders to its image (a `cid:` source in
+    message-borne HTML materializes through the enclosing message, §6.2); a `<video>`/`<audio>`
+    or `<a href="data:…">` carrier to its raw bytes; a text element names its region and
+    materializes only through `el=<N>&text` (v43 — the element's subtree reduced to its text;
+    record-level `?text` reduces the whole document). Every ordinal must resolve: one past the
+    attested count names nothing and is `address-unresolvable`, checked before any
+    materializability question.
 - param: selector
   type: string
   description: |-

@@ -14,6 +14,18 @@
   auto-promotes the `<img>` to an image first (non-image carriers cannot promote).
 - `selector=<css>` (HTML → image) — CSS selector identifying a single `<img>`;
   decodes its data URI. Back-compat with earlier records.
+- `text` (HTML → text) and `el=<N>&text` (htmlel → text) *(v43, §6.2)* — the markup's
+  own text reduction (`html_text`, below): document order, block-level elements and
+  `<br>` as line breaks, table cells tab-separated, `<head>`/`<script>`/`<style>`/
+  `<template>` dropped, whitespace normalized. Nothing removed on judgment — no chrome
+  strip, no quote trim (that is `emlfile.body_text`'s job, deliberately separate) — and
+  never a rendering. Unversioned like the PDF text layer's `page=<N>&text`.
+- `cid:` carriers *(v43, §6.2 intra-container references)* — an `<img src="cid:…">`
+  (or a `<video>`/`<audio>`/`<a>` whose source is a `cid:` URI) in MESSAGE-BORNE HTML
+  names a sibling MIME part by Content-ID (RFC 2392). It materializes through the
+  enclosing message the `part=` handler left in the context (`ctx["cid_source"]`,
+  `emlfile.part_by_content_id`), never by inlining; with no enclosing message the
+  reference is a hard error naming the missing part.
 
 Inline media (every carrier) lives in the HTML as a base64 `data:` URI — `<img src>` /
 `srcset`, a `<video>`/`<audio>`'s `<source src>` (or own `src`), or an attachment
@@ -37,6 +49,7 @@ from dataclasses import dataclass
 # Side-effect: registers AVIF codec with PIL.
 import pillow_avif  # noqa: F401
 from bs4 import BeautifulSoup, Tag
+from bs4.element import CData, Comment, Declaration, Doctype, NavigableString, ProcessingInstruction
 from PIL import Image
 
 from .. import functional_uri as furi
@@ -478,6 +491,59 @@ def carrier_data_uri(tag: Tag) -> str | None:
     return None
 
 
+def carrier_cid(tag: Tag) -> str | None:
+    """The bare Content-ID a carrier element refers to through a `cid:` URI (RFC 2392 —
+    `<img src="cid:logo@x">`, a `<video>`/`<audio>` source, an `<a href="cid:…">`), or None
+    when the element carries no such reference. The intra-container counterpart of
+    `carrier_data_uri` (§6.2): the bytes live in a sibling MIME part of the enclosing
+    message, never in the HTML."""
+    if not isinstance(tag, Tag):
+        return None
+    name = tag.name
+    candidates: list[object] = []
+    if name == "img":
+        candidates.append(largest_img_src(tag))
+    elif name in _MEDIA_CARRIER_TAGS:
+        candidates.append(tag.get("src"))
+        candidates.extend(
+            source.get("src") for source in tag.find_all("source") if isinstance(source, Tag)
+        )
+    elif name == "a":
+        candidates.append(tag.get("href"))
+    for cand in candidates:
+        if isinstance(cand, str) and cand.strip().lower().startswith("cid:"):
+            cid = cand.strip()[4:].strip()
+            if cid:
+                return cid
+    return None
+
+
+def _cid_bytes(cid: str, ctx: RenderContext | None, where: str) -> tuple[str, bytes]:
+    """Materialize a `cid:` reference to `(media_type, bytes)` through the enclosing
+    message the `part=` handler left in `ctx["cid_source"]` (§6.2 intra-container
+    references). No enclosing message, or no part with that Content-ID, is a hard error:
+    the address names something real that this route cannot reach, never a quiet blank."""
+    from pathlib import Path
+
+    from .. import emlfile
+
+    source = (ctx or {}).get("cid_source")
+    if not source:
+        raise ValueError(
+            f"{where}: <cid:{cid}> refers to a sibling MIME part of an enclosing message, "
+            f"and this artifact is not being resolved through one — reach it via "
+            f"`msg=<N>&part=<M>&el=…` (or a promoted message's `part=`), never standalone"
+        )
+    found = emlfile.part_by_content_id(Path(str(source)).read_bytes(), cid)
+    if found is None:
+        raise ValueError(
+            f"{where}: the enclosing message carries no part with Content-ID <{cid}>"
+        )
+    part, decoded = found
+    media_type, _ = emlfile.part_facts(part, decoded)
+    return media_type, decoded
+
+
 _DOWNLOAD_LABEL_RE = re.compile(r"download\s+(?P<name>.+?)(?:\s*\([^)]*\))?\s*$", re.IGNORECASE)
 
 
@@ -623,16 +689,20 @@ def render_htmlel_image(ref: HtmlElRef, ctx: RenderContext) -> Image.Image:
             f"el={ref.index} resolved to <{tag.name}>, which has no image rendering; "
             f"image-output ops (bbox/mark/fit/…) apply only to <img> carriers"
         )
-    return _img_tag_to_pil(tag, f"el={ref.index}")
+    return _img_tag_to_pil(tag, f"el={ref.index}", ctx)
 
 
-def htmlel_bytes(ref: HtmlElRef) -> tuple[str, bytes]:
-    """Materialize a non-image carrier (`<video>`/`<audio>`/`<a href="data:…">`) to
+def htmlel_bytes(ref: HtmlElRef, ctx: RenderContext | None = None) -> tuple[str, bytes]:
+    """Materialize a non-image carrier (`<video>`/`<audio>`/`<a href="data:…">`, or a
+    `cid:`-referencing one through the enclosing message in `ctx`) to
     `(media_type, raw_bytes)`. Raises for an `<img>` (use `render_htmlel_image`) or a
     structural element with no inline bytes."""
     tag = ref.tag
     uri = carrier_data_uri(tag)
     if uri is None:
+        cid = carrier_cid(tag)
+        if cid is not None:
+            return _cid_bytes(cid, ctx, f"el={ref.index} (<{tag.name}>)")
         # The element IS there and is exactly what the address said — a heading, a
         # table, a list. Its content is text, so there are no bytes to materialize; a
         # text segment citing it is complete as it stands.
@@ -725,20 +795,25 @@ def extract_via_selector(
     return _img_tag_to_pil(tag, selector)
 
 
-def _img_tag_to_pil(tag: Tag, selector_for_error: str) -> Image.Image:
+def _img_tag_to_pil(
+    tag: Tag, selector_for_error: str, ctx: RenderContext | None = None
+) -> Image.Image:
     if tag.name != "img":
         raise ValueError(
             f"selector {selector_for_error!r} resolved to <{tag.name}>, expected <img>"
         )
     src_raw = largest_img_src(tag) or ""
     src = str(src_raw).strip()
-    if not src.startswith("data:"):
+    if src.lower().startswith("cid:"):
+        # An intra-container reference (§6.2): the bytes are a sibling MIME part of the
+        # enclosing message, reached through `ctx["cid_source"]`.
+        _, raw = _cid_bytes(src[4:].strip(), ctx, selector_for_error)
+    elif not src.startswith("data:"):
         raise ValueError(
             f"<img src=> is not a data URI ({src[:60]!r}…) for {selector_for_error!r}; "
-            "the html resolver only handles inline base64 data URIs"
+            "the html resolver only handles inline base64 data URIs and cid: references"
         )
-    match = _DATA_URI_RE.match(src)
-    if match:
+    elif (match := _DATA_URI_RE.match(src)) is not None:
         raw = base64.b64decode(match.group(2))
     else:
         # The source may inline an image under a generic / non-image media type —
@@ -773,6 +848,95 @@ def _img_tag_to_pil(tag: Tag, selector_for_error: str) -> Image.Image:
             f"failed to decode image bytes from data URI for {selector_for_error!r}: {exc}"
         ) from exc
     return img.convert("RGBA") if img.mode == "P" else img
+
+
+# ---------- the text reduction (`text` / `el=<N>&text`, v43 §6.2) ---------- #
+
+#: Elements whose content is not the document's text: dropped whole.
+_TEXT_SKIP_TAGS = frozenset({"head", "script", "style", "template", "noscript"})
+#: Elements that break the line on both sides. `<br>` breaks once; `<td>`/`<th>` end a cell
+#: with a tab (handled inline in `html_text`).
+_TEXT_BLOCK_TAGS = frozenset({
+    "address", "article", "aside", "blockquote", "center", "dd", "details", "dialog", "div",
+    "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4",
+    "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "summary",
+    "table", "tbody", "tfoot", "thead", "tr", "ul",
+})
+_TEXT_SKIP_STRINGS = (Comment, Doctype, Declaration, ProcessingInstruction, CData)
+_TEXT_SPACE_RE = re.compile(r"[ \xa0\r\f\v]+")
+_TEXT_TAB_RE = re.compile(r" ?\t+ ?")
+#: Whitespace inside a text node — source line breaks included — is one space, as a browser
+#: lays it out; only structure (`_TEXT_BLOCK_TAGS`, `<br>`) breaks a line. `<pre>` keeps its
+#: line breaks (its indentation still collapses: this is a text surface, not a rendering).
+_TEXT_INLINE_WS_RE = re.compile(r"\s+")
+
+
+def html_text(node: Tag | BeautifulSoup) -> str:
+    """The markup's own text reduction (spec §6.2 `text`): every text node under `node`
+    in document order; block-level elements and `<br>` become line breaks, table cells are
+    tab-separated, `_TEXT_SKIP_TAGS` are dropped whole; runs of whitespace collapse to one
+    space, lines are stripped, and runs of blank lines collapse to one. Deterministic under
+    the pinned parser (`EL_PARSER_ID`), so a citation's quote matches it verbatim on every
+    run. Nothing is removed on judgment: no chrome strip, no quote trimming. Source line
+    breaks inside a text node are whitespace, as a browser lays them out — only structure
+    breaks a line — except under `<pre>`, whose line breaks are kept (indentation still
+    collapses: a text surface, not a rendering). Returns `''` for markup carrying no text."""
+    pieces: list[str] = []
+
+    def walk(parent: Tag, in_pre: bool) -> None:
+        for child in parent.children:
+            if isinstance(child, NavigableString):
+                if isinstance(child, _TEXT_SKIP_STRINGS):
+                    continue
+                text = str(child)
+                pieces.append(text if in_pre else _TEXT_INLINE_WS_RE.sub(" ", text))
+            elif isinstance(child, Tag):
+                name = (child.name or "").lower()
+                if name in _TEXT_SKIP_TAGS:
+                    continue
+                if name == "br":
+                    pieces.append("\n")
+                    continue
+                if name in ("td", "th"):
+                    walk(child, in_pre)
+                    pieces.append("\t")
+                    continue
+                block = name in _TEXT_BLOCK_TAGS
+                if block:
+                    pieces.append("\n")
+                walk(child, in_pre or name == "pre")
+                if block:
+                    pieces.append("\n")
+
+    walk(node, False)
+    lines: list[str] = []
+    for line in "".join(pieces).split("\n"):
+        line = _TEXT_SPACE_RE.sub(" ", line)
+        line = _TEXT_TAB_RE.sub("\t", line).strip(" \t")
+        if line:
+            lines.append(line)
+        elif lines and lines[-1]:
+            lines.append("")
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+@register("html", "text", "text")
+def extract_text(soup: BeautifulSoup, value: str | None, ctx: RenderContext) -> str:
+    """`?text` — the whole document's text reduction (`html_text`), spec §6.2 (v43)."""
+    if value:
+        raise ValueError("text takes no value")
+    return html_text(soup)
+
+
+@register("htmlel", "text", "text")
+def extract_el_text(ref: HtmlElRef, value: str | None, ctx: RenderContext) -> str:
+    """`?el=<N>&text` — the selected element's own subtree reduced exactly as `text`
+    (the span-precise form), spec §6.2 (v43)."""
+    if value:
+        raise ValueError("text takes no value")
+    return html_text(ref.tag)
 
 
 def _is_svg_payload(raw: bytes) -> bool:

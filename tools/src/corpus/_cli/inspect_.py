@@ -278,9 +278,9 @@ def _print_resolver_ops(root, post) -> None:
     # named directly here instead, per spec §6.2's fixed table.
     record_level: list[str] = []
     if media_type:
-        record_level.append("body -> markdown")
+        record_level.append("body -> markdown [reading]")
         embed_count = len(list(records.iter_embed_blocks(post)))
-        record_level.append(f"members -> json ({embed_count} embed(s))")
+        record_level.append(f"members -> json ({embed_count} embed(s)) [reading]")
     try:
         declared = shape.form_for_record(post, root)
     except Exception:
@@ -298,8 +298,10 @@ def _print_resolver_ops(root, post) -> None:
             # it can never drift from what `resolve()` actually keys on (spec §6.4).
             turn_engine = resolver.engine_version_for_param("turn")
             engine_suffix = f" [engine: {turn_engine}]" if turn_engine else ""
-            record_level.append(f"turn=<N> -> json  (form: {form_id}){engine_suffix}")
-            record_level.append(f"turn=<N>&att=<M> -> bytes  (lineage-chained){engine_suffix}")
+            record_level.append(f"turn=<N> -> json  (form: {form_id}){engine_suffix} [address]")
+            record_level.append(
+                f"turn=<N>&att=<M> -> bytes  (lineage-chained){engine_suffix} [address]"
+            )
     print("  record-level: " + (" · ".join(record_level) if record_level else "none"))
 
     if not media_type:
@@ -325,8 +327,15 @@ def _print_resolver_ops(root, post) -> None:
         parts = []
         for op in kind_ops:
             engine = f" [engine: {op.engine_version}]" if op.engine_version else ""
-            parts.append(f"{op.param}= -> {op.output_kind}{engine}")
+            # The op's class is its PLACE (spec §6.2 op classes): address/reading may be
+            # stored (address) or cited (both); view/instrument/engine are tools — never
+            # an anchor, never a stored address.
+            parts.append(f"{op.param}= -> {op.output_kind}{engine} [{op.op_class}]")
         print(f"    from {kind}: " + " · ".join(parts))
+    print(
+        "  op classes: address = names a place (storable, citable) · reading = the place's "
+        "text (citable) · view / instrument / engine = tools, never anchors (spec §6.2)"
+    )
 
     if initial_kind in ("zip", "tar"):
         print(

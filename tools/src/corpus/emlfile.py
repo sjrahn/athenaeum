@@ -91,9 +91,11 @@ def parts_with_decoded_bytes(raw: bytes, msg: Message) -> list[tuple[Message, by
     ]
 
 
-def resolve_part(raw: bytes, ordinal: int) -> bytes:
-    """The 1-indexed `ordinal` addressable part's CTE-decoded bytes. Raises `ValueError` when
-    the ordinal doesn't exist — the transform surfaces a clean error."""
+def part_member(raw: bytes, ordinal: int) -> tuple[Message, bytes]:
+    """The 1-indexed `ordinal` addressable part as `(part, decoded_bytes)` — the parsed part
+    (its declared content type, charset, and filename ride on it) alongside its CTE-decoded
+    payload. Raises `ValueError` when the ordinal doesn't exist — the transform surfaces a
+    clean error."""
     if ordinal < 1:
         raise ValueError(f"part={ordinal}: parts are 1-indexed")
     triples = _iter_part_spans(raw, parse(raw))
@@ -102,7 +104,13 @@ def resolve_part(raw: bytes, ordinal: int) -> bytes:
             f"part={ordinal}: no such part (message has {len(triples)} addressable part(s))"
         )
     part, start, end = triples[ordinal - 1]
-    return _decoded_bytes_for(raw, part, start, end)
+    return part, _decoded_bytes_for(raw, part, start, end)
+
+
+def resolve_part(raw: bytes, ordinal: int) -> bytes:
+    """The 1-indexed `ordinal` addressable part's CTE-decoded bytes (`part_member`'s payload
+    half)."""
+    return part_member(raw, ordinal)[1]
 
 
 # ---------- raw-span location (verbatim bytes for a message/rfc822 part) ---------- #
@@ -183,6 +191,23 @@ def _iter_part_spans(raw: bytes, msg: Message) -> list[tuple[Message, int, int]]
 
     _rec(msg, 0, len(raw))
     return out
+
+
+def part_by_content_id(raw: bytes, content_id: str) -> tuple[Message, bytes] | None:
+    """The addressable part carrying `Content-ID: <content_id>` as `(part, decoded_bytes)`,
+    or None — the target of a `cid:` reference inside this message's HTML (RFC 2392; spec
+    §6.2 intra-container references). `content_id` is compared bare: angle brackets,
+    surrounding whitespace, and `cid:` URL percent-encoding stripped on both sides."""
+    from urllib.parse import unquote
+
+    wanted = unquote(content_id).strip().lstrip("<").rstrip(">").strip()
+    if not wanted:
+        return None
+    for part, decoded in parts_with_decoded_bytes(raw, parse(raw)):
+        cid = part.get("Content-ID")
+        if cid and str(cid).strip().lstrip("<").rstrip(">").strip() == wanted:
+            return part, decoded
+    return None
 
 
 def part_filename(raw: bytes, ordinal: int) -> str | None:

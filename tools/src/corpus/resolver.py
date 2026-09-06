@@ -79,13 +79,26 @@ _VCARD_CARD_OP_PARAMS: frozenset[str] = frozenset({"card"})
 # (`transforms.mbox.ENGINE_VERSION`).
 _MBOX_OP_PARAMS: frozenset[str] = frozenset({"msg"})
 
+# The MIME-message part-extraction op (§12.11 `part=`) — pinned depth-first part enumeration,
+# CTE decoding, and the terminal textual decode of a declared-textual part
+# (`transforms.message.ENGINE_VERSION`). Checked BEFORE the mbox and archive branches: on
+# `msg=<N>&part=<M>` / `path=<x>.eml&part=<M>` the part step is the more specific op, and the
+# version label the cache keys on is the one that governs the bytes actually served.
+_EML_PART_OP_PARAMS: frozenset[str] = frozenset({"part"})
+
+# The MIME-message header op (§6.2 `header=<name>`, v43) — pinned RFC 2047 decode + single-
+# line fold + repeat-join semantics (`transforms.message.HEADER_ENGINE_VERSION`). Checked
+# first among the mail ops: on `msg=<N>&header=<name>` (or a nested `part=<M>&header=`) the
+# header step is the most specific op and governs the text served.
+_EML_HEADER_OP_PARAMS: frozenset[str] = frozenset({"header"})
+
 # The archive path= member-extraction op (§12.11 `path=`, §6.2 "Member re-chaining") — pinned
 # member-path resolution and the terminal textual decode, shared verbatim by the zip and tar
 # transforms (`transforms.zip.ENGINE_VERSION` == `transforms.tar.ENGINE_VERSION`, both
 # re-exporting the one canonical `ziparchive.ENGINE_VERSION`). Checked LAST among the per-param
 # branches below (right before `else`): when `path=` re-chains into a further op that carries
 # its OWN pin (a rechained CSV member's `row=`/`col=`, a rechained vcard's `prop=`, an HTML
-# member's `el=`), that op's more-specific id wins — `archive-path@1` folds in only for the
+# member's `el=`), that op's more-specific id wins — `archive-path@2` folds in only for the
 # member-selection/terminal-decode step itself, when nothing more specific also matched.
 _ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
 
@@ -368,6 +381,14 @@ def resolve(
         from .transforms import vcard as vcard_tf
 
         version_label = vcard_tf.CARD_ENGINE_VERSION
+    elif any(k in _EML_HEADER_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import message as message_tf
+
+        version_label = message_tf.HEADER_ENGINE_VERSION
+    elif any(k in _EML_PART_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import message as message_tf
+
+        version_label = message_tf.ENGINE_VERSION
     elif any(k in _MBOX_OP_PARAMS for k, _ in parsed.params):
         from .transforms import mbox as mbox_tf
 
@@ -1142,6 +1163,18 @@ def _member_text_kind(sniffed_mime: str) -> str | None:
     return None
 
 
+def _decode_member_text(data: bytes, charset: str | None) -> str:
+    """A terminal textual member's decode: the container's declared charset when it names
+    one Python knows (a MIME part's `charset=`), UTF-8 otherwise — always replacing rather
+    than raising, so a mislabeled part still prints."""
+    if charset:
+        try:
+            return data.decode(charset, errors="replace")
+        except LookupError:
+            pass
+    return data.decode("utf-8", errors="replace")
+
+
 def _init_member_working_value(kind: str, path: Path) -> Any:
     """Construct the initial working value for a re-chained container member (§6.2) — the
     member-address counterpart of `resolve()`'s own top-level working-value initialization,
@@ -1196,7 +1229,23 @@ def _rechain_member(
     key = parsed.params[param_idx][0]
     ref = str(parsed.params[param_idx][1] or "")
     has_more = any(k not in _NOOP_PARAMS for k, _ in parsed.params[param_idx + 1 :])
-    sniffed_mime = mime_mod.sniff_head(data, ref or None)
+    # The extraction handler's DECLARED facts about this member (`RenderContext`), consumed
+    # here and never carried past this step. A MIME part is addressed by ordinal, so `ref`
+    # is no filename to guess from; its container declares the type instead. The sniff
+    # still wins wherever it positively identifies the bytes (a magic signature, a
+    # message header shape) — the declaration fills in only where the sniff is blank.
+    declared_mime = ctx.pop("member_mime", None)
+    declared_name = ctx.pop("member_name", None)
+    declared_charset = ctx.pop("member_charset", None)
+    sniffed_mime = mime_mod.sniff_head(data, declared_name or ref or None)
+    if sniffed_mime == "unknown" and declared_mime:
+        sniffed_mime = declared_mime
+    elif sniffed_mime == "unknown" and mime_mod.looks_textual(data[:8192]):
+        # Declared type and name both silent (`config/docker.cfg`, no mimetypes entry, no
+        # magic): the bytes decide — valid UTF-8 with no NUL is plain text, and a
+        # plain-text member never stays an opaque `.bin` for lacking a known extension
+        # (§6.2 "already-textual", v43; `archive-path@2` / `eml-part@1` pin this decode).
+        sniffed_mime = "text/plain"
 
     if has_more:
         new_kind = _working_kind_for(corpus_root, sniffed_mime)
@@ -1232,6 +1281,15 @@ def _rechain_member(
             working = _init_member_working_value(new_kind, member_path)
             if new_kind == "pdf":
                 pdf_doc = working
+            if new_kind == "html":
+                # A member's `el=` speaks the CURRENT grammar (§6.2 intra-container
+                # references, v43): the frozen grammars serve STORED addresses on
+                # unstamped/dotted records, and a container member has no record and no
+                # stored addresses — so stamp the ordinal scheme under the pinned parser
+                # (no element count: nothing attested to check against).
+                from .transforms import html as html_tf
+
+                ctx["el_addressing"] = {"parser": html_tf.EL_PARSER_ID, "scheme": "ordinal"}
             if new_kind == "csv":
                 ctx["csv_dialect"] = _csv_dialect_for(corpus_root, sniffed_mime)
             # PDF text/probe ops read the source from disk via pypdf — point them at the
@@ -1241,7 +1299,7 @@ def _rechain_member(
 
     text_kind = _member_text_kind(sniffed_mime)
     if text_kind is not None:
-        return data.decode("utf-8", errors="replace"), text_kind, pdf_doc, sniffed_mime
+        return _decode_member_text(data, declared_charset), text_kind, pdf_doc, sniffed_mime
     # Opaque terminal bytes: still carry the sniff (never re-encoded — `data` is untouched)
     # so the resolver's cache extension/sidecar mime reflect the member's real type
     # (`.eml`, a promoted mbox message; `.pdf`, an un-chained archive member) instead of the
@@ -1301,7 +1359,7 @@ def _materialize_htmlel(
 
     if ref.tag.name == "img":
         return html_transforms.render_htmlel_image(ref, ctx), "image", "png", "image/png"
-    media_type, raw = html_transforms.htmlel_bytes(ref)
+    media_type, raw = html_transforms.htmlel_bytes(ref, ctx)
     return raw, "bytes", mime_mod.extension_for(media_type), media_type
 
 
@@ -1430,6 +1488,9 @@ class ResolverOp:
     from_kind: str
     output_kind: str
     engine_version: str | None
+    #: The op's class (spec §6.2 op classes, v43): `address` | `reading` | `view` |
+    #: `instrument` | `engine` — its place: what may be stored, what may be cited.
+    op_class: str = "address"
 
 
 def working_kind_for(corpus_root: Path, media_type: str) -> str | None:
@@ -1473,6 +1534,7 @@ def ops_for_media_type(corpus_root: Path, media_type: str) -> list[ResolverOp]:
                     from_kind=in_kind,
                     output_kind=handler.output_kind,
                     engine_version=engine_version_for_param(key),
+                    op_class=handler.op_class,
                 )
             )
             queue.append(handler.output_kind)
@@ -1483,6 +1545,12 @@ def ops_for_media_type(corpus_root: Path, media_type: str) -> list[ResolverOp]:
         if kind in ("pdfpage", "htmlel"):
             queue.append("image")
     return out
+
+
+def op_class_for_param(key: str) -> str | None:
+    """`key`'s declared op class (spec §6.2 op classes) — `transforms.op_class`, re-exported
+    beside `engine_version_for_param` so introspection callers read both from one place."""
+    return transforms.op_class(key)
 
 
 def engine_version_for_param(key: str) -> str | None:
@@ -1510,6 +1578,14 @@ def engine_version_for_param(key: str) -> str | None:
         from .transforms import vcard as vcard_tf
 
         return vcard_tf.CARD_ENGINE_VERSION
+    if key in _EML_HEADER_OP_PARAMS:
+        from .transforms import message as message_tf
+
+        return message_tf.HEADER_ENGINE_VERSION
+    if key in _EML_PART_OP_PARAMS:
+        from .transforms import message as message_tf
+
+        return message_tf.ENGINE_VERSION
     if key in _MBOX_OP_PARAMS:
         from .transforms import mbox as mbox_tf
 
