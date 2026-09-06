@@ -160,6 +160,65 @@ def test_section_address_el_path_algebra():
     assert segments.section_address(segs("el=3", "el=7")) == "el=3-7"
 
 
+def test_el_path_envelope_same_start_ranges_keep_the_wider():
+    """Two sibling ranges on one parent from the same first child tie on the document-order
+    key; the wider must open first, or the narrower one listed first lets the wider through
+    as a second top (the pairwise form never did)."""
+    def segs(*addrs):
+        return [Segment(atom="text", address=a) for a in addrs]
+
+    assert segments.section_address(segs("el=5.[2-3]", "el=5.[2-5]"), el_paths=True) == "el=5.[2-5]"
+    assert segments.section_address(segs("el=5.[2-5]", "el=5.[2-3]"), el_paths=True) == "el=5.[2-5]"
+    # A range and the point at its first child: range-first, so the point is contained.
+    assert segments.section_address(segs("el=5.2", "el=5.[2-3]"), el_paths=True) == "el=5.[2-3]"
+    # Overlapping, non-nested ranges both survive; the points under them do not.
+    assert segments.section_address(
+        segs("el=1.4", "el=1.[3-9]", "el=1.2", "el=1.[1-5]"), el_paths=True
+    ) == ["el=1.[1-5]", "el=1.[3-9]"]
+
+
+def test_el_path_envelope_matches_the_all_pairs_reference():
+    """The single-pass envelope against the retired all-pairs definition it replaced, over
+    seeded random claim sets dense enough to hit every tie (same-start ranges, a range and
+    its first child, overlapping ranges, duplicates)."""
+    import random
+
+    def reference(values):
+        claims = [furi.parse_el_path(v) for v in values]
+        unique = []
+        for c in claims:
+            if c not in unique:
+                unique.append(c)
+        tops = sorted(
+            (c for c in unique if not any(o != c and furi.el_path_contains(o, c) for o in unique)),
+            key=furi.el_path_sort_key,
+        )
+        if len(tops) == 1:
+            return f"el={furi.format_el_path(tops[0])}"
+        if all(t.sibling_range is None for t in tops):
+            parents = {t.components[:-1] for t in tops}
+            if len(parents) == 1:
+                parent = tops[0].components[:-1]
+                idxs = sorted(t.components[-1] for t in tops)
+                if parent and idxs == list(range(idxs[0], idxs[-1] + 1)):
+                    stem = ".".join(str(c) for c in parent)
+                    return f"el={stem}.[{idxs[0]}-{idxs[-1]}]"
+        return [f"el={furi.format_el_path(t)}" for t in tops]
+
+    def claim(rng, depth, width):
+        stem = ".".join(str(rng.randint(1, width)) for _ in range(rng.randint(1, depth)))
+        if rng.random() < 0.35:
+            a = rng.randint(1, width - 1)
+            return f"{stem}.[{a}-{rng.randint(a + 1, width)}]"
+        return stem
+
+    rng = random.Random(36)
+    for _ in range(600):
+        depth, width = rng.choice([1, 2, 3, 4]), rng.choice([2, 3, 5])
+        values = [claim(rng, depth, width) for _ in range(rng.randint(1, 12))]
+        assert segments._el_path_envelope(values) == reference(values), values
+
+
 # ---------- attest guard + remap engine, end to end ---------- #
 
 

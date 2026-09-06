@@ -74,6 +74,7 @@ report the defect this module exists to find. Callers gate on `records.el_addres
 from __future__ import annotations
 
 import copy
+import functools
 import re
 from typing import Any
 
@@ -210,6 +211,7 @@ def _element_text(nodes: list[Any]) -> str:
     return textnorm.norm(" ".join(_node_text(n) for n in nodes))
 
 
+@functools.lru_cache(maxsize=16384)
 def _cmp(s: str) -> str:
     """Comparison form for THIS module's matching: case folded, and the trademark marks
     spelled the long way (`®` → `(r)`, `™` → `(tm)`) so the two spellings compare equal.
@@ -229,6 +231,7 @@ def _cmp(s: str) -> str:
     return s.translate(_MARK_FOLD).casefold()
 
 
+@functools.lru_cache(maxsize=16384)
 def _fold(s: str) -> str:
     """The retry form: `_cmp`, then `textnorm.squash`'s whitespace and hyphens, plus the
     JOINERS a rendering inserts between two texts the DOM carries adjacent.
@@ -251,6 +254,16 @@ def _contains(needle: str, haystack: str) -> bool:
     `<b>`/`<wbr>` puts in the DOM, the ones a soft wrap puts in the body, and the connectives
     a rendering inserts between adjacent source texts."""
     return _cmp(needle) in _cmp(haystack) or _fold(needle) in _fold(haystack)
+
+
+def _inside_anchor(tag: Any) -> bool:
+    """Whether any ancestor of `tag` is an `<a>` — `find_parent("a")` without the filter cost."""
+    parent = tag.parent
+    while parent is not None:
+        if parent.name == "a":
+            return True
+        parent = parent.parent
+    return False
 
 
 def _text_runs_outside_anchors(tag: Any) -> list[str]:
@@ -278,9 +291,12 @@ def _text_runs_outside_anchors(tag: Any) -> list[str]:
 
     Anchors are replaced in a COPY (`copy.copy` on a bs4 `Tag` deep-copies): the real tree
     must not be mutated, since every `el=` path in the record indexes into it."""
-    if tag.name == "a" or tag.find_parent("a") is not None:
+    # Plain tree walks rather than `find_parent("a")` / `find("a")`: bs4's filter machinery
+    # dominated a 77,000-leaf record's fidelity pass, and the question is only "is any
+    # ancestor / descendant an `<a>`".
+    if tag.name == "a" or _inside_anchor(tag):
         return []
-    if tag.find("a") is None:
+    if not any(isinstance(d, Tag) and d.name == "a" for d in tag.descendants):
         text = textnorm.norm(tag.get_text(" "))
         return [text] if len(text) >= _MIN_LINE else []
     clone = copy.copy(tag)
@@ -555,6 +571,13 @@ def check_fidelity(
     counts = dict.fromkeys(KINDS, 0)
     segments_checked = 0
     lines_checked = 0
+    # Per-leaf memo for the reverse direction: `(runs, missing)` — the leaf's runs outside
+    # anchors and the subset the body renders nowhere — or None for a leaf inside an unowed
+    # region. Both are properties of the leaf and the body, not of the segment probing it, so
+    # a leaf reached under several addresses (a malformed host nests every unclosed `<p>`
+    # under the one before, so each address's subtree is the rest of the document) is walked
+    # once; the per-segment `probed` set still decides what each segment reports.
+    leaf_memo: dict[int, tuple[list[str], set[str]] | None] = {}
 
     for index, seg in enumerate(_segments.leaf_segments(blocks)):
         if not seg.is_content or seg.atom != "text" or not (seg.body or "").strip():
@@ -615,13 +638,25 @@ def check_fidelity(
                 if not isinstance(tag, Tag):
                     continue  # a bare text node has no element identity to name in a finding
                 for leaf in _leaf_elements(tag):
-                    if unowed and _inside_unowed(leaf, unowed):
-                        continue  # §7.2: the transcription owes only the subject
-                    for run in _text_runs_outside_anchors(leaf):
+                    key = id(leaf)
+                    if key not in leaf_memo:
+                        if unowed and _inside_unowed(leaf, unowed):
+                            leaf_memo[key] = None  # §7.2: the transcription owes only the subject
+                        else:
+                            runs = _text_runs_outside_anchors(leaf)
+                            leaf_memo[key] = (
+                                runs,
+                                {run for run in runs if not _contains(run[:_PROBE], rendered_text)},
+                            )
+                    memo = leaf_memo[key]
+                    if memo is None:
+                        continue
+                    runs, missing = memo
+                    for run in runs:
                         if run in probed:
                             continue  # this segment already answered for identical text
                         probed.add(run)
-                        if not _contains(run[:_PROBE], rendered_text):
+                        if run in missing:
                             dropped.append(f"<{leaf.name}> in {addr}: {run}")
         if dropped:
             _record(findings, counts, index, seg, "dropped",

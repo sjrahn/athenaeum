@@ -389,14 +389,34 @@ def _el_path_envelope(values: list[str]) -> str | list[str] | None:
         claims = [furi.parse_el_path(v) for v in values]
     except ValueError:
         return None
-    unique: list[Any] = []
-    for c in claims:
-        if c not in unique:
-            unique.append(c)
-    tops = [
-        c for c in unique
-        if not any(o != c and furi.el_path_contains(o, c) for o in unique)
-    ]
+    # Dedup by identity of the parsed claim (ElPath is a frozen dataclass), then keep the
+    # claims no OTHER claim contains. Every claim is a contiguous interval of the body's
+    # pre-order element sequence (a subtree, or a run of sibling subtrees), and containment
+    # is interval inclusion — so with the claims sorted by START, and a wider claim ahead
+    # of a narrower one sharing its start, a container precedes everything it contains and
+    # a stack of open ancestors finds the same `tops` the all-pairs test did, in O(n·depth)
+    # instead of O(n²) (a 700-segment record has ~8,000 claims; the pairwise form ran for
+    # tens of minutes on it). The two same-start ties: a range and the point at its first
+    # child sort range-first; two ranges on one parent from the same child sort wider-first
+    # (`5.[2-5]` before `5.[2-3]`) — the input order is no tie-break, since a narrower range
+    # opened first would let the wider one through as a second top.
+    unique = list(dict.fromkeys(claims))
+    unique.sort(
+        key=lambda c: (
+            furi.el_path_sort_key(c),
+            0 if c.sibling_range is not None else 1,
+            -c.sibling_range[1] if c.sibling_range is not None else 0,
+        )
+    )
+    tops: list[Any] = []
+    open_ancestors: list[Any] = []
+    for c in unique:
+        while open_ancestors and not furi.el_path_contains(open_ancestors[-1], c):
+            open_ancestors.pop()
+        if open_ancestors:
+            continue  # contained in an open ancestor — a subtree is one address
+        tops.append(c)
+        open_ancestors.append(c)
     tops.sort(key=furi.el_path_sort_key)
     if len(tops) == 1:
         return f"el={furi.format_el_path(tops[0])}"
