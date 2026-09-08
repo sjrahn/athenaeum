@@ -62,6 +62,11 @@ Commands:
                 (dry-run by default; --apply writes)
   worklist REF  dependents to revisit — REF is a fact id, a corpus hash,
                 or an invariant id
+  scope SPEC    scope evaluation (§12.1) — seed, traverse, close. SPEC is a
+                JSON object, a path to one, or '-' (stdin); prints the
+                evaluation as JSON (--ids: member ids, one per line).
+                Owner-plane and unfiltered: the read surface's /scope is
+                where the publication filter applies
   regen         rewrite the generated views (VOCAB.md, the open-questions
                 block; --coverage additionally sweeps corpora for coverage.md)
   export        plane-projected RDF projection of the fact graph (§15.7):
@@ -586,6 +591,63 @@ def _cmd_worklist(argv: Sequence[str]) -> int:
     return 0
 
 
+def _read_scope_spec(arg: str) -> dict:
+    """The scope spec from the CLI argument: inline JSON (starts with `{` or
+    `[`), `-` for stdin, else a path. Raises ValueError with a clear message."""
+    if arg == "-":
+        raw, where = sys.stdin.read(), "stdin"
+    elif arg.lstrip()[:1] in ("{", "["):
+        raw, where = arg, "argument"
+    else:
+        path = Path(arg)
+        if not path.is_file():
+            raise ValueError(f"{arg}: not a file (a spec is inline JSON, a path, or '-')")
+        raw, where = path.read_text(encoding="utf-8"), str(path)
+    try:
+        spec = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{where}: spec is not valid JSON: {e}") from e
+    if not isinstance(spec, dict):
+        raise ValueError(f"{where}: scope spec must be a JSON object")
+    return spec
+
+
+def _cmd_scope(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger scope",
+        "Evaluate a scope spec (spec/ledger.md §12.1): seed, traverse, close — the one "
+        "library call, as a shell primitive. Owner-plane: the result is the full "
+        "membership; the read surface's /scope applies the publication filter.")
+    ap.add_argument("spec", help="the scope spec: inline JSON, a path to a JSON file, "
+                                 "or '-' to read stdin")
+    ap.add_argument("--ids", action="store_true",
+                    help="print member ids one per line instead of the JSON result")
+    ns = ap.parse_args(list(argv))
+    try:
+        spec = _read_scope_spec(ns.spec)
+    except ValueError as e:
+        print(f"ath ledger scope: {e}", file=sys.stderr)
+        return 2
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.scope import evaluate_scope
+
+    try:
+        result = evaluate_scope(
+            ledger_root, spec,
+            references=list(datasets.values()),
+            corpora_roots=[c.root for c in join.corpora],
+        )
+    except (ValueError, NotImplementedError) as e:
+        print(f"ath ledger scope: {e}", file=sys.stderr)
+        return 2
+    if ns.ids:
+        for m in result["members"]:
+            print(m["id"])
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _cmd_supersede(argv: Sequence[str]) -> int:
     ap = _base_parser("ath ledger supersede",
                       "Rewrite corpus citations old→new when a record is re-captured (§13.3).")
@@ -912,6 +974,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "promote": _cmd_promote,
         "stamp": _cmd_stamp,
         "worklist": _cmd_worklist,
+        "scope": _cmd_scope,
         "supersede": _cmd_supersede,
         "merge": _cmd_merge,
         "remap-el": _cmd_remap_el,

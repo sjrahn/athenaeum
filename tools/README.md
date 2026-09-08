@@ -7,7 +7,7 @@ shipping three libraries and two CLIs:
 |---|---|---|
 | `corpus` | `corpus <subcommand>` — parse, lint, resolve, derive views, shape, and orchestrate the capture → ingest → (demand-driven) normalize pipeline | [ATH Part II](../spec/corpus.md) |
 | `ath` | `ath <verb>` — instance verbs against the instance config (`init`, `status`, `issue`, `corpus`, `ledger`, `ref`) | [ATH Part I](../spec/athenaeum.md) |
-| `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|regen` — the knowledge layer's deterministic surface | [ATH Part III](../spec/ledger.md) |
+| `ledger` | `ath ledger check\|verify\|harvest\|promote\|stamp\|worklist\|scope\|regen` — the knowledge layer's deterministic surface | [ATH Part III](../spec/ledger.md) |
 
 Also bundled: the **universal** corpus schemas (`mime`, `origin`, `atom/**`,
 `context/issue/**`). Each instance supplies only its own records and its

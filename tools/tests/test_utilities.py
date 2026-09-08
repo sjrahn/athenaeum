@@ -30,9 +30,70 @@ def test_find_corpus_root(tmp_path):
     assert paths.find_corpus_root(nested) == root.resolve()
 
 
-def test_find_corpus_root_raises_when_missing(tmp_path):
+def test_find_corpus_root_raises_when_missing(tmp_path, monkeypatch):
+    monkeypatch.delenv(paths.ROOT_ENV, raising=False)
     with pytest.raises(FileNotFoundError):
         paths.find_corpus_root(tmp_path)
+
+
+# --- $ATHENAEUM_ROOT precedence (Part I §2.1 "$ATHENAEUM_ROOT overrides"; the
+# corpus CLI honours it exactly as `ath` does: flag > env > cwd walk).
+
+
+def _instance(root):
+    corpus = root / "corpus"
+    (corpus / "records").mkdir(parents=True)
+    (corpus / "schema").mkdir()
+    (root / "athenaeum.yaml").write_text("name: t\n")
+    return corpus
+
+
+def test_find_corpus_root_honours_athenaeum_root(tmp_path, monkeypatch):
+    corpus = _instance(tmp_path / "inst")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv(paths.ROOT_ENV, str(tmp_path / "inst"))
+    assert paths.find_corpus_root() == corpus.resolve()
+
+
+def test_find_corpus_root_env_names_no_corpus_is_loud(tmp_path, monkeypatch):
+    """An operator-declared root with no corpus under it never falls through to
+    the cwd walk — even when the walk would have found one."""
+    here = tmp_path / "cwd-corpus"
+    (here / "records").mkdir(parents=True)
+    (here / "schema").mkdir()
+    monkeypatch.chdir(here)
+    monkeypatch.setenv(paths.ROOT_ENV, str(tmp_path / "empty"))
+    with pytest.raises(FileNotFoundError, match=paths.ROOT_ENV):
+        paths.find_corpus_root()
+
+
+def test_find_corpus_root_explicit_start_ignores_env(tmp_path, monkeypatch):
+    """Mirrors `ath.manifest.find_root`: a caller that names its start (ingest
+    discovering the corpus beside a source file) is not redirected by the env."""
+    _instance(tmp_path / "inst")
+    local = tmp_path / "local"
+    (local / "records").mkdir(parents=True)
+    (local / "schema").mkdir()
+    monkeypatch.setenv(paths.ROOT_ENV, str(tmp_path / "inst"))
+    assert paths.find_corpus_root(local / "records") == local.resolve()
+
+
+def test_corpus_root_flag_beats_env(tmp_path, monkeypatch):
+    import argparse
+
+    from corpus._cli._common import resolved_corpus_root
+
+    _instance(tmp_path / "inst")
+    flagged = tmp_path / "flagged"
+    (flagged / "records").mkdir(parents=True)
+    (flagged / "schema").mkdir()
+    monkeypatch.setenv(paths.ROOT_ENV, str(tmp_path / "inst"))
+    ns = argparse.Namespace(corpus_root=str(flagged))
+    assert resolved_corpus_root(ns) == flagged.resolve()
+    ns = argparse.Namespace(corpus_root=None)
+    assert resolved_corpus_root(ns) == (tmp_path / "inst" / "corpus").resolve()
 
 
 def test_shard_and_record_path(tmp_path):

@@ -7,7 +7,9 @@ first two hex characters of the blake3 id, e.g. `records/a7/a7f3b2c1….md` and
 
 `find_corpus_root` keys on the presence of both `records/` and `schema/`; an empty
 `schema/` is a valid marker for a corpus that vendors no local schemas and relies on
-the package's bundled universals.
+the package's bundled universals. Precedence mirrors `ath.manifest.find_root` (Part I
+§2.1: "$ATHENAEUM_ROOT overrides"): an explicit start wins, else `$ATHENAEUM_ROOT/corpus`
+when the variable is set, else the walk up from cwd.
 """
 
 from __future__ import annotations
@@ -18,6 +20,13 @@ from pathlib import Path
 
 SHARD_LEN = 2
 
+# The instance-root override and the instance's corpus directory. Both duplicate
+# `ath.manifest` (`ROOT_ENV`, `Instance.corpus_root`) on purpose: the corpus layer
+# never imports `ath` (the layers are read-only downstream of the config, never the
+# other way — the same rule `corpus.assets` follows for the manifest filename).
+ROOT_ENV = "ATHENAEUM_ROOT"
+CORPUS_DIRNAME = "corpus"
+
 # Minimum hex prefix accepted as a short-hash record reference. Four hex chars give
 # 16^4 = 65,536 distinct prefixes — collisions in a corpus of a few thousand records
 # are real but rare. When a prefix is ambiguous, `resolve_record` exits with the
@@ -25,12 +34,29 @@ SHARD_LEN = 2
 MIN_HASH_PREFIX = 4
 
 
+def is_corpus_root(path: Path) -> bool:
+    """True when `path` carries the two tracked marker dirs, `records/` + `schema/`."""
+    return (path / "records").is_dir() and (path / "schema").is_dir()
+
+
 def find_corpus_root(start: Path | None = None) -> Path:
-    """Walk upward from `start` (default: cwd) until a directory containing both
-    `records/` and `schema/` is found. That's the corpus root."""
+    """The corpus root: `$ATHENAEUM_ROOT/corpus` when the variable is set and no
+    `start` is given, else walk upward from `start` (default: cwd) until a directory
+    containing both `records/` and `schema/` is found.
+
+    An `$ATHENAEUM_ROOT` that names no corpus is a loud `FileNotFoundError`, never a
+    silent fall-through to the walk — the operator said where the instance is."""
+    env = os.environ.get(ROOT_ENV)
+    if env and start is None:
+        root = (Path(env) / CORPUS_DIRNAME).resolve()
+        if is_corpus_root(root):
+            return root
+        raise FileNotFoundError(
+            f"{ROOT_ENV}={env}: {root} is not a corpus root (looking for records/ + schema/)"
+        )
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
-        if (candidate / "records").is_dir() and (candidate / "schema").is_dir():
+        if is_corpus_root(candidate):
             return candidate
     raise FileNotFoundError(f"No corpus root found above {here} (looking for records/ + schema/)")
 

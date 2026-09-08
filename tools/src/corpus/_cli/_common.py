@@ -12,8 +12,9 @@ from corpus import paths
 
 
 def resolved_corpus_root(args: argparse.Namespace) -> Path:
-    """Get the corpus root from `args.corpus_root` (set via --corpus-root) or by
-    discovery from cwd. Exits with a friendly message if neither works."""
+    """Get the corpus root from `args.corpus_root` (set via --corpus-root), else
+    `$ATHENAEUM_ROOT/corpus`, else by discovery from cwd — the same precedence
+    `ath` gives the instance root. Exits with a friendly message if none works."""
     explicit = getattr(args, "corpus_root", None)
     if explicit:
         root = Path(explicit).resolve()
@@ -45,7 +46,8 @@ def add_corpus_root_arg(parser: argparse.ArgumentParser) -> None:
         "--corpus-root",
         dest="corpus_root",
         default=None,
-        help="Path to corpus root (default: walk up from cwd to find records/+schema/).",
+        help="Path to corpus root (default: $ATHENAEUM_ROOT/corpus when set, else walk up "
+             "from cwd to find records/+schema/).",
     )
 
 
