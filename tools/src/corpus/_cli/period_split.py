@@ -55,14 +55,32 @@ beyond this axis. The `mtime` axis is unaffected
 by any of this: a directory source's mtime is already read as UTC, and a zip source's
 `ZipInfo.date_time` is naive by format (no offset ever present) — both already bucket
 correctly under the rule as written.
+
+**The index-file axis (spec §7.2 `date_index:` / §12.3.14, v44).** A producer whose
+members carry NO per-member sidecar, and whose dates live in ONE index file keyed by
+member path (a Meta export: `stories.json` is `{ig_stories: [{uri, creation_timestamp,
+…}]}`, `posts_N.json` a top-level list of posts each with `media: [{uri,
+creation_timestamp}]`), declares the index on its origin overlay — `file` (a glob over
+member paths), `entries` (the dotted path to the entry array; arrays along the way are
+traversed), `key` (the entry field holding the member path) — and the split reads each
+member's date from ITS entry at `--date-from index:<dotted-path>`. Every value rule
+above applies unchanged: an epoch integer is UTC by definition, an offset-bearing ISO
+string converts, a naive one is face-value unless a `render_timezone` applies. The
+index files are members of the export but never PRIMARIES — like `pairing.export_level`
+they are excluded from bucketing and disclosed (`date_index_files`); an entry naming no
+member is counted (`date_index_unmatched`), a member path two entries date differently
+buckets undated rather than by guess (`date_index_conflicts`), and a member with no
+entry at all lands undated exactly as a sidecar-less member does on the sidecar axis.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import sys
 import zipfile
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -99,11 +117,16 @@ def configure(parser: argparse.ArgumentParser) -> None:
         metavar="SPEC",
         dest="date_from",
         help=(
-            "the per-member date axis: `mtime` (the member file's own mtime) or "
+            "the per-member date axis: `mtime` (the member file's own mtime); "
             "`sidecar:<dotted-path>` (read from the member's paired sidecar JSON at "
             "that key path, e.g. `sidecar:date` for a photo library's per-item JSON, "
             "`sidecar:Payload.Time` for a mail export's epoch field; the pairing itself is "
-            "the origin overlay's `sidecar.pairing` declaration, spec §7.2). The sidecar "
+            "the origin overlay's `sidecar.pairing` declaration, spec §7.2); or "
+            "`index:<dotted-path>` (v44: read from the member's entry in the export's "
+            "index file(s) at that key path, e.g. `index:creation_timestamp` for a Meta "
+            "export's `stories.json` / `posts_N.json`; which files, which entry array "
+            "and which entry field names the member path is the origin overlay's "
+            "`date_index:` declaration, spec §7.2). A sidecar or index "
             "value may "
             "be an ISO string or an epoch-seconds INTEGER (v36) — the integer form is "
             "UTC by definition. A member with no parseable date on this axis goes to "
@@ -226,7 +249,15 @@ def _parse_date_axis(spec: str) -> tuple[str, str | None]:
         if not dotted:
             sys.exit("--date-from sidecar:<dotted-path> needs a non-empty path")
         return "sidecar", dotted
-    sys.exit(f"--date-from: expected 'mtime' or 'sidecar:<dotted-path>', got {spec!r}")
+    if text.startswith("index:"):
+        dotted = text[len("index:") :].strip()
+        if not dotted:
+            sys.exit("--date-from index:<dotted-path> needs a non-empty path")
+        return "index", dotted
+    sys.exit(
+        f"--date-from: expected 'mtime', 'sidecar:<dotted-path>' or 'index:<dotted-path>', "
+        f"got {spec!r}"
+    )
     raise AssertionError("unreachable")
 
 
@@ -254,11 +285,28 @@ def _sidecar_date_year_month(
         doc = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+    return _date_value_year_month(_walk(doc, dotted_path), render_zone)
+
+
+def _walk(doc: Any, dotted_path: str) -> Any:
+    """`doc` walked by `dotted_path` through nested objects; None when any segment is
+    absent or the value at it is not an object."""
     value: Any = doc
     for seg in dotted_path.split("."):
         if not isinstance(value, dict) or seg not in value:
             return None
         value = value[seg]
+    return value
+
+
+def _date_value_year_month(
+    value: Any, render_zone: ZoneInfo | None = None
+) -> tuple[int, int] | None:
+    """One date-axis VALUE (a sidecar field, an index entry field) → `(year, month)` under
+    the rules `_sidecar_date_year_month` documents, or None. Shared by the sidecar and
+    index axes so both read a value identically — the v34 boundary rule, the v36 epoch
+    form and the v38 rendered-local class are properties of the value, not of where it
+    was found."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -280,17 +328,115 @@ def _sidecar_date_year_month(
     return bucket_year_month(dt)
 
 
+# ---------- the index-file axis (spec §7.2 `date_index:`, v44) ---------- #
+
+
+@dataclass
+class _DateIndex:
+    """Every member path an export's index file(s) date, resolved once up front. `dates`
+    maps member path → `(year, month)` (None: the entry's date value was unparseable —
+    undated, never guessed); `files` are the index members themselves (excluded from
+    bucketing, disclosed); `unmatched` counts entries naming no member of this export;
+    `conflicts` counts member paths two entries dated DIFFERENTLY (such a member buckets
+    undated — the index disagrees with itself, and the split does not pick a side)."""
+
+    dates: dict[str, tuple[int, int] | None] = field(default_factory=dict)
+    files: list[str] = field(default_factory=list)
+    unmatched: int = 0
+    conflicts: int = 0
+
+
+def _index_entries(doc: Any, entries_path: str) -> list[dict[str, Any]]:
+    """The entry objects an index document yields at `entries_path`: walk each dotted
+    segment through objects, mapping over any array met on the way (a top-level list
+    of posts, each carrying a `media` array, yields every post's media entries at
+    `media`); `[]` suffixes are accepted as the strip_fields notation and mean the
+    same traversal. Only objects are entries — anything else at the end is ignored."""
+    nodes: list[Any] = [doc]
+    for seg in [s for s in entries_path.split(".") if s]:
+        key = seg
+        while key.endswith("[]"):
+            key = key[:-2]
+        if not key:  # a bare `[]` segment: traverse only, no key step
+            nodes = _flatten(nodes)
+            continue
+        nxt: list[Any] = []
+        for n in _flatten(nodes):
+            if isinstance(n, dict) and key in n:
+                nxt.append(n[key])
+        nodes = nxt
+    return [n for n in _flatten(nodes) if isinstance(n, dict)]
+
+
+def _flatten(nodes: list[Any]) -> list[Any]:
+    out: list[Any] = []
+    for n in nodes:
+        if isinstance(n, list):
+            out.extend(_flatten(n))
+        else:
+            out.append(n)
+    return out
+
+
+def _load_date_index(
+    src: _Source,
+    names: list[str],
+    declarations: list[dict[str, str]],
+    date_path: str,
+    render_zone: ZoneInfo | None,
+) -> _DateIndex:
+    """Read every declared index file present in the export and resolve each entry's
+    member path → date. An index file that does not parse as JSON is a hard exit (the
+    declaration named it as the axis; silently dating nothing would send the whole
+    export undated with no signal)."""
+    index = _DateIndex()
+    name_set = set(names)
+    # member path → the distinct parsed dates its entries carry (order-independent: an
+    # unparseable entry contributes nothing, so it never manufactures a conflict).
+    seen: dict[str, set[tuple[int, int]]] = {}
+    for decl in declarations:
+        matched = sorted(n for n in names if fnmatch.fnmatchcase(n, decl["file"]))
+        for idx_name in matched:
+            if idx_name not in index.files:
+                index.files.append(idx_name)
+            try:
+                doc = json.loads(src.read(idx_name))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                sys.exit(f"{idx_name}: declared date_index file is not JSON: {exc}")
+            for entry in _index_entries(doc, decl["entries"]):
+                member = _walk(entry, decl["key"])
+                if not isinstance(member, str) or member not in name_set:
+                    index.unmatched += 1
+                    continue
+                ym = _date_value_year_month(_walk(entry, date_path), render_zone)
+                dates = seen.setdefault(member, set())
+                if ym is not None:
+                    dates.add(ym)
+    index.files.sort()
+    for member, dates in seen.items():
+        if len(dates) > 1:
+            index.conflicts += 1
+            index.dates[member] = None
+        else:
+            index.dates[member] = next(iter(dates), None)
+    return index
+
+
 def _resolve_date(
     src: _Source,
     primary: str,
     sidecar_name: str | None,
     axis: tuple[str, str | None],
     render_zone: ZoneInfo | None,
+    date_index: _DateIndex | None = None,
 ) -> tuple[int, int] | None:
     kind, dotted_path = axis
     if kind == "mtime":
         dt = src.mtime(primary)
         return dt.year, dt.month
+    if kind == "index":
+        assert date_index is not None
+        return date_index.dates.get(primary)
     if sidecar_name is None:
         return None
     assert dotted_path is not None
@@ -343,6 +489,21 @@ def run(args: argparse.Namespace) -> int:
             f"each member's sidecar (spec §12.3.14); a producer with no sidecar "
             f"declaration can still use --date-from mtime."
         )
+    index_declarations: list[dict[str, str]] | None = None
+    if axis[0] == "index":
+        try:
+            index_declarations = schemas.resolve_date_index(
+                corpus_root, "application/zip", origin_id=args.origin
+            )
+        except ValueError as exc:
+            sys.exit(str(exc))
+        if index_declarations is None:
+            sys.exit(
+                f"--origin {args.origin!r} declares no `date_index:` on its overlay ladder "
+                f"(spec §7.2, v44) — --date-from index:… needs its `file`/`entries`/`key` "
+                f"to find each member's entry (spec §12.3.14); a producer with no index "
+                f"declaration can still use --date-from mtime."
+            )
     export_level_names = declaration.export_level if declaration is not None else frozenset()
 
     src = _open_source(source_path)
@@ -352,6 +513,18 @@ def run(args: argparse.Namespace) -> int:
             sys.exit(f"{source_path.name}: no members found")
         excluded_export_level = sorted(n for n in all_names if n in export_level_names)
         names = [n for n in all_names if n not in export_level_names]
+        date_index: _DateIndex | None = None
+        if index_declarations is not None:
+            assert axis[1] is not None
+            date_index = _load_date_index(src, names, index_declarations, axis[1], render_zone)
+            if not date_index.files:
+                sys.exit(
+                    f"{source_path.name}: no member matches the declared date_index "
+                    f"file(s) {[d['file'] for d in index_declarations]} — nothing to "
+                    f"read dates from (spec §12.3.14)"
+                )
+            index_files = set(date_index.files)
+            names = [n for n in names if n not in index_files]
         if not names:
             sys.exit(f"{source_path.name}: no members found (only export-level metadata?)")
         name_set = set(names)
@@ -371,7 +544,7 @@ def run(args: argparse.Namespace) -> int:
         bucket_of: dict[str, str] = {}
         undated = 0
         for p in primaries:
-            ym = _resolve_date(src, p, sidecar_of.get(p), axis, render_zone)
+            ym = _resolve_date(src, p, sidecar_of.get(p), axis, render_zone, date_index)
             if ym is None:
                 undated += 1
                 bucket_of[p] = "undated" if undated_mode == "standing" else "current"
@@ -455,6 +628,15 @@ def run(args: argparse.Namespace) -> int:
                 # An export-wide fact (like `source_export`/`date_axis` above), disclosed
                 # on every emitted bucket rather than picking one to own it.
                 origin_fields["export_level_metadata"] = excluded_export_level
+            if date_index is not None:
+                # The index axis's own disclosure (v44), export-wide like the above: which
+                # members were the index, how many entries named nothing here, and how
+                # many members the index dated two ways (bucketed undated, never guessed).
+                origin_fields["date_index_files"] = list(date_index.files)
+                if date_index.unmatched:
+                    origin_fields["date_index_unmatched"] = date_index.unmatched
+                if date_index.conflicts:
+                    origin_fields["date_index_conflicts"] = date_index.conflicts
             origin_fields.update(extra_fields)
             sidecar_yaml: dict[str, Any] = {
                 "origin_schema": args.origin,
@@ -494,6 +676,13 @@ def run(args: argparse.Namespace) -> int:
             print(
                 f"  export-level metadata (excluded from bucketing): "
                 f"{', '.join(excluded_export_level)}"
+            )
+        if date_index is not None:
+            print(
+                f"  date index (excluded from bucketing): {', '.join(date_index.files)} — "
+                f"{sum(1 for v in date_index.dates.values() if v is not None)} member(s) "
+                f"dated, {date_index.unmatched} entr(y/ies) naming no member, "
+                f"{date_index.conflicts} conflict(s)"
             )
         print(
             "  next: corpus ingest each emitted zip; promote closed-period members as "

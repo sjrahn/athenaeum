@@ -1065,6 +1065,91 @@ def resolve_partition(
     return _origin_partition_declaration(corpus_root, default_id)
 
 
+def _validate_date_index(raw: Any, *, origin_id: str) -> list[dict[str, str]]:
+    """Validate a `date_index:` block (spec §7.2 / §12.3.14, v44) — the INDEX-FILE date
+    axis: a producer whose members' dates live in one index file keyed by member path
+    rather than in a per-member sidecar (a Meta export's `stories.json`, `posts_N.json`).
+    One mapping or a list of them, each `{file, entries, key}`: `file` is a glob over
+    member paths naming the index file(s) (`your_instagram_activity/media/posts_*.json`),
+    `entries` the dotted path from the index document to its entry array (empty when the
+    document IS the array; arrays along the path are traversed, so `media` on a
+    top-level list of posts yields every post's media entries), and `key` the entry
+    field whose value is a member path.
+
+    Strict, like `partition.onboarding` (v36): an explicit `date_index:` that does not
+    validate is a typo in THIS overlay, not "try a broader ancestor" — raises
+    `ValueError` naming the key. Only the declaration's SHAPE is checked here; what the
+    axis reads at each entry (the date field) is the split's `--date-from index:<path>`."""
+    where = f"origin overlay {origin_id!r} `date_index:`"
+    items = raw if isinstance(raw, list) else [raw]
+    if not items:
+        raise ValueError(f"{where} must be a mapping or a non-empty list of mappings")
+    out: list[dict[str, str]] = []
+    for i, item in enumerate(items):
+        w = f"{where}[{i}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{w} must be a mapping with `file`, `entries`, `key`")
+        file_ = item.get("file")
+        if not isinstance(file_, str) or not file_.strip():
+            raise ValueError(f"{w}: `file` must be a non-empty member-path glob")
+        entries = item.get("entries", "")
+        if entries is None:
+            entries = ""
+        if not isinstance(entries, str) or any(
+            not seg.strip() for seg in entries.split(".") if entries.strip()
+        ):
+            raise ValueError(f"{w}: `entries` must be a dotted path (empty for a root array)")
+        key = item.get("key")
+        if not isinstance(key, str) or not key.strip() or any(
+            not seg.strip() for seg in key.split(".")
+        ):
+            raise ValueError(f"{w}: `key` must be a dotted entry path naming the member path")
+        unknown = sorted(set(item) - {"file", "entries", "key"})
+        if unknown:
+            raise ValueError(f"{w}: unknown key(s) {unknown} (known: entries, file, key)")
+        out.append({"file": file_.strip(), "entries": entries.strip(), "key": key.strip()})
+    return out
+
+
+def _origin_date_index_declaration(
+    corpus_root: Path, origin_id: str
+) -> list[dict[str, str]] | None:
+    """Namespace walk for `date_index:` (mirrors `_origin_partition_declaration`): try
+    `origin_id`, then each id-prefix ancestor; the first overlay carrying the key wins
+    and is validated strictly (`_validate_date_index`)."""
+    parts = [p for p in (origin_id or "").split("/") if p]
+    if not parts:
+        return None
+    for i in range(len(parts), 0, -1):
+        candidate_id = "/".join(parts[:i])
+        overlay = load_origin_overlay_by_id(corpus_root, candidate_id)
+        if not isinstance(overlay, dict) or "date_index" not in overlay:
+            continue
+        return _validate_date_index(overlay["date_index"], origin_id=candidate_id)
+    return None
+
+
+def resolve_date_index(
+    corpus_root: Path,
+    media_type: str,
+    *,
+    origin_id: str | None = None,
+) -> list[dict[str, str]] | None:
+    """Resolve a producer's `date_index:` declaration (spec §7.2 / §12.3.14, v44) — the
+    index-file date axis `corpus period-split --date-from index:<path>` reads. Same
+    resolution chain as `resolve_partition`: `origin_id` given walks ITS namespace and
+    that is FINAL (`None` when nothing declares); no `origin_id` resolves the mime
+    schema's `default_origin` binding and walks THAT namespace. Raises `ValueError` for
+    a declaration that does not validate — a CLI verb catches it and exits with the
+    message."""
+    if origin_id is not None:
+        return _origin_date_index_declaration(corpus_root, origin_id)
+    default_id = resolve_default_origin(corpus_root, media_type)
+    if default_id is None:
+        return None
+    return _origin_date_index_declaration(corpus_root, default_id)
+
+
 def _origin_render_timezone_declaration(corpus_root: Path, origin_id: str) -> str | None:
     """The `render_timezone` walk (spec §12.3.14, v38) — mirrors `_origin_strip_declaration`
     (`_origin_declared_string_list`) except the declared value is a single IANA zone
