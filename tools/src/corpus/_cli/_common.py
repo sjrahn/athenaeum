@@ -135,7 +135,20 @@ left-to-right, each operating on the previous step's output:
   fit=WxH | fit=llm  downscale to fit a box, aspect-preserving, never enlarges
                      (the `llm` preset caps to a vision-model input budget)
   resize=WxH         resize to exact pixel dimensions (may distort or enlarge)
+  format=png         write the decoded image out as PNG — the viewable rendering of a
+                     HEIC/HEIF/AVIF/WebP still (add fit=llm to bound it). Every image
+                     op above writes PNG too; this is the explicit no-other-change form.
   dpi=N              rasterization DPI for page= (default 200; position-independent)
+
+  Container members (spec §6.2 "Member re-chaining"):
+  path=<member>      a kept-whole archive's member (zip/tar); msg=N a mailbox message;
+                     part=N a MIME part. BARE, the member is served as its RAW bytes,
+                     verbatim (a .HEIC member stays HEIC — nothing re-encodes what no op
+                     asked to transform; only an already-textual member prints as text).
+                     Chain any op and the member re-enters ITS OWN pipeline:
+                       path=IMG_0001.HEIC&auto_orient&fit=llm   -> a viewable PNG
+                       path=report.pdf&page=1&text              -> that page's text
+                       msg=23&part=3                            -> an attachment, chainable on
 """
 
 
