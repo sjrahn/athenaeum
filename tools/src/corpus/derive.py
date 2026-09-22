@@ -428,6 +428,20 @@ def build_content_zone(
         if strategy == "mbox-manifest":
             drafter_kwargs["messages"] = messages
     result = drafter(binary_file, **drafter_kwargs)
+    # *(v45, §4.3.1.4 / §7.2)* A container-member sidecar is metadata of its frame, never a
+    # member: every sidecar the record's own `sidecar:` declaration pairs to a present
+    # primary leaves the roster here — the one place both projections (the stored block via
+    # `attest`, the `members` derivation) read from, so they cannot disagree. The drafter's
+    # enumeration is the container's physical entry list, so the pairing reads it whole
+    # before anything is dropped; `member_count` and every archive fact stay physical.
+    embeds = result.get("embeds") if isinstance(result, dict) else None
+    if embeds:
+        try:
+            decl = sidecar.declaration_for_container(corpus_root, post)
+        except sidecar.DeclarationError as exc:
+            raise DeriveError(str(exc)) from exc
+        if decl is not None:
+            result["embeds"], _consumed = sidecar.drop_consumed_rows(list(embeds), decl)
     return build, result, mt_schema, binary_file, mime_schema_id
 
 

@@ -18,10 +18,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
-from .ziparchive import ENGINE_VERSION, common_root, relpath
+from .ziparchive import ENGINE_VERSION, MemberMissing, common_root, relpath
 
 __all__ = [
     "ENGINE_VERSION",
+    "MemberMissing",
     "common_root",
     "compression",
     "member_source_modified",
@@ -64,7 +65,7 @@ def open_member(tar_path: Path, rel: str) -> Iterator[IO[bytes]]:
                     raise ValueError(f"path={rel}: member is not a regular file")
                 yield fp
                 return
-    raise ValueError(f"path={rel}: no such member in archive")
+    raise MemberMissing(f"path={rel}: no such member in archive")
 
 
 def resolve_member(tar_path: Path, rel: str) -> bytes:

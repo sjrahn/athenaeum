@@ -192,6 +192,17 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--host", default=None, help="only records with an origin URI on this host (subdomains included)."
     )
     parser.add_argument(
+        "--origin",
+        default=None,
+        metavar="OVERLAY_ID",
+        help=(
+            "only records with an origin block qualified by this overlay id (`<id>` matches "
+            "every subtype; `<id>/<subtype>` just that one) — the selector for a uri-less, "
+            "producer-declared origin `--host` cannot reach (e.g. the v45 sidecar migration: "
+            "`--origin osxphotos-export --mime application/zip`)."
+        ),
+    )
+    parser.add_argument(
         "--state",
         choices=("proxy", "terminal", "rendered", "formed", "any"),
         default="any",
@@ -239,6 +250,18 @@ def _host_matches(post, want: str) -> bool:
     return any(h == want or h.endswith("." + want) for h in _origin_hosts(post))
 
 
+def _origin_matches(post, want: str) -> bool:
+    want = want.strip().strip("/")
+    for block in records.iter_origin_blocks(post):
+        id_ = str(block.get("id") or "")
+        if not id_:
+            continue
+        subtype = str(block.get("subtype") or "")
+        if want == id_ or (subtype and want == f"{id_}/{subtype}"):
+            return True
+    return False
+
+
 def run(args: argparse.Namespace) -> int:
     from corpus import paths
 
@@ -278,6 +301,9 @@ def run(args: argparse.Namespace) -> int:
         if args.mime and records.media_type_for(post) != args.mime:
             continue
         if args.host and not _host_matches(post, args.host):
+            continue
+        origin_want = getattr(args, "origin", None)
+        if origin_want and not _origin_matches(post, origin_want):
             continue
 
         rid = str(post.metadata.get("id") or "")[:12]

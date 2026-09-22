@@ -302,6 +302,24 @@ def _print_resolver_ops(root, post) -> None:
             record_level.append(
                 f"turn=<N>&att=<M> -> bytes  (lineage-chained){engine_suffix} [address]"
             )
+    # *(v45, §6.2 `sidecar`)* A container whose origin declares a member sidecar (§7.2) reads
+    # each frame's sidecar THROUGH the frame; the sidecars themselves are not members, so the
+    # op is named here with the pairing it reads by. A promoted frame reaches it bare.
+    from corpus import sidecar as _sidecar
+
+    try:
+        sidecar_decl = _sidecar.declaration_for_container(root, post)
+    except _sidecar.DeclarationError:
+        sidecar_decl = None
+    if sidecar_decl is not None:
+        pin = resolver.engine_version_for_param("sidecar")
+        if any(True for _ in records.iter_embed_blocks(post)):
+            record_level.append(
+                f"path=<frame>&sidecar -> {sidecar_decl.format}  "
+                f"(pairing {sidecar_decl.template!r}) [engine: {pin}] [reading]"
+            )
+        elif resolver.member_lineage(post) is not None:
+            record_level.append(f"sidecar -> {sidecar_decl.format} [engine: {pin}] [reading]")
     print("  record-level: " + (" · ".join(record_level) if record_level else "none"))
 
     if not media_type:

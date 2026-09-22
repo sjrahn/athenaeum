@@ -34,6 +34,13 @@ from typing import IO
 ENGINE_VERSION = "archive-path@2"
 
 
+class MemberMissing(ValueError):
+    """No member of the archive answers the `path=` address. A `ValueError` (every caller that
+    already treats a bad address as a clean 4xx keeps doing so); the subclass exists so a caller
+    probing for an OPTIONAL member — a container-member sidecar paired by template, spec §7.2 —
+    can tell "absent" from "present but unreadable" without matching message text."""
+
+
 def member_names(zf: zipfile.ZipFile) -> list[str]:
     """The archive's file members (directories excluded), in central-directory order."""
     return [i.filename for i in zf.infolist() if not i.is_dir()]
@@ -71,7 +78,7 @@ def resolve_member(zip_path: Path, rel: str) -> bytes:
         root = common_root(list(names))
         if root and (root + rel) in names:
             return zf.read(root + rel)
-    raise ValueError(f"path={rel}: no such member in archive")
+    raise MemberMissing(f"path={rel}: no such member in archive")
 
 
 def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
@@ -83,7 +90,7 @@ def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
     root = common_root(list(names))
     if root and (root + rel) in names:
         return root + rel
-    raise ValueError(f"path={rel}: no such member in archive")
+    raise MemberMissing(f"path={rel}: no such member in archive")
 
 
 @contextmanager

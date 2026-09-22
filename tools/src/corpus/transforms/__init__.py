@@ -147,7 +147,7 @@ OP_CLASSES: dict[str, str] = {
     "rotate": OP_CLASS_ADDRESS, "auto_orient": OP_CLASS_ADDRESS, "cover": OP_CLASS_ADDRESS,
     # reading
     "text": OP_CLASS_READING, "body": OP_CLASS_READING, "members": OP_CLASS_READING,
-    "outline": OP_CLASS_READING,
+    "outline": OP_CLASS_READING, "sidecar": OP_CLASS_READING,
     # view — renderings and their configuration, delivery forms
     "render": OP_CLASS_VIEW, "fit": OP_CLASS_VIEW, "resize": OP_CLASS_VIEW,
     "mark": OP_CLASS_VIEW, "autocontrast": OP_CLASS_VIEW, "contrast": OP_CLASS_VIEW,

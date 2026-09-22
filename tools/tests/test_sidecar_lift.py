@@ -279,7 +279,7 @@ def test_no_gate_no_reference_no_flag(photo):
 
 def test_consumed_sidecar_address_is_refused_naming_the_primary(photo):
     root, cid = photo
-    with pytest.raises(SystemExit, match=r"consumed sidecar of member 'IMG_0001\.HEIC'"):
+    with pytest.raises(SystemExit, match=r"is the sidecar of member 'IMG_0001\.HEIC'"):
         _promote(root, f"corpus://{cid}?path=IMG_0001.HEIC.json")
     assert not paths.record_path(root, _b3(_PHOTO_MEMBERS["IMG_0001.HEIC.json"])).exists()
 
@@ -311,7 +311,8 @@ def test_promote_reports_the_lift(photo, capsys):
         uri=f"corpus://{cid}?path=IMG_0001.HEIC", json=True, corpus_root=str(root)
     )) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["sidecar"] == "path=IMG_0001.HEIC.json"
+    assert out["sidecar"] == "path=IMG_0001.HEIC&sidecar"
+    assert out["sidecar_file"] == "IMG_0001.HEIC.json"
     assert out["origin_schema"] == "photo-export/item"
     assert "px_edited" in out["lifted"] and "px_modified" not in out["lifted"]
 
@@ -453,7 +454,7 @@ def test_mail_shape_lifts_from_a_nested_payload(mail):
     assert f["pm_subject"] == "Hello"
     assert f["pm_time"] == 1700000000
     assert f["pm_labels"] == ["1"]
-    with pytest.raises(SystemExit, match=r"consumed sidecar of member 'abc\.eml'"):
+    with pytest.raises(SystemExit, match=r"is the sidecar of member 'abc\.eml'"):
         _promote(root, f"corpus://{cid}?path=abc.metadata.json")
     # An export-level member pairs with no primary: an ordinary, promotable member.
     assert _promote(root, f"corpus://{cid}?path=labels.json") == 0

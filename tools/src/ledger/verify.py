@@ -390,6 +390,12 @@ def _op_engine_map(corpus_root: Path, media_type: str) -> dict[str, str]:
             if op.engine_version}
 
 
+#: Record-level reading ops an anchor may end in (corpus §6.2 op classes) that the resolver
+#: serves whatever the source record's media type — attempted by `_derived_resolution` even
+#: though no mime pipeline lists them.
+_RECORD_LEVEL_READINGS: frozenset[str] = frozenset({"sidecar"})
+
+
 def _derived_resolution(
     corpus_root: Path,
     uri: str,
@@ -417,9 +423,13 @@ def _derived_resolution(
     """
     if uri in cache:
         return cache[uri]
-    from corpus.resolver import ops_for_media_type
+    from corpus.resolver import engine_version_for_param, ops_for_media_type
 
     op_params = {op.param for op in ops_for_media_type(corpus_root, media_type)}
+    # Record-level readings the resolver serves regardless of the source's media type (never
+    # registry-reachable, so `ops_for_media_type` cannot list them): `sidecar` (corpus §6.2,
+    # v45) — a promoted frame's `?sidecar` reads its container's paired sidecar.
+    op_params |= _RECORD_LEVEL_READINGS
     if not any(k in op_params for k, _ in params):
         # never attempted for an anchor with no derivation-op axis at all — a
         # plain `el=` against a record that already carries stored segments for
@@ -462,6 +472,9 @@ def _derived_resolution(
         cache[uri] = result
         return result
     used_pins = {k: op_engine[k] for k, _ in params if k in op_engine}
+    for k, _ in params:
+        if k in _RECORD_LEVEL_READINGS and (pin := engine_version_for_param(k)):
+            used_pins[k] = pin
     result = (True, text, "", used_pins)
     cache[uri] = result
     return result

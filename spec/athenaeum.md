@@ -2,7 +2,7 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 44
+version: 45
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08

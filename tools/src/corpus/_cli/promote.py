@@ -204,24 +204,13 @@ def run(args: argparse.Namespace) -> int:
         sys.exit(f"no container record for {container_id} at {container_file}")
     container_post = records.load(container_file)
     container_media_type = records.media_type_for(container_post)
-    embed = _find_embed(container_post, member_address)
-    if embed is None:
-        sys.exit(
-            f"container {container_id[:12]} has no embed at {member_address!r} "
-            f"(nothing to promote)."
-        )
-    expected_algo, _, expected_hex = str(embed.get("transport") or "").partition(":")
-    if expected_algo != "blake3" or not expected_hex:
-        sys.exit(
-            f"embed at {member_address!r} has no blake3 transport hash "
-            f"(got {embed.get('transport')!r}); cannot verify a promoted id."
-        )
 
-    # 1b. *(v41, §7.2)* The container's origin overlay MAY declare a `sidecar:` — a member
-    #     whose export pairs each primary with a companion metadata member. A consumed
-    #     sidecar is never a record of its own: refuse its address here, naming the primary
-    #     it belongs to, BEFORE a single byte is streamed. The engine is producer-agnostic —
-    #     the declaration says what pairs with what; nothing here knows what the members are.
+    # 1a. *(v41, §7.2; v45 ordering)* The container's origin overlay MAY declare a `sidecar:`
+    #     — a member whose export pairs each primary with a companion metadata member. A
+    #     sidecar is metadata of its frame, never a record of its own: refuse its address
+    #     here, naming the frame, BEFORE the roster lookup — since v45 the roster no longer
+    #     lists a sidecar at all, so "no embed" would be the wrong answer to give. The engine
+    #     is producer-agnostic: the declaration says what pairs with what.
     try:
         sidecar_decl = sidecar.declaration_for_container(corpus_root, container_post)
     except sidecar.DeclarationError as e:
@@ -236,12 +225,26 @@ def run(args: argparse.Namespace) -> int:
         primary = sidecar_decl.primary_of(member_path, roster)
         if primary is not None:
             sys.exit(
-                f"{member_address!r} is the consumed sidecar of member {primary!r} under "
-                f"the container's `sidecar:` declaration (spec §7.2 — a sidecar member is "
-                f"never a record of its own): promote "
+                f"{member_address!r} is the sidecar of member {primary!r} under the "
+                f"container's `sidecar:` declaration (spec §7.2 — a sidecar is metadata of "
+                f"its frame, never a record of its own): promote "
                 f"corpus://{container_id}?path={primary} instead; the sidecar projects "
-                f"into that record's origin block."
+                f"into that record's origin block, and reads through the frame as "
+                f"`?path={primary}&sidecar`."
             )
+
+    embed = _find_embed(container_post, member_address)
+    if embed is None:
+        sys.exit(
+            f"container {container_id[:12]} has no embed at {member_address!r} "
+            f"(nothing to promote)."
+        )
+    expected_algo, _, expected_hex = str(embed.get("transport") or "").partition(":")
+    if expected_algo != "blake3" or not expected_hex:
+        sys.exit(
+            f"embed at {member_address!r} has no blake3 transport hash "
+            f"(got {embed.get('transport')!r}); cannot verify a promoted id."
+        )
 
     # 2. The container's bytes (standalone, or streamed out of a nested container).
     from corpus.store import ArtifactMissing
@@ -319,20 +322,22 @@ def run(args: argparse.Namespace) -> int:
     #     lifts nothing and stays bare. A sidecar that will not parse is a note, never a
     #     failed promote — the bytes are what promotion is for — and `corpus reattest`
     #     regenerates the lift from the container later (§12.4.6).
+    #     *(v45)* Pairing is physical: the roster no longer lists the sidecar, so its presence
+    #     is read from the container's own entries.
     sidecar_path: str | None = None
     lifted: dict[str, Any] = {}
     lift_schema_id: str | None = None
     if sidecar_decl is not None and member_path is not None:
-        sidecar_path = sidecar_decl.sidecar_for(member_path, roster)
-    if sidecar_path is not None:
         try:
-            doc = sidecar.read_sidecar(
-                container_path, container_media_type, sidecar_path, el_addressing=el_addressing
+            paired = sidecar.read_paired_sidecar(
+                sidecar_decl, container_path, container_media_type, member_path,
+                el_addressing=el_addressing,
             )
         except (ValueError, OSError) as e:
-            print(f"  note: sidecar {sidecar_path!r} not lifted ({e})", file=sys.stderr)
-            sidecar_path = None
-        else:
+            print(f"  note: sidecar of {member_path!r} not lifted ({e})", file=sys.stderr)
+            paired = None
+        if paired is not None:
+            sidecar_path, doc = paired
             lifted = sidecar.project(sidecar_decl, doc, member_path, roster)
             origin_fields.update(lifted)
             lift_schema_id = sidecar_decl.qualified_id
@@ -400,7 +405,9 @@ def run(args: argparse.Namespace) -> int:
     if cutting_note:
         result["cutting"] = cutting_note
     if sidecar_path is not None:
-        result["sidecar"] = f"path={sidecar_path}"
+        # v45: the sidecar has no address of its own — it reads through the frame.
+        result["sidecar"] = f"path={member_path}&sidecar"
+        result["sidecar_file"] = sidecar_path
         result["lifted"] = sorted(lifted)
         if lift_schema_id:
             result["origin_schema"] = lift_schema_id
@@ -412,7 +419,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"  media_type: {media_type}")
         if sidecar_path is not None:
             print(
-                f"  sidecar:    path={sidecar_path} → {len(lifted)} field(s) lifted onto "
+                f"  sidecar:    {sidecar_path} (read as path={member_path}&sidecar) → "
+                f"{len(lifted)} field(s) lifted onto "
                 f"<!--origin {lift_schema_id or ''}-->"
             )
         print(f"  bytes:      resident in {container_id[:12]} (not copied; resolves via §12.9)")

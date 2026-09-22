@@ -106,6 +106,18 @@ _ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
 # path only, never the persisted-segment `address: el=N` read (`transforms.html.ENGINE_VERSION`).
 _HTML_EL_OP_PARAMS: frozenset[str] = frozenset({"el"})
 
+# The container-member sidecar reading (§6.2 `sidecar`, v45) — `?path=<frame>&sidecar`: the
+# paired sidecar's bytes verbatim, reached through the frame (physical pairing under the
+# container's `sidecar:` declaration, §7.2). A pure op, versioned so a later change to what it
+# serves is a new id rather than a silent reinterpretation of an already-cited reading.
+SIDECAR_ENGINE_VERSION = "sidecar@1"
+_SIDECAR_OP_PARAMS: frozenset[str] = frozenset({"sidecar"})
+
+# The `members` reading's own version (§6.2): v45 removed consumed sidecars from the roster
+# and put their projection on the frame's descriptor — a changed payload under an unchanged
+# URI, so the op id folds into the cache key and a pre-v45 cached roster is never served.
+MEMBERS_ENGINE_VERSION = "members@2"
+
 # Every member-extraction axis whose registry handler yields opaque `bytes` and so may
 # itself chain further (§6.2 "Member re-chaining", v33: generalized from `path=`-only to
 # every axis alike) — `_rechain_member` re-detects the extracted bytes' real mime and, when
@@ -261,6 +273,15 @@ def resolve(
         return resolve(
             redirected, corpus_root, regenerate=regenerate, store=store, transcriber=transcriber
         )
+
+    # *(v45, §6.2 `sidecar`, §7.2)* A container-member sidecar is metadata of its frame: read
+    # only THROUGH the frame, and never addressed as a member itself.
+    if any(k in _SIDECAR_OP_PARAMS for k, _ in parsed.params):
+        return _resolve_sidecar(
+            corpus_root, canonical_uri, parsed, artifact_record,
+            store=store, regenerate=regenerate,
+        )
+    _refuse_consumed_sidecar(corpus_root, parsed, artifact_record)
 
     if store is None:
         store = get_store(corpus_root)
@@ -809,13 +830,14 @@ def _resolve_members(
     drafter for the type). The fallback is lossy — four keys, no descriptors — and says so in
     the payload, because a caller that silently got less than it asked for is worse than one
     told the surface was degraded. Cached like any resolver result."""
-    urihash_value = furi.urihash(canonical_uri)
+    urihash_value = furi.urihash(f"{canonical_uri}|engine={MEMBERS_ENGINE_VERSION}")
     cache_p = furi.cache_path(corpus_root, urihash_value, "json")
     if cache_p.is_file() and not regenerate:
         return cache_p.resolve()
 
     rows: list[dict[str, Any]] = []
     derived_from = "artifact"
+    binary: Path | None = None
     try:
         import copy
 
@@ -834,7 +856,7 @@ def _resolve_members(
         scratch = copy.deepcopy(artifact_record)
         declared = _mbox.declared_ordinals(artifact_record) or None
         scratch.metadata["_embeds"] = []
-        _build, result, _mt, _bin, _sid = _derive.build_content_zone(
+        _build, result, _mt, binary, _sid = _derive.build_content_zone(
             scratch, corpus_root, messages=declared
         )
         rows = list(result.get("embeds") or [])
@@ -858,11 +880,186 @@ def _resolve_members(
             # knows stays at the front of every object.
             entry.update({k: v for k, v in fields.items() if v is not None})
             members.append(entry)
-    payload = {"count": len(members), "derived_from": derived_from, "members": members}
+    notes: list[str] = []
+    if binary is not None:
+        _attach_sidecar_descriptors(corpus_root, artifact_record, binary, members, notes)
+    payload: dict[str, Any] = {
+        "count": len(members), "derived_from": derived_from, "members": members,
+    }
+    if notes:
+        payload["notes"] = notes
 
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     cache_p.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    _write_sidecar(corpus_root, canonical_uri, source_hash, cache_p, "json")
+    _write_sidecar(
+        corpus_root, canonical_uri, source_hash, cache_p, "json",
+        version_label=MEMBERS_ENGINE_VERSION,
+    )
+    return cache_p.resolve()
+
+
+def _attach_sidecar_descriptors(
+    corpus_root: Path,
+    artifact_record: Any,
+    container_path: Path,
+    members: list[dict[str, Any]],
+    notes: list[str],
+) -> None:
+    """*(v45, §6.2 `members`, §7.2)* A frame's descriptor carries its sidecar's projection —
+    exactly the prefixed fields `corpus promote` would lift onto the promoted record's origin
+    block (one projection, `sidecar.project`), derived here on demand and stored nowhere. The
+    sidecar itself is no longer a member, so this is the only place the roster speaks of it.
+    A sidecar that will not parse is a note on the payload, never a failed enumeration."""
+    from corpus import sidecar as sidecar_mod
+
+    try:
+        decl = sidecar_mod.declaration_for_container(corpus_root, artifact_record)
+    except sidecar_mod.DeclarationError as exc:
+        notes.append(f"sidecar declaration not applied ({exc})")
+        return
+    if decl is None:
+        return
+    media_type = records.media_type_for(artifact_record)
+    el_addressing = records.el_addressing(artifact_record)
+    roster = tuple(
+        str(m["address"])[len("path=") :]
+        for m in members
+        if str(m.get("address") or "").startswith("path=")
+    )
+    for entry in members:
+        addr = str(entry.get("address") or "")
+        if not addr.startswith("path=") or "&" in addr:
+            continue
+        member = addr[len("path=") :]
+        try:
+            paired = sidecar_mod.read_paired_sidecar(
+                decl, container_path, media_type, member, el_addressing=el_addressing
+            )
+        except (ValueError, OSError) as exc:
+            notes.append(f"sidecar of {member!r} not projected ({exc})")
+            continue
+        if paired is None:
+            continue
+        _path, doc = paired
+        entry.update(sidecar_mod.project(decl, doc, member, roster))
+
+
+def _refuse_consumed_sidecar(
+    corpus_root: Path, parsed: furi.ParsedURI, artifact_record: Any
+) -> None:
+    """*(v45, §6.2 / §7.2)* A container-member sidecar has no address of its own: a URI whose
+    member axis names one (`?path=IMG_x.HEIC.json`) is refused, naming the frame it is read
+    through. Only the LEADING `path=` is the container's own axis — a later one addresses a
+    member of a re-chained nested archive, which has no record and declares nothing."""
+    if not parsed.params or parsed.params[0][0] != "path" or not parsed.params[0][1]:
+        return
+    from corpus import sidecar as sidecar_mod
+
+    try:
+        decl = sidecar_mod.declaration_for_container(corpus_root, artifact_record)
+    except sidecar_mod.DeclarationError:
+        return  # a malformed declaration is lint's and attest's to report, loudly
+    if decl is None:
+        return
+    member = parsed.params[0][1]
+    primary = decl.primary_of(member, sidecar_mod.container_roster(artifact_record))
+    if primary is None:
+        return
+    through = furi.canonical(
+        furi.ParsedURI(hash=parsed.hash, params=(("path", primary), ("sidecar", None)))
+    )
+    raise ValueError(
+        f"path={member} is the sidecar of path={primary} — metadata of its frame, not a "
+        f"member (spec §7.2, v45: a sidecar has no address of its own). Read it through the "
+        f"frame: {through}"
+    )
+
+
+def _resolve_sidecar(
+    corpus_root: Path,
+    canonical_uri: str,
+    parsed: furi.ParsedURI,
+    artifact_record: Any,
+    *,
+    store: ArtifactStore | None,
+    regenerate: bool,
+) -> Path:
+    """Materialize the `sidecar` reading (§6.2, v45): `?path=<frame>&sidecar` — the frame's
+    paired sidecar, its bytes exactly as the container holds them. A promoted frame reaches
+    here too: route unification rewrites `corpus://<frame>?sidecar` to its container first.
+
+    Terminal and exact: the op reads one frame's one sidecar, so any other shape is a hard
+    error naming the one that works. Pairing is physical (the container's own entries under
+    its `sidecar:` declaration) — a frame with no sidecar beside it has nothing to read, and
+    says so rather than serving something else."""
+    from corpus import sidecar as sidecar_mod
+
+    params = parsed.params
+    shape_ok = (
+        len(params) == 2
+        and params[0][0] == "path"
+        and bool(params[0][1])
+        and params[1] == ("sidecar", None)
+    )
+    if not shape_ok:
+        if any(k == "sidecar" and v is not None for k, v in params):
+            raise ValueError("sidecar is flag-style and takes no value")
+        raise ValueError(
+            "sidecar is the terminal reading of ONE container member: "
+            "`corpus://<container>?path=<frame>&sidecar`, or `corpus://<promoted frame>?sidecar` "
+            "for a frame promoted out of a container still in the corpus (§6.2, v45)"
+        )
+    member = str(params[0][1])
+    try:
+        decl = sidecar_mod.declaration_for_container(corpus_root, artifact_record)
+    except sidecar_mod.DeclarationError as exc:
+        raise ValueError(str(exc)) from exc
+    if decl is None:
+        raise ValueError(
+            f"corpus://{parsed.hash[:12]}… declares no `sidecar:` (its origin overlay, §7.2) "
+            f"— nothing in this container pairs with path={member}"
+        )
+    _refuse_consumed_sidecar(corpus_root, furi.ParsedURI(hash=parsed.hash, params=params[:1]),
+                             artifact_record)
+
+    key_uri = f"{canonical_uri}|engine={SIDECAR_ENGINE_VERSION}"
+    cache_p = furi.cache_path(corpus_root, furi.urihash(key_uri), decl.format)
+    if cache_p.is_file() and not regenerate:
+        return cache_p.resolve()
+
+    media_type = records.media_type_for(artifact_record)
+    container_path = containment.ensure_local_bytes(
+        corpus_root, parsed.hash, mime_mod.extension_for(media_type), store=store
+    )
+    paired = sidecar_mod.read_paired_sidecar_bytes(
+        decl, container_path, media_type, member,
+        el_addressing=records.el_addressing(artifact_record),
+    )
+    if paired is None:
+        raise ValueError(
+            f"path={member} has no sidecar in this container (the `sidecar:` template names "
+            f"{decl.sidecar_candidate(member)!r}, which the container does not hold)"
+        )
+    _sidecar_path, data = paired
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"the sidecar of path={member} is not UTF-8 text ({exc}) — a `format: "
+            f"{decl.format}` sidecar reads as text"
+        ) from exc
+
+    cache_p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_p.with_name(f"{cache_p.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, cache_p)
+    finally:
+        tmp.unlink(missing_ok=True)
+    _write_sidecar(
+        corpus_root, canonical_uri, parsed.hash, cache_p, "json",
+        version_label=SIDECAR_ENGINE_VERSION,
+    )
     return cache_p.resolve()
 
 
@@ -1605,6 +1802,8 @@ def engine_version_for_param(key: str) -> str | None:
         from .shape import units as units_tf
 
         return units_tf.ENGINE_VERSION
+    if key in _SIDECAR_OP_PARAMS:
+        return SIDECAR_ENGINE_VERSION
     return None
 
 

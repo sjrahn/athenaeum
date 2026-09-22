@@ -488,6 +488,44 @@ def _rule_sidecar_member_promoted(post, blocks, root) -> Iterator[Finding]:
         )
 
 
+def _rule_sidecar_member_rostered(post, blocks, root) -> Iterator[Finding]:
+    """*(v45, §4.3.1.4 / §7.2)* A container-member sidecar is metadata of its frame, never a
+    member: a container whose own `sidecar:` declaration pairs a rostered path to a rostered
+    primary still carries the pre-v45 row. Reads only this record (its roster + its origin
+    ladder), never bytes. The fix is mechanical — `corpus reattest` re-derives the roster,
+    which omits every paired sidecar — so this is the migration's completeness gate."""
+    from corpus import sidecar as _sidecar
+
+    if root is None:
+        return
+    roster = _sidecar.container_roster(post)
+    if not roster:
+        return
+    try:
+        decl = _sidecar.declaration_for_container(root, post)
+    except _sidecar.DeclarationError as exc:
+        yield Finding(rule_id="sidecar-declaration-invalid", severity="error", message=str(exc))
+        return
+    if decl is None:
+        return
+    consumed = decl.consumed(roster)
+    if not consumed:
+        return
+    sample = sorted(consumed)[:3]
+    yield Finding(
+        rule_id="sidecar-member-rostered",
+        severity="error",
+        message=(
+            f"the members block rosters {len(consumed)} sidecar(s) its own `sidecar:` "
+            f"declaration pairs to a frame (e.g. {', '.join(f'`path={x}`' for x in sample)}) "
+            f"— a sidecar is metadata of its frame, never a member (spec §7.2, v45); "
+            f"`corpus reattest` this record to drop them. Each reads through its frame as "
+            f"`?path=<frame>&sidecar`."
+        ),
+        fields={"count": len(consumed), "sidecars": [f"path={x}" for x in sorted(consumed)]},
+    )
+
+
 def _rule_sidecar_field_undeclared(post, blocks, root) -> Iterator[Finding]:
     """*(v41, §7.2)* Every lifted field on a subtype-qualified origin block — every field
     carrying the declaration's `prefix` — must be declared, with type and role, on the
@@ -2765,6 +2803,8 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("sidecar-member-promoted", _rule_sidecar_member_promoted),
     ("sidecar-declaration-invalid", _rule_sidecar_member_promoted),
     ("sidecar-field-undeclared", _rule_sidecar_field_undeclared),
+    # *(v45)* ... and a sidecar is never a roster row (the pre-v45 shape, until re-attested).
+    ("sidecar-member-rostered", _rule_sidecar_member_rostered),
     ("embed-format", _rule_embed_format),
     ("member-row-unknown-key", _rule_member_row_unknown_key),
     ("atom-invalid", _rule_atom_invalid),

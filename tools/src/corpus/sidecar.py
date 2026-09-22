@@ -3,10 +3,17 @@ declaration (spec/corpus.md §7.2, v41; §8.1 promote row; §12.3.14 pairing; §
 
 A producer whose export pairs each primary member with a companion metadata member beside
 it in the same container (a photo library's per-photo JSON, a mail export's per-message
-metadata) declares the pairing and the lift on ITS origin overlay. The sidecar member stays
-in the container — a roster row, `?path=`-addressable, resolvable, citable — but it is
-**consumed**: at `corpus promote` its declared fields project onto the promoted primary's
-lineage origin block, and it never becomes a record of its own.
+metadata) declares the pairing and the lift on ITS origin overlay. The sidecar is **metadata of
+its frame, never a member of its own** *(v45, owner ruling 2026-09-22)*: its bytes stay inside
+the container (they are part of the container's identity), but it is not a roster row, has no
+member route, no `path=` address, and is never promoted. It is reached only THROUGH its
+primary — `?path=<primary>&sidecar` reads it verbatim, the `members` derivation carries its
+projection on the primary's descriptor, and at `corpus promote` its declared fields project
+onto the promoted primary's lineage origin block.
+
+Pairing is therefore **physical**: the sidecar a template names is looked up in the container's
+own entries (the drafter's full enumeration at attest; the archive itself afterwards), never in
+the roster, which by design no longer lists it.
 
 **This module is producer- and format-agnostic by construction** (owner ruling,
 2026-08-27). Its whole vocabulary is:
@@ -105,19 +112,45 @@ class Declaration:
     def reference_names(self) -> frozenset[str]:
         return frozenset(f"{self.prefix}{e.field}" for e in self.references)
 
-    def sidecar_for(self, member: str, roster: Container[str]) -> str | None:
-        """The roster path of `member`'s paired sidecar, or None when the template's
-        expansion names no roster member (present-only; nothing is invented)."""
+    def sidecar_candidate(self, member: str) -> str | None:
+        """The path `member`'s sidecar WOULD have under the template — None when the template
+        names the member itself. Whether it exists is a physical fact of the container, which
+        the caller checks (`read_paired_sidecar`), never an assumption."""
         candidate = expand_template(self.template, member)
-        return candidate if candidate in roster and candidate != member else None
+        return candidate if candidate != member else None
 
-    def primary_of(self, sidecar: str, roster: Iterable[str]) -> str | None:
-        """The primary member `sidecar` is the consumed sidecar OF (the refuse check at
-        promote, the lint verdict), or None when no roster member pairs to it."""
-        for member in roster:
+    def sidecar_for(self, member: str, entries: Container[str]) -> str | None:
+        """`member`'s paired sidecar among `entries` — a set of the container's PHYSICAL
+        member paths (the drafter's full enumeration) — or None when the template's expansion
+        names none of them (present-only; nothing is invented)."""
+        candidate = self.sidecar_candidate(member)
+        return candidate if candidate is not None and candidate in entries else None
+
+    def primary_of(self, sidecar: str, members: Iterable[str]) -> str | None:
+        """The primary member `sidecar` is the consumed sidecar OF, or None when no member in
+        `members` pairs to it. `members` may be the roster: a primary is always a row, so this
+        answers "is this path a sidecar?" whether or not the roster still lists the sidecar
+        itself (a pre-v45 roster does; a current one does not)."""
+        for member in members:
             if member != sidecar and expand_template(self.template, member) == sidecar:
                 return member
         return None
+
+    def consumed(self, entries: Iterable[str]) -> dict[str, str]:
+        """`{sidecar path: primary path}` for every sidecar the template pairs to a present
+        primary among `entries` (physical member paths). A paired sidecar is metadata of its
+        frame (v45) — the roster omits exactly these. An unpaired `.json` (its primary absent
+        from this container) is not consumed: it stays an ordinary member."""
+        present = set(entries)
+        out: dict[str, str] = {}
+        for member in sorted(present):
+            candidate = self.sidecar_candidate(member)
+            if candidate is not None and candidate in present and candidate not in out:
+                out[candidate] = member
+        # A path that is both some member's sidecar AND the primary of another would chain
+        # (`x`, `x.json`, `x.json.json`); the chain's head is the only real frame, so a pairing
+        # whose primary is itself consumed is not a pairing.
+        return {s: p for s, p in out.items() if p not in out}
 
 
 def expand_template(template: str, member: str) -> str:
@@ -318,6 +351,93 @@ def container_roster(container_post: frontmatter.Post) -> tuple[str, ...]:
     return tuple(out)
 
 
+def drop_consumed_rows(
+    embeds: list[dict[str, Any]], decl: Declaration
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Filter a drafter's member rows (spec §4.3.1.4, v45): every `path=` address that is a
+    consumed sidecar under `decl` leaves the roster. The drafter's enumeration IS the
+    container's physical entry list, so pairing reads it before anything is dropped. Returns
+    `(kept rows, {dropped sidecar: its primary})`. A row that also carries other positions
+    (members dedup by transport) keeps the positions that are not consumed sidecars."""
+    entries: list[str] = []
+    for row in embeds:
+        addr = row.get("address")
+        for a in addr if isinstance(addr, list) else [addr]:
+            a = str(a or "")
+            if a.startswith("path=") and "&" not in a:
+                entries.append(a[len("path=") :])
+    consumed = decl.consumed(entries)
+    if not consumed:
+        return embeds, {}
+    gone = {f"path={s}" for s in consumed}
+    kept: list[dict[str, Any]] = []
+    for row in embeds:
+        addr = row.get("address")
+        if isinstance(addr, list):
+            left = [a for a in addr if str(a) not in gone]
+            if not left:
+                continue
+            if len(left) != len(addr):
+                row = {**row, "address": left if len(left) > 1 else left[0]}
+            kept.append(row)
+        elif str(addr) not in gone:
+            kept.append(row)
+    return kept, consumed
+
+
+def read_paired_sidecar(
+    decl: Declaration,
+    container_path: Path,
+    container_media_type: str,
+    member: str,
+    *,
+    el_addressing: dict | None = None,
+) -> tuple[str, Any] | None:
+    """`(sidecar path, parsed document)` for `member`'s paired sidecar, read out of the
+    container's own entries — or None when the container physically holds no member at the
+    template's path (present-only). Raises `ValueError` when the sidecar exists but is not a
+    JSON document."""
+    from corpus.ziparchive import MemberMissing
+
+    candidate = decl.sidecar_candidate(member)
+    if candidate is None:
+        return None
+    try:
+        doc = read_sidecar(
+            container_path, container_media_type, candidate, el_addressing=el_addressing
+        )
+    except MemberMissing:
+        return None
+    return candidate, doc
+
+
+def read_paired_sidecar_bytes(
+    decl: Declaration,
+    container_path: Path,
+    container_media_type: str,
+    member: str,
+    *,
+    el_addressing: dict | None = None,
+) -> tuple[str, bytes] | None:
+    """`(sidecar path, raw bytes)` for `member`'s paired sidecar — the `sidecar` reading's
+    source (spec §6.2, v45): the bytes exactly as the container holds them — or None when the
+    container physically holds no member at the template's path."""
+    from corpus import containment
+    from corpus.ziparchive import MemberMissing
+
+    candidate = decl.sidecar_candidate(member)
+    if candidate is None:
+        return None
+    try:
+        with containment.open_member_stream(
+            container_path, container_media_type, f"path={candidate}",
+            el_addressing=el_addressing,
+        ) as fp:
+            return candidate, fp.read()
+    except MemberMissing:
+        return None
+
+
 # ---------- projection ---------- #
 
 
@@ -514,26 +634,32 @@ def refresh_lineage_lift(
         if decl is None:
             continue
         roster = container_roster(container_post)
-        sidecar_path = decl.sidecar_for(member, roster)
         fields = block.setdefault("fields", {})
-        if sidecar_path is None:
+        if decl.sidecar_candidate(member) is None:
             changed |= apply_lift(fields, decl, {})
             continue
         container_media_type = records.media_type_for(container_post)
         container_path = containment.ensure_local_bytes(
             corpus_root, container_id, mime_mod.extension_for(container_media_type)
         )
+        # Physical pairing (v45): the roster no longer lists the sidecar, so its presence is
+        # read from the container's own entries.
         try:
-            doc = read_sidecar(
+            paired = read_paired_sidecar(
+                decl,
                 container_path,
                 container_media_type,
-                sidecar_path,
+                member,
                 el_addressing=records.el_addressing(container_post),
             )
         except (ValueError, OSError) as exc:
             if notes is not None:
-                notes.append(f"sidecar {sidecar_path!r} not lifted ({exc})")
+                notes.append(f"sidecar of {member!r} not lifted ({exc})")
             continue
+        if paired is None:
+            changed |= apply_lift(fields, decl, {})
+            continue
+        _sidecar_path, doc = paired
         changed |= apply_lift(fields, decl, project(decl, doc, member, roster))
         changed |= qualify_block(block, decl)
     return changed

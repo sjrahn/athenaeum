@@ -149,6 +149,10 @@ left-to-right, each operating on the previous step's output:
                        path=IMG_0001.HEIC&auto_orient&fit=llm   -> a viewable PNG
                        path=report.pdf&page=1&text              -> that page's text
                        msg=23&part=3                            -> an attachment, chainable on
+  path=<frame>&sidecar  the frame's paired metadata sidecar, verbatim (v45) — where the
+                     container's origin overlay declares one (an osxphotos IMG_x.HEIC.json).
+                     A sidecar is metadata OF its frame: not a member, no address of its own
+                     (path=IMG_x.HEIC.json is refused); a promoted frame takes bare ?sidecar.
 """
 
 
