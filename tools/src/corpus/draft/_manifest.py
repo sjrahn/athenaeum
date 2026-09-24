@@ -22,6 +22,16 @@ _CHUNK = 1 << 20
 
 
 def digest_and_text(fp: IO[bytes]) -> tuple[str, bool]:
+    """`digest_text_head` without the head: for callers needing only digest + text verdict."""
+    digest, is_text, _head = digest_text_head(fp)
+    return digest, is_text
+
+
+# The byte prefix kept for the binary media-type sniff (magic numbers sit in the first KiB).
+_HEAD = 4096
+
+
+def digest_text_head(fp: IO[bytes]) -> tuple[str, bool, bytes]:
     """Stream a member's bytes once through `fp` — blake3 transport digest + a text/binary
     sniff — without materializing it whole (an archive can hold multi-GB members). Text is
     decided over the full bytes (no NUL byte, valid UTF-8), the same verdict as a whole-member
@@ -31,8 +41,11 @@ def digest_and_text(fp: IO[bytes]) -> tuple[str, bool]:
     b3 = blake3.blake3()
     decoder = codecs.getincrementaldecoder("utf-8")()
     is_text = True
+    head = b""
     while chunk := fp.read(_CHUNK):
         b3.update(chunk)
+        if len(head) < _HEAD:
+            head += chunk[: _HEAD - len(head)]
         if is_text:
             if b"\x00" in chunk:
                 is_text = False
@@ -46,19 +59,29 @@ def digest_and_text(fp: IO[bytes]) -> tuple[str, bool]:
             decoder.decode(b"", final=True)  # a truncated trailing multibyte → not text
         except UnicodeDecodeError:
             is_text = False
-    return b3.hexdigest(), is_text
+    return b3.hexdigest(), is_text, head
 
 
-def media_type(rel: str, is_text: bool) -> str:
+def media_type(rel: str, is_text: bool, head: bytes | None = None) -> str:
     """The member's MIME — and, since the embed carries it, the text-vs-binary distinction.
     Text is decided by **content** (UTF-8, no NULs — see `digest_and_text`), not extension,
     so a `.cfg`/`.conf`/extensionless config or log is `text/plain` rather than misclassified
     binary; a precise extension guess (`application/json`, `image/png`) is kept; an opaque
-    binary is `application/octet-stream`."""
+    binary is `application/octet-stream`. A binary the extension table doesn't know is
+    sniffed by its magic bytes (`head`) before falling back — a camera-RAW `.DNG` is TIFF
+    (`image/tiff`), which the platform extension table has no entry for."""
     guessed = mimetypes.guess_type(rel)[0]
     if is_text:
         return guessed or "text/plain"
-    return guessed or "application/octet-stream"
+    if guessed:
+        return guessed
+    if head:
+        from corpus import mime as mime_mod
+
+        sniffed = mime_mod.sniff_head(head)
+        if sniffed not in ("unknown", "", "application/octet-stream"):
+            return sniffed
+    return "application/octet-stream"
 
 
 def partial_content_issue(detector: str, description: str) -> dict[str, Any]:

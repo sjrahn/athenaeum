@@ -96,13 +96,13 @@ def draft(
                 if info.flag_bits & 0x1:
                     encrypted = True
                 try:
-                    digest, is_text = _digest_and_text(zf, info)
+                    digest, is_text, head = _digest_text_head(zf, info)
                 except RuntimeError:
                     encrypted = True  # an encrypted member we can't read without a password
                     continue
                 embeds.append(
                     {
-                        "media_type": _media_type(rel, is_text),
+                        "media_type": _manifest.media_type(rel, is_text, head),
                         "address": f"path={rel}",
                         "transport": records.format_hash("blake3", digest),
                         "fields": {"bytes": info.file_size},
@@ -159,3 +159,11 @@ def _digest_and_text(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[str, b
     (no password), like `zipfile.read` — `zf.open` raises before the stream is consumed."""
     with zf.open(info) as fp:
         return _manifest.digest_and_text(fp)
+
+
+def _digest_text_head(
+    zf: zipfile.ZipFile, info: zipfile.ZipInfo
+) -> tuple[str, bool, bytes]:
+    """`_digest_and_text` plus the member's byte head, for the binary magic-byte sniff."""
+    with zf.open(info) as fp:
+        return _manifest.digest_text_head(fp)

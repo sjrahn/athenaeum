@@ -66,11 +66,11 @@ def draft(
                 fp = tf.extractfile(info)
                 if fp is None:  # defensive: isfile() should guarantee a stream
                     continue
-                digest, is_text = _manifest.digest_and_text(fp)
+                digest, is_text, head = _manifest.digest_text_head(fp)
                 embeds.append(
                     {
                         "name": info.name,
-                        "media_type": _manifest.media_type(info.name, is_text),
+                        "media_type": _manifest.media_type(info.name, is_text, head),
                         "transport": records.format_hash("blake3", digest),
                         "fields": {"bytes": info.size},
                     }
