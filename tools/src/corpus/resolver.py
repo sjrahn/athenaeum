@@ -169,6 +169,7 @@ _INITIAL_KIND_FOR_MIME: dict[str, str] = {
     "image/avif": "image",
     "image/heic": "image",
     "image/heif": "image",
+    "image/tiff": "image",
     "video/mp4": "video",
     "video/webm": "video",
     "video/quicktime": "video",

@@ -136,9 +136,16 @@ left-to-right, each operating on the previous step's output:
                      (the `llm` preset caps to a vision-model input budget)
   resize=WxH         resize to exact pixel dimensions (may distort or enlarge)
   format=png         write the decoded image out as PNG — the viewable rendering of a
-                     HEIC/HEIF/AVIF/WebP still (add fit=llm to bound it). Every image
+                     HEIC/HEIF/AVIF/WebP/TIFF still — a DNG is TIFF, and renders its
+                     embedded full-size preview (add fit=llm to bound it). Every image
                      op above writes PNG too; this is the explicit no-other-change form.
   dpi=N              rasterization DPI for page= (default 200; position-independent)
+
+  Video:
+  frame=<secs|MM:SS|HH:MM:SS>  grab one still at that instant -> image; chain any
+                     image op after it (frame=12.5&fit=llm). On an image, frame=N
+                     is instead a 1-based frame ordinal (GIF/WebP/HEIF/TIFF pages).
+  time_range=A-B     cut a span -> video;  extract_audio -> audio;  format=mp4|webm|…
 
   Container members (spec §6.2 "Member re-chaining"):
   path=<member>      a kept-whole archive's member (zip/tar); msg=N a mailbox message;
@@ -147,6 +154,8 @@ left-to-right, each operating on the previous step's output:
                      asked to transform; only an already-textual member prints as text).
                      Chain any op and the member re-enters ITS OWN pipeline:
                        path=IMG_0001.HEIC&auto_orient&fit=llm   -> a viewable PNG
+                       path=IMG_0002.MOV&frame=3&fit=llm        -> the video's still at 3s
+                     (a video takes no image op until `frame=` makes it one — see Video)
                        path=report.pdf&page=1&text              -> that page's text
                        msg=23&part=3                            -> an attachment, chainable on
   path=<frame>&sidecar  the frame's paired metadata sidecar, verbatim (v45) — where the

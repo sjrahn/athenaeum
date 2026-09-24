@@ -28,6 +28,7 @@ _IMAGE_SCHEMA_IDS = (
     "image/image_webp",
     "image/image_avif",
     "image/image_heic",
+    "image/image_tiff",
 )
 
 _EXIF_FIELDS: tuple[tuple[str, str], ...] = (
@@ -40,7 +41,7 @@ _EXIF_FIELDS: tuple[tuple[str, str], ...] = (
 # (3.10 §4.3.2.2) The formats whose bytes decide whether they are a still or a sequence.
 # Their schemas declare `whole_address: single_unit_only` with `whole_address_count:
 # frame_count`, so the gate compares this attested number and never decodes.
-_ANIMATION_CAPABLE = {"GIF", "WEBP", "AVIF", "HEIF", "HEIC"}
+_ANIMATION_CAPABLE = {"GIF", "WEBP", "AVIF", "HEIF", "HEIC", "TIFF"}
 
 
 def _gif_frame_count(data: bytes) -> int | None:
@@ -95,6 +96,31 @@ def _webp_frame_count(data: bytes) -> int | None:
     return n if n else 1
 
 
+def _tiff_frame_count(data: bytes) -> int | None:
+    """Pages in a TIFF, by walking the top-level IFD chain (IFD0 -> next-IFD offsets).
+
+    SubIFDs (tag 330) are not followed: a DNG keeps its raw and reduced-resolution images
+    there as alternate representations of ONE image, so a single-shot DNG counts 1. A
+    loop or out-of-range offset ends the walk with what was counted."""
+    if data[:4] == b"II*\x00":
+        order = "little"
+    elif data[:4] == b"MM\x00*":
+        order = "big"
+    else:
+        return None
+    off = int.from_bytes(data[4:8], order)
+    n, seen = 0, set()
+    while off and off not in seen and off + 2 <= len(data):
+        seen.add(off)
+        entries = int.from_bytes(data[off:off + 2], order)
+        nxt = off + 2 + 12 * entries
+        if nxt + 4 > len(data):
+            break
+        n += 1
+        off = int.from_bytes(data[nxt:nxt + 4], order)
+    return n or None
+
+
 def _frame_count(path: Path, fmt: str, im: Image.Image) -> int | None:
     """The artifact's frame count, or None when the format has no frame axis.
 
@@ -109,6 +135,8 @@ def _frame_count(path: Path, fmt: str, im: Image.Image) -> int | None:
     if fmt == "GIF" and (n := _gif_frame_count(data)) is not None:
         return n
     if fmt == "WEBP" and (n := _webp_frame_count(data)) is not None:
+        return n
+    if fmt == "TIFF" and (n := _tiff_frame_count(data)) is not None:
         return n
     try:                                    # AVIF/HEIF: no structural reader yet
         return int(getattr(im, "n_frames", 1))

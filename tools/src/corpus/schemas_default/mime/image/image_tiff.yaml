@@ -1,0 +1,29 @@
+applies_to:
+  content_types:
+  - image/tiff
+# TIFF stills, both byte orders (`II*\0` / `MM\0*`), sniffed by the shared MIME detector.
+# The camera-RAW family built on TIFF sniffs here too — DNG (Apple ProRAW among them) IS
+# TIFF, and no `x-` type is invented (mime.py). Pillow reads IFD0: for a DNG that is the
+# producer's rendered preview (an iPhone ProRAW IFD0 is the full-size RGB rendering), never
+# the sensor data, which lives in SubIFDs no decoder here develops.
+#
+# whole-address admissibility: a TIFF may be multi-page (the top-level IFD chain), so the
+# bytes decide — the same `frame_count` gate as the other sequence-capable stills. The
+# count walks the top-level chain only; SubIFDs (a DNG's raw + reduced previews) are
+# alternate representations of one image, not further pages.
+whole_address: single_unit_only
+whole_address_count: frame_count
+# The frame axis: a 1-based page ordinal `frame=<N>`; an inclusive span `frame=<A>-<B>` is
+# the whole-sequence ASSERTION (spec section 4.3.2.2). Chains frame-then-region
+# (spec section 6.2). The subtype declares its OWN scheme, so bbox is restated here.
+address_scheme:
+- param: frame
+  type: index-span
+  description: |-
+    1-based page ordinal `N`, or inclusive span `A-B` (the whole-sequence assertion).
+    Bounds-checked against the attested `frame_count`. Must lead its chain.
+- param: bbox
+  type: rect
+  description: |-
+    <x>,<y>,<w>,<h> - relative floats in [0.0, 1.0]. Origin top-left. After a `frame=`,
+    addresses a region of that frame.
