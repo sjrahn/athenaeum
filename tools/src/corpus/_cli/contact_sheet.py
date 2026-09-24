@@ -1,5 +1,5 @@
-"""`corpus contact-sheet` — a labelled grid over a container's image members (spec §12.9.3,
-v45). An instrument: it shows an investigator which frames to open, and every tile names the
+"""`corpus contact-sheet` — a labelled grid over a container's image and video members (spec
+§12.9.3, v45/v46). An instrument: it shows an investigator which frames to open, and every tile names the
 member address to open (or cite) next. Never an anchor, never stored.
 
     corpus contact-sheet <container>                                  sheet 1, roster order
@@ -8,6 +8,12 @@ member address to open (or cite) next. Never an anchor, never stored.
         --sort osx_date_original --label osx_date_original             the cat, by date
     corpus contact-sheet <container> --where osx_kind!~screenshot     no screenshots
     corpus contact-sheet <container> --glob 'IMG_14*'                 by member path
+    corpus contact-sheet <container> --video-at 5                     video tiles at 5 s
+    corpus contact-sheet <container> --no-video                       stills only
+
+A video member is tiled by one still (`frame=<secs>`, badged ▶; the legend records the
+instant); a video another member references by address (a live photo's motion twin) is its
+companion and is passed over, disclosed as `companion`.
 
 `--where FIELD<op>VALUE` runs over the container's `members` descriptors (`corpus resolve
 'corpus://<container>?members'` shows them) — for a container whose origin declares a member
@@ -63,6 +69,16 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rows", type=int, default=cs.DEFAULT_ROWS)
     parser.add_argument("--tile", type=int, default=cs.DEFAULT_TILE, help="tile box, px")
     parser.add_argument(
+        "--video-at",
+        default=cs.DEFAULT_VIDEO_AT,
+        metavar="SECS",
+        help="the instant a video tile shows (seconds or MM:SS; default %(default)s; "
+        "a shorter clip falls back to its first frame)",
+    )
+    parser.add_argument(
+        "--no-video", action="store_true", help="tile image members only (videos disclosed)"
+    )
+    parser.add_argument(
         "--full", action="store_true", help="skip the final fit to the `llm` budget"
     )
     parser.add_argument("--jobs", type=int, default=None, help="parallel tile renders")
@@ -89,6 +105,8 @@ def run(args: argparse.Namespace) -> int:
             columns=args.columns,
             rows=args.rows,
             tile=args.tile,
+            video=not args.no_video,
+            video_at=args.video_at,
             fit_llm=not args.full,
             jobs=args.jobs,
             regenerate=args.regenerate,
@@ -104,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
     skipped = ", ".join(f"{v} {k}" for k, v in sorted(legend.get("skipped", {}).items()))
     print(
         f"sheet {legend['page']}/{legend['pages']} · {len(legend['tiles'])} of "
-        f"{legend['selected']} selected image member(s)"
+        f"{legend['selected']} selected member(s)"
         + (f" · passed over: {skipped}" if skipped else "")
         + f" · corpus://{container_id}"
         + (" · (cached)" if sheet.cached else "")
@@ -112,5 +130,8 @@ def run(args: argparse.Namespace) -> int:
     for t in legend["tiles"]:
         extra = "  ".join(f"{k}={v}" for k, v in t["labels"].items())
         err = f"  [unreadable: {t['error']}]" if t.get("error") else ""
-        print(f"  {t['n']:>4}  {t['address']}" + (f"  {extra}" if extra else "") + err)
+        vid = f"  [video @ {t['frame']}s]" if t.get("frame") is not None else (
+            "  [video]" if t.get("video") else ""
+        )
+        print(f"  {t['n']:>4}  {t['address']}" + vid + (f"  {extra}" if extra else "") + err)
     return 0

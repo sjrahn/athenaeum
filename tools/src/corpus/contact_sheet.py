@@ -1,5 +1,5 @@
-"""The contact sheet — a labelled grid over a container's image members (spec §12.9.3, v45;
-codex-steven R-0037).
+"""The contact sheet — a labelled grid over a container's image and video members (spec
+§12.9.3, v45; video tiles v46; codex-steven R-0037/R-0038).
 
 An **instrument** (§6.2 op classes): a tool's view ABOUT a container, for an investigator
 deciding which frames to open — never an anchor, never stored, never a surface a claim cites.
@@ -18,6 +18,14 @@ Each tile is the frame's own rendering, `corpus://<container>?<address>&auto_ori
 frame an investigator gets on opening it, upright. The sheet itself is cached under the
 resolver cache, keyed on its full selection + layout + `ENGINE_VERSION`, with a JSON legend
 beside it (tile number → member address → label values).
+
+A video member is tiled by ONE still — `corpus://<container>?<address>&frame=<T>&auto_orient&
+fit=…`, the video kind's own frame grab (v46) — marked as video on the sheet and in the
+legend, which records the instant shown. A video member that another member's descriptor
+names by address (a sibling reference — a live photo's motion twin, lifted from the still's
+sidecar) is that member's companion, not a frame of its own: it is passed over and disclosed
+as `companion`, so the still stands for the pair. The rule reads addresses only, never a
+field's meaning.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ from PIL import Image, ImageDraw
 from corpus import functional_uri as furi
 from corpus import paths
 
-ENGINE_VERSION = "contact-sheet@1"
+ENGINE_VERSION = "contact-sheet@2"
 
 # Layout defaults: 5 x 4 tiles of 208 px with a two-line label strip lands a sheet inside the
 # `fit=llm` budget (transforms.image LLM_MAX_EDGE / LLM_MAX_PIXELS) without a final downscale,
@@ -47,6 +55,9 @@ ENGINE_VERSION = "contact-sheet@1"
 DEFAULT_COLUMNS = 5
 DEFAULT_ROWS = 4
 DEFAULT_TILE = 208
+# The instant a video tile shows, in seconds — past a clip's opening black/fade, and inside
+# the ~3 s motion of a live photo. A clip too short for it falls back to its first frame.
+DEFAULT_VIDEO_AT = "1"
 _GAP = 8
 _BG = (255, 255, 255)
 _CELL_BG = (236, 236, 236)
@@ -142,21 +153,52 @@ def _member_name(address: str) -> str:
     return value
 
 
+def is_video(member: dict[str, Any]) -> bool:
+    return str(member.get("media_type") or "").startswith("video/")
+
+
+def _referenced_addresses(members: Sequence[dict[str, Any]]) -> set[str]:
+    """Every member address some OTHER member's descriptor names as a field value (a sibling
+    reference, §7.2) — read structurally, whatever the field is called."""
+    addresses = {str(m.get("address") or "") for m in members}
+    named: set[str] = set()
+    for m in members:
+        own = m.get("address")
+        for k, v in m.items():
+            if k == "address":
+                continue
+            for item in v if isinstance(v, list) else [v]:
+                if isinstance(item, str) and item != own and item in addresses:
+                    named.add(item)
+    return named
+
+
 def select(
     members: Iterable[dict[str, Any]],
     *,
     globs: Sequence[str] = (),
     where: Sequence[Predicate] = (),
     sort: str | None = None,
+    video: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """The image members a sheet shows, in order, plus the counts of what it passed over by
-    media family (`video`, `other`) — a sheet discloses what it is not showing."""
+    """The image and video members a sheet shows, in order, plus the counts of what it
+    passed over by family (`companion` — a video another member references; `video` when
+    `video=False`; `other`) — a sheet discloses what it is not showing."""
+    members = list(members)
+    companions = _referenced_addresses(members)
     chosen: list[dict[str, Any]] = []
     skipped: dict[str, int] = {}
     for m in members:
         mt = str(m.get("media_type") or "")
-        if not mt.startswith("image/"):
-            family = "video" if mt.startswith("video/") else "other"
+        family = None
+        if mt.startswith("video/"):
+            if str(m.get("address") or "") in companions:
+                family = "companion"
+            elif not video:
+                family = "video"
+        elif not mt.startswith("image/"):
+            family = "other"
+        if family:
             skipped[family] = skipped.get(family, 0) + 1
             continue
         name = _member_name(str(m.get("address") or ""))
@@ -205,16 +247,27 @@ def _fit_text(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> str:
     return text + "…"
 
 
+def _play_badge(draw: ImageDraw.ImageDraw, x0: int, y0: int, tile: int) -> None:
+    """A play triangle in the tile's corner — this tile is one still of a video."""
+    r = max(8, tile // 9)
+    cx, cy = x0 + r + 4, y0 + r + 4
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(0, 0, 0), outline=(255, 255, 255))
+    h = r * 0.55
+    tri = [(cx - h * 0.6, cy - h), (cx - h * 0.6, cy + h), (cx + h, cy)]
+    draw.polygon(tri, fill=(255, 255, 255))
+
+
 def _label_value(value: Any) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     return "" if value is None else str(value)
 
 
-def _tile_uri(container_id: str, address: str, tile: int) -> str:
+def _tile_uri(container_id: str, address: str, tile: int, at: str | None = None) -> str:
     key, _, value = address.partition("=")
     params: tuple[tuple[str, str | None], ...] = (
         (key, value),
+        *((("frame", at),) if at is not None else ()),
         ("auto_orient", None),
         ("fit", f"{tile}x{tile}"),
     )
@@ -233,6 +286,8 @@ def build(
     columns: int = DEFAULT_COLUMNS,
     rows: int = DEFAULT_ROWS,
     tile: int = DEFAULT_TILE,
+    video: bool = True,
+    video_at: str = DEFAULT_VIDEO_AT,
     fit_llm: bool = True,
     jobs: int | None = None,
     regenerate: bool = False,
@@ -254,6 +309,7 @@ def build(
         "columns": columns,
         "rows": rows,
         "tile": tile,
+        "video": video_at if video else False,
         "fit": "llm" if fit_llm else "full",
         "page": page,
     }
@@ -266,27 +322,36 @@ def build(
 
     members_path = resolver.resolve(f"corpus://{container_id}?members", corpus_root)
     payload = json.loads(members_path.read_text("utf-8"))
-    chosen, skipped = select(payload.get("members") or [], globs=globs, where=where, sort=sort)
+    chosen, skipped = select(
+        payload.get("members") or [], globs=globs, where=where, sort=sort, video=video
+    )
     per = columns * rows
     total = len(chosen)
     if total == 0:
         raise SheetError(
-            f"no image member of corpus://{container_id[:12]}… matches the selection "
-            f"({sum(skipped.values())} non-image member(s) passed over)"
+            f"no image or video member of corpus://{container_id[:12]}… matches the "
+            f"selection ({sum(skipped.values())} other member(s) passed over)"
         )
     pages = math.ceil(total / per)
     if page > pages:
         raise SheetError(f"--page {page} is past the end: {total} frame(s) make {pages} sheet(s)")
     shown = chosen[(page - 1) * per : page * per]
 
-    def render(m: dict[str, Any]) -> tuple[Image.Image | None, str | None]:
-        uri = _tile_uri(container_id, str(m["address"]), tile)
-        try:
-            with Image.open(resolver.resolve(uri, corpus_root)) as im:
-                im.load()
-                return im.convert("RGB"), None
-        except Exception as exc:  # one unreadable frame is a marked tile, never a lost sheet
-            return None, f"{type(exc).__name__}: {exc}"
+    def render(m: dict[str, Any]) -> tuple[Image.Image | None, str | None, str | None]:
+        # a video tries the sheet's instant, then its first frame (a clip shorter than it)
+        instants: tuple[str | None, ...] = (
+            (video_at, "0") if video_at != "0" else ("0",)
+        ) if is_video(m) else (None,)
+        error = None
+        for at in instants:
+            uri = _tile_uri(container_id, str(m["address"]), tile, at)
+            try:
+                with Image.open(resolver.resolve(uri, corpus_root)) as im:
+                    im.load()
+                    return im.convert("RGB"), None, at
+            except Exception as exc:  # one unreadable frame: a marked tile, never a lost sheet
+                error = f"{type(exc).__name__}: {exc}"
+        return None, error, None
 
     workers = jobs or min(8, os.cpu_count() or 1)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -304,7 +369,7 @@ def build(
     draw = ImageDraw.Draw(sheet)
 
     tiles: list[dict[str, Any]] = []
-    for i, (m, (im, error)) in enumerate(zip(shown, rendered, strict=True)):
+    for i, (m, (im, error, at)) in enumerate(zip(shown, rendered, strict=True)):
         n = (page - 1) * per + i + 1
         col, row = i % columns, i // columns
         x0 = _GAP + col * (cell_w + _GAP)
@@ -314,6 +379,8 @@ def build(
             sheet.paste(im, (x0 + (tile - im.width) // 2, y0 + (tile - im.height) // 2))
         else:
             draw.text((x0 + 6, y0 + tile // 2 - line_h), "unreadable", fill=_MUTED, font=font)
+        if is_video(m):
+            _play_badge(draw, x0, y0, tile)
         name = _member_name(str(m["address"]))
         ty = y0 + tile + 3
         draw.text((x0, ty), _fit_text(draw, f"{n}  {name}", font, tile), fill=_INK, font=font)
@@ -328,6 +395,10 @@ def build(
                 font=font,
             )
         entry: dict[str, Any] = {"n": n, "address": m["address"], "labels": values}
+        if is_video(m):
+            entry["video"] = True
+            if at is not None:
+                entry["frame"] = at  # the instant shown; open more of it with frame=<secs>
         if error:
             entry["error"] = error
         tiles.append(entry)

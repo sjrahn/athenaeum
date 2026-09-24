@@ -57,7 +57,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "overlay":         ("Inspect",                "Show an origin overlay's declarations + normalization tactics"),
     "preview":         ("Inspect",                "Render an artifact with bbox marks, fit to a model's input budget (the cropping loop's eyes)"),
     "bands":           ("Inspect",                "Audit page=N&bbox= bands against the rendered pixels (pixel-truth geometry)"),
-    "contact-sheet":   ("Inspect",                "Labelled grid over a container's image members — filter/sort by member descriptors (an instrument, never an anchor)"),
+    "contact-sheet":   ("Inspect",                "Labelled grid over a container's image + video members — filter/sort by member descriptors (an instrument, never an anchor)"),
     "view":            ("Inspect",                "Bundle one record as <id>.zip — artifact + record.md + a self-contained page showing both (the human's eyes; --html for the page alone)"),
     "export":          ("Inspect",                "Single-record portable export — md/typst/pdf rendering with materialized surfaces (spec §10; --annotated for the debug variant)"),
     "toc":             ("Inspect",                "Top-level block table of contents"),

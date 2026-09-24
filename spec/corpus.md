@@ -2,11 +2,11 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 45
+version: 46
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-08-28
+date_modified: 2026-09-24
 ---
 
 # Athenaeum Specification — Part II: The Corpus
@@ -2057,15 +2057,17 @@ The query layer over every recipe value (§2, §7.9) — record-resident and ind
 
 **Moved to Part IV** ([`custody.md`](custody.md) §4): the attached-location route's derived map, its persistence rationale, staleness pins, and row provenance. This stub keeps the section number so existing citations resolve.
 
-#### 12.9.3 The contact sheet *(v45)*
+#### 12.9.3 The contact sheet *(v45; video tiles v46)*
 
-`corpus contact-sheet <container>` renders a labelled grid over a container's **image members** — one sheet in place of a resolve per frame when the question is *which of these frames show X*. It is an **instrument** (§6.2 op classes): a tool's view about the container, never stored, never an anchor; what it hands the investigator is the member address each tile names, which is what the follow-up resolve — or the evidence anchor — uses. Mechanics, all implementation-owned except where stated:
+`corpus contact-sheet <container>` renders a labelled grid over a container's **image and video members** — one sheet in place of a resolve per frame when the question is *which of these frames show X*. It is an **instrument** (§6.2 op classes): a tool's view about the container, never stored, never an anchor; what it hands the investigator is the member address each tile names, which is what the follow-up resolve — or the evidence anchor — uses. Mechanics, all implementation-owned except where stated:
 
 - **Tiles are the frames' own renderings** — `corpus://<container>?<address>&auto_orient&fit=<T>x<T>`, resolved and cached through the ordinary resolver, so a tile is exactly what opening the frame shows, upright. A frame that will not render is a marked tile and a legend note, never a lost sheet.
+- **A video member is tiled by one still** — the same rendering with the video kind's frame grab leading the chain (`…?<address>&frame=<t>&auto_orient&fit=…`, §6.2), marked as video on the sheet, with the instant `t` recorded in the legend. The instant is a sheet option (implementation default); a clip shorter than it is shown by its first frame, and the legend says so. One still is a pointer into the clip, not a reading of it: what the clip holds is read by opening it.
+- **A companion is not a frame of its own.** A video member that another member's descriptor names by address — a sibling reference (§7.2), such as a live photo's motion twin — is passed over and disclosed as `companion`; the referencing member stands for the pair. The rule compares addresses only and knows no field's meaning.
 - **Selection runs over the `members` derivation's descriptors** (§6.2) — which, for a container declaring a `sidecar:` (§7.2), carry each frame's lifted fields — so the sheet is generic over producers and knows no field's meaning: a member-path glob, and `FIELD<op>VALUE` predicates (`~` contains, `!~` lacks, `=`, `!=`, `>=`, `<=`; a date bound compares on the value's own face), all of which must hold; an optional sort key; optional label fields printed under each tile.
 - **Pages** walk a long sequence at a fixed tiles-per-sheet budget; the default layout fits a vision model's input budget (the `fit=llm` preset's bounds) with the labels still legible.
-- **Disclosure**: the legend reports the page, the page count, the selected count, and what the sheet passed over by media family (video, other) — a sheet never implies it showed everything.
-- **Cached** under `cache/` keyed on the full selection, the layout, and the engine id (`contact-sheet@1`), with the JSON legend beside it; regenerable like any resolver result (§6.4).
+- **Disclosure**: the legend reports the page, the page count, the selected count, and what the sheet passed over by family (companion; video, when the sheet is asked for stills only; other) — a sheet never implies it showed everything.
+- **Cached** under `cache/` keyed on the full selection (the video instant included), the layout, and the engine id (`contact-sheet@2`), with the JSON legend beside it; regenerable like any resolver result (§6.4).
 
 ### 12.10 Export output layout
 
