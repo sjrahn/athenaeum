@@ -1,7 +1,8 @@
-"""`corpus contact-sheet` — a labelled grid over a container's image members (spec §12.9.3,
-v45; codex-steven R-0037). An instrument: selection runs over the `members` descriptors
-(which carry a declared sidecar's lifted fields), each tile is the frame's own
-`auto_orient&fit` rendering, and the legend names every tile's member address."""
+"""`corpus contact-sheet` — a labelled grid over a container's image and video members (spec
+§12.9.3, v45; video tiles v46; codex-steven R-0037/R-0038). An instrument: selection runs
+over the `members` descriptors (which carry a declared sidecar's lifted fields), each tile
+is the frame's own `auto_orient&fit` rendering, and the legend names every tile's member
+address."""
 
 from __future__ import annotations
 
@@ -13,9 +14,10 @@ import pytest
 from PIL import Image
 
 from corpus import contact_sheet as cs
-from corpus import paths
+from corpus import paths, resolver
 from corpus._cli import contact_sheet as cs_cli
 from corpus._cli import reattest as reattest_cli
+from corpus.transforms.video import FramePastEnd
 from tests.test_sidecar_lift import _PHOTO_MEMBERS, _container, _corpus
 
 
@@ -128,6 +130,7 @@ def test_sheet_tiles_every_image_frame_and_marks_the_unreadable(box):
     assert legend["skipped"] == {"other": 1, "companion": 1}
     clip = legend["tiles"][-1]
     assert clip["video"] is True and "error" in clip  # not a real movie: a marked tile
+    assert "frame" not in clip  # a broken clip is not a short one: no first-frame retry
     assert legend["class"] == "instrument" and legend["engine"] == cs.ENGINE_VERSION
     by = {t["address"]: t for t in legend["tiles"]}
     assert by["path=IMG_0001.HEIC"]["labels"] == {"px_uuid": "0001-UUID"}
@@ -240,6 +243,22 @@ def _mp4(seconds: float = 2.0) -> bytes:
             return fh.read()
 
 
+@pytest.mark.parametrize("bad", ["5s", "garbage", "-1", "nan", "inf", ""])
+def test_a_bad_video_instant_refuses_the_sheet(box, bad):
+    # never silently some other frame: the pre-fix sheet tiled every video at 0 here
+    root, cid = box
+    with pytest.raises(cs.SheetError, match="--video-at"):
+        cs.build(root, cid, tile=64, video_at=bad)
+    # stills only: the instant is never read, so it is never judged
+    assert cs.build(root, cid, tile=64, video=False, video_at=bad).legend["tiles"]
+
+
+def test_the_video_instant_is_spelled_in_canonical_seconds():
+    assert [cs.video_instant(v) for v in ("1", "1.0", "00:01", "0:00:01.000")] == ["1"] * 4
+    assert cs.video_instant("01:02.5") == "62.5"
+    assert cs.video_instant("0") == "0"
+
+
 def test_a_video_member_is_tiled_by_one_badged_still(tmp_path):
     root = _corpus(tmp_path, producer="photo")
     cid = _container(
@@ -256,3 +275,9 @@ def test_a_video_member_is_tiled_by_one_badged_still(tmp_path):
     at5 = cs.build(root, cid, tile=64, video_at="0.2")
     assert at5.path != sheet.path  # the instant is part of the selection key
     assert {t["frame"] for t in at5.legend["tiles"]} == {"0.2"}
+    # one instant, one key: `00:01` is the same sheet as `1`
+    same = cs.build(root, cid, tile=64, video_at="00:01")
+    assert same.cached and same.path == sheet.path
+    # the fallback's trigger: a member's past-the-end grab is its own error type
+    with pytest.raises(FramePastEnd):
+        resolver.resolve(f"corpus://{cid}?path=short.mp4&frame=1", root)

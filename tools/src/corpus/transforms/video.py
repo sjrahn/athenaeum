@@ -31,6 +31,12 @@ from . import RenderContext, register
 log = logging.getLogger(__name__)
 
 
+class FramePastEnd(ValueError):
+    """`frame=<t>` names an instant at or past the video's end — the one frame-grab
+    failure a caller may answer with an earlier instant (the contact sheet's first-frame
+    fallback, §12.9.3). Every other failure is the frame's own."""
+
+
 @register("video", "extract_audio", "audio")
 def extract_audio(video_path: Path, value: str | None, ctx: RenderContext) -> Path:
     """Extract mono 16 kHz 64 kbps MP3 — suitable input for speech-to-text.
@@ -76,7 +82,7 @@ def frame(video_path: Path, value: str | None, ctx: RenderContext) -> Image.Imag
         raise ValueError(f"frame= must be non-negative, got {seconds}")
     duration = ctx.get("video_duration_seconds")
     if duration is not None and seconds >= duration:
-        raise ValueError(
+        raise FramePastEnd(
             f"frame={timecode!r} ({seconds:.2f}s) is past the end of the video "
             f"(duration {duration:.2f}s)"
         )
@@ -95,8 +101,10 @@ def frame(video_path: Path, value: str | None, ctx: RenderContext) -> Image.Imag
         out.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg frame failed: {proc.stderr.strip()}")
     if not out.is_file() or out.stat().st_size == 0:
+        # ffmpeg exits clean and writes nothing when `-ss` lands past the last frame (a
+        # container member carries no attested duration to range-check against first)
         out.unlink(missing_ok=True)
-        raise RuntimeError(f"ffmpeg frame produced no output (timecode {timecode!r} past end?)")
+        raise FramePastEnd(f"ffmpeg frame produced no output (timecode {timecode!r} past end?)")
 
     with Image.open(out) as im:
         im.load()

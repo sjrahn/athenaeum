@@ -263,6 +263,22 @@ def _label_value(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def video_instant(value: str) -> str:
+    """The sheet's video instant, validated with the video kind's own `frame=` parser and
+    spelled in canonical seconds (`00:01`, `1.0`, `1` → `1`), so one instant is one cache
+    key and one legend value. A bad instant refuses the sheet — it never silently becomes
+    some other frame."""
+    from corpus.transforms.video import _parse_timecode_to_seconds
+
+    try:
+        seconds = _parse_timecode_to_seconds(str(value).strip())
+    except ValueError as exc:
+        raise SheetError(f"--video-at: {exc}") from exc
+    if not math.isfinite(seconds) or seconds < 0:
+        raise SheetError(f"--video-at must be a finite, non-negative instant, got {value!r}")
+    return f"{seconds:.3f}".rstrip("0").rstrip(".")
+
+
 def _tile_uri(container_id: str, address: str, tile: int, at: str | None = None) -> str:
     key, _, value = address.partition("=")
     params: tuple[tuple[str, str | None], ...] = (
@@ -294,11 +310,13 @@ def build(
 ) -> Sheet:
     """Build (or fetch from cache) one page of a container's contact sheet."""
     from corpus import resolver
+    from corpus.transforms.video import FramePastEnd
 
     if columns < 1 or rows < 1 or tile < 32:
         raise SheetError("columns and rows must be >= 1 and the tile >= 32 px")
     if page < 1:
         raise SheetError(f"--page must be >= 1, got {page}")
+    instant = video_instant(video_at) if video else None
 
     selection = {
         "container": container_id,
@@ -309,7 +327,7 @@ def build(
         "columns": columns,
         "rows": rows,
         "tile": tile,
-        "video": video_at if video else False,
+        "video": instant if instant is not None else False,
         "fit": "llm" if fit_llm else "full",
         "page": page,
     }
@@ -338,19 +356,22 @@ def build(
     shown = chosen[(page - 1) * per : page * per]
 
     def render(m: dict[str, Any]) -> tuple[Image.Image | None, str | None, str | None]:
-        # a video tries the sheet's instant, then its first frame (a clip shorter than it)
+        # a video tries the sheet's instant, then — only when that instant is past its
+        # end (a clip shorter than it) — its first frame
         instants: tuple[str | None, ...] = (
-            (video_at, "0") if video_at != "0" else ("0",)
-        ) if is_video(m) else (None,)
+            ((instant, "0") if instant != "0" else ("0",)) if is_video(m) else (None,)
+        )
         error = None
-        for at in instants:
-            uri = _tile_uri(container_id, str(m["address"]), tile, at)
+        for t in instants:
+            uri = _tile_uri(container_id, str(m["address"]), tile, t)
             try:
                 with Image.open(resolver.resolve(uri, corpus_root)) as im:
                     im.load()
-                    return im.convert("RGB"), None, at
-            except Exception as exc:  # one unreadable frame: a marked tile, never a lost sheet
+                    return im.convert("RGB"), None, t
+            except FramePastEnd as exc:
                 error = f"{type(exc).__name__}: {exc}"
+            except Exception as exc:  # one unreadable frame: a marked tile, never a lost sheet
+                return None, f"{type(exc).__name__}: {exc}", None
         return None, error, None
 
     workers = jobs or min(8, os.cpu_count() or 1)

@@ -136,8 +136,9 @@ left-to-right, each operating on the previous step's output:
                      (the `llm` preset caps to a vision-model input budget)
   resize=WxH         resize to exact pixel dimensions (may distort or enlarge)
   format=png         write the decoded image out as PNG — the viewable rendering of a
-                     HEIC/HEIF/AVIF/WebP/TIFF still — a DNG is TIFF, and renders its
-                     embedded full-size preview (add fit=llm to bound it). Every image
+                     HEIC/HEIF/AVIF/WebP/TIFF still (add fit=llm to bound it). A DNG is
+                     TIFF: it renders the image its first IFD holds — an iPhone ProRAW's
+                     full-size rendering, often only a thumbnail elsewhere. Every image
                      op above writes PNG too; this is the explicit no-other-change form.
   dpi=N              rasterization DPI for page= (default 200; position-independent)
 

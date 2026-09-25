@@ -39,7 +39,7 @@ extended_fields:
     source: file_metadata
     description: >-
       (3.10 §7.2.1) Number of frames the artifact holds. Stamped only for the
-      animation-capable formats (GIF, WebP, AVIF, HEIF), where it is the fact
+      animation-capable formats (GIF, WebP, AVIF, HEIF, TIFF), where it is the fact
       `whole_address: single_unit_only` gates on — absence of a segment address is
       admissible iff this is 1. Read structurally from the container, never from a
       decoder, so the value cannot vary with which optional codecs the ingesting host
