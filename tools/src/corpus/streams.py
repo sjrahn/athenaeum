@@ -73,6 +73,11 @@ from typing import IO
 # ---------- public result type ---------- #
 
 
+class NotIsobmff(ValueError):
+    """The file is not an ISOBMFF container at all (Matroska/WebM, or no `moov` box) — a
+    coverage gap, distinct from an ISOBMFF container this module failed to read."""
+
+
 @dataclass(frozen=True)
 class StreamInfo:
     """One elementary stream (track) reported by `probe_streams`.
@@ -149,6 +154,14 @@ _AV1_FOURCCS = frozenset({"av01"})
 # dOps/...). Constant regardless of box version — SampleEntry carries no version field.
 _VIDEO_SAMPLE_ENTRY_FIXED = 78
 _AUDIO_SAMPLE_ENTRY_FIXED = 28
+# QuickTime's SoundDescription shares ISOBMFF's 28-byte AudioSampleEntry prefix, but its
+# `version` (the first u16 after data_reference_index) EXTENDS it: version 1 appends 16
+# bytes (samplesPerPacket, bytesPerPacket, bytesPerFrame, bytesPerSample), version 2
+# appends 36 (the LPCM-capable layout). An iPhone .MOV's AAC track is version 1 — read at
+# the ISOBMFF offset, its first "child box" is `samplesPerPacket` (size 1024, type
+# 0x00000001) and the whole container fails. ISOBMFF's own AudioSampleEntryV1 keeps the
+# 28-byte layout, so the extension applies to a QuickTime file only (`_is_quicktime`).
+_QT_SOUND_DESCRIPTION_EXTRA = {0: 0, 1: 16, 2: 36}
 
 _EBML_MAGIC = b"\x1a\x45\xdf\xa3"  # Matroska/WebM's EBML header — the non-ISOBMFF tell.
 
@@ -191,6 +204,38 @@ def _find_box(fh: IO[bytes], box_type: str, start: int, end: int) -> tuple[int, 
         if bt == box_type:
             return ps, pe
     return None
+
+
+def _find_config_box(
+    fh: IO[bytes], box_type: str, start: int, end: int
+) -> tuple[int, int] | None:
+    """A sample entry's codec-configuration box: a direct child (ISOBMFF), or — in a
+    QuickTime sound description — a child of its `wave` atom, where QuickTime nests `esds`
+    beside `frma` and a zero terminator atom."""
+    found = _find_box(fh, box_type, start, end)
+    if found is None and (wave := _find_box(fh, "wave", start, end)) is not None:
+        found = _find_box(fh, box_type, *wave)
+    return found
+
+
+def _is_quicktime(fh: IO[bytes]) -> bool:
+    """A QuickTime (not plain ISOBMFF) file: `ftyp` major brand `qt  `, or no leading `ftyp`
+    at all — QuickTime before ISOBMFF wrote none, and every ISOBMFF brand requires one."""
+    fh.seek(0)
+    head = fh.read(12)
+    return head[4:8] != b"ftyp" or head[8:12] == b"qt  "
+
+
+def _qt_sound_extra(fh: IO[bytes], entry_ps: int) -> int:
+    """Bytes a QuickTime SoundDescription's `version` adds past the 28-byte prefix."""
+    fh.seek(entry_ps + 8)  # reserved(6) + data_reference_index(2)
+    version = struct.unpack(">H", fh.read(2))[0]
+    if version not in _QT_SOUND_DESCRIPTION_EXTRA:
+        raise ValueError(
+            f"QuickTime sound sample description version {version} — no known layout, "
+            "refusing to guess where its child boxes start"
+        )
+    return _QT_SOUND_DESCRIPTION_EXTRA[version]
 
 
 # ---------- track (`trak`) parsing ---------- #
@@ -378,19 +423,19 @@ def _resolve_codec(
     config box still raises — that is a malformed track, not an unknown one."""
     children_start = entry_ps + fixed
     if fourcc in _H264_FOURCCS:
-        avcc = _find_box(fh, "avcC", children_start, entry_pe)
+        avcc = _find_config_box(fh, "avcC", children_start, entry_pe)
         if avcc is None:
             raise ValueError(f"'{fourcc}' sample entry has no 'avcC' config box")
         nals, length_size = _parse_avcc(fh, *avcc)
         return "h264", nals, length_size
     if fourcc in _HEVC_FOURCCS:
-        hvcc = _find_box(fh, "hvcC", children_start, entry_pe)
+        hvcc = _find_config_box(fh, "hvcC", children_start, entry_pe)
         if hvcc is None:
             raise ValueError(f"'{fourcc}' sample entry has no 'hvcC' config box")
         nals, length_size = _parse_hvcc(fh, *hvcc)
         return "hevc", nals, length_size
     if fourcc == "mp4a":
-        esds = _find_box(fh, "esds", children_start, entry_pe)
+        esds = _find_config_box(fh, "esds", children_start, entry_pe)
         if esds is None:
             raise ValueError("'mp4a' sample entry has no 'esds' config box")
         asc, object_type = _parse_esds(fh, *esds)
@@ -399,14 +444,14 @@ def _resolve_codec(
         config = _parse_audio_specific_config(asc)
         return "aac", config, None
     if fourcc == "Opus":
-        dops = _find_box(fh, "dOps", children_start, entry_pe)
+        dops = _find_config_box(fh, "dOps", children_start, entry_pe)
         if dops is None:
             raise ValueError("'Opus' sample entry has no 'dOps' config box")
         fh.seek(dops[0])
         payload = fh.read(dops[1] - dops[0])
         return "opus", payload, None
     if fourcc in _AV1_FOURCCS:
-        av1c = _find_box(fh, "av1C", children_start, entry_pe)
+        av1c = _find_config_box(fh, "av1C", children_start, entry_pe)
         if av1c is None:
             raise ValueError(f"'{fourcc}' sample entry has no 'av1C' config box")
         # The av1C payload is not parsed further — payload extraction needs no config
@@ -417,7 +462,9 @@ def _resolve_codec(
     return fourcc, None, None
 
 
-def _parse_trak(fh: IO[bytes], trak_ps: int, trak_pe: int, index: int) -> _Track:
+def _parse_trak(
+    fh: IO[bytes], trak_ps: int, trak_pe: int, index: int, *, quicktime: bool = False
+) -> _Track:
     mdia = _find_box(fh, "mdia", trak_ps, trak_pe)
     if mdia is None:
         raise ValueError(f"track {index}: no 'mdia' box")
@@ -439,6 +486,8 @@ def _parse_trak(fh: IO[bytes], trak_ps: int, trak_pe: int, index: int) -> _Track
         raise ValueError(f"track {index}: no 'stsd' box")
     fourcc, entry_ps, entry_pe = _parse_stsd(fh, *stsd)
     fixed = _VIDEO_SAMPLE_ENTRY_FIXED if kind == "video" else _AUDIO_SAMPLE_ENTRY_FIXED
+    if kind == "audio" and quicktime:
+        fixed += _qt_sound_extra(fh, entry_ps)
     codec, config, length_size = _resolve_codec(fh, fourcc, entry_ps, entry_pe, fixed)
 
     stsz = _find_box(fh, "stsz", stbl_ps, stbl_pe)
@@ -468,22 +517,23 @@ def _parse_container(path: Path) -> list[_Track]:
     with path.open("rb") as fh:
         head = fh.read(4)
         if head == _EBML_MAGIC:
-            raise ValueError(
+            raise NotIsobmff(
                 f"{path}: Matroska/WebM (EBML) container — stream extraction is ISOBMFF "
                 "only (mp4/m4a/mov) in this increment"
             )
         size = path.stat().st_size
         moov = _find_box(fh, "moov", 0, size)
         if moov is None:
-            raise ValueError(
+            raise NotIsobmff(
                 f"{path}: no 'moov' box found — not a supported ISOBMFF file "
                 "(stream extraction is ISOBMFF only)"
             )
+        quicktime = _is_quicktime(fh)
         tracks: list[_Track] = []
         for bt, ps, pe in _iter_boxes(fh, *moov):
             if bt != "trak":
                 continue
-            tracks.append(_parse_trak(fh, ps, pe, index=len(tracks)))
+            tracks.append(_parse_trak(fh, ps, pe, index=len(tracks), quicktime=quicktime))
         return tracks
 
 

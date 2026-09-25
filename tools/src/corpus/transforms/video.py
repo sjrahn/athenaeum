@@ -55,7 +55,9 @@ def extract_audio(video_path: Path, value: str | None, ctx: RenderContext) -> Pa
         str(out),
     ]
     log.info("ffmpeg extract_audio: %s -> %s", video_path.name, out)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         out.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg extract_audio failed: {proc.stderr.strip()}")
@@ -96,7 +98,9 @@ def frame(video_path: Path, value: str | None, ctx: RenderContext) -> Image.Imag
         str(out),
     ]
     log.info("ffmpeg frame: %s @ %s -> %s", video_path.name, timecode, out)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         out.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg frame failed: {proc.stderr.strip()}")
@@ -155,7 +159,9 @@ def ffmpeg_engine_label() -> str:
 
 def _run_ffmpeg(cmd: list[str], op: str) -> None:
     log.info("ffmpeg %s: %s", op, " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         Path(cmd[-1]).unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg {op} failed: {proc.stderr.strip()}")
@@ -175,7 +181,9 @@ def _probe_stream_kinds(path: Path) -> dict[str, list[int]]:
         "-show_entries", "stream=index,codec_type",
         "-of", "json", str(path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {proc.stderr.strip()}")
     try:
@@ -470,7 +478,9 @@ def scenes(path: Path, value: str | None, ctx: RenderContext) -> str:
         "-f", "null", "-",
     ]
     log.info("ffmpeg scenes: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg scenes failed: {proc.stderr.strip()}")
     timestamps = _parse_showinfo_timestamps(proc.stderr)

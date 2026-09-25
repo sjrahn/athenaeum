@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
-from .ziparchive import ENGINE_VERSION, MemberMissing, common_root, relpath
+from .ziparchive import ENGINE_VERSION, MemberMissing, common_root, member_missing, relpath
 
 __all__ = [
     "ENGINE_VERSION",
@@ -57,6 +57,7 @@ def open_member(tar_path: Path, rel: str) -> Iterator[IO[bytes]]:
     (spec §12.9). Iterates the solid stream and stops at the target, so only the bytes up to
     (and including) the member are decompressed. Yields a binary file-like; raises `ValueError`
     when no member matches."""
+    seen: list[str] = []  # the failed scan's names: the refusal's raw-spelling check, free
     with open_archive(tar_path) as tf:
         for member in tf:
             if member.isfile() and _name_matches(member.name, rel):
@@ -65,7 +66,9 @@ def open_member(tar_path: Path, rel: str) -> Iterator[IO[bytes]]:
                     raise ValueError(f"path={rel}: member is not a regular file")
                 yield fp
                 return
-    raise MemberMissing(f"path={rel}: no such member in archive")
+            if member.isfile():
+                seen.append(member.name)
+    raise member_missing(rel, lambda r: any(_name_matches(n, r) for n in seen))
 
 
 def resolve_member(tar_path: Path, rel: str) -> bytes:

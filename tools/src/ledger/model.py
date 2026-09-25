@@ -82,13 +82,17 @@ ROSTER_KEYS = {"uri", "role", "note", "provenance",
 # `source`/`anchor` don't belong here; neither does `verified` (nothing to
 # stamp before the citation resolves against a real fact).
 PROPOSES_EVIDENCE_KEYS = {"uri", "quote", "note", "kind", "element"}
+# *(v47, §7.2)* a hypothesis that a thing the ledger has no fact for exists: the concept
+# `ath ledger promote` mints (`facts/{type}/{id}.json`) and the draft claims it lands on it.
+PROPOSES_NEW_KEYS = {"id", "type", "name", "claims"}
 
 CLAIM_STATUSES = {"confirmed", "provisional", "inferred", "reported", "disputed", "conflicting"}
 EVIDENCE_KINDS = {"authoritative", "direct", "incidental"}
 
 INTERP_KEYS = {
     "id", "kind", "about", "statement", "confidence", "reasoning", "based_on",
-    "would_resolve", "proposes", "challenges", "needs", "status", "resolution", "asof",
+    "would_resolve", "proposes", "proposes_new", "challenges", "needs", "status",
+    "resolution", "asof",
 }
 INTERP_KINDS = {"hypothesis", "assessment", "correction"}
 HYPOTHESIS_STATUSES = {"open", "promoted", "refuted"}

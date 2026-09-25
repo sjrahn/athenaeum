@@ -46,6 +46,7 @@ from ledger.model import (
     PERIOD_RE,
     PRESENCE_VALUES,
     PROPOSES_EVIDENCE_KEYS,
+    PROPOSES_NEW_KEYS,
     QUALIFIED_URI_RE,
     REF_URI_RE,
     ROSTER_KEYS,
@@ -87,6 +88,23 @@ _RETIRED_QUALIFIERS_HINT = "time lives in `period`/`asof`, never ad-hoc qualifie
 # a schema expectation's positional display id (§4.4) — reordering a
 # schema's list renumbers it, so nothing durable may reference one (§14)
 _POSITIONAL_EXPECTATION_RE = re.compile(r"^expectation:([^\[]+)\[\d+\]$")
+
+
+def _anchor_unknown_param(anchor: str) -> str | None:
+    """*(v47, §6.2)* The first param of an evidence anchor that names no op or address axis
+    the corpus knows — a free-text anchor ("Purchases data-table, page 2") parses as one
+    such param, resolves nothing, and used to verify its quote record-wide. None for a
+    `#fragment` or an anchor of known params (their CLASS is §13.2's check, not this)."""
+    if not anchor or anchor.startswith("#"):
+        return None
+    from corpus import functional_uri as furi
+    from corpus.transforms import op_class
+
+    try:
+        params = furi.parse(f"corpus://{'0' * 64}?{anchor}").params
+    except Exception:
+        return anchor
+    return next((k for k, _ in params if op_class(k) is None), None)
 
 
 @dataclass
@@ -948,6 +966,11 @@ def run_check(
             anchor = e.get("anchor")
             if isinstance(anchor, str) and anchor.startswith("?"):
                 rep.err(where, f"anchor {anchor!r} must not carry a leading '?'")
+            elif isinstance(anchor, str) and (unknown := _anchor_unknown_param(anchor)):
+                rep.err(where, f"anchor {anchor!r} is not a functional-URI address: "
+                               f"`{unknown[:40]}` names no op or axis (§6.2) — re-anchor "
+                               f"at a stored address (`corpus toc`), or drop the anchor "
+                               f"for a record-level cite and put the words in `note`")
             skey = e.get("source")
             if not skey or not isinstance(skey, str):
                 rep.err(where, "evidence entry has no source")
@@ -1127,94 +1150,147 @@ def run_check(
                 rep.err(where, f"about entry {a!r} is not a known fact id")
 
         proposes = o.get("proposes")
+        proposes_new = o.get("proposes_new")
+        mint: str | None = None
+
+        def check_draft_claim(dc: dict, label: str, where: str, mint: str | None) -> None:
+            """One draft Claim (§7.2) — `proposes`, or an entry of `proposes_new.claims` —
+            whose target and `object` name a known fact or the one `proposes_new` mints."""
+            pid = str(dc.get("id", ""))
+            pm = CLAIM_ID_RE.match(pid)
+            if not pm:
+                rep.err(where, f"{label}.id {pid!r} must be '{{fact-id}}:{{short}}'")
+            elif label != "proposes" and pm.group(1) != mint:
+                rep.err(where, f"{label}.id {pid!r} must target the minted fact "
+                               f"{mint!r} — a claim on a known fact is `proposes`")
+            elif pm.group(1) != mint and resolve_id(pm.group(1)) is None:
+                rep.err(where, f"{label} targets unknown fact {pm.group(1)!r}"
+                               + ("" if mint else " — a fact not yet minted is "
+                                  "proposed with `proposes_new` (§7.2)"))
+            if not dc.get("predicate"):
+                rep.err(where, f"{label} has no predicate")
+            pobj = dc.get("object")
+            if pobj is not None and str(pobj) != mint and resolve_id(str(pobj)) is None:
+                rep.err(where, f"{label} object {pobj!r} names no fact — mint it with "
+                               "`proposes_new` (§7.2), or propose on a known one")
+            pevs = dc.get("evidence")
+            if not pevs:
+                rep.warn(where, f"{label} carries no evidence — promotion will need it")
+            elif isinstance(pevs, list):
+                # proposes predates the fact it targets, so its evidence
+                # stays in the pre-reforge inline-`uri` shape (design
+                # corner: interpretations are unchanged) — `promote` hoists
+                # it into the target fact's sources table at landing time
+                for pe in pevs:
+                    if not isinstance(pe, dict):
+                        rep.err(where, "proposes evidence entries must be objects")
+                        continue
+                    pbad = set(pe) - PROPOSES_EVIDENCE_KEYS
+                    if "source" in pbad or "anchor" in pbad:
+                        rep.err(where, "proposes evidence carries a sources-table "
+                                       "`source`/`anchor` key — proposes has no fact "
+                                       "of its own to reference; keep the inline `uri` "
+                                       "form until promotion")
+                        pbad = pbad - {"source", "anchor"}
+                    if pbad:
+                        rep.err(where, f"proposes evidence unknown keys {sorted(pbad)}")
+                    pkind = pe.get("kind")
+                    if pkind not in EVIDENCE_KINDS:
+                        rep.err(where, f"proposes evidence kind {pkind!r} "
+                                       "missing/invalid (authoritative|direct|incidental)")
+                    puri = str(pe.get("uri", ""))
+                    pcm = CORPUS_URI_RE.match(puri)
+                    prm = REF_URI_RE.match(puri)
+                    if pcm:
+                        if resolve_live and not join.resolves(pcm.group(1)):
+                            rep.err(where, f"proposes evidence cites "
+                                           f"corpus://{pcm.group(1)[:12]}… which "
+                                           "resolves in no registered corpus")
+                        owner = mirror_hash_owner.get(pcm.group(1))
+                        if owner is not None:
+                            odset, otag = owner
+                            rep.warn(where, f"proposes evidence cites "
+                                           f"corpus://{pcm.group(1)[:12]}…, the mirror "
+                                           f"artifact for {odset!r}@{otag!r} — the "
+                                           "mirror record's honest citation surface is "
+                                           f"ref://{odset}/{{id}}, not the corpus hash "
+                                           "directly (§6.5, §13.1)")
+                    elif prm:
+                        if "?" in prm.group(3):
+                            # §6.5 "Anchors are entry-level": REF_URI_RE's id
+                            # group is greedy (`(.+)$`), so a param'd uri
+                            # still MATCHES — it doesn't fall through to the
+                            # generic "not a citation" error below; the
+                            # rejection has to be explicit here instead.
+                            rep.err(where, f"proposes evidence ref:// uri "
+                                           f"{puri!r} carries a span parameter — "
+                                           "ref:// citations carry no anchors "
+                                           "(§6.5)")
+                        if prm.group(1) not in datasets:
+                            rep.err(where, f"proposes evidence ref:// dataset "
+                                           f"{prm.group(1)!r} is not registered")
+                        elif prm.group(2) is not None \
+                                and prm.group(2) not in datasets[prm.group(1)].snapshots:
+                            rep.err(where, f"proposes evidence ref:// pin "
+                                           f"{prm.group(1)!r}@{prm.group(2)!r} is a "
+                                           f"dangling pin: {prm.group(2)!r} is not a "
+                                           f"registered snapshot tag on "
+                                           f"{prm.group(1)!r} (§13.1)")
+                    elif QUALIFIED_URI_RE.match(puri):
+                        rep.err(where, f"proposes evidence uri {puri!r} uses the "
+                                       "retired qualified form — cite bare "
+                                       "corpus://{hash}")
+                    else:
+                        rep.err(where, f"proposes evidence uri {puri!r} is not a "
+                                       "corpus:// or ref:// citation")
+            bad = set(dc) - (CLAIM_KEYS - {"status"})
+            if bad:
+                rep.err(where, f"{label} unknown keys {sorted(bad)} (status is "
+                               "assigned at promotion)")
+
+        if proposes_new is not None:
+            # *(v47, §7.2)* the hypothesis that a thing the ledger has no fact for exists:
+            # the concept to mint and the draft claims it would carry — `promote` mints it
+            if kind != "hypothesis":
+                rep.err(where, "proposes_new belongs on hypotheses")
+            if not isinstance(proposes_new, dict):
+                rep.err(where, "proposes_new must be an object {id, type, name, claims}")
+            else:
+                nbad = set(proposes_new) - PROPOSES_NEW_KEYS
+                if nbad:
+                    rep.err(where, f"proposes_new unknown keys {sorted(nbad)}")
+                nid = str(proposes_new.get("id") or "")
+                if not SLUG_RE.match(nid):
+                    rep.err(where, f"proposes_new.id {nid!r} is not a fact slug (§4.1)")
+                else:
+                    mint = nid
+                    if st == "open" and (nid in ids or nid in lineage):
+                        rep.err(where, f"proposes_new.id {nid!r} already exists — a claim "
+                                       "on a known fact is `proposes`, not a mint")
+                    elif st == "promoted" and resolve_id(nid) is None:
+                        rep.err(where, f"promoted, but the minted fact {nid!r} is gone")
+                if not SLUG_RE.match(str(proposes_new.get("type") or "")):
+                    rep.err(where, "proposes_new.type must be a concept type slug (§4.2)")
+                if not str(proposes_new.get("name") or "").strip():
+                    rep.err(where, "proposes_new has no name")
+                nclaims = proposes_new.get("claims", [])
+                if not isinstance(nclaims, list):
+                    rep.err(where, "proposes_new.claims must be a list of draft claims")
+                elif mint is not None:
+                    for dc in nclaims:
+                        if isinstance(dc, dict):
+                            check_draft_claim(dc, "proposes_new claim", where, mint)
+                        else:
+                            rep.err(where, "proposes_new.claims entries must be draft "
+                                           "Claim objects")
+
         if proposes is not None:
             if kind != "hypothesis":
                 rep.err(where, "proposes belongs on hypotheses")
             if not isinstance(proposes, dict):
                 rep.err(where, "proposes must be a draft Claim object")
             else:
-                pid = str(proposes.get("id", ""))
-                pm = CLAIM_ID_RE.match(pid)
-                if not pm:
-                    rep.err(where, f"proposes.id {pid!r} must be '{{fact-id}}:{{short}}'")
-                elif resolve_id(pm.group(1)) is None:
-                    rep.err(where, f"proposes targets unknown fact {pm.group(1)!r}")
-                if not proposes.get("predicate"):
-                    rep.err(where, "proposes has no predicate")
-                pevs = proposes.get("evidence")
-                if not pevs:
-                    rep.warn(where, "proposes carries no evidence — promotion will need it")
-                elif isinstance(pevs, list):
-                    # proposes predates the fact it targets, so its evidence
-                    # stays in the pre-reforge inline-`uri` shape (design
-                    # corner: interpretations are unchanged) — `promote` hoists
-                    # it into the target fact's sources table at landing time
-                    for pe in pevs:
-                        if not isinstance(pe, dict):
-                            rep.err(where, "proposes evidence entries must be objects")
-                            continue
-                        pbad = set(pe) - PROPOSES_EVIDENCE_KEYS
-                        if "source" in pbad or "anchor" in pbad:
-                            rep.err(where, "proposes evidence carries a sources-table "
-                                           "`source`/`anchor` key — proposes has no fact "
-                                           "of its own to reference; keep the inline `uri` "
-                                           "form until promotion")
-                            pbad = pbad - {"source", "anchor"}
-                        if pbad:
-                            rep.err(where, f"proposes evidence unknown keys {sorted(pbad)}")
-                        pkind = pe.get("kind")
-                        if pkind not in EVIDENCE_KINDS:
-                            rep.err(where, f"proposes evidence kind {pkind!r} "
-                                           "missing/invalid (authoritative|direct|incidental)")
-                        puri = str(pe.get("uri", ""))
-                        pcm = CORPUS_URI_RE.match(puri)
-                        prm = REF_URI_RE.match(puri)
-                        if pcm:
-                            if resolve_live and not join.resolves(pcm.group(1)):
-                                rep.err(where, f"proposes evidence cites "
-                                               f"corpus://{pcm.group(1)[:12]}… which "
-                                               "resolves in no registered corpus")
-                            owner = mirror_hash_owner.get(pcm.group(1))
-                            if owner is not None:
-                                odset, otag = owner
-                                rep.warn(where, f"proposes evidence cites "
-                                               f"corpus://{pcm.group(1)[:12]}…, the mirror "
-                                               f"artifact for {odset!r}@{otag!r} — the "
-                                               "mirror record's honest citation surface is "
-                                               f"ref://{odset}/{{id}}, not the corpus hash "
-                                               "directly (§6.5, §13.1)")
-                        elif prm:
-                            if "?" in prm.group(3):
-                                # §6.5 "Anchors are entry-level": REF_URI_RE's id
-                                # group is greedy (`(.+)$`), so a param'd uri
-                                # still MATCHES — it doesn't fall through to the
-                                # generic "not a citation" error below; the
-                                # rejection has to be explicit here instead.
-                                rep.err(where, f"proposes evidence ref:// uri "
-                                               f"{puri!r} carries a span parameter — "
-                                               "ref:// citations carry no anchors "
-                                               "(§6.5)")
-                            if prm.group(1) not in datasets:
-                                rep.err(where, f"proposes evidence ref:// dataset "
-                                               f"{prm.group(1)!r} is not registered")
-                            elif prm.group(2) is not None \
-                                    and prm.group(2) not in datasets[prm.group(1)].snapshots:
-                                rep.err(where, f"proposes evidence ref:// pin "
-                                               f"{prm.group(1)!r}@{prm.group(2)!r} is a "
-                                               f"dangling pin: {prm.group(2)!r} is not a "
-                                               f"registered snapshot tag on "
-                                               f"{prm.group(1)!r} (§13.1)")
-                        elif QUALIFIED_URI_RE.match(puri):
-                            rep.err(where, f"proposes evidence uri {puri!r} uses the "
-                                           "retired qualified form — cite bare "
-                                           "corpus://{hash}")
-                        else:
-                            rep.err(where, f"proposes evidence uri {puri!r} is not a "
-                                           "corpus:// or ref:// citation")
-                bad = set(proposes) - (CLAIM_KEYS - {"status"})
-                if bad:
-                    rep.err(where, f"proposes unknown keys {sorted(bad)} (status is "
-                                   "assigned at promotion)")
+                check_draft_claim(proposes, "proposes", where, mint)
 
         challenges = o.get("challenges")
         if challenges is not None:

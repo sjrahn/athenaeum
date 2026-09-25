@@ -545,7 +545,11 @@ def _cmd_harvest(argv: Sequence[str]) -> int:
 
 
 def _cmd_promote(argv: Sequence[str]) -> int:
-    ap = _base_parser("ath ledger promote", "Promote a claim-shaped hypothesis (§7.2).")
+    ap = _base_parser(
+        "ath ledger promote",
+        "Promote a claim-shaped hypothesis (§7.2): land its `proposes` draft claim, "
+        "minting the fact its `proposes_new` names first.",
+    )
     ap.add_argument("id")
     ns = ap.parse_args(list(argv))
     ledger_root, _, _ = _system(ns.root)

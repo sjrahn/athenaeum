@@ -56,19 +56,24 @@ def attest_track_manifest(path: Path) -> tuple[list[dict[str, Any]], list[dict[s
     track fact (kind + codec, read from the container's own sample description), just not
     one this module can pin a transport hash for.
 
-    Returns `([], [])` for a non-ISOBMFF container or any file `streams.probe_streams` can't
-    read (`ValueError`) — not every video/audio mime schema names a media container this
-    module can probe (webm/mkv; bare mp3/wav)."""
+    Returns `([], [])` for a file that is not ISOBMFF at all (`streams.NotIsobmff`) — not
+    every video/audio mime schema names a media container this module can probe (webm/mkv;
+    bare mp3/wav). An ISOBMFF container whose box tree it cannot read returns no embeds and
+    ONE `partial-content/track-manifest-unreadable` issue: an empty manifest must never pass
+    for a container with no tracks (a QuickTime sound description read at the ISOBMFF offset
+    hid every iPhone .MOV's tracks this way until 2026-09-25)."""
     try:
         tracks = streams.probe_streams(path)
-    except (ValueError, NotImplementedError) as exc:
-        # ValueError: non-ISOBMFF container, or a malformed/incomplete track.
-        # NotImplementedError: a structurally-refused track ANYWHERE in the container (e.g. a
-        # multi-entry `stsd`, §12.20.1's "never guess") — `probe_streams` parses every track
-        # eagerly, so one bad track blocks the whole container's manifest this run, a
-        # limitation inherited from phase 1 (`corpus.streams`), not routed around here.
+    except streams.NotIsobmff as exc:
         log.debug("no track manifest for %s: %s", path, exc)
         return [], []
+    except (ValueError, NotImplementedError) as exc:
+        # ValueError: a malformed/incomplete track. NotImplementedError: a structurally-refused
+        # track ANYWHERE in the container (e.g. a multi-entry `stsd`, §12.20.1's "never
+        # guess") — `probe_streams` parses every track eagerly, so one bad track blocks the
+        # whole container's manifest this run, a limitation inherited from phase 1
+        # (`corpus.streams`), not routed around here — but disclosed.
+        return [], [_unreadable_manifest_issue(str(exc))]
 
     embeds: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
@@ -129,6 +134,24 @@ def _unsupported_track_issue(track: streams.StreamInfo, reason: str) -> dict[str
             "stream_id": track.index,
             "kind": track.kind,
             "codec": track.codec,
+        },
+    }
+
+
+def _unreadable_manifest_issue(reason: str) -> dict[str, Any]:
+    """The whole track manifest is missing because the container's box tree could not be
+    read — a record-level `partial-content` fact, so the gap shows on the record (and a
+    `corpus reattest` after a reader fix clears it) instead of hiding as an empty roster."""
+    return {
+        "id": "partial-content",
+        "subtype": "track-manifest-unreadable",
+        "severity": "warning",
+        "detector": _DETECTOR,
+        "fields": {
+            "description": (
+                f"the container's track manifest could not be read: {reason} — no "
+                f"`stream_id=` member is attested."
+            ),
         },
     }
 

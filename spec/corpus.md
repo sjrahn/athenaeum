@@ -2,11 +2,11 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 46
+version: 47
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-09-24
+date_modified: 2026-09-25
 ---
 
 # Athenaeum Specification — Part II: The Corpus

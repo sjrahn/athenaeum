@@ -237,6 +237,18 @@ def _rewrite_interp(
             changed = True
             plan["references_rewritten"].append({"file": rel, "kind": "proposes",
                                                  "old": pid, "new": new_pid})
+    # *(v47)* a draft claim's `object` — on `proposes` or a `proposes_new` claim — may
+    # name the loser too (the fact a proposed mint would be related to)
+    proposes_new = o.get("proposes_new")
+    drafts = [proposes] + (
+        list(proposes_new.get("claims") or []) if isinstance(proposes_new, dict) else []
+    )
+    for dc in drafts:
+        if isinstance(dc, dict) and dc.get("object") == loser:
+            dc["object"] = survivor
+            changed = True
+            plan["references_rewritten"].append({"file": rel, "kind": "proposes-object",
+                                                 "old": loser, "new": survivor})
 
     challenges = o.get("challenges")
     if isinstance(challenges, dict):

@@ -62,6 +62,13 @@ address_scheme:
     (the VIDEO reading of the polymorphic `frame=` axis, spec section 6.2; on the image working
     kind the same key is a 1-based ordinal). This declares the axis the guidance above and the
     drafter's positioning markers have used all along (#124 closed the declaration gap).
+- param: bbox
+  type: rect
+  description: |-
+    <x>,<y>,<w>,<h> - relative floats in [0.0, 1.0], origin top-left, of the FRAME a leading
+    `frame=` rendered — `frame=12.5&bbox=…` names a region of that still (the guidance
+    above's region-scoped text segment; a video track leaf's frame OCR). Never on its own:
+    before `frame=` there is no image for a region to be of.
 extended_fields:
   duration:
     type: number

@@ -202,7 +202,11 @@ def select(
             skipped[family] = skipped.get(family, 0) + 1
             continue
         name = _member_name(str(m.get("address") or ""))
-        if globs and not any(fnmatch.fnmatchcase(name, g) for g in globs):
+        # case-folded: producers disagree on extension case (`.MOV` / `.mov`), and a glob
+        # that silently misses half a camera roll is the failure a sheet must not have
+        if globs and not any(
+            fnmatch.fnmatchcase(name.casefold(), g.casefold()) for g in globs
+        ):
             continue
         if all(matches(m, p) for p in where):
             chosen.append(m)
@@ -321,6 +325,7 @@ def build(
     selection = {
         "container": container_id,
         "glob": list(globs),
+        "glob_case": "folded",
         "where": [str(p) for p in where],
         "sort": sort,
         "labels": list(labels),

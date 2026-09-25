@@ -830,8 +830,13 @@ def _resolve_members(
     Falls back to the stored rows when the artifact cannot be read (bytes not resident, no
     drafter for the type). The fallback is lossy — four keys, no descriptors — and says so in
     the payload, because a caller that silently got less than it asked for is worse than one
-    told the surface was degraded. Cached like any resolver result."""
-    urihash_value = furi.urihash(f"{canonical_uri}|engine={MEMBERS_ENGINE_VERSION}")
+    told the surface was degraded. Cached like any resolver result — keyed on its inputs as
+    well as its URI (`_members_inputs_digest`), so a re-attested roster or an edited sidecar
+    declaration re-derives instead of serving the stale payload."""
+    urihash_value = furi.urihash(
+        f"{canonical_uri}|engine={MEMBERS_ENGINE_VERSION}"
+        f"|inputs={_members_inputs_digest(corpus_root, artifact_record)}"
+    )
     cache_p = furi.cache_path(corpus_root, urihash_value, "json")
     if cache_p.is_file() and not regenerate:
         return cache_p.resolve()
@@ -897,6 +902,37 @@ def _resolve_members(
         version_label=MEMBERS_ENGINE_VERSION,
     )
     return cache_p.resolve()
+
+
+def _members_inputs_digest(corpus_root: Path, artifact_record: Any) -> str:
+    """What a cached `members` payload was derived from beyond its URI and engine: the
+    record's attested roster — a `corpus reattest` that re-types, re-hashes, adds or drops a
+    member rewrites it (R-0039: DNG rows re-typed `image/tiff` kept serving the stale
+    `application/octet-stream` payload until `--regenerate`) — and the container's resolved
+    `sidecar:` declaration, whose edit changes the lifted projection. §6.4 leaves the key to
+    the implementation and asks only that a result be reproducible from its inputs; these
+    are the inputs a record carries."""
+    import dataclasses
+
+    from corpus import sidecar as sidecar_mod
+
+    try:
+        decl = sidecar_mod.declaration_for_container(corpus_root, artifact_record)
+        declared: Any = dataclasses.asdict(decl) if decl is not None else None
+    except sidecar_mod.DeclarationError as exc:
+        declared = f"error: {exc}"
+    state = {
+        "mime": records.media_type_for(artifact_record),
+        "roster": list(records.iter_members(artifact_record)),
+        "sidecar": declared,
+    }
+    # a frozenset's repr/iteration order varies per process (string hash randomization)
+    canon = json.dumps(
+        state,
+        sort_keys=True,
+        default=lambda o: sorted(o) if isinstance(o, (set, frozenset)) else str(o),
+    )
+    return furi.urihash(canon)
 
 
 def _attach_sidecar_descriptors(

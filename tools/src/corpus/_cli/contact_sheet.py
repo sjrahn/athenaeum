@@ -41,7 +41,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         metavar="PATTERN",
-        help="keep members whose path matches (fnmatch; repeatable, any may match)",
+        help="keep members whose path matches (fnmatch, case-insensitive: '*.mov' "
+        "matches IMG_1.MOV; repeatable, any may match)",
     )
     parser.add_argument(
         "--where",

@@ -191,7 +191,9 @@ def mux_stream_to(path: Path, stream_id: int, dest: Path) -> Framing:
         "-f", _FORMAT,
         str(dest),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+    )
     if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
         raise MuxFailed(
             f"stream_id={stream_id}: mux produced no member "

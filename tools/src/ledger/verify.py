@@ -113,6 +113,16 @@ class RecordContent:
     citation_surface: str = "raw"
     segment_count: int = 0  # addressable leaf segments the record actually persists
     corpus_root: Path | None = None  # the holding corpus root — for resolver calls (1.5)
+    # *(v47, §13.2)* a stored address → the text of the block(s) stored AT it (canonical
+    # spelling, `_canon_address`); a list address registers its block under every part.
+    # An anchor that IS a stored address scopes to exactly this — never its whole page.
+    addressed: dict[str, list[str]] = field(default_factory=dict)
+    # *(v47)* (page, (x, y, w, h), text) for every stored `page=N[&bbox=…]` part — a bare
+    # `page=N` is the whole page — so a region anchor that is not itself a stored address
+    # scopes to the stored segments its region overlaps.
+    regions: list[tuple[int, tuple[float, float, float, float], str]] = field(
+        default_factory=list
+    )
 
 
 @dataclass
@@ -150,6 +160,31 @@ class VerifyResult:
 # spellings verify's own call sites (and its tests) use; the semantics are unchanged.
 _norm = _textnorm.norm
 _quote_found = _textnorm.quote_found
+
+# *(v47, §13.2)* A table row of a record's stored rendering: a markdown pipe-table line
+# (the delimiter row excepted) or an HTML `<tr>`.
+_HTML_ROW_RE = re.compile(r"<tr\b[^>]*>.*?</tr>", re.S | re.I)
+_MD_DELIMITER_ROW_RE = re.compile(r"^\|?[\s:|-]+\|?$")
+
+
+def _table_rows(text: str) -> list[str]:
+    rows = _HTML_ROW_RE.findall(text)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and not _MD_DELIMITER_ROW_RE.match(stripped):
+            rows.append(stripped)
+    return rows
+
+
+def _quote_in_one_row(quote: str, haystack: str) -> bool:
+    """*(v47, §13.2)* A quote carrying `|` cites table CELLS, and cells verify only
+    together, within ONE row of the cited scope: in-order matching across the whole scope
+    let a quote join one row's merchant to another row's amount. What the quote does not
+    carry (which column, the row's other cells) belongs in `note`; a claim resting on two
+    rows cites each with its own entry. A scope holding NO table has no cells to straddle:
+    there `|` keeps its plain in-order separator reading (OCR'd signage, a pipe-set title)."""
+    rows = _table_rows(haystack)
+    return not rows or any(_quote_found(quote, row) for row in rows)
 
 
 def _parse_axis_values(
@@ -195,6 +230,47 @@ def _parse_axis_values(
     return out, paths
 
 
+def _canon_address(addr: str) -> str:
+    """One spelling per address, so an anchor copied from `corpus toc` and the stored
+    address compare equal: params stripped, region values as exact floats (`0.20` and `0.2`
+    are one coordinate)."""
+    parts = []
+    for part in addr.split("&"):
+        key, sep, value = part.partition("=")
+        key, value = key.strip(), value.strip()
+        if key in furi.REGION_PARAMS and value:
+            with contextlib.suppress(ValueError):
+                value = ",".join(repr(float(x)) for x in value.split(","))
+        parts.append(f"{key}{sep}{value}")
+    return "&".join(parts)
+
+
+def _page_region(addr: str) -> tuple[int, tuple[float, float, float, float]] | None:
+    """`page=N` or `page=N&bbox=x,y,w,h` → (N, rect); a bare page is the whole page. None
+    for any other shape — only a page region is scoped by overlap."""
+    params = [p.partition("=") for p in addr.split("&")]
+    keys = [k.strip() for k, _, _ in params]
+    if keys not in (["page"], ["page", "bbox"]):
+        return None
+    m = _SPAN_RE.match(params[0][2].strip())
+    if not m or m.group(2):
+        return None
+    rect = (0.0, 0.0, 1.0, 1.0)
+    if len(params) == 2:
+        try:
+            x, y, w, h = (float(v) for v in params[1][2].split(","))
+        except ValueError:
+            return None
+        rect = (x, y, w, h)
+    return int(m.group(1)), rect
+
+
+def _rects_overlap(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
 def _el_paths_overlap(a, b) -> bool:
     """Two §6.1.1 el= claims intersect when either contains the other. Dispatched by
     TYPE — both are always parsed under the same record's single grammar, so this reads
@@ -232,6 +308,8 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         else "dotted"
     )
     texts: list[str] = []
+    addressed: dict[str, list[str]] = {}
+    regions: list[tuple[int, tuple[float, float, float, float], str]] = []
 
     def add(addr, *parts):
         text = "\n".join(p for p in parts if p)
@@ -247,6 +325,12 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
             # addresses.
             return
         texts.append(text)
+        for one in addr if isinstance(addr, list) else [addr]:
+            if isinstance(one, str) and "=" in one:
+                addressed.setdefault(_canon_address(one), []).append(text)
+                region = _page_region(one)
+                if region is not None:
+                    regions.append((*region, text))
         int_spans, paths = _parse_axis_values(addr, el_scheme=el_scheme)
         for axis, lo, hi in int_spans:
             spans.setdefault(axis, []).append((lo, hi, text))
@@ -314,6 +398,7 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         spans=spans, full_text="\n".join(texts), touch=touch,
         media_type=media_type, citation_surface=surface, segment_count=segment_count,
         corpus_root=corpus_root, el_paths=el_paths, el_scheme=el_scheme,
+        addressed=addressed, regions=regions,
     )
 
 
@@ -323,7 +408,27 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
     A span param scopes to the segments it intersects; a cited span touching
     nothing addressable is a bad anchor. Params with no checkable text mark
     the citation `unchecked` (falls back to whole-record for quote search).
+
+    *(v47, §13.2)* A REGION anchor (one carrying `bbox=`) names a place finer than its
+    axis unit, so it never scopes to the whole unit: one that IS a stored address scopes
+    to the block(s) stored at it — not every segment on its page, where a quote could
+    assemble one row's merchant and another row's amount — and a page region that is not
+    one scopes to the stored page segments it overlaps (overlapping none is a bad anchor).
+    A bare axis anchor (`page=2`, `msg=3`) still names the whole unit.
     """
+    if any(k in furi.REGION_PARAMS for k, _ in params):
+        spelled = _canon_address("&".join(f"{k}={v}" if v else k for k, v in params))
+        if spelled in content.addressed:
+            return "\n".join(dict.fromkeys(content.addressed[spelled])), "ok"
+        region = _page_region(spelled)
+        if region is not None and len(params) == 2:
+            page, rect = region
+            on_page = [(r, t) for (p, r, t) in content.regions if p == page]
+            if on_page:
+                hit = [t for (r, t) in on_page if _rects_overlap(r, rect)]
+                if not hit:
+                    return None, "bad-anchor"
+                return "\n".join(dict.fromkeys(hit)), "ok"
     for key, value in params:
         if key in _UNCHECKED_PARAMS:
             return None, "unchecked"
@@ -855,6 +960,12 @@ def verify_ledger(
                                        f"corpus://{h[:12]}… — «{str(quote)[:60]}…»")
                         bad(skey)
                         continue
+                    if "|" in str(quote) and not _quote_in_one_row(str(quote), haystack):
+                        sev.append(f"{where}: quote's `|` cells are not all in one table "
+                                   f"row of the cited scope — cite one row per evidence "
+                                   f"entry (§13.2) — «{str(quote)[:60]}…»")
+                        bad(skey)
+                        continue
                 if not quote and (status == "unchecked" or surface_deferred):
                     if surface_deferred:
                         # (1.8) a bare cite of a deferred surface attests nothing
@@ -936,9 +1047,14 @@ def verify_ledger(
         # targets, so it can't yet cite a sources-table key). Both are references
         # the discovery rides on, so both feed the same demand aggregate.
         refs: list[str] = list(interp.get("based_on") or [])
-        proposes = interp.get("proposes")
-        if isinstance(proposes, dict):
-            for pe in proposes.get("evidence") or []:
+        proposes, proposes_new = interp.get("proposes"), interp.get("proposes_new")
+        drafts = [proposes] + (  # *(v47)* a proposed mint's draft claims cite inline too
+            list(proposes_new.get("claims") or []) if isinstance(proposes_new, dict) else []
+        )
+        for draft in drafts:
+            if not isinstance(draft, dict):
+                continue
+            for pe in draft.get("evidence") or []:
                 if isinstance(pe, dict):
                     refs.append(str(pe.get("uri", "")))
         counted: set[str] = set()

@@ -10,6 +10,10 @@
 #   partial-content/captcha         — page is a captcha challenge
 #   partial-content/tiny            — artifact byte size under per-MIME threshold
 #   partial-content/empty-body      — parsed <body> has no visible content
+#   partial-content/unsupported-track — a media track declared (kind + codec) but not
+#                                     embedded: no pinned extraction for its codec
+#   partial-content/track-manifest-unreadable — an ISOBMFF media container whose box tree
+#                                     the track reader could not walk: no track attested
 #
 # Bare `partial-content` (no subtype) is also valid, used by the normalizer when
 # no subtype fits (e.g. an OCR pass that failed on scanned PDF pages).

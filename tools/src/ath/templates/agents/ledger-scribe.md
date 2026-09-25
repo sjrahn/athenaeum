@@ -127,10 +127,16 @@ When nothing captured can settle it, that is a `capture` or `observe` need.
   or an **engine** (`transcribe` — cite the STORED transcript segments instead): those are the
   normalizer's and the querier's tools, and `ath ledger verify` refuses them as a citation
   defect, never as "unverifiable". `corpus inspect <id>` lists every op available for the
-  record with its class — read it before anchoring into a derived surface.
+  record with its class — read it before anchoring into a derived surface. **An anchor is
+  never prose** (v47): "Purchases table, page 2" is a check error — copy the segment's
+  address from `corpus toc`, or leave the anchor off (record-level) and put the words in
+  `note`. A region anchor (`page=N&bbox=…`) checks against the segment AT that address, not
+  its whole page.
 - `quote` — a **verbatim span** of the resolved content at the cited anchor; it exists to be
   machine-checked by `ath ledger verify`. Paraphrase goes in `note` or the claim's
-  `reasoning`, never in `quote`.
+  `reasoning`, never in `quote`. A `|` in a quote separates table **cells**, and the cells
+  must all sit in **one row** (v47): a statement transaction is `Mar 04 | SAFEWAY #4907 |
+  52.18` from its own row — a claim resting on two rows cites each row with its own entry.
 - `kind` — grade the artifact honestly: `authoritative` (the artifact's *function* is to
   certify the datum — authority is scoped), `direct` (first-party statement in informal
   media), `incidental` (passing mention).
@@ -196,6 +202,11 @@ exist at least as a stub — mint the stub rather than dangling the reference.
 **Pre-assertion content is an interpretation, never a low-status claim (§7).** An identity
 guess ("these two mentions are the same thing") is a `hypothesis` — claim-shaped ones carry
 `proposes` so `ath ledger promote <id>` can move them mechanically when evidence lands. A
+hypothesis that a thing the ledger has NO fact for exists (an event the trip was for, a venue
+a gig was held at) carries **`proposes_new: {id, type, name, claims: [...]}`** (v47) —
+never a stub minted ahead of the doubt, and never a mint proposal left in prose; its drafts
+cite inline `uri:` like `proposes`, and a `proposes` beside it may name the new id as its
+`object`. `promote` mints the fact, then lands every draft. A
 working assessment or coverage-gap observation is an `assessment` with `capture` needs. A
 challenge to an existing claim is a `correction` naming it in `challenges` — run
 `ath ledger stamp <id>` to pin the challenged claim's state, and set that claim

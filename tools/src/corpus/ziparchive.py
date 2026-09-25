@@ -11,8 +11,10 @@ byte-identical content — the same drafter↔transform contract the EPUB pair s
 
 from __future__ import annotations
 
+import re
+import urllib.parse
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +41,30 @@ class MemberMissing(ValueError):
     already treats a bad address as a clean 4xx keeps doing so); the subclass exists so a caller
     probing for an OPTIONAL member — a container-member sidecar paired by template, spec §7.2 —
     can tell "absent" from "present but unreadable" without matching message text."""
+
+
+_PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def member_missing(rel: str, present: Callable[[str], bool] | None = None) -> MemberMissing:
+    """The `path=` refusal. When the value carries percent escapes the URI grammar does NOT
+    decode — a value decodes only `%25`/`%26`/`%23` (spec §6.1), so `IMG%20x.MOV` names a member
+    literally called that — it points at the raw spelling: almost always the address was
+    URL-encoded on its way in. `present` (when the caller has the member names at hand) turns
+    the pointer into a confirmation that the raw-spelled member exists."""
+    message = f"path={rel}: no such member in archive"
+    raw = urllib.parse.unquote(rel) if _PERCENT_ESCAPE.search(rel) else rel
+    if raw != rel:
+        spelled = raw.replace("%", "%25").replace("&", "%26").replace("#", "%23")
+        rule = "a URI value decodes only %25, %26 and %23 (spec §6.1)"
+        if present is not None and present(raw):
+            message += f" — {rule}; the member is `{raw}`: address it as `path={spelled}`"
+        elif present is None:
+            message += (
+                f" — {rule}, so the other escapes here are literal; for `{raw}` write "
+                f"`path={spelled}`"
+            )
+    return MemberMissing(message)
 
 
 def member_names(zf: zipfile.ZipFile) -> list[str]:
@@ -78,7 +104,7 @@ def resolve_member(zip_path: Path, rel: str) -> bytes:
         root = common_root(list(names))
         if root and (root + rel) in names:
             return zf.read(root + rel)
-    raise MemberMissing(f"path={rel}: no such member in archive")
+    raise member_missing(rel, lambda r: r in names or bool(root and root + r in names))
 
 
 def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
@@ -90,7 +116,7 @@ def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
     root = common_root(list(names))
     if root and (root + rel) in names:
         return root + rel
-    raise MemberMissing(f"path={rel}: no such member in archive")
+    raise member_missing(rel, lambda r: r in names or bool(root and root + r in names))
 
 
 @contextmanager

@@ -178,7 +178,9 @@ def _probe_video(video_path: Path) -> dict[str, Any]:
         "-show_format", "-show_streams", str(video_path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+        )
     except FileNotFoundError:
         log.info("ffprobe not on PATH — skipping video metadata")
         return empty

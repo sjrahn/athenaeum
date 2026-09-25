@@ -151,7 +151,9 @@ def _probe_duration(path: Path) -> float | None:
         "-of", "default=nw=1:nk=1", str(path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+        )
     except OSError:
         return None
     if proc.returncode != 0:

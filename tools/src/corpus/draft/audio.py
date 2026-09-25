@@ -232,7 +232,9 @@ def _probe_audio(audio_path: Path) -> dict[str, Any]:
         "-show_format", "-show_streams", str(audio_path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL
+        )
     except FileNotFoundError:
         log.info("ffprobe not on PATH — skipping audio metadata")
         return empty
