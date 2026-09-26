@@ -313,6 +313,17 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
 
     def add(addr, *parts):
         text = "\n".join(p for p in parts if p)
+        # *(v47)* every stored address is a place a region anchor may name — a textless one
+        # (an image region, an untranscribed span) included: it resolves and bounds-checks,
+        # it just carries no text for a quote to match (§6.2)
+        for one in addr if isinstance(addr, list) else [addr]:
+            if isinstance(one, str) and "=" in one:
+                at = addressed.setdefault(_canon_address(one), [])
+                if text:
+                    at.append(text)
+                region = _page_region(one)
+                if region is not None:
+                    regions.append((*region, text))
         if not text:
             # *(3.7)* A block with no citable text of its own registers no span. This used to
             # be unreachable for an ADDRESSED block, and it stopped being so when the section
@@ -325,12 +336,6 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
             # addresses.
             return
         texts.append(text)
-        for one in addr if isinstance(addr, list) else [addr]:
-            if isinstance(one, str) and "=" in one:
-                addressed.setdefault(_canon_address(one), []).append(text)
-                region = _page_region(one)
-                if region is not None:
-                    regions.append((*region, text))
         int_spans, paths = _parse_axis_values(addr, el_scheme=el_scheme)
         for axis, lo, hi in int_spans:
             spans.setdefault(axis, []).append((lo, hi, text))
@@ -428,7 +433,7 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
                 hit = [t for (r, t) in on_page if _rects_overlap(r, rect)]
                 if not hit:
                     return None, "bad-anchor"
-                return "\n".join(dict.fromkeys(hit)), "ok"
+                return "\n".join(dict.fromkeys(t for t in hit if t)), "ok"
     for key, value in params:
         if key in _UNCHECKED_PARAMS:
             return None, "unchecked"

@@ -164,6 +164,12 @@ _AUDIO_SAMPLE_ENTRY_FIXED = 28
 _QT_SOUND_DESCRIPTION_EXTRA = {0: 0, 1: 16, 2: 36}
 
 _EBML_MAGIC = b"\x1a\x45\xdf\xa3"  # Matroska/WebM's EBML header — the non-ISOBMFF tell.
+# The atoms an ISOBMFF / QuickTime file may open with — a file whose first 8 bytes do not
+# name one of these was never a box tree (see `_parse_container`).
+_ISOBMFF_TOP_LEVEL = frozenset(
+    {b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"pnot", b"uuid", b"styp",
+     b"sidx", b"moof", b"meta", b"pdin"}
+)
 
 
 # ---------- generic box walking ---------- #
@@ -522,7 +528,20 @@ def _parse_container(path: Path) -> list[_Track]:
                 "only (mp4/m4a/mov) in this increment"
             )
         size = path.stat().st_size
-        moov = _find_box(fh, "moov", 0, size)
+        try:
+            moov = _find_box(fh, "moov", 0, size)
+        except ValueError as exc:
+            # a top-level box walk over bytes that were never boxes (MP3 frame sync / ID3,
+            # RIFF/WAVE, fLaC, OggS) fails on its first "size" — a coverage gap, not an
+            # ISOBMFF container this module failed to read. Only a file that OPENS with a
+            # known top-level atom is ISOBMFF enough for a malformed later box to count.
+            fh.seek(0)
+            if fh.read(8)[4:8] not in _ISOBMFF_TOP_LEVEL:
+                raise NotIsobmff(
+                    f"{path}: no ISOBMFF box structure ({exc}) — stream extraction is "
+                    "ISOBMFF only (mp4/m4a/mov)"
+                ) from exc
+            raise
         if moov is None:
             raise NotIsobmff(
                 f"{path}: no 'moov' box found — not a supported ISOBMFF file "

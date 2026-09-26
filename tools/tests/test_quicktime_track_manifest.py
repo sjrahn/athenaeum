@@ -112,3 +112,13 @@ def test_a_non_isobmff_file_stays_a_silent_noop(tmp_path):
     no_moov = tmp_path / "x.mp4"
     no_moov.write_bytes(b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00")
     assert _trackmanifest.attest_track_manifest(no_moov) == ([], [])
+
+
+def test_a_bare_audio_file_is_a_coverage_gap_not_an_unreadable_manifest(tmp_path):
+    # an MP3 (ID3 header) is no box tree at all: its first "size" overruns the file — that
+    # is NotIsobmff, never a `track-manifest-unreadable` warning on every ingested song
+    mp3 = tmp_path / "song.mp3"
+    mp3.write_bytes(b"ID3\x03\x00\x00\x00\x00\x00\x10" + bytes(4000))
+    with pytest.raises(streams.NotIsobmff):
+        streams.probe_streams(mp3)
+    assert _trackmanifest.attest_track_manifest(mp3) == ([], [])

@@ -42,7 +42,7 @@ _TABLE_ADDR = "page=1&bbox=0,0.4,1,0.4"
 RID = "5" * 64
 
 
-def _statement(tmp_path: Path) -> Path:
+def _statement(tmp_path: Path, extra: tuple = ()) -> Path:
     """A formed card statement: a summary segment and a transactions table on page 1."""
     root = tmp_path / "corpus"
     (root / "records").mkdir(parents=True)
@@ -58,13 +58,14 @@ def _statement(tmp_path: Path) -> Path:
                          body="New balance 92.18 due Apr 01"),
         segments.Segment(atom="text", overlay="text/data-table", address=_TABLE_ADDR,
                          body=_TABLE),
+        *extra,
     ])
     records.dump(post, paths.record_path(root, RID))
     return root
 
 
-def _verify(tmp_path: Path, anchor: str | None, quote: str):
-    root = _statement(tmp_path)
+def _verify(tmp_path: Path, anchor: str | None, quote: str, extra: tuple = ()):
+    root = _statement(tmp_path, extra)
     ledger = tmp_path / "ledger"
     (ledger / "facts" / "doc").mkdir(parents=True)
     evidence = {"source": "s1", "quote": quote, "kind": "authoritative"}
@@ -98,6 +99,23 @@ def test_an_unstored_region_scopes_to_the_segments_it_overlaps(tmp_path):
     assert len(res.errors) == 1 and "NOT at the cited anchor" in res.errors[0]
     res = _verify(tmp_path / "c", "page=1&bbox=0,0.9,1,0.05", "Mar 04")  # overlaps nothing
     assert len(res.errors) == 1 and "does not resolve" in res.errors[0]
+
+
+def test_a_textless_stored_region_still_resolves(tmp_path):
+    # an image region with no text of its own: a quote-less cite of it resolves (§6.2)
+    # instead of reading as "overlaps nothing" beside the page's text segments
+    figure = "page=1&bbox=0,0.85,0.5,0.1"
+    extra = (segments.Segment(atom="image", overlay="image/figure", address=figure, body=""),)
+    res = _verify(tmp_path, figure, "", extra)
+    assert res.errors == []
+
+
+def test_section_and_schema_declared_axes_are_not_prose():
+    from ledger.check import _anchor_unknown_param
+
+    for anchor in ("pages=2-4", "spines=1-3", "line=3&jsonpath=$.a"):
+        assert _anchor_unknown_param(anchor) is None, anchor
+    assert _anchor_unknown_param("Purchases table, page 2") is not None
 
 
 def test_a_bare_page_anchor_still_names_the_whole_page(tmp_path):

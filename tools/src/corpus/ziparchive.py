@@ -98,25 +98,24 @@ def resolve_member(zip_path: Path, rel: str) -> bytes:
     `ValueError` when no member matches — so the resolver surfaces a clean 4xx rather
     than an opaque KeyError."""
     with zipfile.ZipFile(zip_path) as zf:
-        names = set(member_names(zf))
-        if rel in names:
-            return zf.read(rel)
-        root = common_root(list(names))
-        if root and (root + rel) in names:
-            return zf.read(root + rel)
-    raise member_missing(rel, lambda r: r in names or bool(root and root + r in names))
+        return zf.read(_actual_member(zf, rel))
 
 
 def _actual_member(zf: zipfile.ZipFile, rel: str) -> str:
     """Map a rendered (possibly root-stripped) member path back to the archive's actual
     member name — exact match first, else the re-derived-root form. `ValueError` if none."""
     names = set(member_names(zf))
-    if rel in names:
-        return rel
     root = common_root(list(names))
-    if root and (root + rel) in names:
-        return root + rel
-    raise member_missing(rel, lambda r: r in names or bool(root and root + r in names))
+
+    def match(r: str) -> str | None:
+        if r in names:
+            return r
+        return root + r if root and (root + r) in names else None
+
+    found = match(rel)
+    if found is None:
+        raise member_missing(rel, lambda r: match(r) is not None)
+    return found
 
 
 @contextmanager
