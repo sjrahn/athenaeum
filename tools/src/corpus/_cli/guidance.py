@@ -57,11 +57,17 @@ def run(args: argparse.Namespace) -> int:
     if origins:
         print("## applied origin overlays\n")
         for blk in origins:
-            oid = str(blk.get("id"))
-            ov = schemas.load_origin_overlay_by_id(corpus_root, oid) or {}
-            _print_guidance_block(f"origin {oid}", _origin_overlay_relpath(corpus_root, oid), ov, level=3)
-            _print_regions(corpus_root, oid)
-            _print_exemplars(corpus_root, oid)
+            # the block's overlay ladder (§4.3.1): the subtype overlay, then its producer's
+            for oid in records._origin_overlay_ladder(blk):
+                ov = schemas.load_origin_overlay_by_id(corpus_root, oid)
+                if ov is None and oid != blk.get("id"):
+                    continue  # an unauthored subtype rung: the producer rung still prints
+                _print_guidance_block(
+                    f"origin {oid}", _origin_overlay_relpath(corpus_root, oid), ov or {},
+                    level=3,
+                )
+                _print_regions(corpus_root, oid)
+                _print_exemplars(corpus_root, oid)
 
     return 0
 

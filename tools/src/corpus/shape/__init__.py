@@ -95,26 +95,32 @@ def form_for_record(
     missing `match` matches everything). A rule missing `id` is skipped. A block matching
     no rule stands as if `form:` were absent — the walk continues to the record's next
     qualified origin block rather than returning None early. A `form:` value that is
-    neither a dict nor a list is ignored (treated as absent)."""
+    neither a dict nor a list is ignored (treated as absent).
+
+    A subtype-qualified block (`<!--origin owner-share/receipt-->`) walks its overlay ladder
+    (§4.3.1, §7.2): the `<id>/<subtype>` overlay FIRST, the bare producer overlay as the
+    fallback — the first rung whose `form:` yields a declaration wins, and the returned origin
+    id is that rung's (so an origin-keyed shaper registered on the producer still serves a
+    subtype that inherits the producer's form)."""
     for origin in records.iter_origin_blocks(post):
-        oid = str(origin.get("id") or "")
-        if not oid:
-            continue
-        overlay = schemas.load_origin_overlay_by_id(corpus_root, oid)
-        form = (overlay or {}).get("form")
-        if isinstance(form, dict) and form.get("id"):
-            mapping = form.get("mapping") if isinstance(form.get("mapping"), dict) else {}
-            return oid, str(form["id"]), dict(mapping)
-        if isinstance(form, list):
-            primary_uri = _origin_primary_uri(origin)
-            for rule in form:
-                if not isinstance(rule, dict) or not rule.get("id"):
-                    continue
-                if _route_rule_matches(rule, primary_uri):
-                    mapping = rule.get("mapping") if isinstance(rule.get("mapping"), dict) else {}
-                    return oid, str(rule["id"]), dict(mapping)
-            # No rule matched: this block stands as if `form:` were absent — fall through
-            # to the record's next qualified origin block rather than returning None here.
+        for oid in records._origin_overlay_ladder(origin):
+            overlay = schemas.load_origin_overlay_by_id(corpus_root, oid)
+            form = (overlay or {}).get("form")
+            if isinstance(form, dict) and form.get("id"):
+                mapping = form.get("mapping") if isinstance(form.get("mapping"), dict) else {}
+                return oid, str(form["id"]), dict(mapping)
+            if isinstance(form, list):
+                primary_uri = _origin_primary_uri(origin)
+                for rule in form:
+                    if not isinstance(rule, dict) or not rule.get("id"):
+                        continue
+                    if _route_rule_matches(rule, primary_uri):
+                        mapping = (
+                            rule.get("mapping") if isinstance(rule.get("mapping"), dict) else {}
+                        )
+                        return oid, str(rule["id"]), dict(mapping)
+                # No rule matched: this rung stands as if `form:` were absent — fall through
+                # to the next rung, then the record's next qualified origin block.
     return None
 
 

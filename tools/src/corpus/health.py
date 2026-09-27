@@ -854,8 +854,9 @@ def overlay_declarations(refs: list[RecordRef], corpus_root: Path, **_kw: Any) -
     in_use: set[str] = set()
     for ref in refs:
         for blk in records.iter_origin_blocks(ref.post):
-            if oid := str(blk.get("id") or "").strip():
-                in_use.add(oid)
+            # every rung of the block's overlay ladder (§4.3.1) — a subtype overlay's
+            # regions/exemplars are in use exactly when a block qualifies with it
+            in_use.update(records._origin_overlay_ladder(blk))
     problems: dict[str, list[str]] = {}
     for oid in sorted(in_use):
         if msgs := schemas.origin_declaration_errors(corpus_root, oid):

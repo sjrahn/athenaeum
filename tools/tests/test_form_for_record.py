@@ -21,6 +21,7 @@ def _corpus(tmp_path: Path, overlays: dict[str, str], name: str = "c") -> Path:
     odir = root / "schema" / "origin"
     odir.mkdir(parents=True)
     for schema_id, yaml_text in overlays.items():
+        (odir / f"{schema_id}.yaml").parent.mkdir(parents=True, exist_ok=True)
         (odir / f"{schema_id}.yaml").write_text(yaml_text, encoding="utf-8")
     schemas.cache_clear()
     return root
@@ -208,3 +209,48 @@ form:
     root2 = _corpus(tmp_path, {"route-host": scalar_overlay}, name="c2")
     post2 = _post([("route-host", "routetest://site/anything")])
     assert shape_pkg.form_for_record(post2, root2) is None
+
+
+# ---------- a subtype-qualified block walks its overlay ladder (§4.3.1) ---------- #
+# ath-steven 2026-09-26: `<!--origin owner-share/receipt-->` read only `origin/owner-share.yaml`
+# (no form), never `origin/owner-share/receipt.yaml` (`form: {id: receipt}`), so a receipt
+# fell through to its image mime's passthrough.
+
+_PRODUCER = """\
+applies_to:
+  schemes: [file]
+kind: interpretive
+"""
+
+_RECEIPT_SUBTYPE = """\
+kind: interpretive
+form:
+  id: receipt
+"""
+
+
+def _subtype_post(schema_id: str, subtype: str) -> frontmatter.Post:
+    post = frontmatter.Post("")
+    records.append_origin_block(
+        post, snapshot="2026-01-01T00:00:00Z", schema_id=schema_id, subtype=subtype
+    )
+    return post
+
+
+def test_a_subtype_overlays_form_is_read_first(tmp_path):
+    root = _corpus(tmp_path, {"owner-share": _PRODUCER, "owner-share/receipt": _RECEIPT_SUBTYPE})
+    post = _subtype_post("owner-share", "receipt")
+    assert shape_pkg.form_for_record(post, root) == ("owner-share/receipt", "receipt", {})
+
+
+def test_a_subtype_with_no_form_inherits_its_producers(tmp_path):
+    root = _corpus(tmp_path, {
+        "conv-export": _DICT_OVERLAY, "conv-export/archived": "kind: interpretive\n",
+    })
+    post = _subtype_post("conv-export", "archived")
+    assert shape_pkg.form_for_record(post, root) == (
+        "conv-export", "conversation", {"messages": "messages"}
+    )
+    # an unauthored subtype rung is no rung at all
+    post = _subtype_post("conv-export", "never-authored")
+    assert shape_pkg.form_for_record(post, root)[1] == "conversation"

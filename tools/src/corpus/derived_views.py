@@ -51,17 +51,16 @@ def _iter_tagged_fields(
             )
 
     # Origin schemas — walk each qualified origin block.
+    # Each block walks its overlay ladder (§4.3.1): subtype overlay first, producer fallback.
     for origin in records.iter_origin_blocks(post):
-        id_ = origin.get("id")
-        if not id_:
-            continue
-        origin_schema = schemas.load_origin_overlay_by_id(corpus_root, id_)
-        if origin_schema is None:
-            continue
         block_fields = origin.get("fields") or {}
-        yield from _walk_schema_fields(
-            origin_schema, block_fields, target_semantic, seen_fields
-        )
+        for overlay_id in records._origin_overlay_ladder(origin):
+            origin_schema = schemas.load_origin_overlay_by_id(corpus_root, overlay_id)
+            if origin_schema is None:
+                continue
+            yield from _walk_schema_fields(
+                origin_schema, block_fields, target_semantic, seen_fields
+            )
 
 def _walk_schema_fields(
     schema: dict[str, Any],
