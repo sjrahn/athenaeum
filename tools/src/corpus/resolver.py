@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -302,10 +303,18 @@ def resolve(
         else:
             transcriber = get_transcriber(corpus_root)
     # Containment-aware (spec §2/§12.9): a standalone artifact when present, else the bytes
-    # streamed out of the promoted record's container via the member index.
-    artifact_binary = containment.ensure_local_bytes(
-        corpus_root, parsed.hash, mime_mod.extension_for(media_type), store=store
-    )
+    # streamed out of the promoted record's container via the member index. Fetched on first
+    # use, AFTER each derivation's cache check: a cached derivation is a pure function of
+    # these bytes, so a hit needs neither the bytes nor a container route to them (which can
+    # mean a parse of every record to build the member index, or a remote hydration).
+    fetched: list[Path] = []
+
+    def artifact_bytes() -> Path:
+        if not fetched:
+            fetched.append(containment.ensure_local_bytes(
+                corpus_root, parsed.hash, mime_mod.extension_for(media_type), store=store
+            ))
+        return fetched[0]
 
     # `raw` (§6.1, §6.2, v35): the stored artifact bytes, exactly — terminal only, the
     # identity equation's markup spelling and the escape from the annotated default below.
@@ -314,7 +323,7 @@ def resolve(
     if any(k == "raw" for k, _ in parsed.params):
         if len(parsed.params) != 1:
             raise ValueError("raw= is terminal-only (§6.2) and composes with nothing")
-        return artifact_binary.resolve()
+        return artifact_bytes().resolve()
 
     # `annotated` (§6.1.1, §6.2, v35) and the DEFAULT bare-route delivery it shares on an
     # ordinal-scheme markup record — owner ruling: "the machine count is what readers get".
@@ -323,7 +332,7 @@ def resolve(
     # disclosed by construction rather than two independent derivations of the same bytes.
     # ONLY the resolver's terminal artifact-route delivery is affected: every internal
     # consumer (transforms below, `el_member_bytes`, containment/promotion, drafters,
-    # verify/fidelity) reads `artifact_binary` — the RAW file — directly, never through this
+    # verify/fidelity) reads `artifact_bytes()` — the RAW file — directly, never through this
     # branch, so the working-kind pipeline can never accidentally see stamped bytes.
     annotated_requested = len(parsed.params) == 1 and parsed.params[0] == ("annotated", None)
     if annotated_requested or (parsed.is_bare and media_type == "text/html"):
@@ -333,7 +342,7 @@ def resolve(
                 furi.ParsedURI(hash=parsed.hash, params=(("annotated", None),))
             )
             return _resolve_annotated(
-                corpus_root, annotated_uri, parsed.hash, artifact_binary, el_addressing,
+                corpus_root, annotated_uri, parsed.hash, artifact_bytes, el_addressing,
                 regenerate=regenerate,
             )
         if annotated_requested:
@@ -349,7 +358,7 @@ def resolve(
     # Bare URI — no derivation; the caller wants the source binary (raw bytes: every
     # non-markup type, and a markup record with no ordinal stamp yet).
     if parsed.is_bare:
-        return artifact_binary.resolve()
+        return artifact_bytes().resolve()
 
     # `stream_id=<n>` ALONE (§2): the bare/terminal identity case. Composed with an engine op
     # (`time_range=`/`format=`/`scenes=`) `stream_id=` stays pure addressing config (handled
@@ -360,13 +369,13 @@ def resolve(
     # engine at all, folds into the cache key.
     if parsed.params and all(k == "stream_id" for k, _ in parsed.params):
         return _resolve_stream_identity(
-            corpus_root, canonical_uri, parsed.hash, artifact_binary,
+            corpus_root, canonical_uri, parsed.hash, artifact_bytes,
             parsed.params, regenerate=regenerate,
         )
 
     # Effectively bare: all params are no-ops (pure addressing). Return source.
     if all(k in _NOOP_PARAMS for k, _ in parsed.params):
-        return artifact_binary.resolve()
+        return artifact_bytes().resolve()
 
     # Initial kind (schema-declared `working_kind`, else the built-in table) and final
     # kind (predicted from chain).
@@ -457,6 +466,7 @@ def resolve(
         if cache_p.is_file() and not regenerate:
             log.debug("cache hit: %s", cache_p)
             return cache_p.resolve()
+    artifact_binary = artifact_bytes()
 
     # Build render context.
     ctx: transforms.RenderContext = {}
@@ -1104,7 +1114,7 @@ def _resolve_stream_identity(
     corpus_root: Path,
     canonical_uri: str,
     source_hash: str,
-    artifact_binary: Path,
+    artifact_bytes: Callable[[], Path],
     params: list[tuple[str, str | None]],
     *,
     regenerate: bool,
@@ -1118,9 +1128,9 @@ def _resolve_stream_identity(
     different codecs' payload bytes) — that combination is only valid alongside a
     muxing-contract op.
 
-    The extension is cheap to predict ahead of the cache check (unlike the muxing
-    contract's deferred-extension kinds): `probe_streams` reads only the small `moov`
-    subtree, never sample data."""
+    The cache check is by stem, before any byte is touched: the extension comes from the
+    probed track's codec, and probing needs the container's bytes — a cache hit needs
+    neither."""
     from . import streams
 
     values = [v for _, v in params if v]
@@ -1134,6 +1144,12 @@ def _resolve_stream_identity(
     except ValueError as exc:
         raise ValueError(f"stream_id= must be an integer, got {values[-1]!r}") from exc
 
+    urihash_value = furi.urihash(canonical_uri)
+    cached = _find_cached_by_stem(corpus_root, urihash_value)
+    if cached is not None and not regenerate:
+        return cached.resolve()
+
+    artifact_binary = artifact_bytes()
     tracks = streams.probe_streams(artifact_binary)
     track = next((t for t in tracks if t.index == stream_id), None)
     if track is None:
@@ -1144,12 +1160,7 @@ def _resolve_stream_identity(
             f"{track.codec!r}"
         )
     ext = mime_mod.extension_for(track.media_type)
-
-    urihash_value = furi.urihash(canonical_uri)
     cache_p = furi.cache_path(corpus_root, urihash_value, ext)
-    if cache_p.is_file() and not regenerate:
-        return cache_p.resolve()
-
     cache_p.parent.mkdir(parents=True, exist_ok=True)
     # Pid-suffixed (matches `paths.atomic_write_text`) so two concurrent workers resolving
     # the same stream never share a scratch file — the `finally` below must only ever remove
@@ -1293,12 +1304,12 @@ def _resolve_annotated(
     corpus_root: Path,
     canonical_uri: str,
     source_hash: str,
-    artifact_binary: Path,
+    artifact_bytes: Callable[[], Path],
     el_addressing: dict,
     *,
     regenerate: bool,
 ) -> Path:
-    """Materialize the `annotated` view (§6.1.1, §6.2, v35): `artifact_binary`'s raw bytes
+    """Materialize the `annotated` view (§6.1.1, §6.2, v35): the artifact's raw bytes
     with every element's document-order ordinal spliced into its own start tag as
     `data-el="<N>"` (`transforms.html.annotate_bytes` — span-surgical, never a re-parse or
     re-serialization). `canonical_uri` is always the CANONICAL `?annotated` form, even when
@@ -1319,7 +1330,7 @@ def _resolve_annotated(
 
     from bs4 import BeautifulSoup
 
-    raw = artifact_binary.read_bytes()
+    raw = artifact_bytes().read_bytes()
     soup = BeautifulSoup(raw, html_tf.EL_PARSER_ID)
 
     parser = str(el_addressing.get("parser") or "")
@@ -1599,12 +1610,13 @@ def _materialize_htmlel(
 
 def _find_cached_by_stem(corpus_root: Path, urihash_value: str) -> Path | None:
     """Return an existing cache content file for `urihash_value` under any extension (the
-    polymorphic `htmlel` cache hit), or None. Excludes the `.json` sidecar."""
+    polymorphic `htmlel` cache hit), or None. Excludes the `.json` sidecar and an in-flight
+    `<name>.tmp.<pid>` scratch file (a concurrent worker's half-written output)."""
     shard_dir = corpus_root / "cache" / paths.shard(urihash_value)
     if not shard_dir.is_dir():
         return None
     for p in sorted(shard_dir.glob(f"{urihash_value}.*")):
-        if p.name.endswith(".json") or not p.is_file():
+        if p.name.endswith(".json") or ".tmp." in p.name or not p.is_file():
             continue
         return p
     return None

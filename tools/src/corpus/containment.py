@@ -24,6 +24,7 @@ import os
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import IO
 
@@ -82,6 +83,38 @@ def member_hashes(post: frontmatter.Post) -> Iterator[str]:
         algo, _, hexval = transport.partition(":")
         if algo == "blake3" and hexval:
             yield hexval
+
+
+_MEMBER_INDEX_SCOPE: ContextVar[dict[Path, dict[str, list[tuple[str, str]]]] | None] = (
+    ContextVar("member_index_scope", default=None)
+)
+
+
+@contextmanager
+def member_index_scope() -> Iterator[None]:
+    """Build each corpus's member index at most once for the life of the `with` — for a
+    read-only batch that resolves many URIs (`ath ledger verify`). Outside a scope every
+    `ensure_local_bytes` that needs a container route rebuilds the index (one parse of every
+    record); inside one, the first build serves the rest. The index is built lazily, so a
+    batch that never routes through a container never pays for it. Only for batches that
+    write no record: an index built before a record's embeds change is stale."""
+    token = _MEMBER_INDEX_SCOPE.set({})
+    try:
+        yield
+    finally:
+        _MEMBER_INDEX_SCOPE.reset(token)
+
+
+def _member_index_for(corpus_root: Path) -> dict[str, list[tuple[str, str]]]:
+    """The member index for `corpus_root` — the scope's copy inside a `member_index_scope`,
+    else a fresh build."""
+    scope = _MEMBER_INDEX_SCOPE.get()
+    if scope is None:
+        return build_member_index(corpus_root)
+    key = Path(corpus_root).resolve()
+    if key not in scope:
+        scope[key] = build_member_index(corpus_root)
+    return scope[key]
 
 
 def build_member_index(corpus_root: Path) -> dict[str, list[tuple[str, str]]]:
@@ -346,7 +379,7 @@ def ensure_local_bytes(
 
     # No standalone file — resolve through the container. The member index is the ONLY route
     # (the promoted record's origin uri: is history, never consulted for lookup, §12.9).
-    idx = member_index if member_index is not None else build_member_index(corpus_root)
+    idx = member_index if member_index is not None else _member_index_for(corpus_root)
     # Several routes may exist at once and every route yields identical bytes (§2) — "a
     # resolver may take any", so take the first VIABLE one: a route through a container
     # already on the resolution path (or through the record itself) is not a route at all.

@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import refdata
+from corpus import containment
 from corpus import functional_uri as furi
 from corpus import textnorm as _textnorm
 from ledger.corpora import CorpusJoin
@@ -598,6 +599,24 @@ def verify_ledger(
     stamp: bool = False,
     only_ids: set[str] | None = None,
     today: str | None = None,
+) -> VerifyResult:
+    # A run resolves thousands of derived surfaces and writes no corpus record, so each
+    # corpus's member index (the container route to a promoted member's bytes, one parse of
+    # every record) is built at most once for the whole run, not once per resolution.
+    with containment.member_index_scope():
+        return _verify_ledger(
+            ledger_root, join, datasets, stamp=stamp, only_ids=only_ids, today=today
+        )
+
+
+def _verify_ledger(
+    ledger_root: Path,
+    join: CorpusJoin,
+    datasets: Mapping[str, Reference],
+    *,
+    stamp: bool,
+    only_ids: set[str] | None,
+    today: str | None,
 ) -> VerifyResult:
     res = VerifyResult()
     if not join.complete:
