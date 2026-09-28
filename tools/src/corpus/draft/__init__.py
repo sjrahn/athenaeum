@@ -110,6 +110,17 @@ def get_drafter(schema_id: str) -> DrafterFn | None:
     return REGISTRY.get(schema_id)
 
 
+def get_family_drafter(media_type: str) -> DrafterFn | None:
+    """The family default for a type no id-keyed drafter or declared strategy serves: any
+    `text/*` type drafts as its own verbatim text (spec/corpus.md §6.2 — markdown / plain
+    `body` is passthrough). None for every other family."""
+    if media_type.lower().startswith("text/"):
+        from . import text
+
+        return text.draft_for(media_type)
+    return None
+
+
 # Strategy registry — drafters keyed by a *draft strategy* name a mime schema declares
 # (`draft.strategy: <name>`) rather than by schema id. This decouples drafter choice from
 # the detected type, so one general drafter (e.g. `zip-manifest`) can serve many

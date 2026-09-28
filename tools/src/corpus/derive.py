@@ -359,7 +359,7 @@ def resolve_drafter(corpus_root: Path, media_type: str):
     corpus's own local drafter modules first. Raises `DeriveError` when no schema/drafter
     resolves. A mime schema MAY name a general draft `strategy` (overlay-driven — e.g.
     `zip-manifest`), which decouples drafter choice from the schema id; absent one, dispatch
-    by schema id."""
+    by schema id, then by the type's family default (a `text/*` type drafts verbatim)."""
     if not media_type:
         raise DeriveError("record has no `<!--artifact <mime>-->` block (re-stub first?).")
     mt_schema = schemas.load_mime_schema(corpus_root, media_type)
@@ -380,7 +380,9 @@ def resolve_drafter(corpus_root: Path, media_type: str):
                 f"but no drafter is registered for it."
             )
     else:
-        drafter = draft_pkg.get_drafter(mime_schema_id)
+        drafter = draft_pkg.get_drafter(mime_schema_id) or draft_pkg.get_family_drafter(
+            media_type
+        )
         if drafter is None:
             raise DeriveError(f"no drafter registered for mime schema id {mime_schema_id!r}.")
     return drafter, strategy, mime_schema_id, mt_schema

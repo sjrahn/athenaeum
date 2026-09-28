@@ -504,7 +504,7 @@ def _op_engine_map(corpus_root: Path, media_type: str) -> dict[str, str]:
 #: Record-level reading ops an anchor may end in (corpus §6.2 op classes) that the resolver
 #: serves whatever the source record's media type — attempted by `_derived_resolution` even
 #: though no mime pipeline lists them.
-_RECORD_LEVEL_READINGS: frozenset[str] = frozenset({"sidecar"})
+_RECORD_LEVEL_READINGS: frozenset[str] = frozenset({"sidecar", "body"})
 
 
 def _derived_resolution(
@@ -539,7 +539,8 @@ def _derived_resolution(
     op_params = {op.param for op in ops_for_media_type(corpus_root, media_type)}
     # Record-level readings the resolver serves regardless of the source's media type (never
     # registry-reachable, so `ops_for_media_type` cannot list them): `sidecar` (corpus §6.2,
-    # v45) — a promoted frame's `?sidecar` reads its container's paired sidecar.
+    # v45) — a promoted frame's `?sidecar` reads its container's paired sidecar; `body` (§6.2)
+    # — the record's derived body, any media type with a drafter.
     op_params |= _RECORD_LEVEL_READINGS
     if not any(k in op_params for k, _ in params):
         # never attempted for an anchor with no derivation-op axis at all — a
@@ -901,6 +902,26 @@ def _verify_ledger(
                 if quote:
                     haystack = text if (status == "ok" and text is not None) \
                         else content.full_text
+                    # (§6.3, §13.2.4) a record-level quote into a raw-surface record that
+                    # stores no rendering (formless, or terminal: `form/passthrough`) cites
+                    # its DERIVED body — the `body` op's mechanical output, op-pinned —
+                    # which the stored blocks do not carry
+                    if (not params and content.citation_surface == "raw"
+                            and content.segment_count == 0
+                            and content.corpus_root is not None
+                            and not _quote_found(str(quote), haystack)):
+                        body_ok, body_text, _why, body_pins = _derived_resolution(
+                            content.corpus_root, f"corpus://{h}?body", content.media_type,
+                            [("body", "")], derived_cache,
+                        )
+                        if body_ok and _quote_found(str(quote), body_text,
+                                                    strip_markup=False):
+                            res.verified += 1
+                            res.derived_resolved += 1
+                            if body_pins:
+                                source_ops.setdefault(skey, {}).update(body_pins)
+                            ok(skey)
+                            continue
                     if not haystack.strip() and not content.full_text.strip():
                         if surface_deferred:
                             defer(skey, h)
