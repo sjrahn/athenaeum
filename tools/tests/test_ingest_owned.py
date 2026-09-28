@@ -40,6 +40,9 @@ def instance(tmp_path: Path) -> Path:
     for oid in ("owner-statement", "bank-statement"):
         (corpus / "schema" / "origin").mkdir(parents=True, exist_ok=True)
         (corpus / "schema" / "origin" / f"{oid}.yaml").write_text(_OVERLAY, encoding="utf-8")
+    (corpus / "schema" / "origin" / "origin.yaml").write_text(
+        "extended_fields:\n  snapshot:\n    type: string\n    required: true\n",
+        encoding="utf-8")
     (corpus / "schema" / "mime" / "text").mkdir(parents=True)
     (corpus / "schema" / "mime" / "text" / "text_plain.yaml").write_text(
         "applies_to:\n  content_types: [text/plain]\n", encoding="utf-8")
@@ -99,3 +102,13 @@ def test_a_declared_owner_statement_is_ingested_with_its_provenance(instance):
     assert block["id"] == "owner-statement"
     assert block["fields"]["channel_ref"] == "codex-steven session d41d msg 5e"
     assert not (instance / "corpus" / "capture" / "statement.txt").exists()
+
+
+def test_the_fields_ingest_stamps_are_not_owed_by_the_caller(instance):
+    """`snapshot` is required on every origin block, but ingest stamps it (the ingest instant),
+    so a sidecar need not declare it (arbre-ath-steven, first v49 uses)."""
+    assert ingest_owned.refuse(instance / "corpus", _stage(instance, _GOOD)) is None
+    assert _run(instance, _stage(instance, _GOOD)) == 0
+    (rec,) = _records(instance)
+    (block,) = list(records.iter_origin_blocks(records.load(rec)))
+    assert block["fields"]["snapshot"]

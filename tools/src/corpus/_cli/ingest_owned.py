@@ -14,7 +14,8 @@ touched, it refuses unless:
   sidecar `source_url`, a SingleFile banner) is the web lane's (`corpus capture`), where host
   overlays apply;
 - every field the overlay marks `required` is declared (`origin_fields:`) — the provenance
-  is the point.
+  is the point. The universal `origin/origin.yaml` fields are not owed: ingest stamps
+  them (`snapshot` is the ingest instant, `filename`/`source_modified` the staged file's).
 
 It then ingests exactly as `corpus ingest` does (identity, dedup, derived hashes, sidecar
 cleanup). If the bytes are already in the corpus, the declared owner-sourced origin block is
@@ -86,11 +87,12 @@ def refuse(corpus_root: Path, src: Path) -> str | None:
     if uri:
         return (f"{src.name} carries a retrieval origin ({uri}) — a web page goes through "
                 "`corpus capture`, where its host overlay applies")
-    declared = fields
+    stamped = schemas.universal_origin_fields(corpus_root)
     ext = overlay.get("extended_fields") or {}
     missing = sorted(
         name for name, spec in ext.items()
-        if isinstance(spec, dict) and spec.get("required") and declared.get(name) in (None, "")
+        if name not in stamped and isinstance(spec, dict) and spec.get("required")
+        and fields.get(name) in (None, "")
     )
     if missing:
         return (f"origin {schema_id!r} requires {', '.join(missing)} — declare them under the "

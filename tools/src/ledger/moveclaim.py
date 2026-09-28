@@ -13,15 +13,23 @@ The claim-grain counterpart of `merge`. `plan_move` computes the whole move with
 
 External holders of the old id (`ledger://…`, frozen corpus prose) resolve through the row.
 `apply_move` executes a refusal-free plan behind the same `ath ledger check` gate `merge`
-uses: any NEW check error rolls every write back.
+uses: any NEW check error rolls every write back. `apply_moves` runs several moves behind ONE
+gate (a split of dozens of claims pays the two check runs once), and `preview_moves` plans
+them in sequence against a scratch copy, so each plan sees the moves before it.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ledger.merge import MergeError, _dump, apply_merge
+from ledger.check import run_check
+from ledger.corpora import CorpusJoin
+from ledger.merge import MergeError, _dump, apply_merge, write_all
 from ledger.model import (
     CLAIM_ID_RE,
     CLAIM_LINEAGE_REASONS,
@@ -35,7 +43,11 @@ from ledger.model import (
     source_target,
 )
 
+if TYPE_CHECKING:
+    from ath.manifest import Reference
+
 MoveError = MergeError
+Move = tuple[str, str, str]  # (claim id, to, reason)
 
 
 def plan_move(ledger_root: Path, claim_id: str, to: str, reason: str) -> dict:
@@ -197,3 +209,59 @@ def plan_move(ledger_root: Path, claim_id: str, to: str, reason: str) -> dict:
 def apply_move(ledger_root: Path, plan: dict, join=None, datasets=None) -> None:
     """Execute a refusal-free `plan_move`, gated by `ath ledger check` (see `apply_merge`)."""
     apply_merge(ledger_root, plan, join, datasets, verb="move-claim")
+
+
+def apply_moves(
+    ledger_root: Path, moves: Iterable[Move], join: CorpusJoin | None = None,
+    datasets: Mapping[str, Reference] | None = None,
+) -> list[dict]:
+    """Execute `moves` in order behind ONE `ath ledger check` gate. Each move is planned
+    against the ledger as the moves before it left it. A refused plan, or any NEW check error
+    after the last move, rolls every move's writes back and raises `MoveError`."""
+    no_corpus = join is None
+    real_join = join if join is not None else CorpusJoin([])
+    real_datasets = datasets if datasets is not None else {}
+    baseline = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
+    originals: dict[str, str | None] = {}
+    plans: list[dict] = []
+    try:
+        for claim_id, to, reason in moves:
+            plan = plan_move(ledger_root, claim_id, to, reason)
+            plans.append(plan)
+            if plan["errors"]:
+                raise MoveError(f"{claim_id} → {to} refused: " + "; ".join(plan["errors"]))
+            for rel, content in plan["_originals"].items():
+                originals.setdefault(rel, content)
+            write_all(ledger_root, plan["_writes"])
+        if not plans:
+            raise MoveError("no moves given")
+        after = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
+        new_errors = [e for e in after.errors if e not in baseline.errors]
+        if new_errors:
+            raise MoveError(f"{len(plans)} moves introduced new check errors: "
+                            + "; ".join(new_errors))
+    except BaseException as e:
+        write_all(ledger_root, originals)
+        if isinstance(e, MoveError):
+            raise MoveError(f"{e} — rolled back all {len(plans)} planned moves") from None
+        raise
+    return plans
+
+
+def preview_moves(ledger_root: Path, moves: Iterable[Move]) -> list[dict]:
+    """Plan `moves` in order without touching the ledger: each plan is computed on, and
+    written to, a scratch copy of `facts/` and `interpretations/`, so a later move sees the
+    earlier ones. Planning stops at the first refused move (its plan is the last returned)."""
+    plans: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="ath-move-claim-") as tmp:
+        scratch = Path(tmp)
+        for sub in ("facts", "interpretations"):
+            if (ledger_root / sub).is_dir():
+                shutil.copytree(ledger_root / sub, scratch / sub)
+        for claim_id, to, reason in moves:
+            plan = plan_move(scratch, claim_id, to, reason)
+            plans.append(plan)
+            if plan["errors"]:
+                break
+            write_all(scratch, plan["_writes"])
+    return plans

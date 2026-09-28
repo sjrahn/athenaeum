@@ -1384,6 +1384,14 @@ def load_origin_overlay_by_id(
     return None
 
 
+def universal_origin_fields(corpus_root: Path) -> frozenset[str]:
+    """The field names the universal `origin/origin.yaml` declares — the fields every origin
+    block carries, which ingest stamps itself (`snapshot`, and `filename`/`source_modified`
+    on a local file) rather than a producer declaring them."""
+    universal = _read_yaml_first(_sources(corpus_root), "origin/origin.yaml") or {}
+    return frozenset(universal.get("extended_fields") or {})
+
+
 def origin_overlays_for_uris(
     corpus_root: Path, uris: list[str]
 ) -> list[tuple[str, dict[str, Any]]]:

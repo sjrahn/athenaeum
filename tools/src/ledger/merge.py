@@ -487,6 +487,18 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
     return plan
 
 
+def write_all(ledger_root: Path, mapping: dict[str, str | None]) -> None:
+    """Write a plan's `{relpath: content}` map; None deletes the file."""
+    for rel, content in mapping.items():
+        path = ledger_root / rel
+        if content is None:
+            if path.is_file():
+                path.unlink()
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+
 def apply_merge(
     ledger_root: Path, plan: dict, join: CorpusJoin | None = None,
     datasets: Mapping[str, Reference] | None = None, *, verb: str = "merge",
@@ -506,22 +518,11 @@ def apply_merge(
     real_join = join if join is not None else CorpusJoin([])
     real_datasets = datasets if datasets is not None else {}
     baseline = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
-
-    def _write_all(mapping: dict[str, str | None]) -> None:
-        for rel, content in mapping.items():
-            path = ledger_root / rel
-            if content is None:
-                if path.is_file():
-                    path.unlink()
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
-
-    _write_all(writes)
+    write_all(ledger_root, writes)
 
     after = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
     new_errors = [e for e in after.errors if e not in baseline.errors]
     if new_errors:
-        _write_all(originals)
+        write_all(ledger_root, originals)
         raise MergeError(f"{verb} introduced new check errors — rolled back: "
                          + "; ".join(new_errors))

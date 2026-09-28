@@ -552,7 +552,9 @@ _MetaDumper.add_representer(str, _repr_str_block)
 
 
 def _typed(raw: str):
-    if re.fullmatch(r"-?\d+", raw):
+    # A numeral with a leading zero (`00000003`, a printed register number) is an
+    # identifier, not an int: `int()` would drop the zeros and change the value.
+    if re.fullmatch(r"-?(?:0|[1-9]\d*)", raw):
         return int(raw)
     if raw in ("true", "false"):
         return raw == "true"
@@ -586,8 +588,22 @@ def _filetext(work: Path, ref: str | None) -> str | None:
     return path.read_text(encoding="utf-8").rstrip("\n")
 
 
-def _rest(kv: dict[str, str], used: set[str]) -> dict:
-    return {k: _typed(v) for k, v in kv.items() if k not in used}
+def _rest(kv: dict[str, str], used: set[str], strings: frozenset[str] = frozenset()) -> dict:
+    return {k: (v if k in strings else _typed(v)) for k, v in kv.items() if k not in used}
+
+
+def _form_string_fields(b: Build, form: str | None) -> frozenset[str]:
+    """The header fields `form` declares `type: string` — kept verbatim on a `section` line,
+    never typed, so `transaction=7710` stays the string the receipt prints (`_fmt_scalar`
+    emits a string `'7710'` bare, and shlex erases any quoting). Empty without a corpus root
+    or a resolvable form: the untyped read then applies."""
+    if b.corpus_root is None or not form:
+        return frozenset()
+    overlay = schemas.load_form_overlay(b.corpus_root, form) or {}
+    return frozenset(
+        name for name, spec in (overlay.get("extended_fields") or {}).items()
+        if isinstance(spec, dict) and spec.get("type") == "string"
+    )
 
 
 # ====================================================================== #
@@ -1048,13 +1064,15 @@ def _dispatch_op(b: Build, work: Path, toks: list[str], state: _ReadState) -> No
         # dir carrying a legacy record's already-present field round-trips (§12.26);
         # `compile`'s retirement gate (#116) refuses only a rebuild that ACQUIRES one
         # (a net increase over the base record), never a carry.
+        form = kv.get("form") or kv.get("class")
         open_section(
             b,
             address=(_parse_addr(kv["addr"]) if "addr" in kv else None),
             entry=kv.get("entry"),
-            form=(kv.get("form") or kv.get("class")),
+            form=form,
             description=_filetext(work, kv.get("desc")),
-            fields=_rest(kv, {"addr", "entry", "form", "class", "desc"}),
+            fields=_rest(kv, {"addr", "entry", "form", "class", "desc"},
+                         _form_string_fields(b, form)),
         )
     elif verb == "seg":
         opener = toks[1]

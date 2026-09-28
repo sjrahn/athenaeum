@@ -24,7 +24,7 @@ from ledger.model import (
     load_lineage_rows,
     resolve_claim_ref,
 )
-from ledger.moveclaim import apply_move, plan_move
+from ledger.moveclaim import MoveError, apply_move, apply_moves, plan_move, preview_moves
 from ledger.worklist import worklist
 
 H1 = "a" * 64
@@ -194,3 +194,58 @@ def test_a_merge_keeps_claim_rows_and_retargets_those_into_the_loser(ledger):
     assert claim_rows["visa-ledger:txn-0102"]["to"] == "safeway-2026-03-04:card-charge"
     assert "safeway-2026-03-04:amount-2" in claim_rows  # untouched, still occupied
     assert load_lineage(ledger)[0]["safeway-dup"] == "safeway-2026-03-04"
+
+
+# ---------- a batch of moves behind one gate (arbre-ath-steven, R-0055: 74 moves) ---------- #
+
+
+_CHAIN = [
+    ("visa-ledger:txn-0305", "safeway-2026-03-04:card-charge", "split"),
+    # planned against the ledger the first move left: this claim exists only after it
+    ("safeway-2026-03-04:card-charge", "visa-ledger:charge-0305", "rekeyed"),
+]
+
+
+def _snapshot(root: Path) -> dict[str, str]:
+    return {str(p.relative_to(root)): p.read_text(encoding="utf-8")
+            for p in sorted(root.rglob("*.json"))}
+
+
+def test_a_preview_plans_in_sequence_and_touches_nothing(ledger):
+    before = _snapshot(ledger)
+    plans = preview_moves(ledger, _CHAIN)
+    assert [p["errors"] for p in plans] == [[], []]
+    assert plans[1]["lineage_retargeted"] == [{
+        "key": "visa-ledger:txn-0305", "old_target": "safeway-2026-03-04:card-charge",
+        "new_target": "visa-ledger:charge-0305"}]
+    assert _snapshot(ledger) == before
+
+
+def test_a_batch_applies_every_move_behind_one_gate(ledger):
+    apply_moves(ledger, _CHAIN)
+    assert load_claim_lineage_rows(ledger) == {
+        "visa-ledger:txn-0305": {"to": "visa-ledger:charge-0305", "reason": "split"},
+        "safeway-2026-03-04:card-charge": {"to": "visa-ledger:charge-0305",
+                                           "reason": "rekeyed"},
+    }
+    assert _errors(ledger) == []
+
+
+def test_a_refused_move_rolls_the_whole_batch_back(ledger):
+    before = _snapshot(ledger)
+    with pytest.raises(MoveError, match="rolled back all 2"):
+        apply_moves(ledger, [_CHAIN[0], ("visa-ledger:txn-9999", "safeway-2026-03-04:x",
+                                         "split")])
+    assert _snapshot(ledger) == before
+
+
+def test_the_batch_file_reads_claim_to_and_an_optional_reason(tmp_path):
+    from ledger._cli import _read_move_batch
+
+    f = tmp_path / "moves.txt"
+    f.write_text("# R-0055\nvisa-ledger:txn-0304 safeway-2026-03-04\n\n"
+                 "a:b c:d rekeyed  # inline\n", encoding="utf-8")
+    assert _read_move_batch(f, "split") == [
+        ("visa-ledger:txn-0304", "safeway-2026-03-04", "split"), ("a:b", "c:d", "rekeyed")]
+    with pytest.raises(ValueError, match="no REASON"):
+        _read_move_batch(f, None)
