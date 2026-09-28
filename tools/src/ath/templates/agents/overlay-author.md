@@ -42,9 +42,9 @@ never strips chrome; every strip decision is yours, made per host, at capture ti
 1. The capture-operations runbook in the corpus layer (`<corpus root>/runbooks/capture-operations.md`)
    — §6 (the overlay-authoring primer + hard-won cross-host patterns) fully; skim the rest,
    especially §1 (CDP hosts) and §5.
-2. `spec/corpus.md` §7.2 — the `capture:` grammar (`interactions:` primitives: scroll /
-   expand / click / hover / eval / remove / wait; `transport`, `url_rewrite`, `canonical`,
-   `cookies_from_host`, `ytdlp:`).
+2. `spec/corpus.md` §7.2 — the `capture:` grammar (`interactions:` primitives, §12.3.6:
+   scroll / expand / click / hover / eval / remove / wait / assert; `transport`,
+   `url_rewrite`, `canonical`, `cookies_from_host`, `ytdlp:`).
 3. The worked model overlays §6 names (chrome-strip, eval, video-router examples) plus the
    most recent festival/marketing pair — read at least one close sibling of your host's
    stack before writing a line. Match the house header-comment style: the site stack, every
@@ -60,6 +60,13 @@ never strips chrome; every strip decision is yours, made per host, at capture ti
 - **ORDER: surface first, strip second.** `scroll: full` (lazy media) → `expand: all` (the
   generic disclosure safety net — it replaces DEFAULT_STEPS wholesale when an explicit
   `interactions:` list exists) → settle `wait` → `remove:` → settle `wait`.
+- **Fail closed with `assert`, never with a sentinel.** Every step is best-effort except
+  `assert` (§12.3.6, v48): when the page can be the wrong page (a login wall, an expired
+  session, an empty receipt panel), assert the content's presence (`assert: {selector,
+  message}`) or the wrong page's absence (`present: false`) right after the settle `wait`.
+  A failed assert aborts before the snapshot, so nothing is staged or ingested. Never wipe
+  `document.body` to a marker and throw from `eval`: the throw is swallowed and the marker
+  page is ingested.
 - **Byte-identity churn is chrome.** Anything freshly generated per render (countdowns,
   per-render tokens like `g-recaptcha-response-*`, session nonces rendered into the body)
   poisons blake3 identity on every future re-capture — strip it, and note WHY. Strip by

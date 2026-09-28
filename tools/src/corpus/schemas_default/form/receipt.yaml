@@ -11,6 +11,15 @@ extended_fields:
     required: false
     semantic_type: timestamp
     description: The transaction date the receipt prints, verbatim, where present.
+  transaction:
+    type: string
+    required: false
+    description: |
+      The transaction identifier the receipt prints (a transaction / register / invoice
+      number, else its printed timestamp), verbatim. Written on the opener only when ONE
+      record holds several receipts (three slips in one photo): adjacent same-form sections
+      with equal header fields are one span (§4.3.2.1), so each receipt's own printed
+      identifier is what keeps its span apart. Mechanically derivable from the span's bytes.
 decomposition: |
   The span carries the receipt's rendered content — the merchant framing, the itemized lines,
   and the payment/tender block, transcribed faithfully (a `text/data-table` where the line
@@ -19,9 +28,14 @@ decomposition: |
   as the receipt itself prints it — never lifted onto the section header (§7.8: "`form/receipt`
   never names the merchant"; that is a second copy of what the bytes already state, the
   §12.31 defect class). A raster register tape with no text layer stays a body-empty `image`
-  marker at `page=`/`bbox=`, permanent — never fabricated text.
+  marker at `page=`/`bbox=`, permanent — never fabricated text. One record holding several
+  receipts (a photo of slips side by side) carries one span per receipt, each opener naming
+  that receipt's printed `transaction`.
 checks:
-  address_axes: [pages, page, el, block]
+  # `bbox` is a raster receipt's only region axis (an app screenshot, a photographed slip):
+  # it has no page, element or block to address, and the decomposition above already
+  # places its markers at `page=`/`bbox=`.
+  address_axes: [pages, page, el, block, bbox]
   monotonic: false
 normalization:
   guidance: |
@@ -33,8 +47,11 @@ normalization:
     address, never a narrated description.
 
     Do not write `title:`, `description:`, or `merchant:` on the section header: the
-    universal section-header fields retired in 3.5, a form marks no editorial candidate
-    (§4.2.3), and this form declares no envelope fields at all — its opener is bare
-    (`<!--section receipt-->`). Which receipt this is among a merchant's many others, what
-    was purchased, and the total are not the record's to compose — a ledger claim names
-    them, citing the span and the transcribed line items.
+    universal section-header fields retired in 3.5, and a form marks no editorial candidate
+    (§4.2.3). A record holding ONE receipt has a bare opener (`<!--section receipt-->`).
+    A record holding SEVERAL (slips photographed side by side) opens one span per receipt,
+    each carrying that receipt's printed transaction number verbatim as a header field
+    (`transaction: "6368"` on the opener), else its printed timestamp. Without it the spans
+    are equal and parse as one. What was purchased and the total are not the
+    record's to compose — a ledger claim names them, citing the span and the transcribed
+    line items.

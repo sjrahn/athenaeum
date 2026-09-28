@@ -6,7 +6,9 @@ taken. A capture recipe's ``interactions:`` is an ordered list of single-key
 steps; absent one, :data:`DEFAULT_STEPS` runs.
 
 Every step is **best-effort**: a step that raises is logged at debug and the run
-continues. A bad selector in a recipe must never abort a capture.
+continues. A bad selector in a recipe must never abort a capture. The one exception is
+``assert`` (spec §12.3.6, v48), the overlay's fail-closed check: when it does not hold,
+the capture raises before the snapshot, so nothing is staged or ingested.
 
 Step grammar (each list item is a single-key mapping)::
 
@@ -25,6 +27,10 @@ Step grammar (each list item is a single-key mapping)::
     - hover: {selector: "..."}
     - remove: ['#header', 'footer', '.ad']   # delete chrome before the snapshot
     - eval: "<javascript>"      # escape hatch
+    - assert: {selector: "#receipt", present: true, message: "not logged in"}
+    - assert: {js: "document.title !== 'Sign In'", message: "..."}
+                                # FAIL-CLOSED: false, unevaluable, or malformed aborts
+                                # the capture before the snapshot
 
 ``remove`` is the declarative way to strip page chrome (nav/header/footer/ads/
 cookie notices) per host: the HTML drafter is mechanical and never guesses what
@@ -42,6 +48,12 @@ from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger("corpus.capture.interactions")
+
+
+class CaptureAborted(RuntimeError):
+    """An `assert` step did not hold — the overlay declared this page unfit to capture
+    (spec §12.3.6). Raised through `run`'s best-effort guard; the capture layer turns it
+    into a `CaptureError` before any snapshot is written."""
 
 # The generic all-media pass when a recipe declares no `interactions:`. Kept
 # conservative on purpose — scroll + expand are broadly safe; site-specific
@@ -103,6 +115,8 @@ def run(
         (kind, arg), = step.items()
         try:
             _run_step(page, str(kind), arg, carousel_handler=carousel_handler)
+        except CaptureAborted:
+            raise  # the one fail-closed step
         except Exception as exc:  # best-effort: never abort a capture on a step
             log.debug("interaction %s failed: %s — continuing", kind, exc)
     with contextlib.suppress(Exception):
@@ -137,6 +151,8 @@ def _run_step(
         _remove(page, arg)
     elif kind == "eval":
         page.evaluate(str(arg))
+    elif kind == "assert":
+        _assert(page, arg)
     else:
         log.debug("unknown interaction kind: %r", kind)
 
@@ -188,3 +204,32 @@ def _wait(page: Any, arg: Any) -> None:
             page.wait_for_selector(str(arg["selector"]), timeout=int(arg.get("timeout_ms", 10000)))
     elif isinstance(arg, int):
         page.wait_for_timeout(arg)
+
+
+def _assert(page: Any, arg: Any) -> None:
+    """The fail-closed step (spec §12.3.6): `{selector, present?}` holds when the selector
+    matches (or, with `present: false`, matches nothing); `{js}` holds when the expression
+    (or async function) is truthy. A step that does not hold, cannot be evaluated, or is
+    malformed aborts — a check that silently skipped would be no check at all."""
+    if not isinstance(arg, dict) or bool(arg.get("selector")) == bool(arg.get("js")):
+        raise CaptureAborted(
+            f"capture aborted: malformed assert step {arg!r} — it takes exactly one of "
+            "`selector` (with optional `present`) or `js`, plus an optional `message`"
+        )
+    message = str(arg.get("message") or "assert failed")
+    if arg.get("selector"):
+        want = arg.get("present", True) is not False
+        what = f"selector {arg['selector']!r} {'present' if want else 'absent'}"
+    else:
+        what = f"js {arg['js']!r}"
+    try:
+        if arg.get("selector"):
+            held = (page.locator(str(arg["selector"])).count() > 0) == want
+        else:
+            held = bool(page.evaluate(str(arg["js"])))
+    except Exception as exc:
+        raise CaptureAborted(
+            f"capture aborted: {message} ({what} could not be evaluated: {exc})"
+        ) from exc
+    if not held:
+        raise CaptureAborted(f"capture aborted: {message} ({what} did not hold)")

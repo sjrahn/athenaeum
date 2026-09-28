@@ -376,6 +376,13 @@ _SPAN_STRATEGIES: dict[str, Any] = {
 }
 
 
+#: The section RANGE params — a span envelope's own spelling where it differs from its children's
+#: point axis (`page`→`pages`, `spine`→`spines`). They name a run of units, not a surface: no
+#: resolver op materializes `pages=2-6`, and each child's own `page=N` is what resolves.
+SECTION_RANGE_PARAMS: frozenset[str] = frozenset(
+    s.section_param for s in _SPAN_STRATEGIES.values()
+) - frozenset(_SPAN_STRATEGIES)
+
 def _el_path_envelope(values: list[str]) -> str | list[str] | None:
     """The §6.1.1 envelope over children's `el=` path values, by pure address algebra —
     no artifact access. Claims contained in another claim drop (a subtree is one

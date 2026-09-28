@@ -11,4 +11,4 @@ the other.
 
 from __future__ import annotations
 
-SPEC_VERSION = 47
+SPEC_VERSION = 48

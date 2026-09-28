@@ -198,6 +198,12 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #         document.querySelectorAll('img[data-large_image], img[data-zoom-image]')
 #           .forEach((i) => i.setAttribute('src',
 #             i.getAttribute('data-large_image') || i.getAttribute('data-zoom-image')));
+#     # `assert` is the one FAIL-CLOSED step (every other step is best-effort): when it does
+#     # not hold, the capture aborts before the snapshot -- nothing staged, nothing ingested.
+#     # Use it where the page can be the wrong page (a login wall, an expired session).
+#     - assert: {selector: '#main-content', message: 'content missing -- logged out?'}
+#     # - assert: {selector: 'form#sign-in', present: false, message: 'login wall'}
+#     # - assert: {js: "document.title !== 'Sign In'", message: 'login wall'}
 #   viewport: 1280x900
 #   # --- paginated works (thread / multi-page article / gallery) ---  Walk the ?page=N /
 #   # /page-N pages, MERGE them, and ingest ONE content-addressed record (not page-1-only,

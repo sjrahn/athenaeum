@@ -2495,6 +2495,23 @@ def _rule_form_coherence(post, blocks, root) -> Iterator[Finding]:
         checks = overlay.get("checks") or {}
         header = dict(blk.extra or {})
 
+        # §7.8: a form's `extended_fields` "are the only fields a section carries" — a
+        # header field it does not declare is residue (a retired `merchant:`) or a fact in
+        # the wrong layer, never part of the span's envelope.
+        declared = overlay.get("extended_fields") or {}
+        for field_name in header:
+            if field_name not in declared:
+                yield Finding(
+                    rule_id="form-header-undeclared",
+                    severity="warning",
+                    message=(
+                        f"section {top_i} (form `{blk.form}`) carries header field "
+                        f"`{field_name}`, which `form/{blk.form}` does not declare — a "
+                        f"section carries only its form's `extended_fields` (spec §7.8)."
+                    ),
+                    address=_addr_str(blk.address),
+                )
+
         for field_name in checks.get("envelope_required") or []:
             if field_name not in header:
                 yield Finding(
@@ -2853,6 +2870,7 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("structural-mark-retired", _rule_structural_byte_mark),
     ("form-overlay-unknown", _rule_form_coherence),
     ("form-envelope-missing", _rule_form_coherence),
+    ("form-header-undeclared", _rule_form_coherence),
     ("form-codebook-index-out-of-range", _rule_form_coherence),
     ("form-address-axis", _rule_form_coherence),
     ("form-address-nonmonotonic", _rule_form_coherence),
@@ -2913,6 +2931,7 @@ FRAGMENT_RULES: tuple[str, ...] = (
     "structural-mark-retired",
     "form-overlay-unknown",
     "form-envelope-missing",
+    "form-header-undeclared",
     "form-codebook-index-out-of-range",
     "form-address-axis",
     "form-address-nonmonotonic",
@@ -2992,6 +3011,12 @@ def resolve_addresses(
         seen.add(addr)
         if _region_problems(addr):
             continue  # `address-region-invalid` already reports it; don't say it twice
+        if addr.split("&", 1)[0].partition("=")[0] in _segments.SECTION_RANGE_PARAMS:
+            # A section's `pages=1-2` envelope is derived from its children (§4.3.2.1) and
+            # names a run of pages, not a surface — no op materializes it; each child's own
+            # `page=N` is resolved in its turn.
+            spans.append(addr)
+            continue
         uri = f"corpus://{record_id}?{addr}"
         try:
             path = _resolver.resolve(uri, corpus_root)

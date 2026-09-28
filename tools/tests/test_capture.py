@@ -42,6 +42,12 @@ def test_sanitize_filename():
     # netloc + path only — the query string is not part of the staged filename.
     assert capture._sanitize_filename("https://example.com/a/b?c=d") == "example.com-a-b"
     assert capture._sanitize_filename("https://example.com/") == "example.com"
+    # The path's own extension is dropped — every caller appends the one it writes, so a
+    # `.html` URL staged `….html.html` — while a bare host keeps its dots.
+    assert capture._sanitize_filename("https://www.costco.ca/receipt.html") == (
+        "www.costco.ca-receipt"
+    )
+    assert capture._sanitize_filename("https://example.com") == "example.com"
     # Truncates long names.
     long = "https://example.com/" + "x" * 300
     assert len(capture._sanitize_filename(long)) <= 120

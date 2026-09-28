@@ -2,11 +2,11 @@
 spec_id: ATH
 part: III
 title: "Athenaeum Specification — Part III: The Ledger"
-version: 47
+version: 48
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-07-02
-date_modified: 2026-09-25
+date_modified: 2026-09-27
 ---
 
 # Athenaeum Specification — Part III: The Ledger

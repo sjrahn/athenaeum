@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 47
+version: 48
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-09-25
+date_modified: 2026-09-27
 ---
 
 # Athenaeum Specification — Part I: Architecture

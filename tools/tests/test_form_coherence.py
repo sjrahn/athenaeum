@@ -607,3 +607,84 @@ def test_guidance_prints_the_governing_form_contract(tmp_path, capsys):
     assert "authoring guidance" in out
     # the 3.12 doctrine the section exists to deliver: markers never narrate
     assert "body-empty and permanent" in out
+
+
+def test_a_raster_receipt_addresses_its_children_by_bbox(tmp_path):
+    """An image receipt (an app screenshot, a photographed slip) has no page, element or
+    block — `bbox=` is its only region axis, so `receipt` declares it (ath-steven 2026-09-27:
+    seven `form-address-axis` warnings per formed Co-op receipt)."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="receipt", address="bbox=0,0,1,1", entry="receipt",
+        segments=[
+            segments.Segment(atom="text", address="bbox=0,0.05,1,0.1", body="CALGARY CO-OP"),
+            segments.Segment(atom="text", address="bbox=0,0.93,1,0.02", body="VISA ****1234"),
+        ],
+    )
+    post.content = segments.emit([sec])
+    assert "form-address-axis" not in _fired(post, root)
+
+
+def _slip(transaction: str | None, left: float) -> segments.Section:
+    return segments.Section(
+        form="receipt",
+        extra={"transaction": transaction} if transaction else {},
+        segments=[
+            segments.Segment(atom="text", address=f"bbox={left},0.05,0.3,0.1", body="CO-OP"),
+            segments.Segment(atom="text", address=f"bbox={left},0.9,0.3,0.05", body="TOTAL"),
+        ],
+    )
+
+
+def test_several_receipts_in_one_image_keep_one_span_each(tmp_path):
+    """Owner ruling 2026-09-27: one photo of three slips carries three `receipt` spans, kept
+    apart by each slip's printed `transaction` — without it, adjacent same-form spans with
+    equal header fields are one span (§4.3.2.1) and the three collapse."""
+    root = _root(tmp_path)
+    post = _post()
+    post.content = segments.emit([_slip("6368", 0.0), _slip("7403", 0.33), _slip("4094", 0.66)])
+    blocks = [b for b in segments.iter_blocks(post.content) if isinstance(b, segments.Section)]
+    assert [b.extra.get("transaction") for b in blocks] == ["6368", "7403", "4094"]
+    assert not any(f.startswith("form-") for f in _fired(post, root))
+
+    bare = segments.emit([_slip(None, 0.0), _slip(None, 0.33)])
+    assert len([b for b in segments.iter_blocks(bare) if isinstance(b, segments.Section)]) == 1
+
+
+def test_resolve_pass_treats_a_pages_envelope_as_a_span(tmp_path):
+    """`corpus lint --resolve` on a 2-page formed PDF errored `address-unresolvable
+    [pages=1-2]` (ath-steven 2026-09-27): a section's range envelope is derived from its
+    children and names a run of pages, not a surface — no op materializes it. It is
+    declared with the other spans; each child's own `page=N` is what gets resolved."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = segments.Section(
+        form="receipt",
+        segments=[
+            segments.Segment(atom="text", address="page=1", body="COSTCO"),
+            segments.Segment(atom="text", address="page=2", body="TOTAL"),
+        ],
+    )
+    post.content = segments.emit([sec])
+    blocks = segments.iter_blocks(post.content)
+    assert blocks[0].address == "pages=1-2"
+    found = lint.resolve_addresses(post, blocks, root)
+    assert not any(f.address == "pages=1-2" and f.severity == "error" for f in found)
+    spans = [f for f in found if f.rule_id == "address-not-materializable"]
+    assert spans and "pages=1-2" in spans[0].fields["addresses"]
+
+
+def test_a_header_field_the_form_does_not_declare_warns(tmp_path):
+    """v48 (owner ruling 2026-09-27): a form's `extended_fields` are the only fields a
+    section carries (§7.8), so a residual `merchant:` on a receipt opener is flagged; the
+    declared `transaction` is not."""
+    root = _root(tmp_path)
+    post = _post()
+    sec = _slip("6368", 0.0)
+    sec.extra["merchant"] = "Costco Wholesale"
+    post.content = segments.emit([sec])
+    found = lint.lint(post, segments.iter_blocks(post.content), root)
+    undeclared = [f for f in found if f.rule_id == "form-header-undeclared"]
+    assert len(undeclared) == 1 and "`merchant`" in undeclared[0].message
+    assert undeclared[0].severity == "warning"

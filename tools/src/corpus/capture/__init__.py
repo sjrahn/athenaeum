@@ -171,6 +171,17 @@ class CaptureError(RuntimeError):
     """A capture could not be completed (extra missing, navigation failed, etc.)."""
 
 
+def _interact(page: Any, steps: list[dict[str, Any]] | None, **kwargs: Any) -> None:
+    """`interactions.run`, with an overlay `assert` that does not hold surfaced as a
+    `CaptureError` — raised before the snapshot, so nothing is staged or ingested."""
+    from . import interactions  # lazy, like the playwright paths that call this
+
+    try:
+        interactions.run(page, steps, **kwargs)
+    except interactions.CaptureAborted as exc:
+        raise CaptureError(str(exc)) from exc
+
+
 @dataclass
 class CaptureOptions:
     """Knobs for a single capture. All optional; defaults match the CLI."""
@@ -519,8 +530,6 @@ def _capture_from_save(
             "uv pip install 'athenaeum[capture]' && playwright install chromium"
         ) from e
 
-    from . import interactions
-
     timeout_ms = opts.timeout_s * 1000
     recipe = recipe or {}
     fidelity = _resolve_fidelity(opts.fidelity, recipe)
@@ -556,7 +565,7 @@ def _capture_from_save(
             page = ctx.new_page()
             log.info("from-save: loading %s (headless, network aborted)", src.name)
             page.goto(file_uri, wait_until="domcontentloaded", timeout=timeout_ms)
-            interactions.run(page, interaction_steps)
+            _interact(page, interaction_steps)
             snapshot = _snapshot_html(
                 page=page,
                 fetched_at=saved_at,
@@ -1090,8 +1099,6 @@ def _capture_via_playwright(
             "uv pip install 'athenaeum[capture]' && playwright install chromium"
         ) from e
 
-    from . import interactions
-
     timeout_ms = opts.timeout_s * 1000
     fetched_at = touches.now_iso()
     base = _sanitize_filename(url)
@@ -1191,7 +1198,7 @@ def _capture_via_playwright(
                         "networkidle did not settle within %dms — snapshotting anyway",
                         NETWORKIDLE_BUDGET_MS,
                     )
-                interactions.run(
+                _interact(
                     page,
                     interaction_steps,
                     carousel_handler=lambda pg, a: _walk_carousel(
@@ -1988,9 +1995,12 @@ def _apply_url_rewrite(url: str, recipe: dict[str, Any]) -> str:
 
 def _sanitize_filename(url: str) -> str:
     """Readable, filesystem-safe name from a URL. Only the name a human sees if
-    they peek at `capture/` — ingest renames to `artifacts/<hash>.<ext>`."""
+    they peek at `capture/` — ingest renames to `artifacts/<hash>.<ext>`. Every caller
+    appends the extension it writes, so the path's own (`/receipt.html`) is dropped rather
+    than doubled (`receipt.html.html`); a bare host keeps its dots (`example.com`)."""
     parsed = urlparse(url)
-    raw = (parsed.netloc + parsed.path).strip("/") or "page"
+    path = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", parsed.path.rstrip("/"))
+    raw = (parsed.netloc + path).strip("/") or "page"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")
     return safe[:120] or "page"
 
