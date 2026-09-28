@@ -25,6 +25,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "session":         ("Capture & ingest",       "Capture a Claude Code session (bundle → ingest → draft); list sessions"),
     "check":           ("Capture & ingest",       "Read-only: is a URL already captured? (resolves short links)"),
     "ingest":          ("Capture & ingest",       "Ingest a capture/ file → records/<shard>/<hash>.md"),
+    "ingest-owned":    ("Capture & ingest",       "The consumer lane: ingest a capture/ file only under an owner-sourced origin the instance opens (athenaeum.yaml consumer_ingest)"),
     "promote":         ("Capture & ingest",       "Mint a record for a container member (corpus://<id>?<member-address>)"),
     "cut":             ("Capture & ingest",       "Resolve + stamp a video stream leaf's cut strategy (`cutting:`; dry-run by default)"),
     "assemble":        ("Capture & ingest",       "Repackage delivered export archives into one containment-friendly bundle"),
@@ -75,7 +76,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Maintenance — derived-data hygiene + deliberate record removal
     "remap-el":        ("Maintenance",            "§12.28 migration: rewrite legacy el=N addresses to child-index paths + stamp addressing (dry-run by default)"),
     "remap-el-ordinal": ("Maintenance",           "v35 migration: rewrite dotted/legacy el= addresses to document-order ordinals + stamp scheme: ordinal (dry-run by default)"),
-    "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired (dry-run by default)"),
+    "drop-retired":    ("Maintenance",            "§12.27 migration: remove the fields + annotation namespaces 3.5 retired, and section header fields a form does not declare (dry-run by default)"),
     "retire-resolution": ("Maintenance",          "v42 migration: strip the retired issue `resolution:` field; fixed/superseded blocks drop outright (dry-run by default)"),
     "reseat":          ("Maintenance",            "§12.30 migration: promote each placed member and move its rendering onto its own record, leaving a placement (dry-run by default)"),
     "home-crumb":      ("Maintenance",            "#89 migration: move a verbatim, alone-in-its-own-segment my.alldata.com breadcrumb into a new trailing index span (dry-run by default)"),

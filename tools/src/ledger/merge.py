@@ -24,6 +24,7 @@ from ledger.model import (
     CLAIM_ID_RE,
     canonical_claim_state,
     is_redirect,
+    load_claim_lineage_rows,
     load_json_dir,
     load_lineage_rows,
     next_source_key,
@@ -328,6 +329,13 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
         m = CLAIM_ID_RE.match(str(c.get("id", "")))
         if m:
             taken_shorts.add(m.group(2))
+    # *(v49, §4.1)* a claim-grain lineage key on the survivor is a retired claim id —
+    # occupied forever, so a moved claim is never re-keyed onto it
+    claim_rows = load_claim_lineage_rows(ledger_root)
+    for key in claim_rows:
+        m = CLAIM_ID_RE.match(key)
+        if m and m.group(1) == survivor:
+            taken_shorts.add(m.group(2))
 
     claim_rename_map: dict[str, str] = {}
     moved_claims: list[dict] = []
@@ -422,6 +430,15 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
                                                "new_target": survivor})
     lineage_rows[loser] = {"to": survivor, "reason": "merged"}
     plan["lineage_row"] = {loser: dict(lineage_rows[loser])}
+    # claim-grain rows pointing INTO the loser follow its claims (one-hop rule): a row whose
+    # `to` is the loser now names the survivor, one naming a moved claim names its new id
+    for key, row in list(claim_rows.items()):
+        to = str(row.get("to"))
+        new_to = survivor if to == loser else claim_rename_map.get(to)
+        if new_to is not None:
+            claim_rows[key] = {"to": new_to, "reason": row.get("reason")}
+            plan["lineage_retargeted"].append({"key": key, "old_target": to,
+                                               "new_target": new_to})
 
     # ------------------------------------------------- reference rewrite pass
     touched_paths: set[Path] = set()
@@ -462,8 +479,8 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
     lineage_rel = "facts/LINEAGE.json"
     originals[lineage_rel] = lineage_path.read_text(encoding="utf-8") \
         if lineage_path.is_file() else None
-    writes[lineage_rel] = json.dumps(dict(sorted(lineage_rows.items())), indent=1,
-                                     ensure_ascii=False) + "\n"
+    writes[lineage_rel] = json.dumps(dict(sorted({**lineage_rows, **claim_rows}.items())),
+                                     indent=1, ensure_ascii=False) + "\n"
 
     plan["_writes"] = writes
     plan["_originals"] = originals
@@ -472,11 +489,11 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
 
 def apply_merge(
     ledger_root: Path, plan: dict, join: CorpusJoin | None = None,
-    datasets: Mapping[str, Reference] | None = None,
+    datasets: Mapping[str, Reference] | None = None, *, verb: str = "merge",
 ) -> None:
-    """Execute a plan from `plan_merge`. Refuses a plan carrying errors.
-    Writes every file the plan computed, then gates on `ath ledger check`
-    (full corpus join when *join* is given, `--no-corpus` mode otherwise):
+    """Execute a plan from `plan_merge` (or `moveclaim.plan_move`, *verb* naming it).
+    Refuses a plan carrying errors. Writes every file the plan computed, then gates on
+    `ath ledger check` (full corpus join when *join* is given, `--no-corpus` mode otherwise):
     any NEW error the merge introduced rolls every write back."""
     if plan.get("errors"):
         raise MergeError("refused: " + "; ".join(plan["errors"]))
@@ -506,5 +523,5 @@ def apply_merge(
     new_errors = [e for e in after.errors if e not in baseline.errors]
     if new_errors:
         _write_all(originals)
-        raise MergeError("merge introduced new check errors — rolled back: "
+        raise MergeError(f"{verb} introduced new check errors — rolled back: "
                          + "; ".join(new_errors))

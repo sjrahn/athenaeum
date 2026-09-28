@@ -54,6 +54,12 @@ Commands:
                 references rewrite ledger-wide, lineage row added, loser
                 file deleted; dry-run by default, --apply executes, --json
                 for the plan
+  move-claim CLAIM TO --reason split|rekeyed  one claim leaves a file that
+                lives on (§4.1, v49): TO is `fact:short` (the claim moves
+                there, sources re-hoisted) or a bare fact id (the claim
+                became that fact); internal references rewrite, the
+                claim-grain lineage row is added; dry-run by default,
+                --apply executes behind the check gate, --json for the plan
   remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
                 child-index paths, mapped against the artifacts (dry-run by
                 default; --apply writes)
@@ -776,6 +782,56 @@ def _cmd_merge(argv: Sequence[str]) -> int:
     return 0
 
 
+def _cmd_move_claim(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger move-claim",
+        "Move one claim out of a file that lives on (§4.1, v49) — dry-run by default.",
+    )
+    ap.add_argument("claim", help="the claim id that moves (`file-id:short`)")
+    ap.add_argument("to", help="`fact-id:short` (the claim moves there) or `fact-id` "
+                               "(the claim became that fact)")
+    ap.add_argument("--reason", required=True, choices=["split", "rekeyed"],
+                    help="split: it became, or joined, another fact; rekeyed: it moved "
+                         "to a sibling concept")
+    ap.add_argument("--apply", action="store_true", help="execute (default: dry-run)")
+    ap.add_argument("--json", action="store_true", help="print the full plan as JSON")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.moveclaim import MoveError, apply_move, plan_move
+
+    plan = plan_move(ledger_root, ns.claim, ns.to, ns.reason)
+    summary = {k: v for k, v in plan.items() if not k.startswith("_")}
+    if ns.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(f"[{'APPLYING' if ns.apply else 'DRY RUN'}] move-claim {ns.claim} → {ns.to} "
+              f"({ns.reason})")
+        for e in summary["errors"]:
+            print(f"  REFUSED: {e}")
+        for w in summary["warnings"]:
+            print(f"  WARN   {w}")
+        for r in summary["references_rewritten"]:
+            print(f"  rewrite {r['kind']} in {r['file']}")
+        for r in summary["challenges_repinned"]:
+            print(f"  repin  challenge {r['interp']}")
+        for r in summary["lineage_retargeted"]:
+            print(f"  retarget lineage {r['key']}: {r['old_target']} → {r['new_target']}")
+        for key, row in summary["lineage_row"].items():
+            print(f"  lineage {key} → {row['to']} ({row['reason']})")
+    if summary["errors"]:
+        return 1
+    if not ns.apply:
+        print("\n(dry run — pass --apply to execute)")
+        return 0
+    try:
+        apply_move(ledger_root, plan, join, datasets)
+    except MoveError as e:
+        print(f"ath ledger move-claim: {e}", file=sys.stderr)
+        return 1
+    print(f"\napplied: {ns.claim} → {ns.to}")
+    return 0
+
+
 def _cmd_remap_el(argv: Sequence[str]) -> int:
     ap = _base_parser(
         "ath ledger remap-el",
@@ -981,6 +1037,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "scope": _cmd_scope,
         "supersede": _cmd_supersede,
         "merge": _cmd_merge,
+        "move-claim": _cmd_move_claim,
         "remap-el": _cmd_remap_el,
         "remap-el-ordinal": _cmd_remap_el_ordinal,
     }

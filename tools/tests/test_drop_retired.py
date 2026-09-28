@@ -334,3 +334,44 @@ def test_a_section_carrying_only_one_retired_field_still_sweeps(tmp_path, field_
     report = drop_retired.sweep_record(rf, root)
     assert report.changed, report.hold
     assert dict(report.counts) == {f"section {field_name}": 1}
+
+
+# ---------- v48: a header field the form does not declare ---------- #
+
+
+def _receipt(extra, address):
+    return Section(form="receipt", extra=dict(extra),
+                   segments=[Segment(atom="text", address=address, body="One.")])
+
+
+def test_an_undeclared_header_field_comes_off_under_its_own_touch(tmp_path):
+    """A residual `merchant:` on a receipt opener (§7.8, `form-header-undeclared`) is
+    swept like a retired field, stamped `migrate.form-header-48`; the declared
+    `transaction` stays."""
+    root, rf = _record(
+        tmp_path, [_receipt({"merchant": "Costco Wholesale", "transaction": "6368"},
+                            "el=1.1.2")],
+        canonical=False,
+    )
+    rep = drop_retired.sweep_record(rf, root)
+    assert rep.changed and rep.hold is None
+    assert rep.counts["undeclared section merchant"] == 1
+    (sec,) = [b for b in segments.iter_blocks(records.loads(rep.new_text).content)
+              if isinstance(b, Section)]
+    assert sec.extra == {"transaction": "6368"}
+    assert drop_retired.HEADER_TOUCH_ID in rep.new_text
+    assert drop_retired.TOUCH_ID not in rep.new_text  # nothing 3.5/3.7 retired was here
+
+
+def test_dropping_a_field_two_spans_differ_in_is_held_not_merged(tmp_path):
+    """Two adjacent receipt spans told apart only by an undeclared `merchant:` would merge
+    once it goes (§4.3.2.1) — re-spanning is a normalizer's judgment, so the sweep holds."""
+    root, rf = _record(
+        tmp_path,
+        [_receipt({"merchant": "Costco"}, "el=1.1.2"),
+         _receipt({"merchant": "Co-op"}, "el=1.1.3")],
+        canonical=False,
+    )
+    rep = drop_retired.sweep_record(rf, root)
+    assert not rep.changed
+    assert rep.hold and "would merge 1 adjacent" in rep.hold

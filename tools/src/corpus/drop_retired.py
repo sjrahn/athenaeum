@@ -47,6 +47,14 @@ discovering:
   layer. That is the correct answer — but it is visible, so the manifest records the before
   and after for every record whose derived title moves.
 
+*(v49, for v48's rule)* And one of a different kind: a section **header field its form does not
+declare** (`form-header-undeclared`, §7.8 — a form's `extended_fields` are the only fields a
+section carries), such as a residual `merchant:` on a receipt opener. It retired no grammar; it
+was never part of any. Removing it is the same subtraction, stamped with its own touch
+(`migrate.form-header-48`), and held where it is not neutral: two adjacent same-form spans that
+differed ONLY in that field would merge once it goes (§4.3.2.1), and that is re-spanning, not a
+sweep.
+
 Same discipline as the §12.28 remap this follows: compute, never write; refuse rather than
 guess; and **the neutrality gate** — a record whose rewrite would raise ANY lint rule's
 finding count is HELD, not swept.
@@ -66,6 +74,8 @@ from corpus import lint, records, retired, segments, touches
 
 #: Touch identifier stamped on every record the sweep rewrites.
 TOUCH_ID = "migrate.faithfulness-35"
+#: *(v48)* Touch stamped when undeclared section header fields came off.
+HEADER_TOUCH_ID = "migrate.form-header-48"
 
 # WHAT is retired lives in `corpus.retired` — one definition, shared with the write-side
 # gate that keeps this sweep from being undone by the next compile (#116). This module owns
@@ -206,6 +216,25 @@ def _neutrality_hold(new_text: str, before: Counter[str], corpus_root: Path) -> 
     return f"the rewrite would introduce new lint findings ({detail})"
 
 
+def _undeclared_header_fields(
+    sections: list[segments.Section], corpus_root: Path
+) -> list[tuple[segments.Section, str]]:
+    """`(section, field)` for every header field a section's form does not declare (§7.8,
+    v48 — `lint`'s `form-header-undeclared`). A section with no form, or whose form overlay
+    does not resolve, is not judged: there is no declaration to hold it to."""
+    from corpus import schemas
+
+    out: list[tuple[segments.Section, str]] = []
+    for sec in sections:
+        overlay = schemas.load_form_overlay(corpus_root, sec.form) if sec.form else None
+        if not overlay:
+            continue
+        declared = overlay.get("extended_fields") or {}
+        out.extend((sec, key) for key in list(sec.extra) if key not in declared
+                   and key not in retired.SECTION_EXTRA_FIELDS)
+    return out
+
+
 def _el_paths(value: Any) -> list[furi.ElPath]:
     """Every `el=` address in `value` (scalar or list) as a parsed §6.1.1 DOTTED path. A
     non-`el=` axis or an unparseable value contributes nothing — containment is only
@@ -336,7 +365,9 @@ def sweep_record(
 
     canonicalizes = _content_is_stale(original)
 
-    if not (carried or stale_headers or canonicalizes):
+    undeclared = _undeclared_header_fields(sections, corpus_root)
+
+    if not (carried or stale_headers or canonicalizes or undeclared):
         report.skipped = "carries nothing 3.5/3.7 retired"
         return report
 
@@ -436,6 +467,9 @@ def sweep_record(
         sec.entry = None
         for key in retired.SECTION_EXTRA_FIELDS:
             sec.extra.pop(key, None)
+    for sec, key in undeclared:
+        sec.extra.pop(key, None)
+        report.counts[f"undeclared section {key}"] += 1
 
     for seg in all_segments:
         seg.description = None
@@ -455,7 +489,23 @@ def sweep_record(
             (ctx.get("fields") or {}).pop("description", None)
 
     post.content = segments.emit(blocks).rstrip("\n") + trailing
-    touches.record_touch(post, touches.script_identifier(TOUCH_ID))
+    if undeclared:
+        # Dropping a field two neighbouring spans differed in merges them (§4.3.2.1) — a
+        # re-spanning, which is a normalizer's judgment, never this sweep's.
+        merged = len(sections) - sum(
+            1 for b in segments.iter_blocks(post.content) if isinstance(b, segments.Section))
+        if merged > 0:
+            names = sorted({key for _, key in undeclared})
+            report.hold = (
+                f"dropping undeclared {', '.join(names)} would merge {merged} adjacent "
+                f"same-form span(s) that differ only there (§4.3.2.1) — give each its "
+                f"form's declared distinguishing field first"
+            )
+            return report
+    if carried or stale_headers or canonicalizes:
+        touches.record_touch(post, touches.script_identifier(TOUCH_ID))
+    if undeclared:
+        touches.record_touch(post, touches.script_identifier(HEADER_TOUCH_ID))
     new_text = records.dumps(post)
 
     hold = _neutrality_hold(new_text, before_findings, corpus_root)

@@ -1163,3 +1163,31 @@ def test_undeclared_tenancy_falls_to_the_instance_tier_floor_not_public(
     assert r_owner.status_code == 200
     r_owner_rec = client.get(f"/records/{FLOOR_H_UNDECLARED}", headers=_owner_headers())
     assert r_owner_rec.status_code == 200
+
+
+def test_a_moved_claim_redirects_through_its_lineage_row(instance: Path) -> None:
+    """v49 (§4.1): a claim-grain row moves one held claim id; a file-grain row moves every
+    claim of a retired file with its short preserved. The destination's visibility is
+    checked before the 307, exactly as for a retired fact."""
+    lineage_path = instance / "ledger" / "facts" / "LINEAGE.json"
+    lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+    lineage[f"{FACT_MIXED}:moved"] = {"to": f"{FACT_PUBLIC}:colour", "reason": "split"}
+    lineage[f"{FACT_PUBLIC}:hidden"] = {"to": f"{FACT_MIXED}:secret", "reason": "split"}
+    lineage_path.write_text(json.dumps(lineage), encoding="utf-8")
+    client = _client(instance)
+
+    r = client.get(f"/facts/{FACT_MIXED}/claims/moved", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == f"/facts/{FACT_PUBLIC}/claims/colour"
+    assert r.headers.get("etag") and r.headers.get("vary") == "Authorization"
+
+    r = client.get(f"/facts/{RETIRED_ID}/claims/colour", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == f"/facts/{FACT_PUBLIC}/claims/colour"
+
+    # a row into a claim the caller cannot see is a 404, never a revealing 307
+    assert client.get(f"/facts/{FACT_PUBLIC}/claims/hidden",
+                      follow_redirects=False).status_code == 404
+    r = client.get(f"/facts/{FACT_PUBLIC}/claims/hidden", headers=_owner_headers(),
+                   follow_redirects=False)
+    assert r.status_code == 307

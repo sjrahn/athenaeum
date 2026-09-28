@@ -61,8 +61,10 @@ from ledger.model import (
     canonical_claim_state,
     is_edge,
     is_redirect,
+    load_claim_lineage_rows,
     load_json_dir,
     load_lineage,
+    resolve_claim_ref,
 )
 from ledger.schemas import (
     extends_chain_errors,
@@ -797,6 +799,33 @@ def run_check(
                                    f"(also {rel(claims_by_id[cid][0])})")
                 claims_by_id[cid] = (f, o, c)
 
+    # *(v49, §4.1)* claim-grain lineage rows — one claim that left a file which lives on.
+    # A key is a retired CLAIM id: occupied forever, so it may not name a living claim; its
+    # `to` (a fact id, or a claim id) must live, one hop only, like a file-grain row's.
+    claim_lineage = {k: v["to"] for k, v in load_claim_lineage_rows(ledger_root).items()}
+    for key, target in claim_lineage.items():
+        if key in claims_by_id:
+            rep.err("facts/LINEAGE.json", f"claim-grain lineage key {key!r} collides with a "
+                                          f"living claim (in {rel(claims_by_id[key][0])}) — "
+                                          "a retired claim id stays occupied")
+        tm = CLAIM_ID_RE.match(target)
+        if target in claim_lineage or (tm and tm.group(1) in lineage) or target in lineage:
+            rep.err("facts/LINEAGE.json", f"lineage row {key!r} -> {target!r}: {target!r} is "
+                                          "itself retired — retarget to where it lives now "
+                                          "(one-hop rule)")
+        elif tm and target not in claims_by_id:
+            rep.err("facts/LINEAGE.json", f"lineage row {key!r} -> {target!r}: no living "
+                                          f"claim {target!r}")
+        elif not tm and target not in live_facts:
+            rep.err("facts/LINEAGE.json", f"lineage row {key!r} -> {target!r}: "
+                                          f"{target!r} does not exist")
+
+    def moved(claim_ref: str) -> str:
+        """The §4.1 hint for an internal reference naming a claim that has moved."""
+        to = resolve_claim_ref(claim_ref, claim_lineage, lineage)
+        return (f" — it moved to {to!r} (facts/LINEAGE.json); internal references are "
+                "rewritten when a claim moves (§4.1)") if to != claim_ref else ""
+
     # ------------------------------------------------------------------ claims
     private_claims = 0
     private_files = 0
@@ -1268,7 +1297,7 @@ def run_check(
                 continue
             if b not in claims_by_id:
                 rep.err(where, f"based_on entry {b!r} is neither a citation nor a known "
-                               "claim id")
+                               f"claim id{moved(b)}")
         for a in o.get("about") or []:
             if resolve_id(str(a)) is None:
                 rep.err(where, f"about entry {a!r} is not a known fact id")
@@ -1330,7 +1359,7 @@ def run_check(
             else:
                 target = str(challenges.get("claim", ""))
                 if target not in claims_by_id:
-                    rep.err(where, f"challenges unknown claim {target!r}")
+                    rep.err(where, f"challenges unknown claim {target!r}{moved(target)}")
                 else:
                     if st == "standing":
                         standing_challenges[target] = str(o.get("id"))

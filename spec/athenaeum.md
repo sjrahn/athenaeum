@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 48
+version: 49
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-09-27
+date_modified: 2026-09-28
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -149,7 +149,13 @@ assets:                    # instance-registered tool assets (Part II §12.3.6):
     snapshots:
       {tag}:
         artifact: …        # blake3 of the registered build's bytes
+
+consumer_ingest:           # optional (v49) — the consumer ingest lane (Part II §12.3.15):
+  origins: [owner-statement, owner-share]   # the producer-declared, owner-sourced origin
+                           #   ids `corpus ingest-owned` may mint under. Absent: no lane.
 ```
+
+**The consumer ingest lane is declared here, never by its caller** *(v49)*. A consumer that captures the owner's own words needs one mutating verb it can be allowed to run un-gated. That verb's reach must not be a caller argument: a permission list matches a command by prefix, so an allowed `ingest --allow-origin X` also admits the same call with a second `--allow-origin` appended. The instance config — tracked and resident-owned, never consumer-writable — names the origins, and `corpus ingest-owned` takes none.
 
 The registry earns tracking: a snapshot registration (tag → mirror blake3) is a durable fact about the system — it now lands as a visible diff with history, like every other durable declaration (§1.2 principle 8). Machine-specific custody (where mirror bytes physically reside) stays out of the config — that is `corpus.toml`'s job (Part IV). An `assets:` entry registers a **tool asset** — a payload the tooling injects or executes (the web capturer's SingleFile bundle, Part II §12.3.6) whose exact bytes shape captured content and therefore belong to the instance, not the tooling: captured with provenance, pinned by artifact blake3, resolved through custody, updated by registration diff. Same snapshot grammar as `references:`, none of the citation semantics — asset content is never a `ref://` surface.
 

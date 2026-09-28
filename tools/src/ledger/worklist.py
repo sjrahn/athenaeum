@@ -13,7 +13,13 @@ import re
 from pathlib import Path
 
 from ledger import invariants as invariants_mod
-from ledger.model import derived_uri, load_json_dir, load_lineage
+from ledger.model import (
+    CLAIM_ID_RE,
+    derived_uri,
+    load_claim_lineage_rows,
+    load_json_dir,
+    load_lineage,
+)
 
 
 def worklist(ledger_root: Path, ref: str) -> list[str]:
@@ -55,12 +61,33 @@ def worklist(ledger_root: Path, ref: str) -> list[str]:
         return [f"{sev.upper():7} {msg}" for sev, msg in
                 invariants_mod.evaluate([inv], facts)]
 
+    claim_rows = load_claim_lineage_rows(ledger_root)
+    if CLAIM_ID_RE.match(ref):  # *(v49)* claim id → what names it, and where it went
+        if ref in claim_rows:
+            row = claim_rows[ref]
+            out.append(f"retired {ref} → {row['to']} ({row['reason']}, facts/LINEAGE.json)")
+        for key, row in sorted(claim_rows.items()):
+            if row.get("to") == ref:
+                out.append(f"lineage {key} → {ref} ({row['reason']}, facts/LINEAGE.json)")
+        for path, o in interps.items():
+            where = str(path.relative_to(ledger_root))
+            if ref in [str(b) for b in o.get("based_on") or []]:
+                out.append(f"interp  {o.get('id')} based_on ({where})")
+            ch = o.get("challenges")
+            if isinstance(ch, dict) and ch.get("claim") == ref:
+                out.append(f"interp  {o.get('id')} challenges ({where})")
+        return out
+
     # fact id → dependents
     link = re.compile(rf"\[\[{re.escape(ref)}(?:[\]|#])")
     lineage, _ = load_lineage(ledger_root)
     for key, target in sorted(lineage.items()):
         if target == ref:
             out.append(f"lineage {key} → {ref} (facts/LINEAGE.json)")
+    for key, row in sorted(claim_rows.items()):
+        m = CLAIM_ID_RE.match(str(row.get("to")))
+        if row.get("to") == ref or (m and m.group(1) == ref):
+            out.append(f"lineage {key} → {row['to']} ({row['reason']}, facts/LINEAGE.json)")
     for path, o in facts.items():
         where = str(path.relative_to(ledger_root))
         if o.get("subject") == ref or ref in (o.get("participants") or []):

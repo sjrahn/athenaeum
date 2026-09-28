@@ -2,11 +2,11 @@
 spec_id: ATH
 part: II
 title: "Athenaeum Specification — Part II: The Corpus"
-version: 48
+version: 49
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-09-27
+date_modified: 2026-09-28
 ---
 
 # Athenaeum Specification — Part II: The Corpus
@@ -1826,6 +1826,10 @@ A producer that re-delivers **temporal content** — mail, message-platform expo
 
   A producer whose serializer is NOT deterministic across export jobs, and that has no such ruling, onboards **member-dedup-only** — the window-reduction pattern (§12.3.13), with no closed-period claim — until, or unless, a later measurement or ruling earns a mode.
 - **JSON-family canonicalization — `strip_fields`.** The mail chrome strip generalizes past mbox headers to any JSON-family export: a producer overlay MAY declare `strip_fields`, a declarative list of dotted key paths (`[]` permitted for array traversal) removed **span-surgically** — the matched key-value span's bytes are deleted in place; the document is NEVER re-parsed, re-ordered, or re-serialized, so every byte the producer did not name stays exactly as delivered, precisely as the header strip leaves body lines untouched (§12.3.13). The same amendment applies verbatim: canonicalize-then-hash where declared, the delivered bytes' blake3 kept as `source_transport` (disclosed as `stripped_fields` + the field count), an already-canonical file passing through untouched, declarative list only — no eval hook, so field surgery stays as reviewable as header surgery.
+
+#### 12.3.15 The consumer ingest lane (`corpus ingest-owned`)
+
+*(v49)* A consumer of the instance may be allowed to capture what the **owner** said or handed it — a statement, a shared file — without a request per capture, and nothing else. `corpus ingest-owned <file>` is that lane: ordinary ingest (§12.3.4–§12.3.5) behind a pre-flight that refuses, **before the staged bytes are touched or anything is stored**, unless (1) the instance config opens the lane (`consumer_ingest.origins`, Part I §2.3); (2) the staged file's capture sidecar **declares** an origin (`origin_schema:`) the lane lists and whose overlay resolves; (3) that origin is **uri-less** — a producer-declared local-file origin (§7.2), never a retrieval origin (a sidecar `source_url`, a SingleFile banner): a web page is the web lane's (`corpus capture`), where its host overlay applies and its URL is its provenance; and (4) every field the overlay marks `required` is declared. The verb takes no origin argument — the allowlist is the instance's, not the caller's — and it never writes the ledger. A byte-identical re-encounter appends the declared origin block to the existing record, as any re-encounter does (§12.3.5).
 
 ### 12.4 Attest & derive
 
