@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import itertools
 import re
 from typing import Any
 
@@ -96,8 +97,9 @@ __all__ = ["KINDS", "check_fidelity", "el_paths"]
 
 #: The four judgments, in severity order. `misplaced` and `dropped` are the defect classes
 #: the drain measured; `unresolvable` is an address that names nothing; `unsourced` is the
-#: honest residue — text the artifact's DOM does not carry anywhere (a caption, an `alt`,
-#: a normalizer's own table header), which is weak evidence of anything on its own.
+#: honest residue — text the artifact's DOM does not carry anywhere (a caption, an `alt`),
+#: which is weak evidence of anything on its own. A markdown table's invented header row is
+#: not even that: the grid requires one, so it is never judged (`_table_header_lines`).
 KINDS = ("misplaced", "dropped", "unresolvable", "unsourced")
 
 #: A body line shorter than this many normalized characters is not evidence — bullets,
@@ -115,6 +117,8 @@ _SAMPLE_CHARS = 160
 # so a nested `> - item` sheds both. Never applied to the artifact side: a DOM's text is not
 # markdown, and a source line that genuinely opens with "1." keeps it there.
 _LINE_PREFIX_RE = re.compile(r"^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)+")
+# A CommonMark backslash escape: a backslash before any ASCII punctuation character.
+_MD_ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
 # A word character that is not an underscore — its absence marks a line as pure syntax.
 _WORD_RE = re.compile(r"[^\W_]", re.UNICODE)
 # Connectives a RENDERING inserts between two texts the DOM carries adjacent — see `_fold`.
@@ -162,9 +166,15 @@ def el_paths(address: str | list[str] | None) -> list[tuple[str, str]]:
 
 
 def _line_norm(line: str) -> str:
-    """One body line in comparison form: leading block syntax shed, then `textnorm.norm`
-    with markdown stripping (a record body IS markdown)."""
-    return textnorm.norm(_LINE_PREFIX_RE.sub("", line))
+    """One body line in comparison form: leading block syntax shed, backslash escapes
+    undone, then `textnorm.norm` with markdown stripping (a record body IS markdown).
+
+    An escape is how a body says a character is the SOURCE's, not markup: a description
+    printing a literal `***Current tenant…***` is written `\\*\\*\\*…` or markdown renders
+    it bold-italic, and `body-masked-digits-unescaped` demands exactly that of `****1234`.
+    Undoing it here compares what the body renders against what the source prints. The
+    artifact side is never unescaped — a DOM's backslash is a backslash."""
+    return textnorm.norm(_MD_ESCAPE_RE.sub(r"\1", _LINE_PREFIX_RE.sub("", line)))
 
 
 def _body_lines(body: str) -> list[str]:
@@ -177,6 +187,25 @@ def _body_lines(body: str) -> list[str]:
             continue
         out.append(n)
     return out
+
+
+# A markdown table's delimiter row: `|---|:--:|`, pipes optional at the ends.
+_DELIMITER_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
+
+
+def _table_header_lines(body: str) -> set[str]:
+    """The header rows of the body's markdown tables, in comparison form — each the row
+    directly above a delimiter row. A markdown grid cannot exist without one, so where the
+    source's label/value rows carry no header (a `<dl>` facts block, a two-column spec list),
+    the rendering MUST invent `| Field | Value |` — and that invented row appears nowhere in
+    the artifact by construction. A source header the rendering drops or relabels is still
+    caught: its `<th>` text is owed to the reverse direction like any other leaf."""
+    raw = body.split("\n")
+    return {
+        _line_norm(prev)
+        for prev, line in itertools.pairwise(raw)
+        if "|" in prev and _DELIMITER_RE.match(line)
+    }
 
 
 def _rendered_body(blocks: list[Any]) -> str:
@@ -613,11 +642,14 @@ def check_fidelity(
         lines_checked += len(body_lines)
 
         element_units = _leaf_texts([t for _addr, tags in resolved for t in tags])
+        headers = _table_header_lines(seg.body or "")
         misplaced: list[str] = []
         unsourced: list[str] = []
         for line in body_lines:
             if _contains(line, element_text) or _renders_unit(line, element_units):
                 continue
+            if line in headers:
+                continue  # a grid's required header row, invented where the source has none
             (misplaced if _contains(line, whole_text) else unsourced).append(line)
         if misplaced:
             _record(findings, counts, index, seg, "misplaced",

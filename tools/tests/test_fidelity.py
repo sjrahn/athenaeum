@@ -173,6 +173,47 @@ def test_markdown_table_body_matches_html_table_element():
     assert result["lines"] == 3  # the `|---|---|` separator row is pure syntax, not a line
 
 
+def test_an_invented_table_header_over_a_headerless_source_is_not_unsourced():
+    """A `<dl>` facts block has no header, and a markdown grid must have one — so the
+    rendering invents `| Field | Value |` (the shape the ledger asks for). Only that row is
+    exempt: a body row the source does not carry still reports."""
+    html = (
+        "<body><div><dl><dt>Heating:</dt><dd>Baseboard</dd></dl>"
+        "<dl><dt>Cooling:</dt><dd>None</dd></dl></div></body>"
+    )
+    body = (
+        "| Field | Value |\n"
+        "|---|---|\n"
+        "| Heating | Baseboard |\n"
+        "| Cooling | None |"
+    )
+    result = _scan(html, [Segment(atom="text", address="el=1", body=body)])
+    assert result["unsourced"] == 0 and result["pass"] is True
+
+    fabricated = body + "\n| Garage | Double attached |"
+    assert _scan(html, [Segment(atom="text", address="el=1", body=fabricated)])["unsourced"] == 1
+
+
+def test_a_dropped_source_header_is_still_owed_by_the_reverse_direction():
+    html = (
+        "<body><table><thead><tr><th>Fastener</th><th>Torque specification</th></tr></thead>"
+        "<tr><td>Head bolts</td><td>22 ft-lb</td></tr></table></body>"
+    )
+    body = "| Field | Value |\n|---|---|\n| Head bolts | 22 ft-lb |"
+    result = _scan(html, [Segment(atom="text", address="el=1", body=body)])
+    assert result["unsourced"] == 0
+    assert any("Torque specification" in s for f in _kinds(result, "dropped") for s in f["sample"])
+
+
+def test_an_escaped_literal_asterisk_run_matches_the_source_it_escapes():
+    """The source prints `***…***` as text; the body must escape it or markdown renders
+    bold-italic — and the escaped body is the faithful one."""
+    html = "<body><p>***Current tenant until September 1, 2026.*** Rate is 5_000 | #1.</p></body>"
+    body = r"\*\*\*Current tenant until September 1, 2026.\*\*\* Rate is 5\_000 \| \#1."
+    result = _scan(html, [Segment(atom="text", address="el=1", body=body)])
+    assert result["unsourced"] == 0 and result["dropped"] == 0 and result["pass"] is True
+
+
 def test_markdown_link_and_emphasis_match_plain_element_text():
     html = '<body><p>See the <a href="/torque">Torque Spec</a> for <b>details</b>.</p></body>'
     blocks = [
