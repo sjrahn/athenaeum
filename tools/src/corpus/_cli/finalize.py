@@ -16,6 +16,11 @@ never refuses on a terminal declaration, since the contract's whole point is tha
 section need ever be stamped — so an enqueued terminal record drains to a no-op finalize
 (lint-clean is still required; the new `terminal-stored-rendering` rule is the one that
 can still block it).
+
+*(v50)* The gate's third half: the pass may not leave a **document-shaped** content zone that
+no form governs (`records.is_document_shaped` — a stored rendering of text the artifact itself
+carries, beyond sparse extraction and one whole-transport segment). `compile` refuses to write
+one; this refuses to close a pass over one written some other way.
 """
 
 from __future__ import annotations
@@ -57,6 +62,11 @@ def run(args: argparse.Namespace) -> int:
         refusals.append(
             f"not formed — the origin declares form {unmet_form!r} but no section carries it "
             f"(spec §4.4.6)"
+        )
+    if records.is_document_shaped(post):
+        refusals.append(
+            "a document-shaped content zone with no form (spec §4.1, §7.8, v50) — name the "
+            "form the rendering follows, or drop the stored rendering and leave the record proxy"
         )
     if refusals:
         for r in refusals:

@@ -75,7 +75,9 @@ def _put(
             [segments.Section(form=section_form, segments=[seg], extra=section_fields or {})]
         )
     else:
-        seg = segments.Segment(atom="text", address="el=1", body="hello", entry=entry)
+        # Formless, the plain text rendered whole: one whole-transport segment (no address),
+        # which needs no form (v50, §4.1) — unlike a formless rendering of its parts.
+        seg = segments.Segment(atom="text", address=None, body="hello", entry=entry)
         post.content = segments.emit([seg])
     if title:
         post.metadata["title"] = title

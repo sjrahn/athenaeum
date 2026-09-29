@@ -35,6 +35,9 @@ normalization:
     After draft, a claude-session record carries one `<!--section-->` per
     user-message boundary (`address: turn=<N>`) and 1+ `<!--segment-->` children
     per section (atom `text` or `image`, addressed `jsonpath=<expr>&line=<N>`).
+    The draft's openers name no form — they are grouping scaffolding, and a rendering
+    under them is not yet a finished shape: the normalize pass names the form (a session
+    is a `conversation`) on each, or `compile` refuses the rebuild (spec §4.1, v50).
 
     **There is no narrative summary to author.** A record's display `description`
     is derived, never authored (spec §4.2.3) — there is no frontmatter field this

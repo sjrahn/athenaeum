@@ -184,6 +184,39 @@ def run(args: argparse.Namespace) -> int:
                     return 1
                 exit_code = 1
 
+    # The form gate (v50, §4.1/§7.8). A stored rendering of text the artifact itself carries
+    # rides a named form, so a pass may not leave a document-shaped content zone that no form
+    # governs: name the form, or store no rendering and leave the record proxy. Every compile
+    # is a new pass, so a grandfathered `rendered` record exits here too — it reads tolerantly,
+    # but it does not survive a pass unchanged. `--out` is exempt: nothing authored is written.
+    if out is None and records.is_document_shaped(rebuilt):
+        print(
+            f"  {'would refuse' if dry_run else 'REFUSING'}: the rebuild leaves a document-"
+            f"shaped content zone with no form (spec §4.1, §7.8) — wrap the rendering in "
+            f"`<!--section <form-id>-->` for the form it follows, or drop the stored "
+            f"rendering and leave the record proxy (a terminal contract, if the artifact is "
+            f"its own representation). Sparse extraction (text/ocr, text/transcript, any text "
+            f"of an image/video/audio) and one whole-transport segment need no form.",
+            file=sys.stderr,
+        )
+        if not dry_run:
+            return 1
+        exit_code = 1
+
+    # A section opener with no form id governs nothing (§4.3.2.1): the 2.x TOC grouping, read
+    # tolerantly where it already stands, but never new — a pass that writes one has almost
+    # always dropped the form id it meant (one normalize eval lost `statement` that way).
+    if out is None:
+        was = records.bare_section_count(records.loads(base_text)) if base_text else 0
+        now = records.bare_section_count(rebuilt)
+        if now > was:
+            print(
+                f"  warning: this rebuild adds {now - was} section opener(s) with no form id "
+                f"(`<!--section-->`) — name the form each span follows "
+                f"(`<!--section <form-id>-->`).",
+                file=sys.stderr,
+            )
+
     if dry_run:
         live_text = target.read_text(encoding="utf-8") if target.exists() else ""
         diff = list(

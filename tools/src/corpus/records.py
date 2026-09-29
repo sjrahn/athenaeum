@@ -1936,6 +1936,63 @@ def has_stored_rendering(post: frontmatter.Post) -> bool:
     return False
 
 
+# The extraction kinds a pass may leave on a formless record (§4.3.2.2, §4.3.3.6): what they
+# carry is read out of pixels or sound — no derivation op produces it — so storing it restates
+# nothing the resolver already derives.
+SPARSE_EXTRACTION_KINDS = frozenset({"text/ocr", "text/transcript"})
+# Media whose every text rendering is extraction: an image, a video, a sound carries no text of
+# its own for the resolver to derive.
+_EXTRACTION_MEDIA = ("image/", "video/", "audio/")
+
+
+def is_document_shaped(post: frontmatter.Post) -> bool:
+    """*(v50)* True when the record stores a **document-shaped** content zone that no form
+    section governs (spec §4.1, §7.8) — the shape a normalize pass may not leave behind
+    (`compile`, and `finalize`'s pass gate, §8.5).
+
+    A formless record's content zone is document-shaped when some body-bearing text segment
+    restates text the artifact itself carries — anything but the two shapes that are
+    extraction rather than rendering: **sparse extraction** (§4.3.2.2) — every text segment
+    of an image/video/audio artifact, and the sweepable kinds (`SPARSE_EXTRACTION_KINDS`) on
+    any artifact — and a **single whole-transport segment** (an absent address: a promoted
+    member's own rendering, a table image rendered whole). A formed record is never
+    document-shaped: its formless segments are the mixed-artifact case (§4.3.2.1).
+    Parse-tolerant, like `is_formed`."""
+    from . import segments as _segments
+
+    if is_formed(post):
+        return False
+    try:
+        blocks = _segments.iter_blocks(post.content or "")
+    except Exception:
+        return False
+    segs = [
+        s
+        for b in blocks
+        for s in (b.segments if isinstance(b, _segments.Section) else [b])
+        if isinstance(s, _segments.Segment) and s.is_content
+    ]
+    if len(segs) == 1 and segs[0].address is None:
+        return False
+    if media_type_for(post).startswith(_EXTRACTION_MEDIA):
+        return False
+    return any(
+        s.atom == "text" and s.body and s.overlay not in SPARSE_EXTRACTION_KINDS for s in segs
+    )
+
+
+def bare_section_count(post: frontmatter.Post) -> int:
+    """Section openers that name no form (`<!--section-->`): the 2.x TOC grouping, read
+    tolerantly, governing nothing (§4.3.2.1). Parse-tolerant."""
+    from . import segments as _segments
+
+    try:
+        blocks = _segments.iter_blocks(post.content or "")
+    except Exception:
+        return 0
+    return sum(1 for b in blocks if isinstance(b, _segments.Section) and not b.form)
+
+
 def derived_state(post: frontmatter.Post, corpus_root: Path | None = None) -> str:
     """The record's derived layer state (spec §4.1) — one of:
 

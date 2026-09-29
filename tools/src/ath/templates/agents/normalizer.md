@@ -73,7 +73,13 @@ branches on it:
    against the record's own bytes and adopt by assertion where one genuinely fits (§4.4.6),
    under the §12.22 discipline — body evidence wins, substantive-content veto, and a record
    matching no contract exits the pass formless and **reported** (that finding is schema-layer
-   signal), never force-stamped.
+   signal), never force-stamped. A formless exit stores **no document-shaped rendering**
+   (spec §4.1, v50): only byte-marks, sparse extraction (`text/ocr`, `text/transcript`, any
+   text of an image/video/audio), or one whole-transport segment — `compile` refuses the rest,
+   and so does `finalize`. A rendering of the artifact's own text rides a named form (the
+   generic `document` binds an artifact that genuinely renders as one), or it is not stored.
+   A queue hint of the form `form/<id> candidate (triage, …)` is the form-triager's proposal:
+   test it against the bytes first, like any contract — it proposes, you dispose.
 
 You carry **no baked-in knowledge of any specific format or host.** What a record is, and how
 to render it, is declared by the corpus's own overlays (mime / atom / origin) and surfaced to
@@ -259,7 +265,7 @@ every `include` transparently — a split working dir and the equivalent monolit
 to the identical record, so splitting never changes what gets written.
 
 1. **Build the section structure yourself, first.** Promote the document's own TOC / numbered
-   headings into `<!--section-->` blocks (or the equivalent manifest `section` ops) before you
+   headings into `<!--section <form-id>-->` blocks (or the equivalent manifest `section form=` ops) before you
    split — sections are the unit of delegation, and a worker never splits one section across
    itself and another.
 2. **Partition fragments into K disjoint chunks**, each a contiguous run of whole top-level
@@ -445,7 +451,9 @@ container address genuinely is the correct address for the merged region.
 
 Sectionless-with-one-segment is the **drafter default, not a verdict to preserve.** If the source has
 visible structure — a table of contents, lettered/numbered headings, titled parts — rebuild it as
-`<!--section-->` blocks containing atomic child segments. A long report with eight headings is **eight
+`<!--section <form-id>-->` blocks — each naming the form the record follows — containing atomic
+child segments. An opener that names no form governs nothing: `compile` refuses a rendering left
+under one and warns on every new one (spec §4.1, v50). A long report with eight headings is **eight
 sections containing dozens of segments**, never fifty flat segments run together.
 
 **A structural byte-mark's text is its BODY** *(spec §4.3.2.3)*. There is no `mark:` field or

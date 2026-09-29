@@ -64,7 +64,7 @@ normalization:
 
     ## Sections — heading-driven grouping (SPECv2 §4.3)
 
-    A docx body's top-level blocks are sections, one per top-level heading (a paragraph whose style is `Heading1` / `SDMHead1`, or which carries `outlineLvl 0`) — each a BARE `<!--section-->` opener, its envelope derived from its children, never stored (spec §4.3.2.1). The drafter's first-pass output still writes the heading text as a section-level `entry:` (residue, see above); the normalize pass converts it to the section's opening structural mark instead — `<!--segment structural addr=block=<N> level=1-->`, body = the heading text verbatim.
+    A docx body's top-level blocks are sections, one per top-level heading (a paragraph whose style is `Heading1` / `SDMHead1`, or which carries `outlineLvl 0`) — each a `<!--section <form-id>-->` span naming the form the document follows (the generic `document` where no specific one fits; `document` declares no fields, so its opener carries nothing else), its envelope derived from its children, never stored (spec §4.3.2.1). An opener that names no form governs nothing: `compile` refuses a rendering left under one (spec §4.1, v50). The drafter's first-pass output still writes the heading text as a section-level `entry:` (residue, see above); the normalize pass converts it to the section's opening structural mark instead — `<!--segment structural addr=block=<N> level=1-->`, body = the heading text verbatim.
 
     A synthetic `Preamble` section (no structural mark, since there is no heading to transcribe) wraps content before the first top-level heading — the cover/title block (which lives inside `<w:sdt>` content controls the drafter unwraps: document-class label, title, version line, "Sectoral scope(s):") and the table of contents. Sub-headings (level ≥2) render as markdown `##`/`###` inside the section they belong to, not as their own sections.
 
@@ -85,7 +85,7 @@ normalization:
 
     ## Reading the drafter's signals
 
-    - Each `<!--section-->` opens with a `<!--segment structural-->` mark carrying the document's own heading text verbatim as its body (never an `entry:` field, retired 3.5). The section's `atom: text` child segment carries the rendered markdown.
+    - Each section opens with a `<!--segment structural-->` mark carrying the document's own heading text verbatim as its body (never an `entry:` field, retired 3.5). The section's `atom: text` child segment carries the rendered markdown.
     - The body markdown already promotes the document's heading hierarchy (`##` for sub-headings within a section), renders paragraphs as prose (one paragraph per markdown block, internal tabs/line-breaks collapsed to spaces), and renders tables as GitHub-flavored markdown.
     - Frontmatter `page_count` is the **last-saved page count from `docProps/app.xml`** — a soft render-time value, not a structural axis. `word_count` is likewise app.xml's count. Don't treat either as authoritative document structure.
 

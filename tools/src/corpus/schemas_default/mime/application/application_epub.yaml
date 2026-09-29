@@ -65,7 +65,10 @@ normalization:
     with a mechanically-cleaned structural-HTML body (headings, prose, lists, tables; non-
     rendered infrastructure stripped), grouped into `<!--section-->` blocks along the book's
     navigation document. Each `<img>` is kept as a src-stripped `<img data-el="K">`
-    placeholder and rostered as a `<!--members-->` row.
+    placeholder and rostered as a `<!--members-->` row. The drafter's section openers name
+    no form — grouping scaffolding: the normalize pass names the form the book follows on
+    each (the generic `document` where no specific one fits), or `compile` refuses the
+    rebuild (spec §4.1, v50).
 
     The body is already faithful cleaned HTML. Don't re-extract from the artifact with an
     external EPUB tool and call it done — you'd be at parity with the drafter. Your work is

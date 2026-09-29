@@ -64,7 +64,9 @@ def _record(root: Path, *, legacy: bool = False) -> Path:
         )
     post.content = segments.emit(
         [
+            # A PDF rendering rides a named form (v50, §4.1) — else compile refuses it.
             segments.Section(
+                form="document",
                 address="pages=1-2",
                 segments=[
                     segments.Segment(atom="text", address="page=1", body="One."),
