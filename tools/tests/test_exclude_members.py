@@ -514,12 +514,15 @@ def test_export_diff_excludes_from_both_sides(tmp_path):
     assert "NOT resolved" not in rendered
 
 
-def test_export_diff_without_corpus_root_measures_raw_churn(tmp_path):
+def test_export_diff_without_corpus_root_measures_raw_churn(tmp_path, monkeypatch):
     """The negative control preserving export-diff's pre-v37 behavior: with no
     `--corpus-root`/`--origin` resolved (exclude=None), a Spam-only member shows as raw
     only-A churn instead of being reconciled away — and the report/rendered text say so
     explicitly (measurement-honesty: "0 excluded, nothing matched" must never read the
     same as "0 excluded, exclusion never even checked")."""
+    # "No corpus reachable" must hold even when the gates run with a live instance exported.
+    monkeypatch.delenv("ATHENAEUM_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
     common = _msg("common", labels="Inbox")
     spam_only_a = _msg("spamA", labels="Spam")
     a = _mbox(tmp_path, "a.mbox", common, spam_only_a)

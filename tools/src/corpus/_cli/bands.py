@@ -11,7 +11,11 @@ pages that matter most.
     corpus bands <record> --rows 19    print the page's measured rows and gaps
 
 `cuts` findings are hard defects: a band edge slicing through a line of text, so
-neither crop renders a readable sentence. `drift` findings mean the band carries
+neither crop renders a readable sentence. Each edge is measured across its OWN band's
+x-range, column by column, under the local paper tone — so a two-column page, a scan's
+box rules and show-through, and a full-bleed photograph no longer report phantom cuts. An
+edge over unbroken ink (a picture, a background), or across drawing strokes no text-layer
+word spans, reports as `opaque`: nothing to measure, never a cut. `drift` findings mean the band carries
 whitespace well beyond its ink — usually a band that includes running chrome, or
 one that has slid off its content.
 """
@@ -55,19 +59,23 @@ def run(args: argparse.Namespace) -> int:
     record_id, record_file = paths.resolve_record(corpus_root, args.record)
     text = Path(record_file).read_text(encoding="utf-8")
 
-    cache: dict[int, list] = {}
+    inks: dict[int, _bands.PageInk | None] = {}
 
-    def rows_for_page(page: int) -> list:
-        if page not in cache:
+    def page_ink(page: int) -> _bands.PageInk | None:
+        if page not in inks:
             try:
                 # No fit=: native resolution measures ink boundaries more precisely
                 # than a downscaled preview would.
                 rendered = resolver.resolve(f"corpus://{record_id}?page={page}", corpus_root)
-                cache[page] = _bands.ink_rows(rendered)
+                inks[page] = _bands.PageInk(rendered)
             except Exception as exc:
                 log.warning("page %d did not render (%s); skipping", page, exc)
-                cache[page] = []
-        return cache[page]
+                inks[page] = None
+        return inks[page]
+
+    def rows_for_page(page: int) -> list:
+        ink = page_ink(page)
+        return ink.rows() if ink is not None else []
 
     if args.rows is not None:
         rows = rows_for_page(args.rows)
@@ -79,16 +87,17 @@ def run(args: argparse.Namespace) -> int:
             prev = row.bottom
         return 0
 
-    found: list[tuple[int, float, float, int]] = []
+    found: list[tuple[int, float, float, int, float, float]] = []
     all_pages: set[int] = set()
     for m in _BBOX_RE.finditer(text):
         page = int(m.group(1))
         all_pages.add(page)
         if args.page is not None and page != args.page:
             continue
-        top = float(m.group(3))
+        left, top = float(m.group(2)), float(m.group(3))
         found.append((page, round(top, 4), round(top + float(m.group(5)), 4),
-                      text[: m.start()].count("\n") + 1))
+                      text[: m.start()].count("\n") + 1,
+                      round(left, 4), round(min(1.0, left + float(m.group(4))), 4)))
     if not found:
         print("no bbox bands to audit.")
         return 0
@@ -103,17 +112,31 @@ def run(args: argparse.Namespace) -> int:
     # the code disagreed.
     chrome_pages = {p: rows_for_page(p) for p in sorted(all_pages)}
     chrome = _bands.detect_chrome(chrome_pages)
-    rows_by_page = {p: chrome_pages[p] for p, _, _, _ in found}
+    rows_by_page = {p: chrome_pages[p] for p, *_ in found}
 
-    findings = _bands.audit_bands(found, rows_for_page, chrome=chrome)
+    # The text layer confirms each raster cut (a stroke of a drawing is not a line of text);
+    # a record whose bytes do not open as a PDF is audited on the raster alone.
+    layer = None
+    try:
+        from corpus.containment import ensure_local_bytes
+
+        layer = _bands.TextLayer(ensure_local_bytes(corpus_root, record_id, "pdf"))
+    except Exception as exc:
+        log.warning("no text layer to confirm cuts against (%s); raster only", exc)
+    findings = _bands.audit_bands(
+        found, rows_for_page, chrome=chrome, page_ink=page_ink,
+        page_words=layer.words if layer is not None else None,
+    )
     missing = _bands.uncovered(found, rows_by_page, chrome)
 
     cuts = [f for f in findings if f.kind == "cuts"]
+    opaque = [f for f in findings if f.kind == "opaque"]
     swallowed = [f for f in findings if f.kind == "chrome"]
     drifts = [f for f in findings if f.kind == "drift"]
     print(f"{record_id[:12]}  {len(found)} band(s), "
           f"{len(cuts)} cutting a text row, {len(swallowed)} swallowing chrome, "
-          f"{len(drifts)} drifted, {len(missing)} content row(s) uncovered")
+          f"{len(drifts)} drifted, {len(missing)} content row(s) uncovered, "
+          f"{len(opaque)} edge(s) over non-text ink")
     scope = (
         f"{len(chrome_pages)} rendered page(s)"
         if args.page is None

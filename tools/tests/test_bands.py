@@ -56,7 +56,7 @@ def test_ink_rows_blank_page_no_rows(tmp_path):
 
 
 def test_ink_rows_is_pillow_only():
-    """No numpy import anywhere in the module — Pillow getextrema() only."""
+    """No numpy import anywhere in the module — Pillow projections only."""
     import corpus.bands as bands_mod
 
     src = Path(bands_mod.__file__).read_text(encoding="utf-8")
@@ -153,3 +153,137 @@ def test_snap_finds_nearest_gap_midpoint(tmp_path):
 
 def test_snap_no_gap_returns_none():
     assert snap(0.5, [Row(0.1, 0.2)]) is None
+
+
+# ---------- PageInk: the three false-positive modes (arbre-ath-steven's PDF eval) ---------- #
+
+from corpus.bands import PageInk  # noqa: E402
+
+PW, PH = 800, 1000
+
+
+def _page(tmp_path: Path, name: str, paint) -> PageInk:
+    im = Image.new("L", (PW, PH), color=255)
+    paint(ImageDraw.Draw(im))
+    path = tmp_path / name
+    im.save(path)
+    return PageInk(path)
+
+
+def _lines(draw, x0: int, x1: int, tops: list[int], h: int = 12, fill: int = 0) -> None:
+    for t in tops:
+        draw.rectangle([x0, t, x1, t + h - 1], fill=fill)
+
+
+def test_a_full_bleed_picture_is_never_a_cut(tmp_path):
+    """e00c8dfa: the whole page inked, so every band edge measured inside one row [0, 1]."""
+    def paint(d):
+        d.rectangle([0, 0, PW - 1, PH - 1], fill=90)
+        for y in range(0, PH, 3):  # photographic texture: no blank scanline anywhere
+            d.line([(0, y), (PW - 1, y)], fill=60)
+    ink = _page(tmp_path, "bleed.png", paint)
+    for edge in (0.1, 0.33, 0.5, 0.77):
+        hit = ink.edge_cut(edge, 0.05, 0.95)
+        assert hit is None or hit[0] == "opaque"
+
+
+def test_box_rules_and_show_through_do_not_merge_a_scan_into_one_row(tmp_path):
+    """f1452162: a box's vertical rules ink every scanline they cross, and the reverse side's
+    show-through lands as sparse specks — together they merged [0.12, 0.65] into one row."""
+    def paint(d):
+        d.rectangle([0, 0, PW - 1, PH - 1], fill=236)  # scan paper tone
+        d.line([(40, 120), (40, 650)], fill=0, width=3)  # box rules
+        d.line([(760, 120), (760, 650)], fill=0, width=3)
+        _lines(d, 80, 700, [200, 230, 260, 400, 430])
+        for y in range(120, 650, 4):  # show-through specks, a pixel or two per scanline
+            d.point([(300 + (y * 7) % 300, y)], fill=100)
+    ink = _page(tmp_path, "scan.png", paint)
+    rows = ink.rows(0.0, 1.0)
+    assert all(r.height < 0.1 for r in rows), rows
+    assert ink.edge_cut(0.33, 0.04, 0.96) is None  # the gap between two paragraphs
+    hit = ink.edge_cut(0.236, 0.04, 0.96)  # through the second line
+    assert hit is not None and hit[0] == "cuts"
+
+
+def test_a_band_is_measured_against_its_own_column(tmp_path):
+    """e84ada4d: the right column's lines fill the left column's gaps; a left-column band's
+    edge in its own paragraph gap measured as inside a merged row [0.286, 0.49]."""
+    def paint(d):
+        _lines(d, 40, 370, [300, 320, 340, 400, 420])  # left: paragraph, gap, paragraph
+        _lines(d, 430, 760, [300, 320, 340, 360, 380, 400, 420])  # right: unbroken
+    ink = _page(tmp_path, "cols.png", paint)
+    assert ink.edge_cut(0.37, 0.04, 0.47) is None  # the left column's own gap
+    hit = ink.edge_cut(0.37, 0.04, 0.96)  # a full-width band DOES cut the right column
+    assert hit is not None and hit[0] == "cuts" and hit[2][0] > 0.5
+
+
+def test_light_text_on_a_dark_panel_is_measured_under_the_panels_tone(tmp_path):
+    """e00c8dfa p2: a dark panel on a white page — under the page's tone the whole panel is
+    ink; under its own it is light text with gaps."""
+    def paint(d):
+        d.rectangle([0, 300, PW - 1, 700], fill=15)
+        _lines(d, 60, 700, [400, 420, 500, 520], fill=240)
+    ink = _page(tmp_path, "panel.png", paint)
+    assert ink.edge_cut(0.46, 0.05, 0.9) is None
+    hit = ink.edge_cut(0.405, 0.05, 0.9)
+    assert hit is not None and hit[0] == "cuts"
+
+
+def test_audit_bands_measures_each_band_in_its_own_x_range(tmp_path):
+    def paint(d):
+        _lines(d, 40, 370, [300, 320, 340, 400, 420])
+        _lines(d, 430, 760, [300, 320, 340, 360, 380, 400, 420])
+    ink = _page(tmp_path, "cols2.png", paint)
+    left = (1, 0.29, 0.37, 7, 0.04, 0.47)
+    wide = (1, 0.29, 0.37, 9, 0.04, 0.96)
+    found = audit_bands([left, wide], lambda p: ink.rows(), page_ink=lambda p: ink)
+    assert [f.line for f in found if f.kind == "cuts"] == [9]
+
+
+def test_an_edge_along_a_horizontal_rule_cuts_nothing(tmp_path):
+    def paint(d):
+        _lines(d, 40, 760, [300, 320])
+        d.rectangle([40, 400, 760, 401], fill=0)  # a 2px table rule
+        _lines(d, 40, 760, [480, 500])
+    ink = _page(tmp_path, "rule.png", paint)
+    assert ink.edge_cut(0.4005, 0.04, 0.96) is None
+
+
+# ---------- text-layer confirmation (v50 validation: vector line-art labels) ---------- #
+
+from corpus.bands import confirm_cut  # noqa: E402
+
+
+def _word(text, x, y, w, h):
+    return {"text": text, "bbox": [x, y, w, h]}
+
+
+def test_a_raster_cut_no_word_spans_is_drawing_ink():
+    """An assembly diagram's label band: strokes around the label merge into one tall 'row'
+    the edge crosses, but the label's own word sits wholly inside the band."""
+    hit = ("cuts", Row(0.11, 0.21), (0.26, 0.32))
+    words = [_word("AAA", 0.264, 0.164, 0.055, 0.043)]
+    assert confirm_cut(hit, words, 0.162, 0.261, 0.321)[0] == "opaque"
+
+
+def test_a_raster_cut_a_word_spans_stands():
+    hit = ("cuts", Row(0.13, 0.20), (0.585, 0.675))
+    words = [_word("4x", 0.595, 0.144, 0.07, 0.055)]
+    assert confirm_cut(hit, words, 0.183, 0.585, 0.675) == hit
+
+
+def test_a_page_with_no_text_layer_keeps_the_rasters_verdict():
+    hit = ("cuts", Row(0.1, 0.2), (0.0, 1.0))
+    assert confirm_cut(hit, [], 0.15, 0.0, 1.0) == hit
+    assert confirm_cut(None, [], 0.15, 0.0, 1.0) is None
+
+
+def test_an_edge_grazing_a_words_rim_is_a_cut_but_a_clear_label_band_is_not():
+    """The two cases that size WORD_GRAZE_FRAC: an edge 0.0002 inside an `A₀` box (math ink
+    reaches past the box) confirms; a label band drawn 0.002 clear of its word does not."""
+    hit = ("cuts", Row(0.757, 0.781), (0.53, 0.93))
+    assert confirm_cut(hit, [_word("A0", 0.60, 0.7698, 0.02, 0.0104)], 0.77, 0.51, 0.93) == hit
+    label = ("cuts", Row(0.11, 0.21), (0.26, 0.32))
+    words = [_word("AAA", 0.264, 0.164, 0.055, 0.043)]
+    assert confirm_cut(label, words, 0.162, 0.261, 0.321)[0] == "opaque"
+    assert confirm_cut(label, words, 0.21, 0.261, 0.321)[0] == "opaque"

@@ -20,6 +20,7 @@ Reconciliations applied:
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -2399,6 +2400,264 @@ def _rule_body_unknown_comment(post, blocks, root) -> Iterator[Finding]:
 # ---------- 3.0 byte-mark + form-coherence rules (§4.3.2.1, §4.3.2.3, §7.8) ---------- #
 
 
+# ---------- normalize-quality warnings (arbre-ath-steven's PDF eval, 2026-09-28) ---------- #
+#
+# Five defects a 96-run normalize eval found in weak output that every existing gate passed.
+# All warnings: each separated weak output from good in the eval, and each is calibrated
+# against the live fleet below, but none is a conformance fact the spec states — a warning
+# is the honest severity for a quality signal. Scoped by where the defect can occur:
+# `_LAYOUT_MEDIA` is text the pass RECONSTRUCTS from a layout (a PDF's positioned glyphs, an
+# image's pixels), where a trailing space or a column-width line break is residue of the
+# reconstruction; in a text-native source (a message, a vCard, code) the same characters
+# are the source's own, and faithful.
+
+
+def _layout_media(post) -> bool:
+    mt = _records.media_type_for(post) or ""
+    return mt == "application/pdf" or mt.startswith("image/")
+
+
+_FENCE_LINE_RE = re.compile(r"^\s*(```|~~~)")
+# Overlays whose line structure is the source's own, never a layout's.
+_LINE_NATIVE_OVERLAYS = frozenset(
+    {"text/code", "text/ocr", "text/data-table", "text/transcript", "text/message"}
+)
+
+
+def _prose_lines(body: str) -> list[str]:
+    """The body's lines outside fenced code."""
+    out: list[str] = []
+    inside = False
+    for line in body.split("\n"):
+        if _FENCE_LINE_RE.match(line):
+            inside = not inside
+            continue
+        if not inside:
+            out.append(line)
+    return out
+
+
+_TRAILING_WS_RE = re.compile(r"[ \t]+$")
+
+
+def _rule_body_trailing_whitespace(post, blocks, root) -> Iterator[Finding]:
+    """Lines of a layout-derived body that end in spaces or tabs — residue of the text layer
+    or the drafter, which a finished rendering does not carry (the eval: a mean of 20 such
+    lines per record in one arm, 0-1 in the arms that checked)."""
+    if not _layout_media(post):
+        return
+    for seg in _iter_all_segments(blocks):
+        if seg.atom != "text" or not seg.body or seg.overlay == "text/code":
+            continue
+        n = sum(1 for line in _prose_lines(seg.body) if _TRAILING_WS_RE.search(line))
+        if n:
+            yield Finding(
+                rule_id="body-trailing-whitespace",
+                severity="warning",
+                message=f"{n} line(s) end in trailing whitespace — strip it.",
+                address=_addr_str(seg.address),
+                fields={"lines": n},
+            )
+
+
+_LIST_ITEM_RE = re.compile(r"^\s*([-*+]|\d+[.)]|[a-z][.)])\s")
+_WRAP_END_RE = re.compile(r"[a-z,;]$")
+_WRAP_START_RE = re.compile(r"^[a-z]")
+# A column wrap breaks a line that ran to the column's width; a short line broken before a
+# lowercase one is a label, a logo lockup, or a contact block — the page's own lines.
+_WRAP_MIN_CHARS = 40
+
+
+def _rule_body_hard_wrap(post, blocks, root) -> Iterator[Finding]:
+    """A prose line ending mid-sentence (`[a-z,;]`) followed by a line starting lowercase: the
+    column-width wrap of the PDF text layer, which the drafter keeps verbatim and the normalize
+    pass reflows (the PDF schema's own guidance calls it drafter residue). PDF bodies only, and
+    never tables, lists, headings, quotes, an indented continuation, or a line too short to
+    have reached a column's width."""
+    if (_records.media_type_for(post) or "") != "application/pdf":
+        return
+    for seg in _iter_all_segments(blocks):
+        if seg.atom != "text" or not seg.body or seg.overlay in _LINE_NATIVE_OVERLAYS:
+            continue
+        lines = _prose_lines(seg.body)
+        n = 0
+        for a, b in itertools.pairwise(lines):
+            if a.lstrip().startswith(("|", "#", ">")) or b.lstrip().startswith("|"):
+                continue
+            if _LIST_ITEM_RE.match(b) or b[:1] in (" ", "\t"):
+                continue
+            if len(a.strip()) < _WRAP_MIN_CHARS:
+                continue
+            if _WRAP_END_RE.search(a) and _WRAP_START_RE.match(b):
+                n += 1
+        if n:
+            yield Finding(
+                rule_id="body-hard-wrap",
+                severity="warning",
+                message=(
+                    f"{n} mid-sentence line break(s) — the text layer's column wrap survives; "
+                    f"reflow the prose."
+                ),
+                address=_addr_str(seg.address),
+                fields={"wraps": n},
+            )
+
+
+# Three or more asterisks straight onto a digit, none escaped: a masked account number
+# (`****1234`) that markdown reads as emphasis and renders as a bold/italic `1234`.
+_MASKED_DIGITS_RE = re.compile(r"(?<![\\*])\*{3,}(?=\d)")
+_INLINE_CODE_RE = re.compile(r"`[^`]*`")
+
+
+def _rule_body_masked_digits_unescaped(post, blocks, root) -> Iterator[Finding]:
+    """A masked number written `****1234` renders as emphasis, not as the asterisks the source
+    prints; the faithful rendering escapes them (`\\*\\*\\*\\*1234`)."""
+    for seg in _iter_all_segments(blocks):
+        if seg.atom != "text" or not seg.body or seg.overlay == "text/code":
+            continue
+        n = sum(
+            len(_MASKED_DIGITS_RE.findall(_INLINE_CODE_RE.sub("", line)))
+            for line in _prose_lines(seg.body)
+        )
+        if n:
+            yield Finding(
+                rule_id="body-masked-digits-unescaped",
+                severity="warning",
+                message=(
+                    f"{n} masked number(s) written `****<digits>` unescaped — markdown renders "
+                    f"them as emphasis; escape each asterisk (`\\*`)."
+                ),
+                address=_addr_str(seg.address),
+                fields={"count": n},
+            )
+
+
+# A body this long repeated elsewhere in the same record is not a coincidence of boilerplate.
+_DUPLICATE_MIN_CHARS = 200
+_DUPLICATE_JACCARD = 0.9
+
+
+def _shingles(text: str, k: int = 5) -> set[tuple[str, ...]]:
+    words = re.findall(r"\w+", text.lower())
+    return {tuple(words[i : i + k]) for i in range(max(1, len(words) - k + 1))}
+
+
+class _SourceRepeats:
+    """Whether two PDF regions' own text layers carry the same words — a source that prints
+    one table or header strip on several pages (arbre-ath-steven's v50 validation: a
+    deployment table on pages 2 and 6, a header strip on pages 3, 5 and 7). Opened lazily,
+    only once a duplicate is found; no PDF, no bytes, or no text layer answers False, and
+    the warning stands."""
+
+    MIN_TOKENS = 10
+    SAME = 0.8
+
+    def __init__(self, post, root) -> None:
+        self._post, self._root, self._doc, self._tried = post, root, None, False
+
+    def repeats(self, a, b) -> bool:
+        if (_records.media_type_for(self._post) or "") != "application/pdf":
+            return False
+        if not self._tried:
+            self._tried = True
+            try:
+                import pypdfium2 as pdfium
+
+                from corpus.containment import ensure_local_bytes
+
+                rid = str(self._post.metadata.get("id") or "")
+                self._doc = pdfium.PdfDocument(str(ensure_local_bytes(self._root, rid, "pdf")))
+            except Exception:
+                self._doc = None
+        if self._doc is None:
+            return False
+        from corpus import coverage as _coverage
+
+        ta, tb = _coverage.region_tokens(self._doc, a), _coverage.region_tokens(self._doc, b)
+        if not ta or not tb or min(len(ta), len(tb)) < self.MIN_TOKENS:
+            return False
+        return len(ta & tb) / len(ta | tb) >= self.SAME
+
+
+def _rule_segment_body_duplicated(post, blocks, root) -> Iterator[Finding]:
+    """A segment body (near-)identical to another's in the same layout-derived record — one
+    region's rendering written over another's. The eval's one critical failure: page 3's fine
+    print replaced by a copy of page 1's transaction table, reported as "reflowed". (A text-
+    native source legitimately repeats itself — a resent message — so it is out of scope; so
+    does a PDF that prints one table twice, which `_SourceRepeats` reads off the text layer.)"""
+    if not _layout_media(post):
+        return
+    source = _SourceRepeats(post, root)
+    seen: list[tuple[Any, str, set]] = []
+    for seg in _iter_all_segments(blocks):
+        if seg.atom != "text" or not seg.body:
+            continue
+        norm = " ".join(seg.body.split())
+        if len(norm) < _DUPLICATE_MIN_CHARS:
+            continue
+        sh = _shingles(norm)
+        for other, other_norm, other_sh in seen:
+            if min(len(norm), len(other_norm)) / max(len(norm), len(other_norm)) < 0.8:
+                continue
+            union = len(sh | other_sh)
+            if norm == other_norm or (union and len(sh & other_sh) / union >= _DUPLICATE_JACCARD):
+                if source.repeats(seg.address, other.address):
+                    continue  # the source prints it twice; the rendering is faithful
+                yield Finding(
+                    rule_id="segment-body-duplicated",
+                    severity="warning",
+                    message=(
+                        f"body repeats the body at {_addr_str(other.address)} "
+                        f"({'identical' if norm == other_norm else 'near-identical'}) — "
+                        f"check each region's rendering against its own page."
+                    ),
+                    address=_addr_str(seg.address),
+                    fields={"duplicate_of": _addr_str(other.address)},
+                )
+                break
+        seen.append((seg, norm, sh))
+
+
+# Share of a born-digital page's addressed text layer a rendering must carry before it is
+# not worth a look. Generous — a faithful rendering loses words to hyphenation and LaTeX —
+# and calibrated against the fleet (see `corpus.coverage`).
+PAGE_COVERAGE_MIN = 0.5
+
+
+def _rule_segment_page_coverage(post, blocks, root) -> Iterator[Finding]:
+    """A born-digital PDF page whose addressed text layer the record's segments mostly do not
+    render (`corpus.coverage`). Reads artifact bytes, artifact-optional like the link gate: no
+    bytes, no finding."""
+    if (_records.media_type_for(post) or "") != "application/pdf":
+        return
+    record_id = str(post.metadata.get("id") or "")
+    segs = [s for s in _iter_all_segments(blocks) if s.atom == "text" and s.body]
+    if not record_id or not segs:
+        return
+    from corpus import coverage as _coverage
+    from corpus.containment import ensure_local_bytes
+
+    try:
+        pdf = ensure_local_bytes(root, record_id, "pdf")
+        pages = _coverage.page_coverage(segs, pdf)
+    except Exception:
+        return
+    for pc in pages:
+        if pc.coverage < PAGE_COVERAGE_MIN:
+            yield Finding(
+                rule_id="segment-page-coverage",
+                severity="warning",
+                message=(
+                    f"page {pc.page}: the segments render {pc.coverage:.0%} of the "
+                    f"{pc.tokens} distinct words its addressed text layer carries "
+                    f"(missing e.g. {', '.join(pc.missing[:6])}) — check the page's "
+                    f"rendering against the page."
+                ),
+                address=f"page={pc.page}",
+                fields={"page": pc.page, "coverage": pc.coverage, "tokens": pc.tokens},
+            )
+
+
 def _iter_all_segments(blocks):
     """Yield every segment (top-level and in-section), in reading order."""
     for blk in blocks:
@@ -2865,6 +3124,12 @@ _REGISTRY: tuple[tuple[str, Any], ...] = (
     ("body-corpus-link-forbidden", _rule_body_corpus_link_forbidden),
     ("body-codefence-unbalanced", _rule_body_codefence_unbalanced),
     ("body-unknown-comment", _rule_body_unknown_comment),
+    # normalize-quality warnings (arbre-ath-steven's PDF eval, 2026-09-28).
+    ("body-trailing-whitespace", _rule_body_trailing_whitespace),
+    ("body-hard-wrap", _rule_body_hard_wrap),
+    ("body-masked-digits-unescaped", _rule_body_masked_digits_unescaped),
+    ("segment-body-duplicated", _rule_segment_body_duplicated),
+    ("segment-page-coverage", _rule_segment_page_coverage),
     # 3.0 byte-mark + form-coherence (§4.3.2.1, §4.3.2.3, §7.8).
     ("structural-level-invalid", _rule_structural_byte_mark),
     ("structural-mark-retired", _rule_structural_byte_mark),
@@ -2939,6 +3204,7 @@ FRAGMENT_RULES: tuple[str, ...] = (
     "body-corpus-link-forbidden",
     "body-codefence-unbalanced",
     "body-unknown-comment",
+    "body-masked-digits-unescaped",
 )
 
 
@@ -2969,6 +3235,81 @@ def lint(
         for finding in fn(post, blocks, corpus_root):
             if wanted is None or finding.rule_id in wanted:
                 out.append(finding)
+    return out
+
+
+# ---------- the band audit (opt-in with the resolve pass; renders pages) ---------- #
+
+_BAND_ADDR_RE = re.compile(r"(?:^|&)page=(\d+)&bbox=([\d.]+),([\d.]+),([\d.]+),([\d.]+)")
+
+
+def band_cuts(
+    post: frontmatter.Post,
+    blocks: list[_segments.Block],
+    corpus_root: Path,
+) -> list[Finding]:
+    """`bands-cut`: a stored `page=N&bbox=` band whose top or bottom edge slices a line of
+    text — `corpus bands`'s cut test (`bands.PageInk.edge_cut`: the band's own columns, under
+    the local paper tone, confirmed against the text layer where the page has one) as a lint
+    warning. Renders every banded page, so it rides the opt-in resolve pass rather than the
+    default gate; an edge over a picture, a background, or drawing strokes no word spans
+    (`opaque`) is never reported, and a page that does not render is silently skipped."""
+    from corpus import bands as _bands
+    from corpus import resolver as _resolver
+
+    record_id = str(post.metadata.get("id") or "")
+    if not record_id or (_records.media_type_for(post) or "") != "application/pdf":
+        return []
+    inks: dict[int, Any] = {}
+    out: list[Finding] = []
+    seen: set[tuple] = set()
+    try:
+        from corpus.containment import ensure_local_bytes
+
+        layer = _bands.TextLayer(ensure_local_bytes(corpus_root, record_id, "pdf"))
+    except Exception:
+        layer = None
+    for seg in _iter_all_segments(blocks):
+        addrs = seg.address if isinstance(seg.address, list) else [seg.address]
+        for addr in addrs:
+            m = _BAND_ADDR_RE.search(str(addr or ""))
+            if m is None:
+                continue
+            page = int(m.group(1))
+            x, y, w, h = (float(v) for v in m.groups()[1:])
+            if page not in inks:
+                try:
+                    rendered = _resolver.resolve(f"corpus://{record_id}?page={page}", corpus_root)
+                    inks[page] = _bands.PageInk(rendered)
+                except Exception:
+                    inks[page] = None
+            ink = inks[page]
+            if ink is None:
+                continue
+            for edge, which in ((round(y, 4), "top"), (round(y + h, 4), "bottom")):
+                key = (page, edge, x, w)
+                if not 0.0 < edge < 1.0 or key in seen:
+                    continue
+                seen.add(key)
+                hit = ink.edge_cut(edge, x, min(1.0, x + w))
+                if layer is not None:
+                    hit = _bands.confirm_cut(hit, layer.words(page), edge, x, min(1.0, x + w))
+                if hit is None or hit[0] != "cuts":
+                    continue
+                row = hit[1]
+                out.append(
+                    Finding(
+                        rule_id="bands-cut",
+                        severity="warning",
+                        message=(
+                            f"{which} edge {edge} of the band slices the text row "
+                            f"[{row.top}, {row.bottom}] — move it into the gap "
+                            f"(`corpus bands {record_id[:12]} --rows {page}`)."
+                        ),
+                        address=str(addr),
+                        fields={"page": page, "edge": edge, "row": [row.top, row.bottom]},
+                    )
+                )
     return out
 
 

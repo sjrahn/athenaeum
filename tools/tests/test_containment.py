@@ -116,6 +116,24 @@ def test_promoted_member_resolves_by_streaming(tmp_path):
     assert "cache" in out.parts
 
 
+def test_a_materialized_member_is_served_without_the_member_index(tmp_path, monkeypatch):
+    """A warm cache copy is authoritative (content-addressed bytes are immutable), so a
+    repeat lookup never pays the member index's walk over every record."""
+    root = _corpus(tmp_path)
+    payload = b"cached once, served after\n"
+    cid = _ingest_and_draft(root, _zip(tmp_path / "c.zip", {"note.txt": payload}))
+    assert _promote(root, f"corpus://{cid}?path=note.txt") == 0
+    pid = _b3(payload)
+    first = containment.ensure_local_bytes(root, pid, "txt")
+
+    def walk(*_a, **_k):
+        raise AssertionError("the member index was rebuilt for a cached member")
+
+    monkeypatch.setattr(containment, "build_member_index", walk)
+    assert containment.ensure_local_bytes(root, pid, "txt") == first
+    assert first.read_bytes() == payload
+
+
 def test_standalone_residence_wins_over_container(tmp_path):
     root = _corpus(tmp_path)
     payload = b"resident twice\n"

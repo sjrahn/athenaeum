@@ -377,6 +377,15 @@ def ensure_local_bytes(
     if located is not None:
         return located
 
+    # A member materialized before is in the resolver cache, and content-addressed bytes are
+    # immutable, so a warm file is authoritative (`_materialize_member`). Checking it BEFORE
+    # the member index is what makes a repeat lookup cheap: the index is one `load_all` over
+    # every record — seconds on a live corpus — and a promoted record needs it only to find
+    # its container, which a cached copy no longer needs.
+    cached = _member_cache_path(corpus_root, record_id, ext)
+    if cached.is_file():
+        return cached
+
     # No standalone file — resolve through the container. The member index is the ONLY route
     # (the promoted record's origin uri: is history, never consulted for lookup, §12.9).
     idx = member_index if member_index is not None else _member_index_for(corpus_root)

@@ -7,8 +7,8 @@ import dataclasses
 import json
 import sys
 
+from corpus import containment, paths, records, segments
 from corpus import lint as _lint
-from corpus import paths, records, segments
 from corpus._cli._common import add_corpus_root_arg, resolved_corpus_root
 
 
@@ -36,7 +36,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
             "resolve to nothing (`address-unresolvable` / `address-resolves-empty`). "
             "Reads artifact bytes and runs the render chain, so it is slower than the "
             "text-only rules — but it is the only mechanical proof that a stored "
-            "address points at real bytes. Run it after authoring any new address."
+            "address points at real bytes. Run it after authoring any new address. "
+            "Also renders every banded PDF page and warns on a band edge that slices "
+            "a line of text (`bands-cut`, the `corpus bands` cut test)."
         ),
     )
     add_corpus_root_arg(parser)
@@ -70,6 +72,7 @@ def _lint_one(root, record_id, record_file, *, json_out: bool = False, resolve: 
     findings = _lint.lint(post, blocks, root)
     if resolve:
         findings = findings + _lint.resolve_addresses(post, blocks, root)
+        findings = findings + _lint.band_cuts(post, blocks, root)
     if json_out:
         _dump_json(_payloads(record_id, findings))
         return 1 if any(f.severity == "error" for f in findings) else 0
@@ -90,6 +93,13 @@ def _lint_all(root, *, json_out: bool = False, resolve: bool = False) -> int:
     if not records_dir.is_dir():
         print("no records/ dir")
         return 0
+    # The byte-reading rules (address fidelity, page coverage) resolve promoted records
+    # through the member index; one build serves the whole sweep.
+    with containment.member_index_scope():
+        return _lint_sweep(root, json_out=json_out, resolve=resolve)
+
+
+def _lint_sweep(root, *, json_out: bool, resolve: bool) -> int:
     any_err = 0
     any_record = False
     all_payloads: list[dict] = []
@@ -101,6 +111,7 @@ def _lint_all(root, *, json_out: bool = False, resolve: bool = False) -> int:
             findings = _lint.lint(post, blocks, root)
             if resolve:
                 findings = findings + _lint.resolve_addresses(post, blocks, root)
+                findings = findings + _lint.band_cuts(post, blocks, root)
         except Exception as e:
             print(f"{md.stem}: ERROR loading: {e}", file=sys.stderr)
             any_err = 1
