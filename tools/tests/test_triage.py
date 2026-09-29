@@ -98,3 +98,26 @@ def test_a_packet_carries_the_opening_text_when_the_bytes_are_local(tmp_path, mo
     monkeypatch.setattr(containment, "ensure_local_bytes", lambda *a, **k: src)
     pk = triage.packet(records.load(_put(root, A)), root)
     assert pk["text"] == "Statement period Aug 1 - Aug 31 Opening balance $10.00"
+
+
+def test_field_rows_count_label_value_rows_however_the_page_builds_them(tmp_path):
+    """The triager read "no tables" on myRealPage listings whose facts are `<dl>`s — so the
+    packet counts label/value rows, not `<table>` tags."""
+    from bs4 import BeautifulSoup
+
+    def rows(html: str) -> int:
+        return triage._field_rows(BeautifulSoup(html, "html.parser"))
+
+    dl = "".join(f"<dl><dt>Field {i}:</dt><dd>Value {i}</dd></dl>" for i in range(4))
+    assert rows(f"<div>{dl}</div>") == 4  # one per pair, never again as a div-built run
+    assert rows("<table><tr><th>Colour</th><td>Grey</td></tr>"
+                "<tr><th>Shape</th><td>Rectangle</td></tr></table>") == 2
+    # an unclosed row nests the value cell under its header cell
+    assert rows("<table><tr><th> Lid Type <td>Manual<tr><th> Colour <td>Grey</table>") == 2
+    div = "".join(f"<div><span>Label {i}</span><span>Value {i}</span></div>" for i in range(3))
+    assert rows(f"<section>{div}</section>") == 3
+    assert rows(f"<section>{div[:len(div) * 2 // 3]}</section>") == 0  # two siblings are no run
+    # prose, a header row, and a link list are not fields
+    assert rows("<article><p>One paragraph.</p><p>Another.</p></article>") == 0
+    assert rows("<table><tr><th>A</th><th>B</th><th>C</th></tr></table>") == 0
+    assert rows("<ul><li><a href='/a'>A</a></li><li><a href='/b'>B</a></li></ul>") == 0

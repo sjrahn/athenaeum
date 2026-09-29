@@ -34,7 +34,7 @@ says so, over many records at once. You propose; the normalizer disposes against
 1. `corpus triage --forms` — the catalog you choose from (id, terminal flag, description).
    Choose only an id it lists.
 2. `corpus triage [--all] [--limit N]` — one JSON packet per line: mime, origin, role-marked
-   fields, and cheap probes (HTML title + tag counts + opening text; PDF page count, outline,
+   fields, and cheap probes (HTML title + tag counts + `field_rows` + opening text; PDF page count, outline,
    image coverage, characters per page, invisible text, pages 1-2 opening text; OOXML text).
 3. Judge the packets in batches of about 25. For each, one decision:
    - **`form/<id>`** — the record plainly IS that shape (a statement's period envelope and
@@ -53,4 +53,7 @@ says so, over many records at once. You propose; the normalizer disposes against
 
 Measured on the prototype: spec sheets and datasheets with diagrams read as `schematic` when
 they are `document`; prose-heavy documents read as `article`. Repair pages that walk steps are
-`procedure` even when titled like articles. When two forms both fit, defer.
+`procedure` even when titled like articles. A page about one item whose facts block is the
+payload (a listing or product page: many `field_rows` — label/value rows however the page
+builds them, `<dl>` or div grids included, which `html_counts.table` misses) is `document`,
+not `article`: the description prose frames the facts. When two forms both fit, defer.

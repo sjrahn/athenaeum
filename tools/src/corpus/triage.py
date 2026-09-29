@@ -124,6 +124,7 @@ def _html_features(path: Path) -> dict[str, Any]:
     return {
         "html_title": _html.unescape(title)[:160],
         "html_counts": counts,
+        "field_rows": _field_rows(soup),
         "text_chars": len(text),
         "text": _clip(text),
     }
@@ -158,6 +159,53 @@ def _pdf_features(path: Path) -> dict[str, Any]:
         }
     finally:
         doc.close()
+
+
+# A field label is short: longer than this, the "label" is a sentence and the row is prose.
+_LABEL_MAX = 60
+
+
+def _field_rows(soup: Any) -> int:
+    """Label/value rows however the page builds them — the facts block `<table>` counts miss.
+    A `<dt>` with its `<dd>`; a `<th>` with its `<td>` (as a sibling, or as the child
+    `html.parser` nests it under when the source leaves the row unclosed); a two-`<td>` row
+    with a short first cell; and div-built rows — a run of at least three siblings that each
+    hold exactly two text-bearing elements, the first a short label (myRealPage-style
+    spec lists, rentfaster's fact grid)."""
+    from bs4 import Tag
+
+    def text(t: Any) -> str:
+        return t.get_text(" ", strip=True)
+
+    def kids(t: Any) -> list[Any]:
+        return [c for c in t.children if isinstance(c, Tag) and text(c)]
+
+    n = 0
+    for dt in soup.find_all("dt"):
+        nxt = dt.find_next_sibling()
+        n += nxt is not None and nxt.name == "dd"
+    for th in soup.find_all("th"):
+        nxt = th.find_next_sibling()
+        n += (nxt is not None and nxt.name == "td") or th.find("td", recursive=False) is not None
+    for tr in soup.find_all("tr"):
+        tds = tr.find_all("td", recursive=False)
+        n += (len(tds) == 2 and tr.find("th", recursive=False) is None
+              and 0 < len(text(tds[0])) <= _LABEL_MAX and bool(text(tds[1])))
+    for parent in soup.find_all(True):
+        if parent.name in ("table", "tbody", "thead", "tr", "dl", "ul", "ol"):
+            continue
+        run = 0
+        for child in kids(parent):
+            pair = kids(child)
+            if (child.name not in ("tr", "dl", "dt", "dd", "li") and len(pair) == 2
+                    and len(text(pair[0])) <= _LABEL_MAX and pair[0].find(["a", "img"]) is None
+                    and text(pair[0]) != text(pair[1])):
+                run += 1
+                continue
+            n += run if run >= 3 else 0
+            run = 0
+        n += run if run >= 3 else 0
+    return n
 
 
 def _ooxml_features(path: Path) -> dict[str, Any]:
