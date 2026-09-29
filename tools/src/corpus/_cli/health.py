@@ -100,6 +100,11 @@ def _format_summary(report: dict[str, Any]) -> str:
             f"{k}: {lp[k]}" for k in ("formed", "terminal", "rendered", "proxy") if k in lp
         )
         lines.append(f"layers: {parts}")
+        if lp.get("extraction"):
+            lines.append(
+                f"extraction: {lp['extraction']} (formless, conformant: sparse extraction or"
+                " one whole-transport segment)"
+            )
         lines.append(f"titled: {lp.get('titled', 0)}  untitled: {lp.get('untitled', 0)}")
         if lp.get("legacy_status"):
             lines.append(f"legacy_status: {lp['legacy_status']} (pending migration sweep)")

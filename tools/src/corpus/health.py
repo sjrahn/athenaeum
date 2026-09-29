@@ -83,23 +83,29 @@ def layer_presence(refs: list[RecordRef], corpus_root: Path) -> dict[str, int]:
     """Layer-presence census (spec §4.1, §12.19 — succeeding the 3.0 status census): how the
     fleet sits across the derived-state enum, plus **derived-editorial coverage** (3.2,
     §12.21 step 1, succeeding the retired `authored` tally) and a transitional legacy-status
-    count. `rendered` is `derived_state == "rendered"` — a stored rendering with no governing
-    form, the grandfathered population (§12.18 step 3). `terminal` *(3.3)* is
+    count. `rendered` is `derived_state == "rendered"` narrowed to the **document-shaped**
+    renderings (`records.is_document_shaped`, the predicate the v50 compile gate refuses on,
+    §4.1) — the grandfathered population a future pass must fix (§12.18 step 3), so the number
+    counts only what is owed. The rest of that state is extraction, not rendering — sparse
+    extraction and a single whole-transport segment, conformant formless — and counts apart
+    as `extraction`, tolerated, never folded into `proxy`. `terminal` *(3.3)* is
     `derived_state == "terminal"` — a terminal contract governs and no rendering is stored
     (§7.8); it narrows what `proxy` means to genuinely unassessed-or-awaiting. `titled`/
     `untitled` count records whose derived title (spec §4.2.3) is non-empty vs. empty — the
     empty set is the §12.21 role-marking worklist, not a defect tally. The queue is standing
     demand, not backlog (§8.5), so this reports layer presence only — not how many records
     "need" a pass."""
-    formed = terminal = rendered = proxy = titled = untitled = legacy_status = 0
+    formed = terminal = rendered = extraction = proxy = titled = untitled = legacy_status = 0
     for r in refs:
         state = records.derived_state(r.post, corpus_root)
         if state == "formed":
             formed += 1
         elif state == "terminal":
             terminal += 1
-        elif state == "rendered":
+        elif state == "rendered" and records.is_document_shaped(r.post):
             rendered += 1
+        elif state == "rendered":
+            extraction += 1
         else:
             proxy += 1
         if records.title_for(r.post, corpus_root):
@@ -112,6 +118,7 @@ def layer_presence(refs: list[RecordRef], corpus_root: Path) -> dict[str, int]:
         "formed": formed,
         "terminal": terminal,
         "rendered": rendered,
+        "extraction": extraction,
         "proxy": proxy,
         "titled": titled,
         "untitled": untitled,

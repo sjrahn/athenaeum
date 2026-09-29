@@ -17,6 +17,7 @@ import frontmatter
 from corpus import config as config_mod
 from corpus import hashing, health, locationindex, paths, records, segments, touches
 from corpus._cli import dispatch
+from corpus._cli import health as health_cli
 from corpus._cli import location as location_cli
 
 A = "a0" * 32  # proxy, UNTITLED (no title candidate anywhere), missing artifact, legacy `status:`
@@ -146,6 +147,26 @@ def test_layer_presence(tmp_path):
     assert counts["titled"] == 4  # B, C, D, E
     assert counts["untitled"] == 1  # A
     assert counts["legacy_status"] == 1  # A only
+
+
+def test_layer_presence_counts_only_document_shaped_renderings_as_rendered(tmp_path):
+    """Owner ruling 2026-09-29: `rendered` counts what a future pass must fix (the v50 gate's
+    `is_document_shaped`); sparse extraction and a whole-transport segment count apart as
+    `extraction`, tolerated — neither dropped nor folded into `proxy`."""
+    root = _corpus(tmp_path)
+    _write(root, A, mime="application/pdf", ext="pdf", artifact=True,
+           content_blocks=[segments.Segment(atom="text", address="page=1", body="words")])
+    _write(root, B, mime="application/pdf", ext="pdf", artifact=True,
+           content_blocks=[segments.Segment(atom="text", address="page=1&bbox=0,0,1,0.2",
+                                            body="scanned words", overlay="text/ocr")])
+    _write(root, C, mime="text/plain", ext="txt", artifact=True,
+           content_blocks=[segments.Segment(atom="text", address=None, body="whole")])
+    counts = health.layer_presence(health.load_all_records(root), root)
+    assert counts["rendered"] == 1  # A
+    assert counts["extraction"] == 2  # B, C
+    assert counts["proxy"] == 0
+    out = health_cli._format_summary({"total_records": 3, "layer_presence": counts})
+    assert "rendered: 1" in out and "extraction: 2 (formless, conformant" in out
 
 
 def test_unshaped(tmp_path):
