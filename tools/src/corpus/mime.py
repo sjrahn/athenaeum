@@ -33,6 +33,10 @@ mimetypes.add_type("text/vcard", ".vcard")
 # `image/avif`, and a container member's type is extension-first, so without this pin the
 # attested type of the same bytes would depend on which host attested them (R-0060).
 mimetypes.add_type("image/heic", ".hif")
+# A Sony ARW is TIFF by magic, but its IFD0 is a thumbnail no bundled decoder reads and its
+# picture is undeveloped sensor data — typed apart so the image pipeline never tries
+# (v51; `_TIFF_EXT_REFINEMENTS`). A DNG stays `image/tiff`: its IFD0 IS the rendered picture.
+mimetypes.add_type("image/x-sony-arw", ".arw")
 # The codec-derived leaf mimes a promoted media-stream track carries (spec §2, v32): the
 # raw codec payload, concatenated sample bytes with NO reframing of any kind — no ADTS
 # header, no Annex-B start codes, no corpus-invented framing. A bare payload of any of
@@ -54,9 +58,9 @@ _SIGNATURES: tuple[tuple[int, bytes, str], ...] = (
     (0, b"\xff\xd8\xff", "image/jpeg"),
     (0, b"GIF87a", "image/gif"),
     (0, b"GIF89a", "image/gif"),
-    # TIFF, both byte orders. Covers the TIFF-based camera-RAW family too (DNG — Apple
-    # ProRAW export attachments among them): DNG IS TIFF, and the codebase already names
-    # the family `image/tiff` (epub + html embed tables), so no `x-` type is invented.
+    # TIFF, both byte orders. Covers DNG (Apple ProRAW export attachments among them): a
+    # DNG IS TIFF, its IFD0 the producer's rendered picture. A camera RAW whose IFD0 is not
+    # a picture the image pipeline can open refines by extension (`_TIFF_EXT_REFINEMENTS`).
     (0, b"II*\x00", "image/tiff"),
     (0, b"MM\x00*", "image/tiff"),
     # NOTE: RIFF containers (WebP / WAV / AVI) all share the `RIFF` magic at offset 0;
@@ -173,6 +177,8 @@ def detect(path: Path, corpus_root: Path | None = None) -> str:
         return _refine_zip(path, corpus_root)
     if sig in ("video/mp4", "video/quicktime"):
         return _refine_isobmff(path, sig)
+    if sig == "image/tiff":
+        return _TIFF_EXT_REFINEMENTS.get(path.suffix.lower(), sig)
     if sig:
         return sig
 
@@ -209,6 +215,8 @@ def sniff_head(head: bytes, filename: str | None = None) -> str:
         refined = _ZIP_EXT_REFINEMENTS.get(Path(filename).suffix.lower())
         if refined:
             return refined
+    if sig == "image/tiff" and filename:
+        return _TIFF_EXT_REFINEMENTS.get(Path(filename).suffix.lower(), sig)
     if sig:
         return sig
     if _looks_like_svg(head):
@@ -326,6 +334,15 @@ def _refine_gzip(path: Path) -> str:
 # signal that the container is audio, so it routes to the audio pipeline (transcription),
 # not the video one (which would try to keyframe-section a cover image).
 _ISOBMFF_AUDIO_EXTENSIONS = {".m4a", ".m4b"}
+
+
+# TIFF-magic camera RAWs typed apart from `image/tiff` by their extension (v51): the magic
+# says only "TIFF structure", and these formats' first directory is not a picture the image
+# pipeline can open. Bytes-only evidence never refines — a bare TIFF stays `image/tiff`.
+_TIFF_EXT_REFINEMENTS: dict[str, str] = {".arw": "image/x-sony-arw"}
+#: `image/*` types with no pixels the image pipeline can open — a consumer that tiles or
+#: crops stills (the contact sheet) passes them over as `other`.
+UNDEVELOPED_RAW: frozenset[str] = frozenset(_TIFF_EXT_REFINEMENTS.values())
 
 
 def _refine_isobmff(path: Path, video_mime: str) -> str:

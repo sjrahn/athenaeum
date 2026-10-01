@@ -1,0 +1,45 @@
+description: |
+  Sony ARW camera RAW (spec v51, owner ruling 2026-10-01). The bytes are TIFF-structured
+  (`II*\0`), but unlike a DNG — whose IFD0 is the producer's rendered picture, which is
+  why DNG stays `image/tiff` — an ARW's IFD0 is an old-style-JPEG thumbnail (TIFF
+  compression 6) no bundled decoder reads, and the picture itself is 14-bit sensor data in
+  a SubIFD that nothing here develops. Typed apart from `image/tiff` so the image pipeline
+  never attempts a decode it cannot perform: the record is terminal, carrying only facts
+  read from the TIFF directory entries. The name is the freedesktop shared-mime-info type.
+  Recognized by the `.arw` extension over TIFF magic (`corpus.mime`).
+applies_to:
+  content_types:
+  - image/x-sony-arw
+# No pixels the resolver can open, so no working kind and no address axis: the whole
+# record is the only nameable thing (an absent address). A crop or a frame grab of an ARW
+# waits on a developing engine; until then every param refuses rather than decoding wrong.
+working_kind:
+address_scheme: []
+whole_address: admissible
+# The family default `passthrough` (image.yaml) stands, and here it is not a default a
+# per-record judgment might overturn: there is no rendering to author.
+canonical_strategy:
+extended_fields:
+  width:
+    required: false
+    description: >-
+      Picture width the camera declares (EXIF PixelXDimension — the default crop of the
+      sensor), else the raw SubIFD's ImageWidth. Read from the directory, never decoded.
+  height:
+    required: false
+    description: >-
+      Picture height the camera declares (EXIF PixelYDimension), else the raw SubIFD's
+      ImageLength.
+  format:
+    description: Always `ARW` — a constant label, since no decoder names it.
+  exif_lens:
+    type: string
+    required: false
+    source: file_metadata
+    description: Lens model from EXIF LensModel, when present (e.g. 'FE 20-70mm F4 G').
+normalization:
+  guidance: |
+    Nothing to shape: the record is terminal (`form/passthrough`) and carries no segment.
+    The bytes cannot be rendered here, so do not author a description of what the photo
+    shows from a sibling's pixels — a paired JPEG or HIF of the same shot is its own
+    record and carries its own reading.

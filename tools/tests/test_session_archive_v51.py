@@ -55,6 +55,24 @@ def _home(tmp_path: Path, lines: list[dict], *, state: str = "working") -> Path:
     plans.mkdir(parents=True, exist_ok=True)
     (plans / "a-plan.md").write_text("# plan\n", encoding="utf-8")
     (plans / "unnamed.md").write_text("# not this one\n", encoding="utf-8")
+    cache = home / "paste-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "aaaa1111bbbb2222.txt").write_text("pasted\u00a0as pasted  \n", encoding="utf-8")
+    (cache / "cccc3333dddd4444.txt").write_text("another session's paste\n", encoding="utf-8")
+    history = [
+        {"display": "[Pasted text #1]", "sessionId": SID,
+         "pastedContents": {"1": {"id": 1, "type": "text", "contentHash": "aaaa1111bbbb2222"}}},
+        {"display": "small", "sessionId": SID,
+         "pastedContents": {"1": {"id": 1, "type": "text", "content": "inline"}}},
+        {"display": "[Pasted text #1]", "sessionId": "someone-else",
+         "pastedContents": {"1": {"id": 1, "type": "text", "contentHash": "cccc3333dddd4444"}}},
+        {"display": "bad", "sessionId": SID,
+         "pastedContents": {"1": {"id": 1, "type": "text", "contentHash": "../../etc/passwd"}}},
+    ]
+    (home / "history.jsonl").write_text(
+        "".join(json.dumps(h) + "\n" for h in history) + "not json " + SID + "\n",
+        encoding="utf-8",
+    )
     return home
 
 
@@ -79,12 +97,16 @@ def test_the_bundle_takes_every_per_session_store(tmp_path):
         "tasks/1.json",
         "job/state.json",  # found through `resumeSessionId`; another session's job is not
         "plans/a-plan.md",  # named by the transcript; an unnamed plan is not
+        # the cached original of a paste the session's prompt history names; another
+        # session's paste is not, an inline one is already in the transcript, and a hash
+        # that is not plain hex is never followed
+        "pastes/aaaa1111bbbb2222.txt",
     }
 
 
-def test_job_scratch_rides_only_when_asked(tmp_path):
-    sp = _sp(_home(tmp_path, LINES))
-    assert "job/tmp/scratch.bin" in {r for r, _ in ccsession.collect_members(sp, with_scratch=True)}
+def test_job_scratch_is_never_bundled(tmp_path):
+    members = {r for r, _ in ccsession.collect_members(_sp(_home(tmp_path, LINES)))}
+    assert not any(r.startswith("job/tmp/") for r in members)
 
 
 # ---------- capture, supersession, retirement ---------- #

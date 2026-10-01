@@ -23,7 +23,7 @@ the source), so sessions from every box fold into one corpus.
 
 *(v51)* The bundle holds everything produced in or sent to the session (`ccsession`'s
 per-session stores: uploads at full size, file-history, task list, a background job's
-state); a job's `tmp/` scratch rides only `--with-scratch`. `stage` packs the bundle and its
+state — never its `tmp/` scratch, owner ruling 2026-10-01). `stage` packs the bundle and its
 capture sidecar into `capture/` and stops — the consumer ingest lane's half
 (`corpus ingest-owned capture/<id>.zip`, when the instance lists `claude-code-session` in
 `consumer_ingest.origins`), so a consumer archives its own session without a store-writing
@@ -53,8 +53,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
                        help="pull the session from another machine via ssh ([user@]host)")
     p_cap.add_argument("--no-draft", action="store_true",
                        help="stop after ingest (leave the record a stub)")
-    p_cap.add_argument("--with-scratch", action="store_true",
-                       help="also bundle a background job's tmp/ scratch space")
     add_corpus_root_arg(p_cap)
 
     p_stage = sub.add_parser(
@@ -64,8 +62,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
     p_stage.add_argument("--project", help="narrow discovery to one ~/.claude/projects/<dir>")
     p_stage.add_argument("--from", dest="from_host", metavar="HOST",
                          help="pull the session from another machine via ssh ([user@]host)")
-    p_stage.add_argument("--with-scratch", action="store_true",
-                         help="also bundle a background job's tmp/ scratch space")
     add_corpus_root_arg(p_stage)
 
     p_list = sub.add_parser("list", help="List discoverable sessions with stats.")
@@ -129,7 +125,7 @@ def _pack(args: argparse.Namespace, corpus_root: Path):
     snapshot = stats.activity_end or captured_at
     priors = ccsession.find_prior_sessions(corpus_root, stats.session_id, sp.host)
     zip_path = corpus_root / "capture" / f"{stats.session_id}.zip"
-    members = ccsession.collect_members(sp, with_scratch=getattr(args, "with_scratch", False))
+    members = ccsession.collect_members(sp)
     size = ccsession.build_bundle(
         members, zip_path, comment=ccsession.bundle_comment(sp, stats)
     )

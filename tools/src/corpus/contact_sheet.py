@@ -45,7 +45,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from corpus import functional_uri as furi
-from corpus import paths
+from corpus import mime, paths
 
 ENGINE_VERSION = "contact-sheet@2"
 
@@ -196,7 +196,7 @@ def select(
                 family = "companion"
             elif not video:
                 family = "video"
-        elif not mt.startswith("image/"):
+        elif not mt.startswith("image/") or mt in mime.UNDEVELOPED_RAW:
             family = "other"
         if family:
             skipped[family] = skipped.get(family, 0) + 1

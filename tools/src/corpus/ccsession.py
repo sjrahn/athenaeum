@@ -17,13 +17,18 @@ per-session stores Claude Code keeps beside it, each bundled under its own top-l
     ~/.claude/tasks/session-<id8>/         → tasks/          # the session's task list
     ~/.claude/teams/session-<id8>/         → teams/          # its team roster
     ~/.claude/jobs/<job>/                  → job/            # a background job's state +
-                                                             #   timeline (`tmp/` scratch only
-                                                             #   with `--with-scratch`)
+                                                             #   timeline (never its `tmp/`)
     ~/.claude/plans/<name>.md              → plans/<name>.md # plans the transcript names
+    ~/.claude/paste-cache/<hash>.txt       → pastes/<hash>.txt # large pastes, as pasted
 
 The transcript's own copy of an upload is the downscaled one sent to the model; the upload
 store keeps the file as sent, so each upload is its own member with its own blake3 and a
-request can promote it directly. A store that does not exist is simply absent.
+request can promote it directly. A store that does not exist is simply absent. Pastes are
+the same case for text: a large paste lives in the shared, content-keyed paste cache, which
+the prompt history (`history.jsonl`, one line per prompt, carrying its `sessionId`) ties to
+the session; the transcript's copy of it is not byte-exact (whitespace is normalized), so
+the cached original rides as its own member. A small paste history keeps inline is already
+verbatim in the transcript.
 
 This module gathers those files, stats the transcript, and packs the union into ONE
 deterministic zstd-zip (`corpus.assembly.write_bundle` — the reusable writer core spec
@@ -46,6 +51,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import socket
 import subprocess
 from collections import Counter
@@ -225,6 +231,32 @@ def session_stats(sp: SessionPaths) -> SessionStats:
 
 
 _PLAN_REF_RE = re.compile(r"\.claude/plans/([A-Za-z0-9._-]+\.md)")
+_PASTE_HASH_RE = re.compile(r"[0-9a-f]{8,64}")
+
+
+def session_paste_hashes(history: Path, session_id: str) -> list[str]:
+    """The paste-cache content hashes the prompt history ties to `session_id` — every
+    `pastedContents` entry stored by `contentHash` on a history line of that session, in
+    first-use order. A malformed line or a hash that is not plain hex is passed over."""
+    if not history.is_file():
+        return []
+    seen: dict[str, None] = {}
+    with history.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if session_id not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("sessionId") != session_id:
+                continue
+            pasted = entry.get("pastedContents")
+            for item in pasted.values() if isinstance(pasted, dict) else ():
+                h = item.get("contentHash") if isinstance(item, dict) else None
+                if isinstance(h, str) and _PASTE_HASH_RE.fullmatch(h):
+                    seen.setdefault(h, None)
+    return list(seen)
 
 
 def _job_dirs(claude_home: Path, session_id: str) -> list[Path]:
@@ -271,16 +303,20 @@ def session_stores(sp: SessionPaths) -> list[tuple[str, Path]]:
         plan = home / "plans" / name
         if plan.is_file():
             out.append((f"plans/{name}", plan))
+    for h in session_paste_hashes(home / "history.jsonl", sid):
+        paste = home / "paste-cache" / f"{h}.txt"
+        if paste.is_file():
+            out.append((f"pastes/{h}.txt", paste))
     return out
 
 
-def collect_members(
-    sp: SessionPaths, *, with_scratch: bool = False
-) -> list[tuple[str, Path]]:
+def collect_members(sp: SessionPaths) -> list[tuple[str, Path]]:
     """`(bundle-relpath, source-path)` for every file of the session: the transcript at
     `<id>.jsonl`, sidecar files under `<id>/…`, and *(v51)* each per-session store under its
-    own prefix (`session_stores`). A background job's `tmp/` is its scratch space and rides
-    only `with_scratch`. Sorted, so the bundle is deterministic regardless of walk order."""
+    own prefix (`session_stores`). A background job's `tmp/` is its scratch space and is
+    never bundled (owner ruling 2026-10-01): working copies and throwaway instances, not a
+    record of the session — what the session wrote there is in the transcript. Sorted, so
+    the bundle is deterministic regardless of walk order."""
     members: list[tuple[str, Path]] = [
         (f"{sp.session_id}{_TRANSCRIPT_SUFFIX}", sp.transcript)
     ]
@@ -297,7 +333,7 @@ def collect_members(
             if not f.is_file():
                 continue
             rel = f.relative_to(src).as_posix()
-            if prefix.startswith("job") and not with_scratch and rel.split("/", 1)[0] == "tmp":
+            if prefix.startswith("job") and rel.split("/", 1)[0] == "tmp":
                 continue
             members.append((f"{prefix}/{rel}", f))
     members.sort(key=lambda m: m[0])
@@ -495,12 +531,25 @@ def ssh_fetch(
         if rel and ".." not in rel:
             dst = home / rel
             dst.mkdir(parents=True, exist_ok=True)
-            _rsync(f"{host}:~/.claude/{rel}/", dst, dir_contents=True)
+            # a job's scratch is never bundled, so it never crosses the wire either
+            _rsync(
+                f"{host}:~/.claude/{rel}/", dst, dir_contents=True,
+                exclude=("/tmp/",) if rel.startswith("jobs/") else (),
+            )
     with local_transcript.open("r", encoding="utf-8", errors="replace") as fh:
         plans = sorted({m for line in fh for m in _PLAN_REF_RE.findall(line)})
     for name in plans:
         (home / "plans").mkdir(parents=True, exist_ok=True)
         _rsync(f"{host}:~/.claude/plans/{name}", home / "plans" / name)
+    # The session's slice of the prompt history names its cached pastes; only that slice
+    # is mirrored, never another session's prompts.
+    hist = _run([
+        "ssh", host, f"grep -F {shlex.quote(session_id)} ~/.claude/history.jsonl 2>/dev/null"
+    ])
+    (home / "history.jsonl").write_text(hist.stdout or "", encoding="utf-8")
+    for h in session_paste_hashes(home / "history.jsonl", session_id):
+        (home / "paste-cache").mkdir(parents=True, exist_ok=True)
+        _rsync(f"{host}:~/.claude/paste-cache/{h}.txt", home / "paste-cache" / f"{h}.txt")
 
     host_label = host.split("@", 1)[-1].split(".", 1)[0]
     return _session_paths_for(local_transcript, host_label, claude_home=home)
@@ -523,9 +572,12 @@ def _shq(path: str) -> str:
     return path
 
 
-def _rsync(src: str, dst: Path, *, dir_contents: bool = False) -> bool:
+def _rsync(
+    src: str, dst: Path, *, dir_contents: bool = False, exclude: tuple[str, ...] = ()
+) -> bool:
     src_arg = src if not dir_contents else (src if src.endswith("/") else src + "/")
-    proc = _run(["rsync", "-a", src_arg, str(dst) + ("/" if dir_contents else "")])
+    excludes = [f"--exclude={e}" for e in exclude]
+    proc = _run(["rsync", "-a", *excludes, src_arg, str(dst) + ("/" if dir_contents else "")])
     return proc.returncode == 0
 
 

@@ -2,10 +2,11 @@ applies_to:
   content_types:
   - image/tiff
 # TIFF stills, both byte orders (`II*\0` / `MM\0*`), sniffed by the shared MIME detector.
-# The camera-RAW family built on TIFF sniffs here too — DNG (Apple ProRAW among them) IS
-# TIFF, and no `x-` type is invented (mime.py). Pillow reads IFD0: for a DNG that is the
-# producer's rendered preview (an iPhone ProRAW IFD0 is the full-size RGB rendering), never
-# the sensor data, which lives in SubIFDs no decoder here develops.
+# DNG sniffs here too (Apple ProRAW among them) — DNG IS TIFF. Pillow reads IFD0: for a
+# DNG that is the producer's rendered preview (an iPhone ProRAW IFD0 is the full-size RGB
+# rendering), never the sensor data, which lives in SubIFDs no decoder here develops. A RAW
+# whose IFD0 is no such picture is typed apart by extension (v51: `.arw` →
+# `image/x-sony-arw`, mime.py).
 #
 # whole-address admissibility: a TIFF may be multi-page (the top-level IFD chain), so the
 # bytes decide — the same `frame_count` gate as the other sequence-capable stills. The

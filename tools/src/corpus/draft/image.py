@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PIL import ExifTags, Image
+from PIL import ExifTags, Image, TiffImagePlugin
 
 import corpus._pil  # noqa: F401 — registers the optional HEIF opener (v41)
 from corpus import content_hash, recordbuild, records
@@ -213,6 +213,71 @@ for _sid in _IMAGE_SCHEMA_IDS:
     register(_sid)(draft)
 
 
+# ---------- camera RAW: read the TIFF structure, never decode (v51) ---------- #
+
+_TAG_SUBIFDS, _TAG_EXIF_IFD, _TAG_GPS_IFD = 330, 34665, 34853
+_TAG_DATETIME_ORIGINAL, _TAG_PIXEL_X, _TAG_PIXEL_Y = 36867, 40962, 40963
+_TAG_LENS_MODEL = 42036
+
+
+@register("image/image_x-sony-arw")
+def draft_raw(
+    image_path: Path,
+    *,
+    build: recordbuild.Build,
+    corpus_root: Path | None = None,
+    record_id: str | None = None,
+    record_metadata: dict[str, Any] | None = None,
+    canonical_algo: str | None = None,
+    fingerprint: bool | str | list[str] = False,
+) -> DrafterResult:
+    """A Sony ARW: TIFF-structured, but IFD0 is an old-style-JPEG thumbnail and the
+    picture is 14-bit sensor data in a SubIFD — nothing here develops it. The facts are
+    read from the directory entries alone (picture size, camera, lens, capture time, GPS),
+    so they cannot vary with the host's decoders. No segment: the record is terminal
+    (`form/passthrough`), and the bytes have no addressable surface to mark."""
+    fields: dict[str, Any] = {"size_bytes": image_path.stat().st_size, "format": "ARW"}
+    with image_path.open("rb") as fh:
+        ifd0 = _tiff_ifd(fh, None)
+        exif = _tiff_ifd(fh, ifd0.get(_TAG_EXIF_IFD)) if ifd0 else {}
+        subs = ifd0.get(_TAG_SUBIFDS) if ifd0 else None
+        first_sub = subs[0] if isinstance(subs, tuple) and subs else subs
+        raw = _tiff_ifd(fh, first_sub) if first_sub else {}
+        gps = _tiff_ifd(fh, ifd0.get(_TAG_GPS_IFD)) if ifd0 else {}
+    width = exif.get(_TAG_PIXEL_X) or raw.get(256)
+    height = exif.get(_TAG_PIXEL_Y) or raw.get(257)
+    if width and height:
+        fields["width"], fields["height"] = int(width), int(height)
+    for value, dst in (
+        (ifd0.get(271), "exif_make"),
+        (ifd0.get(272), "exif_model"),
+        (exif.get(_TAG_DATETIME_ORIGINAL) or ifd0.get(306), "exif_datetime"),
+        (exif.get(_TAG_LENS_MODEL), "exif_lens"),
+    ):
+        if _str(value):
+            fields[dst] = _str(value)
+    location = _gps_from_tags(gps)
+    if location:
+        fields["exif_gps"] = location
+    return {"fields": fields, "embeds": [], "issues": [], "canonical": None}
+
+
+def _tiff_ifd(fh: Any, offset: Any) -> dict[int, Any]:
+    """One TIFF directory's entries, by tag. `offset` None reads IFD0 from the header. A
+    directory the bytes do not hold reads as empty — a missing fact, never a crash."""
+    try:
+        fh.seek(0)
+        header = fh.read(8)
+        if offset is None:
+            offset = int.from_bytes(header[4:8], "little" if header[:2] == b"II" else "big")
+        ifd = TiffImagePlugin.ImageFileDirectory_v2(header)
+        fh.seek(int(offset))
+        ifd.load(fh)
+        return dict(ifd)
+    except Exception:
+        return {}
+
+
 # ---------- helpers ---------- #
 
 
@@ -233,9 +298,13 @@ def _gps_from_exif(exif: Any) -> str:
         gps_ifd = exif.get_ifd(0x8825) if hasattr(exif, "get_ifd") else None
     except Exception:
         gps_ifd = None
+    return _gps_from_tags(gps_ifd)
+
+
+def _gps_from_tags(gps_ifd: Any) -> str:
+    """Decimal-degree `lat,lon` from a GPS directory's entries, or "" without both."""
     if not gps_ifd:
         return ""
-
     gps_tags = {ExifTags.GPSTAGS.get(k, k): v for k, v in gps_ifd.items()}
     lat = _dms_to_decimal(gps_tags.get("GPSLatitude"), gps_tags.get("GPSLatitudeRef"))
     lon = _dms_to_decimal(gps_tags.get("GPSLongitude"), gps_tags.get("GPSLongitudeRef"))
