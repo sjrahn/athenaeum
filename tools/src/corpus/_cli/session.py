@@ -1,6 +1,7 @@
 """Capture a Claude Code session into the corpus, or list discoverable sessions.
 
     corpus session capture <session-id | path/to/<id>.jsonl> [--project P] [--from HOST]
+    corpus session stage   <session-id | path/to/<id>.jsonl> [--project P] [--from HOST]
     corpus session list [--project P] [--from HOST]
 
 `capture` bundles a session (the `<id>.jsonl` transcript + its `<id>/` sidecar tree of
@@ -19,6 +20,15 @@ fuller copy.
 
 `--from HOST` pulls the session off another machine over ssh/rsync first (recording HOST as
 the source), so sessions from every box fold into one corpus.
+
+*(v51)* The bundle holds everything produced in or sent to the session (`ccsession`'s
+per-session stores: uploads at full size, file-history, task list, a background job's
+state); a job's `tmp/` scratch rides only `--with-scratch`. `stage` packs the bundle and its
+capture sidecar into `capture/` and stops — the consumer ingest lane's half
+(`corpus ingest-owned capture/<id>.zip`, when the instance lists `claude-code-session` in
+`consumer_ingest.origins`), so a consumer archives its own session without a store-writing
+verb of its own. Who asked rides `ATHENAEUM_CAPTURE_CONTEXT` into the sidecar's
+`capture_context:` (`corpus.capturectx`).
 """
 
 from __future__ import annotations
@@ -43,7 +53,20 @@ def configure(parser: argparse.ArgumentParser) -> None:
                        help="pull the session from another machine via ssh ([user@]host)")
     p_cap.add_argument("--no-draft", action="store_true",
                        help="stop after ingest (leave the record a stub)")
+    p_cap.add_argument("--with-scratch", action="store_true",
+                       help="also bundle a background job's tmp/ scratch space")
     add_corpus_root_arg(p_cap)
+
+    p_stage = sub.add_parser(
+        "stage", help="Bundle a session into capture/ with its sidecar; ingest nothing."
+    )
+    p_stage.add_argument("target", help="session id, or a path to its <id>.jsonl transcript")
+    p_stage.add_argument("--project", help="narrow discovery to one ~/.claude/projects/<dir>")
+    p_stage.add_argument("--from", dest="from_host", metavar="HOST",
+                         help="pull the session from another machine via ssh ([user@]host)")
+    p_stage.add_argument("--with-scratch", action="store_true",
+                         help="also bundle a background job's tmp/ scratch space")
+    add_corpus_root_arg(p_stage)
 
     p_list = sub.add_parser("list", help="List discoverable sessions with stats.")
     p_list.add_argument("--project", help="narrow to one ~/.claude/projects/<dir> subdir")
@@ -57,6 +80,8 @@ def run(args: argparse.Namespace) -> int:
         return _list(args)
     if args.action == "capture":
         return _capture(args)
+    if args.action == "stage":
+        return _stage(args)
     print(f"unknown action: {args.action}", file=sys.stderr)
     return 2
 
@@ -64,14 +89,35 @@ def run(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- capture
 
 
-def _capture(args: argparse.Namespace) -> int:
+def _stage(args: argparse.Namespace) -> int:
+    """Pack + mint the sidecar, then stop: the bundle waits in `capture/` for an ingest verb
+    (the consumer lane's `corpus ingest-owned`). Prints the staged path."""
     corpus_root = resolved_corpus_root(args)
-    staging: Path | None = None
+    staged = _pack(args, corpus_root)
+    if staged is None:
+        return 1
+    zip_path, _record_id, _sp, _stats, _priors, _already, staging = staged
+    _cleanup_staging(staging)
+    print(zip_path)
+    return 0
 
-    # 1. Locate the session — locally, or fetched from a remote host first.
+
+def _pack(args: argparse.Namespace, corpus_root: Path):
+    """Locate (or fetch) the session, pack the deterministic bundle into `capture/`, and
+    mint its capture sidecar — the shared first half of `capture` and `stage`."""
+    from corpus import capturectx
+
+    try:  # who asked (v51) — refused before anything is packed
+        context = capturectx.from_env()
+    except capturectx.ContextError as exc:
+        sys.exit(f"session: refused — {exc}")
+    staging: Path | None = None
     try:
         if args.from_host:
-            staging = corpus_root / "capture" / ".session-staging" / _sanitize(args.from_host) / args.target
+            staging = (
+                corpus_root / "capture" / ".session-staging" / _sanitize(args.from_host)
+                / args.target
+            )
             sp = ccsession.ssh_fetch(args.from_host, args.target, staging, project=args.project)
         else:
             sp = ccsession.find_session(args.target, project=args.project)
@@ -82,25 +128,28 @@ def _capture(args: argparse.Namespace) -> int:
     captured_at = ccsession.now_iso()
     snapshot = stats.activity_end or captured_at
     priors = ccsession.find_prior_sessions(corpus_root, stats.session_id, sp.host)
-
-    # 2. Pack the deterministic bundle + mint the capture sidecar.
     zip_path = corpus_root / "capture" / f"{stats.session_id}.zip"
-    members = ccsession.collect_members(sp)
+    members = ccsession.collect_members(sp, with_scratch=getattr(args, "with_scratch", False))
     size = ccsession.build_bundle(
         members, zip_path, comment=ccsession.bundle_comment(sp, stats)
     )
     record_id = hashing.hash_file(zip_path, also=())["blake3"]
     already = paths.record_path(corpus_root, record_id).is_file()
     fields = ccsession.origin_fields(sp, stats, captured_at=captured_at)
-    ccsession.write_sidecar(zip_path, fields, snapshot=snapshot)
-
+    ccsession.write_sidecar(zip_path, fields, snapshot=snapshot, context=context)
     print(
         f"session {stats.session_id} @{sp.host}: {len(members)} files, "
         f"{stats.record_count} records, {size:,} bundle bytes → {record_id[:12]}…",
         file=sys.stderr,
     )
+    return zip_path, record_id, sp, stats, priors, already, staging
 
-    # 3. Ingest through the real command (dedup, grammar validation, dump). 3.0: ingest
+
+def _capture(args: argparse.Namespace) -> int:
+    corpus_root = resolved_corpus_root(args)
+    zip_path, record_id, _sp, stats, priors, already, staging = _pack(args, corpus_root)
+
+    # Ingest through the real command (dedup, grammar validation, dump). 3.0: ingest
     # attests the session bundle's byte-facts (its members as `path=` embeds) at stub time —
     # there is no separate draft stage; the transcript body is a derivation op (§6.2). The
     # `--no-draft` flag is retained as a no-op for caller compatibility.

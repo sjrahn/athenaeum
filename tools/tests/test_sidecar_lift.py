@@ -520,7 +520,7 @@ def test_expand_template_placeholders():
         ({}, "pairing"),
         ({"pairing": {"template": "fixed.json"}}, "no placeholder"),
         ({"pairing": {"template": "{nope}.json"}}, "unknown placeholder"),
-        ({"pairing": {"template": "{member}.json"}, "format": "xml"}, "format"),
+        ({"pairing": {"template": "{member}.json"}, "format": "yaml"}, "format"),
         ({"pairing": {"template": "{member}.json"}, "lift": {"a": "a"}}, "prefix"),
         ({"pairing": {"template": "{member}.json"}, "prefix": "p_", "lift": {"a": "a"}}, "subtype"),
         (

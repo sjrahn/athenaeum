@@ -75,6 +75,12 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     # companion) reads `orig_src`, never the post-collapse `src`.
     orig_src = src
     sidecar = _read_sidecar(orig_src)
+    from corpus import capturectx
+
+    try:  # validated before anything is read into the store (v51)
+        context_fields = capturectx.resolve(sidecar)
+    except capturectx.ContextError as exc:
+        sys.exit(f"ingest: refused — {exc}. Nothing was written.")
 
     media_type = mime.detect(src, corpus_root)
 
@@ -127,6 +133,7 @@ def _ingest_one(corpus_root: Path, src: Path) -> int:
     )
     origin_fields.update(strip_provenance)
     origin_fields.update(envelope_fields)
+    origin_fields.update(context_fields)
 
     if record_file.is_file():
         post = records.load(record_file)

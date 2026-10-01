@@ -8,6 +8,23 @@ A Claude Code session lives on disk as a transcript plus a sidecar tree:
         tool-results/<id>.txt · pdf-<id>/page-N.jpg            #   overflow tool payloads
         workflows/wf_<id>.json                                 #   workflow scripts/state
 
+— and, *(v51, codex-steven R-0059: "all things produced or sent to the session")*, in the
+per-session stores Claude Code keeps beside it, each bundled under its own top-level prefix:
+
+    ~/.claude/uploads/<session-id>/        → uploads/        # chat uploads, full size
+    ~/.claude/file-history/<session-id>/   → file-history/   # pre-edit file backups
+    ~/.claude/session-env/<session-id>/    → session-env/    # captured environments
+    ~/.claude/tasks/session-<id8>/         → tasks/          # the session's task list
+    ~/.claude/teams/session-<id8>/         → teams/          # its team roster
+    ~/.claude/jobs/<job>/                  → job/            # a background job's state +
+                                                             #   timeline (`tmp/` scratch only
+                                                             #   with `--with-scratch`)
+    ~/.claude/plans/<name>.md              → plans/<name>.md # plans the transcript names
+
+The transcript's own copy of an upload is the downscaled one sent to the model; the upload
+store keeps the file as sent, so each upload is its own member with its own blake3 and a
+request can promote it directly. A store that does not exist is simply absent.
+
 This module gathers those files, stats the transcript, and packs the union into ONE
 deterministic zstd-zip (`corpus.assembly.write_bundle` — the reusable writer core spec
 §12.8 reserves for a producer-side bundler like this) staged in `capture/`, alongside a
@@ -28,6 +45,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import socket
 import subprocess
 from collections import Counter
@@ -57,6 +75,10 @@ class SessionPaths:
     sidecar: Path | None  # <id>/ dir, or None when the session spawned no sidecar files
     project_dir: str  # the `~/.claude/projects/<name>` subdir basename (mangled cwd)
     host: str  # source machine label (local hostname, or the --from host)
+    # The `~/.claude` the per-session stores are read from (v51) — the real one locally,
+    # the staging mirror for a `--from` fetch; None skips them (a bare transcript path
+    # given from outside any Claude home).
+    claude_home: Path | None = None
 
 
 def home_projects_dir(home: Path | None = None) -> Path:
@@ -69,15 +91,20 @@ def local_host() -> str:
     return socket.gethostname().split(".", 1)[0]
 
 
-def _session_paths_for(transcript: Path, host: str) -> SessionPaths:
+def _session_paths_for(
+    transcript: Path, host: str, claude_home: Path | None = None
+) -> SessionPaths:
     session_id = transcript.name[: -len(_TRANSCRIPT_SUFFIX)]
     sidecar = transcript.with_suffix("")  # <dir>/<id>
+    if claude_home is None and transcript.parent.parent.name == "projects":
+        claude_home = transcript.parent.parent.parent  # <home>/projects/<proj>/<id>.jsonl
     return SessionPaths(
         session_id=session_id,
         transcript=transcript,
         sidecar=sidecar if sidecar.is_dir() else None,
         project_dir=transcript.parent.name,
         host=host,
+        claude_home=claude_home,
     )
 
 
@@ -197,10 +224,63 @@ def session_stats(sp: SessionPaths) -> SessionStats:
 # --------------------------------------------------------------------------- bundle
 
 
-def collect_members(sp: SessionPaths) -> list[tuple[str, Path]]:
-    """`(bundle-relpath, source-path)` for every file of the session, mirroring the on-disk
-    tree: the transcript at `<id>.jsonl`, sidecar files under `<id>/…`. Sorted, so the
-    bundle is deterministic regardless of directory-walk order."""
+_PLAN_REF_RE = re.compile(r"\.claude/plans/([A-Za-z0-9._-]+\.md)")
+
+
+def _job_dirs(claude_home: Path, session_id: str) -> list[Path]:
+    """Background-job dirs belonging to the session: a job's `state.json` names the session
+    it runs (`sessionId`) or resumes (`resumeSessionId` — a resumed job's own id differs
+    from the transcript's)."""
+    out = []
+    for state in sorted((claude_home / "jobs").glob("*/state.json")):
+        try:
+            data = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if session_id in (data.get("sessionId"), data.get("resumeSessionId")):
+            out.append(state.parent)
+    return out
+
+
+def session_stores(sp: SessionPaths) -> list[tuple[str, Path]]:
+    """`(bundle prefix, source dir or file)` for each per-session store that exists beside
+    the transcript (module docstring). Plans are the ones the transcript names by path."""
+    home = sp.claude_home
+    if home is None:
+        return []
+    sid, short = sp.session_id, sp.session_id[:8]
+    out: list[tuple[str, Path]] = []
+    for prefix, src in (
+        ("uploads", home / "uploads" / sid),
+        ("file-history", home / "file-history" / sid),
+        ("session-env", home / "session-env" / sid),
+        ("tasks", home / "tasks" / f"session-{short}"),
+        ("teams", home / "teams" / f"session-{short}"),
+    ):
+        if src.is_dir():
+            out.append((prefix, src))
+    jobs = _job_dirs(home, sid)
+    for job in jobs:
+        out.append(("job" if len(jobs) == 1 else f"job/{job.name}", job))
+    plans: set[str] = set()
+    with sp.transcript.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if ".claude/plans/" in line:
+                plans.update(_PLAN_REF_RE.findall(line))
+    for name in sorted(plans):
+        plan = home / "plans" / name
+        if plan.is_file():
+            out.append((f"plans/{name}", plan))
+    return out
+
+
+def collect_members(
+    sp: SessionPaths, *, with_scratch: bool = False
+) -> list[tuple[str, Path]]:
+    """`(bundle-relpath, source-path)` for every file of the session: the transcript at
+    `<id>.jsonl`, sidecar files under `<id>/…`, and *(v51)* each per-session store under its
+    own prefix (`session_stores`). A background job's `tmp/` is its scratch space and rides
+    only `with_scratch`. Sorted, so the bundle is deterministic regardless of walk order."""
     members: list[tuple[str, Path]] = [
         (f"{sp.session_id}{_TRANSCRIPT_SUFFIX}", sp.transcript)
     ]
@@ -209,6 +289,17 @@ def collect_members(sp: SessionPaths) -> list[tuple[str, Path]]:
             if f.is_file():
                 rel = f.relative_to(sp.sidecar).as_posix()
                 members.append((f"{sp.session_id}/{rel}", f))
+    for prefix, src in session_stores(sp):
+        if src.is_file():
+            members.append((prefix, src))
+            continue
+        for f in src.rglob("*"):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(src).as_posix()
+            if prefix.startswith("job") and not with_scratch and rel.split("/", 1)[0] == "tmp":
+                continue
+            members.append((f"{prefix}/{rel}", f))
     members.sort(key=lambda m: m[0])
     return members
 
@@ -260,11 +351,17 @@ def origin_fields(sp: SessionPaths, stats: SessionStats, *, captured_at: str) ->
     return {k: v for k, v in fields.items() if v not in ("", None)}
 
 
-def write_sidecar(zip_path: Path, fields: dict, *, snapshot: str) -> Path:
+def write_sidecar(
+    zip_path: Path, fields: dict, *, snapshot: str, context: dict | None = None
+) -> Path:
     """Mint the `<bundle>.capture.yaml` ingest consumes: a uri-less producer-export origin
     (`origin_schema` + `origin_fields`; `fetched_at` → the origin snapshot). No `source_url`
-    — a session has nothing to re-fetch (spec §7.2, the imessage-export shape)."""
+    — a session has nothing to re-fetch (spec §7.2, the imessage-export shape). `context` —
+    already-validated `capture_*` fields (`corpus.capturectx`) — rides as the sidecar's
+    `capture_context:` mapping, so a later `ingest-owned` lands it without the environment."""
     import yaml
+
+    from . import capturectx
 
     sidecar = zip_path.with_suffix(zip_path.suffix + ".capture.yaml")
     payload = {
@@ -272,6 +369,9 @@ def write_sidecar(zip_path: Path, fields: dict, *, snapshot: str) -> Path:
         "origin_schema": ORIGIN_SCHEMA,
         "origin_fields": fields,
     }
+    if context:
+        back = {v: k for k, v in capturectx.FIELDS.items()}
+        payload["capture_context"] = {back[k]: v for k, v in context.items()}
     sidecar.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return sidecar
 
@@ -357,16 +457,20 @@ def ssh_find_transcript(host: str, session_id: str, *, project: str | None = Non
 def ssh_fetch(
     host: str, session_id: str, staging: Path, *, project: str | None = None
 ) -> SessionPaths:
-    """Pull a remote session's transcript + `<id>/` sidecar into `staging` (rsync `-a`,
-    preserving mtimes so the bundle stays deterministic; `scp -rp` fallback) and return its
-    local `SessionPaths`. `host` is recorded as the source machine."""
+    """Pull a remote session into `staging` as a MIRROR of its `~/.claude` — the transcript,
+    its `<id>/` sidecar, and *(v51)* every per-session store `session_stores` would read
+    locally (rsync `-a`, preserving mtimes so the bundle stays deterministic; `scp -rp`
+    fallback for the transcript) — and return its local `SessionPaths`, rooted at the
+    mirror. `host` is recorded as the source machine. A store the remote lacks is absent."""
     remote_transcript = ssh_find_transcript(host, session_id, project=project)
     project_dir = remote_transcript.rsplit("/", 2)[-2]
     remote_sidecar = remote_transcript[: -len(_TRANSCRIPT_SUFFIX)]
 
-    staging.mkdir(parents=True, exist_ok=True)
-    local_transcript = staging / f"{session_id}{_TRANSCRIPT_SUFFIX}"
-    local_sidecar = staging / session_id
+    home = staging / "claude"
+    proj = home / "projects" / project_dir
+    proj.mkdir(parents=True, exist_ok=True)
+    local_transcript = proj / f"{session_id}{_TRANSCRIPT_SUFFIX}"
+    local_sidecar = proj / session_id
 
     if not _rsync(f"{host}:{_shq(remote_transcript)}", local_transcript) and not _scp(
         f"{host}:{_shq(remote_transcript)}", local_transcript, recursive=False
@@ -376,16 +480,30 @@ def ssh_fetch(
     # sub-agents/tool-results is legitimate).
     local_sidecar.mkdir(exist_ok=True)
     if not _rsync(f"{host}:{_shq(remote_sidecar)}/", local_sidecar, dir_contents=True):
-        _scp(f"{host}:{_shq(remote_sidecar)}", staging, recursive=True)
+        _scp(f"{host}:{_shq(remote_sidecar)}", proj, recursive=True)
+    if not any(local_sidecar.rglob("*")):
+        local_sidecar.rmdir()
+
+    short = session_id[:8]
+    listing = _run(["ssh", host, (
+        "cd ~/.claude 2>/dev/null || exit 0; "
+        f"for d in uploads/{session_id} file-history/{session_id} session-env/{session_id} "
+        f"tasks/session-{short} teams/session-{short}; do [ -d \"$d\" ] && echo \"$d\"; done; "
+        f"grep -l '\"{session_id}\"' jobs/*/state.json 2>/dev/null | sed 's#/state.json$##'"
+    )])
+    for rel in (ln.strip() for ln in (listing.stdout or "").splitlines()):
+        if rel and ".." not in rel:
+            dst = home / rel
+            dst.mkdir(parents=True, exist_ok=True)
+            _rsync(f"{host}:~/.claude/{rel}/", dst, dir_contents=True)
+    with local_transcript.open("r", encoding="utf-8", errors="replace") as fh:
+        plans = sorted({m for line in fh for m in _PLAN_REF_RE.findall(line)})
+    for name in plans:
+        (home / "plans").mkdir(parents=True, exist_ok=True)
+        _rsync(f"{host}:~/.claude/plans/{name}", home / "plans" / name)
 
     host_label = host.split("@", 1)[-1].split(".", 1)[0]
-    return SessionPaths(
-        session_id=session_id,
-        transcript=local_transcript,
-        sidecar=local_sidecar if any(local_sidecar.rglob("*")) else None,
-        project_dir=project_dir,
-        host=host_label,
-    )
+    return _session_paths_for(local_transcript, host_label, claude_home=home)
 
 
 def ssh_list(host: str) -> list[str]:

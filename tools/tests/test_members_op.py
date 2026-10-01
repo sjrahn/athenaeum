@@ -86,3 +86,46 @@ def test_members_op_flattens_repeated_address(tmp_path):
     data = json.loads(out.read_text("utf-8"))
     assert data["count"] == 2
     assert {m["address"] for m in data["members"]} == {"path=a.txt", "path=b.txt"}
+
+
+def _html_post(stamp: dict | None, roster: list[dict] | None = None) -> frontmatter.Post:
+    post = frontmatter.Post("", **records.stub_frontmatter(record_id="a" * 64, touch_id="t@1"))
+    records.set_artifact_block(
+        post, mime="text/html", fields={"addressing": stamp} if stamp else {}
+    )
+    for row in roster or []:
+        records.append_embed_block(post, **row)
+    return post
+
+
+_PAGE = "<html><body><div><p>x</p><img src='a.png'></div><img src='b.png'></body></html>"
+_ROWS = [
+    {"address": "el=3", "transport": "blake3:" + "1" * 64, "media_type": "image/png"},
+    {"address": ["el=4"], "transport": "blake3:" + "2" * 64, "media_type": "image/png"},
+]
+
+
+def test_members_on_a_path_addressed_record_speak_dotted_paths(tmp_path):
+    """The drafter derives ordinals; a 3.6 record (stamp without `scheme`) reads `el=` as a
+    child-index path, so the reading re-keys each row into it — `el=7` on such a record
+    named nothing the resolver would accept (arbre-ath-steven, 2026-10-01)."""
+    page = tmp_path / "p.html"
+    page.write_text(_PAGE, encoding="utf-8")
+    notes: list[str] = []
+    out = resolver._members_in_record_grammar(
+        _html_post({"parser": "html.parser"}), page, _ROWS, notes
+    )
+    assert [r["address"] for r in out] == ["el=1.2", ["el=2"]]
+    assert notes == []
+    ordinal = _html_post({"parser": "html.parser", "scheme": "ordinal"})
+    assert resolver._members_in_record_grammar(ordinal, page, _ROWS, notes) == _ROWS
+
+
+def test_members_on_an_unstamped_record_take_the_stored_address(tmp_path):
+    page = tmp_path / "p.html"
+    page.write_text(_PAGE, encoding="utf-8")
+    roster = [{"address": "el=9", "transport": "blake3:" + "1" * 64, "media_type": "image/png"}]
+    notes: list[str] = []
+    out = resolver._members_in_record_grammar(_html_post(None, roster), page, _ROWS, notes)
+    assert [r["address"] for r in out] == ["el=9"]
+    assert notes and "1 derived member(s) dropped" in notes[0]

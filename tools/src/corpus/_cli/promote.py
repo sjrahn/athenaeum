@@ -191,6 +191,12 @@ def run(args: argparse.Namespace) -> int:
             "promote needs a member address: corpus://<container-id>?<member-address> "
             "(a bare corpus://<id> names no member)."
         )
+    from corpus import capturectx
+
+    try:  # who asked (v51, §7.2 `capture_*`) — refused before anything is written
+        context_fields = capturectx.from_env()
+    except capturectx.ContextError as exc:
+        sys.exit(f"promote: refused — {exc}. Nothing was written.")
     container_id = parsed.hash
     containment_uri = furi.canonical(parsed)
     # The address to match against the embed + extract by — reserved chars decoded (§6.1).
@@ -313,6 +319,7 @@ def run(args: argparse.Namespace) -> int:
         origin_fields["filename"] = meta["filename"]
     if meta.get("source_modified"):
         origin_fields["source_modified"] = meta["source_modified"]
+    origin_fields.update(context_fields)
 
     # 6a. *(v41, §7.2)* The container-member sidecar lift — resolved HERE for the same reason
     #     `cutting:` is (6b, below): this is the one moment both records are in hand. The

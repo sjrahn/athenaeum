@@ -28,6 +28,11 @@ mimetypes.add_type("message/rfc822", ".eml")
 # `text/x-vcard`; pin it to the RFC 6350 canonical so ingest + the zip member index agree.
 mimetypes.add_type("text/vcard", ".vcf")
 mimetypes.add_type("text/vcard", ".vcard")
+# A camera's `.HIF` still (Sony, Canon) is HEIF with HEVC coding — brand `heix`, the same
+# family `_SIGNATURES` reads as `image/heic`. Some hosts' /etc/mime.types map `hif` to
+# `image/avif`, and a container member's type is extension-first, so without this pin the
+# attested type of the same bytes would depend on which host attested them (R-0060).
+mimetypes.add_type("image/heic", ".hif")
 # The codec-derived leaf mimes a promoted media-stream track carries (spec §2, v32): the
 # raw codec payload, concatenated sample bytes with NO reframing of any kind — no ADTS
 # header, no Annex-B start codes, no corpus-invented framing. A bare payload of any of

@@ -44,3 +44,11 @@ def test_zip_roster_types_a_dng_member_as_tiff(tmp_path):
     embeds = {e["address"]: e["media_type"] for e in result["embeds"]}
     assert embeds["path=IMG_0001.DNG"] == "image/tiff"
     assert embeds["path=data.zzqq"] == "application/octet-stream"
+
+
+def test_a_camera_hif_member_is_heic_whatever_the_host_mime_table_says():
+    """A Sony/Canon `.HIF` is HEVC-coded HEIF (`ftypheix`). Some hosts' /etc/mime.types map
+    `hif` to `image/avif`, and member typing is extension-first — so the type is pinned,
+    or the same bytes would attest differently per host (R-0060)."""
+    head = b"\x00\x00\x00\x28ftypheix\x00\x00\x00\x00mif1heix"
+    assert _manifest.media_type("DCIM/100MSDCF/DSC08130.HIF", False, head) == "image/heic"

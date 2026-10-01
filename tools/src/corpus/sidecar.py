@@ -20,7 +20,9 @@ the roster, which by design no longer lists it.
 
 - a **pairing template** (`{member}` / `{stem}` / `{dir}` / `{name}`) expanded against the
   container roster — present-only, never invented;
-- a parsed sidecar **tree walked by dotted path**;
+- a parsed sidecar **tree walked by dotted path** — a JSON document, or *(v51)* an XML
+  document under one fixed tree convention (`_walk_xml`: elements by local name, `@attr`
+  for an attribute, `[@attr=value]` / `[n]` to choose among repeated siblings);
 - a **lift map** with two generic transforms — `omit` (a value filter) and `flags` (collapse
   boolean keys into one list of the set ones);
 - **reference templates** resolved against the roster, stored as member addresses;
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import json
 import re
+import xml.etree.ElementTree as ET
 from collections.abc import Container, Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -51,7 +54,7 @@ import frontmatter
 from corpus import functional_uri as furi
 from corpus import paths, records, schemas
 
-FORMATS = frozenset({"json"})
+FORMATS = frozenset({"json", "xml"})
 _PLACEHOLDER_RE = re.compile(r"\{(\w*)\}")
 _PLACEHOLDERS = frozenset({"member", "stem", "dir", "name"})
 _FIELD_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -193,7 +196,13 @@ def _check_field_name(name: Any, where: str) -> str:
     return name
 
 
-def _check_dotted(path: Any, where: str) -> str:
+def _check_dotted(path: Any, where: str, fmt: str = "json") -> str:
+    if fmt == "xml":
+        try:
+            _xml_steps(str(path))
+        except ValueError as exc:
+            raise DeclarationError(f"{where}: {path!r} is not an XML sidecar path ({exc})") from exc
+        return str(path).strip()
     if not isinstance(path, str) or not path.strip() or not all(
         seg.strip() for seg in path.split(".")
     ):
@@ -250,7 +259,7 @@ def parse_declaration(raw: Any, *, source_id: str) -> Declaration:
         fw = f"{where} lift.{field_name}"
         fname = _check_field_name(field_name, fw)
         if isinstance(spec, str):
-            lift.append(LiftEntry(field=fname, path=_check_dotted(spec, fw)))
+            lift.append(LiftEntry(field=fname, path=_check_dotted(spec, fw, fmt)))
             continue
         if not isinstance(spec, dict):
             raise DeclarationError(f"{fw}: expected a dotted path or a mapping, got {spec!r}")
@@ -262,13 +271,15 @@ def parse_declaration(raw: Any, *, source_id: str) -> Declaration:
             if not isinstance(flags, (list, tuple)) or not flags:
                 raise DeclarationError(f"{fw}: `flags` must be a non-empty list of sidecar keys")
             lift.append(
-                LiftEntry(field=fname, flags=tuple(_check_dotted(f, fw) for f in flags))
+                LiftEntry(field=fname, flags=tuple(_check_dotted(f, fw, fmt) for f in flags))
             )
             continue
         omit = spec.get("omit") or []
         if not isinstance(omit, (list, tuple)):
             raise DeclarationError(f"{fw}: `omit` must be a list of values")
-        lift.append(LiftEntry(field=fname, path=_check_dotted(path, fw), omit=tuple(omit)))
+        lift.append(
+            LiftEntry(field=fname, path=_check_dotted(path, fw, fmt), omit=tuple(omit))
+        )
 
     references: list[ReferenceEntry] = []
     for field_name, spec in refs_raw.items():
@@ -282,7 +293,7 @@ def parse_declaration(raw: Any, *, source_id: str) -> Declaration:
             raise DeclarationError(f"{fw}: `template` must be a string or a non-empty list")
         templates = tuple(_check_template(x, fw) for x in templates)
         when = spec.get("when")
-        when = _check_dotted(when, fw) if when is not None else None
+        when = _check_dotted(when, fw, fmt) if when is not None else None
         references.append(ReferenceEntry(field=fname, templates=templates, when=when))
 
     seen: set[str] = set()
@@ -395,8 +406,8 @@ def read_paired_sidecar(
 ) -> tuple[str, Any] | None:
     """`(sidecar path, parsed document)` for `member`'s paired sidecar, read out of the
     container's own entries — or None when the container physically holds no member at the
-    template's path (present-only). Raises `ValueError` when the sidecar exists but is not a
-    JSON document."""
+    template's path (present-only). Raises `ValueError` when the sidecar exists but does not
+    parse as its declared `format`."""
     from corpus.ziparchive import MemberMissing
 
     candidate = decl.sidecar_candidate(member)
@@ -404,7 +415,8 @@ def read_paired_sidecar(
         return None
     try:
         doc = read_sidecar(
-            container_path, container_media_type, candidate, el_addressing=el_addressing
+            container_path, container_media_type, candidate, el_addressing=el_addressing,
+            fmt=decl.format,
         )
     except MemberMissing:
         return None
@@ -442,12 +454,158 @@ def read_paired_sidecar_bytes(
 
 
 def _walk(doc: Any, dotted: str) -> Any:
+    if isinstance(doc, ET.Element):
+        return _walk_xml(doc, dotted)
     value = doc
     for seg in dotted.split("."):
         if not isinstance(value, dict) or seg not in value:
             return _MISSING
         value = value[seg]
     return value
+
+
+# ---------- the XML tree convention (v51) ---------- #
+
+# One step: an element's local name, then any `[@attr=value]` / `[n]` selectors, then an
+# optional `@attr` ending the path. A lone `@attr` reads the document element's own attribute.
+_XML_STEP_RE = re.compile(
+    r"^(?P<name>[^\[\]@=]*)(?P<sel>(?:\[[^\]]*\])*)(?:@(?P<attr>[^\[\]@=]+))?$"
+)
+_XML_SEL_RE = re.compile(
+    r"\[(?:@(?P<attr>[^=\]]+)=(?P<quote>['\"]?)(?P<value>[^\]]*)(?P=quote)|(?P<index>\d+))\]"
+)
+
+
+@dataclass(frozen=True)
+class _XmlStep:
+    name: str
+    selectors: tuple[tuple[str, str] | int, ...]
+    attr: str | None
+
+
+def _xml_steps(path: str) -> tuple[_XmlStep, ...]:
+    """Parse an XML sidecar path. Steps split on `.` outside brackets, so a selector value
+    may carry one (`VideoFrame[@captureFps=59.94p]`). Raises `ValueError` naming the step."""
+    path = path.strip()
+    if not path:
+        raise ValueError("empty path")
+    parts: list[str] = []
+    depth, cur = 0, ""
+    for ch in path:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("unbalanced `]`")
+        if ch == "." and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if depth:
+        raise ValueError("unbalanced `[`")
+    parts.append(cur)
+    steps: list[_XmlStep] = []
+    for i, part in enumerate(parts):
+        m = _XML_STEP_RE.match(part.strip())
+        root_attr = bool(m and m.group("attr") and i == 0 and not m.group("sel"))
+        if not m or (not m.group("name") and not root_attr):
+            raise ValueError(f"step {part!r} is not `Name[@attr=value][n]@attr`")
+        if m.group("attr") and i != len(parts) - 1:
+            raise ValueError(f"step {part!r}: an `@attr` ends the path")
+        selectors: list[tuple[str, str] | int] = []
+        sel = m.group("sel")
+        pos = 0
+        while pos < len(sel):
+            sm = _XML_SEL_RE.match(sel, pos)
+            if not sm:
+                raise ValueError(f"step {part!r}: selector {sel[pos:]!r} is not `[@a=v]` or `[n]`")
+            if sm.group("index") is not None:
+                n = int(sm.group("index"))
+                if n < 1:
+                    raise ValueError(f"step {part!r}: positions count from 1")
+                selectors.append(n)
+            else:
+                selectors.append((_local(sm.group("attr").strip()), sm.group("value")))
+            pos = sm.end()
+        steps.append(_XmlStep(
+            name=_local(m.group("name").strip()),
+            selectors=tuple(selectors),
+            attr=_local(m.group("attr").strip()) if m.group("attr") else None,
+        ))
+    return tuple(steps)
+
+
+def _local(name: str) -> str:
+    """A name without its namespace — `{urn:…}Duration` and `lib:Duration` both read as
+    `Duration`, so a document's default (or any) namespace is transparent to a path."""
+    return name.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
+
+
+def _attr(el: ET.Element, name: str) -> str | None:
+    for key, value in el.attrib.items():
+        if _local(key) == name:
+            return value
+    return None
+
+
+def _xml_scalar(text: str) -> Any:
+    """An XML value as the tree hands it to the lift: verbatim text, except the
+    `xsd:boolean` words `true` / `false`, which ARE the format's booleans — so present-only
+    (a `false` lifts nothing) and `flags:` read an XML sidecar exactly as they read JSON.
+    Numbers stay text: an identifier like `0123` or a timecode is not a number."""
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return text
+
+
+def _walk_xml(root: ET.Element, path: str) -> Any:
+    """Walk an XML sidecar by the v51 convention. The document element is the walk's start
+    (as a JSON document's top object is); each step selects child elements by local name,
+    filters them by `[@attr=value]` and picks the n-th by `[n]` (1-based, after filtering);
+    a final `@attr` reads that attribute, and a path ending on an element reads its text.
+    One match is a scalar; several — repeated siblings no selector narrowed — are the list
+    of their values in document order; none is missing."""
+    nodes = [root]
+    steps = _xml_steps(path)
+    for step in steps:
+        if step.name:
+            nodes = [
+                c for n in nodes for c in n
+                if isinstance(c.tag, str) and _local(c.tag) == step.name
+            ]
+        for sel in step.selectors:
+            if isinstance(sel, int):
+                nodes = nodes[sel - 1 : sel]
+            else:
+                key, want = sel
+                nodes = [n for n in nodes if _attr(n, key) == want]
+        if not nodes:
+            return _MISSING
+    last = steps[-1]
+    if last.attr is not None:
+        values = [v for n in nodes if (v := _attr(n, last.attr)) is not None]
+    else:
+        values = [t for n in nodes if len(n) == 0 and (t := (n.text or "").strip())]
+    if not values:
+        return _MISSING
+    scalars = [_xml_scalar(v) for v in values]
+    return scalars[0] if len(scalars) == 1 else scalars
+
+
+def parse_xml(data: bytes, where: str) -> ET.Element:
+    """Parse an XML sidecar. A document type declaration is refused outright: a metadata
+    sidecar has no use for one, and refusing it closes entity expansion before the parser
+    sees any."""
+    if b"<!DOCTYPE" in data[:4096].upper() or b"<!ENTITY" in data.upper():
+        raise ValueError(f"sidecar {where!r} declares a DOCTYPE/ENTITY — refused")
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError(f"sidecar {where!r} is not XML: {exc}") from exc
 
 
 def _is_scalar(value: Any) -> bool:
@@ -512,15 +670,19 @@ def read_sidecar(
     sidecar_path: str,
     *,
     el_addressing: dict | None = None,
+    fmt: str = "json",
 ) -> Any:
-    """Stream the sidecar member out of its container and parse it (`format: json`).
-    Raises `ValueError` for bytes that are not a JSON document."""
+    """Stream the sidecar member out of its container and parse it as its declared
+    `format` — a JSON document, or an XML document's element tree. Raises `ValueError` for
+    bytes that do not parse."""
     from corpus import containment
 
     with containment.open_member_stream(
         container_path, container_media_type, f"path={sidecar_path}", el_addressing=el_addressing
     ) as fp:
         data = fp.read()
+    if fmt == "xml":
+        return parse_xml(data, sidecar_path)
     try:
         return json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:

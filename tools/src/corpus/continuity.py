@@ -38,8 +38,15 @@ IDENTICAL = "identical"  # same transport blake3 — preserved, no I/O
 CONTAINED = "contained"  # A's bytes are a prefix of B's (append-only growth) — preserved
 DIVERGED = "diverged"  # present in B but neither identical nor a prefix — content changed
 ABSENT = "absent"  # the address exists in A but not in B — dropped
+# *(v51)* diverged or absent, but a member A's producer declares VOLATILE (its origin
+# overlay's `volatile:` globs, spec §7.2): live state a later capture legitimately replaces
+# (a job's `state.json`, a task list). It does not block supersession — and it is not
+# preserved either, so a citation of it never follows (`member_status`/`ath ledger
+# supersede` leave it on the old record and report it).
+VOLATILE = "volatile"
 
 _PRESERVED = frozenset({IDENTICAL, CONTAINED})
+_SUPERSEDABLE = _PRESERVED | {VOLATILE}
 
 
 @dataclass(frozen=True)
@@ -60,9 +67,10 @@ class Continuity:
 
     @property
     def contains_a(self) -> bool:
-        """True iff every addressable unit of A is preserved in B (identical or contained).
-        The green light for `B supersedes A` and for rewriting citations of A to B."""
-        return bool(self.members) and all(m.status in _PRESERVED for m in self.members)
+        """True iff every addressable unit of A is preserved in B (identical or contained),
+        or is a member A's producer declares volatile *(v51)*. The green light for `B
+        supersedes A`; a citation still follows only a PRESERVED address (`status_for`)."""
+        return bool(self.members) and all(m.status in _SUPERSEDABLE for m in self.members)
 
     @property
     def diverged(self) -> list[MemberStatus]:
@@ -126,19 +134,50 @@ def continuity(corpus_root: Path, a_id: str, b_id: str) -> Continuity:
 
     ext_a = mime.extension_for(records.media_type_for(post_a))
     ext_b = mime.extension_for(records.media_type_for(post_b))
+    volatile = volatile_globs(corpus_root, post_a)
     for address, transport_a in map_a.items():
+        rel = address[len("path=") :]
         transport_b = map_b.get(address)
         if transport_b is None:
-            result.members.append(MemberStatus(address, ABSENT))
-            continue
-        if transport_b == transport_a:
-            result.members.append(MemberStatus(address, IDENTICAL))
-            continue
-        # Hash differs — the one member that grows. Resolve both and test prefix containment.
-        rel = address[len("path=") :]
-        status = _prefix_status(corpus_root, a_id, ext_a, b_id, ext_b, rel)
+            status = ABSENT
+        elif transport_b == transport_a:
+            status = IDENTICAL
+        else:
+            # Hash differs — the member grew, or changed. Resolve both and test prefix
+            # containment.
+            status = _prefix_status(corpus_root, a_id, ext_a, b_id, ext_b, rel)
+        if status in (ABSENT, DIVERGED) and _matches(rel, volatile):
+            status = VOLATILE
         result.members.append(MemberStatus(address, status))
     return result
+
+
+def volatile_globs(corpus_root: Path, post) -> tuple[str, ...]:
+    """The member-path globs the record's producer declares volatile *(v51, spec §7.2)* —
+    the `volatile:` list on the origin overlay of any of its qualified origin blocks."""
+    from . import schemas
+
+    out: list[str] = []
+    for block in records.iter_origin_blocks(post):
+        id_ = block.get("id")
+        if not id_:
+            continue
+        overlay = schemas.load_origin_overlay_by_id(corpus_root, str(id_)) or {}
+        raw = overlay.get("volatile") if isinstance(overlay, dict) else None
+        if isinstance(raw, (list, tuple)):
+            out.extend(str(g) for g in raw if isinstance(g, str) and g.strip())
+    return tuple(dict.fromkeys(out))
+
+
+def _matches(rel: str, globs: tuple[str, ...]) -> bool:
+    """`rel` against `globs` — `fnmatch` per glob, where `**/` also matches nothing (so
+    `**/workflows/*.json` covers a top-level `workflows/` too)."""
+    from fnmatch import fnmatchcase
+
+    for g in globs:
+        if fnmatchcase(rel, g) or (g.startswith("**/") and fnmatchcase(rel, g[3:])):
+            return True
+    return False
 
 
 def _media_continuity(

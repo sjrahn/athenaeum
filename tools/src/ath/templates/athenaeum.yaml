@@ -82,6 +82,8 @@ assets: {}
 # The consumer ingest lane (spec/athenaeum.md §2.3, spec/corpus.md §12.3.15) —
 # the owner-sourced, producer-declared origin ids `corpus ingest-owned` may
 # mint under, so a consumer can be allowed that one verb outright. Absent: no
-# lane. The allowlist lives here, never on the caller's command line. E.g.:
+# lane. The allowlist lives here, never on the caller's command line. Listing
+# `claude-code-session` (v51) lets a consumer archive its own session whole
+# (`corpus session stage`, then `corpus ingest-owned`). E.g.:
 #   consumer_ingest:
-#     origins: [owner-statement, owner-share]
+#     origins: [owner-statement, owner-share, claude-code-session]

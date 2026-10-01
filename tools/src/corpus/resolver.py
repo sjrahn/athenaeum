@@ -66,6 +66,9 @@ _FFMPEG_ENGINE_PARAMS: frozenset[str] = frozenset({"time_range", "format", "scen
 # change to row/col extraction semantics is a new id rather than a silent reinterpretation
 # of an already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
 _CSV_OP_PARAMS: frozenset[str] = frozenset({"row", "col"})
+# The NDJSON line selectors (§6.2 `line=`, v51 `uuid=`) — a pure parse, pinned the same way
+# (`transforms.ndjson.ENGINE_VERSION`).
+_NDJSON_OP_PARAMS: frozenset[str] = frozenset({"line", "uuid"})
 
 # The vcard property op (§6.2 `prop=`) is likewise a deterministic pure parse (never an
 # external engine), versioned the same way (`transforms.vcard.ENGINE_VERSION`).
@@ -117,7 +120,7 @@ _SIDECAR_OP_PARAMS: frozenset[str] = frozenset({"sidecar"})
 # The `members` reading's own version (§6.2): v45 removed consumed sidecars from the roster
 # and put their projection on the frame's descriptor — a changed payload under an unchanged
 # URI, so the op id folds into the cache key and a pre-v45 cached roster is never served.
-MEMBERS_ENGINE_VERSION = "members@2"
+MEMBERS_ENGINE_VERSION = "members@3"
 
 # Every member-extraction axis whose registry handler yields opaque `bytes` and so may
 # itself chain further (§6.2 "Member re-chaining", v33: generalized from `path=`-only to
@@ -176,6 +179,7 @@ _INITIAL_KIND_FOR_MIME: dict[str, str] = {
     "video/quicktime": "video",
     "video/x-matroska": "video",
     "audio/mpeg": "audio",
+    "application/x-ndjson": "ndjson",
 }
 
 
@@ -404,6 +408,10 @@ def resolve(
         from .transforms import csv as csv_tf
 
         version_label = csv_tf.ENGINE_VERSION
+    elif any(k in _NDJSON_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import ndjson as ndjson_tf
+
+        version_label = ndjson_tf.ENGINE_VERSION
     elif any(k in _VCARD_OP_PARAMS for k, _ in parsed.params):
         from .transforms import vcard as vcard_tf
 
@@ -530,7 +538,7 @@ def resolve(
             im.load()
             working = im.copy()
     elif initial_kind in (
-        "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv",
+        "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv", "ndjson",
     ):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
@@ -880,6 +888,14 @@ def _resolve_members(
         derived_from = f"stored-roster ({type(exc).__name__})"
         rows = list(records.iter_members(artifact_record))
 
+    notes: list[str] = []
+    if derived_from == "artifact" and binary is not None:
+        try:
+            rows = _members_in_record_grammar(artifact_record, binary, rows, notes)
+        except Exception as exc:  # a row this tree cannot re-key is never served un-keyed
+            derived_from = f"stored-roster ({type(exc).__name__})"
+            rows = list(records.iter_members(artifact_record))
+
     members: list[dict[str, Any]] = []
     for row in rows:
         addr = row.get("address")
@@ -896,7 +912,6 @@ def _resolve_members(
             # knows stays at the front of every object.
             entry.update({k: v for k, v in fields.items() if v is not None})
             members.append(entry)
-    notes: list[str] = []
     if binary is not None:
         _attach_sidecar_descriptors(corpus_root, artifact_record, binary, members, notes)
     payload: dict[str, Any] = {
@@ -912,6 +927,59 @@ def _resolve_members(
         version_label=MEMBERS_ENGINE_VERSION,
     )
     return cache_p.resolve()
+
+
+def _members_in_record_grammar(
+    artifact_record: Any, binary: Path, rows: list[dict[str, Any]], notes: list[str]
+) -> list[dict[str, Any]]:
+    """Re-key freshly derived member rows into the `el=` grammar the RECORD speaks (§6.1.1).
+
+    The html drafter writes only the v35 ordinal space, so a re-derivation over a record
+    stamped in the frozen 3.6 dotted-path space (an `addressing:` stamp without `scheme`)
+    came back as bare ordinals (`el=7`) that its own roster and the resolver both read as
+    paths — a member the reading named was a member nobody could resolve. A 3.6 record's
+    ordinals translate exactly: same parser, same tree, so `el=N` → its element → that
+    element's child-index path. A record with no stamp at all speaks the pre-3.6 filtered
+    index, which has no structural inverse here; its rows take the stored roster's address
+    for the same transport, and a row the roster does not carry keeps no address it could
+    be misread by — dropped, and said so."""
+    if records.media_type_for(artifact_record) != "text/html":
+        return rows
+    stamp = records.el_addressing(artifact_record)
+    if stamp is not None and stamp.get("scheme") == "ordinal":
+        return rows
+    if stamp is None:
+        stored: dict[str, Any] = {}
+        for row in records.iter_members(artifact_record):
+            stored.setdefault(str(row.get("transport")), row.get("address"))
+        out = []
+        for row in rows:
+            addr = stored.get(str(row.get("transport")))
+            if addr is not None:
+                out.append({**row, "address": addr})
+        if len(out) < len(rows):
+            notes.append(
+                f"{len(rows) - len(out)} derived member(s) dropped: this record speaks the "
+                f"pre-3.6 el= index, and its stored roster names no address for them"
+            )
+        return out
+
+    from bs4 import BeautifulSoup
+
+    from corpus.transforms.html import EL_PARSER_ID, element_path, path_root, resolve_ordinal
+
+    root = path_root(BeautifulSoup(binary.read_bytes(), EL_PARSER_ID))
+
+    def as_path(value: Any) -> Any:
+        if isinstance(value, list):
+            return [as_path(v) for v in value]
+        m = re.fullmatch(r"el=(\d+)", str(value or ""))
+        if not m:
+            return value
+        path = element_path(resolve_ordinal(root, int(m.group(1))), root)
+        return f"el={path}" if path else value
+
+    return [{**row, "address": as_path(row.get("address"))} for row in rows]
 
 
 def _members_inputs_digest(corpus_root: Path, artifact_record: Any) -> str:
@@ -1104,7 +1172,8 @@ def _resolve_sidecar(
     finally:
         tmp.unlink(missing_ok=True)
     _write_sidecar(
-        corpus_root, canonical_uri, parsed.hash, cache_p, "json",
+        corpus_root, canonical_uri, parsed.hash, cache_p, decl.format,
+        mime_override="application/xml" if decl.format == "xml" else "application/json",
         version_label=SIDECAR_ENGINE_VERSION,
     )
     return cache_p.resolve()
@@ -1438,7 +1507,9 @@ def _init_member_working_value(kind: str, path: Path) -> Any:
         with Image.open(path) as im:
             im.load()
             return im.copy()
-    if kind in ("video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv"):
+    if kind in (
+        "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv", "ndjson",
+    ):
         return path
     raise NotImplementedError(f"member working kind {kind!r} not yet supported")
 
@@ -1816,6 +1887,10 @@ def engine_version_for_param(key: str) -> str | None:
         from .transforms import csv as csv_tf
 
         return csv_tf.ENGINE_VERSION
+    if key in _NDJSON_OP_PARAMS:
+        from .transforms import ndjson as ndjson_tf
+
+        return ndjson_tf.ENGINE_VERSION
     if key in _VCARD_OP_PARAMS:
         from .transforms import vcard as vcard_tf
 

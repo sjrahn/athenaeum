@@ -2,11 +2,11 @@
 spec_id: ATH
 part: I
 title: "Athenaeum Specification — Part I: Architecture"
-version: 50
+version: 51
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-02-08
-date_modified: 2026-09-28
+date_modified: 2026-10-01
 ---
 
 # Athenaeum Specification — Part I: Architecture
@@ -152,7 +152,9 @@ assets:                    # instance-registered tool assets (Part II §12.3.6):
 
 consumer_ingest:           # optional (v49) — the consumer ingest lane (Part II §12.3.15):
   origins: [owner-statement, owner-share]   # the producer-declared, owner-sourced origin
-                           #   ids `corpus ingest-owned` may mint under. Absent: no lane.
+                           #   ids `corpus ingest-owned` may mint under (v51: may include
+                           #   `claude-code-session` — the consumer's own session, whole).
+                           #   Absent: no lane.
 ```
 
 **The consumer ingest lane is declared here, never by its caller** *(v49)*. A consumer that captures the owner's own words needs one mutating verb it can be allowed to run un-gated. That verb's reach must not be a caller argument: a permission list matches a command by prefix, so an allowed `ingest --allow-origin X` also admits the same call with a second `--allow-origin` appended. The instance config — tracked and resident-owned, never consumer-writable — names the origins, and `corpus ingest-owned` takes none.

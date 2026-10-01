@@ -9,10 +9,19 @@ applies_to:
 whole_address: admissible
 mode: body-draft
 artifact_kind: self_contained
+# `line=` / `uuid=` select one line verbatim (`transforms.ndjson`, §6.2) — the working value
+# is the file itself, streamed.
+working_kind: ndjson
 address_scheme:
 - param: line
   type: integer
   description: 1-indexed line number in the source NDJSON.
+- param: uuid
+  type: string
+  description: |-
+    *(v51)* The one line whose top-level `uuid` field equals the value, verbatim — a record
+    named by its own key (a Claude Code transcript entry's uuid). Resolves to exactly one
+    line or fails; stable across append-only re-captures, like `line=`.
 - param: jsonpath
   type: string
   description: |-

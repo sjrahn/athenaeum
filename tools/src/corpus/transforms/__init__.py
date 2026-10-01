@@ -141,7 +141,7 @@ OP_CLASSES: dict[str, str] = {
     "card": OP_CLASS_ADDRESS, "prop": OP_CLASS_ADDRESS, "entry": OP_CLASS_ADDRESS,
     "item": OP_CLASS_ADDRESS, "attachment": OP_CLASS_ADDRESS, "path": OP_CLASS_ADDRESS,
     "msg": OP_CLASS_ADDRESS, "part": OP_CLASS_ADDRESS, "header": OP_CLASS_ADDRESS,
-    "spine": OP_CLASS_ADDRESS,
+    "spine": OP_CLASS_ADDRESS, "uuid": OP_CLASS_ADDRESS,
     "selector": OP_CLASS_ADDRESS, "xpath": OP_CLASS_ADDRESS,
     # … the frame a region is measured in (lossless), and the disclosed region subtraction
     "rotate": OP_CLASS_ADDRESS, "auto_orient": OP_CLASS_ADDRESS, "cover": OP_CLASS_ADDRESS,
@@ -227,6 +227,7 @@ from . import html as _html  # noqa: E402, F401
 from . import image as _image  # noqa: E402, F401
 from . import mbox as _mbox  # noqa: E402, F401
 from . import message as _message  # noqa: E402, F401
+from . import ndjson as _ndjson  # noqa: E402, F401
 from . import pdf as _pdf  # noqa: E402, F401
 from . import tar as _tar  # noqa: E402, F401
 from . import vcard as _vcard  # noqa: E402, F401

@@ -220,7 +220,7 @@ def test_members_descriptor_carries_what_promote_lifts(photo):
     assert frame["px_edited"] == "path=IMG_0001_edited.jpeg"
     # a member with no sidecar carries no projection
     assert not any(k.startswith("px_") for k in by_addr["path=notes.txt"])
-    assert json.loads(furi.cache_sidecar_path(out).read_text("utf-8"))["engine"] == "members@2"
+    assert json.loads(furi.cache_sidecar_path(out).read_text("utf-8"))["engine"] == "members@3"
 
     # one projection: the promoted record's lift is the same field set, same values
     assert _promote(root, f"corpus://{cid}?path=IMG_0001.HEIC") == 0

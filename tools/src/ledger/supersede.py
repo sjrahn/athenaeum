@@ -15,9 +15,14 @@ and reports the rest, gated by `corpus.continuity`:
   genuine break stays visibly on the old id, and `ath ledger check` / `verify` already error
   on it (dangling id, or broken anchor/quote).
 
-`--retire` then reclaims the old record's bytes (`corpus rm`) — but only when no diverged
-citation still points at it. This is the corpus-citation analogue of the ledger's own
-concept-level lineage map (`facts/LINEAGE.json`, §4.1), one layer down.
+`--retire` then reclaims the old record's bytes — but only when no diverged citation still
+points at it — by the container retirement `corpus retire` performs (spec §12.8, extend or
+die): a member promoted out of the old capture (an upload, a sub-agent transcript) re-points
+to the byte-identical member of the NEW capture and lives on; only a member no live
+container carries dies with it. *(v51 — before, a force-remove stranded every promoted
+member on a container that no longer existed, the husk §12.8 prohibits.)* This is the
+corpus-citation analogue of the ledger's own concept-level lineage map (`facts/LINEAGE.json`,
+§4.1), one layer down.
 """
 
 from __future__ import annotations
@@ -202,12 +207,46 @@ def supersede(
                 f"{old[:12]}… — not retiring; re-anchor them first."
             )
         else:
-            from corpus import maintenance
-
-            maintenance.remove_records(corpus_root, [old], force=True, execute=True)
-            result.retired = True
+            result.note = _retire_into(corpus_root, old, new)
+            result.retired = not result.note
 
     return result
+
+
+def _retire_into(corpus_root: Path, old: str, new: str) -> str:
+    """Retire `old` by extend-or-die (`corpus retire`, spec §12.8), every extension that the
+    new capture can carry pointed at the NEW capture. Returns "" on success, or the reason
+    nothing was removed — a dying member some claim still cites, or a failed extension."""
+    from corpus import paths as corpus_paths
+    from corpus import records
+    from corpus._cli import retire as retire_cli
+
+    try:
+        plan = retire_cli.plan_retirement(corpus_root, old)
+    except retire_cli.RetireError as exc:
+        return f"error: {exc}"
+    new_post = records.load(corpus_paths.record_path(corpus_root, new))
+    in_new: dict[str, str] = {}
+    for embed in records.iter_embed_blocks(new_post):
+        hexval = str(embed.get("transport") or "").split(":", 1)[-1]
+        addr = embed.get("address")
+        first = addr[0] if isinstance(addr, list) else addr
+        if hexval and first:
+            in_new.setdefault(hexval, str(first))
+    for item in plan.extend:
+        if item.member_id in in_new:
+            item.target_container, item.address = new, in_new[item.member_id]
+    cited = [rid for rid in plan.die if plan.citing_claims.get(rid)]
+    if cited:
+        return (
+            f"{len(cited)} member(s) promoted from {old[:12]}… would die and are still "
+            f"cited ({', '.join(c[:12] for c in cited)}) — not retiring"
+        )
+    try:
+        retire_cli.execute_retirement(corpus_root, plan)
+    except retire_cli.RetireError as exc:
+        return f"error: {exc}"
+    return ""
 
 
 def _rewrite_sources(fact: dict, old: str, new: str, cont, fact_rel: str):

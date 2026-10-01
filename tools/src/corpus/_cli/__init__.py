@@ -129,7 +129,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"corpus: unknown command {cmd!r}", file=sys.stderr)
         print("Run 'corpus --help' to see available commands.", file=sys.stderr)
         return 2
-    return dispatch([cmd, *args[1:]])
+    try:
+        return dispatch([cmd, *args[1:]])
+    except BrokenPipeError:
+        # The reader closed early (`corpus diagnose <id> | head`): stop quietly, as a shell
+        # tool does. Point stdout at devnull so the interpreter's exit flush cannot raise
+        # the same error again, and exit as SIGPIPE would (128 + 13).
+        import os
+
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 141
 
 
 def dispatch(argv: Sequence[str]) -> int:
