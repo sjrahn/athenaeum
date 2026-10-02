@@ -24,6 +24,7 @@ audio (transcribe, via the configured TranscriptionAdapter pulled from the conte
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -529,9 +530,7 @@ def resolve(
         pdf_doc.init_forms()
         working = pdf_doc
     elif initial_kind == "html":
-        from bs4 import BeautifulSoup
-
-        working = BeautifulSoup(artifact_binary.read_bytes(), "html.parser")
+        working = _parsed_html(artifact_binary)
     elif initial_kind == "image":
         # Load + decode into memory so the file handle closes before transforms run.
         with Image.open(artifact_binary) as im:
@@ -863,8 +862,6 @@ def _resolve_members(
     derived_from = "artifact"
     binary: Path | None = None
     try:
-        import copy
-
         from corpus import derive as _derive
         from corpus.draft import mbox_manifest as _mbox
 
@@ -1652,6 +1649,29 @@ def _render_pdfpage(ref: Any, ctx: transforms.RenderContext) -> Any:
     return pdf_transforms.render_pdfpage(ref, ctx)
 
 
+# The last HTML artifact parsed for a chain, keyed by (path, mtime_ns, size). A page that
+# resolves many addresses of one snapshot (`corpus view` of a capture with 811 `el=` image
+# members) would otherwise re-parse the whole document per address: a 5.8 MB SingleFile
+# save costs ~0.3 s a parse, so the view sat silent for minutes. One entry, not an LRU:
+# callers walk one record at a time, and a parsed multi-MB tree is large. Sharing is safe
+# because no `html`-kind transform mutates the tree (they select and read).
+_HTML_PARSE_MEMO: tuple[tuple[str, int, int], Any] | None = None
+
+
+def _parsed_html(path: Path) -> Any:
+    """The artifact parsed with `html.parser`, reused while the file is unchanged."""
+    global _HTML_PARSE_MEMO
+    from bs4 import BeautifulSoup
+
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if _HTML_PARSE_MEMO is not None and _HTML_PARSE_MEMO[0] == key:
+        return _HTML_PARSE_MEMO[1]
+    soup = BeautifulSoup(path.read_bytes(), "html.parser")
+    _HTML_PARSE_MEMO = (key, soup)
+    return soup
+
+
 def _promote_to_image(working: Any, current_kind: str, ctx: transforms.RenderContext) -> Any:
     """Render an intermediate selector (`pdfpage` / `htmlel`) to a PIL Image so a following
     image-output op (bbox/mark/fit/…) can apply."""
@@ -1956,11 +1976,23 @@ def _csv_dialect_for(corpus_root: Path, media_type: str) -> dict[str, Any]:
     return merged
 
 
+# The last record parsed, keyed like `_HTML_PARSE_MEMO`: every resolve loads its record,
+# even on a cache hit, so a page resolving each of 811 members re-parsed an 811-row roster
+# 811 times (~10 s of YAML). Handed out as a deep copy (~1 ms against a ~14 ms parse) so no
+# caller can see another's mutation.
+_RECORD_MEMO: tuple[tuple[str, int, int], Any] | None = None
+
+
 def _load_record(corpus_root: Path, record_hash: str):
+    global _RECORD_MEMO
     record_file = paths.record_path(corpus_root, record_hash)
     if not record_file.is_file():
         raise FileNotFoundError(f"no record for hash {record_hash}: {record_file}")
-    return records.load(record_file)
+    st = record_file.stat()
+    key = (str(record_file), st.st_mtime_ns, st.st_size)
+    if _RECORD_MEMO is None or _RECORD_MEMO[0] != key:
+        _RECORD_MEMO = (key, records.load(record_file))
+    return copy.deepcopy(_RECORD_MEMO[1])
 
 
 def _record_duration(artifact_record: Any) -> float | None:

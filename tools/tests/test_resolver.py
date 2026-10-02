@@ -256,6 +256,39 @@ def test_html_el_cache_key_includes_engine_version(tmp_path, monkeypatch):
     assert sidecar2["engine"] == "html-el@fake-2"
 
 
+def test_html_parse_and_record_load_happen_once_per_page(tmp_path, monkeypatch):
+    """A page that resolves many addresses of one HTML snapshot (`corpus view` of a capture
+    with 811 `el=` image members) parses the document and loads the record once, not once
+    per address — before the memo, a 5.8 MB Facebook save took minutes to view. Each caller
+    still gets its own copy of the record, so one caller's mutation never reaches another."""
+    import bs4
+
+    root = _make_corpus(tmp_path)
+    rid = _ingest_fixture(root, "sample.html", mime="text/html", ext="html")
+    parses, loads = [], []
+    real_soup, real_load = bs4.BeautifulSoup, records.load
+    monkeypatch.setattr(
+        bs4, "BeautifulSoup", lambda *a, **k: parses.append(1) or real_soup(*a, **k)
+    )
+    monkeypatch.setattr(records, "load", lambda p: loads.append(p) or real_load(p))
+    monkeypatch.setattr(resolver, "_HTML_PARSE_MEMO", None)
+    monkeypatch.setattr(resolver, "_RECORD_MEMO", None)
+
+    for _ in range(3):  # regenerate: every pass runs the chain, none is a cache hit
+        resolver.resolve(f"corpus://{rid}?el=4", root, regenerate=True)
+    assert (len(parses), len(loads)) == (1, 1)
+
+    first = resolver._load_record(root, rid)
+    first.metadata["_embeds"] = ["mutated"]
+    assert resolver._load_record(root, rid).metadata.get("_embeds") != ["mutated"]
+
+    # A changed record file is re-read, never served stale.
+    rec = paths.record_path(root, rid)
+    rec.write_text(rec.read_text() + "\n")
+    resolver._load_record(root, rid)
+    assert len(loads) == 2
+
+
 def _ingest_html_bytes(corpus_root: Path, html: bytes) -> str:
     """Stage inline HTML bytes as a corpus record + artifact. Returns the record id."""
     import hashlib
