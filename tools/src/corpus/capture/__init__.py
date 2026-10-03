@@ -182,6 +182,116 @@ def _interact(page: Any, steps: list[dict[str, Any]] | None, **kwargs: Any) -> N
         raise CaptureError(str(exc)) from exc
 
 
+# Render guarantee for a capture driven through a real browser (spec Part II, `transport:
+# cdp | headed`). A locked display parks Chrome's compositor: a CDP-driven tab keeps
+# `visibilityState == "visible"` but runs requestAnimationFrame at 0/s, so dialogs never
+# finish transitioning and virtualized feeds never mount, and the snapshot silently catches
+# a half-hydrated page. A screencast the capturer acknowledges frame by frame keeps the page
+# compositing; a probe counts animation frames and fails the capture closed on zero.
+RENDER_PROBE_WINDOW_MS = 1_000
+
+_RAF_PROBE_START_JS = (
+    "() => { const s = { n: 0, on: true }; window.__athRafProbe = s;"
+    " const f = () => { if (!s.on) return; s.n++; requestAnimationFrame(f); };"
+    " requestAnimationFrame(f); }"
+)
+_RAF_PROBE_READ_JS = (
+    "() => { const s = window.__athRafProbe; if (!s) return null; s.on = false;"
+    " delete window.__athRafProbe; return s.n; }"
+)
+
+
+def _start_render_keepalive(cdp: Any) -> Callable[[], None]:
+    """Keep the page behind CDP session `cdp` compositing: a tiny screencast whose every
+    frame is acknowledged. Returns an idempotent, best-effort stop function.
+
+    Setup is best-effort too — `_probe_rendering` is the fail-closed guard, so a browser
+    that refuses a setup command is logged, not fatal. The ack runs inside the sync-API
+    event handler (the dispatcher); `send` there does not deadlock — it is the same
+    pattern Playwright documents for handlers that call back into the page — and a send
+    failing during teardown is swallowed so it cannot surface out of the dispatcher.
+    """
+
+    def _ack(params: dict[str, Any]) -> None:
+        with contextlib.suppress(Exception):
+            cdp.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]})
+
+    for method, params in (
+        ("Page.enable", {}),
+        ("Emulation.setFocusEmulationEnabled", {"enabled": True}),
+        ("Page.setWebLifecycleState", {"state": "active"}),
+    ):
+        try:
+            cdp.send(method, params)
+        except Exception as exc:
+            log.debug("render keep-alive: %s unavailable: %s", method, exc)
+    cdp.on("Page.screencastFrame", _ack)
+    try:
+        cdp.send(
+            "Page.startScreencast",
+            {
+                "format": "jpeg",
+                "quality": 10,
+                "maxWidth": 200,
+                "maxHeight": 200,
+                "everyNthFrame": 1,
+            },
+        )
+    except Exception as exc:
+        log.warning("render keep-alive: could not start the screencast: %s", exc)
+
+    stopped = False
+
+    def stop() -> None:
+        nonlocal stopped
+        if stopped:
+            return
+        stopped = True
+        with contextlib.suppress(Exception):
+            cdp.send("Page.stopScreencast")
+        with contextlib.suppress(Exception):
+            cdp.remove_listener("Page.screencastFrame", _ack)
+
+    return stop
+
+
+def _probe_rendering(page: Any, *, window_ms: int = RENDER_PROBE_WINDOW_MS) -> int:
+    """Count `requestAnimationFrame` callbacks over `window_ms`; a page that is not
+    drawing reads 0. Raises `CaptureError` when the probe cannot be evaluated.
+
+    The window is timed on the Playwright side (`wait_for_timeout`), not by a page timer,
+    and both page evaluations return immediately — so a frozen or throttled page reads
+    zero rather than hanging the probe.
+    """
+    try:
+        page.evaluate(_RAF_PROBE_START_JS)
+        page.wait_for_timeout(window_ms)
+        frames = page.evaluate(_RAF_PROBE_READ_JS)
+    except Exception as exc:
+        raise CaptureError(
+            f"capture aborted: the render probe could not run ({exc}) — is the display locked?"
+        ) from exc
+    if not isinstance(frames, (int, float)) or isinstance(frames, bool):
+        raise CaptureError(
+            "capture aborted: the render probe could not read the page's animation frames "
+            "(the page navigated or replaced the probe) — is the display locked?"
+        )
+    return int(frames)
+
+
+def _require_rendering(page: Any, *, when: str) -> int:
+    """Probe the page and abort the capture as a failed `assert` does when it is not
+    drawing. `when` names the checkpoint for the log and the error."""
+    frames = _probe_rendering(page)
+    if frames <= 0:
+        raise CaptureError(
+            f"capture aborted: the page is not drawing (0 animation frames in "
+            f"{RENDER_PROBE_WINDOW_MS // 1000}s, {when}) — is the display locked?"
+        )
+    log.info("render probe (%s): %d animation frames in %dms", when, frames, RENDER_PROBE_WINDOW_MS)
+    return frames
+
+
 @dataclass
 class CaptureOptions:
     """Knobs for a single capture. All optional; defaults match the CLI."""
@@ -1138,6 +1248,10 @@ def _capture_via_playwright(
             browser = p.chromium.launch(headless=not headed)
             if headed:
                 log.info("launched headed browser (recipe transport: headed)")
+        # A real browser (cdp, headed) can park its compositor behind a locked display;
+        # headless Chrome renders regardless, so it gets no keep-alive and no probe.
+        real_browser = using_cdp or transport == "headed"
+        stop_keepalive: Callable[[], None] | None = None
         page = None
         try:
             if using_cdp:
@@ -1159,12 +1273,19 @@ def _capture_via_playwright(
             # issue the CDP command directly. It must precede goto so the document commits
             # with CSP relaxed. Safe: we snapshot the rendered DOM, not preserve runtime
             # behaviour. Best-effort — a non-Chromium / unsupported transport just skips it.
+            cdp = None
             try:
-                page.context.new_cdp_session(page).send(
-                    "Page.setBypassCSP", {"enabled": True}
-                )
+                cdp = page.context.new_cdp_session(page)
+                cdp.send("Page.setBypassCSP", {"enabled": True})
             except Exception as exc:
                 log.debug("Page.setBypassCSP unavailable: %s", exc)
+            if real_browser:
+                if cdp is None:
+                    raise CaptureError(
+                        "capture aborted: no CDP session on the page, so it cannot be kept "
+                        "rendering — is this a Chromium browser?"
+                    )
+                stop_keepalive = _start_render_keepalive(cdp)
 
             log.debug("navigating: %s", url)
             response = None
@@ -1198,6 +1319,8 @@ def _capture_via_playwright(
                         "networkidle did not settle within %dms — snapshotting anyway",
                         NETWORKIDLE_BUDGET_MS,
                     )
+                if real_browser:
+                    _require_rendering(page, when="before interactions")
                 _interact(
                     page,
                     interaction_steps,
@@ -1207,6 +1330,8 @@ def _capture_via_playwright(
                 )
                 image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 final_url = page.url
+                if real_browser:
+                    _require_rendering(page, when="before snapshot")
                 snapshot = _snapshot_html(
                     page=page, fetched_at=fetched_at, bundle=bundle, fidelity=fidelity
                 )
@@ -1247,6 +1372,8 @@ def _capture_via_playwright(
             log.info("non-HTML response: saved %d bytes as .%s", len(raw), ext)
             return capture_path, [], None
         finally:
+            if stop_keepalive is not None:
+                stop_keepalive()
             if page is not None:
                 with contextlib.suppress(Exception):
                     page.close()

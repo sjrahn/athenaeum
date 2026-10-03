@@ -2,11 +2,11 @@
 spec_id: ATH
 part: IV
 title: "Athenaeum Specification — Part IV: Custody"
-version: 51
+version: 52
 status: current
 license: "CC BY-SA 4.0"
 date_created: 2026-08-19
-date_modified: 2026-10-01
+date_modified: 2026-10-02
 ---
 
 # Athenaeum Specification — Part IV: Custody

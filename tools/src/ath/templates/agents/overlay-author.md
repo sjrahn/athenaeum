@@ -43,7 +43,7 @@ never strips chrome; every strip decision is yours, made per host, at capture ti
    — §6 (the overlay-authoring primer + hard-won cross-host patterns) fully; skim the rest,
    especially §1 (CDP hosts) and §5.
 2. `spec/corpus.md` §7.2 — the `capture:` grammar (`interactions:` primitives, §12.3.6:
-   scroll / expand / click / hover / eval / remove / wait / assert; `transport`,
+   scroll / expand / click / hover / eval / remove / wait / assert / carousel / feed; `transport`,
    `url_rewrite`, `canonical`, `cookies_from_host`, `ytdlp:`).
 3. The worked model overlays §6 names (chrome-strip, eval, video-router examples) plus the
    most recent festival/marketing pair — read at least one close sibling of your host's
@@ -60,6 +60,10 @@ never strips chrome; every strip decision is yours, made per host, at capture ti
 - **ORDER: surface first, strip second.** `scroll: full` (lazy media) → `expand: all` (the
   generic disclosure safety net — it replaces DEFAULT_STEPS wholesale when an explicit
   `interactions:` list exists) → settle `wait` → `remove:` → settle `wait`.
+  An infinite list that grows as it is scrolled wants `scroll: {until_stable: N}` instead of
+  `scroll: full`. A VIRTUALIZED feed (items unmount when scrolled away) wants `feed`, not
+  `scroll: full` -- and pair it with `assert: {selector: 'main[data-ath-feed]'}` so an empty
+  harvest fails closed.
 - **Fail closed with `assert`, never with a sentinel.** Every step is best-effort except
   `assert` (§12.3.6, v48): when the page can be the wrong page (a login wall, an expired
   session, an empty receipt panel), assert the content's presence (`assert: {selector,

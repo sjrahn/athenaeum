@@ -13,6 +13,9 @@ the capture raises before the snapshot, so nothing is staged or ingested.
 Step grammar (each list item is a single-key mapping)::
 
     - scroll: full              # top-to-bottom, hydrating lazy content
+    - scroll: {until_stable: 5, step_ms: 1500, max_seconds: 300}
+                                # an infinite list: scroll to the bottom until the height
+                                # stops growing for 5 consecutive steps
     - expand: all               # open <details>; click [aria-expanded=false]
     - expand: details           # open <details> only
     - click: {selector: "...", repeat: 10, delay_ms: 400}
@@ -22,6 +25,9 @@ Step grammar (each list item is a single-key mapping)::
                                 # force-inlining each slide as it's reached so all N
                                 # survive — not just the 2 left in the DOM at snapshot.
                                 # Needs the capture's request API (caller-supplied).
+    - feed: {item: "[aria-posinset]", order: aria-posinset, hover: {...}, ...}
+                                # harvest a VIRTUALIZED feed item by item, with a trusted
+                                # hover per item — see `capture/feed.py` for the shape
     - wait: {ms: 1500}
     - wait: {selector: "img.loaded", timeout_ms: 8000}
     - hover: {selector: "..."}
@@ -73,6 +79,20 @@ _SCROLL_JS = """async () => {
     for (let y = 0; y <= total; y += step) {
         window.scrollTo(0, y);
         await new Promise(r => setTimeout(r, 300));
+    }
+}"""
+
+# A list that extends itself as it is scrolled (an infinite grid): keep scrolling to the
+# bottom until the height has not grown for `stable` consecutive steps, or time runs out.
+_SCROLL_UNTIL_STABLE_JS = """async (a) => {
+    const t0 = Date.now();
+    let last = -1, still = 0;
+    while (still < a.stable && Date.now() - t0 < a.max_ms) {
+        window.scrollTo(0, document.documentElement.scrollHeight);
+        await new Promise(r => setTimeout(r, a.step_ms));
+        const h = document.documentElement.scrollHeight;
+        still = h === last ? still + 1 : 0;
+        last = h;
     }
 }"""
 
@@ -131,7 +151,14 @@ def _run_step(
     carousel_handler: Callable[[Any, Any], None] | None = None,
 ) -> None:
     if kind == "scroll":
-        page.evaluate(_SCROLL_JS)
+        if isinstance(arg, dict) and arg.get("until_stable"):
+            page.evaluate(_SCROLL_UNTIL_STABLE_JS, {
+                "stable": max(1, int(arg["until_stable"])),
+                "step_ms": int(arg.get("step_ms", 1500)),
+                "max_ms": int(float(arg.get("max_seconds", 300)) * 1000),
+            })
+        else:
+            page.evaluate(_SCROLL_JS)
     elif kind == "expand":
         page.evaluate(_EXPAND_ALL_JS if arg == "all" else _EXPAND_DETAILS_JS)
     elif kind == "click":
@@ -141,6 +168,10 @@ def _run_step(
             carousel_handler(page, arg)
         else:
             log.debug("carousel step with no handler — skipping")
+    elif kind == "feed":
+        from . import feed
+
+        feed.walk(page, arg)
     elif kind == "wait":
         _wait(page, arg)
     elif kind == "hover":

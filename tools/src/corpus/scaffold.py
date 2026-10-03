@@ -175,6 +175,8 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #   capturer: browser                # packaged (browser | video) or a corpus-local name
 #   transport: headless              # headless | headed | cdp  (headed/cdp need a display
 #                                    # or a running Chrome -- see `corpus capture --transport`)
+#                                    # cdp/headed captures abort if the page is not drawing (a
+#                                    # locked display); the capturer keeps it rendering itself.
 #   fidelity: balanced               # exact | balanced | lean SingleFile snapshot tier.
 #                                    # exact = byte-faithful (presentation IS content); balanced
 #                                    # (default) drops redundant font/image/media alternates
@@ -182,7 +184,11 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #                                    # Records are identical across tiers; only artifacts shrink.
 #   interactions:
 #     - scroll: full                   # hydrate lazy-loaded / below-the-fold media
+#     # An INFINITE list: scroll to the bottom until its height stops growing for 5 steps.
+#     # - scroll: {until_stable: 5, step_ms: 1500, max_seconds: 300}
 #     - click: {selector: "button[aria-label='Next']", repeat: 12, delay_ms: 500}
+#     # A VIRTUALIZED image carousel: click next, inlining each slide as it is reached.
+#     # - carousel: {next: "button[aria-label='Next']", max: 12}
 #     - expand: all                    # open <details> + aria-expanded accordions/tabs
 #     - remove: ['#header', 'footer', 'nav', '.cookie-banner', '.related', '#ad']
 #                                      # delete chrome so it isn't inlined/embedded or
@@ -204,6 +210,13 @@ _EXAMPLE_ORIGIN_OVERLAY_YAML = """\
 #     - assert: {selector: '#main-content', message: 'content missing -- logged out?'}
 #     # - assert: {selector: 'form#sign-in', present: false, message: 'login wall'}
 #     # - assert: {js: "document.title !== 'Sign In'", message: 'login wall'}
+#     # A VIRTUALIZED feed (items unmount when scrolled away -- `scroll: full` would lose them):
+#     # `feed` visits each item, does a trusted hover, stashes clones, and assembles them into
+#     # <main data-ath-feed>. Pair it with an assert so a failed harvest aborts the capture.
+#     # - feed: {item: '[aria-posinset]', order: aria-posinset,
+#     #          ready: "(el) => el.querySelector('.ts')",
+#     #          hover: {target: '.ts', tooltip: '[role=tooltip]'}, max_items: 200}
+#     # - assert: {selector: 'main[data-ath-feed]', message: 'feed harvest produced nothing'}
 #   viewport: 1280x900
 #   # --- paginated works (thread / multi-page article / gallery) ---  Walk the ?page=N /
 #   # /page-N pages, MERGE them, and ingest ONE content-addressed record (not page-1-only,
