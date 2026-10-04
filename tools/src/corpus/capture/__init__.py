@@ -56,7 +56,7 @@ import logging
 import os
 import re
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -290,6 +290,77 @@ def _require_rendering(page: Any, *, when: str) -> int:
         )
     log.info("render probe (%s): %d animation frames in %dms", when, frames, RENDER_PROBE_WINDOW_MS)
     return frames
+
+
+_DOM_SIZE_JS = (
+    "() => ({ elements: document.getElementsByTagName('*').length,"
+    " videos: document.getElementsByTagName('video').length })"
+)
+
+
+def _dom_size(page: Any) -> str:
+    """A cheap description of the page's size for a failure report, or `unknown`."""
+    try:
+        size = page.evaluate(_DOM_SIZE_JS)
+        return f"{size['elements']} elements, {size['videos']} <video>"
+    except Exception:
+        return "unknown"
+
+
+@contextlib.contextmanager
+def _capture_stage(stage: str, *, page_url: str, dom: str, steps: list[str]) -> Iterator[None]:
+    """Name the stage a capture died in. A renderer crash or a dropped CDP connection
+    otherwise surfaces as a bare `TargetClosed` that says nothing of where, on what page,
+    or after which interaction — so it can't be diagnosed without re-running it."""
+    try:
+        yield
+    except CaptureError:
+        raise
+    except Exception as exc:
+        raise CaptureError(
+            f"capture failed at the {stage} stage ({type(exc).__name__}: {exc}) — "
+            f"page {page_url}, DOM {dom}, last interaction step: "
+            f"{steps[-1] if steps else 'none'}"
+        ) from exc
+
+
+def _target_id(cdp: Any) -> str | None:
+    """The CDP target id of the page behind session `cdp`, or None."""
+    try:
+        return str(cdp.send("Target.getTargetInfo")["targetInfo"]["targetId"])
+    except Exception as exc:
+        log.debug("could not read the capture page's target id: %s", exc)
+        return None
+
+
+def _close_own_tab(
+    p: Any, browser: Any, page: Any, *, cdp_url: str | None, target_id: str | None
+) -> None:
+    """Close the tab this capture opened — and only it. `page.close()` first; when that
+    fails (the renderer crashed) or cannot have reached the browser (the CDP connection
+    dropped under an oversized snapshot — measured: `page.close()` then returns
+    silently and the tab stays), close the capture's own target by id over a FRESH
+    connection. A CDP capture runs in the owner's browser, so a tab left behind is
+    clutter there."""
+    try:
+        page.close()
+        if browser.is_connected():
+            return
+        log.debug("page.close() returned, but the CDP connection is gone")
+    except Exception as exc:
+        log.debug("page.close() failed: %s", exc)
+    if not cdp_url or not target_id:
+        return  # a launched browser goes with browser.close()
+    try:
+        fresh = p.chromium.connect_over_cdp(cdp_url)
+        try:
+            fresh.new_browser_cdp_session().send("Target.closeTarget", {"targetId": target_id})
+            log.info("closed the capture's tab %s over a fresh CDP connection", target_id)
+        finally:
+            with contextlib.suppress(Exception):
+                fresh.close()
+    except Exception as exc:
+        log.warning("could not close the capture's tab %s in the CDP browser: %s", target_id, exc)
 
 
 @dataclass
@@ -1253,6 +1324,7 @@ def _capture_via_playwright(
         real_browser = using_cdp or transport == "headed"
         stop_keepalive: Callable[[], None] | None = None
         page = None
+        target_id: str | None = None
         try:
             if using_cdp:
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -1276,6 +1348,7 @@ def _capture_via_playwright(
             cdp = None
             try:
                 cdp = page.context.new_cdp_session(page)
+                target_id = _target_id(cdp)
                 cdp.send("Page.setBypassCSP", {"enabled": True})
             except Exception as exc:
                 log.debug("Page.setBypassCSP unavailable: %s", exc)
@@ -1321,34 +1394,41 @@ def _capture_via_playwright(
                     )
                 if real_browser:
                     _require_rendering(page, when="before interactions")
+                steps_run: list[str] = []
                 _interact(
                     page,
                     interaction_steps,
+                    progress=steps_run,
                     carousel_handler=lambda pg, a: _walk_carousel(
                         page=pg, request_api=ctx.request, arg=a
                     ),
                 )
-                image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 final_url = page.url
+                where = {"page_url": final_url, "dom": _dom_size(page), "steps": steps_run}
+                with _capture_stage("inline", **where):
+                    image_stats = _inline_image_srcs(page=page, request_api=ctx.request)
                 if real_browser:
                     _require_rendering(page, when="before snapshot")
-                snapshot = _snapshot_html(
-                    page=page, fetched_at=fetched_at, bundle=bundle, fidelity=fidelity
-                )
-                issues = _run_capture_detectors(
-                    snapshot=snapshot,
-                    # Drift is measured against where we INTENDED to navigate (the rewritten
-                    # nav target), not the pre-rewrite URL — else any `url_rewrite` that
-                    # changes host (e.g. www.reddit → old.reddit) self-reports a false
-                    # hostname-change drift. The original `url` remains the recorded origin.
-                    request_url=nav_url,
-                    final_url=final_url,
-                    response_status=response_status,
-                    image_stats=image_stats,
-                    snapshot_engine=snapshot_engine,
-                )
-                capture_path = capture_dir / f"{base}.html"
-                capture_path.write_text(snapshot, encoding="utf-8")
+                with _capture_stage("snapshot", **where):
+                    snapshot = _snapshot_html(
+                        page=page, fetched_at=fetched_at, bundle=bundle, fidelity=fidelity
+                    )
+                with _capture_stage("serialise", **where):
+                    issues = _run_capture_detectors(
+                        snapshot=snapshot,
+                        # Drift is measured against where we INTENDED to navigate (the
+                        # rewritten nav target), not the pre-rewrite URL — else any
+                        # `url_rewrite` that changes host (e.g. www.reddit → old.reddit)
+                        # self-reports a false hostname-change drift. The original `url`
+                        # remains the recorded origin.
+                        request_url=nav_url,
+                        final_url=final_url,
+                        response_status=response_status,
+                        image_stats=image_stats,
+                        snapshot_engine=snapshot_engine,
+                    )
+                    capture_path = capture_dir / f"{base}.html"
+                    capture_path.write_text(snapshot, encoding="utf-8")
                 return capture_path, issues, snapshot_engine
 
             api = ctx.request.get(url, timeout=timeout_ms)
@@ -1375,9 +1455,14 @@ def _capture_via_playwright(
             if stop_keepalive is not None:
                 stop_keepalive()
             if page is not None:
-                with contextlib.suppress(Exception):
-                    page.close()
-            browser.close()
+                _close_own_tab(p, browser, page, cdp_url=cdp_url if using_cdp else None,
+                               target_id=target_id)
+            # A dropped connection makes this raise too; it must not replace the error
+            # that is already propagating.
+            try:
+                browser.close()
+            except Exception as exc:
+                log.debug("browser.close() failed: %s", exc)
 
 
 @register("browser")

@@ -117,6 +117,7 @@ def run(
     steps: list[dict[str, Any]] | None,
     *,
     carousel_handler: Callable[[Any, Any], None] | None = None,
+    progress: list[str] | None = None,
 ) -> None:
     """Execute an ordered list of interaction `steps` against `page` (best-effort).
 
@@ -127,12 +128,17 @@ def run(
     capture's request API to force-inline each slide as the walk reaches it, so it
     is supplied by the caller (`_capture_via_playwright`) rather than implemented
     here. Absent a handler the step is a no-op.
+
+    `progress`, when given, has each step's kind appended as the step starts, so a
+    capture that later fails can name the last interaction that ran.
     """
     for step in steps if steps is not None else DEFAULT_STEPS:
         if not isinstance(step, dict) or len(step) != 1:
             log.debug("skipping malformed interaction step: %r", step)
             continue
         (kind, arg), = step.items()
+        if progress is not None:
+            progress.append(str(kind))
         try:
             _run_step(page, str(kind), arg, carousel_handler=carousel_handler)
         except CaptureAborted:
