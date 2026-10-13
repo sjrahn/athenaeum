@@ -1,0 +1,2 @@
+{"subject":"png","predicate":"refines","value":"image"}
+{"subject":"png","predicate":"matches","value":{"mime":"image/png"}}

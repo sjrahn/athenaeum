@@ -42,12 +42,24 @@ export class ArtifactCache {
   }
 }
 
+/** The blake3 of a container member by path, from the attests roster. */
+export function memberOf(a: Artifact, path: string): string | null {
+  const members = (a.attests.value as { members?: { path: string; blake3: string }[] }).members ?? [];
+  return members.find((m) => m.path === path)?.blake3 ?? null;
+}
+
 /** Does the artifact have a scope at `at`: a listed scope, `whole`, or (tabular) a cell of a listed row? */
 export function scopeExists(a: Artifact, at: string): boolean {
   const s = scopeAt(at);
   if (a.table.get(s)) return true;
   const m = parseAddress(s).members[0]!;
-  if (m.kind === "row" && m.col !== undefined) return a.table.get(`row=${m.row}`) !== undefined;
+  // physical scopes are always addressable: a row the parse holds, a page the document has
+  if (m.kind === "row")
+    return a.csv !== undefined
+      ? m.row < a.csv.rows.length && (m.col === undefined || m.col < (a.csv.rows[m.row]?.cells.length ?? 0))
+      : a.table.get(`row=${m.row}`) !== undefined;
+  if (m.kind === "page")
+    return a.pdf !== undefined ? m.page >= 1 && m.page <= a.pdf.pages.length : a.table.get(`page=${m.page}`) !== undefined;
   return false;
 }
 
@@ -62,8 +74,24 @@ export async function bindEntry(cache: ArtifactCache, e: EvidenceEntry): Promise
   const b = parseBinding(e.reading);
   if (b.kind === "invalid") return { ...base, state: "flagged", why: b.why };
   if (b.kind === "held") return { ...base, state: "held" };
-  const a = await cache.get(anchor.blake3);
+  let a = await cache.get(anchor.blake3);
   if (!a) return { ...base, state: "flagged", why: "anchor names an artifact not in the chain" };
+  // a route through a container canonicalises to the member (spec §5.1): corpus://<zip>?path=p[;…] → the member's subject
+  const route = parseAddress(anchor.at).members[0];
+  if (route?.kind === "path") {
+    const member = memberOf(a, route.path);
+    if (!member) return { ...base, state: "flagged", why: `container has no member at path ${route.path}` };
+    const m = await cache.get(member);
+    if (!m) return { ...base, state: "flagged", why: `member ${member.slice(0, 12)}… is not a subject in the chain` };
+    a = m;
+    anchor = {
+      ...anchor,
+      blake3: member,
+      at: parseAddress(anchor.at).members.length > 1 ? scopeAt(anchor.at.replace(/^path=[^;]*;/, "")) : "whole",
+    };
+    base.blake3 = member;
+    base.at = anchor.at;
+  }
   if (!scopeExists(a, anchor.at)) return { ...base, state: "flagged", why: "anchor resolves to no scope" };
   const surface = surfaceFor(a, anchor.at, b, anchor.aspect);
   if (!surface) return { ...base, state: "flagged", why: `binding ${e.reading} yields no surface at ${anchor.at}` };

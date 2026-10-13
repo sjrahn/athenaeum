@@ -19,6 +19,7 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
   }
   if (starts([0x1f, 0x8b])) return "application/gzip";
   const head = text(b, 2048).replace(/^﻿/, "").trimStart().toLowerCase();
+  if (/^(<\?xml[^>]*\?>\s*(<!--[\s\S]*?-->\s*)*)?<svg[\s>]/.test(head) || /^<!doctype svg/.test(head)) return "image/svg+xml";
   if (/^(<!doctype html|<html|<head|<meta |<\?xml[^>]*\?>\s*<html)/.test(head) || /<html[\s>]/.test(head.slice(0, 1024)))
     return "text/html";
   const ext = name.toLowerCase().split(".").pop() ?? "";

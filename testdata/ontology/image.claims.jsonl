@@ -1,0 +1,6 @@
+{"subject":"image","predicate":"refines","value":"lossy"}
+{"subject":"image","predicate":"axes","value":["bbox"]}
+{"subject":"image","predicate":"tree","value":"asserted — boxes on the pixel grid are judgments"}
+{"subject":"image","predicate":"reads","value":"none"}
+{"subject":"image","predicate":"convention","value":"boxes in the stored frame; orientation rides on the reading"}
+{"subject":"image","predicate":"convention","value":"no derivation yields words: image.words@1 is a proposal a pass accepts or refuses; every image reading is listed by L7"}

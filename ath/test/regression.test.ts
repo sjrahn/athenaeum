@@ -14,6 +14,7 @@ const R = process.env.ATH_REGRESSION ?? join(TESTDATA, "regression");
 const HTML = join(R, "g8board-idle-stall-292301.html");
 const CSV = join(R, "amazon-order-history.csv");
 const PDF = join(R, "am-tool-03-v3.pdf");
+const ZIP = join(R, "discord-export.zip");
 const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232.p1.jsonl");
 const env = { ATH_ACTOR: "regression" };
 
@@ -158,4 +159,24 @@ describe("regression: CDM TOOL03 (pdf, asserted tree)", () => {
       expect(md.stdout).toContain("\\tag*{Equation (1)}");
     },
   );
+});
+
+describe("regression: a Discord export (zip, container)", () => {
+  test.skipIf(!existsSync(ZIP))("members are subjects; the JSON and the PNGs classify; a route canonicalises to the member", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, ZIP, { date: "2026-10-13", provenance: { origin: "discord", via: "export" } });
+    expect(ing.mime).toBe("application/zip");
+    expect(ing.members.length).toBe(9);
+    expect(ing.members.map((m) => m.mime).sort()).toEqual(["application/json", ...Array(7).fill("image/png"), "image/svg+xml"].sort());
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("zip");
+    const png = ing.members.find((m) => m.mime === "image/png")!;
+    const pa = await loadArtifact(chain, o, png.blake3);
+    expect(pa.root).toBe("png");
+    expect(pa.tree).toBe("asserted");
+    expect((pa.capturedFrom!.value as { container: string }).container).toBe(`corpus://${ing.blake3}`);
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+  });
 });

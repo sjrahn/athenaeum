@@ -1,0 +1,2 @@
+{"subject":"lossy","predicate":"refines","value":"unit"}
+{"subject":"lossy","predicate":"definition","value":"bytes whose readings can be drawn but never total to a proxy: rasters, audio, video"}

@@ -30,7 +30,7 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
   const deps: DispatchDeps = {
     registry: o.registry ?? buildRegistry(),
     io,
-    env: { HOME: process.env.HOME, USER: "tester", ...(o.env ?? {}) },
+    env: { HOME: process.env.HOME, USER: "tester", ATH_TEST: "1", ...(o.env ?? {}) },
     cwd: o.cwd ?? process.cwd(),
     tty: o.tty ?? false,
     session: () => o.session ?? null,

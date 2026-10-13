@@ -109,11 +109,11 @@ describe("layer + ingest", () => {
   test("ontology commands over the chain", async () => {
     const f = foundation();
     const list = await ath(["--json", "ontology", "list"], { cwd: f });
-    expect((list.json() as { data: { terms: unknown[] } }).data.terms.length).toBe(70);
+    expect((list.json() as { data: { terms: unknown[] } }).data.terms.length).toBe(76);
     const rules = await ath(["ontology", "rules", "heading"], { cwd: f });
     expect(rules.stdout).toContain("reads       text");
     const hash = await ath(["--json", "ontology", "hash"], { cwd: f });
-    expect((hash.json() as { data: { terms: number } }).data.terms).toBe(70);
+    expect((hash.json() as { data: { terms: number } }).data.terms).toBe(76);
     expect((await ath(["ontology", "show", "nope"], { cwd: f })).code).toBe(66);
     const lint = await ath(["ontology", "lint"], { cwd: f });
     expect(lint.code).toBe(0);
