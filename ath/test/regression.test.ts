@@ -13,6 +13,8 @@ import { foundation, TESTDATA } from "./layers.ts";
 const R = process.env.ATH_REGRESSION ?? join(TESTDATA, "regression");
 const HTML = join(R, "g8board-idle-stall-292301.html");
 const CSV = join(R, "amazon-order-history.csv");
+const PDF = join(R, "am-tool-03-v3.pdf");
+const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232.p1.jsonl");
 const env = { ATH_ACTOR: "regression" };
 
 describe("regression: the XenForo thread (html, derived tree)", () => {
@@ -29,7 +31,7 @@ describe("regression: the XenForo thread (html, derived tree)", () => {
       snapshot: "2026-08-15T23:40:36Z",
       fidelity: "lean",
     });
-    const a = loadArtifact(chain, o, ing.blake3);
+    const a = await loadArtifact(chain, o, ing.blake3);
     expect(a.root).toBe("xenforo-thread");
     expect(a.table.size).toBe(72);
     expect(a.table.unreachable()).toEqual([]);
@@ -90,7 +92,7 @@ describe("regression: the Amazon order history (csv, derived tree)", () => {
     });
     expect(ing.blake3).toBe("1409369e05ce462408344c922183331d96fe70117f4c27389d75817e39702711");
     expect(ing.attests.value).toMatchObject({ mime: "text/csv", bytes: 151157, rows: 275, header_row: 0, cols: 29, bom: true });
-    const a = loadArtifact(chain, o, ing.blake3);
+    const a = await loadArtifact(chain, o, ing.blake3);
     expect(a.root).toBe("amazon-order-history");
     expect(a.table.walk().length).toBe(277);
     expect(a.table.unreachable().length).toBe(29);
@@ -106,4 +108,54 @@ describe("regression: the Amazon order history (csv, derived tree)", () => {
     const at = await ath(["tree", "at", ing.blake3, "col=Currency"], { cwd: f, env });
     expect(at.stdout.trim()).toBe("col=3  (currency-code)");
   });
+});
+
+describe("regression: CDM TOOL03 (pdf, asserted tree)", () => {
+  test.skipIf(!existsSync(PDF))(
+    "ingest → pass open → append the fixture (121 revs recompute) → sign → inspect → lint → export",
+    async () => {
+      const f = foundation();
+      const ing = await ath(
+        [
+          "--json",
+          "ingest",
+          PDF,
+          "--origin",
+          "cdm.unfccc.int",
+          "--via",
+          "upload",
+          "--uri",
+          "https://cdm.unfccc.int/methodologies/PAmethodologies/tools/am-tool-03-v3.pdf",
+          "--received",
+          "2026-10-13",
+        ],
+        { cwd: f, env },
+      );
+      const id = (ing.json() as { data: { ingested: { blake3: string; mime: string }[] } }).data.ingested[0]!;
+      expect(id.blake3).toBe("404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232");
+      expect(id.mime).toBe("application/pdf");
+      const open = await ath(["--json", "pass", "open", id.blake3, "--by", "claude-opus-4-8", "--verify", "claude-sonnet-5_3"], {
+        cwd: f,
+        env,
+      });
+      expect((open.json() as { data: { id: string } }).data.id).toBe("p1");
+      const app = await ath(["--json", "claims", "append", id.blake3, "--pass", "p1", "--from", PASS], { cwd: f, env });
+      expect(app.code, app.stderr).toBe(0);
+      expect((app.json() as { data: { staged: number } }).data.staged).toBe(410);
+      const sign = await ath(["--json", "pass", "sign", id.blake3, "p1", "--walked"], { cwd: f, env });
+      const sd = (sign.json() as { data: { signed: boolean; findings: { code: string; severity: string; msg: string }[] } }).data;
+      expect(sd.findings.filter((x) => x.severity === "block").map((x) => `${x.code} ${x.msg}`)).toEqual([]);
+      expect(sd.signed).toBe(true);
+      const insp = await ath(["--json", "inspect", id.blake3], { cwd: f, env });
+      const rows = (insp.json() as { data: { rows: { terms: string[]; state: string }[]; counts: Record<string, number> } }).data;
+      expect(rows.counts.ok).toBeGreaterThan(100);
+      expect(rows.rows.filter((r) => r.state === "diverges").every((r) => r.terms.includes("equation"))).toBe(true);
+      expect((await ath(["lint", id.blake3], { cwd: f, env })).code).toBe(0);
+      const at = await ath(["tree", "at", id.blake3, "sec=5&para=6"], { cwd: f, env });
+      expect(at.stdout).toContain("(paragraph)");
+      const md = await ath(["export", "markdown", id.blake3], { cwd: f, env });
+      expect(md.stdout).toContain("## 5. Baseline methodology procedure");
+      expect(md.stdout).toContain("\\tag*{Equation (1)}");
+    },
+  );
 });

@@ -53,10 +53,10 @@ export const tree = defineCommand({
     },
     data: treeData,
   }),
-  run(ctx, a) {
+  async run(ctx, a) {
     const chain = openChain(ctx);
     const o = openOntology(chain);
-    const art = loadArtifact(chain, o, requireBlake3(a.subject));
+    const art = await loadArtifact(chain, o, requireBlake3(a.subject));
     const depthOf = new Map<string, number>();
     const rows: z.infer<typeof scopeRow>[] = [];
     for (const s of art.table.walk()) {
@@ -118,10 +118,10 @@ export const treeAt = defineCommand({
     },
     data: z.object({ subject: z.string(), query: z.string(), at: z.string(), terms: z.array(z.string()) }),
   }),
-  run(ctx, a) {
+  async run(ctx, a) {
     const chain = openChain(ctx);
     const o = openOntology(chain);
-    const art = loadArtifact(chain, o, requireBlake3(a.subject));
+    const art = await loadArtifact(chain, o, requireBlake3(a.subject));
     const at = resolveQuery(o, art.table, a.query);
     return { data: { subject: art.blake3, query: a.query, at, terms: art.table.get(at)?.terms ?? [] } };
   },

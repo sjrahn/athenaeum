@@ -55,9 +55,9 @@ export const lint = defineCommand({
     if (!artifacts.length && !concepts.length) throw new AthError("USAGE", "name subjects or pass --all");
     const findings: Finding[] = [];
     for (const id of artifacts)
-      findings.push(...lintArtifact(loadArtifact(chain, o, id), pin, { generic: a.generic, file: a.file, term: a.term }));
+      findings.push(...lintArtifact(await loadArtifact(chain, o, id), pin, { generic: a.generic, file: a.file, term: a.term }));
     if (concepts.length && (!a.generic && !a.file && !a.term ? true : a.generic || a.file)) {
-      const r = verifyLedger(chain, o, concepts);
+      const r = await verifyLedger(chain, o, concepts);
       for (const c of r.concepts) findings.push(...c.findings);
     }
     return {

@@ -27,7 +27,7 @@ export const exportMarkdownCmd = defineCommand({
   async run(ctx, a) {
     const chain = openChain(ctx);
     const o = openOntology(chain);
-    const art = loadArtifact(chain, o, requireBlake3(a.subject));
+    const art = await loadArtifact(chain, o, requireBlake3(a.subject));
     const inspected = unionView("corpus", readSubject(chain, "corpus", art.blake3, true)).map((l) => l.line);
     const md = exportMarkdown(art, { inspected, pin: await ontologyPin(o) });
     let out: string | null = null;

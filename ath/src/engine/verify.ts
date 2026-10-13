@@ -31,7 +31,7 @@ export interface VerifyReport {
   };
 }
 
-export function verifyConcept(_chain: Chain, o: Ontology, cache: ArtifactCache, c: Concept): ConceptReport {
+export async function verifyConcept(_chain: Chain, o: Ontology, cache: ArtifactCache, c: Concept): Promise<ConceptReport> {
   const findings = fileLintsLedger(c, o);
   const functional = c.terms.flatMap((t) =>
     o.terms.has(t)
@@ -40,12 +40,15 @@ export function verifyConcept(_chain: Chain, o: Ontology, cache: ArtifactCache, 
   );
   const judged: Judged[] = [];
   for (const cl of c.claims) {
-    const bindings: BindResult[] = cl.evidence.map((e) => {
-      const b = bindEntry(cache, e);
-      if (b.state === "bound" && !valueInQuote(cl.value, e))
-        return { ...b, state: "flagged", why: "a stated value is not in its quote (D-D4)" };
-      return b;
-    });
+    const bindings: BindResult[] = [];
+    for (const e of cl.evidence) {
+      const b = await bindEntry(cache, e);
+      bindings.push(
+        b.state === "bound" && !valueInQuote(cl.value, e)
+          ? { ...b, state: "flagged", why: "a stated value is not in its quote (D-D4)" }
+          : b,
+      );
+    }
     bindings.forEach((b, i) => {
       if (b.state === "flagged")
         findings.push({ code: "G4", severity: "block", subject: c.slug, at: b.at, msg: `${cl.predicate} entry ${i}: ${b.why}` });
@@ -57,7 +60,7 @@ export function verifyConcept(_chain: Chain, o: Ontology, cache: ArtifactCache, 
   return { concept: c, judged, demand: demandFor(o, c, judged), findings };
 }
 
-export function verifyLedger(chain: Chain, o: Ontology, slugs?: string[]): VerifyReport {
+export async function verifyLedger(chain: Chain, o: Ontology, slugs?: string[]): Promise<VerifyReport> {
   const cache = new ArtifactCache(chain, o);
   const list = slugs ?? listConcepts(chain);
   const concepts: ConceptReport[] = [];
@@ -65,7 +68,7 @@ export function verifyLedger(chain: Chain, o: Ontology, slugs?: string[]): Verif
   for (const slug of list) {
     const c = readConcept(chain, slug);
     if (!c) continue;
-    const r = verifyConcept(chain, o, cache, c);
+    const r = await verifyConcept(chain, o, cache, c);
     concepts.push(r);
     counts.concepts++;
     for (const j of r.judged) {

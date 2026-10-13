@@ -67,7 +67,7 @@ export const verify = defineCommand({
     if (!a.all && !a.subjects.length && !a.stale) throw new AthError("USAGE", "name concepts, pass --all, or --stale");
     const r =
       a.all || a.subjects.length
-        ? verifyLedger(chain, o, a.all ? undefined : a.subjects)
+        ? await verifyLedger(chain, o, a.all ? undefined : a.subjects)
         : { concepts: [], counts: { concepts: 0, claims: 0, entries: 0, bound: 0, held: 0, flagged: 0, byStatus: {} } };
     const claims = r.concepts.flatMap((c) =>
       c.judged.map((j) => ({
@@ -82,7 +82,7 @@ export const verify = defineCommand({
     const stale: { subject: string; pass: string; pinned: string }[] = [];
     if (a.stale || a.all) {
       for (const id of listSubjects(chain, "corpus")) {
-        const art = loadArtifact(chain, o, id, { bytes: false });
+        const art = await loadArtifact(chain, o, id, { bytes: false });
         for (const p of art.passes.values()) {
           const v = p.value as { id: string; ontology: string };
           if (v.ontology !== pin) stale.push({ subject: id, pass: v.id, pinned: v.ontology });

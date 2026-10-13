@@ -42,12 +42,12 @@ export const resolveCmd = defineCommand({
       out: z.string().nullable(),
     }),
   }),
-  run(ctx, a) {
+  async run(ctx, a) {
     const chain = openChain(ctx);
     const o = openOntology(chain);
     const anchor = a.anchor.startsWith("corpus://") ? a.anchor : `corpus://${a.anchor}`;
     const an = parseAnchor(anchor.includes("?") ? anchor : `${anchor}?whole`);
-    const art = loadArtifact(chain, o, an.blake3);
+    const art = await loadArtifact(chain, o, an.blake3);
     if (a.bytes) {
       const b = bytesAt(art, an.at);
       if (a.out) {

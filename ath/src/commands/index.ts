@@ -4,10 +4,12 @@ import { claimsShow, claimsSort } from "./claims.ts";
 import { exportMarkdownCmd, exportNquads } from "./export.ts";
 import { harvest } from "./harvest.ts";
 import { ingest, ingestShow } from "./ingest.ts";
+import { inspect, inspectAccept, inspectRevoke } from "./inspect.ts";
 import { layerCheck, layerInit, layerShow } from "./layer.ts";
 import { lint } from "./lint.ts";
 import { logCommand } from "./log.ts";
 import { ontologyHash, ontologyLint, ontologyList, ontologyRules, ontologyShow } from "./ontology.ts";
+import { claimsAppend, passAbandon, passList, passOpen, passSign } from "./pass.ts";
 import { resolveCmd } from "./resolve.ts";
 import { tree, treeAt } from "./tree.ts";
 import { verify } from "./verify.ts";
@@ -27,6 +29,8 @@ export function buildRegistry(): Registry {
   r.registerGroup("verify", "bindings, derived status, demand, stale passes");
   r.registerGroup("harvest", "concept lines minted into the ledger");
   r.registerGroup("export", "the markdown proxy and the N-Quads projection");
+  r.registerGroup("pass", "a pass: open, stage lines, sign, abandon");
+  r.registerGroup("inspect", "L7: readings against the bytes; the owner's acceptances");
   for (const def of [
     whoamiCommand,
     logCommand,
@@ -50,6 +54,14 @@ export function buildRegistry(): Registry {
     harvest,
     exportMarkdownCmd,
     exportNquads,
+    passOpen,
+    passList,
+    passSign,
+    passAbandon,
+    claimsAppend,
+    inspect,
+    inspectAccept,
+    inspectRevoke,
   ])
     r.register(def);
   return r;

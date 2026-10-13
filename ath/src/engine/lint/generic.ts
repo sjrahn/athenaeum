@@ -5,6 +5,7 @@ import type { Artifact } from "../corpus/derive.ts";
 import { isPageAt, parseAddress } from "../model/address.ts";
 import { effectiveRules } from "../ontology/effective.ts";
 import { textRuns } from "../ops/html/text.ts";
+import { isChromeWord } from "../ops/pdf/words.ts";
 import type { Finding } from "./report.ts";
 
 /** G1: every stored reads_as sits at a scope with a manifests whose term reads that aspect. */
@@ -123,7 +124,64 @@ export function coverageHtml(a: Artifact): Coverage | null {
   return { total, inUnits, chrome, remainder, ratio: total ? remainder / total : 0 };
 }
 
+/** G3 (asserted, PDF): every word of pdf.words@1 lies in some manifested scope on its page or in derived chrome. */
+export function coveragePdf(a: Artifact): (Coverage & { outside: { page: number; text: string }[] }) | null {
+  if (!a.pdf) return null;
+  const boxes = [...a.table.scopes.values()]
+    .flatMap((s) => parseAddress(s.at).members.map((m) => ({ m, s })))
+    .filter((x) => x.m.kind === "page" && x.m.box !== undefined) as {
+    m: { kind: "page"; page: number; box: [number, number, number, number] };
+    s: unknown;
+  }[];
+  let total = 0;
+  let inUnits = 0;
+  let chrome = 0;
+  const outside: { page: number; text: string }[] = [];
+  for (const p of a.pdf.pages) {
+    for (const w of p.words) {
+      total++;
+      const cx = w.bbox[0] + w.bbox[2] / 2;
+      const cy = w.bbox[1] + w.bbox[3] / 2;
+      if (
+        boxes.some(
+          (b) =>
+            b.m.page === p.page &&
+            cx >= b.m.box[0] - 0.002 &&
+            cx <= b.m.box[0] + b.m.box[2] + 0.002 &&
+            cy >= b.m.box[1] - 0.002 &&
+            cy <= b.m.box[1] + b.m.box[3] + 0.002,
+        )
+      )
+        inUnits++;
+      else if (isChromeWord(a.pdf.chrome, p.page, w)) chrome++;
+      else outside.push({ page: p.page, text: w.text });
+    }
+  }
+  const remainder = total - inUnits - chrome;
+  return { total, inUnits, chrome, remainder, ratio: total ? remainder / total : 0, outside };
+}
+
 export function g3Cover(a: Artifact): Finding[] {
+  if (a.tree === "asserted" && a.pdf) {
+    const walked = a.table.get("whole")?.stored.some((l) => l.predicate === "walked") ?? false;
+    const c = coveragePdf(a)!;
+    if (c.remainder > 0) {
+      const sample = c.outside
+        .slice(0, 8)
+        .map((w) => `p${w.page} '${w.text}'`)
+        .join(", ");
+      return [
+        {
+          code: "G3",
+          severity: walked ? "block" : "list",
+          subject: a.blake3,
+          at: "whole",
+          msg: `${c.remainder} of ${c.total} words lie in no scope and in no chrome${walked ? " under walked" : ""}: ${sample}${c.outside.length > 8 ? " …" : ""}`,
+        },
+      ];
+    }
+    return [];
+  }
   if (a.tree === "derived") {
     for (const s of a.table.scopes.values()) {
       if (s.stored.some((l) => l.predicate === "walked")) {

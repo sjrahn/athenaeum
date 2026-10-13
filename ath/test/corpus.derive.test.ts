@@ -20,7 +20,7 @@ describe("derived trees", () => {
 
   test("markup: select lines derive scopes, placement by containment, ord by document order, fields from attributes", async () => {
     const ing = await ingestFile(chain, join(FIX, "small.html"), { date: "2026-10-13" });
-    const a = loadArtifact(chain, o, ing.blake3);
+    const a = await loadArtifact(chain, o, ing.blake3);
     expect(a.root).toBe("xenforo-thread");
     expect(a.tree).toBe("derived");
     expect(a.rootChain).toEqual(["xenforo-thread", "web-page", "html", "document", "unit"]);
@@ -78,7 +78,7 @@ describe("derived trees", () => {
 
   test("tabular: the twin CSV classifies by header fingerprint; header, columns, records and cells derive", async () => {
     const ing = await ingestFile(chain, join(TESTDATA, "synthetic", "amazon-twin.csv"), { date: "2026-10-13" });
-    const a = loadArtifact(chain, o, ing.blake3);
+    const a = await loadArtifact(chain, o, ing.blake3);
     expect(a.root).toBe("amazon-order-history");
     expect(a.tree).toBe("derived");
     expect(a.rootChain).toContain("csv");
@@ -104,7 +104,7 @@ describe("derived trees", () => {
 
   test("markup: designated addresses by post number", async () => {
     const ing = await ingestFile(chain, join(FIX, "small.html"), { date: "2026-10-13" });
-    const a = loadArtifact(chain, o, ing.blake3);
+    const a = await loadArtifact(chain, o, ing.blake3);
     expect(resolveQuery(o, a.table, "post=1")).toBe(a.table.find("post")!.at);
     expect(() => resolveQuery(o, a.table, "post=2")).toThrow("nothing matches");
     expect(resolveQuery(o, a.table, "1/0")).toBe(a.table.find("author")!.at);

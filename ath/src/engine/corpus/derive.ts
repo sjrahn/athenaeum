@@ -15,6 +15,7 @@ import { classify } from "../ontology/match.ts";
 import { CSV_OP, type CsvParse, parseCsv } from "../ops/csv/parse.ts";
 import { type HtmlDoc, matchesSelector, parseHtml, select, spanOf } from "../ops/html/dom.ts";
 import { elementText, HTML_TEXT_OP } from "../ops/html/text.ts";
+import { allPages, type ChromeLine, detectChrome, type PageWords } from "../ops/pdf/words.ts";
 import { ScopeTable } from "./tree.ts";
 
 export interface Artifact {
@@ -35,12 +36,14 @@ export interface Artifact {
   /** Parsed forms, by mime family. */
   html?: HtmlDoc;
   csv?: CsvParse;
+  /** PDF: words per page (loaded on demand by `pdfPages`) and chrome by repetition. */
+  pdf?: { pages: PageWords[]; chrome: ChromeLine[] };
   /** Byte spans the root term declares as chrome (markup). */
   chromeSpans: { start: number; end: number; selector: string }[];
   passes: Map<string, JsonObject>;
 }
 
-export function loadArtifact(chain: Chain, o: Ontology, blake3: string, opts: { bytes?: boolean } = {}): Artifact {
+export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, opts: { bytes?: boolean } = {}): Promise<Artifact> {
   const lines = unionView("corpus", readSubject(chain, "corpus", blake3)).map((l) => l.line);
   const attests = lines.find((l) => l.predicate === "attests");
   if (!attests) throw new AthError("NOT_FOUND", `${blake3}: no artifact subject in the chain`);
@@ -70,6 +73,10 @@ export function loadArtifact(chain: Chain, o: Ontology, blake3: string, opts: { 
   if (bytes) {
     if (mime === "text/html" || mime === "application/xhtml+xml") a.html = parseHtml(bytes);
     else if (mime === "text/csv" || mime === "text/tab-separated-values") a.csv = parseCsv(bytes);
+    else if (mime === "application/pdf") {
+      const pages = await allPages(bytes);
+      a.pdf = { pages, chrome: detectChrome(pages) };
+    }
   }
 
   // the root term: a stored manifests at whole wins over matches

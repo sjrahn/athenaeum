@@ -30,10 +30,10 @@ export class ArtifactCache {
     private readonly chain: Chain,
     private readonly o: Ontology,
   ) {}
-  get(blake3: string): Artifact | null {
+  async get(blake3: string): Promise<Artifact | null> {
     if (!this.map.has(blake3)) {
       try {
-        this.map.set(blake3, loadArtifact(this.chain, this.o, blake3));
+        this.map.set(blake3, await loadArtifact(this.chain, this.o, blake3));
       } catch {
         this.map.set(blake3, null);
       }
@@ -51,7 +51,7 @@ export function scopeExists(a: Artifact, at: string): boolean {
   return false;
 }
 
-export function bindEntry(cache: ArtifactCache, e: EvidenceEntry): BindResult {
+export async function bindEntry(cache: ArtifactCache, e: EvidenceEntry): Promise<BindResult> {
   let anchor: ReturnType<typeof parseAnchor>;
   try {
     anchor = parseAnchor(e.anchor);
@@ -62,7 +62,7 @@ export function bindEntry(cache: ArtifactCache, e: EvidenceEntry): BindResult {
   const b = parseBinding(e.reading);
   if (b.kind === "invalid") return { ...base, state: "flagged", why: b.why };
   if (b.kind === "held") return { ...base, state: "held" };
-  const a = cache.get(anchor.blake3);
+  const a = await cache.get(anchor.blake3);
   if (!a) return { ...base, state: "flagged", why: "anchor names an artifact not in the chain" };
   if (!scopeExists(a, anchor.at)) return { ...base, state: "flagged", why: "anchor resolves to no scope" };
   const surface = surfaceFor(a, anchor.at, b, anchor.aspect);

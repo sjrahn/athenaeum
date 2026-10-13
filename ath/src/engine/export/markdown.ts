@@ -4,7 +4,7 @@
 import type { JsonObject } from "../../lib/jsonl.ts";
 import type { Artifact } from "../corpus/derive.ts";
 import type { Scope } from "../corpus/tree.ts";
-import { coverageHtml } from "../lint/generic.ts";
+import { coverageHtml, coveragePdf } from "../lint/generic.ts";
 import { effectiveRules } from "../ontology/effective.ts";
 
 function render(a: Artifact, s: Scope, reading: { aspect: string; body: unknown } | undefined): string | null {
@@ -66,6 +66,14 @@ export function exportMarkdown(a: Artifact, o: { inspected?: JsonObject[]; pin?:
       `remainder  ${cov.remainder} of ${cov.total} text characters outside every reading scope and declared chrome (${(cov.ratio * 100).toFixed(1)}%)`,
     );
   if (a.chromeSpans.length) head.push(`chrome     ${a.chromeSpans.length} regions by declared selectors, never read`);
+  const pc = coveragePdf(a);
+  if (pc) {
+    head.push(`remainder  ${pc.remainder} of ${pc.total} words outside every scope and derived chrome`);
+    if (a.pdf?.chrome.length)
+      head.push(
+        `chrome     ${a.pdf.chrome.length} lines by repetition (${[...new Set(a.pdf.chrome.map((c) => c.role))].join(", ")}), stored nowhere`,
+      );
+  }
   const out: string[] = [`<!--\n${head.join("\n")}\n-->`, ""];
   for (const s of a.table.walk()) {
     if (s.at === "whole") continue;

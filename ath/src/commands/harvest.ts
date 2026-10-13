@@ -35,7 +35,7 @@ export const harvest = defineCommand({
   async run(ctx, a) {
     const chain = openChain(ctx);
     const o = openOntology(chain);
-    const art = loadArtifact(chain, o, requireBlake3(a.subject));
+    const art = await loadArtifact(chain, o, requireBlake3(a.subject));
     requireRoot(art);
     const pin = await ontologyPin(o);
     const { files, report } = harvestArtifact(art, pin, { onlyTerm: a.term });

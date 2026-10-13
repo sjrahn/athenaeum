@@ -7,6 +7,7 @@ import type { Binding } from "../model/evidence.ts";
 import { cellsSurface } from "../norm/text.ts";
 import { CSV_OP, csvSurface } from "../ops/csv/parse.ts";
 import { attrAt, HTML_ATTR_OP, HTML_TEXT_OP, HTML_TITLE_OP, rootAttr, textAt, titleOf } from "../ops/html/text.ts";
+import { PDF_WORDS_OP, wordsInBox, wordsText } from "../ops/pdf/words.ts";
 import type { Artifact } from "./derive.ts";
 
 export interface Surface {
@@ -35,6 +36,19 @@ export function derivationAt(a: Artifact, at: string, aspect: Aspect = "text"): 
     if (m.kind !== "bytes") return null;
     const t = textAt(a.html, m.start, m.end);
     return t === null ? null : { source: HTML_TEXT_OP, text: t };
+  }
+  if (a.pdf) {
+    const members = parseAddress(scopeAt(at)).members;
+    const parts: string[] = [];
+    for (const mm of members) {
+      if (mm.kind === "whole") parts.push(...a.pdf.pages.map((p) => wordsText(p.words)));
+      else if (mm.kind === "page") {
+        const page = a.pdf.pages[mm.page - 1];
+        if (!page) return null;
+        parts.push(mm.box ? wordsText(wordsInBox(page.words, mm.box)) : wordsText(page.words));
+      } else return null;
+    }
+    return { source: PDF_WORDS_OP, text: parts.join("\n") };
   }
   if (a.csv) {
     if (m.kind !== "row") return null;
