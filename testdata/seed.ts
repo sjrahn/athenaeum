@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 // seed.ts — seed testdata/instance (a gitignored foundation layer) from testdata/exemplars.yaml: for each entry,
-// locate the artifact's bytes (a source instance's corpus/artifacts/<ab>/<blake3>.* with --from, or the committed
-// testdata/synthetic/<file>) and `ath ingest` them; a container's members become subjects on their own. Idempotent.
+// locate the artifact's bytes (testdata/regression/<file> for a `regression` entry, placed by hand; the committed
+// testdata/synthetic/<file> for a `synthetic` one; or, with --from, a source instance's corpus/artifacts/<ab>/<blake3>.*)
+// and `ath ingest` them; a container's members become subjects on their own. Idempotent.
 //
 //   bun testdata/seed.ts [--from SOURCE_INSTANCE_ROOT]
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
 const HERE = dirname(Bun.fileURLToPath(import.meta.url));
@@ -16,13 +17,13 @@ const { values } = parseArgs({ options: { from: { type: "string" } } });
 const from = values.from ?? process.env.ATHENAEUM_ROOT;
 
 interface Entry {
+  file: string;
   blake3: string;
   mime: string;
+  root: string;
   shape: string;
   note?: string;
-  source: "direct" | "promoted" | "synthetic";
-  file?: string;
-  via?: { container: string; address: string };
+  source: "regression" | "synthetic";
 }
 
 const manifest = Bun.YAML.parse(readFileSync(join(HERE, "exemplars.yaml"), "utf8")) as Entry[];
@@ -32,11 +33,14 @@ function ath(args: string[]): { code: number; out: string; err: string } {
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
-function sourceBytes(blake3: string): string | null {
+/** Where the entry's bytes are: the placed/committed file, else the source instance's artifact by blake3. */
+function locate(e: Entry): string | null {
+  const local = join(HERE, e.source === "synthetic" ? "synthetic" : "regression", e.file);
+  if (existsSync(local)) return local;
   if (!from) return null;
-  const dir = join(from, "corpus", "artifacts", blake3.slice(0, 2));
+  const dir = join(from, "corpus", "artifacts", e.blake3.slice(0, 2));
   if (!existsSync(dir)) return null;
-  const f = readdirSync(dir).find((n) => n.startsWith(blake3));
+  const f = readdirSync(dir).find((n) => n.startsWith(e.blake3));
   return f ? join(dir, f) : null;
 }
 
@@ -53,25 +57,24 @@ let seeded = 0;
 let skipped = 0;
 let missing = 0;
 for (const e of manifest) {
-  const id = e.source === "promoted" ? e.via!.container : e.blake3;
-  if (existsSync(join(INSTANCE, "corpus", `${id}.claims.jsonl`))) {
+  if (existsSync(join(INSTANCE, "corpus", `${e.blake3}.claims.jsonl`))) {
     skipped++;
     continue;
   }
-  const path = e.source === "synthetic" ? resolve(HERE, e.file!) : sourceBytes(id);
-  if (!path || !existsSync(path)) {
-    console.error(`missing bytes for ${e.mime} ${id.slice(0, 12)}… (${e.source === "synthetic" ? e.file : "needs --from"})`);
+  const path = locate(e);
+  if (!path) {
+    console.error(`missing bytes for ${e.mime} ${e.blake3.slice(0, 12)}… (${e.source}/${e.file}${e.source === "regression" ? ", or --from" : ""})`);
     missing++;
     continue;
   }
   const r = ath(["ingest", path, "--origin", e.source === "synthetic" ? "synthetic" : "source-instance", "--via", "upload"]);
   if (r.code !== 0) {
-    console.error(`ingest failed for ${id.slice(0, 12)}…: ${r.err.trim()}`);
+    console.error(`ingest failed for ${e.blake3.slice(0, 12)}…: ${r.err.trim()}`);
     missing++;
     continue;
   }
   seeded++;
-  console.log(`+ ${e.mime.padEnd(28)} ${id.slice(0, 12)}…${e.note ? `  ${e.note}` : ""}`);
+  console.log(`+ ${e.mime.padEnd(28)} ${e.blake3.slice(0, 12)}… → ${e.root}${e.note ? `  (${e.shape})` : ""}`);
 }
 console.log(`${seeded} seeded, ${skipped} already present, ${missing} missing`);
 process.exitCode = missing ? 1 : 0;

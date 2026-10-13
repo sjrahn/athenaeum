@@ -1,142 +1,224 @@
-# Exemplar library manifest for testdata/instance (see testdata/README.md).
+# Exemplar library manifest — one artifact per mime (see testdata/README.md).
 #
-# Each entry is a real artifact copied out of a private source instance, one per
-# interesting mime/shape, for spec + tooling regression testing. `note` is
-# neutral/technical only — no personal filenames, subjects, names, or content
+# Each entry names bytes the successor tooling (`ath/`) ingests, classifies to a root term of the
+# regression ontology (testdata/ontology/) and lints clean; `ath/test/regression.test.ts` runs
+# every entry whose bytes are present and `testdata/seed.ts` seeds them into testdata/instance.
+# `note` is neutral/technical only — no personal filenames, subjects, names, or content
 # descriptions (this file is tracked in a publicly-hostable repo).
 #
-# Most entries are `direct`: the blake3 names a record whose bytes are
-# reachable in the source instance (co-located artifacts/ tree) and are copied
-# in as-is. A few small images exist in the source corpus only as *promoted
-# container members* (an embedded <img> inside a captured HTML page) with no
-# standalone bytes of their own — spec's containment model resolves them
-# on-demand from their container, never materializing a separate copy. For
-# those, `source: promoted` names the container (also copied in) and the
-# member address `corpus promote` needs to re-mint the same (content-addressed,
-# so byte-identical) leaf record inside testdata/instance.
+# `source: regression` — private bytes placed by hand under testdata/regression/<file> (gitignored),
+#   copied from the source instance's corpus (`ath-steven/corpus/artifacts/<ab>/<blake3>.*`) or its
+#   export folder; the blake3 pins the exact bytes.
+# `source: synthetic` — generated fixtures with no private content, committed under testdata/synthetic/
+#   (see "The synthetic tier" in the README): the committed bytes, not a fresh run of gen.py, are what
+#   the blake3 pins.
 #
-# `source: synthetic` entries have no real-artifact origin at all: three shapes
-# (single-track audio/mp4, message/rfc822 with attachments, image/heic) had no
-# suitably-small real artifact in the source instance, so their bytes are
-# generated (testdata/synthetic/gen.py) and committed directly to this
-# public repo under testdata/synthetic/ — `file:` names the committed path,
-# relative to testdata/. See testdata/README.md's synthetic-tier paragraph for
-# why the committed bytes (not a fresh run of gen.py) are what the blake3 pins.
+# `root` is the term `whole` manifests by the ontology's `matches` lines; `shape` is the exercise.
 
-- blake3: 426bf4ac98134e0c565db54a12716af3387f40488bce7328a0f62ac7b0994d97
-  mime: video/mp4
-  shape: multi-track-media
-  note: multi-track ISOBMFF, h264+aac
-  source: direct
+# ── documents ─────────────────────────────────────────────────────────────────────────────────────
 
-- blake3: 6737c2fe3f762b856a614d940b20b581354d539d545a0bf7d77ae4ac1d291e55
-  mime: application/mbox
-  shape: mbox
-  note: mbox, 358 messages, google-takeout/gmail export slice
-  source: direct
-
-- blake3: 070eb9ff378f80e8a4af499bf7f48bd24dc7a646f788b0d5049f131cc0be6bad
-  mime: application/zip
-  shape: zip-multi-member
-  note: multi-member zip, imessage-export bundle (2 html members)
-  source: direct
-
-- blake3: 7741d83b88f5f90ce8cf67d9510569e94b90a831483e1a12f8bba5e489e9fa50
-  mime: application/zip
-  shape: zip-single-member-envelope
-  note: single-member zip envelope, imessage-export bundle
-  source: direct
-
-- blake3: 86bef047b496dfbab372a41ed67e3235f9354ab0ea9aab362fafdc72768b6b77
+- file: receipt.pdf
+  blake3: 86bef047b496dfbab372a41ed67e3235f9354ab0ea9aab362fafdc72768b6b77
   mime: application/pdf
+  root: pdf
   shape: pdf
-  note: single-page PDF, print-to-PDF
-  source: direct
+  note: single-page PDF, print-to-PDF; the asserted tree (pdf.words@1)
+  source: regression
 
-- blake3: b264b1b78b5b7a0c7a969cf0d473ee3b9c1ce25901cfa9d854bda96da8c820d2
+- file: g8board-idle-stall-292301.html
+  blake3: dd0a78441fe3ae117f520809a759dac6cba0fbf52737bb2baf1cd19e1d695299
   mime: text/html
-  shape: html
-  note: HTML, imessage-export transcript page, 14 elements
-  source: direct
+  root: xenforo-thread
+  shape: html-capture
+  note: XenForo thread capture with the v52 banner; 72 scopes by select (Appendix B)
+  source: regression
 
-- blake3: 6c91b6098d635ac29572e2d881711320529152dbc0c85f60ce0feb7989f92ee8
-  mime: image/png
-  shape: image-png
-  note: inline image, promoted from a captured HTML page's embed manifest
-  source: promoted
-  via:
-    container: bc6676a6b1a5993d5f142663229b2229a6900729db3c4bc999001b28454367d1
-    address: el=3
-
-- blake3: d1d86a1386fa49269a5b8b10edafa53d346b06ba6c985aff050facd33ab8a0ab
-  mime: image/jpeg
-  shape: image-jpeg
-  note: inline image, promoted from a captured HTML page's embed manifest
-  source: promoted
-  via:
-    container: 53efe52639a5e2ef7794acd5c0893731e3fafcc4b56e7117f6a38493bcb0edf9
-    address: el=1.9.2.33.1.1.4.1.2.1.2.3.1.2.4.2.1.2.1.2.2.2.2.2.2.1.1.1.1.1.1.1.1
-
-- blake3: 81b9df57c982d8c39c8bf3338312d19252253b5d86b8833b2d336bb4d89d7584
-  mime: image/gif
-  shape: image-gif
-  note: inline image, promoted from a captured HTML page's embed manifest
-  source: promoted
-  via:
-    container: 5ad99d879d274f16cd89c82f75f2d8a256f60a04b792ee91279de4163bdc0148
-    address: el=1
-
-- blake3: da44e941694f926ccf010aec4bcd7de0b715360157642d79c639692a1d35dc86
-  mime: image/svg+xml
-  shape: image-svg
-  note: inline image, promoted from a captured HTML page's embed manifest
-  source: promoted
-  via:
-    container: 72960558f5623c6dd44132bc82c8b206a448d1f315078991fae22e6ea1ac2312
-    address: el=2.1.2.2.1
-
-- blake3: ca4a2aaef7d7f5d7790f94a3ba27d487b28eccf2eee334a06dc70b454776948d
-  mime: image/webp
-  shape: image-webp
-  note: inline image, promoted from a captured HTML page's embed manifest
-  source: promoted
-  via:
-    container: 91548d684bd8d91e9436523cb28b1b21756f0a076eac64a3381f5fde9afb2b9c
-    address: el=2.2.1.3.1.2.1.1.1.1.2.7.1.2.1.1.1.2
-
-- blake3: de06e95ea6ad0da6d7b00d88b9896dc9d52d4aefb20597d5c42b6579b02547d5
-  mime: text/vcard
-  shape: vcard
-  note: vCard collection, iCloud contacts export, 150 cards
-  source: direct
-
-- blake3: ff5cc5f8ed2b52ff40f70a9fa124b6a4e61ecbd5c4a9dad80abc619c9be8aad7
-  mime: application/json
-  shape: json
-  note: JSON object, single top-level array field
-  source: direct
-
-- blake3: c6e3984ff59bef5dcb77f70723ef25a42d8df3fb3ddd88c0b9310f4de4b23a6d
-  mime: audio/mp4
-  shape: single-track-audio
-  note: single-track ISOBMFF/M4A, AAC, 1s mono sine wave, synthetic
-  source: synthetic
-  file: synthetic/synthetic-audio.m4a
-
-- blake3: b8ed8b5a6f2c8d4a43bc4c72decf59ef7978ae5e1772fd8659c5bc2cd0c0720f
+- file: gocf-2026-wpg.eml
+  blake3: 36c1188d271552f814612c517fbec5da425a42883d63a87fd4116675530adbfe
   mime: message/rfc822
+  root: rfc822
   shape: message-with-attachments
+  note: multipart/mixed over multipart/alternative; quoted-printable body with a sigdash; xlsx, jpeg and pdf attachments as members
+  source: regression
+
+- file: synthetic-message.eml
+  blake3: b8ed8b5a6f2c8d4a43bc4c72decf59ef7978ae5e1772fd8659c5bc2cd0c0720f
+  mime: message/rfc822
+  root: rfc822
+  shape: message-with-nested-message
   note: message/rfc822 with a nested message/rfc822 sub-message and a PNG attachment, synthetic
   source: synthetic
-  file: synthetic/synthetic-message.eml
 
-# image/heic is NOT a manifest entry (yet). The bytes exist — synthetic/synthetic-image.heic,
-# generated by gen.py's gen_heic() via heif-enc, and it sniffs correctly as image/heic
-# (the v52 `mime.py` ftypheic signature) — `ath ingest` sniffs it as application/octet-stream and no
-# mime schema/drafter for image/heic to ingest it against: HEIF/HEIC is specced
-# (spec/corpus.md, the "HEIF/HEIC | manifest | image-item members" table row) as its own
-# manifest shape (`item=<id>` image items, declared-primary via the `pitm` box), which
-# hasn't been implemented (schemas_default/mime/image/ has no image_heic.yaml, and
-# draft/image.py's `_IMAGE_SCHEMA_IDS` doesn't list it, though its `_ANIMATION_CAPABLE` set
-# already anticipates HEIC/HEIF). Committed here so the fixture is ready the day that
-# drafter lands; left out of the manifest so `seed.py` stays green in the meantime.
+- file: readme.md
+  blake3: ea89e9aa9a85bed84587c51e7070bba0a1d894c1e1e9c59fa48d93c23dd7ce02
+  mime: text/markdown
+  root: markdown
+  shape: markdown
+  note: 71 lines, 5 headings; the text aspect is the bytes (no block derivation yet)
+  source: regression
+
+- file: single-file.js
+  blake3: 49d2223068ad8c86afecf297ed5b37fb965ccc244ec87e8fc100baffc8e81b7b
+  mime: text/javascript
+  root: javascript
+  shape: source-text
+  note: the capture engine every v52 HTML capture pins by hash; 15k lines
+  source: regression
+
+# ── tabular and structured data ───────────────────────────────────────────────────────────────────
+
+- file: amazon-order-history.csv
+  blake3: 1409369e05ce462408344c922183331d96fe70117f4c27389d75817e39702711
+  mime: text/csv
+  root: amazon-order-history
+  shape: csv-with-header-fingerprint
+  note: 275 × 29, BOM; matches by header; 426 concepts (Appendix B)
+  source: regression
+
+- file: amazon-twin.csv
+  blake3: 8286ddb3f2df0d2ccc3f960b52eb8c8fba3c83668579b0a45c34b3ab529ce5f5
+  mime: text/csv
+  root: amazon-order-history
+  shape: csv-with-header-fingerprint
+  note: the same 29-column header over fabricated rows; the public twin of the private export
+  source: synthetic
+
+- file: imessage-media.tsv
+  blake3: 6831ff317bdfb771a3f2fdcc49b949469940e9f2ebd15de4ca46d5f7877430d6
+  mime: text/tab-separated-values
+  root: tsv
+  shape: tsv
+  note: a 9-column gap manifest; csv.parse@1 with the tab as the delimiter
+  source: regression
+
+- file: addresses.json
+  blake3: ff5cc5f8ed2b52ff40f70a9fa124b6a4e61ecbd5c4a9dad80abc619c9be8aad7
+  mime: application/json
+  root: json
+  shape: json
+  note: JSON object, single top-level array field
+  source: regression
+
+- file: synthetic-lines.ndjson
+  blake3: 23f9810ef7b0af559ed6ed6bf0a788950a6ae0374c2e0364054b7fc504f4f6db
+  mime: application/x-ndjson
+  root: ndjson
+  shape: ndjson
+  note: three JSON objects, one per line, synthetic
+  source: synthetic
+
+- file: contacts.vcf
+  blake3: de06e95ea6ad0da6d7b00d88b9896dc9d52d4aefb20597d5c42b6579b02547d5
+  mime: text/vcard
+  root: vcard
+  shape: vcard-collection
+  note: vCard collection, iCloud contacts export, 150 cards
+  source: regression
+
+- file: model.p21
+  blake3: 53ac2b0de5d1aaa00caf842a72a862ef506b2fed6b43d4954b0ccb03b878fd5e
+  mime: application/p21
+  root: step
+  shape: step
+  note: ISO 10303-21 (IFC4) exchange file
+  source: regression
+
+# ── containers ────────────────────────────────────────────────────────────────────────────────────
+
+- file: discord-export.zip
+  blake3: 3c98b37e7bbffa13ccf595046b7dee0f89ab9035669aac86af31d88e936a0ab0
+  mime: application/zip
+  root: zip
+  shape: zip-zstd-members
+  note: a chat export; 9 members (json, png, svg) written with zstd (method 93)
+  source: regression
+
+- file: novel.epub
+  blake3: b8ded2e04ee9a11c3d401e8d39e64497426772f480cbde765abeb917a4732fee
+  mime: application/epub+zip
+  root: epub
+  shape: epub
+  note: EPUB 2 package (calibre); 52 members, 25 spine items; chapters classify by container
+  source: regression
+
+- file: gmail-slice.mbox
+  blake3: 7755d697e7ab330535d4c3555ecae4334176f6353758fce6404adc62546d5116
+  mime: application/mbox
+  root: mbox
+  shape: mbox
+  note: mboxrd, 358 messages, google-takeout/gmail export slice; every message a subject
+  source: regression
+
+# ── lossy: images and media ───────────────────────────────────────────────────────────────────────
+
+- file: photo.jpg
+  blake3: d840fc00fb6206fe5bcd367b99fc9ec0120951e9076a77c9d5c6a89b806f6975
+  mime: image/jpeg
+  root: jpeg
+  shape: image-jpeg
+  note: a photograph; header dims and EXIF orientation attested
+  source: regression
+
+- file: sign.jpg
+  blake3: 6aa934e58bc0dff94e8cb1281ccb0066ff98c9346baca2c72d8764cce6244471
+  mime: image/jpeg
+  root: jpeg
+  shape: image-with-printed-text
+  note: a generated sign with printed text; the image.words@1 proposal exemplar, synthetic
+  source: synthetic
+
+- file: screenshot.png
+  blake3: d481a8c955b5d6a141dfec80fd9f7639319800e93be5a22f20a94bf51c1e8f4c
+  mime: image/png
+  root: png
+  shape: image-png
+  note: a screenshot; IHDR dims attested
+  source: regression
+
+- file: synthetic-image.gif
+  blake3: d6846ee4361867a32b491f0c73b106af30bc755592ee202d72b97fc5abab50b2
+  mime: image/gif
+  root: gif
+  shape: image-gif
+  note: 8×6 single-frame GIF, synthetic (ImageMagick)
+  source: synthetic
+
+- file: synthetic-image.webp
+  blake3: 2217e1aa738444c2edb95544d4fb1eccb396a623cfed22cdc2451db8dea1ed50
+  mime: image/webp
+  root: webp
+  shape: image-webp
+  note: 8×6 WebP, synthetic (ImageMagick)
+  source: synthetic
+
+- file: synthetic-image.svg
+  blake3: 7c72350e64806cebc69812091784f18ced07c57ddfc4310dc8b49c7cbb018962
+  mime: image/svg+xml
+  root: svg
+  shape: image-svg
+  note: one rect, synthetic
+  source: synthetic
+
+- file: synthetic-image.heic
+  blake3: 262e0308dd19571a31ad5be39fcbff0fc18015feaa221a1a749d7c0624b9d9df
+  mime: image/heic
+  root: heic
+  shape: image-heic
+  note: HEIF still image (ftyp heic), synthetic (heif-enc); sniffed by brand
+  source: synthetic
+
+- file: clip.mp4
+  blake3: 426bf4ac98134e0c565db54a12716af3387f40488bce7328a0f62ac7b0994d97
+  mime: video/mp4
+  root: mp4
+  shape: multi-track-media
+  note: multi-track ISOBMFF, h264+aac; sniffed by brand
+  source: regression
+
+- file: synthetic-audio.m4a
+  blake3: c6e3984ff59bef5dcb77f70723ef25a42d8df3fb3ddd88c0b9310f4de4b23a6d
+  mime: audio/mp4
+  root: m4a
+  shape: single-track-audio
+  note: single-track ISOBMFF/M4A, AAC, 1s mono sine wave, synthetic (ffmpeg); brand M4A
+  source: synthetic

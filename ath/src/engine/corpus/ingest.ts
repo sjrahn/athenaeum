@@ -77,7 +77,9 @@ export async function ingestBytes(
   const members: Ingested[] = [];
   if (o.members !== false && result.members) {
     for (const m of result.members) {
-      members.push(await ingestBytes(chain, m.bytes, { date: o.date, name: m.path, container: { blake3, path: m.path }, members: false }));
+      members.push(
+        await ingestBytes(chain, m.bytes, { date: o.date, name: m.name ?? m.path, container: { blake3, path: m.path }, members: false }),
+      );
     }
   }
   return { blake3, mime, bytes: bytes.length, path, attests: attestsLine, capturedFrom: captured, members, existed: report.added === 0 };

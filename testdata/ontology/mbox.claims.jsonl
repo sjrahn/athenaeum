@@ -1,0 +1,3 @@
+{"subject":"mbox","predicate":"refines","value":"container"}
+{"subject":"mbox","predicate":"matches","value":{"mime":"application/mbox"}}
+{"subject":"mbox","predicate":"convention","value":"members are the messages, routed path=<1-based ordinal>, hashed over their un-stuffed bytes (mboxrd); nothing lands on a mailbox"}

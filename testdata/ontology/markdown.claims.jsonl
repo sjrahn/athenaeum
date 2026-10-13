@@ -1,0 +1,4 @@
+{"subject":"markdown","predicate":"refines","value":"document"}
+{"subject":"markdown","predicate":"matches","value":{"mime":"text/markdown"}}
+{"subject":"markdown","predicate":"axes","value":["bytes"]}
+{"subject":"markdown","predicate":"convention","value":"the text aspect is the bytes; CommonMark blocks are not yet derived"}

@@ -7,6 +7,7 @@ import type { Binding } from "../model/evidence.ts";
 import { cellsSurface } from "../norm/text.ts";
 import { CSV_OP, csvSurface } from "../ops/csv/parse.ts";
 import { attrAt, HTML_ATTR_OP, HTML_TEXT_OP, HTML_TITLE_OP, rootAttr, textAt, titleOf } from "../ops/html/text.ts";
+import { EML_TEXT_OP, textAt as mailTextAt } from "../ops/mail/text.ts";
 import { PDF_WORDS_OP, wordsInBox, wordsText } from "../ops/pdf/words.ts";
 import type { Artifact } from "./derive.ts";
 
@@ -54,6 +55,11 @@ export function derivationAt(a: Artifact, at: string, aspect: Aspect = "text"): 
     if (m.kind !== "row") return null;
     const t = csvSurface(a.csv, m.row, m.col);
     return t === null ? null : { source: CSV_OP, text: aspect === "cells" ? t : t };
+  }
+  if (a.mail) {
+    if (m.kind !== "bytes") return null;
+    const t = mailTextAt(a.mail, m.start, m.end);
+    return t === null ? null : { source: EML_TEXT_OP, text: t };
   }
   return null;
 }

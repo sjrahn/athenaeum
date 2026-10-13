@@ -41,9 +41,16 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
   return { code, stdout: io.stdout, stderr: io.stderr, json: () => JSON.parse(io.stdout) };
 }
 
-/** A scratch directory removed at process exit. */
+/** Every scratch directory made in this process; `cleanupScratch` removes them (setup.ts runs it after all tests). */
+export const scratchDirs: string[] = [];
+
+/** A scratch directory removed when the test run ends. */
 export function scratch(prefix = "ath-test-"): string {
   const d = mkdtempSync(join(tmpdir(), prefix));
-  process.on("exit", () => rmSync(d, { recursive: true, force: true }));
+  scratchDirs.push(d);
   return d;
+}
+
+export function cleanupScratch(): void {
+  for (const d of scratchDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 }

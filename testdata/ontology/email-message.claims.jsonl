@@ -1,0 +1,2 @@
+{"subject":"email-message","predicate":"refines","value":"concept"}
+{"subject":"email-message","predicate":"owes","value":["subject","from","sent"]}

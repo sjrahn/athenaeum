@@ -1,0 +1,3 @@
+{"subject":"signature","predicate":"refines","value":"unit"}
+{"subject":"signature","predicate":"reads","value":"text"}
+{"subject":"signature","predicate":"definition","value":"from the `-- ` sigdash line (RFC 3676 §4.3) to the end of the part"}

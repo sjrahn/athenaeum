@@ -6,6 +6,7 @@ import { csvSurface, parseCsv } from "../src/engine/ops/csv/parse.ts";
 import { byteMap, parseHtml, select, spanOf } from "../src/engine/ops/html/dom.ts";
 import { attest } from "../src/engine/ops/index.ts";
 import { sniffMime } from "../src/engine/ops/sniff.ts";
+import { TESTDATA } from "./layers.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
 const PY = join(import.meta.dir, "fixtures");
@@ -16,7 +17,21 @@ describe("sniff", () => {
     expect(sniffMime(await read(join(PY, "born_text.pdf")))).toBe("application/pdf");
     expect(sniffMime(await read(join(PY, "sample.png")))).toBe("image/png");
     expect(sniffMime(await read(join(FIX, "small.zip")), "x.zip")).toBe("application/zip");
-    expect(sniffMime(await read(join(FIX, "small.zip")), "x.epub")).toBe("application/epub+zip");
+    expect(sniffMime(await read(join(FIX, "small.zip")), "x.epub")).toBe("application/zip"); // no OCF mimetype member: not an epub
+    expect(sniffMime(await read(join(FIX, "small.epub")))).toBe("application/epub+zip");
+    expect(sniffMime(await read(join(FIX, "small.mbox")))).toBe("application/mbox");
+    expect(sniffMime(await read(join(TESTDATA, "synthetic", "synthetic-message.eml")))).toBe("message/rfc822");
+    expect(sniffMime(await read(join(FIX, "small.vcf")))).toBe("text/vcard");
+    expect(sniffMime(await read(join(FIX, "small.json")))).toBe("application/json");
+    expect(sniffMime(await read(join(FIX, "small.ndjson")))).toBe("application/x-ndjson");
+    expect(sniffMime(await read(join(FIX, "small.p21")))).toBe("application/p21");
+    expect(sniffMime(await read(join(FIX, "small.md")), "small.md")).toBe("text/markdown");
+    expect(sniffMime(await read(join(FIX, "small.tsv")), "small.tsv")).toBe("text/tab-separated-values");
+    expect(sniffMime(await read(join(FIX, "small.gif")))).toBe("image/gif");
+    expect(sniffMime(await read(join(FIX, "small.webp")))).toBe("image/webp");
+    expect(sniffMime(await read(join(FIX, "small.svg")))).toBe("image/svg+xml");
+    expect(sniffMime(await read(join(TESTDATA, "synthetic", "synthetic-audio.m4a")))).toBe("audio/mp4");
+    expect(sniffMime(await read(join(TESTDATA, "synthetic", "synthetic-image.heic")))).toBe("image/heic");
     expect(sniffMime(await read(join(FIX, "small.html")))).toBe("text/html");
     expect(sniffMime(await read(join(FIX, "small.csv")), "small.csv")).toBe("text/csv");
     expect(sniffMime(new TextEncoder().encode("plain words"), "notes")).toBe("text/plain");
@@ -45,6 +60,16 @@ describe("csv.parse@1", () => {
   test("attests rows (data), cols, header_row 0, bom", async () => {
     const a = await attest(await read(join(FIX, "small.csv")), "text/csv");
     expect(a.value).toEqual({ mime: "text/csv", bytes: 72, rows: 3, header_row: 0, cols: 3, encoding: "utf-8", bom: true });
+  });
+  test("a tab-separated file is the same parse with the tab as the delimiter", async () => {
+    const p = parseCsv(await read(join(FIX, "small.tsv")), "\t");
+    expect(p.rows.map((r) => r.cells.map((c) => c.value))).toEqual([
+      ["id", "name"],
+      ["1", "Ada"],
+      ["2", "Bo"],
+    ]);
+    const a = await attest(await read(join(FIX, "small.tsv")), "text/tab-separated-values");
+    expect(a.value).toMatchObject({ mime: "text/tab-separated-values", rows: 2, cols: 2 });
   });
 });
 

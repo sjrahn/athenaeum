@@ -10,6 +10,7 @@
     "@embedpdf/pdfium": "^2.15.1",
     "css-select": "^7.0.0",
     "hash-wasm": "^4.12.0",
+    "htmlparser2": "10.0.0",
     "parse5": "^8.0.1",
     "parse5-htmlparser2-tree-adapter": "^8.0.1",
     "zod": "^4.6.7"

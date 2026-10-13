@@ -1,0 +1,2 @@
+{"subject":"xlsx","predicate":"refines","value":"data"}
+{"subject":"xlsx","predicate":"matches","value":{"mime":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}}

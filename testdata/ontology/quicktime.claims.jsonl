@@ -1,0 +1,2 @@
+{"subject":"quicktime","predicate":"refines","value":"video"}
+{"subject":"quicktime","predicate":"matches","value":{"mime":"video/quicktime"}}

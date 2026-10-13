@@ -1,9 +1,9 @@
 // attest.ts — what a CSV is: rows (data rows, header excluded), cols, header_row 0, encoding, BOM.
 import { type AttestResult, registerAttester } from "../registry.ts";
-import { parseCsv } from "./parse.ts";
+import { delimiterFor, parseCsv } from "./parse.ts";
 
 export async function attestCsv(bytes: Uint8Array, mime: string): Promise<AttestResult> {
-  const p = parseCsv(bytes);
+  const p = parseCsv(bytes, delimiterFor(mime));
   return {
     value: {
       mime,

@@ -1,0 +1,27 @@
+From a@example Wed Jan  1 00:00:00 2025
+Message-ID: <one@example>
+From: a@example
+To: b@example
+Subject: First
+Date: Wed, 01 Jan 2025 00:00:00 +0000
+
+Hello.
+
+>From here it looks fine.
+
+From b@example Thu Jan  2 00:00:00 2025
+Message-ID: <two@example>
+From: b@example
+To: a@example
+Subject: =?utf-8?q?Second_=E2=80=94_r=C3=A9ponse?=
+Date: Thu, 02 Jan 2025 00:00:00 +0000
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Caf=C3=A9 au lait.=20
+
+> Hello.
+
+--=20
+B.
+

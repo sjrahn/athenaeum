@@ -7,7 +7,7 @@ export interface AttestResult {
   /** The `attests` value: mime, bytes, and the format's own facts. */
   value: Record<string, unknown>;
   /** A container's members: each becomes its own subject. */
-  members?: { path: string; bytes: Uint8Array; blake3?: string }[];
+  members?: { path: string; bytes: Uint8Array; blake3?: string /** A file name to sniff by, when the path is not one. */; name?: string }[];
   /** Provenance the bytes themselves carry (a capture banner), as `captured_from` fields. */
   capturedFrom?: Record<string, unknown>;
 }

@@ -1,0 +1,3 @@
+{"subject":"svg","predicate":"refines","value":"image"}
+{"subject":"svg","predicate":"matches","value":{"mime":"image/svg+xml"}}
+{"subject":"svg","predicate":"convention","value":"markup, not pixels; read as an image until an axis is ruled"}

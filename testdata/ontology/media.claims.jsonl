@@ -1,0 +1,4 @@
+{"subject":"media","predicate":"refines","value":"lossy"}
+{"subject":"media","predicate":"axes","value":["t"]}
+{"subject":"media","predicate":"tree","value":"asserted — spans on the timeline are judgments"}
+{"subject":"media","predicate":"reads","value":"none"}

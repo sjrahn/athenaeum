@@ -101,4 +101,3 @@ export async function attestZip(bytes: Uint8Array, mime: string): Promise<Attest
 }
 
 registerAttester("application/zip", attestZip);
-registerAttester("application/epub+zip", attestZip);

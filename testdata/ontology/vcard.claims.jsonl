@@ -1,0 +1,2 @@
+{"subject":"vcard","predicate":"refines","value":"data"}
+{"subject":"vcard","predicate":"matches","value":{"mime":"text/vcard"}}

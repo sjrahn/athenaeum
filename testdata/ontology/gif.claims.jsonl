@@ -1,0 +1,2 @@
+{"subject":"gif","predicate":"refines","value":"image"}
+{"subject":"gif","predicate":"matches","value":{"mime":"image/gif"}}

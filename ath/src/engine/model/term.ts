@@ -43,6 +43,8 @@ export const MatchesDecl = z
     header: z.array(z.string()).optional(),
     selector: z.string().optional(),
     magic: z.string().optional(),
+    /** The root term of the container the artifact is a member of. */
+    container: z.string().optional(),
   })
   .passthrough();
 export type MatchesDecl = z.infer<typeof MatchesDecl>;

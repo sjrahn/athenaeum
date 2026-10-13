@@ -1,5 +1,6 @@
 // match.ts — classification (spec §7.2 `matches`): the most specific term whose `matches` lines all hold for the
-// artifact — its mime, a header fingerprint (CSV), a root selector (HTML), a magic. A stored `manifests` at `whole`
+// artifact — its mime, a header fingerprint (CSV), a root selector (HTML), a magic, the root term of its container. A
+// stored `manifests` at `whole`
 // overrides the derived answer.
 import { MatchesDecl } from "../model/term.ts";
 import { refinesChain } from "./chain.ts";
@@ -13,6 +14,8 @@ export interface Probe {
   selectorMatches?: (selector: string) => boolean;
   /** The first bytes, for magic. */
   head?: Uint8Array;
+  /** The root term of the container this artifact is a member of (D-epub: a chapter is told by its package). */
+  container?: string | null;
 }
 
 export interface Match {
@@ -35,6 +38,10 @@ function holds(decl: MatchesDecl, p: Probe): number | null {
   }
   if (decl.selector !== undefined) {
     if (!p.selectorMatches?.(decl.selector)) return null;
+    n++;
+  }
+  if (decl.container !== undefined) {
+    if (!p.container || decl.container !== p.container) return null;
     n++;
   }
   if (decl.magic !== undefined) {

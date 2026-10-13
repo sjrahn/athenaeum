@@ -12,9 +12,11 @@ import { refinesChain } from "../ontology/chain.ts";
 import { effectiveRules, resolveAlong } from "../ontology/effective.ts";
 import { linesOf, type Ontology } from "../ontology/load.ts";
 import { classify } from "../ontology/match.ts";
-import { CSV_OP, type CsvParse, parseCsv } from "../ops/csv/parse.ts";
+import { CSV_OP, type CsvParse, delimiterFor, parseCsv } from "../ops/csv/parse.ts";
 import { type HtmlDoc, matchesSelector, parseHtml, select, spanOf } from "../ops/html/dom.ts";
 import { elementText, HTML_TEXT_OP } from "../ops/html/text.ts";
+import { isBodyPart, leaves, type Message, parseMessage } from "../ops/mail/parse.ts";
+import { blocks, EML_TEXT_OP, spanText } from "../ops/mail/text.ts";
 import { allPages, type ChromeLine, detectChrome, type PageWords } from "../ops/pdf/words.ts";
 import { ScopeTable } from "./tree.ts";
 
@@ -38,6 +40,8 @@ export interface Artifact {
   csv?: CsvParse;
   /** PDF: words per page (loaded on demand by `pdfPages`) and chrome by repetition. */
   pdf?: { pages: PageWords[]; chrome: ChromeLine[] };
+  /** A message: its MIME tree with raw spans. */
+  mail?: Message;
   /** Byte spans the root term declares as chrome (markup). */
   chromeSpans: { start: number; end: number; selector: string }[];
   passes: Map<string, JsonObject>;
@@ -72,11 +76,20 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
   // parse the bytes by family
   if (bytes) {
     if (mime === "text/html" || mime === "application/xhtml+xml") a.html = parseHtml(bytes);
-    else if (mime === "text/csv" || mime === "text/tab-separated-values") a.csv = parseCsv(bytes);
+    else if (mime === "text/csv" || mime === "text/tab-separated-values") a.csv = parseCsv(bytes, delimiterFor(mime));
     else if (mime === "application/pdf") {
       const pages = await allPages(bytes);
       a.pdf = { pages, chrome: detectChrome(pages) };
-    }
+    } else if (mime === "message/rfc822") a.mail = parseMessage(bytes);
+  }
+  // a member's container, for classification by package (D-epub)
+  const containerRef = (a.capturedFrom?.value as { container?: string } | null)?.container;
+  let containerRoot: string | null = null;
+  if (typeof containerRef === "string" && containerRef.startsWith("corpus://")) {
+    const cLines = unionView("corpus", readSubject(chain, "corpus", containerRef.slice("corpus://".length))).map((l) => l.line);
+    const cAttests = cLines.find((l) => l.predicate === "attests");
+    const cMime = cAttests ? String((cAttests.value as JsonObject).mime ?? "") : "";
+    containerRoot = cMime ? classify(o, { mime: cMime }) : null;
   }
 
   // the root term: a stored manifests at whole wins over matches
@@ -87,6 +100,7 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
     header,
     selectorMatches: a.html ? (s) => matchesSelector(a.html!, s) : undefined,
     head: bytes?.subarray(0, 16),
+    container: containerRoot,
   });
   a.table.ensure("whole");
   if (derivedRoot) {
@@ -106,8 +120,58 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
 
   if (a.html && a.root) deriveHtml(a);
   if (a.csv && a.root) deriveCsv(a);
+  if (a.mail && a.root) deriveMail(a);
+  if (a.root) deriveSpine(a);
   overlayStored(a);
   return a;
+}
+
+/** The derived tree of a message (D-rfc822-parts): the header block, then every text body part as a scope in whole,
+ * each with its mechanical blocks (paragraph · quote · signature) placed inside it; members are routes, not scopes. */
+function deriveMail(a: Artifact): void {
+  const m = a.mail!;
+  const o = a.ontology;
+  const expects = effectiveRules(o, a.rootChain).expects;
+  const has = (t: string) => expects.includes(t) && o.terms.has(t);
+  let ord = 0;
+  if (has("message-header") && m.root.headerEnd > 0) {
+    const at = `bytes=0,${m.root.headerEnd}`;
+    a.table.addTerm(at, "message-header", {}, `${a.root}.expects`);
+    a.table.place(at, "whole", ord++);
+  }
+  for (const p of leaves(m)) {
+    if (!isBodyPart(p) || !has("message-body")) continue;
+    const at = `bytes=${p.bodyStart},${p.bodyEnd}`;
+    const fields: Record<string, unknown> = { part: p.path || "1", encoding: p.cte };
+    if (p.charset) fields.charset = p.charset;
+    const s = a.table.addTerm(at, "message-body", fields, `${a.root}.expects`);
+    a.table.place(at, "whole", ord++);
+    s.readings.push({ aspect: "text", body: spanText(m, p, p.bodyStart, p.bodyEnd), rev: `derived:${EML_TEXT_OP}`, stored: false });
+    let k = 0;
+    for (const b of blocks(m, p)) {
+      if (!has(b.kind)) continue;
+      const bat = `bytes=${b.start},${b.end}`;
+      if (bat === at) continue;
+      const bs = a.table.addTerm(bat, b.kind, {}, `${a.root}.blocks`);
+      a.table.place(bat, at, k++);
+      bs.readings.push({ aspect: "text", body: spanText(m, p, b.start, b.end), rev: `derived:${EML_TEXT_OP}`, stored: false });
+    }
+  }
+}
+
+/** A container whose attestation carries a `spine` (D-epub): one route scope per spine item, in whole in reading
+ * order, manifesting the term the root expects for a spine item. */
+function deriveSpine(a: Artifact): void {
+  const spine = (a.attests.value as { spine?: unknown }).spine;
+  if (!Array.isArray(spine)) return;
+  const expects = effectiveRules(a.ontology, a.rootChain).expects;
+  const term = expects.find((t) => a.ontology.terms.has(t) && t !== "member");
+  if (!term) return;
+  spine.forEach((p, i) => {
+    const at = `path=${encodeURIComponent(String(p))}`;
+    a.table.addTerm(at, term, { path: String(p) }, `${a.root}.spine`);
+    a.table.place(at, "whole", i);
+  });
 }
 
 function deriveHtml(a: Artifact): void {

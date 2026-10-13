@@ -1,7 +1,11 @@
 // parse.ts — `csv.parse@1`: RFC 4180 over bytes, by hand, so the surface is pinned by this code and not a library's
 // option defaults. Emits each logical row and cell with its byte span. A BOM is recorded and skipped; CRLF and LF
-// both end a row; quoted fields may hold doubled quotes and newlines. `row=0` is the header (D-csv).
+// both end a row; quoted fields may hold doubled quotes and newlines. `row=0` is the header (D-csv). A tab-separated
+// file is the same parse with the tab as the delimiter.
 export const CSV_OP = "csv.parse@1";
+
+/** The delimiter a tabular mime uses. */
+export const delimiterFor = (mime: string): string => (mime === "text/tab-separated-values" ? "\t" : ",");
 
 export interface Cell {
   value: string;
@@ -23,7 +27,7 @@ export interface CsvParse {
   cols: number;
 }
 
-export function parseCsv(bytes: Uint8Array): CsvParse {
+export function parseCsv(bytes: Uint8Array, delimiter = ","): CsvParse {
   const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
   // byte offset per code unit (prefix sum)
   const map = new Uint32Array(text.length + 1);
@@ -73,12 +77,12 @@ export function parseCsv(bytes: Uint8Array): CsvParse {
         }
       } else {
         let j = i;
-        while (j < text.length && text[j] !== "," && text[j] !== "\n" && text[j] !== "\r") j++;
+        while (j < text.length && text[j] !== delimiter && text[j] !== "\n" && text[j] !== "\r") j++;
         value = text.slice(i, j);
         i = j;
       }
       cells.push({ value, start: map[cellStart]!, end: map[i]! });
-      if (text[i] === ",") {
+      if (text[i] === delimiter) {
         i++;
         continue;
       }

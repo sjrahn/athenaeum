@@ -1,0 +1,6 @@
+{"subject":"epub","predicate":"refines","value":"container"}
+{"subject":"epub","predicate":"matches","value":{"mime":"application/epub+zip"}}
+{"subject":"epub","predicate":"expects","value":["spine-item"]}
+{"subject":"epub","predicate":"tree","value":"derived — one route scope per spine item, in reading order"}
+{"subject":"epub","predicate":"convention","value":"the package document's metadata is attested; a chapter is a member classified by its package (epub-chapter)"}
+{"subject":"epub","predicate":"concept","value":{"term":"publication","key":"attests.identifier","claims":{"title":"attests.title","creator":"attests.creator","language":"attests.language","publisher":"attests.publisher","isbn":"attests.isbn"}}}
