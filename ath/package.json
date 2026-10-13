@@ -1,0 +1,34 @@
+{
+  "name": "ath",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.4.3",
+    "@types/yauzl": "^3.4.0"
+  },
+  "dependencies": {
+    "@embedpdf/pdfium": "^2.15.1",
+    "css-select": "^7.0.0",
+    "hash-wasm": "^4.12.0",
+    "parse5": "^8.0.1",
+    "parse5-htmlparser2-tree-adapter": "^8.0.1",
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.7"
+  },
+  "version": "0.1.0-successor",
+  "description": "Athenaeum tooling: the successor contract's reference implementation (ingest, ontology, trees, lints, verify, harvest, export, serve).",
+  "bin": {
+    "ath": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "bun run typecheck && bun run lint && bun test",
+    "build": "bun build --compile --target=bun-linux-x64 ./src/main.ts --outfile dist/ath",
+    "build:arm64": "bun build --compile --target=bun-linux-arm64 ./src/main.ts --outfile dist/ath-arm64"
+  }
+}

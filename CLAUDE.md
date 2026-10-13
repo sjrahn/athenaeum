@@ -8,7 +8,8 @@ up from the working directory for `athenaeum.yaml` ($ATHENAEUM_ROOT
 overrides). Work in this repo is spec and tooling development; content work
 happens in an instance, under the instance's own `CLAUDE.md`.
 
-**The specification is law** — one spec, four parts, one version:
+**The specification is law** — one spec, four parts, one version (frozen at v52 on
+`main`; `spec/successor.md` is the unratified successor draft that `ath/` implements):
 `spec/athenaeum.md` (Part I, architecture), `spec/corpus.md` (Part II),
 `spec/ledger.md` (Part III), `spec/custody.md` (Part IV). Amendment history:
 `spec/CHANGELOG.md`; the spec text carries current law only. Code conforms to
@@ -17,6 +18,11 @@ first — and an amendment lands complete: text + enforcement/guidance sweep +
 migration story, together (Part I §8). Normative spec changes are owner-gated.
 
 ## Layout
+
+- `ath/` — the successor contract's reference implementation (Bun/TypeScript, the
+  `ath` binary): `spec/successor.md` made to run. Fresh code on the model of the
+  `ita` CLI (contracts + kit + engine + commands); no network, no port of `tools/`.
+  Gates: `cd ath && bun run check` (tsc, biome, bun test) and `bun run build`.
 
 - `spec/` — the four parts + CHANGELOG.
 - `tools/` — the `athenaeum` Python distribution: the `ath` and `corpus` CLIs
