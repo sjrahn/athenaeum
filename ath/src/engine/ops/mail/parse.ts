@@ -42,6 +42,16 @@ export interface Message {
 }
 
 const latin1 = new TextDecoder("latin1");
+const utf8Strict = new TextDecoder("utf-8", { fatal: true });
+
+/** A raw header line: UTF-8 when it is valid UTF-8 (RFC 6532), latin1 otherwise. */
+function headerLine(b: Uint8Array): string {
+  try {
+    return utf8Strict.decode(b);
+  } catch {
+    return latin1.decode(b);
+  }
+}
 
 function indexOfSeq(b: Uint8Array, seq: number[], from: number, to = b.length): number {
   outer: for (let i = from; i <= to - seq.length; i++) {
@@ -188,7 +198,7 @@ export function parseHeaders(b: Uint8Array, start: number, end: number): Header[
     let nl = b.indexOf(0x0a, i);
     if (nl === -1 || nl >= end) nl = end;
     const lineEnd = nl > i && b[nl - 1] === 0x0d ? nl - 1 : nl;
-    const line = latin1.decode(b.subarray(i, lineEnd));
+    const line = headerLine(b.subarray(i, lineEnd));
     if ((line.startsWith(" ") || line.startsWith("\t")) && cur) {
       cur.raw += `\n${line}`;
       cur.end = lineEnd;

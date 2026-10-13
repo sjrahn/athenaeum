@@ -1,6 +1,6 @@
 # testdata/ — the regression library
 
-One artifact per mime (`exemplars.yaml`: pdf, html, rfc822, markdown, javascript, csv, tsv, json,
+One artifact per mime (`exemplars.yaml`, 22 mimes: pdf, html, rfc822, markdown, javascript, csv, tsv, json,
 ndjson, vcard, p21, zip, epub, mbox, jpeg, png, gif, webp, svg, heic, mp4, m4a) for spec + tooling
 regression testing against real byte shapes, plus the regression ontology those bytes classify
 under. Most bytes come from a private source instance and are **placed by hand**; a few shapes

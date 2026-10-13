@@ -1,7 +1,7 @@
 // regression.test.ts — the regression set (spec/successor.md Appendix B) over the real bytes. Self-skips per artifact
 // when the bytes are not placed under testdata/regression/ (private exports; see testdata/README.md).
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadArtifact } from "../src/engine/corpus/derive.ts";
 import { ingestFile } from "../src/engine/corpus/ingest.ts";
@@ -296,6 +296,8 @@ describe("regression: a mailbox slice (mbox, container of messages)", () => {
       }
       expect(bodies).toBe(2);
       expect(htmlAlternatives).toBeGreaterThan(300);
+      // D-members-depth: a member's own members stay on its roster; nothing below the mailbox's messages is a subject
+      expect(readdirSync(join(f, "corpus")).filter((n) => n.endsWith(".claims.jsonl")).length).toBe(1 + 358);
       expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
     },
   );
