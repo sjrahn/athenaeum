@@ -72,7 +72,7 @@ describe("html", () => {
     });
     expect(a.capturedFrom).toEqual({
       origin: "example.com",
-      uri: "https://www.example.com/t/1",
+      uri: "https://www.example.com/threads/test-thread.123/",
       via: "capture",
       snapshot: "2026-08-15T23:40:36Z",
     });

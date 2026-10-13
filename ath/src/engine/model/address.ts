@@ -14,6 +14,7 @@ export type Member =
   | { kind: "bbox"; box: Box }
   | { kind: "bytes"; start: number; end: number }
   | { kind: "row"; row: number; col?: number }
+  | { kind: "col"; col: number }
   | { kind: "time"; start: number; end: number }
   | { kind: "path"; path: string };
 
@@ -83,6 +84,10 @@ function parseMember(s: string): Member {
     if (params.has("col")) m.col = num(params.get("col")!, "col");
     return m;
   }
+  if (params.has("col")) {
+    only(["col"]);
+    return { kind: "col", col: num(params.get("col")!, "col") };
+  }
   if (params.has("t")) {
     only(["t"]);
     const p = params.get("t")!.split(",");
@@ -126,6 +131,8 @@ export function formatMember(m: Member): string {
       return `bytes=${m.start},${m.end}`;
     case "row":
       return `row=${m.row}${m.col !== undefined ? `&col=${m.col}` : ""}`;
+    case "col":
+      return `col=${m.col}`;
     case "time":
       return `t=${fmt(m.start)},${fmt(m.end)}`;
     case "path":
@@ -145,6 +152,8 @@ const memberSortKey = (m: Member): number[] => {
       return [3, m.start, m.end];
     case "row":
       return [4, m.row, m.col ?? -1];
+    case "col":
+      return [4.5, m.col];
     case "time":
       return [5, m.start, m.end];
     case "path":
@@ -220,6 +229,8 @@ function memberContains(outer: Member, inner: Member): boolean {
       return inner.kind === "bytes" && inner.start >= outer.start && inner.end <= outer.end;
     case "row":
       return inner.kind === "row" && inner.row === outer.row && (outer.col === undefined || inner.col === outer.col);
+    case "col":
+      return (inner.kind === "row" && inner.col === outer.col) || (inner.kind === "col" && inner.col === outer.col);
     case "time":
       return inner.kind === "time" && inner.start >= outer.start - 1e-6 && inner.end <= outer.end + 1e-6;
     case "path":

@@ -8,16 +8,17 @@ import { REPEATABLE } from "./term.ts";
 
 export const OP_REF = /^[a-z][a-z0-9.-]*@\d+(\.\d+)*$/; // ath.ingest@1, pdf.words@1, corpus.ingest@0.1.0
 export const PASS_REF = /^p[0-9a-z]+$/; // p1, p2a
+export const HARVEST_BY = /^harvest:[a-z0-9-]+@[0-9a-f]{6}$/; // harvest:<term>@<6 hex of the ontology pin>
+export const LEDGER_BY = /^(harvest:[a-z0-9-]+@[0-9a-f]{6}|[a-z][a-z0-9.-]*@\d+(\.\d+)*)$/;
 export const REV = /^b3:[0-9a-f]{16}$/;
 export const BLAKE3 = /^[0-9a-f]{64}$/;
-export const SLUG = /^[a-z0-9][a-z0-9-]*$/;
+export const SLUG = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 export const TERM = SLUG;
 
 export const ARTIFACT_PREDICATES = ["attests", "captured_from", "pass", "walked", "manifests", "in", "reads_as"] as const;
 export type ArtifactPredicate = (typeof ARTIFACT_PREDICATES)[number];
 export const OWNER_PREDICATES = ["inspected"] as const;
 
-const attestation = { by: z.string().regex(OP_REF).optional(), pass: z.string().regex(PASS_REF).optional() };
 const atKey = z.string().min(1);
 
 const opLine = z
@@ -89,7 +90,14 @@ export type OwnerLine = z.infer<typeof OwnerLine>;
 
 /** A ledger line: `term`, `manifested_by`, `part_of`, `pass`, or a claim with evidence. Checked loosely here; the
  * binding grammar and the evidence shape are model/evidence.ts; attestation rules are the per-file lint. */
-export const LedgerLine = z.object({ subject: z.string().regex(SLUG), predicate: z.string().min(1), ...attestation }).catchall(z.unknown());
+export const LedgerLine = z
+  .object({
+    subject: z.string().regex(SLUG),
+    predicate: z.string().min(1),
+    by: z.string().regex(LEDGER_BY).optional(),
+    pass: z.string().regex(PASS_REF).optional(),
+  })
+  .catchall(z.unknown());
 export type LedgerLine = z.infer<typeof LedgerLine>;
 
 export const OntologyLine = z.object({ subject: z.string().regex(TERM), predicate: z.string().min(1), value: z.unknown() }).strict();

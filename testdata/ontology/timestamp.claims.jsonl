@@ -1,3 +1,4 @@
 {"subject":"timestamp","predicate":"refines","value":"unit"}
+{"subject":"timestamp","predicate":"reads","value":"text"}
 {"subject":"timestamp","predicate":"field","value":{"name":"datetime","kind":"datetime","required":true}}
 {"subject":"timestamp","predicate":"derivation","value":"the datetime attribute, not the displayed text"}

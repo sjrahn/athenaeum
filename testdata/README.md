@@ -79,3 +79,15 @@ Sanity-check after seeding:
 ```
 uv run --no-sync corpus health --corpus-root testdata/instance/corpus --summary
 ```
+
+### The successor regression set (`ath/`)
+
+`testdata/ontology/` (tracked) is the regression ontology the successor tooling loads into a
+foundation; `testdata/synthetic/amazon-twin.csv` (tracked) is a fabricated twin of the Amazon
+order-history export with the same 29-column header, so the tabular tests run without private
+bytes. `testdata/regression/` (gitignored) holds the real regression bytes
+(`spec/successor.md` Appendix B): place `g8board-idle-stall-292301.html` and
+`amazon-order-history.csv` from the source instance's `corpus/export/`, and the public
+`am-tool-03-v3.pdf` (https://cdm.unfccc.int/methodologies/PAmethodologies/tools/am-tool-03-v3.pdf,
+blake3 `404d090f…`). `ath/test/regression.test.ts` self-skips per missing file;
+`ATH_REGRESSION=<dir>` points it elsewhere.

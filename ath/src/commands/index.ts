@@ -1,10 +1,16 @@
 // index.ts — the command table: every group registers here. Add a command by importing its def and listing it once.
 import { createRegistry, type Registry } from "../kit/registry.ts";
 import { claimsShow, claimsSort } from "./claims.ts";
+import { exportMarkdownCmd, exportNquads } from "./export.ts";
+import { harvest } from "./harvest.ts";
 import { ingest, ingestShow } from "./ingest.ts";
 import { layerCheck, layerInit, layerShow } from "./layer.ts";
+import { lint } from "./lint.ts";
 import { logCommand } from "./log.ts";
 import { ontologyHash, ontologyLint, ontologyList, ontologyRules, ontologyShow } from "./ontology.ts";
+import { resolveCmd } from "./resolve.ts";
+import { tree, treeAt } from "./tree.ts";
+import { verify } from "./verify.ts";
 import { whoamiCommand } from "./whoami.ts";
 
 export function buildRegistry(): Registry {
@@ -15,6 +21,12 @@ export function buildRegistry(): Registry {
   r.registerGroup("ingest", "bytes on disk become artifact subjects");
   r.registerGroup("ontology", "the terms: list, show, effective rules, the pin, lints");
   r.registerGroup("claims", "a subject's lines: show, sort");
+  r.registerGroup("tree", "an artifact's scope table in ord; derived addresses → intrinsic");
+  r.registerGroup("resolve", "the bytes, derivation or reading at an address");
+  r.registerGroup("lint", "G1–G4, per-file and per-term lints");
+  r.registerGroup("verify", "bindings, derived status, demand, stale passes");
+  r.registerGroup("harvest", "concept lines minted into the ledger");
+  r.registerGroup("export", "the markdown proxy and the N-Quads projection");
   for (const def of [
     whoamiCommand,
     logCommand,
@@ -30,6 +42,14 @@ export function buildRegistry(): Registry {
     ontologyLint,
     claimsShow,
     claimsSort,
+    tree,
+    treeAt,
+    resolveCmd,
+    lint,
+    verify,
+    harvest,
+    exportMarkdownCmd,
+    exportNquads,
   ])
     r.register(def);
   return r;

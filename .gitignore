@@ -22,3 +22,6 @@ tools/.ruff_cache/
 research
 
 __pycache__/
+
+# regression bytes (private exports + a public PDF placed by hand): never tracked
+/testdata/regression/

@@ -22,6 +22,9 @@ describe("address", () => {
     expect(parseAddress("bytes=518950,518985").members[0]).toEqual({ kind: "bytes", start: 518950, end: 518985 });
     expect(parseAddress("row=3&col=10").members[0]).toEqual({ kind: "row", row: 3, col: 10 });
     expect(parseAddress("t=52,80.5").members[0]).toEqual({ kind: "time", start: 52, end: 80.5 });
+    expect(parseAddress("col=4").members[0]).toEqual({ kind: "col", col: 4 });
+    expect(contains("col=4", "row=3&col=4")).toBe(true);
+    expect(contains("col=4", "row=3&col=5")).toBe(false);
     expect(parseAddress("path=OEBPS%2Fch02.xhtml").members[0]).toEqual({ kind: "path", path: "OEBPS/ch02.xhtml" });
     expect(parseAddress("page=5&bbox=0.1,0.2,0.3,0.4;page=6&bbox=0.1,0.1,0.3,0.2").members.length).toBe(2);
   });

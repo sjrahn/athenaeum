@@ -65,7 +65,7 @@ describe("layer + ingest", () => {
     const html = readJsonl(join(f, "corpus", `${rows[1]!.blake3}.claims.jsonl`));
     expect(html[1]!.value).toEqual({
       origin: "fixtures",
-      uri: "https://www.example.com/t/1",
+      uri: "https://www.example.com/threads/test-thread.123/",
       via: "upload",
       snapshot: "2026-08-15T23:40:36Z",
       received: "2026-10-13",
@@ -109,11 +109,11 @@ describe("layer + ingest", () => {
   test("ontology commands over the chain", async () => {
     const f = foundation();
     const list = await ath(["--json", "ontology", "list"], { cwd: f });
-    expect((list.json() as { data: { terms: unknown[] } }).data.terms.length).toBe(69);
+    expect((list.json() as { data: { terms: unknown[] } }).data.terms.length).toBe(70);
     const rules = await ath(["ontology", "rules", "heading"], { cwd: f });
     expect(rules.stdout).toContain("reads       text");
     const hash = await ath(["--json", "ontology", "hash"], { cwd: f });
-    expect((hash.json() as { data: { terms: number } }).data.terms).toBe(69);
+    expect((hash.json() as { data: { terms: number } }).data.terms).toBe(70);
     expect((await ath(["ontology", "show", "nope"], { cwd: f })).code).toBe(66);
     const lint = await ath(["ontology", "lint"], { cwd: f });
     expect(lint.code).toBe(0);

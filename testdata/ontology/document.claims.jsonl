@@ -1,5 +1,4 @@
 {"subject":"document","predicate":"refines","value":"unit"}
-{"subject":"document","predicate":"expects","value":["page"]}
 {"subject":"document","predicate":"convention","value":"sub/superscripts flattened outside math"}
 {"subject":"document","predicate":"convention","value":"line-break hyphens rejoined"}
 {"subject":"document","predicate":"convention","value":"footnote marks as [^n]"}

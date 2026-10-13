@@ -31,6 +31,8 @@ describe("line", () => {
     ).toBeNull();
     expect(validateLine("ledger", { subject: "cdm-tool-03", predicate: "term", value: "methodological-tool" })).toBeNull();
     expect(validateLine("ledger", { subject: "Bad Slug", predicate: "term", value: "x" })).not.toBeNull();
+    expect(validateLine("ledger", { subject: "s", predicate: "name", value: "x", by: "harvest:xenforo-thread@36c40a" })).toBeNull();
+    expect(validateLine("ledger", { subject: "s", predicate: "name", value: "x", by: "claude-opus-4-8" })).not.toBeNull();
     expect(validateLine("ontology", { subject: "heading", predicate: "reads", value: "text" })).toBeNull();
   });
 

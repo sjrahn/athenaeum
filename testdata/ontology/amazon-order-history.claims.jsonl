@@ -31,5 +31,5 @@
 {"subject":"amazon-order-history","predicate":"shape","value":{"col":"Unit Price Tax","term":"monetary-amount","currency":"col:Currency"}}
 {"subject":"amazon-order-history","predicate":"shape","value":{"col":"Website","term":"text"}}
 {"subject":"amazon-order-history","predicate":"concept","value":{"term":"order","key":"Order ID","group":"rows sharing a key are one concept","claims":{"placed":"Order Date","status":"Order Status","marketplace":"Website → marketplace","payment_method":"Payment Method Type","currency":"Currency","ship_to":"Shipping Address","bill_to":"Billing Address","line_item":"{ASIN → product, Product Name, Original Quantity, Unit Price, Unit Price Tax, Total Amount, Total Discounts, Ship Date, Shipment Status, Carrier Name & Tracking Number}"}}}
-{"subject":"amazon-order-history","predicate":"concept","value":{"term":"product","key":"ASIN","claims":{"asin":"ASIN","name":"Product Name","department":"Department"}}}
-{"subject":"amazon-order-history","predicate":"concept","value":{"term":"marketplace","key":"Website","claims":{"name":"Website"}}}
+{"subject":"amazon-order-history","predicate":"concept","value":{"term":"product","key":"ASIN","claims":{"asin":"ASIN","name":"Product Name","department":"Department"},"slug":"asin-{key}","case":"keep"}}
+{"subject":"amazon-order-history","predicate":"concept","value":{"term":"marketplace","key":"Website","claims":{"name":"Website"},"slug":"{key}"}}
