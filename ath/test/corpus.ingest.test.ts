@@ -88,6 +88,53 @@ describe("layer + ingest", () => {
     expect((await ath(["ingest", join(FIX, "nope.bin")], { cwd: f, env })).code).toBe(66);
   });
 
+  test("a producer's <file>.capture.yaml beside the bytes folds into captured_from (D-sidecar); flags still win", async () => {
+    const f = foundation();
+    const dir = scratch();
+    const page = join(dir, "20261013T120000Z-thread.html");
+    writeFileSync(page, readFileSync(join(FIX, "small.html")));
+    writeFileSync(
+      `${page}.capture.yaml`,
+      [
+        "source_url: https://www.example.com/threads/test-thread.123/",
+        "fetched_at: 2026-10-13T12:00:00Z",
+        'snapshot_engine: "singlefile@2026-08-21 blake3:49d2223068ad8c86afecf297ed5b37fb965ccc244ec87e8fc100baffc8e81b7b"',
+        "capture_issues:",
+        "  - {id: feed-partial, subtype: feed, severity: warn, detector: ita-web-capture@1, fields: {seen: 3}}",
+        "origin_fields:",
+        "  pagination: {pages: 2, form: query, posts: 40, page_urls: [https://www.example.com/threads/test-thread.123/, https://www.example.com/threads/test-thread.123/page-2]}",
+        "capture_context: {host: arbre, actor: ita, trigger: request, session_id: s1}",
+        "",
+      ].join("\n"),
+    );
+    const r = await ath(["--json", "ingest", page, "--note", "R-0079"], { cwd: f, env });
+    expect(r.code, r.stderr).toBe(0);
+    const id = (r.json() as { data: { ingested: { blake3: string }[] } }).data.ingested[0]!.blake3;
+    const lines = readJsonl(join(f, "corpus", `${id}.claims.jsonl`));
+    expect(lines[1]!.value).toEqual({
+      origin: "example.com",
+      uri: "https://www.example.com/threads/test-thread.123/",
+      via: "capture",
+      snapshot: "2026-10-13T12:00:00Z",
+      engine: "singlefile@2026-08-21 blake3:49d2223068ad8c86afecf297ed5b37fb965ccc244ec87e8fc100baffc8e81b7b",
+      aliases: ["https://www.example.com/threads/test-thread.123/page-2"],
+      fields: {
+        pagination: {
+          pages: 2,
+          form: "query",
+          posts: 40,
+          page_urls: ["https://www.example.com/threads/test-thread.123/", "https://www.example.com/threads/test-thread.123/page-2"],
+        },
+      },
+      issues: [{ id: "feed-partial", subtype: "feed", severity: "warn", detector: "ita-web-capture@1", fields: { seen: 3 } }],
+      context: { host: "arbre", actor: "ita", trigger: "request", session_id: "s1" },
+      note: "R-0079",
+    });
+    expect(existsSync(`${page}.capture.yaml`)).toBe(true); // the sidecar and the bytes stay where the producer put them
+    const ignored = await ath(["--json", "ingest", page, "--no-sidecar", "--origin", "x", "--received", "2026-10-13"], { cwd: f, env });
+    expect(ignored.code).toBe(73); // same bytes, a different captured_from: refused, never silently merged
+  });
+
   test("the foundation is read-only from above: same bytes are a no-op, a different line is refused; claims show unions the layers", async () => {
     const f = foundation();
     const e = extension(f);
