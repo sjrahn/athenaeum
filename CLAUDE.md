@@ -31,10 +31,11 @@ migration story, together (Part I §8). Normative spec changes are owner-gated.
   publisher for attached locations (Part IV §5). Its manifest format is its
   own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
-  foundation starts from), `exemplars.yaml` + `seed.ts` (a gitignored scratch
-  layer), `synthetic/` (committed fixtures), `passes/` (the TOOL03 pass lines),
-  and `regression/` (gitignored: the private regression bytes, placed by hand).
-  See `testdata/README.md`.
+  foundation starts from, a root term per mime), `exemplars.yaml` (one artifact
+  per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),
+  `synthetic/` (committed fixtures), `passes/` (the TOOL03 pass lines), and
+  `regression/` (gitignored: the private regression bytes, placed by hand under
+  the names the manifest gives). See `testdata/README.md`.
 
 The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
 `v52` tag and keeps serving the current instance from a worktree of that tag.
@@ -45,6 +46,7 @@ The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
     cd ath && bun run build      # the compiled binary still loads pdfium
 
 The regression suite (`ath/test/regression.test.ts`) self-skips per missing
-file under `testdata/regression/`; place the bytes to include it. A change
+file under `testdata/regression/`; place the bytes to include it. Run the tests
+with `TMPDIR` on a filesystem with room (`/tmp` is a 16 GB tmpfs here). A change
 that touches the contract's behaviour also owes a row in `spec/successor.md`
 Appendix D with the test that pins it.
