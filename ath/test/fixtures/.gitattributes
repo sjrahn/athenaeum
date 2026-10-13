@@ -1,0 +1,2 @@
+# fixture bytes are what the tests hash and slice: never convert line endings
+* -text

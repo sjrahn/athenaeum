@@ -1,0 +1,2 @@
+{"subject":"product-identifier","predicate":"refines","value":"identifier"}
+{"subject":"product-identifier","predicate":"field","value":{"name":"scheme","kind":"enum","options":["asin","isbn-10"]}}

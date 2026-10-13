@@ -1,0 +1,4 @@
+{"subject":"post","predicate":"refines","value":"unit"}
+{"subject":"post","predicate":"expects","value":["author","timestamp","post-body"]}
+{"subject":"post","predicate":"field","value":{"name":"position","kind":"designator","where":"attribution","pattern":"^#(\\d+)$","address":"post"}}
+{"subject":"post","predicate":"field","value":{"name":"id","kind":"string","required":true}}

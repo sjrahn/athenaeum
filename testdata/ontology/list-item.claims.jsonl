@@ -1,0 +1,3 @@
+{"subject":"list-item","predicate":"refines","value":"paragraph"}
+{"subject":"list-item","predicate":"field","value":{"name":"num","kind":"designator","where":"leading","pattern":"^\\([a-z]\\)$","address":"item"}}
+{"subject":"list-item","predicate":"aligns","value":"doco:ListItem"}

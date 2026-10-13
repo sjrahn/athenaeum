@@ -1,0 +1,4 @@
+{"subject":"methodological-tool","predicate":"refines","value":"regulation"}
+{"subject":"methodological-tool","predicate":"field","value":{"name":"version","kind":"designator","where":"cover","pattern":"^Version (\\d+\\.\\d+)$","address":"v","required":true}}
+{"subject":"methodological-tool","predicate":"expects","value":["cover-page","table-of-contents","heading","equation","parameter-table","revision-history"]}
+{"subject":"methodological-tool","predicate":"owes","value":["version","keywords","decision_class","calculates","supersedes","superseded_by"]}

@@ -21,6 +21,14 @@ bun run src/main.ts whoami            # or: bun run build && dist/ath whoami
 - `src/commands/` — thin: parse → engine → data (+ a text renderer).
 - `test/` — `bun test`; `test/harness.ts` runs the CLI in-process; regression tests self-skip without the bytes.
 
+## A layer
+
+`ath layer init <dir> [--extends <foundation>]` writes `athenaeum.yaml` (`successor: true`, `name`, `layer: foundation|extension`,
+`extends`, `tier`) and the three trees. Subjects are files: `ontology/<term>.claims.jsonl`, `corpus/<blake3>.claims.jsonl`
+(+ `.owner.jsonl`), `ledger/<slug>.claims.jsonl`; bytes live in `corpus/bytes/<ab>/<blake3>` (gitignored). A subject's
+view is the union of its files down the chain; writes go to the top layer; a corpus identity a lower layer holds is
+never written above it. `testdata/ontology/` carries the regression ontology a foundation starts from.
+
 ## Conventions
 
 Global flags come before the command's words: `ath --json --root PATH --profile P --now ISO <words> [args]`.

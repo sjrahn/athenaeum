@@ -1,0 +1,3 @@
+{"subject":"list","predicate":"refines","value":"unit"}
+{"subject":"list","predicate":"expects","value":["list-item"]}
+{"subject":"list","predicate":"aligns","value":"doco:List"}

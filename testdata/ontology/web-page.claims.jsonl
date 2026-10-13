@@ -1,0 +1,2 @@
+{"subject":"web-page","predicate":"refines","value":"html"}
+{"subject":"web-page","predicate":"field","value":{"name":"captured_at","kind":"datetime"}}

@@ -1,0 +1,4 @@
+{"subject":"figure","predicate":"refines","value":"unit"}
+{"subject":"figure","predicate":"reads","value":"none"}
+{"subject":"figure","predicate":"renders","value":{"md":"![figure]({at}&render)"}}
+{"subject":"figure","predicate":"aligns","value":"doco:Figure"}

@@ -1,0 +1,14 @@
+{"subject":"xenforo-thread","predicate":"refines","value":"web-page"}
+{"subject":"xenforo-thread","predicate":"matches","value":{"mime":"text/html","selector":"html#XF[data-template=\"thread_view\"]"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"h1.p-title-value","term":"thread-title"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post","term":"post","ord":"document order","field":"id","attr":"data-content"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post .message-name","term":"author","in":"post"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post time[qid=post-date-time]","term":"timestamp","in":"post","field":"datetime","attr":"datetime"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post .bbWrapper","term":"post-body","in":"post"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post .userTitle","term":"member-title","in":"post"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post a.username[data-user-id]","term":"author-link","in":"post","field":"user_id","attr":"data-user-id"}}
+{"subject":"xenforo-thread","predicate":"select","value":{"selector":"article.message--post blockquote[data-source]","term":"quote","in":"post","field":"source","attr":"data-source"}}
+{"subject":"xenforo-thread","predicate":"chrome","value":[".p-nav",".p-footer",".message-actionBar",".menu",".p-breadcrumbs",".message-userStats","form","button"]}
+{"subject":"xenforo-thread","predicate":"concept","value":{"term":"forum-thread","key":"captured_from.uri","claims":{"title":"thread-title","url":"captured_from.uri","site":"@data-site","post":"post → forum-post"}}}
+{"subject":"xenforo-thread","predicate":"concept","value":{"term":"forum-post","key":"post.id","claims":{"author":"author → member","posted":"timestamp.datetime","position":"post.position","body":"post-body","quotes":"quote → forum-post"}}}
+{"subject":"xenforo-thread","predicate":"concept","value":{"term":"member","key":"author-link.user_id","claims":{"name":"author","title":"member-title","user_id":"author-link.user_id"}}}

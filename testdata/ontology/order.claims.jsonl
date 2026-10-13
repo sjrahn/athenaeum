@@ -1,0 +1,2 @@
+{"subject":"order","predicate":"refines","value":"concept"}
+{"subject":"order","predicate":"owes","value":["placed","status","marketplace","payment_method","line_item"]}

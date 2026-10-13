@@ -1,0 +1,5 @@
+{"subject":"footnote","predicate":"refines","value":"unit"}
+{"subject":"footnote","predicate":"reads","value":"text"}
+{"subject":"footnote","predicate":"field","value":{"name":"mark","kind":"designator","where":"leading","pattern":"^\\d+$","address":"fn"}}
+{"subject":"footnote","predicate":"renders","value":{"md":"[^{mark}]: {body}"}}
+{"subject":"footnote","predicate":"aligns","value":"doco:Footnote"}

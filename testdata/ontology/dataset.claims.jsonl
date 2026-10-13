@@ -1,0 +1,2 @@
+{"subject":"dataset","predicate":"refines","value":"data"}
+{"subject":"dataset","predicate":"expects","value":["header","column","record"]}

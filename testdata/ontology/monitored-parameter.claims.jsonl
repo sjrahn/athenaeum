@@ -1,0 +1,2 @@
+{"subject":"monitored-parameter","predicate":"refines","value":"parameter"}
+{"subject":"monitored-parameter","predicate":"owes","value":["unit","description","source_of_data","monitoring_frequency","qa_qc"]}

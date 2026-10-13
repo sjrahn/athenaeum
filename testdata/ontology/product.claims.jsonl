@@ -1,0 +1,2 @@
+{"subject":"product","predicate":"refines","value":"concept"}
+{"subject":"product","predicate":"owes","value":["asin","name","department"]}

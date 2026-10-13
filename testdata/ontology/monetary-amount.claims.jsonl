@@ -1,0 +1,4 @@
+{"subject":"monetary-amount","predicate":"refines","value":"column"}
+{"subject":"monetary-amount","predicate":"field","value":{"name":"currency","kind":"string | col","required":true}}
+{"subject":"monetary-amount","predicate":"field","value":{"name":"quoting","kind":"enum","options":["none","excel-apostrophe"]}}
+{"subject":"monetary-amount","predicate":"derivation","value":"money.parse@1 — strips excel apostrophes, signs negatives"}

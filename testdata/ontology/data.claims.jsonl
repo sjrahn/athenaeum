@@ -1,0 +1,3 @@
+{"subject":"data","predicate":"refines","value":"unit"}
+{"subject":"data","predicate":"convention","value":"values are given by the parse; a reading is needed only for free text or embedded artifacts"}
+{"subject":"data","predicate":"convention","value":"sentinels declared on the dataset term derive to null"}

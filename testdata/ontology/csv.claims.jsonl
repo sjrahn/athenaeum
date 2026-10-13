@@ -1,0 +1,7 @@
+{"subject":"csv","predicate":"refines","value":"data"}
+{"subject":"csv","predicate":"matches","value":{"mime":"text/csv"}}
+{"subject":"csv","predicate":"axes","value":["row","col"]}
+{"subject":"csv","predicate":"origin","value":0}
+{"subject":"csv","predicate":"tree","value":"derived — row in whole, cell in row"}
+{"subject":"csv","predicate":"physical","value":"row"}
+{"subject":"csv","predicate":"derivation","value":"csv.parse@1 (RFC 4180)"}

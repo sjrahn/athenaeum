@@ -1,0 +1,3 @@
+{"subject":"end-mark","predicate":"refines","value":"unit"}
+{"subject":"end-mark","predicate":"reads","value":"text"}
+{"subject":"end-mark","predicate":"renders","value":{"md":"* * *"}}

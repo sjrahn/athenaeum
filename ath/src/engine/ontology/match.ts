@@ -1,0 +1,78 @@
+// match.ts — classification (spec §7.2 `matches`): the most specific term whose `matches` lines all hold for the
+// artifact — its mime, a header fingerprint (CSV), a root selector (HTML), a magic. A stored `manifests` at `whole`
+// overrides the derived answer.
+import { MatchesDecl } from "../model/term.ts";
+import { refinesChain } from "./chain.ts";
+import { linesOf, type Ontology } from "./load.ts";
+
+export interface Probe {
+  mime: string;
+  /** The CSV header row's cells, when there is one. */
+  header?: string[];
+  /** Whether a CSS selector matches the document (HTML). */
+  selectorMatches?: (selector: string) => boolean;
+  /** The first bytes, for magic. */
+  head?: Uint8Array;
+}
+
+export interface Match {
+  term: string;
+  /** How many conditions held: the specificity. */
+  conditions: number;
+}
+
+function holds(decl: MatchesDecl, p: Probe): number | null {
+  let n = 0;
+  if (decl.mime !== undefined) {
+    if (decl.mime !== p.mime) return null;
+    n++;
+  }
+  if (decl.header !== undefined) {
+    if (!p.header) return null;
+    const have = p.header.slice(0, decl.header.length);
+    if (have.length !== decl.header.length || decl.header.some((h, i) => h !== have[i])) return null;
+    n++;
+  }
+  if (decl.selector !== undefined) {
+    if (!p.selectorMatches?.(decl.selector)) return null;
+    n++;
+  }
+  if (decl.magic !== undefined) {
+    if (!p.head) return null;
+    const want = new TextEncoder().encode(decl.magic);
+    if (p.head.length < want.length || want.some((b, i) => p.head![i] !== b)) return null;
+    n++;
+  }
+  return n;
+}
+
+/** Every matching term with its specificity, best first (more conditions, then the longer refines chain). */
+export function matches(o: Ontology, p: Probe): Match[] {
+  const out: Match[] = [];
+  for (const term of o.terms.keys()) {
+    const decls = linesOf(o, term, "matches")
+      .map((l) => MatchesDecl.safeParse(l.value))
+      .flatMap((r) => (r.success ? [r.data] : []));
+    if (!decls.length) continue;
+    let total = 0;
+    let ok = true;
+    for (const d of decls) {
+      const n = holds(d, p);
+      if (n === null) {
+        ok = false;
+        break;
+      }
+      total += n;
+    }
+    if (ok) out.push({ term, conditions: total });
+  }
+  return out.sort(
+    (a, b) =>
+      b.conditions - a.conditions || refinesChain(o, b.term).length - refinesChain(o, a.term).length || a.term.localeCompare(b.term),
+  );
+}
+
+/** The root term `whole` manifests by derivation, or null when nothing matches. */
+export function classify(o: Ontology, p: Probe): string | null {
+  return matches(o, p)[0]?.term ?? null;
+}

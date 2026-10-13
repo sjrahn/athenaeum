@@ -1,0 +1,3 @@
+{"subject":"datetime","predicate":"refines","value":"column"}
+{"subject":"datetime","predicate":"field","value":{"name":"format","kind":"string","required":true}}
+{"subject":"datetime","predicate":"derivation","value":"datetime.parse@1(format) → ISO 8601"}

@@ -1,0 +1,3 @@
+{"subject":"revision-history","predicate":"refines","value":"table"}
+{"subject":"revision-history","predicate":"cells","value":["version","date","description"]}
+{"subject":"revision-history","predicate":"concept","value":{"term":"methodological-tool","claims":{"revision":"*"},"derive":"supersedes"}}

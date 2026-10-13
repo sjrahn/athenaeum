@@ -1,0 +1,3 @@
+{"subject":"author-link","predicate":"refines","value":"unit"}
+{"subject":"author-link","predicate":"reads","value":"text"}
+{"subject":"author-link","predicate":"field","value":{"name":"user_id","kind":"string","required":true}}

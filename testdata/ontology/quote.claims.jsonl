@@ -1,0 +1,3 @@
+{"subject":"quote","predicate":"refines","value":"unit"}
+{"subject":"quote","predicate":"reads","value":"text"}
+{"subject":"quote","predicate":"field","value":{"name":"source","kind":"string"}}
