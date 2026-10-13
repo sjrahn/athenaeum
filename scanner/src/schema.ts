@@ -27,7 +27,7 @@ export type ScanMode = "cold" | "incremental" | "scrub" | "compact" | "bench";
  * other entry is an exact basename match. A matched file is skipped; a matched directory is
  * pruned (its subtree is never entered). `._*` deliberately also catches `.__*` lock-style
  * names, matching Samba's own veto behavior. This is the scanner's half of a two-language
- * shared list — `tools/src/corpus/locationindex.py`'s `_DEFAULT_IGNORE_PATTERNS` is the
+ * shared list — the v52 reader's (`tools/src/corpus/locationindex.py` on the `v52` tag) `_DEFAULT_IGNORE_PATTERNS` is the
  * sibling copy and must be kept in sync by hand; there's no single build step spanning both
  * languages.
  */

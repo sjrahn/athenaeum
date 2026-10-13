@@ -1,23 +1,14 @@
 # macOS Finder metadata
 .DS_Store
 
-# tools (Python) build/venv/cache
-tools/.venv/
-tools/dist/
-tools/build/
-tools/**/__pycache__/
-tools/**/*.egg-info/
-tools/.pytest_cache/
-tools/.ruff_cache/
+# ath (Bun) dependencies and the compiled binary
+ath/node_modules/
+ath/dist/
 
 # scratch test instance (testdata/) — seeded from a private source instance by
 # testdata/seed.py; holds real (if tiny) private artifact bytes, never tracked
 /testdata/instance/
 
-# members-parity fixtures — frozen slices of real instance records (third-party
-# correspondence, contacts, host configs): instance data, never tracked here.
-# The battery self-skips without them; restore a local copy to run it in full.
-/tools/tests/data/members_parity/
 
 research
 

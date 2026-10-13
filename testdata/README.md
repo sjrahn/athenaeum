@@ -9,7 +9,7 @@ shapes have no real-artifact counterpart small enough to check in and are
 generated instead (see "The synthetic tier" below).
 
 Tracked here: this README, `exemplars.yaml` (the manifest — blake3 + mime +
-shape + a neutral technical note, no personal content), `seed.py` (the
+shape + a neutral technical note, no personal content), `seed.ts` (the
 seeder), and `synthetic/` (see below). **`instance/` is never tracked** — it
 holds real (if mostly tiny) private artifact bytes and is gitignored at the
 repo root (`/testdata/instance/`).
@@ -30,7 +30,7 @@ this problem for real media), so pinning a freshly-generated hash would make
 the manifest non-reproducible from one machine or ffmpeg/libheif version to
 the next. `gen.py` exists to regenerate or extend the set later, documenting
 provenance (which encoder, which invocation) — it is not run as part of
-`seed.py`.
+`seed.ts`.
 
 `synthetic-image.heic` is generated and committed but has **no manifest
 entry**: `corpus ingest` currently has no mime schema/drafter for
@@ -42,7 +42,7 @@ comment on the shape). The bytes are ready for whenever that lands.
 
 This library is otherwise strictly mime-record-shaped — `exemplars.yaml` has
 no ledger-fact axis at all. The v39 ontology layer (spec/ledger.md §15)
-needs one anyway, so `seed.py`'s `seed_v39_ontology_exemplars` seeds it
+needs one anyway, so `seed.ts`'s `seed_v39_ontology_exemplars` seeds it
 straight into `instance/ledger/` after the manifest pass: a domain concept
 (`facts/continuity/bsg-reimagined.json` — an `ontology:` block minting one
 domain type, `commitment: "conditional"`), a domain-minted member fact
@@ -62,8 +62,8 @@ tracked fixture.
 
 ```
 ath init testdata/instance --name athenaeum-testdata   # once, if instance/ is missing
-uv run --no-sync python testdata/seed.py --from /path/to/source/instance
-# or: ATHENAEUM_ROOT=/path/to/source/instance uv run --no-sync python testdata/seed.py
+bun testdata/seed.ts --from /path/to/source/instance
+# or: ATHENAEUM_ROOT=/path/to/source/instance bun testdata/seed.ts
 ```
 
 Idempotent — an entry whose record already exists in `instance/` is skipped,
@@ -71,13 +71,13 @@ so re-running after adding a manifest entry only seeds what's new. Most
 entries copy artifact bytes straight in and `corpus ingest` them; a few small
 images exist in the source corpus only as promoted HTML-embed members with
 no standalone bytes of their own (see `exemplars.yaml`'s header comment) —
-for those, `seed.py` ingests the named container instead and runs `corpus
+for those, `seed.ts` ingests the named container instead and runs `corpus
 promote` inside `instance/` to re-mint the same content-addressed leaf.
 
 Sanity-check after seeding:
 
 ```
-uv run --no-sync corpus health --corpus-root testdata/instance/corpus --summary
+bun ath/src/main.ts --root testdata/instance lint --all
 ```
 
 ### The successor regression set (`ath/`)

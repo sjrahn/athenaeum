@@ -2,6 +2,9 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { defineContract, z } from "../../contracts/index.ts";
+import ledgerPassBrief from "../../templates/agents/ledger-pass.md" with { type: "file" };
+import passAuthorBrief from "../../templates/agents/pass-author.md" with { type: "file" };
+import claudeTemplate from "../../templates/CLAUDE.md" with { type: "file" };
 import { openChain } from "../engine/context.ts";
 import { type LayerConfig, loadChain, readConfig, serializeConfig, TREE_DIRS } from "../engine/layer/config.ts";
 import { listSubjects, readSubject } from "../engine/layer/store.ts";
@@ -31,6 +34,7 @@ export const layerInit = defineCommand({
       name: z.string().optional(),
       extends: z.string().optional(),
       tier: z.string().optional(),
+      noAgents: z.boolean().default(false),
     }),
     argv: {
       positionals: [{ name: "path", required: true, help: "the directory to make (created if missing)" }],
@@ -38,11 +42,12 @@ export const layerInit = defineCommand({
         name: { type: "string", help: "display name (default: the directory's name)" },
         extends: { type: "string", metavar: "PATH", help: "the foundation this layer extends; absent → a foundation" },
         tier: { type: "string", help: "the tier an extension's lines carry (default private)" },
+        noAgents: { type: "boolean", help: "skip CLAUDE.md and the .claude/agents briefs" },
       },
     },
     data: z.object({ root: z.string(), layer: z.string(), extends: z.string().nullable(), created: z.array(z.string()) }),
   }),
-  run(ctx, a) {
+  async run(ctx, a) {
     const root = resolve(ctx.cwd, a.path);
     const cfgPath = join(root, CONFIG_FILE);
     if (existsSync(cfgPath)) throw new AthError("CONFLICT", `${cfgPath} already exists`);
@@ -66,6 +71,24 @@ export const layerInit = defineCommand({
     if (!existsSync(gi)) {
       writeFileSync(gi, GITIGNORE);
       created.push(".gitignore");
+    }
+    if (!a.noAgents) {
+      const brief = join(root, "CLAUDE.md");
+      if (!existsSync(brief)) {
+        writeFileSync(brief, (await Bun.file(claudeTemplate).text()).replaceAll("{name}", config.name));
+        created.push("CLAUDE.md");
+      }
+      const agents = join(root, ".claude", "agents");
+      mkdirSync(agents, { recursive: true });
+      for (const [file, src] of [
+        ["pass-author.md", passAuthorBrief],
+        ["ledger-pass.md", ledgerPassBrief],
+      ] as const) {
+        const dst = join(agents, file);
+        if (existsSync(dst)) continue;
+        writeFileSync(dst, await Bun.file(src).text());
+        created.push(`.claude/agents/${file}`);
+      }
     }
     loadChain(root); // the chain must resolve
     return { data: { root, layer: config.layer, extends: config.extends ?? null, created } };

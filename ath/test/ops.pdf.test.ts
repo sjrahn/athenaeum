@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { allPages, detectChrome, readingOrder, wordsInBox, wordsText } from "../src/engine/ops/pdf/words.ts";
 
-const PY = join(import.meta.dir, "../../tools/tests/data");
+const PY = join(import.meta.dir, "fixtures");
 const read = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());
 
 describe("pdf.words@1", () => {

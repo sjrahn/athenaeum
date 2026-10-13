@@ -8,7 +8,7 @@ import { ath, scratch } from "./harness.ts";
 import { extension, foundation } from "./layers.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
-const PY = join(import.meta.dir, "../../tools/tests/data");
+const PY = join(import.meta.dir, "fixtures");
 const env = { ATH_ACTOR: "tester" };
 
 describe("layer + ingest", () => {

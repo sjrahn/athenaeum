@@ -11,7 +11,7 @@ import { readJsonl } from "../src/lib/jsonl.ts";
 import { ath } from "./harness.ts";
 import { foundation } from "./layers.ts";
 
-const PDF = join(import.meta.dir, "../../tools/tests/data/geometry_pages.pdf");
+const PDF = join(import.meta.dir, "fixtures/geometry_pages.pdf");
 const env = { ATH_ACTOR: "tester" };
 
 async function lineBox(pageIndex: number, startsWith: string): Promise<{ at: string; text: string }> {

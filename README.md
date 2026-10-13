@@ -42,31 +42,34 @@ carries current law only.
 
 ## The tooling
 
-[`tools/`](tools/) is the `athenaeum` Python distribution — the `ath`
-(instance verbs, ledger surface) and `corpus` (capture → ingest → normalize
-pipeline, resolution, linting, views) CLIs:
+[`ath/`](ath/) is the `ath` CLI (Bun/TypeScript) — the successor contract's
+reference implementation: a layer of sorted JSONL claim files (`ontology/`,
+`corpus/`, `ledger/`), bytes ingested from disk (never fetched), derivation
+ops as the quote surface (`pdf.words@1`, `html.text@1`, `csv.parse@1`),
+passes that stage and sign judgments, lints, L7, verify, harvest, the
+markdown and N-Quads exports, and the read surface by plane:
 
 ```bash
-uv tool install --editable "tools[capture,media,fingerprint]"
-ath init <path>        # scaffold a new instance
+cd ath && bun install && bun run build      # dist/ath
+ath layer init <path>                       # a foundation; --extends <path> for an extension
 ```
 
-The CLIs discover the enclosing instance by walking up from the working
+The CLI discovers the enclosing layer by walking up from the working
 directory for `athenaeum.yaml` (`$ATHENAEUM_ROOT` overrides). See
-[`tools/README.md`](tools/README.md) for the package layout, extras, and the
-development gates.
+[`ath/README.md`](ath/README.md) for the package layout and the gates. The
+v52 Python tooling is on the `v52` tag.
 
 [`scanner/`](scanner/) is the residence scanner (Bun/TypeScript) — a
-host-side manifest publisher that lets the corpus treat a large network
-share as a self-describing content-addressed residence without hashing it
-over the wire. Prototype; its manifest format is a versioned contract
+host-side manifest publisher that lets a corpus treat a large network share
+as a self-describing content-addressed residence without hashing it over
+the wire. Its manifest format is a versioned contract
 ([`scanner/MANIFEST-SCHEMA.md`](scanner/MANIFEST-SCHEMA.md)).
 
-[`testdata/`](testdata/) is the exemplar-MIME regression library: a tracked
-manifest and seeder for a gitignored scratch instance used in write-side
-probes and migration rehearsals.
+[`testdata/`](testdata/) is the regression library: the regression ontology,
+a tracked manifest and seeder for a gitignored scratch layer, synthetic
+fixtures, and the place the private regression bytes are placed by hand.
 
 ## License
 
-Code (`tools/`, `scanner/`, `testdata/`) is [MIT](LICENSE); the
+Code (`ath/`, `scanner/`, `testdata/`) is [MIT](LICENSE); the
 specification (`spec/`) is [CC BY-SA 4.0](LICENSE-CC).

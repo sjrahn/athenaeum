@@ -19,34 +19,32 @@ migration story, together (Part I §8). Normative spec changes are owner-gated.
 
 ## Layout
 
-- `ath/` — the successor contract's reference implementation (Bun/TypeScript, the
-  `ath` binary): `spec/successor.md` made to run. Fresh code on the model of the
-  `ita` CLI (contracts + kit + engine + commands); no network, no port of `tools/`.
-  Gates: `cd ath && bun run check` (tsc, biome, bun test) and `bun run build`.
-
-- `spec/` — the four parts + CHANGELOG.
-- `tools/` — the `athenaeum` Python distribution: the `ath` and `corpus` CLIs
-  (`uv tool install --editable tools/` puts them on PATH). Templates a new
-  instance is scaffolded from (`ath init`) live at `tools/src/ath/templates/`
-  — agent definitions included: edit them THERE; instances hold copies.
+- `spec/` — the four frozen v52 parts + CHANGELOG, and `spec/successor.md`, the
+  unratified successor contract with Appendix D (the rulings `ath/` makes where
+  the draft is silent, each pinned by a test).
+- `ath/` — the `ath` CLI (Bun/TypeScript): the successor contract's reference
+  implementation, on the model of the `ita` CLI (contracts + kit + engine +
+  commands). No network: bytes are ingested from disk; producers live outside.
+  Templates a new layer is scaffolded from (`ath layer init`) live at
+  `ath/templates/` — agent briefs included: edit them THERE; layers hold copies.
 - `scanner/` — the residence scanner (Bun/TypeScript): host-side manifest
   publisher for attached locations (Part IV §5). Its manifest format is its
   own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
-- `testdata/` — exemplar-mime regression library: a tracked manifest +
-  seeder, and a gitignored scratch instance (`testdata/instance/`, real
-  private artifact bytes — never tracked) safe for write-side probes and
-  migration rehearsals. See `testdata/README.md`.
+- `testdata/` — the regression library: `ontology/` (the regression ontology a
+  foundation starts from), `exemplars.yaml` + `seed.ts` (a gitignored scratch
+  layer), `synthetic/` (committed fixtures), `passes/` (the TOOL03 pass lines),
+  and `regression/` (gitignored: the private regression bytes, placed by hand).
+  See `testdata/README.md`.
+
+The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
+`v52` tag and keeps serving the current instance from a worktree of that tag.
 
 ## Gates (run before reporting any tooling change done)
 
-    cd tools && uv run --no-sync python -m pytest -q     # NOT bare `uv run pytest`
-    uv run --no-sync ruff check src tests
+    cd ath && bun run check      # tsc --noEmit, biome check, bun test
+    cd ath && bun run build      # the compiled binary still loads pdfium
 
-Live-instance tests (members-parity and kin) self-skip unless an instance is
-reachable — point `ATHENAEUM_ROOT` at one to include them, and check the
-instance's `corpus/runbooks/deployment.md` for known-red baselines before
-treating a red gate as a regression. A change that touches ledger/corpus
-behavior also owes the instance gates run against a real instance:
-
-    uv run --no-sync ath ledger check --root $ATHENAEUM_ROOT
-    uv run --no-sync ath ledger verify --root $ATHENAEUM_ROOT
+The regression suite (`ath/test/regression.test.ts`) self-skips per missing
+file under `testdata/regression/`; place the bytes to include it. A change
+that touches the contract's behaviour also owes a row in `spec/successor.md`
+Appendix D with the test that pins it.

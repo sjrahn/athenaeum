@@ -8,7 +8,7 @@ import { attest } from "../src/engine/ops/index.ts";
 import { sniffMime } from "../src/engine/ops/sniff.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
-const PY = join(import.meta.dir, "../../tools/tests/data");
+const PY = join(import.meta.dir, "fixtures");
 const read = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());
 
 describe("sniff", () => {

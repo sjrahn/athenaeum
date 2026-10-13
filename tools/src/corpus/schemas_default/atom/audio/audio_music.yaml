@@ -1,9 +1,0 @@
-class_id: audio/music
-kind: atomic
-description: |
-  Music or musical content — composition, performance, jingle, score.
-  The placing segment's own `description:` carries the reading (genre,
-  tempo, recognizable identity if any).
-applies_to:
-  atom: audio
-enables_lossless: false
