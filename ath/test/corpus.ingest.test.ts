@@ -79,9 +79,18 @@ describe("layer + ingest", () => {
       { cwd: f, env },
     );
     expect((again.json() as { data: { ingested: { existed: boolean }[] } }).data.ingested[0]!.existed).toBe(true);
-    // a different provenance for the same bytes is a second captured_from? no: same op, same identity, different content → refused
-    const diff = await ath(["ingest", join(FIX, "small.csv"), "--origin", "elsewhere", "--received", "2026-10-13"], { cwd: f, env });
-    expect(diff.code).toBe(73);
+    // the same bytes from elsewhere is a second captured_from (D-captures: one line per capture); the same capture
+    // with different content is still refused
+    const diff = await ath(["--json", "ingest", join(FIX, "small.csv"), "--origin", "elsewhere", "--received", "2026-10-13"], {
+      cwd: f,
+      env,
+    });
+    expect(diff.code, diff.stderr).toBe(0);
+    expect((diff.json() as { data: { ingested: { existed: boolean }[] } }).data.ingested[0]!.existed).toBe(false);
+    const two = readJsonl(join(f, "corpus", `${csv.blake3}.claims.jsonl`)).filter((l) => l.predicate === "captured_from");
+    expect(two.map((l) => (l.value as { origin: string }).origin).sort()).toEqual(["elsewhere", "fixtures"]);
+    const redo = await ath(["ingest", join(FIX, "small.csv"), "--origin", "elsewhere", "--received", "2026-10-14"], { cwd: f, env });
+    expect(redo.code).toBe(73);
     const show = await ath(["ingest", "show", csv.blake3], { cwd: f, env });
     expect(show.stdout).toContain("bytes  ");
     expect((await ath(["ingest", "show", "0".repeat(64)], { cwd: f, env })).code).toBe(66);
@@ -131,11 +140,13 @@ describe("layer + ingest", () => {
       note: "R-0079",
     });
     expect(existsSync(`${page}.capture.yaml`)).toBe(true); // the sidecar and the bytes stay where the producer put them
+    // the banner in the bytes names the same uri, so this is the same capture described differently: refused, never
+    // silently merged (D-captures keys a capture by its uri; another uri or origin would be a second line)
     const ignored = await ath(["--json", "ingest", page, "--no-sidecar", "--origin", "x", "--received", "2026-10-13"], { cwd: f, env });
-    expect(ignored.code).toBe(73); // same bytes, a different captured_from: refused, never silently merged
+    expect(ignored.code).toBe(73);
   });
 
-  test("the foundation is read-only from above: same bytes are a no-op, a different line is refused; claims show unions the layers", async () => {
+  test("the foundation is read-only from above: same bytes are a no-op, the same capture restated is refused, another capture is the extension's own line; claims show unions the layers", async () => {
     const f = foundation();
     const e = extension(f);
     const first = await ath(["--json", "ingest", join(FIX, "small.csv"), "--origin", "a", "--received", "2026-10-13"], { cwd: f, env });
@@ -143,12 +154,14 @@ describe("layer + ingest", () => {
     const same = await ath(["--json", "ingest", join(FIX, "small.csv"), "--origin", "a", "--received", "2026-10-13"], { cwd: e, env });
     expect(same.code).toBe(0);
     expect(existsSync(join(e, "corpus", `${id}.claims.jsonl`))).toBe(false);
+    const restated = await ath(["ingest", join(FIX, "small.csv"), "--origin", "a", "--received", "2026-10-14"], { cwd: e, env });
+    expect(restated.code).toBe(73);
+    expect(restated.stderr).toContain("lower layer");
     const other = await ath(["ingest", join(FIX, "small.csv"), "--origin", "b", "--received", "2026-10-13"], { cwd: e, env });
-    expect(other.code).toBe(73);
-    expect(other.stderr).toContain("lower layer");
+    expect(other.code, other.stderr).toBe(0);
     const show = await ath(["--json", "claims", "show", id], { cwd: e, env });
     const d = (show.json() as { data: { lines: { layer: string }[] } }).data;
-    expect(d.lines.map((l) => l.layer)).toEqual(["foundation", "foundation"]);
+    expect(d.lines.map((l) => l.layer).sort()).toEqual(["foundation", "foundation", "mine"]);
     const sort = await ath(["--json", "claims", "sort", id], { cwd: f, env });
     expect((sort.json() as { data: { files: { changed: boolean }[] } }).data.files[0]!.changed).toBe(false);
   });

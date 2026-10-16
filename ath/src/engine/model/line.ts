@@ -128,8 +128,13 @@ export function identityKey(tree: Tree, l: JsonObject): string {
     const at = scopeAt(String(l.at));
     switch (p) {
       case "attests":
-      case "captured_from":
         return `${at}|${p}|${String(l.by)}`;
+      case "captured_from": {
+        // repeatable: one line per capture of the same bytes (§5.1) — the identity carries where the bytes came from
+        const v = (l.value ?? {}) as JsonObject;
+        const where = v.container !== undefined ? `${String(v.container)}#${String(v.path ?? "")}` : String(v.uri ?? v.origin ?? "");
+        return `${at}|${p}|${String(l.by)}|${where}`;
+      }
       case "manifests":
         return `${at}|manifests|${String(l.term)}`;
       case "in":
