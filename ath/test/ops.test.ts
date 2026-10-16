@@ -81,7 +81,7 @@ describe("html", () => {
     const h1 = select(d, "h1.p-title-value")[0]!;
     const s = spanOf(d, h1)!;
     expect(s.implied).toBe(false);
-    expect(new TextDecoder().decode(bytes.subarray(s.start, s.end))).toBe('<h1 class="p-title-value">Idle/stall — ✓ 𝑃𝐸</h1>');
+    expect(new TextDecoder().decode(bytes.subarray(s.start, s.end))).toBe('<h1 class="p-title-value">Slip/berth — ✓ 𝑃𝐸</h1>');
     const body = select(d, "div.bbWrapper")[0]!;
     const bs = spanOf(d, body)!;
     expect(new TextDecoder().decode(bytes.subarray(bs.start, bs.end))).toBe('<div class="bbWrapper">héllo <b>wörld</b><br>line two</div>');

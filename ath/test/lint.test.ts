@@ -86,11 +86,11 @@ describe("lints", () => {
       join(f, "ledger", "t.claims.jsonl"),
       [
         '{"subject":"t","predicate":"term","value":"forum-thread"}',
-        `{"subject":"t","predicate":"title","value":"Idle/stall — ✓ 𝑃𝐸","evidence":[{"anchor":"corpus://${id}?${h1}&text","quote":"Idle/stall","kind":"direct","mode":"stated","reading":"derived:html.text@1"}],"by":"ath.test@1"}`,
+        `{"subject":"t","predicate":"title","value":"Slip/berth — ✓ 𝑃𝐸","evidence":[{"anchor":"corpus://${id}?${h1}&text","quote":"Slip/berth","kind":"direct","mode":"stated","reading":"derived:html.text@1"}],"by":"ath.test@1"}`,
         `{"subject":"t","predicate":"nope","value":"x","evidence":[{"anchor":"corpus://${id}?${h1}&text","quote":"not there","kind":"direct","mode":"stated","reading":"derived:html.text@1"}],"by":"ath.test@1"}`,
-        `{"subject":"t","predicate":"bad","value":"x","evidence":[{"anchor":"corpus://${id}?${h1}&text","quote":"Idle/stall","scope":"h1","kind":"direct","mode":"stated","reading":"derived:html.text@1"}],"by":"ath.test@1"}`,
+        `{"subject":"t","predicate":"bad","value":"x","evidence":[{"anchor":"corpus://${id}?${h1}&text","quote":"Slip/berth","scope":"h1","kind":"direct","mode":"stated","reading":"derived:html.text@1"}],"by":"ath.test@1"}`,
         `{"subject":"t","predicate":"unattested","value":"x","evidence":[]}`,
-        `{"subject":"t","predicate":"split","value":"Pontiac Forum","evidence":[{"anchor":"corpus://${id}?whole","quote":"Ünïcode · thread | Example Forum","kind":"direct","mode":"stated","reading":"derived:html.title@1"}],"by":"ath.test@1"}`,
+        `{"subject":"t","predicate":"split","value":"Harbour Forum","evidence":[{"anchor":"corpus://${id}?whole","quote":"Ünïcode · thread | Example Forum","kind":"direct","mode":"stated","reading":"derived:html.title@1"}],"by":"ath.test@1"}`,
         `{"subject":"t","predicate":"held","value":"x","evidence":[{"anchor":"corpus://${id}?whole","quote":"x","kind":"direct","mode":"stated","reading":null}],"by":"ath.test@1"}`,
       ]
         .map((l) => `${l}\n`)

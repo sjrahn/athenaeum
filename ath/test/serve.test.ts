@@ -65,7 +65,7 @@ describe("serve", () => {
     const kinMember = await get(kin, "/ledger/member-alice");
     expect((kinMember.body.claims as { predicate: string }[]).map((c) => c.predicate)).toEqual(["name"]); // nickname is unsupported, not confirmed
     const res = await get(pub, `/resolve/corpus/${id}?at=${encodeURIComponent((tree.body.scopes as { at: string }[])[1]!.at)}`);
-    expect(res.body.text).toBe("Idle/stall — ✓ 𝑃𝐸");
+    expect(res.body.text).toBe("Slip/berth — ✓ 𝑃𝐸");
     expect((await get(pub, `/corpus/${"0".repeat(64)}`)).status).toBe(404);
     expect((await get(pub, `/corpus/${id}/owner`)).status).toBe(404);
     expect((await get(own, `/corpus/${id}/owner`)).status).toBe(200);

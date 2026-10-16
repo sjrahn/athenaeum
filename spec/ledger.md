@@ -815,9 +815,9 @@ The fiction pattern, end to end, in the instance's idiom. The continuity concept
 One concept carrying a public claim and a private-backed claim (one file — sensitivity is derived, §6.4), an artifact roster, and a claim-shaped hypothesis with `proposes`:
 
 ```jsonc
-// ledger/facts/vehicle/pontiac-g8.json
+// ledger/facts/vehicle/cormorant-sedan.json
 {
-  "id": "pontiac-g8", "type": "vehicle", "name": "Pontiac G8",
+  "id": "cormorant-sedan", "type": "vehicle", "name": "Cormorant Sedan",
   "artifacts": [
     { "uri": "corpus://3a71…", "role": "documents", "note": "service manual" }   // rosters keep direct URIs (§6.1)
   ],
@@ -827,17 +827,17 @@ One concept carrying a public claim and a private-backed claim (one file — sen
     "s3": { "record": "55ab…<64hex>" }
   },
   "claims": [{
-    "id": "pontiac-g8:platform", "predicate": "platform", "object": "gm-zeta",
+    "id": "cormorant-sedan:platform", "predicate": "platform", "object": "albion-l",
     "status": "confirmed", "asof": "2026-06-30",
     "evidence": [
-      { "source": "s1", "anchor": "el=42", "quote": "…built on GM's Zeta platform…", "kind": "authoritative" },
+      { "source": "s1", "anchor": "el=42", "quote": "…built on the Albion L platform…", "kind": "authoritative" },
       { "source": "s2", "anchor": "page=3", "kind": "direct" }
     ]
   },
   {
     // 55ab…'s record derives private tenancy → this claim is private-backed (§6.4);
     // public-facing consumers exclude it under the consumption contract (§12)
-    "id": "pontiac-g8:owned-by", "predicate": "owned_by", "object": "steven-rahn",
+    "id": "cormorant-sedan:owned-by", "predicate": "owned_by", "object": "jordan-reyes",
     "status": "confirmed", "asof": "2026-05-12",
     "evidence": [{ "source": "s3", "anchor": "page=1", "quote": "…", "kind": "authoritative", "note": "bill of sale" }]
   }]
@@ -845,15 +845,15 @@ One concept carrying a public claim and a private-backed claim (one file — sen
 ```
 
 ```jsonc
-// ledger/interpretations/base-v6-transmission-is-5l40e.json
+// ledger/interpretations/base-v6-transmission-is-ax6.json
 {
-  "id": "base-v6-transmission-is-5l40e", "kind": "hypothesis",
-  "about": ["pontiac-g8"], "confidence": "likely",
-  "statement": "The base V6's automatic is the 5L40-E.",
+  "id": "base-v6-transmission-is-ax6", "kind": "hypothesis",
+  "about": ["cormorant-sedan"], "confidence": "likely",
+  "statement": "The base V6's automatic is the AX6.",
   "based_on": ["corpus://71fe…?el=18"],
   "proposes": {
-    "id": "pontiac-g8:base-v6-transmission", "predicate": "transmission",
-    "object": "5l40e", "qualifiers": { "applies_to": "base-v6" },
+    "id": "cormorant-sedan:base-v6-transmission", "predicate": "transmission",
+    "object": "ax6", "qualifiers": { "applies_to": "base-v6" },
     "evidence": [{ "uri": "corpus://71fe…?el=18", "kind": "incidental" }]
   },
   "would_resolve": ["a service-manual spec table naming the V6 transmission"],

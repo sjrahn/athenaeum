@@ -25,7 +25,7 @@ describe("derived trees", () => {
     expect(a.tree).toBe("derived");
     expect(a.rootChain).toEqual(["xenforo-thread", "web-page", "html", "document", "unit"]);
     const title = a.table.find("thread-title")!;
-    expect(title.readings[0]!.body).toBe("Idle/stall — ✓ 𝑃𝐸");
+    expect(title.readings[0]!.body).toBe("Slip/berth — ✓ 𝑃𝐸");
     expect(title.readings[0]!.rev).toBe("derived:html.text@1");
     const post = a.table.find("post")!;
     expect(post.parent).toBe("whole");

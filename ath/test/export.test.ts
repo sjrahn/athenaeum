@@ -19,7 +19,7 @@ describe("export", () => {
     expect(md).toContain("authority  the bytes");
     expect(md).toMatch(/ontology {3}b3:[0-9a-f]{16}/);
     expect(md).toMatch(/remainder {2}\d+ of \d+ text characters/);
-    expect(md).toContain("# Idle/stall — ✓ 𝑃𝐸");
+    expect(md).toContain("# Slip/berth — ✓ 𝑃𝐸");
     const blocks = [...md.matchAll(/<!-- (bytes=\d+,\d+) -->/g)].map((m) => m[1]);
     expect(blocks.length).toBe(6); // title, author, author-link, post-number, timestamp, body (the post itself has no reading)
     expect(md).toContain("héllo wörld\nline two");
