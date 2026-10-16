@@ -18,7 +18,7 @@ describe("ontology", () => {
   const o = loadOntology(loadChain(f));
 
   test("loads the 66 regression terms; chains and classes resolve", () => {
-    expect(o.terms.size).toBe(121);
+    expect(o.terms.size).toBe(137);
     expect(refinesChain(o, "methodological-tool")).toEqual(["methodological-tool", "regulation", "document", "unit"]);
     expect(refinesChain(o, "xenforo-thread")).toEqual(["xenforo-thread", "web-page", "html", "document", "unit"]);
     expect(classOf(o, "pdf")).toBe("document");
@@ -83,7 +83,7 @@ describe("ontology", () => {
     expect(await ontologyPin(loadOntology(loadChain(f)))).toBe(pin);
     expect(harvestPin(pin)).toHaveLength(6);
     const pins = await termPins(o);
-    expect(pins.size).toBe(121);
+    expect(pins.size).toBe(137);
     const f2 = foundation();
     writeFileSync(
       join(f2, "ontology", "heading.claims.jsonl"),
@@ -115,7 +115,7 @@ describe("ontology", () => {
       '{"subject":"heading","predicate":"field","value":{"name":"anchor","kind":"string"}}\n',
     );
     const oe = loadOntology(loadChain(e));
-    expect(oe.terms.size).toBe(122);
+    expect(oe.terms.size).toBe(138);
     expect(refinesChain(oe, "biography")).toEqual(["biography", "paragraph", "unit"]);
     expect(effectiveRules(oe, ["heading"]).fields.map((x) => x.name)).toEqual(["num", "level", "anchor"]);
     writeFileSync(join(e, "ontology", "heading.claims.jsonl"), '{"subject":"heading","predicate":"reads","value":"cells"}\n');

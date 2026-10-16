@@ -1,0 +1,10 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: proton-mail-export
+via: export
+origin_fields:
+  period: "2026-03"
+  account: fay.frost@proton.example
+  exported_at: "2026-04-03T01:00:00Z"
+  member_count: 6
+  sidecar_count: 6
+  date_axis: Payload.Time

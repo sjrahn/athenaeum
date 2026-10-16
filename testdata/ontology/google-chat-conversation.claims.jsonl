@@ -1,0 +1,3 @@
+{"subject":"google-chat-conversation","predicate":"refines","value":"json"}
+{"subject":"google-chat-conversation","predicate":"definition","value":"one Google Chat conversation as Takeout exports it: messages with creator, created_date, text, attached files"}
+{"subject":"google-chat-conversation","predicate":"matches","value":{"mime":"application/json","container":"google-chat-export-bundle","path":"*/messages.json"}}

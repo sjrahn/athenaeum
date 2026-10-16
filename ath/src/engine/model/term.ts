@@ -45,6 +45,10 @@ export const MatchesDecl = z
     magic: z.string().optional(),
     /** The root term of the container the artifact is a member of. */
     container: z.string().optional(),
+    /** A path prefix some member of the artifact's own roster carries (a bundle told by its layout); `*x` = ends with x. */
+    member: z.string().optional(),
+    /** The artifact's own path inside its container (a member told by its name); `*x` = ends with x. */
+    path: z.string().optional(),
   })
   .passthrough();
 export type MatchesDecl = z.infer<typeof MatchesDecl>;

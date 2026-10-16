@@ -1,0 +1,2 @@
+{"subject":"instagram-export-bundle","predicate":"refines","value":"export-bundle"}
+{"subject":"instagram-export-bundle","predicate":"matches","value":{"mime":"application/zip","member":"your_instagram_activity/"}}

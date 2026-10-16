@@ -160,6 +160,8 @@ const parts = [
   `--${B1}--`,
   "",
 ];
-const eml = parts.join("\r\n");
-writeFileSync(OUT, eml);
-console.log(`wrote ${OUT} (${eml.length} bytes)`);
+if (import.meta.main) {
+  const eml = parts.join("\r\n");
+  writeFileSync(OUT, eml);
+  console.log(`wrote ${OUT} (${eml.length} bytes)`);
+}

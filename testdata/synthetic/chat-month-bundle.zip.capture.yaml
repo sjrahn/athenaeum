@@ -1,0 +1,8 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: google-chat-export-bundle
+via: export
+origin_fields:
+  period: "2026-03"
+  account: fay.frost@example.invalid
+  exported_at: "2026-04-01T03:00:00Z"
+  source_export: takeout-20260401T030000Z-001.zip

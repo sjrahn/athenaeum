@@ -1,0 +1,3 @@
+{"subject":"google-chat-roster","predicate":"refines","value":"json"}
+{"subject":"google-chat-roster","predicate":"definition","value":"the members of a Google Chat conversation (group_info.json)"}
+{"subject":"google-chat-roster","predicate":"matches","value":{"mime":"application/json","container":"google-chat-export-bundle","path":"*/group_info.json"}}

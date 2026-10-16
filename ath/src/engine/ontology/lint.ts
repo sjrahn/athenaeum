@@ -38,6 +38,8 @@ export function lintOntology(o: Ontology): OntologyFinding[] {
       const r = MatchesDecl.safeParse(l.value);
       if (!r.success || !(r.data.mime || r.data.magic))
         out.push({ term, code: "O5-matches", msg: `matches needs a mime or a magic: ${JSON.stringify(l.value)}` });
+      else if (r.data.member !== undefined && !/^[^/]+\/?.*$/.test(r.data.member))
+        out.push({ term, code: "O5-matches", msg: `matches member must be a path prefix: ${JSON.stringify(l.value)}` });
     }
     const looksSelector = (src: string) => /[#[\]]/.test(src) || (/\./.test(src) && !/^[a-z_][a-z0-9_-]*\.[a-z_][a-z0-9_-]*$/.test(src));
     for (const l of linesOf(o, term, "concept")) {

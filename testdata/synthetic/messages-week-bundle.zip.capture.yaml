@@ -1,0 +1,7 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: imessage-export-bundle
+via: export
+origin_fields:
+  period: 2026-W13
+  exported_at: "2026-03-30T04:00:00Z"
+  assembled_from: imessage-exporter 3.0.0 + inliner 1.2

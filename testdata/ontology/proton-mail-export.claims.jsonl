@@ -1,0 +1,3 @@
+{"subject":"proton-mail-export","predicate":"refines","value":"export-bundle"}
+{"subject":"proton-mail-export","predicate":"matches","value":{"mime":"application/zip","member":"*.metadata.json"}}
+{"subject":"proton-mail-export","predicate":"definition","value":"a Proton Mail export bucket: <id>.eml beside <id>.metadata.json"}

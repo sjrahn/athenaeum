@@ -91,18 +91,26 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
     const cLines = unionView("corpus", readSubject(chain, "corpus", containerRef.slice("corpus://".length))).map((l) => l.line);
     const cAttests = cLines.find((l) => l.predicate === "attests");
     const cMime = cAttests ? String((cAttests.value as JsonObject).mime ?? "") : "";
-    containerRoot = cMime ? classify(o, { mime: cMime }) : null;
+    const cRoster = (cAttests?.value as { members?: { path?: unknown }[] } | undefined)?.members;
+    const cMembers = Array.isArray(cRoster) ? cRoster.flatMap((m) => (typeof m?.path === "string" ? [m.path] : [])) : undefined;
+    containerRoot = cMime ? classify(o, { mime: cMime, members: cMembers }) : null;
   }
 
   // the root term: a stored manifests at whole wins over matches
   const storedRoot = lines.find((l) => l.predicate === "manifests" && canonicalAt(String(l.at)) === "whole");
   const header = a.csv?.rows[0]?.cells.map((c) => c.value);
+  const roster = (a.attests.value as { members?: { path?: unknown }[] }).members;
   const derivedRoot = classify(o, {
     mime,
     header,
     selectorMatches: a.html ? (s) => matchesSelector(a.html!, s) : undefined,
     head: bytes?.subarray(0, 16),
     container: containerRoot,
+    path:
+      typeof (a.capturedFrom?.value as { path?: unknown } | null)?.path === "string"
+        ? (a.capturedFrom!.value as { path: string }).path
+        : null,
+    members: Array.isArray(roster) ? roster.flatMap((m) => (typeof m?.path === "string" ? [m.path] : [])) : undefined,
   });
   a.table.ensure("whole");
   if (derivedRoot) {

@@ -315,6 +315,100 @@ describe("regression: the pump service manual (html, derived tree — the genera
   });
 });
 
+/** The export bundles (D-roster): a bundle is told by its layout, its members by their names; every member a subject. */
+describe("regression: export bundles (zip, containers — generated twins of the account exports)", () => {
+  const bundles: {
+    file: string;
+    blake3: string;
+    root: string;
+    origin: string;
+    members: number;
+    roots: Record<string, number>;
+  }[] = [
+    {
+      file: "facebook-month-bundle.zip",
+      blake3: "e82abeed5b994c8ac3fcc048ef9a9ef56fdf9be485e06ad1bbee88df815f50bb",
+      root: "facebook-export-bundle",
+      origin: "facebook-export-bundle",
+      members: 28,
+      roots: { "messenger-conversation": 4, png: 13, gif: 6, mp4: 3, json: 2 },
+    },
+    {
+      file: "instagram-month-bundle.zip",
+      blake3: "2997cc1236fc3fa8ac6010cb8fe4818accb914d8a0efb8dbc60b0bda07939135",
+      root: "instagram-export-bundle",
+      origin: "instagram-export-bundle",
+      members: 27,
+      roots: { "instagram-conversation": 3, png: 13, gif: 6, mp4: 4, json: 1 },
+    },
+    {
+      file: "threads-month-bundle.zip",
+      blake3: "a55a755c4e751fbb987eb307ceb4a9111be4f6f133ea4d32bc0aff6896998866",
+      root: "threads-export-bundle",
+      origin: "threads-export-bundle",
+      members: 23,
+      roots: { "threads-conversation": 3, png: 12, gif: 6, json: 2 },
+    },
+    {
+      file: "chat-month-bundle.zip",
+      blake3: "fb67bd410ffd71eb2b161bb3f1aaf4e6cae49c9dc2788726945074b63251e5bc",
+      root: "google-chat-export-bundle",
+      origin: "google-chat-export-bundle",
+      members: 5,
+      roots: { "google-chat-conversation": 2, "google-chat-roster": 2, png: 1 },
+    },
+    {
+      file: "messages-week-bundle.zip",
+      blake3: "7c75a49d830b525cef5f156a47057e5e922e729365e02d53df7aa161a8a7198f",
+      root: "imessage-export-bundle",
+      origin: "imessage-export-bundle",
+      members: 4,
+      roots: { "imessage-conversation": 4 },
+    },
+    {
+      file: "mail-month-bundle.zip",
+      blake3: "23725953b0780d273016a739d228ab1ae7719d0d4c3196ed7756ff318d7b32e7",
+      root: "proton-mail-export",
+      origin: "proton-mail-export",
+      members: 12,
+      roots: { rfc822: 6, "mail-export-metadata": 6 },
+    },
+    {
+      file: "photos-month-bundle.zip",
+      blake3: "2940d7706dac5b59e2526b984c358e61b6d15a61f3e9b18ff6eee333c0e78ac3",
+      root: "photo-library-export",
+      origin: "osxphotos-export",
+      members: 13,
+      roots: { heic: 2, "photo-sidecar": 6, jpeg: 3, quicktime: 1, png: 1 },
+    },
+  ];
+  for (const b of bundles) {
+    test(`${b.file}: ${b.root}, ${b.members} members, each a subject classified by its container and name`, async () => {
+      const f = foundation();
+      const chain = loadChain(f);
+      const o = loadOntology(chain);
+      const r = await ath(["--json", "ingest", join(SYN, b.file), "--received", "2026-10-16"], { cwd: f, env });
+      expect(r.code, r.stderr).toBe(0);
+      const rows = (r.json() as { data: { ingested: { blake3: string; mime: string }[] } }).data.ingested;
+      expect(rows[0]!.blake3).toBe(b.blake3);
+      expect(rows[0]!.mime).toBe("application/zip");
+      expect(rows.length - 1).toBe(b.members);
+      const a = await loadArtifact(chain, o, b.blake3);
+      expect(a.root).toBe(b.root);
+      expect((a.capturedFrom!.value as { origin: string; via: string; fields: unknown }).origin).toBe(b.origin); // the sidecar
+      expect((a.capturedFrom!.value as { via: string }).via).toBe("export");
+      const roots: Record<string, number> = {};
+      for (const m of rows.slice(1)) {
+        const ma = await loadArtifact(chain, o, m.blake3);
+        roots[ma.root ?? "null"] = (roots[ma.root ?? "null"] ?? 0) + 1;
+        expect((ma.capturedFrom!.value as { container: string }).container).toBe(`corpus://${b.blake3}`);
+      }
+      expect(roots).toEqual(b.roots);
+      expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    });
+  }
+});
+
 describe("regression: the regatta mailing (rfc822, derived tree — the generated twin of the festival mailing)", () => {
   test("header + body + blocks; the HTML alternative and three attachments are subjects; the message harvests", async () => {
     const f = foundation();

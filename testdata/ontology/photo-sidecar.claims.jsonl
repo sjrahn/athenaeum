@@ -1,0 +1,3 @@
+{"subject":"photo-sidecar","predicate":"refines","value":"json"}
+{"subject":"photo-sidecar","predicate":"definition","value":"the library metadata of one photo or clip (uuid, dates, place, albums, adjustments)"}
+{"subject":"photo-sidecar","predicate":"matches","value":{"mime":"application/json","container":"photo-library-export","path":"*.json"}}

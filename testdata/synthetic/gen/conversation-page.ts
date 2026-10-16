@@ -12,10 +12,6 @@ import { int, lcg, pick, sentence } from "./lib/rand.ts";
 
 const SYN = join(dirname(Bun.fileURLToPath(import.meta.url)), "..");
 const OUT = join(SYN, "quay-messages.html");
-const r = lcg(7700);
-const HANDLE = "+44 7700 900456";
-const PERIOD = "2026-03";
-const THEM = "Bo Calder";
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const stamp = (d: Date) => {
   const h = d.getUTCHours();
@@ -25,9 +21,15 @@ const stamp = (d: Date) => {
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const b64png = (i: number) => Buffer.from(png(12, 12, (x, y) => [(x * 20 + i * 30) & 255, (y * 20) & 255, 90])).toString("base64");
 
-let t = Date.UTC(2026, 2, 2, 9, 12, 5);
+/** One conversation page: `n` messages with `them` on `handle`, from a seed. */
+export function conversationPage(handle: string, them: string, period: string, seed: number, n = 40): string {
+const r = lcg(seed);
+const HANDLE = handle;
+const PERIOD = period;
+const THEM = them;
+let t = Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 2, 9, 12, 5);
 const msgs: string[] = [];
-for (let i = 0; i < 40; i++) {
+for (let i = 0; i < n; i++) {
   t += int(r, 40, 9000) * 1000;
   const d = new Date(t);
   const sent = r() < 0.5;
@@ -63,9 +65,17 @@ ${msgs.join("\n")}
 </body>
 </html>
 `;
-writeFileSync(OUT, html);
-writeFileSync(
-  `${OUT}.capture.yaml`,
-  `# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)\norigin: imessage-export\nvia: export\nfetched_at: "2026-04-01T06:00:00Z"\nsnapshot_engine: imessage-exporter 3.0.0\norigin_fields:\n  schema: imessage-export\n  handle: "${HANDLE}"\n  period: "${PERIOD}"\n`,
-);
-console.log(`wrote ${OUT} (${html.length} chars, ${msgs.length} messages) + sidecar`);
+return html;
+}
+
+if (import.meta.main) {
+  const HANDLE = "+44 7700 900456";
+  const PERIOD = "2026-03";
+  const html = conversationPage(HANDLE, "Bo Calder", PERIOD, 7700);
+  writeFileSync(OUT, html);
+  writeFileSync(
+    `${OUT}.capture.yaml`,
+    `# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)\norigin: imessage-export\nvia: export\nfetched_at: "2026-04-01T06:00:00Z"\nsnapshot_engine: imessage-exporter 3.0.0\norigin_fields:\n  schema: imessage-export\n  handle: "${HANDLE}"\n  period: "${PERIOD}"\n`,
+  );
+  console.log(`wrote ${OUT} (${html.length} chars) + sidecar`);
+}

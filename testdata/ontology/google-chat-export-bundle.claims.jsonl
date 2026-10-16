@@ -1,0 +1,2 @@
+{"subject":"google-chat-export-bundle","predicate":"refines","value":"export-bundle"}
+{"subject":"google-chat-export-bundle","predicate":"matches","value":{"mime":"application/zip","member":"Groups/"}}

@@ -13,6 +13,8 @@ tier"). Run from the repo root.
 | `thread.ts` | `harbourboard-thread.html` | the script itself | yes |
 | `conversation-page.ts` | `quay-messages.html` + `.capture.yaml` | the script itself (`lib/png.ts` for the inlined images) | yes |
 | `manual-page.ts` | `pump-service-manual.html` | the script itself | yes |
+| `bundles.ts` | `facebook-/instagram-/threads-month-bundle.zip`, `*-thread.json`, `chat-month-bundle.zip`, `chat-space.json`, `messages-week-bundle.zip`, `mail-month-bundle.zip`, each with a `.capture.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; the gif and mp4 members are the committed synthetic files) | yes |
+| `bundles.ts` | `photos-month-bundle.zip` | heif-enc, ImageMagick, ffmpeg for the originals | no (encoders) |
 | `mailing.ts` | `regatta-mailing.eml` | the script itself (its xlsx attachment through `lib/zip.ts`; the jpeg and pdf are the committed `garden.jpg` and `till-receipt.pdf`) | yes, given those two files |
 | `novel.ts` | `lantern-novel.epub` | the script itself (`lib/zip.ts`, `lib/png.ts` for the images) | yes |
 | `chat-archive.ts` | `quay-chat.mbox` | the script itself | yes |

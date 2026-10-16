@@ -1,5 +1,6 @@
 // match.ts — classification (spec §7.2 `matches`): the most specific term whose `matches` lines all hold for the
-// artifact — its mime, a header fingerprint (CSV), a root selector (HTML), a magic, the root term of its container. A
+// artifact — its mime, a header fingerprint (CSV), a root selector (HTML), a magic, the root term of its container, a
+// path on its own roster. A
 // stored `manifests` at `whole`
 // overrides the derived answer.
 import { MatchesDecl } from "../model/term.ts";
@@ -16,7 +17,13 @@ export interface Probe {
   head?: Uint8Array;
   /** The root term of the container this artifact is a member of (D-epub: a chapter is told by its package). */
   container?: string | null;
+  /** The paths on the artifact's own roster (D-roster: a bundle is told by its layout). */
+  members?: readonly string[];
+  /** The artifact's own path inside its container (D-roster: a member is told by its name). */
+  path?: string | null;
 }
+
+const pathTest = (want: string) => (want.startsWith("*") ? (m: string) => m.endsWith(want.slice(1)) : (m: string) => m.startsWith(want));
 
 export interface Match {
   term: string;
@@ -42,6 +49,14 @@ function holds(decl: MatchesDecl, p: Probe): number | null {
   }
   if (decl.container !== undefined) {
     if (!p.container || decl.container !== p.container) return null;
+    n++;
+  }
+  if (decl.member !== undefined) {
+    if (!p.members?.some(pathTest(decl.member))) return null;
+    n++;
+  }
+  if (decl.path !== undefined) {
+    if (!p.path || !pathTest(decl.path)(p.path)) return null;
     n++;
   }
   if (decl.magic !== undefined) {

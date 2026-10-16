@@ -179,6 +179,38 @@
   note: the twin of the address export — an object with one top-level array of 24 fabricated records (gen/plain.ts)
   source: synthetic
 
+- file: facebook-thread.json
+  blake3: b3387f8870076512d5cf1b322e65d2518171504a8236bc1dbe2ea7487d2bd1f8
+  mime: application/json
+  root: json
+  shape: conversation-json
+  note: "the twin of a Messenger conversation export on its own (message_1.json: participants, messages with sender_name, timestamp_ms, content, reactions); classifies as json until a JSON derivation lands (gen/bundles.ts)"
+  source: synthetic
+
+- file: instagram-thread.json
+  blake3: 2594c12d16bd23324eb94723d6d0342b1698eb69ef1ceacd903ae26b377e9a98
+  mime: application/json
+  root: json
+  shape: conversation-json
+  note: the twin of an Instagram Direct conversation export on its own (gen/bundles.ts)
+  source: synthetic
+
+- file: threads-thread.json
+  blake3: 84bfabe39e134f8c8b2fca0d80a43623e8fc889f04bb15bcc55a10e92af66557
+  mime: application/json
+  root: json
+  shape: conversation-json
+  note: the twin of a Threads conversation export on its own (gen/bundles.ts)
+  source: synthetic
+
+- file: chat-space.json
+  blake3: af7713d272f45777c254d6d98e6a16f33f6587f23914d13bfdd9a24af14c8ead
+  mime: application/json
+  root: json
+  shape: conversation-json
+  note: the twin of a Google Chat messages.json on its own — creator, created_date, text, topic ids (gen/bundles.ts)
+  source: synthetic
+
 - file: synthetic-lines.ndjson
   blake3: 23f9810ef7b0af559ed6ed6bf0a788950a6ae0374c2e0364054b7fc504f4f6db
   mime: application/x-ndjson
@@ -235,6 +267,62 @@
   root: zip
   shape: zip-zstd-members
   note: the twin of the chat export — the exporter's layout, 9 members (json and svg written with zstd, method 93; seven PNGs stored) (gen/chat-export.ts)
+  source: synthetic
+
+- file: facebook-month-bundle.zip
+  blake3: e82abeed5b994c8ac3fcc048ef9a9ef56fdf9be485e06ad1bbee88df815f50bb
+  mime: application/zip
+  root: facebook-export-bundle
+  shape: export-bundle
+  note: the twin of a Messenger month slice — inbox and filtered threads as message_1.json beside photos, gifs and videos, an event index and an album index; provenance in its .capture.yaml (gen/bundles.ts)
+  source: synthetic
+
+- file: instagram-month-bundle.zip
+  blake3: 2997cc1236fc3fa8ac6010cb8fe4818accb914d8a0efb8dbc60b0bda07939135
+  mime: application/zip
+  root: instagram-export-bundle
+  shape: export-bundle
+  note: the twin of an Instagram month slice — inbox threads with media, a stories index and story media, a post image (gen/bundles.ts)
+  source: synthetic
+
+- file: threads-month-bundle.zip
+  blake3: a55a755c4e751fbb987eb307ceb4a9111be4f6f133ea4d32bc0aff6896998866
+  mime: application/zip
+  root: threads-export-bundle
+  shape: export-bundle
+  note: the twin of a Threads month slice — inbox threads, a posts index, settings (gen/bundles.ts)
+  source: synthetic
+
+- file: chat-month-bundle.zip
+  blake3: fb67bd410ffd71eb2b161bb3f1aaf4e6cae49c9dc2788726945074b63251e5bc
+  mime: application/zip
+  root: google-chat-export-bundle
+  shape: export-bundle
+  note: the twin of a Google Chat month slice — a DM and a space, each messages.json beside group_info.json, one attachment (gen/bundles.ts)
+  source: synthetic
+
+- file: messages-week-bundle.zip
+  blake3: 7c75a49d830b525cef5f156a47057e5e922e729365e02d53df7aa161a8a7198f
+  mime: application/zip
+  root: imessage-export-bundle
+  shape: export-bundle
+  note: the twin of an iMessage week — four conversation pages, one per handle or group (gen/bundles.ts)
+  source: synthetic
+
+- file: mail-month-bundle.zip
+  blake3: 23725953b0780d273016a739d228ab1ae7719d0d4c3196ed7756ff318d7b32e7
+  mime: application/zip
+  root: proton-mail-export
+  shape: export-bundle
+  note: the twin of a mail export month — six <id>.eml beside <id>.metadata.json, one with an attachment (gen/bundles.ts)
+  source: synthetic
+
+- file: photos-month-bundle.zip
+  blake3: 2940d7706dac5b59e2526b984c358e61b6d15a61f3e9b18ff6eee333c0e78ac3
+  mime: application/zip
+  root: photo-library-export
+  shape: export-bundle
+  note: the twin of a photo-library month batch — HEIC and JPG originals with sidecar JSON, an edited render, a QuickTime clip, a screenshot (gen/bundles.ts; heif-enc, ImageMagick, ffmpeg)
   source: synthetic
 
 - file: novel.epub

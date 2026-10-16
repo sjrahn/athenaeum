@@ -1,0 +1,8 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: instagram-export-bundle
+via: export
+origin_fields:
+  period: "2026-03"
+  account: eli.judd
+  exported_at: "2026-04-02"
+  source_export: instagram-eli.judd-2026-04-02.zip

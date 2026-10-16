@@ -16,8 +16,8 @@ test once the derivation lands.
 | iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | quay-messages.html (+ .capture.yaml) | conversation-page.ts | done |
 | service-manual page (procedures, data tables, figures) | web | text/html | 7,000 | c | pump-service-manual.html | manual-page.ts | done |
 | product / order / listing / article page captures | web | text/html | 600 | c | — | — | planned (one generator, a page kind per call) |
-| Meta conversation (`message_N.json`, photos/ gifs/ videos/ audio/) | facebook-, instagram-, threads-conversation | application/json | 2,900 | a (+b via bundle) | — | — | planned |
-| Google Chat conversation (`messages.json` + `group_info.json`) | google-chat-conversation | application/json | 1,200 | a | — | — | planned |
+| Meta conversation (`message_N.json`, photos/ gifs/ videos/ audio/) | facebook-, instagram-, threads-conversation | application/json | 2,900 | a (+b via bundle) | facebook-/instagram-/threads-thread.json; inside the month bundles | bundles.ts | done (classified by container and name; tree is a later ruling) |
+| Google Chat conversation (`messages.json` + `group_info.json`) | google-chat-conversation | application/json | 1,200 | a | chat-space.json; inside chat-month-bundle.zip | bundles.ts | done |
 | Discord channel export (DCE json) | discord-conversation | application/json | 70 | a | (inside quay-chat-export.zip) | chat-export.ts | done |
 | Google Timeline export (`location-history.json`) | google-timeline-export | application/json | 1 | a | — | — | planned |
 | address book | — | application/json | — | a | address-book.json | plain.ts | done |
@@ -29,15 +29,15 @@ test once the derivation lands.
 | single-file script | web | text/javascript | 1 | a | tidewatch.js | plain.ts | done |
 | mail message with attachments | gmail / proton (eml) | message/rfc822 | 100 | c | regatta-mailing.eml | mailing.ts | done |
 | mailbox slice (chat folded into mail) | google-takeout | application/mbox | 30 | b | quay-chat.mbox | chat-archive.ts | done |
-| Proton mail export bucket (`<id>.eml` + `<id>.metadata.json` pairs) | proton-mail-export | application/zip | 38 | b | — | — | planned |
-| Meta export bundle (month slice: inbox threads, media, activity indexes) | facebook-, instagram-, threads-export-bundle | application/zip | 360 | b | — | — | planned |
+| Proton mail export bucket (`<id>.eml` + `<id>.metadata.json` pairs) | proton-mail-export | application/zip | 38 | b | mail-month-bundle.zip | bundles.ts | done |
+| Meta export bundle (month slice: inbox threads, media, activity indexes) | facebook-, instagram-, threads-export-bundle | application/zip | 360 | b | facebook-/instagram-/threads-month-bundle.zip | bundles.ts | done |
 | Meta account export (size-split parts) | facebook-, instagram-, threads-export | application/zip | — | b | — | — | planned (same layout, whole) |
 | Facebook profile harvest (our layout, per person / per year) | facebook-profile-export, -year | application/zip | 2 | b | — | — | planned |
-| Google Chat export bundle (month slice) | google-chat-export-bundle | application/zip | 160 | b | — | — | planned |
-| iMessage export bundle (period of conversation pages) | imessage-export-bundle | application/zip | 180 | b | — | — | planned |
+| Google Chat export bundle (month slice) | google-chat-export-bundle | application/zip | 160 | b | chat-month-bundle.zip | bundles.ts | done |
+| iMessage export bundle (period of conversation pages) | imessage-export-bundle | application/zip | 180 | b | messages-week-bundle.zip | bundles.ts | done |
 | Google Takeout slice (`Takeout/<Service>/…`: fit tcx, contacts, maps, keep html+json, calendar ics) | google-takeout | application/zip (tgz in the wild) | 6 | b | — | — | planned |
 | Google Drive download job | google-drive-export | application/zip | 2 | b | — | — | planned |
-| photo-library period batch (originals, sidecar JSON, edited renders, videos) | osxphotos-export | application/zip | 76 | b | — | — | planned |
+| photo-library period batch (originals, sidecar JSON, edited renders, videos) | osxphotos-export | application/zip | 76 | b | photos-month-bundle.zip | bundles.ts | done |
 | camera SD-card dump (ARW + HIF pairs, MP4 with XML sidecars) | camera-sd-dump | application/zip | — | b | — | — | planned |
 | Discord guild export (DCE json + assets/) | discord-export | application/zip | 36 | b | quay-chat-export.zip | chat-export.ts | done |
 | Amazon data delivery (category zip: csv, pdf invoices, jpeg proofs) | amazon-export | application/zip | 1 | b | — | — | planned |
