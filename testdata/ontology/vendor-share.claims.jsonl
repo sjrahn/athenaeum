@@ -1,0 +1,3 @@
+{"subject":"vendor-share","predicate":"refines","value":"export-bundle"}
+{"subject":"vendor-share","predicate":"matches","value":{"mime":"application/zip","member":"Datasheet/"}}
+{"subject":"vendor-share","predicate":"definition","value":"a vendor download tree: datasheets, drawings, firmware, tools"}

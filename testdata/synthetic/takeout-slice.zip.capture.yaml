@@ -1,0 +1,9 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: google-takeout
+via: export
+origin_fields:
+  account: ada.abbott@example.invalid
+  exported_at: "2026-04-01T03:00:00Z"
+  services: [Fit, Contacts, Maps, Keep, Calendar, Saved]
+  part: "001"
+  job: takeout-20260401T030000Z

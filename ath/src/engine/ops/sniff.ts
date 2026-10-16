@@ -97,6 +97,12 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
   if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8)) return "image/webp";
   if (starts([0x50, 0x4b, 0x03, 0x04]) || starts([0x50, 0x4b, 0x05, 0x06])) return zipKind(b);
   if (starts([0x1f, 0x8b])) return "application/gzip";
+  if (starts([0x49, 0x49, 0x2a, 0x00]) || starts([0x4d, 0x4d, 0x00, 0x2a]))
+    return ext === "arw" ? "image/x-sony-arw" : ext === "dng" ? "image/x-adobe-dng" : "image/tiff";
+  if (starts([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])) return "application/vnd.rar";
+  if (starts([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return "application/x-7z-compressed";
+  if (starts([0x4d, 0x5a])) return "application/x-msdownload";
+  if (starts([0x7f, 0x45, 0x4c, 0x46])) return "application/x-executable";
   if (b.length >= 12 && starts([0x66, 0x74, 0x79, 0x70], 4)) {
     const brand = text(b.subarray(8, 12), 4);
     return BRANDS[brand] ?? (ext === "m4a" ? "audio/mp4" : ext === "mov" ? "video/quicktime" : "video/mp4");
@@ -116,6 +122,7 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
   if (head.startsWith("BEGIN:VCARD")) return "text/vcard";
   if (head.startsWith("BEGIN:VCALENDAR")) return "text/calendar";
   if (head.startsWith("ISO-10303-21;")) return "application/p21";
+  if (/^\s*0\r?\nSECTION\r?\n/.test(head)) return "image/vnd.dxf";
   const json = looksLikeJson(b);
   if (json === "object" && !(ext === "jsonl" || ext === "ndjson")) return "application/json";
   if (json === "lines" || ((ext === "jsonl" || ext === "ndjson") && json !== null)) return "application/x-ndjson";
@@ -147,6 +154,11 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
     opus: "audio/opus",
     m4a: "audio/mp4",
     p21: "application/p21",
+    cfg: "text/plain",
+    conf: "text/plain",
+    log: "text/plain",
+    gpx: "application/xml",
+    tcx: "application/xml",
     ifc: "application/p21",
     step: "application/p21",
     stp: "application/p21",

@@ -1,0 +1,3 @@
+{"subject":"rides-export","predicate":"refines","value":"export-bundle"}
+{"subject":"rides-export","predicate":"matches","value":{"mime":"application/zip","member":"Rider/"}}
+{"subject":"rides-export","predicate":"definition","value":"a ride-hailing data export: category CSVs beside a readme"}

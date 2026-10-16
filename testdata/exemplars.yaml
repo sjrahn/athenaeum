@@ -325,6 +325,102 @@
   note: the twin of a photo-library month batch — HEIC and JPG originals with sidecar JSON, an edited render, a QuickTime clip, a screenshot (gen/bundles.ts; heif-enc, ImageMagick, ffmpeg)
   source: synthetic
 
+- file: orders-delivery.zip
+  blake3: e635ad727152ed032d8bbde3a56a2f97b5821b42da9c1b851408162cf6c28d23
+  mime: application/zip
+  root: data-request-delivery
+  shape: export-bundle
+  note: "the twin of a retailer data-request category delivery — order history, returns and digital orders as CSV, an invoice PDF, a proof-of-delivery image, a readme (gen/bundles2.ts)"
+  source: synthetic
+
+- file: rides-export.zip
+  blake3: a9fe6816e26e9d640be1839b6152b8e0c98a1db2f59c355af14acb271fe986e1
+  mime: application/zip
+  root: rides-export
+  shape: export-bundle
+  note: "the twin of a ride-hailing DSAR export — trips, profile, payment methods, ratings and food orders as CSV beside a readme (gen/bundles2.ts)"
+  source: synthetic
+
+- file: health-export.zip
+  blake3: bc55b3a4d2c117a93f3d02fc4c927d6ad20e202dbe8f9881cbc81e83b8417006
+  mime: application/zip
+  root: health-export
+  shape: export-bundle
+  note: "the twin of a health export — export.xml of samples and a workout, the CDA re-serialisation, an ECG CSV, two GPX routes, a clinical-record JSON (gen/bundles2.ts)"
+  source: synthetic
+
+- file: host-diagnostics.zip
+  blake3: 755432d18af5c7c13ec1a0b048abe410d403072afbc529373f5e26847e00dc2d
+  mime: application/zip
+  root: host-diagnostics
+  shape: export-bundle
+  note: "the twin of a host diagnostics report — smart/ per disk, system/ listings, config/ and shares/ cfg files, a syslog (gen/bundles2.ts)"
+  source: synthetic
+
+- file: vault-subtree.zip
+  blake3: e0fb7ff7cbf4fe64e2330669e50540eaae1c28118e9ef7213dfcece0f4411967
+  mime: application/zip
+  root: vault-export
+  shape: export-bundle
+  note: "the twin of a note-vault subtree — notes with frontmatter and wiki links in folders, a daily log, a clipping, an attachment, the app config (gen/bundles2.ts)"
+  source: synthetic
+
+- file: vendor-share.zip
+  blake3: 7fafd3bd49d5586e8ad43ddd00d78dcd76b083599c41268274d70defcf4a013f
+  mime: application/zip
+  root: vendor-share
+  shape: export-bundle
+  note: "the twin of a vendor download tree — datasheet and schematic PDFs, a DXF outline, a nested firmware zip, rar, 7z and exe told by magic alone (gen/bundles2.ts)"
+  source: synthetic
+
+- file: agent-session.zip
+  blake3: 81f4436b4be4918124484ef6b8441694b5c34be4a2bdfa238644aee94195fbb3
+  mime: application/zip
+  root: agent-session
+  shape: export-bundle
+  note: "the twin of a captured agent session — the JSONL transcript, a sub-agent transcript, tool results and workflow state, every member under zstd (gen/bundles2.ts)"
+  source: synthetic
+
+- file: statements-year.zip
+  blake3: f993a31d5faf7e08e823ea80b554c6085665e3034a0335b1b1d7d7e0487ce53a
+  mime: application/zip
+  root: statement-series
+  shape: export-bundle
+  note: "the twin of a statement year — twelve monthly statement PDFs rendered with typst (gen/bundles2.ts)"
+  source: synthetic
+
+- file: card-dump.zip
+  blake3: 08ac924b1b01e9f58d9c8b5908e0e52d13127273948fae6b658c286f1f0723bf
+  mime: application/zip
+  root: card-dump
+  shape: export-bundle
+  note: "the twin of a camera card copied whole — DCIM raw (a minimal TIFF-shaped ARW) and HIF pairs, a PRIVATE/M4ROOT clip with its XML sidecars (gen/bundles2.ts; heif-enc, ffmpeg)"
+  source: synthetic
+
+- file: takeout-slice.zip
+  blake3: 1d7dc1e96ea93fc2e55b9099393e5907fc1619f49f52a952bea95872c34f3387
+  mime: application/zip
+  root: takeout-slice
+  shape: export-bundle
+  note: "the twin of a Takeout slice — Fit TCX activities and daily metrics, a contacts vCard, labelled places, a Keep note as HTML and JSON, a calendar, saved places, the archive browser (gen/bundles2.ts)"
+  source: synthetic
+
+- file: drive-folder.zip
+  blake3: da7b858a7acc71ea1953f162369503c564bce9e6ec59ad1b717c6864ccaf34f0
+  mime: application/zip
+  root: zip
+  shape: export-bundle
+  note: "the twin of a Drive download job — a flat folder of a PDF, a CSV, a note and an image; no layout to be told by, so it is a zip (gen/bundles2.ts)"
+  source: synthetic
+
+- file: profile-year.zip
+  blake3: 96d4f9ff048b937ff9db93f4e58e02e624609166887f4bce07a4033b16ef7a00
+  mime: application/zip
+  root: profile-year
+  shape: export-bundle
+  note: "the twin of a harvested profile year in the export layout — posts and comments indexes, post media; told apart from a month slice by its comments_and_reactions/ (gen/bundles2.ts)"
+  source: synthetic
+
 - file: novel.epub
   blake3: b8ded2e04ee9a11c3d401e8d39e64497426772f480cbde765abeb917a4732fee
   mime: application/epub+zip

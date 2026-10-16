@@ -1,0 +1,3 @@
+{"subject":"statement-series","predicate":"refines","value":"export-bundle"}
+{"subject":"statement-series","predicate":"matches","value":{"mime":"application/zip","member":"*/Statement-*.pdf"}}
+{"subject":"statement-series","predicate":"definition","value":"a year of monthly statement PDFs from one account"}

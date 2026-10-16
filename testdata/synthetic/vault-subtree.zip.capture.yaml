@@ -1,0 +1,14 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: obsidian-vault
+via: export
+origin_fields:
+  vault_name: Harbour
+  vault_root: ~/Documents/Harbour
+  subtree: /
+  host: lantern
+  exported_at: "2026-03-14T20:00:00Z"
+  note_count: 7
+  excluded: [.trash]
+  command: corpus assemble
+  actor: owner
+  redacted: none

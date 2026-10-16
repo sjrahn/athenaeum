@@ -1,0 +1,2 @@
+{"subject":"avif","predicate":"refines","value":"image"}
+{"subject":"avif","predicate":"matches","value":{"mime":"image/avif"}}

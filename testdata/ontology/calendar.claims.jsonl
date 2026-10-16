@@ -1,0 +1,3 @@
+{"subject":"calendar","predicate":"refines","value":"data"}
+{"subject":"calendar","predicate":"matches","value":{"mime":"text/calendar"}}
+{"subject":"calendar","predicate":"definition","value":"an iCalendar stream (VCALENDAR with VEVENTs)"}

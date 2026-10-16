@@ -1,0 +1,3 @@
+{"subject":"profile-year","predicate":"refines","value":"facebook-export-bundle"}
+{"subject":"profile-year","predicate":"matches","value":{"mime":"application/zip","member":"your_facebook_activity/comments_and_reactions/"}}
+{"subject":"profile-year","predicate":"definition","value":"one year of a harvested profile converted into the export layout: posts, comments, media"}

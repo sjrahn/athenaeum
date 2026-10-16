@@ -1,0 +1,3 @@
+{"subject":"dxf","predicate":"refines","value":"data"}
+{"subject":"dxf","predicate":"matches","value":{"mime":"image/vnd.dxf"}}
+{"subject":"dxf","predicate":"definition","value":"a drawing exchange file: tagged pairs, HEADER and ENTITIES sections"}

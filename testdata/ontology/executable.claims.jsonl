@@ -1,0 +1,2 @@
+{"subject":"executable","predicate":"refines","value":"binary"}
+{"subject":"executable","predicate":"matches","value":{"mime":"application/x-msdownload"}}

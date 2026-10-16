@@ -23,7 +23,15 @@ export interface Probe {
   path?: string | null;
 }
 
-const pathTest = (want: string) => (want.startsWith("*") ? (m: string) => m.endsWith(want.slice(1)) : (m: string) => m.startsWith(want));
+// A member or path probe: a prefix, or a glob where `*` stands for any run of characters ("*.metadata.json",
+// "*-diagnostics-*" followed by "/smart/"); a glob matches from the start, so `*` leads when the start is free.
+const pathTest = (want: string) => {
+  if (!want.includes("*")) return (m: string) => m.startsWith(want);
+  const special = new Set([".", "+", "?", "^", "$", "(", ")", "|", "[", "]", "{", "}", "\\"]);
+  const quote = (p: string) => [...p].map((c) => (special.has(c) ? `\\${c}` : c)).join("");
+  const re = new RegExp(`^${want.split("*").map(quote).join(".*")}`);
+  return (m: string) => re.test(m);
+};
 
 export interface Match {
   term: string;

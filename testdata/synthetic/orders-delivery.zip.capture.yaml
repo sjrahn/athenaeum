@@ -1,0 +1,9 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: amazon-export
+via: export
+origin_fields:
+  category: Your Orders
+  delivery: Request My Data 2026-03-10
+  exported_at: "2026-03-10"
+  exported_at_basis: delivery email
+  account: harbour.orders@example.invalid

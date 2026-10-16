@@ -1,0 +1,2 @@
+{"subject":"elf","predicate":"refines","value":"binary"}
+{"subject":"elf","predicate":"matches","value":{"mime":"application/x-executable"}}

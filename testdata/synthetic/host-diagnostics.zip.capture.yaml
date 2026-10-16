@@ -1,0 +1,11 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: host-diagnostic
+via: export
+origin_fields:
+  host: lantern
+  system: unraid 7.0.0
+  command: diagnostics
+  produced_at: "2026-03-12T09:15:00Z"
+  produced_on: lantern
+  actor: owner
+  redacted: none

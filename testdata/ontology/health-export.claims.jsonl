@@ -1,0 +1,2 @@
+{"subject":"health-export","predicate":"refines","value":"export-bundle"}
+{"subject":"health-export","predicate":"matches","value":{"mime":"application/zip","member":"apple_health_export/"}}

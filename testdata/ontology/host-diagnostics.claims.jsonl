@@ -1,0 +1,3 @@
+{"subject":"host-diagnostics","predicate":"refines","value":"export-bundle"}
+{"subject":"host-diagnostics","predicate":"matches","value":{"mime":"application/zip","member":"*-diagnostics-*/smart/"}}
+{"subject":"host-diagnostics","predicate":"definition","value":"a host diagnostics report: smart/, system/, config/, shares/, logs/"}

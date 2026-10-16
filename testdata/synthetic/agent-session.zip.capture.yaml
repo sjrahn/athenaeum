@@ -1,0 +1,15 @@
+# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
+origin: claude-code-session
+via: export
+origin_fields:
+  session_id: 00000000-0000-4000-8000-00000000c0de
+  host: lantern
+  project_dir: /home/owner/work/harbour
+  cwd: /home/owner/work/harbour
+  claude_code_version: 2.1.0
+  record_count: 46
+  message_count: 40
+  subagent_count: 1
+  captured_at: "2026-03-20T11:00:00Z"
+  activity_start: "2026-03-20T10:00:00Z"
+  activity_end: "2026-03-20T10:04:33Z"

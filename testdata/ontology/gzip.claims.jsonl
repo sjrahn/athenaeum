@@ -1,0 +1,2 @@
+{"subject":"gzip","predicate":"refines","value":"binary"}
+{"subject":"gzip","predicate":"matches","value":{"mime":"application/gzip"}}
